@@ -1,0 +1,13 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`CodedError should initialize with given options 1`] = `[TestError: Error message]`;
+
+exports[`CodedError should initialize with given options 2`] = `
+{
+  "code": "ABORT_ERR",
+  "detail": {
+    "this": "is a testing",
+  },
+  "name": "TestError",
+}
+`;

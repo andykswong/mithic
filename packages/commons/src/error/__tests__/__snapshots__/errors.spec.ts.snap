@@ -1,0 +1,47 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`abortError should initialize with given reason 1`] = `[AbortError: test reason]`;
+
+exports[`abortError should initialize with given reason 2`] = `
+{
+  "code": "ABORT_ERR",
+  "detail": undefined,
+  "name": "AbortError",
+}
+`;
+
+exports[`invalidStateError should initialize with given reason 1`] = `[InvalidStateError: test reason]`;
+
+exports[`invalidStateError should initialize with given reason 2`] = `
+{
+  "code": "ERR",
+  "detail": {
+    "detail": "issue",
+  },
+  "name": "InvalidStateError",
+}
+`;
+
+exports[`notFoundError should initialize with given reason 1`] = `[NotFoundError: test reason]`;
+
+exports[`notFoundError should initialize with given reason 2`] = `
+{
+  "code": "ERR_NOT_FOUND",
+  "detail": {
+    "detail": "issue",
+  },
+  "name": "NotFoundError",
+}
+`;
+
+exports[`operationError should initialize with given parameters 1`] = `[OperationError: test reason]`;
+
+exports[`operationError should initialize with given parameters 2`] = `
+{
+  "code": "ERR_INVALID_ARG_VALUE",
+  "detail": {
+    "detail": "issue",
+  },
+  "name": "OperationError",
+}
+`;

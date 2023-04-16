@@ -1,0 +1,47 @@
+{
+  "name": "mithic",
+  "version": "0.1.0",
+  "description": "Modular library for real-time isomorphic applications using CQRS/ES/CRDT",
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "build": "npm run build -ws",
+    "clean": "npm run clean -ws && rimraf docs",
+    "doc": "typedoc --entryPointStrategy packages --name mithic --readme ./README.md --out docs ./",
+    "test": "npm test -ws"
+  },
+  "workspaces": [
+    "./packages/commons",
+    "./packages/collections",
+    "./packages/messaging",
+    "./packages/cqrs"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andykswong/mithic.git"
+  },
+  "keywords": [
+    "collaboration",
+    "cqrs",
+    "crdt",
+    "decentralized",
+    "distributed",
+    "eventsourcing",
+    "p2p",
+    "offline-first",
+    "state-channel",
+    "typescript",
+    "web3"
+  ],
+  "author": "Andy K.S. Wong <andykswong@outlook.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/andykswong/mithic/issues"
+  },
+  "homepage": "https://github.com/andykswong/mithic",
+  "dependencies": {
+  },
+  "devDependencies": {
+    "typedoc-plugin-resolve-crossmodule-references": "^0.3"
+  }
+}

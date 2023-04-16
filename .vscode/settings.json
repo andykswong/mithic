@@ -1,0 +1,7 @@
+{
+    "editor.tabSize": 2,
+    "javascript.preferences.quoteStyle": "single",
+    "javascript.preferences.importModuleSpecifierEnding": "js",
+    "typescript.preferences.quoteStyle": "single",
+    "typescript.preferences.importModuleSpecifierEnding": "js"
+}
