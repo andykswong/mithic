@@ -3,9 +3,7 @@ import { EventBus, EventConsumer, EventDispatcher, EventSubscription, Unsubscrib
 import { SimpleEventBus } from '../event/index.js';
 import { EventReducer, EventReducerFn } from '../processor/index.js';
 
-/**
- * Creates a simple Redux-compatible CQRS store using {@link EventBus} and {@link EventReducer}.
- */
+/** Creates a simple Redux-compatible CQRS store using {@link EventBus} and {@link EventReducer}. */
 export function createReduxStore<State, Event>(
   options: CreateReduxStoreOptions<State, Event>
 ): ReduxStore<State, Event> {

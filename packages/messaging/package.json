@@ -21,7 +21,7 @@
     "babel": "babel src -d dist -x '.ts' --out-file-extension .js --root-mode upward",
     "tsc": "tsc --project tsconfig.build.json --emitDeclarationOnly",
     "test": "npm run jest",
-    "jest": "cross-env NODE_OPTIONS=--experimental-vm-modules npx jest",
+    "jest": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
     "jest:watch": "npm run jest -- --watch",
     "doc": "typedoc"
   },

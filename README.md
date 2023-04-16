@@ -1,5 +1,5 @@
 > ## ⚠ Heavily WIP, not for consumption yet.
-> ### Event sourcing module upcoming
+> 2023/04: Event sourcing module upcoming
 
 <br />
 
@@ -22,6 +22,23 @@
 `mithic` provides the building blocks for creating real-time client and server side applications, using patterns from [CQRS](https://en.wikipedia.org/wiki/Command%E2%80%93query_separation), [Event Sourcing (ES)](https://en.wikipedia.org/wiki/Event_store) and [CRDT](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type). 
 
 In `mithic`, events form a causal [Merkle DAG](https://docs.ipfs.tech/concepts/merkle-dag/), instead of just a linear event stream. This allows CRDTs to be constructed through conflict-free replication of event graph, which is perfect for implementing offline-first and/or decentralized applications.
+
+## Getting Started
+
+To use the library, you can depend on the monorepo:
+```shell
+npm install --save mithic
+```
+Or select individual [modular packages](#packages) to use:
+```shell
+npm install --save @mithic/messaging
+npm install --save @mithic/cqrs
+```
+
+For detailed usages, [see examples](./packages/examples).
+
+## Documentation
+See generated TypeDoc: https://andykswong.github.io/mithic/
 
 ## Packages
 

@@ -1,0 +1,30 @@
+{
+  "name": "example-simple",
+  "version": "0.2.0",
+  "private": "true",
+  "description": "simple mithic redux store example",
+  "type": "module",
+  "sideEffects": false,
+  "main": "index.js",
+  "scripts": {
+    "build": "echo NOOP",
+    "start": "node .",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andykswong/mithic.git"
+  },
+  "author": "Andy K.S. Wong <andykswong@outlook.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/andykswong/mithic/issues"
+  },
+  "homepage": "https://github.com/andykswong/mithic",
+  "dependencies": {
+    "@mithic/cqrs": "^0.2"
+  },
+  "devDependencies": {
+    "jest": "^29.5"
+  }
+}

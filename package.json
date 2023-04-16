@@ -19,12 +19,6 @@
     "doc": "typedoc",
     "test": "npm test -ws"
   },
-  "workspaces": [
-    "./packages/commons",
-    "./packages/collections",
-    "./packages/messaging",
-    "./packages/cqrs"
-  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/andykswong/mithic.git"
@@ -57,5 +51,12 @@
   "devDependencies": {
     "rimraf": "^5.0",
     "typedoc": "^0.24"
-  }
+  },
+  "workspaces": [
+    "./packages/commons",
+    "./packages/collections",
+    "./packages/messaging",
+    "./packages/cqrs",
+    "./packages/examples/*"
+  ]
 }
