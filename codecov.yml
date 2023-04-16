@@ -1,0 +1,17 @@
+component_management:
+  individual_components:
+    - component_id: "@mithic/collections"
+      paths:
+        - "packages/collections"
+    - component_id: "@mithic/commons"
+      paths:
+        - "packages/commons"
+    - component_id: "@mithic/cqrs"
+      paths:
+        - "packages/cqrs"
+    - component_id: "@mithic/messaging"
+      paths:
+        - "packages/messaging"
+
+comment:
+  layout: "header, diff, flags, components"
