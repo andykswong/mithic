@@ -1,13 +1,14 @@
 {
   "compilerOptions": {
-    "allowSyntheticDefaultImports": true,
-    "isolatedModules": true,
-    "strict": true,
     "module": "esnext",
     "target": "es2022",
-    "moduleResolution": "nodenext",                   
-    "esModuleInterop": true, 
-    "allowJs": true,
+    "moduleResolution": "nodenext",
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "strict": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
     "declaration": true,
     "declarationMap": true
   }

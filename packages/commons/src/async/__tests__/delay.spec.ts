@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { wait } from '../delay.js';
+import { immediate, wait } from '../delay.js';
 
 describe(wait.name, () => {
   beforeEach(() => {
@@ -32,6 +32,20 @@ describe(wait.name, () => {
     expect(promise).toBeInstanceOf(Promise);
 
     jest.runAllTimers();
+
+    await promise;
+    const elapsedTime = Date.now() - startTime;
+
+    expect(elapsedTime).toBeLessThan(1); // Should resolve immediately with negligible delay
+  });
+});
+
+describe(immediate.name, () => {
+  it('should return a Promise that resolves immediately in next tick', async () => {
+    const startTime = Date.now();
+
+    const promise = immediate();
+    expect(promise).toBeInstanceOf(Promise);
 
     await promise;
     const elapsedTime = Date.now() - startTime;

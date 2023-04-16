@@ -1,11 +1,11 @@
 import { AbortOptions, CountingSemaphore, Semaphore } from '@mithic/commons';
 import { SyncQueue } from '../queue.js';
-import { Deque } from '../impl/index.js';
+import { ArrayDeque } from '../impl/index.js';
 
 /** A semaphore that limits access to resources by issuing fixed number of permits per period. */
 export class RateLimiter implements Semaphore {
   private semaphore: Semaphore;
-  private resetQueue: SyncQueue<number> = new Deque();
+  private resetQueue: SyncQueue<number> = new ArrayDeque();
   private resetTimer = 0;
 
   public constructor(

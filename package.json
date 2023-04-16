@@ -4,10 +4,19 @@
   "description": "Modular library for real-time isomorphic applications using CQRS/ES/CRDT",
   "type": "module",
   "sideEffects": false,
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "./index.js",
+    "./index.d.ts"
+  ],
   "scripts": {
     "build": "npm run build -ws",
     "clean": "npm run clean -ws && rimraf docs",
-    "doc": "typedoc --entryPointStrategy packages --name mithic --readme ./README.md --out docs ./",
+    "doc": "typedoc",
     "test": "npm test -ws"
   },
   "workspaces": [
@@ -40,8 +49,13 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
+    "@mithic/collections": "^0.1",
+    "@mithic/commons": "^0.1",
+    "@mithic/cqrs": "^0.1",
+    "@mithic/messaging": "^0.1"
   },
   "devDependencies": {
-    "typedoc-plugin-resolve-crossmodule-references": "^0.3"
+    "rimraf": "^5.0",
+    "typedoc": "^0.24"
   }
 }

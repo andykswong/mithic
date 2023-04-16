@@ -1,14 +1,14 @@
-import { Deque } from '../deque.js';
+import { ArrayDeque } from '../arraydeque.js';
 
-describe(Deque.name, () => {
-  let deque: Deque<number>;
+describe(ArrayDeque.name, () => {
+  let deque: ArrayDeque<number>;
 
   beforeEach(() => {
-    deque = new Deque<number>(3);
+    deque = new ArrayDeque<number>(3);
   });
 
   it('should have correct string tag', () => {
-    expect(deque.toString()).toBe('[object Deque]');
+    expect(`${deque}`).toBe(`[object ${ArrayDeque.name}]`);
   });
 
   describe('size', () => {
@@ -80,6 +80,24 @@ describe(Deque.name, () => {
       expect(deque.get(0)).toBe(1);
       expect(deque.get(1)).toBe(2);
       expect(deque.get(2)).toBe(3);
+    });
+  });
+
+  describe('has', () => {
+    it('should return false for out-of-bounds indices', () => {
+      deque.push(1);
+      deque.push(2);
+      expect(deque.has(-1)).toBe(false);
+      expect(deque.has(2)).toBe(false);
+    });
+
+    it('should return true for existing element', () => {
+      deque.push(1);
+      deque.push(2);
+      deque.push(3);
+      expect(deque.has(0)).toBe(true);
+      expect(deque.has(1)).toBe(true);
+      expect(deque.has(2)).toBe(true);
     });
   });
 

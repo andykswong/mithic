@@ -1,7 +1,7 @@
-import { SyncQueue } from '../queue.js';
+import { PeekableQueue, SyncQueue } from '../queue.js';
 
 /** A binary heap. */
-export class BinaryHeap<T> implements SyncQueue<T> {
+export class BinaryHeap<T> implements PeekableQueue<T>, SyncQueue<T> {
   private heap: T[];
 
   public constructor(

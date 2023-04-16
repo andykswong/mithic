@@ -1,11 +1,11 @@
-import { SyncQueue } from '../queue.js';
-import { SyncStack } from '../stack.js';
+import { PeekableDeque, SyncDeque } from '../deque.js';
+import { MaybeAsyncReadonlyMap } from '../map.js';
 
 const DEFAULT_DEQUE_CAPACITY = 16;
 const DEFAULT_DEQUE_RESIZE_FACTOR = 2;
 
-/** A double-ended queue. */
-export class Deque<T> implements SyncQueue<T>, SyncStack<T>, Iterable<T> {
+/** A double-ended queue using a circular buffer. */
+export class ArrayDeque<T> implements MaybeAsyncReadonlyMap<number, T>, PeekableDeque<T>, SyncDeque<T>, Iterable<T> {
   private buffer: T[];
   private frontIdx = -1;
   private backIdx = -1;
@@ -19,16 +19,16 @@ export class Deque<T> implements SyncQueue<T>, SyncStack<T>, Iterable<T> {
     this.buffer = Array(_capacity);
   }
 
-  public get[Symbol.toStringTag](): string {
-    return Deque.name;
+  public get [Symbol.toStringTag](): string {
+    return ArrayDeque.name;
   }
 
-  /** Returns the current capacity of this {@link Deque}. */
+  /** Returns the current capacity of this {@link ArrayDeque}. */
   public get capacity(): number {
     return this._capacity;
   }
 
-  /** Returns the size of this {@link Deque}. */
+  /** Returns the size of this {@link ArrayDeque}. */
   public get size(): number {
     if (this.isEmpty()) {
       return 0;
@@ -41,7 +41,6 @@ export class Deque<T> implements SyncQueue<T>, SyncStack<T>, Iterable<T> {
     }
   }
 
-  /** Returns the first element of this {@link Deque}, or undefined if empty. */
   public front(): T | undefined {
     if (this.isEmpty()) {
       return undefined;
@@ -50,7 +49,6 @@ export class Deque<T> implements SyncQueue<T>, SyncStack<T>, Iterable<T> {
     return this.buffer[this.frontIdx];
   }
 
-  /** Returns the last element of this {@link Deque}, or undefined if empty. */
   public back(): T | undefined {
     if (this.isEmpty()) {
       return undefined;
@@ -59,7 +57,6 @@ export class Deque<T> implements SyncQueue<T>, SyncStack<T>, Iterable<T> {
     return this.buffer[this.backIdx];
   }
 
-  /** Returns the i-th element of this {@link Deque}, or undefined if not exist. */
   public get(i: number): T | undefined {
     const size = this.size;
     if (i < 0 || i >= size) {
@@ -68,12 +65,16 @@ export class Deque<T> implements SyncQueue<T>, SyncStack<T>, Iterable<T> {
     return this.buffer[(this.frontIdx + i) % this._capacity];
   }
 
-  /** Clears this {@link Deque}. */
+  public has(index: number): boolean {
+    return Number.isInteger(index) && index >= 0 && index < this.size;
+  }
+
+  /** Clears this {@link ArrayDeque}. */
   public clear(): void {
     this.frontIdx = this.backIdx = -1;
   }
 
-  /** Adds an element to the beginning of this {@link Deque}. */
+  /** Adds an element to the beginning of this {@link ArrayDeque}. */
   public unshift(item: T): void {
     if (this.isFull()) {
       this.resize();
@@ -88,7 +89,7 @@ export class Deque<T> implements SyncQueue<T>, SyncStack<T>, Iterable<T> {
     this.buffer[this.frontIdx] = item;
   }
 
-  /** Removes and returns the first element of this {@link Deque}, or undefined if empty. */
+  /** Removes and returns the first element of this {@link ArrayDeque}, or undefined if empty. */
   public shift(): T | undefined {
     if (this.isEmpty()) {
       return undefined;
@@ -104,7 +105,7 @@ export class Deque<T> implements SyncQueue<T>, SyncStack<T>, Iterable<T> {
     return item;
   }
 
-  /** Adds an element to the end of this {@link Deque}. */
+  /** Adds an element to the end of this {@link ArrayDeque}. */
   public push(item: T): void {
     if (this.isFull()) {
       this.resize();
@@ -119,7 +120,7 @@ export class Deque<T> implements SyncQueue<T>, SyncStack<T>, Iterable<T> {
     this.buffer[this.backIdx] = item;
   }
 
-  /** Removes and returns the last element of this {@link Deque}, or undefined if empty. */
+  /** Removes and returns the last element of this {@link ArrayDeque}, or undefined if empty. */
   public pop(): T | undefined {
     if (this.isEmpty()) {
       return undefined;
@@ -136,7 +137,7 @@ export class Deque<T> implements SyncQueue<T>, SyncStack<T>, Iterable<T> {
   }
 
   /**
-   * Resizes this {@link Deque} to the new capacity.
+   * Resizes this {@link ArrayDeque} to the new capacity.
    * By default, it expands to 2x the current capacity.
    * Does nothing if new capacity is less than current size.
    */
