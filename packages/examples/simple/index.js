@@ -27,10 +27,11 @@ const commands = bindEventCreators({
   decrement: (count) => ({ type: 'DECREASED', count }),
 }, store);
 
+// Run some commands and queries
+
 console.log('Initial state:', store.getState());
 assert.deepStrictEqual(store.getState(), { counter: 0 });
 
-// Dispatch commands
 await commands.increment(3);
 console.log('State after increment(3):', store.getState());
 assert.deepStrictEqual(store.getState(), { counter: 3 });
@@ -41,4 +42,3 @@ assert.deepStrictEqual(store.getState(), { counter: 2 });
 
 // Finally close the store
 await store.close();
-console.log('Store closed');

@@ -36,7 +36,7 @@ export class SimpleReduxStore<State, Event> implements ReduxStore<State, Event> 
 
   public dispatch = (event: Event, options?: AbortOptions): MaybePromise<void> => {
     return this.eventDispatcher.dispatch(event, options);
-  }
+  };
 
   public getState(): State {
     return this.eventReducer.state;

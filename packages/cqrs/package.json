@@ -46,6 +46,7 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
+    "@mithic/collections": "^0.2",
     "@mithic/commons": "^0.2",
     "@mithic/messaging": "^0.2",
     "multiformats": "^11.0"

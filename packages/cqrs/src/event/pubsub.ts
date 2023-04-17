@@ -17,9 +17,9 @@ export class PubSubEventBus<Event> implements EventBus<Event> {
   ) {
   }
 
-  public dispatch(event: Event, options?: AbortOptions): MaybePromise<void> {
+  public dispatch = (event: Event, options?: AbortOptions): MaybePromise<void> => {
     return this.pubsub.publish(this.topic, event, options);
-  }
+  };
 
   public subscribe(consumer: EventConsumer<Event>, options?: AbortOptions): MaybePromise<Unsubscribe> {
     const subscribe = !this.consumers.length ? this.pubsub.subscribe(this.topic, this.consumer, options) : void 0;

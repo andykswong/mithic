@@ -11,9 +11,9 @@ export class SimpleEventBus<Event> implements EventBus<Event> {
   ) {
   }
 
-  public dispatch(event: Event): void {
+  public dispatch = (event: Event): void => {
     this.emitter.emit(this.eventName, event);
-  }
+  };
 
   public subscribe(consumer: EventConsumer<Event>): Unsubscribe {
     this.emitter.addListener(this.eventName, consumer);

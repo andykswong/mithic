@@ -35,7 +35,9 @@ npm install --save @mithic/messaging
 npm install --save @mithic/cqrs
 ```
 
-For detailed usages, [see examples](./packages/examples).
+For detailed usages, see the following examples:
+- [Simple Redux store example](./packages/examples/simple) - minimal example to get started. Uses the [Redux](https://redux.js.org/) store preset.
+- [GraphQL example](./packages/examples/graphql) - example integration with [GraphQL](https://graphql.org/) query, mutation and subscription
 
 ## Documentation
 See generated TypeDoc: https://andykswong.github.io/mithic/
