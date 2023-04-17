@@ -272,6 +272,12 @@ describe(ArrayDeque.name, () => {
     for (const value of values) {
       deque.push(value);
     }
+    for (const value of values) {
+      deque.push(value);
+    }
+    for (const _ of values) {
+      deque.pop();
+    }
 
     const expected = values.map(mapper || ((v) => v));
     const actual = Array.from(iterable());

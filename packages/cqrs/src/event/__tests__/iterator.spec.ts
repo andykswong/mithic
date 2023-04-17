@@ -109,4 +109,15 @@ describe(AsyncEventSubscriber.name, () => {
     expect(await result[2]).toEqual({ value: void 0, done: true });
     expect(await result[3]).toEqual({ value: void 0, done: true });
   });
+
+  it('should drop overflowing values', async () => {
+    const subscriber = new AsyncEventSubscriber(eventBus, { bufferSize: 1 });
+    const events = [1, 2, 3];
+    events.forEach(eventBus.dispatch);
+
+    for await (const event of subscriber) {
+      expect(event).toEqual(events[2]); // previous events dropped
+      break;
+    }
+  });
 });

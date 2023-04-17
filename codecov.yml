@@ -14,5 +14,11 @@ component_management:
     - component_id: "@mithic/messaging"
       paths:
         - "packages/messaging"
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
 ignore:
   - "packages/examples"

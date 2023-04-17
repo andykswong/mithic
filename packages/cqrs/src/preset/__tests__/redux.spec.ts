@@ -79,4 +79,16 @@ describe(SimpleReduxStore.name, () => {
     expect(store.getState()).toEqual({ count: 2 });
     expect(consumerFn).toHaveBeenCalledTimes(1);
   });
+
+  it('should be async iterable for listening to state changes', async () => {
+    setTimeout(() =>store.dispatch(INCR_EVENT));
+    let i = 1;
+    for await (const state of store) {
+      expect(state).toEqual({ count: i });
+      if (++i > 1) {
+        break;
+      }
+      await store.dispatch(INCR_EVENT);
+    }
+  });
 });
