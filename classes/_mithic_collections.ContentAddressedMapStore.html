@@ -35,7 +35,7 @@
 <ul class="tsd-hierarchy">
 <li><a href="../interfaces/_mithic_collections.ContentAddressedStore.html" class="tsd-signature-type tsd-kind-Interface">ContentAddressedStore</a><span class="tsd-signature-symbol">&lt;</span><a href="../types/_mithic_commons.ContentId.html" class="tsd-signature-type tsd-kind-Type-alias">ContentId</a><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b59ac14/packages/collections/src/impl/mapcas.ts#L13">packages/collections/src/impl/mapcas.ts:13</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/9caae02/packages/collections/src/impl/mapcas.ts#L13">packages/collections/src/impl/mapcas.ts:13</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-index-accordion" open><summary class="tsd-accordion-summary tsd-index-summary">
@@ -96,7 +96,7 @@
 <h4 class="tsd-returns-title">Returns <a href="_mithic_collections.ContentAddressedMapStore.html" class="tsd-signature-type tsd-kind-Class">ContentAddressedMapStore</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <p>Overrides <a href="_mithic_collections.BaseContentAddressedStore.html">BaseContentAddressedStore</a>.<a href="_mithic_collections.BaseContentAddressedStore.html#constructor">constructor</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b59ac14/packages/collections/src/impl/mapcas.ts#L17">packages/collections/src/impl/mapcas.ts:17</a></li></ul></aside></li></ul></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/9caae02/packages/collections/src/impl/mapcas.ts#L17">packages/collections/src/impl/mapcas.ts:17</a></li></ul></aside></li></ul></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Properties</h2>
 <section class="tsd-panel tsd-member tsd-is-protected"><a id="blockCodec" class="tsd-anchor"></a>
@@ -105,21 +105,21 @@
 <div class="tsd-comment tsd-typography"><p>Data binary encoding to use.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b59ac14/packages/collections/src/impl/mapcas.ts#L21">packages/collections/src/impl/mapcas.ts:21</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/9caae02/packages/collections/src/impl/mapcas.ts#L21">packages/collections/src/impl/mapcas.ts:21</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-protected"><a id="hasher" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>hasher</span><a href="#hasher" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-Property">hasher</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type ">SyncMultihashHasher</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> = sha256</span></div>
 <div class="tsd-comment tsd-typography"><p>Hash function to use for generating CIDs for block data.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b59ac14/packages/collections/src/impl/mapcas.ts#L23">packages/collections/src/impl/mapcas.ts:23</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/9caae02/packages/collections/src/impl/mapcas.ts#L23">packages/collections/src/impl/mapcas.ts:23</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-protected"><a id="map" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>map</span><a href="#map" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-Property">map</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/_mithic_collections.MaybeAsyncMap.html" class="tsd-signature-type tsd-kind-Interface">MaybeAsyncMap</a><span class="tsd-signature-symbol">&lt;</span><a href="../types/_mithic_commons.ContentId.html" class="tsd-signature-type tsd-kind-Type-alias">ContentId</a><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> = ...</span></div>
 <div class="tsd-comment tsd-typography"><p>The underlying storage.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b59ac14/packages/collections/src/impl/mapcas.ts#L19">packages/collections/src/impl/mapcas.ts:19</a></li></ul></aside></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/9caae02/packages/collections/src/impl/mapcas.ts#L19">packages/collections/src/impl/mapcas.ts:19</a></li></ul></aside></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Accessors</h2>
 <section class="tsd-panel tsd-member"><a id="_toStringTag_" class="tsd-anchor"></a>
@@ -129,13 +129,13 @@
 <li class="tsd-description">
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b59ac14/packages/collections/src/impl/mapcas.ts#L43">packages/collections/src/impl/mapcas.ts:43</a></li></ul></aside></li></ul></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/9caae02/packages/collections/src/impl/mapcas.ts#L43">packages/collections/src/impl/mapcas.ts:43</a></li></ul></aside></li></ul></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Methods</h2>
 <section class="tsd-panel tsd-member"><a id="delete" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>delete</span><a href="#delete" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></h3>
 <ul class="tsd-signatures">
-<li class="tsd-signature tsd-anchor-link" id="delete.delete-1"><span class="tsd-kind-Call-signature">delete</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">cid</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../types/_mithic_commons.MaybePromise.html" class="tsd-signature-type tsd-kind-Type-alias">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span><a href="#delete.delete-1" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></li>
+<li class="tsd-signature tsd-anchor-link" id="delete.delete-1"><span class="tsd-kind-Call-signature">delete</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">cid</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-Variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span><a href="#delete.delete-1" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></li>
 <li class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Deletes the data with given ID.</p>
 </div>
@@ -144,11 +144,11 @@
 <ul class="tsd-parameter-list">
 <li>
 <h5><span class="tsd-kind-parameter">cid</span>: <a href="../types/_mithic_commons.ContentId.html" class="tsd-signature-type tsd-kind-Type-alias">ContentId</a></h5></li></ul></div>
-<h4 class="tsd-returns-title">Returns <a href="../types/_mithic_commons.MaybePromise.html" class="tsd-signature-type tsd-kind-Type-alias">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
+<h4 class="tsd-returns-title">Returns <a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-Variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.ContentAddressedStore.html">ContentAddressedStore</a>.<a href="../interfaces/_mithic_collections.ContentAddressedStore.html#delete">delete</a></p>
 <p>Overrides <a href="_mithic_collections.BaseContentAddressedStore.html">BaseContentAddressedStore</a>.<a href="_mithic_collections.BaseContentAddressedStore.html#delete">delete</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b59ac14/packages/collections/src/impl/mapcas.ts#L35">packages/collections/src/impl/mapcas.ts:35</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/9caae02/packages/collections/src/impl/mapcas.ts#L35">packages/collections/src/impl/mapcas.ts:35</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="deleteMany" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>delete<wbr/>Many</span><a href="#deleteMany" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
@@ -167,11 +167,11 @@
 <p>Implementation of <a href="../interfaces/_mithic_collections.ContentAddressedStore.html">ContentAddressedStore</a>.<a href="../interfaces/_mithic_collections.ContentAddressedStore.html#deleteMany">deleteMany</a></p>
 <p>Inherited from <a href="_mithic_collections.BaseContentAddressedStore.html">BaseContentAddressedStore</a>.<a href="_mithic_collections.BaseContentAddressedStore.html#deleteMany">deleteMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b59ac14/packages/collections/src/impl/basecas.ts#L23">packages/collections/src/impl/basecas.ts:23</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/9caae02/packages/collections/src/impl/basecas.ts#L21">packages/collections/src/impl/basecas.ts:21</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="get" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>get</span><a href="#get" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></h3>
 <ul class="tsd-signatures">
-<li class="tsd-signature tsd-anchor-link" id="get.get-1"><span class="tsd-kind-Call-signature">get</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">cid</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../types/_mithic_commons.MaybePromise.html" class="tsd-signature-type tsd-kind-Type-alias">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span><a href="#get.get-1" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></li>
+<li class="tsd-signature tsd-anchor-link" id="get.get-1"><span class="tsd-kind-Call-signature">get</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">cid</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-Variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span><a href="#get.get-1" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></li>
 <li class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Gets the data identified by given key.</p>
 </div>
@@ -180,11 +180,11 @@
 <ul class="tsd-parameter-list">
 <li>
 <h5><span class="tsd-kind-parameter">cid</span>: <a href="../types/_mithic_commons.ContentId.html" class="tsd-signature-type tsd-kind-Type-alias">ContentId</a></h5></li></ul></div>
-<h4 class="tsd-returns-title">Returns <a href="../types/_mithic_commons.MaybePromise.html" class="tsd-signature-type tsd-kind-Type-alias">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
+<h4 class="tsd-returns-title">Returns <a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-Variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.ContentAddressedStore.html">ContentAddressedStore</a>.<a href="../interfaces/_mithic_collections.ContentAddressedStore.html#get">get</a></p>
 <p>Overrides <a href="_mithic_collections.BaseContentAddressedStore.html">BaseContentAddressedStore</a>.<a href="_mithic_collections.BaseContentAddressedStore.html#get">get</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b59ac14/packages/collections/src/impl/mapcas.ts#L39">packages/collections/src/impl/mapcas.ts:39</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/9caae02/packages/collections/src/impl/mapcas.ts#L39">packages/collections/src/impl/mapcas.ts:39</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-private"><a id="getCID" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagPrivate">Private</code> <span>getCID</span><a href="#getCID" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-private">
@@ -197,7 +197,7 @@
 <h5><span class="tsd-kind-parameter">block</span>: <span class="tsd-signature-type tsd-kind-type-parameter">T</span></h5></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type ">CID</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">1</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b59ac14/packages/collections/src/impl/mapcas.ts#L47">packages/collections/src/impl/mapcas.ts:47</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/9caae02/packages/collections/src/impl/mapcas.ts#L47">packages/collections/src/impl/mapcas.ts:47</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="getMany" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>get<wbr/>Many</span><a href="#getMany" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
@@ -216,11 +216,11 @@
 <p>Implementation of <a href="../interfaces/_mithic_collections.ContentAddressedStore.html">ContentAddressedStore</a>.<a href="../interfaces/_mithic_collections.ContentAddressedStore.html#getMany">getMany</a></p>
 <p>Inherited from <a href="_mithic_collections.BaseContentAddressedStore.html">BaseContentAddressedStore</a>.<a href="_mithic_collections.BaseContentAddressedStore.html#getMany">getMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b59ac14/packages/collections/src/impl/basecas.ts#L44">packages/collections/src/impl/basecas.ts:44</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/9caae02/packages/collections/src/impl/basecas.ts#L42">packages/collections/src/impl/basecas.ts:42</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="has" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>has</span><a href="#has" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
-<li class="tsd-signature tsd-anchor-link" id="has.has-1"><span class="tsd-kind-Call-signature">has</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">cid</span>, <span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../types/_mithic_commons.MaybePromise.html" class="tsd-signature-type tsd-kind-Type-alias">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span><a href="#has.has-1" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></li>
+<li class="tsd-signature tsd-anchor-link" id="has.has-1"><span class="tsd-kind-Call-signature">has</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">cid</span>, <span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-Variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span><a href="#has.has-1" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></li>
 <li class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Returns if the store contains data identified by given ID.</p>
 </div>
@@ -231,14 +231,14 @@
 <h5><span class="tsd-kind-parameter">cid</span>: <a href="../types/_mithic_commons.ContentId.html" class="tsd-signature-type tsd-kind-Type-alias">ContentId</a></h5></li>
 <li>
 <h5><code class="tsd-tag ts-flagOptional">Optional</code> <span class="tsd-kind-parameter">options</span>: <a href="../interfaces/_mithic_commons.AbortOptions.html" class="tsd-signature-type tsd-kind-Interface">AbortOptions</a></h5></li></ul></div>
-<h4 class="tsd-returns-title">Returns <a href="../types/_mithic_commons.MaybePromise.html" class="tsd-signature-type tsd-kind-Type-alias">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
+<h4 class="tsd-returns-title">Returns <a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-Variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_collections.BaseContentAddressedStore.html">BaseContentAddressedStore</a>.<a href="_mithic_collections.BaseContentAddressedStore.html#has">has</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b59ac14/packages/collections/src/impl/basecas.ts#L19">packages/collections/src/impl/basecas.ts:19</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/9caae02/packages/collections/src/impl/basecas.ts#L17">packages/collections/src/impl/basecas.ts:17</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="put" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>put</span><a href="#put" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></h3>
 <ul class="tsd-signatures">
-<li class="tsd-signature tsd-anchor-link" id="put.put-1"><span class="tsd-kind-Call-signature">put</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">block</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../types/_mithic_commons.MaybePromise.html" class="tsd-signature-type tsd-kind-Type-alias">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type ">CID</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">1</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span><a href="#put.put-1" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></li>
+<li class="tsd-signature tsd-anchor-link" id="put.put-1"><span class="tsd-kind-Call-signature">put</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">block</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-Variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type ">CID</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">1</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span><a href="#put.put-1" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></li>
 <li class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Puts given value and returns its key.</p>
 </div>
@@ -247,11 +247,11 @@
 <ul class="tsd-parameter-list">
 <li>
 <h5><span class="tsd-kind-parameter">block</span>: <span class="tsd-signature-type tsd-kind-type-parameter">T</span></h5></li></ul></div>
-<h4 class="tsd-returns-title">Returns <a href="../types/_mithic_commons.MaybePromise.html" class="tsd-signature-type tsd-kind-Type-alias">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type ">CID</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">1</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
+<h4 class="tsd-returns-title">Returns <a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-Variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type ">CID</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">1</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.ContentAddressedStore.html">ContentAddressedStore</a>.<a href="../interfaces/_mithic_collections.ContentAddressedStore.html#put">put</a></p>
 <p>Overrides <a href="_mithic_collections.BaseContentAddressedStore.html">BaseContentAddressedStore</a>.<a href="_mithic_collections.BaseContentAddressedStore.html#put">put</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b59ac14/packages/collections/src/impl/mapcas.ts#L28">packages/collections/src/impl/mapcas.ts:28</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/9caae02/packages/collections/src/impl/mapcas.ts#L28">packages/collections/src/impl/mapcas.ts:28</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="putMany" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>put<wbr/>Many</span><a href="#putMany" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
@@ -270,7 +270,7 @@
 <p>Implementation of <a href="../interfaces/_mithic_collections.ContentAddressedStore.html">ContentAddressedStore</a>.<a href="../interfaces/_mithic_collections.ContentAddressedStore.html#putMany">putMany</a></p>
 <p>Inherited from <a href="_mithic_collections.BaseContentAddressedStore.html">BaseContentAddressedStore</a>.<a href="_mithic_collections.BaseContentAddressedStore.html#putMany">putMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b59ac14/packages/collections/src/impl/basecas.ts#L38">packages/collections/src/impl/basecas.ts:38</a></li></ul></aside></li></ul></section></section></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/9caae02/packages/collections/src/impl/basecas.ts#L36">packages/collections/src/impl/basecas.ts:36</a></li></ul></aside></li></ul></section></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
@@ -363,6 +363,12 @@
 <details class="tsd-index-accordion" data-key="@mithic/commons"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4.93896 8.531L12 15.591L19.061 8.531L16.939 6.409L12 11.349L7.06098 6.409L4.93896 8.531Z" fill="var(--color-text)"></path></svg><a href="../modules/_mithic_commons.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-4-path"></use><use href="#icon-4-text"></use></svg><span>@mithic/commons -<wbr/> v0.2.0</span></a></summary>
 <div class="tsd-accordion-details">
 <ul class="tsd-nested-navigation">
+<li>
+<details class="tsd-index-accordion" data-key="@mithic/commons.MaybeAsync"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4.93896 8.531L12 15.591L19.061 8.531L16.939 6.409L12 11.349L7.06098 6.409L4.93896 8.531Z" fill="var(--color-text)"></path></svg><a href="../modules/_mithic_commons.MaybeAsync.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-4-path"></use><use href="#icon-4-text"></use></svg><span>Maybe<wbr/>Async</span></a></summary>
+<div class="tsd-accordion-details">
+<ul class="tsd-nested-navigation">
+<li><a href="../functions/_mithic_commons.MaybeAsync.reduce.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-64-path"></use><use href="#icon-64-text"></use></svg><span>reduce</span></a></li>
+<li><a href="../functions/_mithic_commons.MaybeAsync.resolve.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-64-path"></use><use href="#icon-64-text"></use></svg><span>resolve</span></a></li></ul></div></details></li>
 <li><a href="../enums/_mithic_commons.ErrorCode.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><rect fill="var(--color-icon-background)" stroke="var(--color-ts-enum)" stroke-width="1.5" x="1" y="1" width="22" height="22" rx="6" id="icon-8-path"></rect><path d="M9.45 16V7.24H14.49V8.224H10.518V10.936H14.07V11.908H10.518V15.016H14.49V16H9.45Z" fill="var(--color-text)" id="icon-8-text"></path></svg><span>Error<wbr/>Code</span></a></li>
 <li><a href="../enums/_mithic_commons.ErrorName.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-8-path"></use><use href="#icon-8-text"></use></svg><span>Error<wbr/>Name</span></a></li>
 <li><a href="_mithic_commons.BlockMultibaseEncoding.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Block<wbr/>Multibase<wbr/>Encoding</span></a></li>
@@ -392,19 +398,25 @@
 <li><a href="../types/_mithic_commons.EventTypeMap.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-4194304-path"></use><use href="#icon-4194304-text"></use></svg><span>Event<wbr/>Type<wbr/>Map</span></a></li>
 <li><a href="../types/_mithic_commons.MaybeAsyncIterableIterator.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-4194304-path"></use><use href="#icon-4194304-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Iterable<wbr/>Iterator</span></a></li>
 <li><a href="../types/_mithic_commons.MaybePromise.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-4194304-path"></use><use href="#icon-4194304-text"></use></svg><span>Maybe<wbr/>Promise</span></a></li>
+<li><a href="../types/_mithic_commons.ReduceAsync.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-4194304-path"></use><use href="#icon-4194304-text"></use></svg><span>Reduce<wbr/>Async</span></a></li>
+<li><a href="../types/_mithic_commons.SyncOrAsyncGenerator.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-4194304-path"></use><use href="#icon-4194304-text"></use></svg><span>Sync<wbr/>Or<wbr/>Async<wbr/>Generator</span></a></li>
 <li><a href="../types/_mithic_commons.SyncOrAsyncIterable.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-4194304-path"></use><use href="#icon-4194304-text"></use></svg><span>Sync<wbr/>Or<wbr/>Async<wbr/>Iterable</span></a></li>
 <li><a href="../variables/_mithic_commons.JSON_ENCODING.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-32-path"></use><use href="#icon-32-text"></use></svg><span>JSON_<wbr/>ENCODING</span></a></li>
+<li><a href="../variables/_mithic_commons.MaybePromise-1.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-32-path"></use><use href="#icon-32-text"></use></svg><span>Maybe<wbr/>Promise</span></a></li>
 <li><a href="../variables/_mithic_commons.sha256.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-32-path"></use><use href="#icon-32-text"></use></svg><span>sha256</span></a></li>
 <li><a href="../variables/_mithic_commons.sha512.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-32-path"></use><use href="#icon-32-text"></use></svg><span>sha512</span></a></li>
 <li><a href="../functions/_mithic_commons.abortError.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-64-path"></use><use href="#icon-64-text"></use></svg><span>abort<wbr/>Error</span></a></li>
+<li><a href="../functions/_mithic_commons.consumer.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-64-path"></use><use href="#icon-64-text"></use></svg><span>consumer</span></a></li>
+<li><a href="../functions/_mithic_commons.delay.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-64-path"></use><use href="#icon-64-text"></use></svg><span>delay</span></a></li>
 <li><a href="../functions/_mithic_commons.equalsOrSameString.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-64-path"></use><use href="#icon-64-text"></use></svg><span>equals<wbr/>Or<wbr/>Same<wbr/>String</span></a></li>
 <li><a href="../functions/_mithic_commons.immediate.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-64-path"></use><use href="#icon-64-text"></use></svg><span>immediate</span></a></li>
 <li><a href="../functions/_mithic_commons.invalidStateError.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-64-path"></use><use href="#icon-64-text"></use></svg><span>invalid<wbr/>State<wbr/>Error</span></a></li>
 <li><a href="../functions/_mithic_commons.isPromiseLike.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-64-path"></use><use href="#icon-64-text"></use></svg><span>is<wbr/>Promise<wbr/>Like</span></a></li>
 <li><a href="../functions/_mithic_commons.mapAsync.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-64-path"></use><use href="#icon-64-text"></use></svg><span>map<wbr/>Async</span></a></li>
+<li><a href="../functions/_mithic_commons.maybeAsync-1.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-64-path"></use><use href="#icon-64-text"></use></svg><span>maybe<wbr/>Async</span></a></li>
 <li><a href="../functions/_mithic_commons.notFoundError.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-64-path"></use><use href="#icon-64-text"></use></svg><span>not<wbr/>Found<wbr/>Error</span></a></li>
 <li><a href="../functions/_mithic_commons.operationError.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-64-path"></use><use href="#icon-64-text"></use></svg><span>operation<wbr/>Error</span></a></li>
-<li><a href="../functions/_mithic_commons.wait.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-64-path"></use><use href="#icon-64-text"></use></svg><span>wait</span></a></li></ul></div></details></li>
+<li><a href="../functions/_mithic_commons.reduceAsync-1.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-64-path"></use><use href="#icon-64-text"></use></svg><span>reduce<wbr/>Async</span></a></li></ul></div></details></li>
 <li>
 <details class="tsd-index-accordion" data-key="@mithic/cqrs"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4.93896 8.531L12 15.591L19.061 8.531L16.939 6.409L12 11.349L7.06098 6.409L4.93896 8.531Z" fill="var(--color-text)"></path></svg><a href="../modules/_mithic_cqrs.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-4-path"></use><use href="#icon-4-text"></use></svg><span>@mithic/cqrs -<wbr/> v0.2.0</span></a></summary>
 <div class="tsd-accordion-details">
