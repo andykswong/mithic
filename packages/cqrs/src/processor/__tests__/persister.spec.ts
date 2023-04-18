@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { wait } from '@mithic/commons';
+import { delay } from '@mithic/commons';
 import { EventTransformer } from '../../event.js';
 import { SimpleEventBus } from '../../event/index.js';
 import { EventPersister, ObjectWriter } from '../persister.js';
@@ -24,7 +24,7 @@ describe(EventPersister.name, () => {
     await persister.start();
     subscription.dispatch(RAW_EVENT);
 
-    await wait(); // wait for event to be consumed
+    await delay(); // wait for event to be consumed
 
     expect(writer.events).toEqual([TRANSFORMED_EVENT]);
   });
@@ -34,7 +34,7 @@ describe(EventPersister.name, () => {
     await persister.start();
     subscription.dispatch(RAW_EVENT);
 
-    await wait(); // wait for event to be consumed
+    await delay(); // wait for event to be consumed
 
     expect(writer.events).toEqual([RAW_EVENT]);
   });
@@ -47,7 +47,7 @@ describe(EventPersister.name, () => {
     await persister.start();
     subscription.dispatch(RAW_EVENT);
 
-    await wait(); // wait for event to be consumed
+    await delay(); // wait for event to be consumed
 
     expect(writer.events).toEqual([]);
   });

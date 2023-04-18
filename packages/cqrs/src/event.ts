@@ -1,4 +1,4 @@
-import { AbortOptions, MaybePromise } from '@mithic/commons';
+import { AbortOptions, EventHandler, MaybePromise } from '@mithic/commons';
 
 /** An event bus. */
 export interface EventBus<Event> extends EventDispatcher<Event>, EventSubscription<Event> {
@@ -17,10 +17,10 @@ export interface EventSubscription<Event> {
 }
 
 /** Consumer function of events. */
-export type EventConsumer<Event> = (event: Event) => MaybePromise<void>;
+export type EventConsumer<Event> = EventHandler<[Event], void>;
 
 /** Function to transform and/or filter a source event into target event type. */
-export type EventTransformer<SrcEvent, Event = SrcEvent> = (event: SrcEvent) => MaybePromise<Event | undefined>;
+export type EventTransformer<SrcEvent, Event = SrcEvent> = EventHandler<[SrcEvent], Event | undefined>;
 
 /** Function to unsubscribe event consumer added by {@link EventSubscription#subscribe}. */
 export type Unsubscribe = (options?: AbortOptions) => MaybePromise<void>;

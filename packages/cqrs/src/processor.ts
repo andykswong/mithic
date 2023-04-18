@@ -1,4 +1,5 @@
-import { AbortOptions, MaybePromise, Startable, mapAsync } from '@mithic/commons';
+import { AbortOptions, Startable, maybeAsync } from '@mithic/commons';
+import { resolve } from '@mithic/commons/maybeAsync';
 import { EventConsumer, EventSubscription, Unsubscribe } from './event.js';
 
 /** Processor of events from an {@link EventSubscription}. */
@@ -17,21 +18,14 @@ export class EventProcessor<Event = unknown> implements Startable {
     return !!this.handle;
   }
 
-  public start(options?: AbortOptions): MaybePromise<void> {
-    return mapAsync(this.subscription.subscribe(this.consumer, options), this.setHandle);
-  }
+  public start = maybeAsync(function* (this: EventProcessor<Event>, options?: AbortOptions) {
+    this.handle = yield* resolve(this.subscription.subscribe(this.consumer, options));
+  }, this);
 
-  public close(options?: AbortOptions): MaybePromise<void> {
+  public close = maybeAsync(function* (this: EventProcessor<Event>, options?: AbortOptions) {
     if (this.handle) {
-      return mapAsync(this.handle(options), this.deleteHandle);
+      yield* resolve(this.handle(options));
+      this.handle = void 0;
     }
-  }
-
-  private setHandle = (unsubscribe: Unsubscribe) => {
-    this.handle = unsubscribe;
-  }
-
-  private deleteHandle = () => {
-    this.handle = void 0;
-  }
+  }, this);
 }

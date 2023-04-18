@@ -1,4 +1,4 @@
-import { ContentId, LinkMultibaseEncoding, MaybePromise, mapAsync, sha256 } from '@mithic/commons';
+import { ContentId, LinkMultibaseEncoding, MaybePromise, sha256 } from '@mithic/commons';
 import { BlockCodec, CID, SyncMultihashHasher } from 'multiformats';
 import { base64 } from 'multiformats/bases/base64';
 import * as raw from 'multiformats/codecs/raw';
@@ -28,7 +28,7 @@ export class ContentAddressedMapStore<T = Uint8Array>
   public put(block: T): MaybePromise<CID<T, number, number, 1>> {
     const cid = this.getCID(block);
     const result = this.map.set(cid, block);
-    return mapAsync(result, () => cid);
+    return MaybePromise.map(result, () => cid);
   }
 
   /** Deletes the data with given ID. */

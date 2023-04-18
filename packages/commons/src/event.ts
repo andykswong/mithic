@@ -1,9 +1,10 @@
 import { EventEmitter as NodeEventEmitter } from 'events';
+import { MaybePromise, SyncOrAsyncGenerator } from './async/index.js';
 
 /** Type-safe event emitter interface. */
 export interface TypedEventEmitter<E extends EventTypeMap> extends EventSource<E> {
   /**
-   * Synchronously calls each of the listeners registered for the given event type,
+   * Calls each of the listeners registered for the given event type,
    * in the order they were registered, passing the supplied arguments to each.
    * Returns true if the event had listeners, false otherwise.
    */
@@ -29,7 +30,7 @@ export type EventTypeMap<K extends string = string> = Record<K, unknown[]>;
 export type EventType<E> = E extends EventTypeMap<infer T> ? T : never;
 
 /** Type-safe event handler function. */
-export type EventHandler<Args extends unknown[] = unknown[]> = (...args: Args) => void;
+export type EventHandler<Args extends unknown[] = unknown[], R = void> = (...args: Args) => MaybePromise<R>;
 
 /**
  * {@link TypedEventEmitter} implementation. Most useful as a base class to enable a class to emit type-safe events.
@@ -58,4 +59,18 @@ export class EventEmitter<E extends EventTypeMap = Record<string, unknown[]>> im
   public emit<K extends EventType<E>>(type: K, ...args: E[K]): boolean {
     return this.emitter.emit(type, ...args);
   }
+}
+
+/** Creates a consumer function from a coroutine. Useful for defining event handlers. */
+export function consumer<V = unknown>(
+  coroutine: () => SyncOrAsyncGenerator<unknown, unknown, V>,
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+): EventHandler<[V], any> {
+  const generator = coroutine();
+  let execution = generator.next(); // execute until the first yield
+  return (input) =>
+    MaybePromise.map(
+      execution,
+      () => (execution = generator.next(input))
+    );
 }

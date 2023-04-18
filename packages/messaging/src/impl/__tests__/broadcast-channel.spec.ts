@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { wait } from '@mithic/commons';
+import { delay } from '@mithic/commons';
 import { PubSubPeerChangeEvent, PubSubMessage, MessageValidator, MessageValidatorResult, PubSubPeerEvent, MessageHandler } from '../../index.js';
 import { BroadcastChannelPubSub, BroadcastChannelPubSubMessage, BroadcastChannelPubSubMessageType } from '../broadcast-channel.js';
 
@@ -90,7 +90,7 @@ describe(BroadcastChannelPubSub.name, () => {
     pubsub.subscribe(TOPIC, handler);
     pubsub.publish(TOPIC, MESSAGE);
 
-    await wait(100); // Wait for the message to be delivered
+    await delay(100); // Wait for the message to be delivered
 
     expect(receivedMessages).toContainEqual({
       type: BroadcastChannelPubSubMessageType.Message,
@@ -131,7 +131,7 @@ describe(BroadcastChannelPubSub.name, () => {
 
     pubsub.subscribe(TOPIC, handler);
 
-    await wait(100); // Wait for keepalive message to be delivered
+    await delay(100); // Wait for keepalive message to be delivered
 
     expect(receivedMessages).toContainEqual({
       type: BroadcastChannelPubSubMessageType.Keepalive,
@@ -153,7 +153,7 @@ describe(BroadcastChannelPubSub.name, () => {
         data: MESSAGE,
       });
 
-      await wait(100); // Wait for the message to be delivered
+      await delay(100); // Wait for the message to be delivered
 
       expect(receivedMessages).toContainEqual({
         topic: TOPIC,
@@ -174,7 +174,7 @@ describe(BroadcastChannelPubSub.name, () => {
           from: OTHER_PEER_ID,
         });
 
-        await wait(100); // Wait for the message to be delivered
+        await delay(100); // Wait for the message to be delivered
 
         expect(pubsub['topicSubscribers'].get(TOPIC)?.get(OTHER_PEER_ID)).toEqual([OTHER_PEER_ID, now]);
       }
@@ -189,7 +189,7 @@ describe(BroadcastChannelPubSub.name, () => {
       pubsub.subscribe(TOPIC, handler);
       subscriber.postMessage('rubbish');
 
-      await wait(100); // Wait for the message to be delivered
+      await delay(100); // Wait for the message to be delivered
 
       expect(receivedMessages.length).toBe(0);
     });
@@ -214,7 +214,7 @@ describe(BroadcastChannelPubSub.name, () => {
         data: MESSAGE,
       });
 
-      await wait(100); // Wait for the message to be delivered
+      await delay(100); // Wait for the message to be delivered
 
       expect(receivedMessages).toContainEqual({
         topic: TOPIC,

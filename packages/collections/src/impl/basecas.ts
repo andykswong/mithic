@@ -1,6 +1,4 @@
-import {
-  AbortOptions, CodedError, ContentId, ErrorCode, MaybePromise, mapAsync, operationError
-} from '@mithic/commons';
+import { AbortOptions, CodedError, ContentId, ErrorCode, MaybePromise, operationError } from '@mithic/commons';
 import { ContentAddressedStore } from '../cas.js';
 
 const REASON_DELETE_FAILED = 'Failed to delete';
@@ -17,7 +15,7 @@ export abstract class BaseContentAddressedStore<Id = ContentId, T = Uint8Array> 
 
   /** Returns if the store contains data identified by given ID. */
   public has(cid: Id, options?: AbortOptions): MaybePromise<boolean> {
-    return mapAsync(this.get(cid, options), isDefined);
+    return MaybePromise.map(this.get(cid, options), isDefined);
   }
 
   public async * deleteMany(cids: Iterable<Id>, options?: AbortOptions): AsyncIterableIterator<CodedError<Id> | undefined> {

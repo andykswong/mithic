@@ -17,3 +17,8 @@ export type SyncOrAsyncIterable<T> = AsyncIterable<T> | Iterable<T>;
 
 /** An iterable Iterator that may be sync or async. */
 export type MaybeAsyncIterableIterator<T> = MaybeAsyncIterator<T> & SyncOrAsyncIterable<T>;
+
+/** A generator that may be sync or async. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type SyncOrAsyncGenerator<T = unknown, TReturn = any, TNext = unknown> =
+  AsyncGenerator<T, TReturn, TNext> | Generator<T, TReturn, TNext>;

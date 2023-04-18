@@ -1,4 +1,4 @@
-import { MaybePromise, mapAsync } from '@mithic/commons';
+import { MaybePromise } from '@mithic/commons';
 import { EventDispatcher } from './event.js';
 
 /** An event creator, which is a (maybe async) function that creates an event. */
@@ -37,7 +37,7 @@ export function bindEventCreator<Args extends unknown[], Event>(
   dispatcher: EventDispatcher<Event>
 ): Command<Args> {
   const dispatch = dispatcher.dispatch.bind(dispatcher);
-  return (...args: Args) => mapAsync(eventCreator(...args), dispatch);
+  return (...args: Args) => MaybePromise.map(eventCreator(...args), dispatch);
 }
 
 /** Binds {@link EventCreator}s to an {@link EventDispatcher} and returns a {@link Commands}. */

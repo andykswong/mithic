@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { CountingSemaphore, wait } from '@mithic/commons';
+import { CountingSemaphore, delay } from '@mithic/commons';
 import { RunnableTask, TaskQueue } from '../task.js';
 
 describe(TaskQueue.name, () => {
@@ -158,7 +158,7 @@ describe(TaskQueue.name, () => {
       expect(taskQueue.started).toBe(false);
   
       taskQueue.start();
-      await wait();
+      await delay();
 
       expect(taskQueue.started).toBe(true);
       expect(task).toBeCalledTimes(1);
@@ -168,7 +168,7 @@ describe(TaskQueue.name, () => {
     it('should do nothing if already started', async () => {
       const acquireSpy = jest.spyOn(taskQueue['semaphore'], 'tryAcquire');
       taskQueue.start();
-      await wait();
+      await delay();
       expect(acquireSpy).not.toBeCalled();
     });
   });

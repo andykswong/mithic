@@ -202,13 +202,10 @@ export class BTreeMap<K, V> implements Map<K, V>, RangeQueryable<K, V>, Iterable
       return;
     }
 
-    const iter = options?.reverse ?
+    yield* (options?.reverse ?
       this.reverseIterate(...bounds, options?.limit ?? Infinity) :
-      this.iterate(...bounds, options?.limit ?? Infinity);
-
-    for (const entry of iter) {
-      yield entry;
-    }
+      this.iterate(...bounds, options?.limit ?? Infinity)
+    );
   }
 
   /** Queries keys in this map. */
@@ -340,10 +337,7 @@ export class BTreeMap<K, V> implements Map<K, V>, RangeQueryable<K, V>, Iterable
 
     const lastChild = this.children[index];
     if (lastChild) {
-      for (const entry of lastChild.iterate(lower, upper, lowerInclusive, upperInclusive, limit)) {
-        if (limit-- <= 0) return;
-        yield entry;
-      }
+      yield* lastChild.iterate(lower, upper, lowerInclusive, upperInclusive, limit);
     }
   }
 
@@ -391,10 +385,7 @@ export class BTreeMap<K, V> implements Map<K, V>, RangeQueryable<K, V>, Iterable
 
     const firstChild = this.children[0];
     if (firstChild) {
-      for (const entry of firstChild.reverseIterate(lower, upper, lowerInclusive, upperInclusive, limit)) {
-        if (limit-- <= 0) return;
-        yield entry;
-      }
+      yield* firstChild.reverseIterate(lower, upper, lowerInclusive, upperInclusive, limit);
     }
   }
 }

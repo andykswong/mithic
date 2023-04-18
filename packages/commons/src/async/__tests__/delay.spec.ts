@@ -1,7 +1,7 @@
 import { jest } from '@jest/globals';
-import { immediate, wait } from '../delay.js';
+import { immediate, delay } from '../delay.js';
 
-describe(wait.name, () => {
+describe(delay.name, () => {
   beforeEach(() => {
     jest.useFakeTimers();
   });
@@ -14,7 +14,7 @@ describe(wait.name, () => {
     const delayMs = 5000; // 5 seconds
     const startTime = Date.now();
 
-    const promise = wait(delayMs);
+    const promise = delay(delayMs);
     expect(promise).toBeInstanceOf(Promise);
 
     jest.runAllTimers();
@@ -28,7 +28,7 @@ describe(wait.name, () => {
   it('should return a Promise that resolves immediately when no delay is provided', async () => {
     const startTime = Date.now();
 
-    const promise = wait();
+    const promise = delay();
     expect(promise).toBeInstanceOf(Promise);
 
     jest.runAllTimers();

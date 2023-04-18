@@ -1,6 +1,7 @@
-import { AbortOptions, MaybePromise, mapAsync } from '@mithic/commons';
+import { AbortOptions, MaybePromise, maybeAsync } from '@mithic/commons';
+import { resolve } from '@mithic/commons/maybeAsync';
 import { MessageHandler, PubSub, PubSubMessage } from '@mithic/messaging';
-import { EventBus, EventConsumer, Unsubscribe } from '../event.js';
+import { EventBus, EventConsumer } from '../event.js';
 
 /**
  * An {@link EventBus} implementation using a PubSub.
@@ -21,13 +22,13 @@ export class PubSubEventBus<Event> implements EventBus<Event> {
     return this.pubsub.publish(this.topic, event, options);
   };
 
-  public subscribe(consumer: EventConsumer<Event>, options?: AbortOptions): MaybePromise<Unsubscribe> {
-    const subscribe = !this.consumers.length ? this.pubsub.subscribe(this.topic, this.consumer, options) : void 0;
-    return mapAsync(subscribe, () => {
-      this.consumers.push(consumer);
-      return (options) => this.unsubscribe(consumer, options);
-    });
-  }
+  public subscribe = maybeAsync(function* (
+    this: PubSubEventBus<Event>, consumer: EventConsumer<Event>, options?: AbortOptions
+  ) {
+    yield* resolve(!this.consumers.length ? this.pubsub.subscribe(this.topic, this.consumer, options) : void 0);
+    this.consumers.push(consumer);
+    return (options?: AbortOptions) => this.unsubscribe(consumer, options);
+  }, this);
 
   /** Unsubscribes consumer from new events. */
   public unsubscribe(consumer: EventConsumer<Event>, options?: AbortOptions): MaybePromise<void> {

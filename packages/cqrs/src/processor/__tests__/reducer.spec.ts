@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { wait } from '@mithic/commons';
+import { delay } from '@mithic/commons';
 import { EventConsumer } from '../../event.js';
 import { SimpleEventBus } from '../../event/index.js';
 import { EventReducer } from '../reducer.js';
@@ -51,7 +51,7 @@ describe(EventReducer.name, () => {
 
       await eventReducer.start();
       subscription.dispatch(event);
-      await wait(); // wait for async reducer to finish
+      await delay(); // wait for async reducer to finish
 
       expect(eventReducer.state).toEqual({ events: [event] });
     });

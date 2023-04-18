@@ -1,4 +1,4 @@
-import { MaybePromise, mapAsync } from '@mithic/commons';
+import { MaybePromise } from '@mithic/commons';
 import { EventConsumer, EventSubscription, Unsubscribe } from '../event.js';
 import { SimpleEventBus } from '../event/index.js';
 import { EventProcessor } from '../processor.js';
@@ -19,7 +19,7 @@ export class EventReducer<Event = unknown, State = object>
     /** Initial state. */
     initialState: State,
   ) {
-    const consumer = (event: Event) => mapAsync(reducer(this._state, event), this.setState);
+    const consumer = (event: Event) => MaybePromise.map(reducer(this._state, event), this.setState);
     super(subscription, consumer);
     this._state = initialState;
   }

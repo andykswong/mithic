@@ -1,4 +1,4 @@
-import { wait } from '@mithic/commons';
+import { delay } from '@mithic/commons';
 import { DualBroadcastChannel } from '../dual-broadcast.js';
 
 describe('DualBroadcastChannel', () => {
@@ -21,7 +21,7 @@ describe('DualBroadcastChannel', () => {
 
     channel.postMessage(message);
 
-    await wait(100); // Wait for the message to be delivered
+    await delay(100); // Wait for the message to be delivered
     expect(receivedMessages).toEqual([message]);
   });
 
@@ -35,7 +35,7 @@ describe('DualBroadcastChannel', () => {
 
     otherChannel.postMessage(message);
 
-    await wait(100); // Wait for the message to be delivered
+    await delay(100); // Wait for the message to be delivered
     expect(receivedMessages).toEqual([message]);
 
     otherChannel.close();

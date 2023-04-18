@@ -39,10 +39,8 @@ export class StringKeyMap<K, V> implements Map<K, V>, Iterable<[K, V]> {
     this.map.forEach(([key, value]) => callbackfn(value, key, this), thisArg);
   }
 
-  public * entries(): IterableIterator<[K, V]> {
-    for (const entry of this.map.values()) {
-      yield entry;
-    }
+  public entries(): IterableIterator<[K, V]> {
+    return this.map.values();
   }
 
   public * keys(): IterableIterator<K> {

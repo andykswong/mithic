@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { isPromiseLike, mapAsync, MaybePromise } from '../promise.js';
+import { isPromiseLike, mapAsync, maybeAsync, MaybePromise, reduceAsync } from '../promise.js';
 
 describe('isPromiseLike', () => {
   test('returns true when given a promise', () => {
@@ -25,6 +25,57 @@ describe('isPromiseLike', () => {
     expect(isPromiseLike(123)).toBe(false);
     expect(isPromiseLike('hello')).toBe(false);
     expect(isPromiseLike(true)).toBe(false);
+  });
+});
+
+describe('maybeAsync', () => {
+  it('should return the value when the generator function returns synchronously', () => {
+    const value = 123;
+    const result = maybeAsync(function* () {
+      expect(yield 4).toEqual(4);
+      return value;
+    })();
+    expect(result).toEqual(value);
+  });
+
+  it('should resolve with the value when the generator function yields a promise', async () => {
+    const value = 123;
+    const maybeAsyncFn = maybeAsync(function* () {
+      const ten = 1 + (yield Promise.resolve(9));
+      expect(ten).toEqual(10);
+      return value;
+    });
+
+    await expect(maybeAsyncFn()).resolves.toEqual(value);
+  });
+
+  it('should bind `this` to the generator function', () => {
+    const thisArg = { value: 123 };
+    const result = maybeAsync(function* (this: typeof thisArg) {
+      expect(yield 4).toEqual(4);
+      return this.value;
+    }, thisArg)();
+    expect(result).toEqual(thisArg.value);
+  });
+
+  it('should throw an error when the generator function throws', () => {
+    const reason = 'test';
+    const maybeAsyncFn = maybeAsync(function* () {
+      yield 123;
+      throw new Error(reason);
+    });
+
+    expect(maybeAsyncFn).toThrowError(reason);
+  });
+
+  it('should return rejected promise when the generator function throws after async operation', async () => {
+    const reason = 'test';
+    const maybeAsyncFn = maybeAsync(function* () {
+      yield Promise.resolve(123);
+      throw new Error(reason);
+    });
+
+    await expect(maybeAsyncFn()).rejects.toThrowError(reason);
   });
 });
 
@@ -101,5 +152,26 @@ describe('mapAsync', () => {
     expect(result).toBe(message);
     expect(mapValue).not.toHaveBeenCalled();
     expect(mapError).toHaveBeenCalledWith(error);
+  });
+});
+
+describe('reduceAsync', () => {
+  it('should reduce an array of numbers without an initial value', () => {
+    const result = reduceAsync([1, 2, 3, 4], (a, b) => a + b);
+    expect(result).toEqual(10);
+  });
+
+  it('should reduce an array of numbers with an initial value', () => {
+    const result = reduceAsync([1, 2, 3, 4], (a, b) => a + b, 10);
+    expect(result).toEqual(20);
+  });
+
+  it('should reduce an array asynchronously', async () => {
+    const result = reduceAsync(
+      [1, 2, 3, 4],
+      async (a, b) => a + b,
+      Promise.resolve(10)
+    );
+    expect(result).resolves.toEqual(20);
   });
 });
