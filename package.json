@@ -1,7 +1,7 @@
 {
   "name": "mithic",
-  "version": "0.1.0",
-  "description": "Modular library for real-time isomorphic applications using CQRS/ES/CRDT",
+  "version": "0.2.0",
+  "description": "Modular library for real-time isomorphic applications",
   "type": "module",
   "sideEffects": false,
   "main": "./index.js",
@@ -43,10 +43,11 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/collections": "^0.1",
-    "@mithic/commons": "^0.1",
-    "@mithic/cqrs": "^0.1",
-    "@mithic/messaging": "^0.1"
+    "@mithic/collections": "^0.2",
+    "@mithic/commons": "^0.2",
+    "@mithic/cqrs": "^0.2",
+    "@mithic/es": "^0.2",
+    "@mithic/messaging": "^0.2"
   },
   "devDependencies": {
     "rimraf": "^5.0",
@@ -57,6 +58,7 @@
     "./packages/collections",
     "./packages/messaging",
     "./packages/cqrs",
+    "./packages/es",
     "./packages/examples/*"
   ]
 }

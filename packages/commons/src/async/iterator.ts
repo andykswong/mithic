@@ -1,7 +1,8 @@
 import { MaybePromise } from './promise.js';
 
 /** An Iterator that may be async. */
-export interface MaybeAsyncIterator<T, TReturn = unknown, TNext = undefined> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export interface MaybeAsyncIterator<T, TReturn = any, TNext = unknown> {
   next(...args: [] | [TNext]): MaybePromise<IteratorResult<T, TReturn>>;
 
   return?(value?: MaybePromise<TReturn>): MaybePromise<IteratorResult<T, TReturn>>;

@@ -1,0 +1,19 @@
+{
+  "root": true,
+  "parserOptions": {
+    "sourceType": "module"
+  },
+  "extends": [
+    "eslint:recommended"
+  ],
+  "env": {
+    "es2022": true,
+    "browser": true,
+    "node": true,
+    "jest": true
+  },
+  "ignorePatterns": [
+  ],
+  "rules": {
+  }
+}

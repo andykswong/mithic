@@ -1,22 +1,25 @@
-import { AbortOptions, CodedError, ContentId, ErrorCode, MaybePromise, operationError } from '@mithic/commons';
-import { ContentAddressedStore } from '../cas.js';
+import {
+  AbortOptions, CodedError, ContentId, ErrorCode, MaybePromise, maybeAsync, operationError
+} from '@mithic/commons';
+import { resolve } from '@mithic/commons/maybeAsync';
+import { ContentAddressedStore, ContentAddressedStoreBatch } from '../map.js';
 
 const REASON_DELETE_FAILED = 'Failed to delete';
 
-/**
- * An abstract base class of {@link ContentAddressedStore}.
- */
-export abstract class BaseContentAddressedStore<Id = ContentId, T = Uint8Array> implements ContentAddressedStore<Id, T> {
+/** An abstract base class of {@link ContentAddressedStore}. */
+export abstract class BaseContentAddressedStore<Id = ContentId, T = Uint8Array>
+  implements ContentAddressedStore<Id, T>, ContentAddressedStoreBatch<Id, T>
+{
   public abstract delete(id: Id, options?: AbortOptions): MaybePromise<void>;
 
   public abstract put(block: T, options?: AbortOptions): MaybePromise<Id>;
 
   public abstract get(cid: Id, options?: AbortOptions): MaybePromise<T | undefined>;
 
-  /** Returns if the store contains data identified by given ID. */
-  public has(cid: Id, options?: AbortOptions): MaybePromise<boolean> {
-    return MaybePromise.map(this.get(cid, options), isDefined);
-  }
+  public has = maybeAsync(function* (this: ContentAddressedStore<Id, T>, cid: Id, options?: AbortOptions) {
+    const value = yield* resolve(this.get(cid, options));
+    return !!value;
+  }, this);
 
   public async * deleteMany(cids: Iterable<Id>, options?: AbortOptions): AsyncIterableIterator<CodedError<Id> | undefined> {
     for (const cid of cids) {
@@ -44,8 +47,4 @@ export abstract class BaseContentAddressedStore<Id = ContentId, T = Uint8Array> 
       yield this.get(cid, options);
     }
   }
-}
-
-function isDefined<T>(value: T | undefined): value is T {
-  return !!value;
 }

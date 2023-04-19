@@ -1,8 +1,3 @@
-> ## ⚠ Heavily WIP, not for consumption yet.
-> 2023/04: Event sourcing module upcoming
-
-<br />
-
 <h1 align="center">mithic</h1>
 
 [![mithic](https://img.shields.io/badge/project-mithic-blueviolet.svg?style=flat-square&logo=github)](https://github.com/andykswong/mithic)
@@ -14,14 +9,20 @@
 
 <br/>
 
-> Modular library for real-time isomorphic JavaScript applications using CQRS/ES/CRDT
+> Modular library for real-time isomorphic JavaScript applications
 
 <br />
 
-## Overview
-`mithic` provides the building blocks for creating real-time client and server side applications, using patterns from [CQRS](https://en.wikipedia.org/wiki/Command%E2%80%93query_separation), [Event Sourcing (ES)](https://en.wikipedia.org/wiki/Event_store) and [CRDT](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type). 
+> **Status: ⚠️ heavily WIP, not for consumption yet.** <br/>
+> only in-memory / local storage adapters implemented
 
-In `mithic`, events form a causal [Merkle DAG](https://docs.ipfs.tech/concepts/merkle-dag/), instead of just a linear event stream. This allows CRDTs to be constructed through conflict-free replication of event graph, which is perfect for implementing offline-first and/or decentralized applications.
+## Overview
+`mithic` provides the building blocks for creating real-time client-side, server-side and decentralized applications, using [CQRS](https://en.wikipedia.org/wiki/Command%E2%80%93query_separation) architecture with [CRDT](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type) [eventsourcing](https://en.wikipedia.org/wiki/Event_store) for storage.
+
+In `mithic`, events form a causal [Merkle DAG](https://docs.ipfs.tech/concepts/merkle-dag/), instead of just a linear event stream. This enables CRDT stores to be constructed through conflict-free replication of event graph, which is perfect for implementing offline-first and/or decentralized applications.
+
+## Documentation
+See generated TypeDoc: https://andykswong.github.io/mithic/
 
 ## Getting Started
 
@@ -39,9 +40,6 @@ For detailed usages, see the following examples:
 - [Simple Redux store example](./packages/examples/simple) - minimal example to get started. Uses the [Redux](https://redux.js.org/) store preset.
 - [GraphQL example](./packages/examples/graphql) - example integration with [GraphQL](https://graphql.org/) query, mutation and subscription
 
-## Documentation
-See generated TypeDoc: https://andykswong.github.io/mithic/
-
 ## Packages
 
 |Package|NPM|Description|
@@ -49,7 +47,7 @@ See generated TypeDoc: https://andykswong.github.io/mithic/
 |[`@mithic/collections`](./packages/collections)|[![npm](https://img.shields.io/npm/v/@mithic/collections?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/collections)|collection library|
 |[`@mithic/commons`](./packages/commons)|[![npm](https://img.shields.io/npm/v/@mithic/commons?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/commons)|common utility components|
 |[`@mithic/cqrs`](./packages/cqrs)|[![npm](https://img.shields.io/npm/v/@mithic/cqrs?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/cqrs)|CQRS library|
-|[`@mithic/event`](./packages/event) (WIP)|[![npm](https://img.shields.io/npm/v/@mithic/event?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/event)|event graph store interface|
+|[`@mithic/es`](./packages/es) (WIP)|[![npm](https://img.shields.io/npm/v/@mithic/es?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/es)|Eventsourced data store library|
 |[`@mithic/messaging`](./packages/messaging)|[![npm](https://img.shields.io/npm/v/@mithic/messaging?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/messaging)|messaging interface|
 
 ## License

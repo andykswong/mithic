@@ -1,9 +1,8 @@
-import { ContentId, LinkMultibaseEncoding, MaybePromise, sha256 } from '@mithic/commons';
+import { AbortOptions, ContentId, LinkMultibaseEncoding, MaybePromise, maybeAsync, sha256 } from '@mithic/commons';
 import { BlockCodec, CID, SyncMultihashHasher } from 'multiformats';
 import { base64 } from 'multiformats/bases/base64';
 import * as raw from 'multiformats/codecs/raw';
-import { ContentAddressedStore } from '../cas.js';
-import { MaybeAsyncMap } from '../map.js';
+import { ContentAddressedStore, ContentAddressedStoreBatch, MaybeAsyncMap } from '../map.js';
 import { BaseContentAddressedStore } from './basecas.js';
 import { StringKeyMap } from './stringmap.js';
 
@@ -12,7 +11,7 @@ import { StringKeyMap } from './stringmap.js';
  */
 export class ContentAddressedMapStore<T = Uint8Array>
   extends BaseContentAddressedStore<ContentId, T>
-  implements ContentAddressedStore<ContentId, T>
+  implements ContentAddressedStore<ContentId, T>, ContentAddressedStoreBatch<ContentId, T>
 {
   public constructor(
     /** The underlying storage. */
@@ -25,19 +24,18 @@ export class ContentAddressedMapStore<T = Uint8Array>
     super();
   }
 
-  public put(block: T): MaybePromise<CID<T, number, number, 1>> {
+  public put = maybeAsync(function* (this: ContentAddressedMapStore<T>, block: T, options?: AbortOptions) {
     const cid = this.getCID(block);
-    const result = this.map.set(cid, block);
-    return MaybePromise.map(result, () => cid);
+    yield this.map.set(cid, block, options);
+    return cid;
+  }, this);
+
+  public delete(cid: ContentId, options?: AbortOptions): MaybePromise<void> {
+    return this.map.delete(cid, options) as MaybePromise<void>;
   }
 
-  /** Deletes the data with given ID. */
-  public delete(cid: ContentId): MaybePromise<void> {
-    return this.map.delete(cid) as MaybePromise<void>;
-  }
-
-  public get(cid: ContentId): MaybePromise<T | undefined> {
-    return this.map.get(cid);
+  public get(cid: ContentId, options?: AbortOptions): MaybePromise<T | undefined> {
+    return this.map.get(cid, options);
   }
 
   public get [Symbol.toStringTag](): string {
