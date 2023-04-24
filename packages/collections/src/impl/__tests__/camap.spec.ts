@@ -1,8 +1,8 @@
-import { CodedError, ContentId, sha256 } from '@mithic/commons';
+import { ContentId, sha256 } from '@mithic/commons';
 import { CID } from 'multiformats';
 import * as Block from 'multiformats/block';
 import * as raw from 'multiformats/codecs/raw';
-import { ContentAddressedMapStore } from '../mapcas.js';
+import { ContentAddressedMapStore } from '../camap.js';
 
 const BLOCK = new Uint8Array([0x68, 0x65, 0x6C, 0x6C, 0x6F]);
 const BLOCK2 = new Uint8Array([0x65, 0x66, 0x67]);
@@ -100,19 +100,15 @@ describe(ContentAddressedMapStore.name, () => {
       expect(backingMap.has(cid)).toBe(false);
     });
   });
-  
+
   describe('deleteMany', () => {
     it('should delete multiple blocks from the store', async () => {
       const cid1 = await store.put(BLOCK);
       const cid2 = await store.put(BLOCK2);
-      const expectedData = [undefined, undefined];
 
-      const data: (CodedError | undefined)[] = [];
-      for await (const result of store.deleteMany([cid1, cid2])) {
-        data.push(result);
-      }
-
-      expect(data).toEqual(expectedData);
+      await store.deleteMany([cid1, cid2]);
+      expect(backingMap.has(cid1)).toBe(false);
+      expect(backingMap.has(cid2)).toBe(false);
     });
   });
 });

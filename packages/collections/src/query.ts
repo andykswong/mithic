@@ -1,4 +1,4 @@
-import { MaybeAsyncIterableIterator } from '@mithic/commons';
+import { AbortOptions, MaybeAsyncIterableIterator } from '@mithic/commons';
 
 /** A collection that can be queried by range. */
 export interface RangeQueryable<K, V> {
@@ -13,7 +13,7 @@ export interface RangeQueryable<K, V> {
 }
 
 /** Options for querying a {@link RangeQueryable}. */
-export interface RangeQueryOptions<K> {
+export interface RangeQueryOptions<K> extends AbortOptions {
   /** Requires results strictly greater than given key. */
   gt?: K;
 

@@ -1,6 +1,6 @@
 import { CID } from 'multiformats';
 import { identity } from 'multiformats/hashes/identity';
-import { BlockMultibaseEncoding, JsonEncoding, LinkMultibaseEncoding } from '../encoding.js';
+import { BlockMultibaseEncoding, JsonEncoding, CIDMultibaseEncoding } from '../encoding.js';
 
 const DATA = new Uint8Array([1, 2, 3]);
 const DATA_CID = CID.createV1(0, identity.digest(DATA));
@@ -23,15 +23,15 @@ describe(JsonEncoding.name, () => {
   });
 });
 
-describe(LinkMultibaseEncoding.name, () => {
-  const linkStringEncoding = new LinkMultibaseEncoding();
+describe(CIDMultibaseEncoding.name, () => {
+  const linkStringEncoding = new CIDMultibaseEncoding();
 
-  it('should encode Link data correctly', () => {
+  it('should encode CID data correctly', () => {
     const encoded = linkStringEncoding.encode(DATA_CID);
     expect(encoded).toBe('mAQAAAwECAw');
   });
 
-  it('should decode Link data correctly', () => {
+  it('should decode CID data correctly', () => {
     const encoded = 'mAQAAAwECAw';
     const decoded = linkStringEncoding.decode(encoded);
     expect(decoded).toEqual(DATA_CID);

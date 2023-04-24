@@ -8,7 +8,7 @@
 
 <br/>
 
-> Eventsourced data store library for mithic
+> Eventsourced CRDT storage and replication library for mithic
 
 <br/>
 

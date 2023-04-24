@@ -46,7 +46,7 @@
     "@mithic/collections": "^0.2",
     "@mithic/commons": "^0.2",
     "@mithic/cqrs": "^0.2",
-    "@mithic/es": "^0.2",
+    "@mithic/crdt": "^0.2",
     "@mithic/messaging": "^0.2"
   },
   "devDependencies": {
@@ -58,7 +58,7 @@
     "./packages/collections",
     "./packages/messaging",
     "./packages/cqrs",
-    "./packages/es",
+    "./packages/crdt",
     "./packages/examples/*"
   ]
 }

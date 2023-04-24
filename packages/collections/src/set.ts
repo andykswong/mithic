@@ -7,10 +7,13 @@ export interface MaybeAsyncReadonlySet<T> {
 }
 
 /** A Set that may have async operations. */
-export interface MaybeAsyncSet<T> extends MaybeAsyncReadonlySet<T> {
-  /** Adds an entry to the set. */
-  add(value: T, options?: AbortOptions): MaybePromise<unknown>;
-
+export interface MaybeAsyncSet<T> extends MaybeAsyncAppendOnlySet<T> {
   /** Deletes an entry from the set. */
   delete(value: T, options?: AbortOptions): MaybePromise<unknown>;
+}
+
+/** An append-only Set that may have async operations. */
+export interface MaybeAsyncAppendOnlySet<T> extends MaybeAsyncReadonlySet<T> {
+  /** Adds an entry to the set. Returns `MaybePromise<unknown>` to be compatible with ES Set. */
+  add(value: T, options?: AbortOptions): MaybePromise<unknown>;
 }

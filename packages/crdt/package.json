@@ -1,7 +1,7 @@
 {
-  "name": "@mithic/es",
+  "name": "@mithic/crdt",
   "version": "0.2.0",
-  "description": "Eventsourced data store library for mithic",
+  "description": "Eventsourced CRDT storage and replication library for mithic",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.js",

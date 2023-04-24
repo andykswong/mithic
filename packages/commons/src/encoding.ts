@@ -1,9 +1,28 @@
-import { BlockCodec, CID, Link, MultibaseCodec, Version } from 'multiformats';
+import { BlockCodec, ByteView, CID, MultibaseCodec, MultibaseEncoder, MultihashDigest, Phantom } from 'multiformats';
 import { base64 } from 'multiformats/bases/base64';
 import * as raw from 'multiformats/codecs/raw';
+import { Equal } from './equal.js';
 
-/** Content Id type. */
-export type ContentId = Link<unknown, number, number, Version>;
+/** A content hash ID. */
+export interface ContentId<
+  Data = unknown,
+  Format extends number = number,
+  Alg extends number = number
+> extends Equal<ContentId<Data, Format, Alg>>, Phantom<Data> {
+  /** Multicodec code of this ID. */
+  readonly code: Format;
+
+  /** Multihash value of this ID. */
+  readonly multihash: MultihashDigest<Alg>;
+
+  /** Byte representation of this ID. */
+  readonly bytes: ByteView<ContentId<Data, Format, Alg>>;
+
+  /** Returns a JSON representation of this ID. */
+  toJSON(): { '/': string };
+
+  toString(base?: MultibaseEncoder<string>): string;
+}
 
 /** An encoder of data to string. */
 export interface DataStringEncoder<T = Uint8Array> {
@@ -36,7 +55,7 @@ export class JsonEncoding<T> implements DataStringEncoding<T> {
 export const JSON_ENCODING = new JsonEncoding<unknown>();
 
 /** An encoding of {@link ContentId} to and from multibase string. */
-export class LinkMultibaseEncoding implements DataStringEncoding<ContentId> {
+export class CIDMultibaseEncoding implements DataStringEncoding<ContentId> {
   public constructor(
     /** Base encoding. */
     private readonly baseCodec: MultibaseCodec<string> = base64,
