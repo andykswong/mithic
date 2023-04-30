@@ -4,7 +4,6 @@ export enum ErrorName {
   Abort = 'AbortError',
   InvalidState = 'InvalidStateError',
   NotFound = 'NotFoundError',
-  Dependency = 'DependencyError',
   OpFailed = 'OperationError',
 }
 

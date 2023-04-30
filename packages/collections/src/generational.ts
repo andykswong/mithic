@@ -1,8 +1,9 @@
 import { MaybePromise } from '@mithic/commons';
-import { MaybeAsyncReadonlyMap } from './map.js';
+import { MaybeAsyncMap } from './map.js';
+import { MaybeAsyncReadonlySet } from './set.js';
 
 /** An arena automatically assigns unique key to stored value. */
-export interface Arena<K, V> extends MaybeAsyncReadonlyMap<K, V> {
+export interface Arena<K, V> extends MaybeAsyncMap<K, V> {
   /** Adds a value to the arena and returns its key. */
   add(value: V): MaybePromise<K>;
 
@@ -22,7 +23,7 @@ export interface SyncArena<K, V> extends Arena<K, V> {
 }
 
 /** Generator of values. */
-export interface ValueGenerator<T> extends ReadonlySet<T> {
+export interface ValueGenerator<T> extends MaybeAsyncReadonlySet<T> {
   /** Creates a new value. */
   create(): MaybePromise<T>;
 

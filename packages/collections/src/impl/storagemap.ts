@@ -1,10 +1,15 @@
 import { DataStringEncoding, JSON_ENCODING } from '@mithic/commons';
+import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
+import { SyncMapBatchAdapter } from './batchmap.js';
 
 /**
  * A map that stores data in local storage with prefixed keys.
  * Note that this does not preserve insertion order.
  */
-export class LocalStorageMap<K, V> implements Map<K, V>, Iterable<[K, V]> {
+export class LocalStorageMap<K, V>
+  extends SyncMapBatchAdapter<K, V>
+  implements MaybeAsyncMap<K, V>, MaybeAsyncMapBatch<K, V>, Map<K, V>, Iterable<[K, V]>
+{
   public constructor(
     /** Unique prefix for keys. */
     protected readonly prefix = '',
@@ -15,6 +20,7 @@ export class LocalStorageMap<K, V> implements Map<K, V>, Iterable<[K, V]> {
     /** The value encoding. */
     protected readonly valueEncoding: DataStringEncoding<V> = JSON_ENCODING as DataStringEncoding<V>,
   ) {
+    super();
   }
 
   /**

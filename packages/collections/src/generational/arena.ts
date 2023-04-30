@@ -1,9 +1,14 @@
 import { SyncArena } from '../generational.js';
+import { MaybeAsyncMapBatch } from '../map.js';
+import { SyncMapBatchAdapter } from '../impl/batchmap.js';
 import { indexOf } from './id.js';
 import { IdGenerator } from './generator.js';
 
 /** A {@link SyncArena} that uses generational index as key. */
-export class GenerationalArena<T, I extends number = number> implements SyncArena<I, T>, Map<I, T>, Iterable<[I, T]> {
+export class GenerationalArena<T, I extends number = number>
+  extends SyncMapBatchAdapter<I, T>
+  implements SyncArena<I, T>, MaybeAsyncMapBatch<I, T>, Map<I, T>, Iterable<[I, T]>
+{
   private ids: IdGenerator<I> = new IdGenerator();
   private readonly data: T[] = [];
 

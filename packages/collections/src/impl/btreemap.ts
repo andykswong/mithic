@@ -1,7 +1,12 @@
+import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
 import { RangeQueryOptions, RangeQueryable } from '../query.js';
+import { SyncMapBatchAdapter } from './batchmap.js';
 
 /** An in-memory B-tree structure that implements the Map interface. */
-export class BTreeMap<K, V> implements Map<K, V>, RangeQueryable<K, V>, Iterable<[K, V]> {
+export class BTreeMap<K, V>
+  extends SyncMapBatchAdapter<K, V>
+  implements MaybeAsyncMap<K, V>, MaybeAsyncMapBatch<K, V>, Map<K, V>, RangeQueryable<K, V>, Iterable<[K, V]>
+{
   protected children: BTreeMap<K, V>[] = [];
   protected nodeKeys: K[] = [];
   protected nodeValues: V[] = [];
@@ -12,6 +17,7 @@ export class BTreeMap<K, V> implements Map<K, V>, RangeQueryable<K, V>, Iterable
     /** Function that defines the sort order of keys. */
     protected readonly compare: (a: K, b: K) => number = (a, b) => (a < b ? -1 : b < a ? 1 : 0),
   ) {
+    super();
   }
 
   /**

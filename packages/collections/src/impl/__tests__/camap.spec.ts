@@ -36,7 +36,12 @@ describe(ContentAddressedMapStore.name, () => {
   });
 
   describe('getMany', () => {
-    it('should return multiple stored blocks from the store', async () => {
+    it.each([
+      [() => store],
+      [() => new ContentAddressedMapStore<Uint8Array>(new Map())],
+    ])('should return multiple stored blocks from the store', async (storeCreator) => {
+      store = storeCreator();
+
       const cid1 = await store.put(BLOCK);
       const cid2 = await store.put(BLOCK2);
       const expectedData = [BLOCK, BLOCK2];
@@ -77,14 +82,20 @@ describe(ContentAddressedMapStore.name, () => {
   });
 
   describe('putMany', () => {
-    it('should put multiple blocks to the store and return their CIDs', async () => {
+    it.each([
+      [() => store],
+      [() => new ContentAddressedMapStore<Uint8Array>(new Map())],
+    ])('should put multiple blocks to the store and return their CIDs', async (storeCreator) => {
+      store = storeCreator();
+      backingMap = store['map'] as Map<CID, Uint8Array>;
+
       const cid1 = await store.put(BLOCK);
       const cid2 = await store.put(BLOCK2);
       const expectedCids = [cid1, cid2];
       backingMap.clear();
 
       const cids: ContentId[] = [];
-      for await (const cid of store.putMany([BLOCK, BLOCK2])) {
+      for await (const [cid] of store.putMany([BLOCK, BLOCK2])) {
         cids.push(cid);
       }
 
@@ -102,11 +113,19 @@ describe(ContentAddressedMapStore.name, () => {
   });
 
   describe('deleteMany', () => {
-    it('should delete multiple blocks from the store', async () => {
+    it.each([
+      [() => store],
+      [() => new ContentAddressedMapStore<Uint8Array>(new Map())],
+    ])('should delete multiple blocks from the store', async (storeCreator) => {
+      store = storeCreator();
+      backingMap = store['map'] as Map<CID, Uint8Array>;
+
       const cid1 = await store.put(BLOCK);
       const cid2 = await store.put(BLOCK2);
 
-      await store.deleteMany([cid1, cid2]);
+      for await (const result of store.deleteMany([cid1, cid2])) {
+        expect(result).toBeUndefined();
+      }
       expect(backingMap.has(cid1)).toBe(false);
       expect(backingMap.has(cid2)).toBe(false);
     });

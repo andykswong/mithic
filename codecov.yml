@@ -11,6 +11,9 @@ component_management:
     - component_id: "@mithic/cqrs"
       paths:
         - "packages/cqrs"
+    - component_id: "@mithic/crdt"
+      paths:
+        - "packages/crdt"
     - component_id: "@mithic/messaging"
       paths:
         - "packages/messaging"
@@ -18,7 +21,7 @@ coverage:
   status:
     project:
       default:
-        target: auto
+        target: 90%
         threshold: 1%
 ignore:
   - "packages/examples"

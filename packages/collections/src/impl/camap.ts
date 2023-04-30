@@ -1,5 +1,6 @@
 import {
-  AbortOptions, ContentId, CIDMultibaseEncoding, MaybePromise, maybeAsync, sha256
+  AbortOptions, ContentId, CIDMultibaseEncoding, MaybePromise, maybeAsync, sha256, CodedError,
+  MaybeAsyncIterableIterator, operationError, ErrorCode
 } from '@mithic/commons';
 import { BlockCodec, CID, SyncMultihashHasher } from 'multiformats';
 import { base64 } from 'multiformats/bases/base64';
@@ -16,7 +17,7 @@ export class ContentAddressedMapStore<T = Uint8Array>
   public constructor(
     /** The underlying storage. */
     protected readonly map: MaybeAsyncMap<ContentId, T> & Partial<MaybeAsyncMapBatch<ContentId, T>>
-      = new StringKeyMap(new Map(), new CIDMultibaseEncoding(base64)),
+      = new StringKeyMap<ContentId, T>(new Map(), new CIDMultibaseEncoding(base64)),
     /** Data binary encoding to use. */
     protected readonly blockCodec: BlockCodec<number, T> = raw as unknown as BlockCodec<number, T>,
     /** Hash function to use for generating CIDs for block data. */
@@ -42,20 +43,40 @@ export class ContentAddressedMapStore<T = Uint8Array>
     return this.map.has(cid, options);
   }
 
-  public deleteMany(keys: Iterable<ContentId>, options?: AbortOptions): MaybePromise<void> {
+  public deleteMany(keys: Iterable<ContentId>, options?: AbortOptions): MaybeAsyncIterableIterator<Error | undefined> {
     return this.map.deleteMany ? this.map.deleteMany(keys, options) : this.deleteEach(keys, options);
   }
 
-  public async * putMany(values: Iterable<T>, options?: AbortOptions): AsyncIterableIterator<ContentId> {
+  public async * putMany(
+    values: Iterable<T>, options?: AbortOptions
+  ): AsyncIterableIterator<[key: ContentId, error?: CodedError]> {
     if (this.map.setMany) {
       const entries = this.entriesOf(values);
-      await this.map.setMany(entries, options);
-      for (const [key] of entries) {
-        yield key;
+      let i = 0;
+      for await (const error of this.map.setMany(entries, options)) {
+        const key = entries[i++][0];
+        yield [
+          key,
+          error && operationError(
+            'Failed to put',
+            (error as CodedError)?.code ?? ErrorCode.OpFailed,
+            key,
+            error
+          )
+        ];
       }
     } else {
       for (const value of values) {
-        yield this.put(value, options);
+        const key = this.getCID(value);
+        try {
+          await this.map.set(key, value, options);
+          yield [key];
+        } catch (error) {
+          yield [
+            key,
+            operationError('Failed to put', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error)
+          ];
+        }
       }
     }
   }
@@ -74,16 +95,23 @@ export class ContentAddressedMapStore<T = Uint8Array>
     return ContentAddressedMapStore.name;
   }
 
-  protected deleteEach = maybeAsync(function* (this: ContentAddressedMapStore<T>, keys: Iterable<ContentId>, options?: AbortOptions) {
+  protected async * deleteEach(keys: Iterable<ContentId>, options?: AbortOptions) {
     for (const key of keys) {
-      yield this.delete(key, options);
+      try {
+        await this.delete(key, options);
+        yield;
+      } catch (error) {
+        yield operationError('Failed to delete', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+      }
     }
-  }, this);
+  }
 
-  protected * entriesOf(values: Iterable<T>): IterableIterator<[CID<T, number, number, 1>, T]> {
+  protected entriesOf(values: Iterable<T>): [CID<T, number, number, 1>, T][] {
+    const entries: [CID<T, number, number, 1>, T][] = [];
     for (const value of values) {
-      yield [this.getCID(value), value];
+      entries.push([this.getCID(value), value]);
     }
+    return entries;
   }
 
   protected getCID(block: T): CID<T, number, number, 1> {

@@ -1,13 +1,18 @@
 import { DataStringEncoder, JSON_ENCODING } from '@mithic/commons';
+import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
+import { SyncMapBatchAdapter } from './batchmap.js';
 
 /** A map indexed by stringified key. */
-export class StringKeyMap<K, V> implements Map<K, V>, Iterable<[K, V]> {
+export class StringKeyMap<K, V>
+  extends SyncMapBatchAdapter<K, V>
+  implements MaybeAsyncMap<K, V>, MaybeAsyncMapBatch<K, V>, Map<K, V>, Iterable<[K, V]> {
   public constructor(
     /** underlying map. */
     protected readonly map: Map<string, [K, V]> = new Map(),
     /** The key encoder. */
     protected readonly keyEncoder: DataStringEncoder<K> = JSON_ENCODING as DataStringEncoder<K>,
   ) {
+    super();
   }
 
   public get size(): number {
@@ -59,7 +64,7 @@ export class StringKeyMap<K, V> implements Map<K, V>, Iterable<[K, V]> {
     return this.entries();
   }
 
-  public get[Symbol.toStringTag](): string {
+  public get [Symbol.toStringTag](): string {
     return StringKeyMap.name;
   }
 }

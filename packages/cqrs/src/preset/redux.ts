@@ -1,6 +1,6 @@
 import { AbortOptions, MaybePromise, Startable } from '@mithic/commons';
 import { EventBus, EventConsumer, EventDispatcher, EventSubscription, Unsubscribe } from '../event.js';
-import { AsyncEventSubscriber, SimpleEventBus } from '../event/index.js';
+import { AsyncEventSubscriber, AsyncEventSubscriberOptions, SimpleEventBus } from '../event/index.js';
 import { EventReducer, EventReducerFn } from '../processor/index.js';
 
 /** Creates a simple Redux-compatible CQRS store using {@link EventBus} and {@link EventReducer}. */
@@ -46,8 +46,12 @@ export class SimpleReduxStore<State, Event> implements ReduxStore<State, Event> 
     return this.eventReducer.subscribe(consumer);
   }
 
+  public iterator(options?: AsyncEventSubscriberOptions): AsyncIterableIterator<State> {
+    return new AsyncEventSubscriber(this, options);
+  }
+
   public [Symbol.asyncIterator](): AsyncIterableIterator<State> {
-    return new AsyncEventSubscriber(this, { bufferSize: 2 });
+    return this.iterator({ bufferSize: 2 });
   }
 }
 
@@ -69,4 +73,7 @@ export interface ReduxStore<State = unknown, Event = unknown>
 
   /** Returns the current state. */
   getState(): State;
+
+  /** Returns an async iterator that yields the latest state on change. */
+  iterator(options?: AsyncEventSubscriberOptions): AsyncIterableIterator<State>;
 } 
