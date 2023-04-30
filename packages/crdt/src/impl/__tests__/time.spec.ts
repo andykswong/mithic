@@ -1,11 +1,22 @@
-import { delay } from '@mithic/commons';
+import { jest } from '@jest/globals';
 import { hybridTime } from '../time.js';
 
 describe('hybridTime', () => {
+  let nowSpy: jest.SpiedFunction<() => number>;
+
+  beforeEach(() => {
+    nowSpy = jest.spyOn(Date, 'now');
+  });
+
+  afterEach(() => {
+    nowSpy.mockRestore();
+  });
+
   it('should return a function which returns the current timestamp', async () => {
+    nowSpy.mockReturnValue(123);
     const generator = hybridTime();
-    await delay(1);
-    const time = Date.now();
+    const time = 1234;
+    nowSpy.mockReturnValue(time);
     const timestamp = generator();
     expect(timestamp).toBe(time);
   });
