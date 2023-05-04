@@ -120,4 +120,15 @@ describe(AsyncEventSubscriber.name, () => {
       break;
     }
   });
+
+  it('should ignore new values on fcfs mode if buffer is full', async () => {
+    const subscriber = new AsyncEventSubscriber(eventBus, { bufferSize: 1, fcfs: true });
+    const events = [1, 2, 3];
+    events.forEach(eventBus.dispatch);
+
+    for await (const event of subscriber) {
+      expect(event).toEqual(events[0]); // later events dropped
+      break;
+    }
+  });
 });

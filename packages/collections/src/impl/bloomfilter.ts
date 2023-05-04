@@ -1,5 +1,5 @@
 import { MaybeAsyncAppendOnlySet } from '../set.js';
-import { fnv1aHash, kHash } from './hash.js';
+import { fnv1aHash, kHash } from './utils.js';
 
 /** A simple bloom filter implementation. */
 export class BloomFilter<T> implements MaybeAsyncAppendOnlySet<T> {

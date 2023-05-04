@@ -1,4 +1,4 @@
-import { StringSet } from '../stringset.js';
+import { HashSet } from '../hashset.js';
 
 class Value {
   public constructor(private readonly value: string) { }
@@ -13,13 +13,13 @@ const V2 = new Value('val2');
 const V3 = new Value('val3');
 const VALUES = [V1, V2];
 
-describe(StringSet.name, () => {
-  let set: StringSet<Value>;
+describe(HashSet.name, () => {
+  let set: HashSet<Value>;
   let map: Map<string, Value>;
 
   beforeEach(() => {
     map = new Map();
-    set = new StringSet(map, { encode(k) { return k.toString(); } });
+    set = new HashSet(map, (k) => k.toString());
     set.add(V1);
     set.add(V2);
   });
@@ -78,6 +78,6 @@ describe(StringSet.name, () => {
   });
 
   it('should have correct string tag', () => {
-    expect(set.toString()).toBe('[object StringSet]');
+    expect(set.toString()).toBe(`[object ${HashSet.name}]`);
   });
 });

@@ -1,5 +1,5 @@
 import { AbortOptions, ContentId, MaybeAsyncIterableIterator, MaybePromise } from '@mithic/commons';
-import { MaybeAsyncReadonlySet } from './set.js';
+import { MaybeAsyncReadonlySet, MaybeAsyncReadonlySetBatch, MaybeAsyncSetDeleteBatch } from './set.js';
 
 /** A readonly Map that may have async operations. */
 export interface MaybeAsyncReadonlyMap<K, V> extends MaybeAsyncReadonlySet<K> {
@@ -34,16 +34,10 @@ export interface AppendOnlyAutoKeyMap<K = ContentId, V = Uint8Array> extends May
   put(value: V, options?: AbortOptions): MaybePromise<K>;
 }
 
-/** Batch get API for a {@link MaybeAsyncMap}. */
-export interface MaybeAsyncMapGetBatch<K, V> {
+/** Batch APIs for a {@link MaybeAsyncReadonlyMap}. */
+export interface MaybeAsyncReadonlyMapBatch<K, V> extends MaybeAsyncReadonlySetBatch<K> {
   /** Gets the list of data identified by given keys. */
   getMany(keys: Iterable<K>, options?: AbortOptions): MaybeAsyncIterableIterator<V | undefined>;
-}
-
-/** Batch delete API for a {@link MaybeAsyncMap}. */
-export interface MaybeAsyncMapDeleteBatch<K> {
-  /** Deletes the values with given keys. */
-  deleteMany(keys: Iterable<K>, options?: AbortOptions): MaybeAsyncIterableIterator<Error | undefined>;
 }
 
 /** Batch set API for a {@link MaybeAsyncMap}. */
@@ -54,7 +48,7 @@ export interface MaybeAsyncMapSetBatch<K, V> {
 
 /** Batch APIs for a {@link MaybeAsyncMap}. */
 export interface MaybeAsyncMapBatch<K, V>
-  extends MaybeAsyncMapGetBatch<K, V>, MaybeAsyncMapSetBatch<K, V>, MaybeAsyncMapDeleteBatch<K> {
+  extends MaybeAsyncReadonlyMapBatch<K, V>, MaybeAsyncMapSetBatch<K, V>, MaybeAsyncSetDeleteBatch<K> {
 }
 
 /** Batch put API for a {@link AutoKeyMap}. */
@@ -65,5 +59,5 @@ export interface AutoKeyMapPutBatch<K = ContentId, V = Uint8Array> {
 
 /** Batch APIs for a {@link AutoKeyMap}. */
 export interface AutoKeyMapBatch<K = ContentId, V = Uint8Array>
-  extends MaybeAsyncMapGetBatch<K, V>, MaybeAsyncMapDeleteBatch<K>, AutoKeyMapPutBatch<K, V> {
+  extends MaybeAsyncReadonlyMapBatch<K, V>, MaybeAsyncSetDeleteBatch<K>, AutoKeyMapPutBatch<K, V> {
 }

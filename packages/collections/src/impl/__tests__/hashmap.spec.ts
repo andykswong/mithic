@@ -1,4 +1,4 @@
-import { StringKeyMap } from '../stringmap.js';
+import { HashMap } from '../hashmap.js';
 
 class Key {
   public constructor(private readonly value: string) { }
@@ -13,13 +13,13 @@ const K2 = new Key('val2');
 const K3 = new Key('val3');
 const KEYS = [K1, K2];
 
-describe(StringKeyMap.name, () => {
-  let map: StringKeyMap<Key, number>;
+describe(HashMap.name, () => {
+  let map: HashMap<Key, number>;
   let underlying: Map<string, [Key, number]>;
 
   beforeEach(() => {
     underlying = new Map();
-    map = new StringKeyMap(underlying, { encode(k) { return k.toString(); } });
+    map = new HashMap(underlying, k => k.toString());
     map.set(K1, 1);
     map.set(K2, 2);
   });
@@ -76,6 +76,6 @@ describe(StringKeyMap.name, () => {
   });
 
   it('should have correct string tag', () => {
-    expect(map.toString()).toBe('[object StringKeyMap]');
+    expect(map.toString()).toBe(`[object ${HashMap.name}]`);
   });
 });

@@ -66,6 +66,27 @@ describe(ContentAddressedMapStore.name, () => {
     });
   });
 
+  describe('hasMany', () => {
+    it.each([
+      [() => store],
+      [() => new ContentAddressedMapStore<Uint8Array>(new Map())],
+    ])('should return true/false for existent/non-existent blocks', async (storeCreator) => {
+      store = storeCreator();
+
+      const cid1 = await store.put(BLOCK);
+      const cid2 = await store.put(BLOCK2);
+      const keys = [cid1, cid2, RANDOM_CID];
+      const expectedResult = [true, true, false];
+
+      const results: boolean[] = [];
+      for await (const result of store.hasMany(keys)) {
+        results.push(result);
+      }
+
+      expect(results).toEqual(expectedResult);
+    });
+  });
+
   describe('put', () => {
     it('should put block to the store and return its CID', async () => {
       const cid = await store.put(BLOCK);

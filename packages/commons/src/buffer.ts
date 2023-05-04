@@ -1,16 +1,14 @@
-import { ContentId } from './encoding.js';
+import { ContentId } from './hash.js';
 
-/** Compares 2 Uint8Arrays in constant time. */
+/** Lexicographically compares 2 Uint8Arrays in constant time. */
 export function compareBuffers(a: Uint8Array, b: Uint8Array): number {
-  if (a.byteLength !== b.byteLength) {
-    return Math.sign(a.byteLength - b.byteLength);
-  }
+  const length = Math.min(a.byteLength, b.byteLength);
   let result = 0;
-  for (let i = 0; i < a.byteLength; ++i) {
+  for (let i = 0; i < length; ++i) {
     const diff = a[i] - b[i];
     result = result ? result : diff;
   }
-  return Math.sign(result);
+  return Math.sign(result ? result : (a.byteLength - b.byteLength));
 }
 
 /** Concatenates a list of Uint8Arrays and returns the result as a new Uint8Array. */

@@ -1,4 +1,3 @@
-import { DataStringEncoding, JSON_ENCODING } from '@mithic/commons';
 import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
 import { SyncMapBatchAdapter } from './batchmap.js';
 
@@ -15,10 +14,14 @@ export class LocalStorageMap<K, V>
     protected readonly prefix = '',
     /** The underlying storage. */
     protected readonly storage: Storage = window.localStorage,
-    /** The key encoding. */
-    protected readonly keyEncoding: DataStringEncoding<K> = JSON_ENCODING as DataStringEncoding<K>,
-    /** The value encoding. */
-    protected readonly valueEncoding: DataStringEncoding<V> = JSON_ENCODING as DataStringEncoding<V>,
+    /** The key encoder. */
+    protected readonly _encodeKey: (key: K) => string = JSON.stringify,
+    /** The key decoder. */
+    protected readonly _decodeKey: (key: string) => K = JSON.parse,
+    /** The value encoder. */
+    protected readonly encodeValue: (value: V) => string = JSON.stringify,
+    /** The value decoder. */
+    protected readonly decodeValue: (value: string) => V = JSON.parse,
   ) {
     super();
   }
@@ -45,7 +48,7 @@ export class LocalStorageMap<K, V>
   }
 
   public set(key: K, value: V): this {
-    this.storage.setItem(this.encodeKey(key), this.valueEncoding.encode(value));
+    this.storage.setItem(this.encodeKey(key), this.encodeValue(value));
     return this;
   }
 
@@ -109,7 +112,7 @@ export class LocalStorageMap<K, V>
   }
 
   private encodeKey(key: K): string {
-    return this.prefix + this.keyEncoding.encode(key);
+    return this.prefix + this._encodeKey(key);
   }
 
   private decodeKey(key: string | null): K | undefined {
@@ -118,7 +121,7 @@ export class LocalStorageMap<K, V>
     }
 
     try {
-      return this.keyEncoding.decode(key.substring(this.prefix.length));
+      return this._decodeKey(key.substring(this.prefix.length));
     } catch (_) {
       return;
     }
@@ -130,7 +133,7 @@ export class LocalStorageMap<K, V>
       return;
     }
     try {
-      return this.valueEncoding.decode(valueString);
+      return this.decodeValue(valueString);
     } catch (_) {
       return;
     }

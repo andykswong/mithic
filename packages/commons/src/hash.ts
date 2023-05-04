@@ -1,6 +1,28 @@
 import crypto from 'crypto';
-import { MultihashDigest, SyncMultihashHasher } from 'multiformats';
+import { ByteView, MultibaseEncoder, MultihashDigest, Phantom, SyncMultihashHasher } from 'multiformats';
 import * as Digest from 'multiformats/hashes/digest';
+import { Equal } from './equal.js';
+
+/** A content hash ID. */
+export interface ContentId<
+  Data = unknown,
+  Format extends number = number,
+  Alg extends number = number
+> extends Equal<ContentId<Data, Format, Alg>>, Phantom<Data> {
+  /** Multicodec code of this ID. */
+  readonly code: Format;
+
+  /** Multihash value of this ID. */
+  readonly multihash: MultihashDigest<Alg>;
+
+  /** Byte representation of this ID. */
+  readonly bytes: ByteView<ContentId<Data, Format, Alg>>;
+
+  /** Returns a JSON representation of this ID. */
+  toJSON(): { '/': string };
+
+  toString(base?: MultibaseEncoder<string>): string;
+}
 
 /** An implementation of SyncMultihashHasher. */
 export class Hasher<Code extends number = number> implements SyncMultihashHasher<Code> { 

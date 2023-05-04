@@ -20,6 +20,12 @@ describe(SyncMapBatchAdapter.name, () => {
     expect(values).toEqual(DATA.map(([, value]) => value));
   });
 
+  it('should check if it has many values synchronously from the map', () => {
+    const keys = [...DATA.map(([key]) => key), 4];
+    const values = [...adapter.hasMany(keys)];
+    expect(values).toEqual([...DATA.map(() => true), false]);
+  });
+
   it('should set many values synchronously in the map', () => {
     const entries = [[3, 'x'], [4, 'y'], [5, 'z']] as Iterable<[number, string]>;
     const errors = [...adapter.setMany(entries)];

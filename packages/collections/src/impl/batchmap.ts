@@ -14,6 +14,12 @@ export abstract class SyncMapBatchAdapter<K, V> implements MaybeAsyncMap<K, V>, 
     }
   }
 
+  public * hasMany(keys: Iterable<K>, options?: AbortOptions): IterableIterator<boolean> {
+    for (const key of keys) {
+      yield this.has(key, options);
+    }
+  }
+
   public * setMany(entries: Iterable<[K, V]>, options?: AbortOptions): IterableIterator<CodedError<K> | undefined> {
     for (const [key, value] of entries) {
       try {

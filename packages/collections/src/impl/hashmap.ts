@@ -1,16 +1,15 @@
-import { DataStringEncoder, JSON_ENCODING } from '@mithic/commons';
 import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
 import { SyncMapBatchAdapter } from './batchmap.js';
 
-/** A map indexed by stringified key. */
-export class StringKeyMap<K, V>
+/** A map indexed by hashed/encoded key. */
+export class HashMap<K, V>
   extends SyncMapBatchAdapter<K, V>
   implements MaybeAsyncMap<K, V>, MaybeAsyncMapBatch<K, V>, Map<K, V>, Iterable<[K, V]> {
   public constructor(
     /** underlying map. */
-    protected readonly map: Map<string, [K, V]> = new Map(),
-    /** The key encoder. */
-    protected readonly keyEncoder: DataStringEncoder<K> = JSON_ENCODING as DataStringEncoder<K>,
+    protected readonly map: Map<string | number, [K, V]> = new Map(),
+    /** The key hasher. */
+    protected readonly hash: (key: K) => string | number = JSON.stringify
   ) {
     super();
   }
@@ -20,11 +19,11 @@ export class StringKeyMap<K, V>
   }
 
   public get(key: K): V | undefined {
-    return this.map.get(this.keyEncoder.encode(key))?.[1];
+    return this.map.get(this.hash(key))?.[1];
   }
 
   public set(key: K, value: V): this {
-    this.map.set(this.keyEncoder.encode(key), [key, value]);
+    this.map.set(this.hash(key), [key, value]);
     return this;
   }
 
@@ -33,14 +32,14 @@ export class StringKeyMap<K, V>
   }
 
   public delete(key: K): boolean {
-    return this.map.delete(this.keyEncoder.encode(key));
+    return this.map.delete(this.hash(key));
   }
 
   public has(key: K): boolean {
-    return this.map.has(this.keyEncoder.encode(key));
+    return this.map.has(this.hash(key));
   }
 
-  public forEach(callbackfn: (value: V, key: K, self: StringKeyMap<K, V>) => void, thisArg?: unknown): void {
+  public forEach(callbackfn: (value: V, key: K, self: HashMap<K, V>) => void, thisArg?: unknown): void {
     this.map.forEach(([key, value]) => callbackfn(value, key, this), thisArg);
   }
 
@@ -65,6 +64,6 @@ export class StringKeyMap<K, V>
   }
 
   public get [Symbol.toStringTag](): string {
-    return StringKeyMap.name;
+    return HashMap.name;
   }
 }

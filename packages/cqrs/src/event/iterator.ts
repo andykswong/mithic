@@ -10,6 +10,7 @@ export class AsyncEventSubscriber<Event> implements AsyncIterableIterator<Event>
   private readonly pullQueue: ArrayDeque<(value: IteratorResult<Event>) => void> = new ArrayDeque();
   private readonly pushQueue: ArrayDeque<Event> = new ArrayDeque();
   private readonly bufferSize: number;
+  private readonly fcfs: boolean;
   private readonly abort: AbortSignal | undefined;
   private unsubscribe: MaybePromise<Unsubscribe>;
   private running = true;
@@ -23,6 +24,7 @@ export class AsyncEventSubscriber<Event> implements AsyncIterableIterator<Event>
     this.unsubscribe = subscription.subscribe(this.push);
     this.abort = options?.signal;
     this.bufferSize = (((options?.bufferSize || 0) > 0) && options?.bufferSize) || Infinity;
+    this.fcfs = !!options?.fcfs;
   }
 
   public [Symbol.asyncIterator]() {
@@ -69,8 +71,8 @@ export class AsyncEventSubscriber<Event> implements AsyncIterableIterator<Event>
       resolve(this.running ? { value, done: false } : { value: void 0, done: true });
     } else if (this.running) {
       this.pushQueue.push(value);
-      while (this.pushQueue.size > this.bufferSize)
-        this.pushQueue.shift(); { // Drop overflowing events
+      while (this.pushQueue.size > this.bufferSize) {
+        this.fcfs ? this.pushQueue.pop() : this.pushQueue.shift(); // Drop overflowing events
       }
     }
   }
@@ -88,6 +90,12 @@ export class AsyncEventSubscriber<Event> implements AsyncIterableIterator<Event>
 }
 
 export interface AsyncEventSubscriberOptions extends AbortOptions {
-  /** Event buffer size. Earlier events may be dropped if buffer size is reached. Defaults to Infinity. */
+  /** Event buffer size. Events may be dropped if buffer size is reached. Defaults to Infinity. */
   bufferSize?: number;
+
+  /**
+   * If true, set to first-come-first-serve mode, which ignores new events if buffer size is reached.
+   * Defaults to false, which drops earlier events if buffer size is reached.
+   */
+  fcfs?: boolean;
 }

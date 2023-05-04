@@ -20,6 +20,6 @@ export interface EventMetadata<Id = ContentId> {
   /** Event target aggregate root ID. */
   root?: Id;
 
-  /** Hybrid timestamp at which the event is created/persisted. */
+  /** (Logical) timestamp at which the event is created/persisted. */
   createdAt?: number;
 }

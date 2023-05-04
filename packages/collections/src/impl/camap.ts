@@ -1,12 +1,12 @@
 import {
-  AbortOptions, ContentId, CIDMultibaseEncoding, MaybePromise, maybeAsync, sha256, CodedError,
-  MaybeAsyncIterableIterator, operationError, ErrorCode
+  AbortOptions, ContentId, MaybePromise, maybeAsync, sha256, CodedError, MaybeAsyncIterableIterator,
+  operationError, ErrorCode
 } from '@mithic/commons';
 import { BlockCodec, CID, SyncMultihashHasher } from 'multiformats';
 import { base64 } from 'multiformats/bases/base64';
 import * as raw from 'multiformats/codecs/raw';
 import { AutoKeyMap, AutoKeyMapBatch, MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
-import { StringKeyMap } from './stringmap.js';
+import { HashMap } from './hashmap.js';
 
 /**
  * A content-addressable map store that persists values in a backing {@link MaybeAsyncMap}.
@@ -17,7 +17,7 @@ export class ContentAddressedMapStore<T = Uint8Array>
   public constructor(
     /** The underlying storage. */
     protected readonly map: MaybeAsyncMap<ContentId, T> & Partial<MaybeAsyncMapBatch<ContentId, T>>
-      = new StringKeyMap<ContentId, T>(new Map(), new CIDMultibaseEncoding(base64)),
+      = new HashMap<ContentId, T>(new Map(), (cid) => cid.toString(base64)),
     /** Data binary encoding to use. */
     protected readonly blockCodec: BlockCodec<number, T> = raw as unknown as BlockCodec<number, T>,
     /** Hash function to use for generating CIDs for block data. */
@@ -87,6 +87,16 @@ export class ContentAddressedMapStore<T = Uint8Array>
     } else {
       for (const cid of cids) {
         yield this.get(cid, options);
+      }
+    }
+  }
+
+  public async * hasMany(cids: Iterable<ContentId>, options?: AbortOptions): AsyncIterableIterator<boolean> {
+    if (this.map.hasMany) {
+      return yield* this.map.hasMany(cids, options);
+    } else {
+      for (const cid of cids) {
+        yield this.has(cid, options);
       }
     }
   }
