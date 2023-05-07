@@ -3,5 +3,10 @@
     "javascript.preferences.quoteStyle": "single",
     "javascript.preferences.importModuleSpecifierEnding": "js",
     "typescript.preferences.quoteStyle": "single",
-    "typescript.preferences.importModuleSpecifierEnding": "js"
+    "typescript.preferences.importModuleSpecifierEnding": "js",
+    "jest.nodeEnv": {
+        "NODE_OPTIONS": "--experimental-vm-modules"
+    },
+    "jest.showCoverageOnLoad": true,
+    "jest.coverageFormatter": "GutterFormatter"
 }

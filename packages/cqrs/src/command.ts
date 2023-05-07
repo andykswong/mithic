@@ -1,15 +1,5 @@
-import { MaybePromise } from '@mithic/commons';
+import { MaybeAsyncIterator, MaybePromise, maybeAsync } from '@mithic/commons';
 import { EventDispatcher } from './event.js';
-
-/** An event creator, which is a (maybe async) function that creates an event. */
-export interface EventCreator<Args extends unknown[] = unknown[], Event = unknown> {
-  (...args: Args): MaybePromise<Event>
-}
-
-/** A record whose values are {@link EventCreator}s. */
-export type EventCreators<E extends EventCreatorTypeMap = EventCreatorTypeMap> = {
-  [K in EventCreatorName<E>]: EventCreator<E[K][0], E[K][1]>;
-}
 
 /** A command, which is a (maybe async) function that can have side effects. */
 export interface Command<Args extends unknown[] = unknown[]> {
@@ -17,19 +7,35 @@ export interface Command<Args extends unknown[] = unknown[]> {
 }
 
 /** A record whose values are {@link Command}s. */
-export type Commands<E extends EventCreatorTypeMap = EventCreatorTypeMap> = {
-  [K in EventCreatorName<E>]: Command<E[K][0]>;
+export type Commands<E extends EventTypeMap = EventTypeMap> = {
+  [K in EventName<E>]: Command<E[K][0]>;
 }
 
-/** {@link EventCreator} type name to arguments and return types map. */
-export type EventCreatorTypeMap<K extends string = string, Event = unknown> = Record<K, [unknown[], Event]>;
+/** An event creator, which is a (maybe async) function that creates an event. */
+export interface EventCreator<Args extends unknown[] = unknown[], Event = unknown> {
+  (...args: Args): MaybePromise<Event>
+}
 
-/** {@link EventCreator} name type from {@link EventCreatorTypeMap}. */
-export type EventCreatorName<E extends EventCreatorTypeMap> = E extends EventCreatorTypeMap<infer T> ? T : never;
+/** A record whose values are {@link EventCreator}s. */
+export type EventCreators<E extends EventTypeMap = EventTypeMap> = {
+  [K in EventName<E>]: EventCreator<E[K][0], E[K][1]>;
+}
 
-/** {@link EventCreator} result event type from {@link EventCreatorTypeMap}. */
-export type EventCreatorResult<E extends EventCreatorTypeMap> =
-  E extends EventCreatorTypeMap<string, infer T> ? T : never;
+/** An event generator, which is a function that returns an event iterable. */
+export interface EventGenerator<Args extends unknown[] = unknown[], Event = unknown> {
+  (...args: Args): MaybeAsyncIterator<Event>
+}
+
+/** A record whose values are {@link EventGenerator}s. */
+export type EventGenerators<E extends EventTypeMap = EventTypeMap> = {
+  [K in EventName<E>]: EventGenerator<E[K][0], E[K][1]>;
+}
+
+/** {@link EventCreator} or {@link EventGenerator} type name to arguments and return types map. */
+export type EventTypeMap<K extends string = string, Event = unknown> = Record<K, [unknown[], Event]>;
+
+/** {@link EventCreator} or {@link EventGenerator} name type from {@link EventTypeMap}. */
+export type EventName<E extends EventTypeMap> = E extends EventTypeMap<infer T> ? T : never;
 
 /** Binds an {@link EventCreator} to an {@link EventDispatcher} and returns a {@link Command}. */
 export function bindEventCreator<Args extends unknown[], Event>(
@@ -41,14 +47,41 @@ export function bindEventCreator<Args extends unknown[], Event>(
 }
 
 /** Binds {@link EventCreator}s to an {@link EventDispatcher} and returns a {@link Commands}. */
-export function bindEventCreators<E extends EventCreatorTypeMap>(
-  eventCreators: EventCreators<E>,
-  dispatcher: EventDispatcher<EventCreatorResult<E>>
-): Commands<E> {
-  const commands = {} as Commands<E>;
+export function bindEventCreators<E, M extends EventTypeMap<string, E>>(
+  eventCreators: EventCreators<M>,
+  dispatcher: EventDispatcher<E>
+): Commands<M> {
+  const commands = {} as Commands<M>;
   for (const key in eventCreators) {
-    commands[key as EventCreatorName<E>] =
-      bindEventCreator(eventCreators[key as EventCreatorName<E>], dispatcher);
+    commands[key as EventName<M>] =
+      bindEventCreator(eventCreators[key as EventName<M>], dispatcher);
+  }
+  return commands;
+}
+
+/** Binds an {@link EventGenerator} to an {@link EventDispatcher} and returns a {@link Command}. */
+export function bindEventGenerator<Args extends unknown[], Event>(
+  eventGenerator: EventGenerator<Args, Event>,
+  dispatcher: EventDispatcher<Event>
+): Command<Args> {
+  const dispatch = dispatcher.dispatch.bind(dispatcher);
+  return maybeAsync(function* (...args: Args) {
+    const iter = eventGenerator(...args);
+    for (let result: IteratorResult<Event> = yield iter.next(); !result.done; result = yield iter.next()) {
+      yield dispatch(yield result.value);
+    }
+  });
+}
+
+/** Binds {@link EventGenerator}s to an {@link EventDispatcher} and returns a {@link Commands}. */
+export function bindEventGenerators<E, M extends EventTypeMap<string, E>>(
+  eventGenerators: EventGenerators<M>,
+  dispatcher: EventDispatcher<E>
+): Commands<M> {
+  const commands = {} as Commands<M>;
+  for (const key in eventGenerators) {
+    commands[key as EventName<M>] =
+      bindEventGenerator(eventGenerators[key as EventName<M>], dispatcher);
   }
   return commands;
 }

@@ -2,9 +2,9 @@
 module.exports = {
   collectCoverage: true,
   collectCoverageFrom: [
-    'src/**/*.ts',
+    '**/src/**/*.ts',
     '!**/__tests__/**',
-    '!src/pb/*.ts'
+    '!**/src/gen/*.ts'
   ],
   coverageDirectory: 'coverage',
   extensionsToTreatAsEsm: [

@@ -105,8 +105,8 @@ export class BTreeMap<K, V>
         }
       } else if (prevSibling && prevSibling.nodeSize > this.minKeys) {
         // case 2. borrow from left sibling with extra elements
-        node.nodeKeys.push(parent.nodeKeys[index - 1]);
-        node.nodeValues.push(parent.nodeValues[index - 1]);
+        node.nodeKeys.unshift(parent.nodeKeys[index - 1]);
+        node.nodeValues.unshift(parent.nodeValues[index - 1]);
         parent.nodeKeys[index - 1] = prevSibling.nodeKeys.pop() as K;
         parent.nodeValues[index - 1] = prevSibling.nodeValues.pop() as V;
         const borrowedChild = prevSibling.children.pop();
