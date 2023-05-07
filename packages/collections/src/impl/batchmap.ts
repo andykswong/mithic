@@ -10,18 +10,21 @@ export abstract class SyncMapBatchAdapter<K, V> implements MaybeAsyncMap<K, V>, 
 
   public * getMany(keys: Iterable<K>, options?: AbortOptions): IterableIterator<V | undefined> {
     for (const key of keys) {
+      options?.signal?.throwIfAborted();
       yield this.get(key, options);
     }
   }
 
   public * hasMany(keys: Iterable<K>, options?: AbortOptions): IterableIterator<boolean> {
     for (const key of keys) {
+      options?.signal?.throwIfAborted();
       yield this.has(key, options);
     }
   }
 
   public * setMany(entries: Iterable<[K, V]>, options?: AbortOptions): IterableIterator<CodedError<K> | undefined> {
     for (const [key, value] of entries) {
+      options?.signal?.throwIfAborted();
       try {
         this.set(key, value, options);
         yield;
@@ -33,6 +36,7 @@ export abstract class SyncMapBatchAdapter<K, V> implements MaybeAsyncMap<K, V>, 
 
   public * deleteMany(keys: Iterable<K>, options?: AbortOptions): IterableIterator<CodedError<K> | undefined> {
     for (const key of keys) {
+      options?.signal?.throwIfAborted();
       try {
         this.delete(key, options);
         yield;

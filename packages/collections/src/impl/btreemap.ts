@@ -405,7 +405,7 @@ function getBounds<K>(
   let lowerInclusive = false;
   let upperInclusive = false;
 
-  if (options?.gte && (
+  if (options?.gte !== void 0 && (
     lower === void 0 ||
     (lower !== void 0 && compare(lower, options.gte) < 0)
   )) {
@@ -413,7 +413,7 @@ function getBounds<K>(
     lowerInclusive = true;
   }
 
-  if (options?.lte && (
+  if (options?.lte !== void 0 && (
     upper === void 0 ||
     (upper !== void 0 && compare(upper, options.lte) > 0)
   )) {

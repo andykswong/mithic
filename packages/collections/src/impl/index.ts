@@ -6,6 +6,6 @@ export * from './hashset.js';
 export * from './hashmap.js';
 export * from './heap.js';
 export * from './camap.js';
+export * from './indexeddbmap.js';
 export * from './storagemap.js';
 export * from './utils.js';
-
