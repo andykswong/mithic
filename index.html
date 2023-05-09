@@ -28,10 +28,9 @@
 <br />
 
 <blockquote>
-<p><strong>Status: ⚠️ heavily WIP, not for consumption yet.</strong> <br/>
-only in-memory / local storage adapters implemented</p>
+<p><strong>Status: ⚠️ heavily WIP, not for consumption yet.</strong> <br/></p>
 </blockquote>
-<a id="md:overview" class="tsd-anchor"></a><h2><a href="#$overview" style="color:inherit;text-decoration:none">Overview</a></h2><p><code>mithic</code> provides the building blocks for creating real-time client-side, server-side and decentralized applications, using <a href="https://en.wikipedia.org/wiki/Command%E2%80%93query_separation">CQRS</a> architecture with <a href="https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type">CRDT</a> <a href="https://en.wikipedia.org/wiki/Event_store">eventsourcing</a> for storage and data replication.</p>
+<a id="md:overview" class="tsd-anchor"></a><h2><a href="#$overview" style="color:inherit;text-decoration:none">Overview</a></h2><p><code>mithic</code> provides the building blocks for creating real-time client-side, server-side and decentralized applications, using <a href="https://en.wikipedia.org/wiki/Command%E2%80%93query_separation">CQRS</a> architecture with <a href="https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type">CRDT</a> <a href="https://en.wikipedia.org/wiki/Event_store">eventsourcing</a> for storage and data replication. Targeted use cases include business web apps, collaborative editing, multiplayer gaming, etc.</p>
 <a id="md:documentation" class="tsd-anchor"></a><h2><a href="#$documentation" style="color:inherit;text-decoration:none">Documentation</a></h2><p>See generated TypeDoc: <a href="https://andykswong.github.io/mithic/">https://andykswong.github.io/mithic/</a></p>
 <a id="md:getting-started" class="tsd-anchor"></a><h2><a href="#$getting-started" style="color:inherit;text-decoration:none">Getting Started</a></h2><p>To use the library, you can depend on the monorepo:</p>
 <pre><code class="language-shell"><span class="hl-0">npm </span><span class="hl-1">install</span><span class="hl-0"> </span><span class="hl-1">--save</span><span class="hl-0"> </span><span class="hl-1">mithic</span>
@@ -44,7 +43,8 @@ only in-memory / local storage adapters implemented</p>
 <li><a href="./packages/examples/simple">Simple Redux store example</a> - minimal example to get started. Uses the <a href="https://redux.js.org/">Redux</a> store preset.</li>
 <li><a href="./packages/examples/graphql">GraphQL example</a> - example integration with <a href="https://graphql.org/">GraphQL</a> query, mutation and subscription</li>
 </ul>
-<a id="md:packages" class="tsd-anchor"></a><h2><a href="#$packages" style="color:inherit;text-decoration:none">Packages</a></h2><table>
+<a id="md:packages" class="tsd-anchor"></a><h2><a href="#$packages" style="color:inherit;text-decoration:none">Packages</a></h2><p>Core:</p>
+<table>
 <thead>
 <tr>
 <th>Package</th>
@@ -76,6 +76,21 @@ only in-memory / local storage adapters implemented</p>
 <td><a href="./packages/messaging"><code>@mithic/messaging</code></a></td>
 <td><a href="https://www.npmjs.com/package/@mithic/messaging"><img src="https://img.shields.io/npm/v/@mithic/messaging?style=flat-square&logo=npm" alt="npm"></a></td>
 <td>messaging interface</td>
+</tr>
+</tbody></table>
+<p>Plugins:</p>
+<table>
+<thead>
+<tr>
+<th>Package</th>
+<th>NPM</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="./packages/plugins/level"><code>@mithic/level</code></a> (WIP)</td>
+<td><a href="https://www.npmjs.com/package/@mithic/level"><img src="https://img.shields.io/npm/v/@mithic/level?style=flat-square&logo=npm" alt="npm"></a></td>
+<td>abstract-level adapters</td>
 </tr>
 </tbody></table>
 <a id="md:license" class="tsd-anchor"></a><h2><a href="#$license" style="color:inherit;text-decoration:none">License</a></h2><p>This repository and the code inside it is licensed under the MIT License. Read <a href="./LICENSE">LICENSE</a> for more information.</p>
@@ -130,9 +145,9 @@ only in-memory / local storage adapters implemented</p>
 <li><a href="classes/_mithic_collections.BloomFilter.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Bloom<wbr/>Filter</span></a></li>
 <li><a href="classes/_mithic_collections.ContentAddressedMapStore.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Content<wbr/>Addressed<wbr/>Map<wbr/>Store</span></a></li>
 <li><a href="classes/_mithic_collections.DualStackDeque.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Dual<wbr/>Stack<wbr/>Deque</span></a></li>
+<li><a href="classes/_mithic_collections.EncodedMap.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Encoded<wbr/>Map</span></a></li>
+<li><a href="classes/_mithic_collections.EncodedSet.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Encoded<wbr/>Set</span></a></li>
 <li><a href="classes/_mithic_collections.GenerationalIdMap.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Generational<wbr/>Id<wbr/>Map</span></a></li>
-<li><a href="classes/_mithic_collections.HashMap.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Hash<wbr/>Map</span></a></li>
-<li><a href="classes/_mithic_collections.HashSet.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Hash<wbr/>Set</span></a></li>
 <li><a href="classes/_mithic_collections.IndexedDBMap.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>IndexedDBMap</span></a></li>
 <li><a href="classes/_mithic_collections.LocalStorageMap.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Local<wbr/>Storage<wbr/>Map</span></a></li>
 <li><a href="classes/_mithic_collections.RateLimiter.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Rate<wbr/>Limiter</span></a></li>
@@ -147,6 +162,7 @@ only in-memory / local storage adapters implemented</p>
 <li><a href="interfaces/_mithic_collections.BloomFilterJSON.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Bloom<wbr/>FilterJSON</span></a></li>
 <li><a href="interfaces/_mithic_collections.BloomFilterOptions.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Bloom<wbr/>Filter<wbr/>Options</span></a></li>
 <li><a href="interfaces/_mithic_collections.Deque.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Deque</span></a></li>
+<li><a href="interfaces/_mithic_collections.EncodedMapOptions.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Encoded<wbr/>Map<wbr/>Options</span></a></li>
 <li><a href="interfaces/_mithic_collections.MaybeAsyncAppendOnlySet.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Append<wbr/>Only<wbr/>Set</span></a></li>
 <li><a href="interfaces/_mithic_collections.MaybeAsyncMap.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Map</span></a></li>
 <li><a href="interfaces/_mithic_collections.MaybeAsyncMapBatch.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Map<wbr/>Batch</span></a></li>
@@ -157,6 +173,7 @@ only in-memory / local storage adapters implemented</p>
 <li><a href="interfaces/_mithic_collections.MaybeAsyncReadonlySetBatch.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Readonly<wbr/>Set<wbr/>Batch</span></a></li>
 <li><a href="interfaces/_mithic_collections.MaybeAsyncSet.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Set</span></a></li>
 <li><a href="interfaces/_mithic_collections.MaybeAsyncSetAddBatch.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Set<wbr/>Add<wbr/>Batch</span></a></li>
+<li><a href="interfaces/_mithic_collections.MaybeAsyncSetBatch.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Set<wbr/>Batch</span></a></li>
 <li><a href="interfaces/_mithic_collections.MaybeAsyncSetDeleteBatch.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Set<wbr/>Delete<wbr/>Batch</span></a></li>
 <li><a href="interfaces/_mithic_collections.PeekableDeque.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Peekable<wbr/>Deque</span></a></li>
 <li><a href="interfaces/_mithic_collections.PeekableQueue.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Peekable<wbr/>Queue</span></a></li>
