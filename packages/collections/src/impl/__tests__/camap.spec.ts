@@ -7,15 +7,14 @@ import { ContentAddressedMapStore } from '../camap.js';
 const BLOCK = new Uint8Array([0x68, 0x65, 0x6C, 0x6C, 0x6F]);
 const BLOCK2 = new Uint8Array([0x65, 0x66, 0x67]);
 const BLOCK_ENCODED = await Block.encode({ value: BLOCK, codec: raw, hasher: sha256 });
+const BLOCK2_ENCODED = await Block.encode({ value: BLOCK2, codec: raw, hasher: sha256 });
 const RANDOM_CID = CID.createV1(0, sha256.digest(new Uint8Array([1])));
 
 describe(ContentAddressedMapStore.name, () => {
-  let backingMap: Map<CID, Uint8Array>;
   let store: ContentAddressedMapStore;
 
   beforeEach(() => {
     store = new ContentAddressedMapStore();
-    backingMap = store['map'] as Map<CID, Uint8Array>;
   });
 
   it('should have correct string tag', () => {
@@ -68,7 +67,7 @@ describe(ContentAddressedMapStore.name, () => {
 
   describe('hasMany', () => {
     it.each([
-      [() => store],
+      [() => new ContentAddressedMapStore()],
       [() => new ContentAddressedMapStore<Uint8Array>(new Map())],
     ])('should return true/false for existent/non-existent blocks', async (storeCreator) => {
       store = storeCreator();
@@ -90,7 +89,7 @@ describe(ContentAddressedMapStore.name, () => {
   describe('put', () => {
     it('should put block to the store and return its CID', async () => {
       const cid = await store.put(BLOCK);
-      expect(backingMap.get(cid)).toEqual(BLOCK);
+      expect(await store['map'].get(cid)).toEqual(BLOCK);
       expect(cid).toEqual(BLOCK_ENCODED.cid);
     });
 
@@ -98,30 +97,21 @@ describe(ContentAddressedMapStore.name, () => {
       const cid1 = await store.put(BLOCK);
       const cid2 = await store.put(BLOCK);
       expect(cid1).toEqual(cid2);
-      expect(backingMap.size).toBe(1);
     });
   });
 
   describe('putMany', () => {
-    it.each([
-      [() => store],
-      [() => new ContentAddressedMapStore<Uint8Array>(new Map())],
-    ])('should put multiple blocks to the store and return their CIDs', async (storeCreator) => {
-      store = storeCreator();
-      backingMap = store['map'] as Map<CID, Uint8Array>;
-
-      const cid1 = await store.put(BLOCK);
-      const cid2 = await store.put(BLOCK2);
-      const expectedCids = [cid1, cid2];
-      backingMap.clear();
-
+    it('should put multiple blocks to the store and return their CIDs', async () => {
+      const expectedCids = [BLOCK_ENCODED.cid, BLOCK2_ENCODED.cid];
       const cids: ContentId[] = [];
-      for await (const [cid] of store.putMany([BLOCK, BLOCK2])) {
+      for await (const [cid, error] of store.putMany([BLOCK, BLOCK2])) {
         cids.push(cid);
+        expect(error).toBeUndefined();
       }
 
       expect(cids).toEqual(expectedCids);
-      expect(backingMap.size).toBe(2);
+      expect(await store['map'].get(BLOCK_ENCODED.cid)).toEqual(BLOCK);
+      expect(await store['map'].get(BLOCK2_ENCODED.cid)).toEqual(BLOCK2);
     });
   });
 
@@ -129,17 +119,16 @@ describe(ContentAddressedMapStore.name, () => {
     it('should delete stored block', async () => {
       const cid = await store.put(BLOCK);
       await store.delete(cid);
-      expect(backingMap.has(cid)).toBe(false);
+      expect(await store['map'].has(cid)).toBe(false);
     });
   });
 
   describe('deleteMany', () => {
     it.each([
-      [() => store],
+      [() => new ContentAddressedMapStore()],
       [() => new ContentAddressedMapStore<Uint8Array>(new Map())],
     ])('should delete multiple blocks from the store', async (storeCreator) => {
       store = storeCreator();
-      backingMap = store['map'] as Map<CID, Uint8Array>;
 
       const cid1 = await store.put(BLOCK);
       const cid2 = await store.put(BLOCK2);
@@ -147,8 +136,8 @@ describe(ContentAddressedMapStore.name, () => {
       for await (const result of store.deleteMany([cid1, cid2])) {
         expect(result).toBeUndefined();
       }
-      expect(backingMap.has(cid1)).toBe(false);
-      expect(backingMap.has(cid2)).toBe(false);
+      expect(await store['map'].has(cid1)).toBe(false);
+      expect(await store['map'].has(cid2)).toBe(false);
     });
   });
 });

@@ -1,4 +1,4 @@
-import { BTreeMap, HashMap, MaybeAsyncMap, MaybeAsyncMapBatch, RangeQueryable } from '@mithic/collections';
+import { BTreeMap, EncodedMap, MaybeAsyncMap, MaybeAsyncMapBatch, RangeQueryable } from '@mithic/collections';
 import {
   AbortOptions, CodedError, ContentId, ErrorCode, MaybePromise, compareBuffers, operationError
 } from '@mithic/commons';
@@ -31,7 +31,7 @@ export class SimpleEventStore<
   public constructor({
     hash,
     tick = atomicHybridTime(),
-    data = new HashMap<Id, E>(new Map(), (id) => id.toString(base64)),
+    data = new EncodedMap<Id, E, string>(new Map(), { encodeKey: (id) => id.toString(base64) }),
     index = new BTreeMap<Uint8Array, Id>(5, compareBuffers),
     eventTypeSeparator = DEFAULT_EVENT_TYPE_SEPARATOR
   }: SimpleEventStoreOptions<E, Id>) {

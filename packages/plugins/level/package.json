@@ -1,0 +1,67 @@
+{
+  "name": "@mithic/level",
+  "version": "0.2.0",
+  "description": "abstract-level adapters for mithic",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "/dist"
+  ],
+  "scripts": {
+    "prepublishOnly": "npm run clean && npm run build && npm test",
+    "clean": "rimraf coverage docs dist",
+    "prebuild": "npm run lint",
+    "build": "npm run tsc && npm run babel",
+    "lint": "eslint src --ext .ts,.tsx",
+    "babel": "babel src -d dist -x '.ts' --out-file-extension .js --root-mode upward",
+    "tsc": "tsc --project tsconfig.build.json --emitDeclarationOnly",
+    "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
+    "doc": "typedoc"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andykswong/mithic.git"
+  },
+  "keywords": [
+    "abstract-level",
+    "mithic",
+    "level",
+    "leveldb",
+    "typescript"
+  ],
+  "author": "Andy K.S. Wong <andykswong@outlook.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/andykswong/mithic/issues"
+  },
+  "homepage": "https://github.com/andykswong/mithic",
+  "dependencies": {
+    "@mithic/collections": "^0.2",
+    "@mithic/commons": "^0.2",
+    "@mithic/messaging": "^0.2",
+    "abstract-level": "^1.0"
+  },
+  "devDependencies": {
+    "@babel/cli": "^7.20",
+    "@babel/core": "^7.20",
+    "@babel/preset-env": "^7.20",
+    "@babel/preset-typescript": "^7.20",
+    "@types/jest": "^29.5",
+    "@types/node": "^18.0",
+    "@typescript-eslint/eslint-plugin": "^5.50",
+    "@typescript-eslint/parser": "^5.50",
+    "babel-jest": "^29.5",
+    "cross-env": "^7.0",
+    "eslint": "^8.30",
+    "jest": "^29.5",
+    "memory-level": "^1.0",
+    "rimraf": "^5.0",
+    "typedoc": "^0.24",
+    "typescript": "^5.0"
+  }
+}

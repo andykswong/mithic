@@ -3,7 +3,7 @@ import { LocalStorageMap } from '../storagemap.js';
 
 describe(LocalStorageMap.name, () => {
   let localStorage: Storage;
-  let map: LocalStorageMap<number, string>;
+  let map: LocalStorageMap<'1' | '2' | '3', string>;
 
   beforeEach(() => {
     localStorage = new MockStorage();
@@ -16,8 +16,8 @@ describe(LocalStorageMap.name, () => {
 
   describe('size', () => {
     it('should return the size of the map', () => {
-      localStorage.setItem('prefix-1', '"value1"');
-      localStorage.setItem('prefix-2', '"value2"');
+      localStorage.setItem('prefix-1', 'value1');
+      localStorage.setItem('prefix-2', 'value2');
 
       const size = map.size;
       expect(size).toEqual(2);
@@ -26,53 +26,53 @@ describe(LocalStorageMap.name, () => {
 
   describe('get', () => {
     it('should get data from local storage with prefix', () => {
-      localStorage.setItem('prefix-123', '"value"');
-      const value = map.get(123);
+      localStorage.setItem('prefix-3', 'value');
+      const value = map.get('3');
       expect(value).toEqual('value');
     });
 
     it('should return undefined for non-existent key', () => {
-      localStorage.setItem('prefix-2', '"value"');
-      const value = map.get(1);
+      localStorage.setItem('prefix-2', 'value');
+      const value = map.get('1');
       expect(value).toBeUndefined();
     });
   });
 
   describe('has', () => {
     it('should return true if prefixed key exists in local storage', () => {
-      localStorage.setItem('prefix-1', '"value"');
-      const value = map.has(1);
+      localStorage.setItem('prefix-1', 'value');
+      const value = map.has('1');
       expect(value).toBe(true)
     });
 
     it('should return false for non-existent key', () => {
-      localStorage.setItem('prefix-2', '"value"');
-      const value = map.has(1);
+      localStorage.setItem('prefix-2', 'value');
+      const value = map.has('1');
       expect(value).toBe(false)
     });
   });
 
   describe('set', () => {
     it('should set data to local storage with prefix', () => {
-      map.set(123, 'value');
-      const value = localStorage.getItem('prefix-123');
-      expect(value).toEqual('"value"');
+      map.set('3', 'value');
+      const value = localStorage.getItem('prefix-3');
+      expect(value).toEqual('value');
     });
   });
 
   describe('delete', () => {
     it('should delete an item from local storage with prefix', () => {
-      localStorage.setItem('prefix-1', '"value"');
+      localStorage.setItem('prefix-1', 'value');
 
-      map.delete(1);
+      map.delete('1');
       expect(localStorage.getItem('prefix-1')).toBeNull();
     });
   });
 
   describe('clear', () => {
     it('should clear all data from local storage with prefix', () => {
-      localStorage.setItem('prefix-1', '"value1"');
-      localStorage.setItem('prefix-2', '"value2"');
+      localStorage.setItem('prefix-1', 'value1');
+      localStorage.setItem('prefix-2', 'value2');
 
       map.clear();
       expect(localStorage.getItem('prefix-1')).toBeNull();
@@ -81,13 +81,13 @@ describe(LocalStorageMap.name, () => {
   });
 
   describe('iterable methods', () => {
-    const expectedKeys = [2, 1];
+    const expectedKeys = ['2', '1'];
     const expectedValues = ['value2', 'value1'];
     const expectedEntries = expectedKeys.map((key, i) => [key, expectedValues[i]]);
 
     beforeEach(() => {
-      localStorage.setItem('prefix-1', '"value1"');
-      localStorage.setItem('prefix-2', '"value2"');
+      localStorage.setItem('prefix-1', 'value1');
+      localStorage.setItem('prefix-2', 'value2');
     });
 
     it('should yield all keys using "keys" method', () => {
@@ -107,7 +107,7 @@ describe(LocalStorageMap.name, () => {
     });
 
     it('should yield all key-value pairs using "forEach" method', () => {
-      const entriesArray: [number, string][] = [];
+      const entriesArray: [string, string][] = [];
       map.forEach((value, key) => {
         entriesArray.push([key, value]);
       });

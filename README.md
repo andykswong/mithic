@@ -14,10 +14,9 @@
 <br />
 
 > **Status: ⚠️ heavily WIP, not for consumption yet.** <br/>
-> only in-memory / local storage adapters implemented
 
 ## Overview
-`mithic` provides the building blocks for creating real-time client-side, server-side and decentralized applications, using [CQRS](https://en.wikipedia.org/wiki/Command%E2%80%93query_separation) architecture with [CRDT](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type) [eventsourcing](https://en.wikipedia.org/wiki/Event_store) for storage and data replication.
+`mithic` provides the building blocks for creating real-time client-side, server-side and decentralized applications, using [CQRS](https://en.wikipedia.org/wiki/Command%E2%80%93query_separation) architecture with [CRDT](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type) [eventsourcing](https://en.wikipedia.org/wiki/Event_store) for storage and data replication. Targeted use cases include business web apps, collaborative editing, multiplayer gaming, etc.
 
 ## Documentation
 See generated TypeDoc: https://andykswong.github.io/mithic/
@@ -39,6 +38,8 @@ For detailed usages, see the following examples:
 
 ## Packages
 
+Core:
+
 |Package|NPM|Description|
 |-------|---|-----------|
 |[`@mithic/collections`](./packages/collections)|[![npm](https://img.shields.io/npm/v/@mithic/collections?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/collections)|collection library|
@@ -46,6 +47,13 @@ For detailed usages, see the following examples:
 |[`@mithic/cqrs`](./packages/cqrs)|[![npm](https://img.shields.io/npm/v/@mithic/cqrs?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/cqrs)|CQRS library|
 |[`@mithic/crdt`](./packages/crdt) (WIP)|[![npm](https://img.shields.io/npm/v/@mithic/crdt?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/crdt)|Eventsourced CRDT store and replication library|
 |[`@mithic/messaging`](./packages/messaging)|[![npm](https://img.shields.io/npm/v/@mithic/messaging?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/messaging)|messaging interface|
+
+Plugins:
+
+|Package|NPM|Description|
+|-------|---|-----------|
+|[`@mithic/level`](./packages/plugins/level) (WIP)|[![npm](https://img.shields.io/npm/v/@mithic/level?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/level)|abstract-level adapters|
+
 
 ## License
 This repository and the code inside it is licensed under the MIT License. Read [LICENSE](./LICENSE) for more information.

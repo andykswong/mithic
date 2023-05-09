@@ -5,7 +5,7 @@ import { SyncMapBatchAdapter } from './batchmap.js';
  * A map that stores data in local storage with prefixed keys.
  * Note that this does not preserve insertion order.
  */
-export class LocalStorageMap<K, V>
+export class LocalStorageMap<K extends string, V extends string>
   extends SyncMapBatchAdapter<K, V>
   implements MaybeAsyncMap<K, V>, MaybeAsyncMapBatch<K, V>, Map<K, V>, Iterable<[K, V]>
 {
@@ -14,14 +14,6 @@ export class LocalStorageMap<K, V>
     protected readonly prefix = '',
     /** The underlying storage. */
     protected readonly storage: Storage = window.localStorage,
-    /** The key encoder. */
-    protected readonly _encodeKey: (key: K) => string = JSON.stringify,
-    /** The key decoder. */
-    protected readonly _decodeKey: (key: string) => K = JSON.parse,
-    /** The value encoder. */
-    protected readonly encodeValue: (value: V) => string = JSON.stringify,
-    /** The value decoder. */
-    protected readonly decodeValue: (value: string) => V = JSON.parse,
   ) {
     super();
   }
@@ -48,7 +40,7 @@ export class LocalStorageMap<K, V>
   }
 
   public set(key: K, value: V): this {
-    this.storage.setItem(this.encodeKey(key), this.encodeValue(value));
+    this.storage.setItem(this.encodeKey(key), value);
     return this;
   }
 
@@ -112,30 +104,21 @@ export class LocalStorageMap<K, V>
   }
 
   private encodeKey(key: K): string {
-    return this.prefix + this._encodeKey(key);
+    return this.prefix + key;
   }
 
   private decodeKey(key: string | null): K | undefined {
     if (!key?.startsWith(this.prefix)) {
       return;
     }
-
-    try {
-      return this._decodeKey(key.substring(this.prefix.length));
-    } catch (_) {
-      return;
-    }
+    return key.substring(this.prefix.length) as K;
   }
 
   private getValue(keyString: string | null): V | undefined {
-    const valueString = keyString && this.storage.getItem(keyString);
-    if (valueString === null) {
+    const value = keyString && this.storage.getItem(keyString);
+    if (value === null) {
       return;
     }
-    try {
-      return this.decodeValue(valueString);
-    } catch (_) {
-      return;
-    }
+    return value as V;
   }
 }

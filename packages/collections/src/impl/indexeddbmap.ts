@@ -3,7 +3,7 @@ import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
 import { RangeQueryOptions, RangeQueryable } from '../query.js';
 
 /** A map that stores data in IndexedDB. */
-export class IndexedDBMap<K, V>
+export class IndexedDBMap<K extends IDBValidKey, V>
   implements MaybeAsyncMap<K, V>, MaybeAsyncMapBatch<K, V>, AsyncIterable<[K, V]>, RangeQueryable<K, V>, Startable {
   private db?: IDBDatabase;
 
@@ -11,11 +11,7 @@ export class IndexedDBMap<K, V>
     /** Name of IndexedDB database to use. */
     private readonly dbName: string,
     /** Name of IndexedDB store to use. */
-    private readonly storeName: string,
-    /** The key encoder. */
-    protected readonly encodeKey: (key: K) => IDBValidKey = (k) => k as IDBValidKey,
-    /** The key decoder. */
-    protected readonly decodeKey: (key: IDBValidKey) => K = (k) => k as K,
+    private readonly storeName: string
   ) {
   }
 
@@ -35,7 +31,7 @@ export class IndexedDBMap<K, V>
   }
 
   public async get(key: K): Promise<V | undefined> {
-    const request = (await this.openObjectStore()).get(this.encodeKey(key));
+    const request = (await this.openObjectStore()).get(key);
     const result = await asPromise(request);
     return result;
   }
@@ -50,12 +46,12 @@ export class IndexedDBMap<K, V>
   }
 
   public async set(key: K, value: V): Promise<void> {
-    const request = (await this.openObjectStore(true)).put(value, this.encodeKey(key));
+    const request = (await this.openObjectStore(true)).put(value, key);
     await asPromise(request);
   }
 
   public async delete(key: K): Promise<void> {
-    const request = (await this.openObjectStore(true)).delete(this.encodeKey(key));
+    const request = (await this.openObjectStore(true)).delete(key);
     await asPromise(request);
   }
 
@@ -63,8 +59,8 @@ export class IndexedDBMap<K, V>
     options?.signal?.throwIfAborted();
     const store = await this.openObjectStore();
     for (const key of keys) {
-      yield asPromise(store.get(this.encodeKey(key)));
       options?.signal?.throwIfAborted();
+      yield asPromise(store.get(key));
     }
   }
 
@@ -72,8 +68,8 @@ export class IndexedDBMap<K, V>
     options?.signal?.throwIfAborted();
     const store = await this.openObjectStore();
     for (const key of keys) {
-      yield (await asPromise(store.get(this.encodeKey(key)))) !== void 0;
       options?.signal?.throwIfAborted();
+      yield (await asPromise(store.get(key))) !== void 0;
     }
   }
 
@@ -81,13 +77,13 @@ export class IndexedDBMap<K, V>
     options?.signal?.throwIfAborted();
     const store = await this.openObjectStore(true);
     for (const [key, value] of entries) {
+      options?.signal?.throwIfAborted();
       try {
-        await asPromise(store.put(value, this.encodeKey(key)));
+        await asPromise(store.put(value, key));
         yield;
       } catch (error) {
         yield operationError('Failed to set value', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
       }
-      options?.signal?.throwIfAborted();
     }
   }
 
@@ -95,31 +91,31 @@ export class IndexedDBMap<K, V>
     options?.signal?.throwIfAborted();
     const store = await this.openObjectStore(true);
     for (const key of keys) {
+      options?.signal?.throwIfAborted();
       try {
-        await asPromise(store.delete(this.encodeKey(key)));
+        await asPromise(store.delete(key));
         yield;
       } catch (error) {
         yield operationError('Failed to delete key', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
       }
-      options?.signal?.throwIfAborted();
     }
   }
 
   public async *entries(options?: RangeQueryOptions<K>): AsyncIterableIterator<[K, V]> {
     const request = (await this.openObjectStore())
-      .openCursor(...toCursorOptions(options, this.encodeKey));
+      .openCursor(...toCursorOptions(options));
     for await (const cursor of cursorAsIterable(request, options?.limit)) {
       options?.signal?.throwIfAborted();
-      yield [this.decodeKey(cursor.key), cursor.value];
+      yield [cursor.key as K, cursor.value];
     }
   }
 
   public async *keys(options?: RangeQueryOptions<K>): AsyncIterableIterator<K> {
     const request = (await this.openObjectStore())
-      .openKeyCursor(...toCursorOptions(options, this.encodeKey));
+      .openKeyCursor(...toCursorOptions(options));
     for await (const cursor of cursorAsIterable(request, options?.limit)) {
       options?.signal?.throwIfAborted();
-      yield this.decodeKey(cursor.key);
+      yield cursor.key as K;
     }
   }
 
@@ -174,19 +170,16 @@ async function* cursorAsIterable<T extends IDBCursor>(
   }
 }
 
-function toCursorOptions<K>(
-  options: RangeQueryOptions<K> = {},
-  encodeKey: (key: K) => IDBValidKey
-): [IDBKeyRange | null, IDBCursorDirection] {
+function toCursorOptions<K>(options: RangeQueryOptions<K> = {}): [IDBKeyRange | null, IDBCursorDirection] {
   const lower = options.gte ?? options.gt;
   const lowerOpen = options.gte === void 0;
   const upper = options.lte ?? options.lt;
   const upperOpen = options.lte === void 0;
 
   const bound = lower !== void 0 ? upper !== void 0 ?
-    IDBKeyRange.bound(encodeKey(lower), encodeKey(upper), lowerOpen, upperOpen) :
-    IDBKeyRange.lowerBound(encodeKey(lower), lowerOpen) :
-    upper !== void 0 ? IDBKeyRange.upperBound(encodeKey(upper), upperOpen) : null;
+    IDBKeyRange.bound(lower, upper, lowerOpen, upperOpen) :
+    IDBKeyRange.lowerBound(lower, lowerOpen) :
+    upper !== void 0 ? IDBKeyRange.upperBound(upper, upperOpen) : null;
 
   return [bound, options?.reverse ? 'prev' : 'next'];
 }

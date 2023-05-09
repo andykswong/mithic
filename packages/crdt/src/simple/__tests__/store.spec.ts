@@ -1,5 +1,5 @@
-import { BTreeMap, HashMap } from '@mithic/collections';
-import { ContentId, ErrorCode, compareBuffers, operationError } from '@mithic/commons';
+import { BTreeMap, EncodedMap } from '@mithic/collections';
+import { ContentId, ErrorCode, operationError } from '@mithic/commons';
 import { SimpleEventStore } from '../store.js';
 import { MultihashDigest, MultibaseEncoder } from 'multiformats';
 import { base64 } from 'multiformats/bases/base64';
@@ -37,13 +37,13 @@ const EVENT2: EventType = { type: TYPE2, payload: [2, ID2], meta: { parents: [ID
 
 describe(SimpleEventStore.name, () => {
   let store: SimpleEventStore<Id, EventType>;
-  let data: HashMap<Id, EventType>;
+  let data: EncodedMap<Id, EventType, string>;
   let index: BTreeMap<Uint8Array, Id>;
 
   beforeEach(async () => {
-    data = new HashMap(new Map(), (id) => id.toString());
-    index = new BTreeMap(5, compareBuffers);
-    store = new SimpleEventStore({ hash: (event) => event.payload[1], data, index });
+    store = new SimpleEventStore({ hash: (event) => event.payload[1] });
+    data = store['data'] as EncodedMap<Id, EventType, string>;
+    index = store['index'] as BTreeMap<Uint8Array, Id>;
 
     await store.put(EVENT1);
     await store.put(EVENT2);
@@ -72,7 +72,7 @@ describe(SimpleEventStore.name, () => {
     it('should return the key of event if already exists', async () => {
       const key = await store.put(EVENT1);
       expect(key).toEqual(ID1);
-      expect(data.size).toEqual(2);
+      expect((data.map as Map<string, EventType>).size).toEqual(2);
     });
 
     it('should throw an error if there are missing dependencies', async () => {

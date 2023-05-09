@@ -3,7 +3,6 @@ import { MaybeAsyncReadonlySet, MaybeAsyncReadonlySetBatch, MaybeAsyncSetDeleteB
 
 /** A readonly Map that may have async operations. */
 export interface MaybeAsyncReadonlyMap<K, V> extends MaybeAsyncReadonlySet<K> {
-
   /** Gets a value by key from the map. */
   get(key: K, options?: AbortOptions): MaybePromise<V | undefined>;
 
@@ -22,14 +21,12 @@ export interface MaybeAsyncMap<K, V> extends MaybeAsyncReadonlyMap<K, V> {
 
 /** A map store with auto-generated key. */
 export interface AutoKeyMap<K = ContentId, V = Uint8Array> extends AppendOnlyAutoKeyMap<K, V> {
-
   /** Deletes the value with given key. */
   delete(key: K, options?: AbortOptions): MaybePromise<void>;
 }
 
 /** An append-only map store with auto-generated key. */
 export interface AppendOnlyAutoKeyMap<K = ContentId, V = Uint8Array> extends MaybeAsyncReadonlyMap<K, V> {
-
   /** Puts given value and returns its key. */
   put(value: V, options?: AbortOptions): MaybePromise<K>;
 }

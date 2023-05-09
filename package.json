@@ -47,7 +47,8 @@
     "@mithic/commons": "^0.2",
     "@mithic/cqrs": "^0.2",
     "@mithic/crdt": "^0.2",
-    "@mithic/messaging": "^0.2"
+    "@mithic/messaging": "^0.2",
+    "@mithic/level": "^0.2"
   },
   "devDependencies": {
     "rimraf": "^5.0",
@@ -59,6 +60,7 @@
     "./packages/messaging",
     "./packages/cqrs",
     "./packages/crdt",
+    "./packages/plugins/level",
     "./packages/examples/*"
   ]
 }

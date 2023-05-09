@@ -6,18 +6,16 @@ import { BlockCodec, CID, SyncMultihashHasher } from 'multiformats';
 import { base64 } from 'multiformats/bases/base64';
 import * as raw from 'multiformats/codecs/raw';
 import { AutoKeyMap, AutoKeyMapBatch, MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
-import { HashMap } from './hashmap.js';
+import { EncodedMap } from './encodedmap.js';
 
-/**
- * A content-addressable map store that persists values in a backing {@link MaybeAsyncMap}.
- */
+/** A content-addressable map store that persists values in a backing {@link MaybeAsyncMap}. */
 export class ContentAddressedMapStore<T = Uint8Array>
   implements AutoKeyMap<ContentId, T>, AutoKeyMapBatch<ContentId, T>
 {
   public constructor(
-    /** The underlying storage. */
-    protected readonly map: MaybeAsyncMap<ContentId, T> & Partial<MaybeAsyncMapBatch<ContentId, T>>
-      = new HashMap<ContentId, T>(new Map(), (cid) => cid.toString(base64)),
+    /** The underlying map. */
+    public readonly map: MaybeAsyncMap<ContentId, T> & Partial<MaybeAsyncMapBatch<ContentId, T>>
+      = new EncodedMap<ContentId, T, string>(new Map(), { encodeKey: (cid) => cid.toString(base64) }),
     /** Data binary encoding to use. */
     protected readonly blockCodec: BlockCodec<number, T> = raw as unknown as BlockCodec<number, T>,
     /** Hash function to use for generating CIDs for block data. */
