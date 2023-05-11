@@ -60,6 +60,7 @@
     "./packages/messaging",
     "./packages/cqrs",
     "./packages/crdt",
+    "./packages/plugins/ipfs",
     "./packages/plugins/level",
     "./packages/examples/*"
   ]
