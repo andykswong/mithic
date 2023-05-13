@@ -114,6 +114,32 @@ export class LevelMap<K, V, T = any>
     }
   }
 
+  public async * updateMany(entries: Iterable<[K, V | undefined]>): AsyncIterableIterator<Error | undefined> {
+    let batch = this.level.batch();
+    for (const [key, value] of entries) {
+      if (value === void 0) {
+        batch = batch.del(key);
+      } else {
+        batch = batch.put(key, value);
+      }
+    }
+
+    let error: unknown | undefined;
+    try {
+      await batch.write();
+    } catch (e) {
+      error = e;
+    }
+
+    for (const [key] of entries) {
+      if (error) {
+        yield operationError('Failed to update', ErrorCode.OpFailed, key, error);
+      } else {
+        yield;
+      }
+    }
+  }
+
   public async * keys(options: RangeQueryOptions<K> = {}): AsyncIterableIterator<K> {
     yield* this.level.keys(options);
   }

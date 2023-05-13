@@ -1,4 +1,4 @@
-import { BTreeMap, EncodedMap } from '@mithic/collections';
+import { BTreeMap, ContentAddressedMapStore } from '@mithic/collections';
 import { ContentId, ErrorCode, operationError } from '@mithic/commons';
 import { SimpleEventStore } from '../store.js';
 import { MultihashDigest, MultibaseEncoder } from 'multiformats';
@@ -36,13 +36,15 @@ const EVENT1: EventType = { type: TYPE1, payload: [1, ID1], meta: { parents: [] 
 const EVENT2: EventType = { type: TYPE2, payload: [2, ID2], meta: { parents: [ID1], root: ID1 } };
 
 describe(SimpleEventStore.name, () => {
-  let store: SimpleEventStore<Id, EventType>;
-  let data: EncodedMap<Id, EventType, string>;
+  let store: SimpleEventStore<EventType>;
+  let data: ContentAddressedMapStore<EventType>;
   let index: BTreeMap<Uint8Array, Id>;
 
   beforeEach(async () => {
-    store = new SimpleEventStore({ hash: (event) => event.payload[1] });
-    data = store['data'] as EncodedMap<Id, EventType, string>;
+    store = new SimpleEventStore({
+      data: new ContentAddressedMapStore(void 0, (event) => event.payload[1])
+    });
+    data = store['data'] as ContentAddressedMapStore<EventType>;
     index = store['index'] as BTreeMap<Uint8Array, Id>;
 
     await store.put(EVENT1);
@@ -72,7 +74,8 @@ describe(SimpleEventStore.name, () => {
     it('should return the key of event if already exists', async () => {
       const key = await store.put(EVENT1);
       expect(key).toEqual(ID1);
-      expect((data.map as Map<string, EventType>).size).toEqual(2);
+      const event = await store.get(key);
+      expect(event).toBe(EVENT1);
     });
 
     it('should throw an error if there are missing dependencies', async () => {
@@ -133,6 +136,16 @@ describe(SimpleEventStore.name, () => {
         results.push(event);
       }
       expect(results).toEqual([EVENT1, EVENT2, undefined]);
+    });
+  });
+
+  
+  describe('getKey', () => {
+    it('should return the correct key', async () => {
+      const key = new Id(new Uint8Array([1, 3, 5]));
+      const event: EventType = { type: TYPE1, payload: [3, key], meta: { root: ID1, parents: [ID1] } };
+      const result = await store.getKey(event);
+      expect(key).toEqual(result);
     });
   });
 

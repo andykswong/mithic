@@ -48,8 +48,6 @@ describe(Libp2pPubSub.name, () => {
 
   describe('publish', () => {
     it('should publish to underlying pubsub', async () => {
-      expect.assertions(1);
-
       const publishSpy = jest.spyOn(mockPubSub, 'publish');
       const peers = [PEER_ID];
       mockPubSub.subscribers.set(TOPIC, peers);

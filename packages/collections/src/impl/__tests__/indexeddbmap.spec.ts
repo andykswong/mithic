@@ -162,6 +162,23 @@ describe(IndexedDBMap.name, () => {
     });
   });
 
+  describe('updateMany', () => {
+    it('should set or delete values', async () => {
+      for await (const error of dbMap.setMany([['foo', '9'], ['bar', '10'], ['baz', '11']])) {
+        expect(error).toBeUndefined();
+      }
+
+      for await (const error of dbMap.updateMany([['foo', '123'], ['bar', void 0], ['baz', '789']])) {
+        expect(error).toBeUndefined();
+      }
+      const values = [];
+      for await (const value of dbMap.getMany(['foo', 'bar', 'baz'])) {
+        values.push(value);
+      }
+      expect(values).toEqual(['123', undefined, '789']);
+    });
+  });
+
   describe('iteration', () => {
     const ENTRIES: [string, string][] = [
       ['a', '1'],

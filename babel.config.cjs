@@ -12,8 +12,8 @@ module.exports = api => {
       setSpreadProperties: true,
     },
     babelrcRoots: [
-      '.',
-      'packages/*',
+      './',
+      'packages/**/',
     ],
     comments: false,
     ignore: [

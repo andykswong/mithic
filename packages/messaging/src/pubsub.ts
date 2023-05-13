@@ -21,7 +21,7 @@ export interface PubSub<Msg = Uint8Array, Peer = unknown> extends Closeable {
   /** Publishes a message to given `topic`. */
   publish(topic: string, message: Msg, options?: AbortOptions): MaybePromise<void>;
 
-  /** Returns the list of topics this instance is subscribed to. */
+  /** Returns the list of known topics. */
   topics(options?: AbortOptions): MaybePromise<Iterable<string>>;
 }
 
@@ -33,7 +33,7 @@ export interface PeerAwarePubSub<Msg = Uint8Array, Peer = unknown>
 
 /** Peer subscription state queries for {@link PeerAwarePubSub}. */
 export interface PubSubPeerState<Peer = unknown> {
-  /** Returns the list of topics this instance is subscribed to. */
+  /** Returns the list of known topics. */
   topics(options?: AbortOptions): MaybePromise<Iterable<string>>;
 
   /** Returns the list of peers that are subscribed to one topic. */

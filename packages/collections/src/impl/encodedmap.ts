@@ -102,6 +102,36 @@ export class EncodedMap<K, V, TK = K, TV = V> implements MaybeAsyncMap<K, V>, Ma
     }
   }
 
+  public async * updateMany(
+    entries: Iterable<[K, V | undefined]>, options?: AbortOptions
+  ): AsyncIterableIterator<Error | undefined> {
+    options?.signal?.throwIfAborted();
+    if (this.map.updateMany) {
+      yield* this.map.updateMany(
+        [...entries].map(
+          ([key, value]) => [this.encodeKey(key), value === void 0 ? void 0 : this.encodeValue(value)]
+        ),
+        options
+      );
+      return;
+    }
+
+    for (const [key, value] of entries) {
+      options?.signal?.throwIfAborted();
+      try {
+        if (value !== void 0) {
+          await this.set(key, value, options);
+        } else {
+          await this.delete(key, options);
+        }
+        yield;
+      } catch (error) {
+        yield operationError('Failed to update value', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+      }
+    }
+  }
+
+
   public get [Symbol.toStringTag](): string {
     return EncodedMap.name;
   }

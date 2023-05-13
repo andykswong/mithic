@@ -90,4 +90,8 @@ export class IpfsMap<T = Uint8Array>
       }
     }
   }
+
+  public get [Symbol.toStringTag](): string {
+    return IpfsMap.name;
+  }
 }

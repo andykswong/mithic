@@ -41,7 +41,7 @@ export class IpfsPubSub implements PeerAwarePubSub<Uint8Array, PeerId> {
     this.monitor?.start();
     this.handlers.set(topic, handler);
     if (options?.validator) {
-      this.validators.set(topic, options.validator)
+      this.validators.set(topic, options.validator);
     }
     await this.ipfs.pubsub.subscribe(topic, this.onMessage, options);
   }

@@ -82,8 +82,6 @@ describe(IpfsPubSub.name, () => {
 
   describe('topics/subscribers', () => {
     it('should return subscribed topics and subscribers from underlying pubsub', async () => {
-      expect.assertions(2);
-
       const peers = [PEER_ID];
       mockIpfs.pubsub.subscribers.set(TOPIC, peers);
 

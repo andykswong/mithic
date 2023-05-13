@@ -5,7 +5,8 @@
   "name": "mithic",
   "entryPointStrategy": "packages",
   "entryPoints": [
-    "packages/*"
+    "packages/*",
+    "packages/plugins/*"
   ],
   "includeVersion": true,
   "readme": "./README.md"

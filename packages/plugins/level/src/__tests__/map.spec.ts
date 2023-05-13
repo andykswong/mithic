@@ -134,6 +134,25 @@ describe(LevelMap.name, () => {
     });
   });
 
+  describe('updateMany', () => {
+    it('should set or delete entries', async () => {
+      const entries: [string, string][] = [['a', '1'], ['b', '2']];
+      for await (const error of map.setMany(entries)) {
+        expect(error).toBeUndefined();
+      }
+
+      for await (const error of map.updateMany([['a', '3'], ['b', void 0], ['c', '4']])) {
+        expect(error).toBeUndefined();
+      }
+
+      const results = [];
+      for await (const value of map.getMany(['a', 'b', 'c'])) {
+        results.push(value);
+      }
+      expect(results).toEqual(['3', void 0, '4']);
+    });
+  });
+
   describe('keys', () => {
     it('should return the keys in the range specified', async () => {
       const keys = ['key1', 'key2', 'key3'];

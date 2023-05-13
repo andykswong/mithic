@@ -22,7 +22,7 @@ describe(IpfsMap.name, () => {
     }
   };
 
-  let repo: IpfsMap;
+  let map: IpfsMap;
   let mockIpfs: IPFS;
 
   afterAll(() => {
@@ -34,7 +34,11 @@ describe(IpfsMap.name, () => {
     _mockIpfs.block.data.set(DATA_CID.toString(), [DATA_CID, DATA]);
 
     mockIpfs = _mockIpfs;
-    repo = new IpfsMap(mockIpfs, mockCodec, identity);
+    map = new IpfsMap(mockIpfs, mockCodec, identity);
+  });
+
+  it('should have the correct string tag', () => {
+    expect(`${map}`).toBe(`[object ${IpfsMap.name}]`);
   });
 
   describe('get', () => {
@@ -42,12 +46,12 @@ describe(IpfsMap.name, () => {
       const getSpy = jest.spyOn(mockIpfs.block, 'get');
       const options = { signal: AbortSignal.timeout(1000) };
 
-      expect(await repo.get(DATA_CID, options)).toBe(DATA);
+      expect(await map.get(DATA_CID, options)).toBe(DATA);
       expect(getSpy).toHaveBeenCalledWith(DATA_CID, options);
     });
 
     it('should return undefined if not exist', async () => {
-      expect(await repo.get(CID.createV1(0, identity.digest(new Uint8Array([1]))), {})).toBeUndefined();
+      expect(await map.get(CID.createV1(0, identity.digest(new Uint8Array([1]))), {})).toBeUndefined();
     });
   });
 
@@ -56,13 +60,13 @@ describe(IpfsMap.name, () => {
       const getSpy = jest.spyOn(mockIpfs.block, 'get');
       const options = { signal: AbortSignal.timeout(1000) };
 
-      expect(await repo.has(DATA_CID, options)).toBe(true);
+      expect(await map.has(DATA_CID, options)).toBe(true);
       expect(getSpy).toHaveBeenCalledWith(DATA_CID, options);
     });
 
     it('should return false if CID is not found', async () => {
       expect.assertions(1);
-      expect(await repo.has(CID.createV1(0, identity.digest(new Uint8Array([1]))), {})).toBe(false);
+      expect(await map.has(CID.createV1(0, identity.digest(new Uint8Array([1]))), {})).toBe(false);
     });
   });
 
@@ -72,7 +76,7 @@ describe(IpfsMap.name, () => {
       const putSpy = jest.spyOn(mockIpfs.block, 'put');
 
       const options = { signal: AbortSignal.timeout(1000) };
-      const link = await repo.put(DATA, options);
+      const link = await map.put(DATA, options);
 
       expect(link).toBe(DATA_CID);
       expect(encodeSpy).toBeCalledWith(DATA);
@@ -85,13 +89,13 @@ describe(IpfsMap.name, () => {
       const rmSpy = jest.spyOn(mockIpfs.block, 'rm');
 
       const options = { signal: AbortSignal.timeout(1000) };
-      await repo.delete(DATA_CID, options);
+      await map.delete(DATA_CID, options);
 
       expect(rmSpy).toHaveBeenCalledWith(DATA_CID, { ...options, force: true });
     });
 
     it('should throw errors returned from IPFS.block.rm', async () => {
-      await expect(repo.delete(CID2)).rejects.toThrow('mismatched data');
+      await expect(map.delete(CID2)).rejects.toThrow('mismatched data');
     });
   });
 
@@ -101,7 +105,7 @@ describe(IpfsMap.name, () => {
       const options = { signal: AbortSignal.timeout(1000) };
 
       const results = [];
-      for await (const result of repo.getMany([DATA_CID, CID2], options)) {
+      for await (const result of map.getMany([DATA_CID, CID2], options)) {
         results.push(result);
       }
 
@@ -117,7 +121,7 @@ describe(IpfsMap.name, () => {
       const options = { signal: AbortSignal.timeout(1000) };
 
       const results = [];
-      for await (const result of repo.hasMany([DATA_CID, CID2], options)) {
+      for await (const result of map.hasMany([DATA_CID, CID2], options)) {
         results.push(result);
       }
 
@@ -136,7 +140,7 @@ describe(IpfsMap.name, () => {
       const cid2 = CID.createV1(mockCodec.code, identity.digest(data2));
 
       const results = [];
-      for await (const result of repo.putMany([DATA, data2], options)) {
+      for await (const result of map.putMany([DATA, data2], options)) {
         results.push(result);
       }
 
@@ -156,7 +160,7 @@ describe(IpfsMap.name, () => {
       const options = { signal: AbortSignal.timeout(1000) };
 
       const results = [];
-      for await (const error of repo.deleteMany([DATA_CID, CID2], options)) {
+      for await (const error of map.deleteMany([DATA_CID, CID2], options)) {
         results.push(error);
       }
 

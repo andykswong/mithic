@@ -4,7 +4,7 @@
   "parserOptions": {
     "project": [
       "./tsconfig.json",
-      "./packages/*/tsconfig.json"
+      "./packages/**/tsconfig.json"
     ],
     "sourceType": "module"
   },
@@ -23,7 +23,7 @@
     "jest": true
   },
   "ignorePatterns": [
-    "/packages/*/dist/"
+    "/packages/**/dist/"
   ],
   "rules": {
     "no-unused-vars": "off",

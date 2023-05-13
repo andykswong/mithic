@@ -54,6 +54,7 @@ Plugins:
 |-------|---|-----------|
 |[`@mithic/ipfs`](./packages/plugins/ipfs)|[![npm](https://img.shields.io/npm/v/@mithic/ipfs?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/ipfs)|IPFS and libp2p adapters|
 |[`@mithic/level`](./packages/plugins/level)|[![npm](https://img.shields.io/npm/v/@mithic/level?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/level)|abstract-level adapters|
+|[`@mithic/redis`](./packages/plugins/redis)|[![npm](https://img.shields.io/npm/v/@mithic/redis?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/redis)|Redis adapters|
 
 
 ## License

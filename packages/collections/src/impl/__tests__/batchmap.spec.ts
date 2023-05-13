@@ -14,62 +14,102 @@ describe(SyncMapBatchAdapter.name, () => {
     }
   });
 
-  it('should get many values synchronously from the map', () => {
-    const keys = DATA.map(([key]) => key);
-    const values = [...adapter.getMany(keys)];
-    expect(values).toEqual(DATA.map(([, value]) => value));
-  });
-
-  it('should check if it has many values synchronously from the map', () => {
-    const keys = [...DATA.map(([key]) => key), 4];
-    const values = [...adapter.hasMany(keys)];
-    expect(values).toEqual([...DATA.map(() => true), false]);
-  });
-
-  it('should set many values synchronously in the map', () => {
-    const entries = [[3, 'x'], [4, 'y'], [5, 'z']] as Iterable<[number, string]>;
-    const errors = [...adapter.setMany(entries)];
-    expect(errors).toEqual([void 0, void 0, void 0]);
-    expect(adapter.map.size).toBe(5);
-  });
-
-  it('should handle errors while setting many values synchronously in the map', () => {
-    const entries = [[1, 'x'], [2, 'y'], [3, 'z']] as Iterable<[number, string]>;
-    const error = new Error('Failed');
-    adapter.set = jest.fn(key => {
-      if (key === 2) {
-        throw error;
-      }
+  describe('getMany', () => {
+    it('should get many values synchronously from the map', () => {
+      const keys = DATA.map(([key]) => key);
+      const values = [...adapter.getMany(keys)];
+      expect(values).toEqual(DATA.map(([, value]) => value));
     });
-    const errors = [...adapter.setMany(entries)];
-    expect(errors).toEqual([
-      void 0,
-      operationError('Failed to set value', ErrorCode.OpFailed, 2, error),
-      void 0
-    ]);
   });
 
-  it('should delete many values synchronously from the map', () => {
-    const keys = DATA.map(([key]) => key);
-    const errors = [...adapter.deleteMany(keys)];
-    expect(errors).toEqual([void 0, void 0, void 0]);
-    expect(adapter.map.size).toBe(0);
-  });
-
-  it('should handle errors while deleting many values synchronously from the map', () => {
-    const keys = [1, 2, 3];
-    const error = new Error('Failed');
-    adapter.delete = jest.fn(key => {
-      if (key === 3) {
-        throw error;
-      }
+  describe('hasMany', () => {
+    it('should check if it has many values synchronously from the map', () => {
+      const keys = [...DATA.map(([key]) => key), 4];
+      const values = [...adapter.hasMany(keys)];
+      expect(values).toEqual([...DATA.map(() => true), false]);
     });
-    const errors = [...adapter.deleteMany(keys)];
-    expect(errors).toEqual([
-      void 0, void 0,
-      operationError('Failed to delete key', ErrorCode.OpFailed, 3, error),
-    ]);
   });
+
+  describe('setMany', () => {
+    it('should set many values synchronously in the map', () => {
+      const entries = [[3, 'x'], [4, 'y'], [5, 'z']] as [number, string][];
+      const errors = [...adapter.setMany(entries)];
+      expect(errors).toEqual([void 0, void 0, void 0]);
+      expect(adapter.map.size).toBe(5);
+      expect(adapter.map.get(3)).toBe('x');
+      expect(adapter.map.get(4)).toBe('y');
+      expect(adapter.map.get(5)).toBe('z');
+    });
+
+    it('should handle errors while setting many values synchronously in the map', () => {
+      const entries = [[1, 'x'], [2, 'y'], [3, 'z']] as [number, string][];
+      const error = new Error('Failed');
+      adapter.set = jest.fn(key => {
+        if (key === 2) {
+          throw error;
+        }
+      });
+      const errors = [...adapter.setMany(entries)];
+      expect(errors).toEqual([
+        void 0,
+        operationError('Failed to set value', ErrorCode.OpFailed, 2, error),
+        void 0
+      ]);
+    });
+  });
+
+  describe('deleteMany', () => {
+    it('should delete many values synchronously from the map', () => {
+      const keys = DATA.map(([key]) => key);
+      const errors = [...adapter.deleteMany(keys)];
+      expect(errors).toEqual([void 0, void 0, void 0]);
+      expect(adapter.map.size).toBe(0);
+    });
+
+    it('should handle errors while deleting many values synchronously from the map', () => {
+      const keys = [1, 2, 3];
+      const error = new Error('Failed');
+      adapter.delete = jest.fn(key => {
+        if (key === 3) {
+          throw error;
+        }
+      });
+      const errors = [...adapter.deleteMany(keys)];
+      expect(errors).toEqual([
+        void 0, void 0,
+        operationError('Failed to delete key', ErrorCode.OpFailed, 3, error),
+      ]);
+    });
+  });
+
+  describe('updateMany', () => {
+    it('should set or delete many values synchronously in the map', () => {
+      const entries = [[3, 'x'], [1], [5, 'z']] as [number, string | undefined][];
+      const errors = [...adapter.updateMany(entries)];
+      expect(errors).toEqual([void 0, void 0, void 0]);
+      expect(adapter.map.size).toBe(3);
+      expect(adapter.map.get(3)).toBe('x');
+      expect(adapter.map.has(1)).toBe(false);
+      expect(adapter.map.get(5)).toBe('z');
+    });
+
+    it('should handle errors while setting many values synchronously in the map', () => {
+      const entries = [[1, 'x'], [2], [3, 'z']] as [number, string | undefined][];
+      const error = new Error('Failed');
+      adapter.set = jest.fn(key => {
+        if (key === 3) {
+          throw error;
+        }
+      });
+      const errors = [...adapter.updateMany(entries)];
+      expect(errors).toEqual([
+        void 0,
+        void 0,
+        operationError('Failed to update key', ErrorCode.OpFailed, 3, error),
+      ]);
+    });
+  });
+
 });
 
 class TestAdapter extends SyncMapBatchAdapter<number, string> {

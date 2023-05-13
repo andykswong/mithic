@@ -29,6 +29,9 @@ export interface AutoKeyMap<K = ContentId, V = Uint8Array> extends AppendOnlyAut
 export interface AppendOnlyAutoKeyMap<K = ContentId, V = Uint8Array> extends MaybeAsyncReadonlyMap<K, V> {
   /** Puts given value and returns its key. */
   put(value: V, options?: AbortOptions): MaybePromise<K>;
+
+  /** Gets the key of given value. */
+  getKey(value: V, options?: AbortOptions): MaybePromise<K>;
 }
 
 /** Batch APIs for a {@link MaybeAsyncReadonlyMap}. */
@@ -43,9 +46,15 @@ export interface MaybeAsyncMapSetBatch<K, V> {
   setMany(entries: Iterable<[K, V]>, options?: AbortOptions): MaybeAsyncIterableIterator<Error | undefined>;
 }
 
+/** Batch update API for a {@link MaybeAsyncMap}. */
+export interface MaybeAsyncMapUpdateBatch<K, V> {
+  /** Sets or deletes given list of entries. */
+  updateMany(entries: Iterable<[K, V | undefined]>, options?: AbortOptions): MaybeAsyncIterableIterator<Error | undefined>;
+}
+
 /** Batch APIs for a {@link MaybeAsyncMap}. */
-export interface MaybeAsyncMapBatch<K, V>
-  extends MaybeAsyncReadonlyMapBatch<K, V>, MaybeAsyncMapSetBatch<K, V>, MaybeAsyncSetDeleteBatch<K> {
+export interface MaybeAsyncMapBatch<K, V> extends MaybeAsyncReadonlyMapBatch<K, V>, MaybeAsyncMapSetBatch<K, V>,
+  MaybeAsyncSetDeleteBatch<K>, MaybeAsyncMapUpdateBatch<K, V> {
 }
 
 /** Batch put API for a {@link AutoKeyMap}. */

@@ -94,4 +94,17 @@ describe.each([
       expect(await map.has(K2)).toBe(false);
     });
   });
+
+  describe('updateMany', () => {
+    it('should set or delete values', async () => {
+      const value1 = 11;
+      const value3 = 3;
+      for await (const error of map.updateMany([[K1, value1], [K2, void 0], [K3, value3]])) {
+        expect(error).toBeUndefined();
+      }
+      expect(await map.get(K1)).toBe(value1);
+      expect(await map.has(K2)).toBe(false);
+      expect(await map.get(K3)).toBe(value3);
+    });
+  });
 });

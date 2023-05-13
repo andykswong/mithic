@@ -2,7 +2,7 @@ import {
   AbortOptions, ContentId, MaybePromise, maybeAsync, sha256, CodedError, MaybeAsyncIterableIterator,
   operationError, ErrorCode
 } from '@mithic/commons';
-import { BlockCodec, CID, SyncMultihashHasher } from 'multiformats';
+import { CID } from 'multiformats';
 import { base64 } from 'multiformats/bases/base64';
 import * as raw from 'multiformats/codecs/raw';
 import { AutoKeyMap, AutoKeyMapBatch, MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
@@ -16,29 +16,31 @@ export class ContentAddressedMapStore<T = Uint8Array>
     /** The underlying map. */
     public readonly map: MaybeAsyncMap<ContentId, T> & Partial<MaybeAsyncMapBatch<ContentId, T>>
       = new EncodedMap<ContentId, T, string>(new Map(), { encodeKey: (cid) => cid.toString(base64) }),
-    /** Data binary encoding to use. */
-    protected readonly blockCodec: BlockCodec<number, T> = raw as unknown as BlockCodec<number, T>,
-    /** Hash function to use for generating CIDs for block data. */
-    protected readonly hasher: SyncMultihashHasher<number> = sha256
+    /** Hash function to use for generating keys for values. */
+    protected readonly hash: (value: T) => ContentId = defaultHasher as (value: T) => ContentId
   ) {
   }
 
-  public put = maybeAsync(function* (this: ContentAddressedMapStore<T>, block: T, options?: AbortOptions) {
-    const cid = this.getCID(block);
-    yield this.map.set(cid, block, options);
-    return cid;
+  public put = maybeAsync(function* (this: ContentAddressedMapStore<T>, value: T, options?: AbortOptions) {
+    const cid = this.getKey(value);
+    yield this.map.set(cid, value, options);
+    return cid as ContentId;
   }, this);
 
-  public delete(cid: ContentId, options?: AbortOptions): MaybePromise<void> {
-    return this.map.delete(cid, options) as MaybePromise<void>;
+  public delete(key: ContentId, options?: AbortOptions): MaybePromise<void> {
+    return this.map.delete(key, options) as MaybePromise<void>;
   }
 
-  public get(cid: ContentId, options?: AbortOptions): MaybePromise<T | undefined> {
-    return this.map.get(cid, options);
+  public get(key: ContentId, options?: AbortOptions): MaybePromise<T | undefined> {
+    return this.map.get(key, options);
   }
 
-  public has(cid: ContentId, options?: AbortOptions): MaybePromise<boolean> {
-    return this.map.has(cid, options);
+  public getKey(value: T): ContentId {
+    return this.hash(value);
+  }
+
+  public has(key: ContentId, options?: AbortOptions): MaybePromise<boolean> {
+    return this.map.has(key, options);
   }
 
   public deleteMany(keys: Iterable<ContentId>, options?: AbortOptions): MaybeAsyncIterableIterator<Error | undefined> {
@@ -65,7 +67,7 @@ export class ContentAddressedMapStore<T = Uint8Array>
       }
     } else {
       for (const value of values) {
-        const key = this.getCID(value);
+        const key = this.getKey(value);
         try {
           await this.map.set(key, value, options);
           yield [key];
@@ -79,21 +81,21 @@ export class ContentAddressedMapStore<T = Uint8Array>
     }
   }
 
-  public async * getMany(cids: Iterable<ContentId>, options?: AbortOptions): AsyncIterableIterator<T | undefined> {
+  public async * getMany(keys: Iterable<ContentId>, options?: AbortOptions): AsyncIterableIterator<T | undefined> {
     if (this.map.getMany) {
-      return yield* this.map.getMany(cids, options);
+      return yield* this.map.getMany(keys, options);
     } else {
-      for (const cid of cids) {
+      for (const cid of keys) {
         yield this.get(cid, options);
       }
     }
   }
 
-  public async * hasMany(cids: Iterable<ContentId>, options?: AbortOptions): AsyncIterableIterator<boolean> {
+  public async * hasMany(keys: Iterable<ContentId>, options?: AbortOptions): AsyncIterableIterator<boolean> {
     if (this.map.hasMany) {
-      return yield* this.map.hasMany(cids, options);
+      return yield* this.map.hasMany(keys, options);
     } else {
-      for (const cid of cids) {
+      for (const cid of keys) {
         yield this.has(cid, options);
       }
     }
@@ -114,17 +116,17 @@ export class ContentAddressedMapStore<T = Uint8Array>
     }
   }
 
-  protected entriesOf(values: Iterable<T>): [CID<T, number, number, 1>, T][] {
-    const entries: [CID<T, number, number, 1>, T][] = [];
+  protected entriesOf(values: Iterable<T>): [ContentId, T][] {
+    const entries: [ContentId, T][] = [];
     for (const value of values) {
-      entries.push([this.getCID(value), value]);
+      entries.push([this.getKey(value), value]);
     }
     return entries;
   }
+}
 
-  protected getCID(block: T): CID<T, number, number, 1> {
-    const bytes = this.blockCodec.encode(block);
-    const hash = this.hasher.digest(bytes);
-    return CID.create(1, this.blockCodec.code, hash);
-  }
+function defaultHasher(value: Uint8Array): ContentId {
+  const bytes = raw.encode(value);
+  const hash = sha256.digest(bytes);
+  return CID.create(1, raw.code, hash);
 }

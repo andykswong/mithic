@@ -101,6 +101,24 @@ export class IndexedDBMap<K extends IDBValidKey, V>
     }
   }
 
+  public async * updateMany(entries: Iterable<[K, V | undefined]>, options?: AbortOptions): AsyncIterableIterator<Error | undefined> {
+    options?.signal?.throwIfAborted();
+    const store = await this.openObjectStore(true);
+    for (const [key, value] of entries) {
+      options?.signal?.throwIfAborted();
+      try {
+        if (value === void 0) {
+          await asPromise(store.delete(key));
+        } else {
+          await asPromise(store.put(value, key));
+        }
+        yield;
+      } catch (error) {
+        yield operationError('Failed to update value', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+      }
+    }
+  }
+
   public async *entries(options?: RangeQueryOptions<K>): AsyncIterableIterator<[K, V]> {
     const request = (await this.openObjectStore())
       .openCursor(...toCursorOptions(options));

@@ -54,6 +54,12 @@ describe(ContentAddressedMapStore.name, () => {
     });
   });
 
+  describe('getKey', () => {
+    it('should return the correct CID', () => {
+      expect(store.getKey(BLOCK)).toEqual(BLOCK_ENCODED.cid);
+    });
+  });
+
   describe('has', () => {
     it('should return true for existent block', async () => {
       const cid = await store.put(BLOCK);
