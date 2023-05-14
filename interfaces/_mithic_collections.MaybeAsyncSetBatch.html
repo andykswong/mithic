@@ -29,7 +29,8 @@
 <ul class="tsd-hierarchy">
 <li><a href="_mithic_collections.MaybeAsyncReadonlySetBatch.html" class="tsd-signature-type tsd-kind-Interface">MaybeAsyncReadonlySetBatch</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span></li>
 <li><a href="_mithic_collections.MaybeAsyncSetAddBatch.html" class="tsd-signature-type tsd-kind-Interface">MaybeAsyncSetAddBatch</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span></li>
-<li><a href="_mithic_collections.MaybeAsyncSetDeleteBatch.html" class="tsd-signature-type tsd-kind-Interface">MaybeAsyncSetDeleteBatch</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span>
+<li><a href="_mithic_collections.MaybeAsyncSetDeleteBatch.html" class="tsd-signature-type tsd-kind-Interface">MaybeAsyncSetDeleteBatch</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span></li>
+<li><a href="_mithic_collections.MaybeAsyncSetUpdateBatch.html" class="tsd-signature-type tsd-kind-Interface">MaybeAsyncSetUpdateBatch</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span>
 <ul class="tsd-hierarchy">
 <li><span class="target">MaybeAsyncSetBatch</span></li></ul></li></ul></section>
 <section class="tsd-panel">
@@ -38,7 +39,7 @@
 <li><a href="../classes/_mithic_collections.EncodedSet.html" class="tsd-signature-type tsd-kind-Class">EncodedSet</a></li>
 <li><a href="../classes/_mithic_collections.EncodedSet.html" class="tsd-signature-type tsd-kind-Class">EncodedSet</a></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/079f920/packages/collections/src/set.ts#L40">collections/src/set.ts:40</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/f35dacd/packages/collections/src/set.ts#L46">collections/src/set.ts:46</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-index-accordion" open><summary class="tsd-accordion-summary tsd-index-summary">
@@ -49,6 +50,7 @@
 <div class="tsd-index-list"><a href="_mithic_collections.MaybeAsyncSetBatch.html#addMany" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><rect fill="var(--color-icon-background)" stroke="#FF4DB8" stroke-width="1.5" x="1" y="1" width="22" height="22" rx="12" id="icon-2048-path"></rect><path d="M9.162 16V7.24H10.578L11.514 10.072C11.602 10.328 11.674 10.584 11.73 10.84C11.794 11.088 11.842 11.28 11.874 11.416C11.906 11.28 11.954 11.088 12.018 10.84C12.082 10.584 12.154 10.324 12.234 10.06L13.122 7.24H14.538V16H13.482V12.82C13.482 12.468 13.49 12.068 13.506 11.62C13.53 11.172 13.558 10.716 13.59 10.252C13.622 9.78 13.654 9.332 13.686 8.908C13.726 8.476 13.762 8.1 13.794 7.78L12.366 12.16H11.334L9.894 7.78C9.934 8.092 9.97 8.456 10.002 8.872C10.042 9.28 10.078 9.716 10.11 10.18C10.142 10.636 10.166 11.092 10.182 11.548C10.206 12.004 10.218 12.428 10.218 12.82V16H9.162Z" fill="var(--color-text)" id="icon-2048-text"></path></svg><span>add<wbr/>Many</span></a>
 <a href="_mithic_collections.MaybeAsyncSetBatch.html#deleteMany" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-2048-path"></use><use href="#icon-2048-text"></use></svg><span>delete<wbr/>Many</span></a>
 <a href="_mithic_collections.MaybeAsyncSetBatch.html#hasMany" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-2048-path"></use><use href="#icon-2048-text"></use></svg><span>has<wbr/>Many</span></a>
+<a href="_mithic_collections.MaybeAsyncSetBatch.html#updateMany" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-2048-path"></use><use href="#icon-2048-text"></use></svg><span>update<wbr/>Many</span></a>
 </div></section></div></details></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Methods</h2>
@@ -69,7 +71,7 @@
 <h4 class="tsd-returns-title">Returns <a href="../types/_mithic_commons.MaybeAsyncIterableIterator.html" class="tsd-signature-type tsd-kind-Type-alias">MaybeAsyncIterableIterator</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type ">Error</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_collections.MaybeAsyncSetAddBatch.html">MaybeAsyncSetAddBatch</a>.<a href="_mithic_collections.MaybeAsyncSetAddBatch.html#addMany">addMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/079f920/packages/collections/src/set.ts#L36">collections/src/set.ts:36</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/f35dacd/packages/collections/src/set.ts#L36">collections/src/set.ts:36</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="deleteMany" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>delete<wbr/>Many</span><a href="#deleteMany" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
@@ -87,7 +89,7 @@
 <h4 class="tsd-returns-title">Returns <a href="../types/_mithic_commons.MaybeAsyncIterableIterator.html" class="tsd-signature-type tsd-kind-Type-alias">MaybeAsyncIterableIterator</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type ">Error</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_collections.MaybeAsyncSetDeleteBatch.html">MaybeAsyncSetDeleteBatch</a>.<a href="_mithic_collections.MaybeAsyncSetDeleteBatch.html#deleteMany">deleteMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/079f920/packages/collections/src/set.ts#L30">collections/src/set.ts:30</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/f35dacd/packages/collections/src/set.ts#L30">collections/src/set.ts:30</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="hasMany" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>has<wbr/>Many</span><a href="#hasMany" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
@@ -105,7 +107,25 @@
 <h4 class="tsd-returns-title">Returns <a href="../types/_mithic_commons.MaybeAsyncIterableIterator.html" class="tsd-signature-type tsd-kind-Type-alias">MaybeAsyncIterableIterator</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_collections.MaybeAsyncReadonlySetBatch.html">MaybeAsyncReadonlySetBatch</a>.<a href="_mithic_collections.MaybeAsyncReadonlySetBatch.html#hasMany">hasMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/079f920/packages/collections/src/set.ts#L24">collections/src/set.ts:24</a></li></ul></aside></li></ul></section></section></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/f35dacd/packages/collections/src/set.ts#L24">collections/src/set.ts:24</a></li></ul></aside></li></ul></section>
+<section class="tsd-panel tsd-member tsd-is-inherited"><a id="updateMany" class="tsd-anchor"></a>
+<h3 class="tsd-anchor-link"><span>update<wbr/>Many</span><a href="#updateMany" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></h3>
+<ul class="tsd-signatures tsd-is-inherited">
+<li class="tsd-signature tsd-anchor-link" id="updateMany.updateMany-1"><span class="tsd-kind-Call-signature">update<wbr/>Many</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">keys</span>, <span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../types/_mithic_commons.MaybeAsyncIterableIterator.html" class="tsd-signature-type tsd-kind-Type-alias">MaybeAsyncIterableIterator</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type ">Error</span><span class="tsd-signature-symbol">&gt;</span><a href="#updateMany.updateMany-1" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></li>
+<li class="tsd-description">
+<div class="tsd-comment tsd-typography"><p>Sets or deletes given list of keys.</p>
+</div>
+<div class="tsd-parameters">
+<h4 class="tsd-parameters-title">Parameters</h4>
+<ul class="tsd-parameter-list">
+<li>
+<h5><span class="tsd-kind-parameter">keys</span>: <span class="tsd-signature-type ">Iterable</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-symbol">[</span>key<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span>isDelete<span class="tsd-signature-symbol">?: </span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span></h5></li>
+<li>
+<h5><code class="tsd-tag ts-flagOptional">Optional</code> <span class="tsd-kind-parameter">options</span>: <a href="_mithic_commons.AbortOptions.html" class="tsd-signature-type tsd-kind-Interface">AbortOptions</a></h5></li></ul></div>
+<h4 class="tsd-returns-title">Returns <a href="../types/_mithic_commons.MaybeAsyncIterableIterator.html" class="tsd-signature-type tsd-kind-Type-alias">MaybeAsyncIterableIterator</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type ">Error</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
+<p>Inherited from <a href="_mithic_collections.MaybeAsyncSetUpdateBatch.html">MaybeAsyncSetUpdateBatch</a>.<a href="_mithic_collections.MaybeAsyncSetUpdateBatch.html#updateMany">updateMany</a></p>
+<ul>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/f35dacd/packages/collections/src/set.ts#L42">collections/src/set.ts:42</a></li></ul></aside></li></ul></section></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
@@ -127,7 +147,8 @@
 <ul>
 <li><a href="#addMany" class="tsd-is-inherited"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-2048-path"></use><use href="#icon-2048-text"></use></svg><span>add<wbr/>Many</span></a></li>
 <li><a href="#deleteMany" class="tsd-is-inherited"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-2048-path"></use><use href="#icon-2048-text"></use></svg><span>delete<wbr/>Many</span></a></li>
-<li><a href="#hasMany" class="tsd-is-inherited"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-2048-path"></use><use href="#icon-2048-text"></use></svg><span>has<wbr/>Many</span></a></li></ul></div></details></div>
+<li><a href="#hasMany" class="tsd-is-inherited"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-2048-path"></use><use href="#icon-2048-text"></use></svg><span>has<wbr/>Many</span></a></li>
+<li><a href="#updateMany" class="tsd-is-inherited"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-2048-path"></use><use href="#icon-2048-text"></use></svg><span>update<wbr/>Many</span></a></li></ul></div></details></div>
 <div class="site-menu">
 <nav class="tsd-navigation"><a href="../index.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><rect fill="var(--color-icon-background)" stroke="var(--color-ts-namespace)" stroke-width="1.5" x="1" y="1" width="22" height="22" rx="6" id="icon-4-path"></rect><path d="M9.33 16V7.24H10.77L13.446 14.74C13.43 14.54 13.41 14.296 13.386 14.008C13.37 13.712 13.354 13.404 13.338 13.084C13.33 12.756 13.326 12.448 13.326 12.16V7.24H14.37V16H12.93L10.266 8.5C10.282 8.692 10.298 8.936 10.314 9.232C10.33 9.52 10.342 9.828 10.35 10.156C10.366 10.476 10.374 10.784 10.374 11.08V16H9.33Z" fill="var(--color-text)" id="icon-4-text"></path></svg><span>mithic -<wbr/> v0.2.0</span></a>
 <ul class="tsd-small-nested-navigation">
@@ -181,6 +202,7 @@
 <li><a href="_mithic_collections.MaybeAsyncSetAddBatch.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Set<wbr/>Add<wbr/>Batch</span></a></li>
 <li><a href="_mithic_collections.MaybeAsyncSetBatch.html" class="current"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Set<wbr/>Batch</span></a></li>
 <li><a href="_mithic_collections.MaybeAsyncSetDeleteBatch.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Set<wbr/>Delete<wbr/>Batch</span></a></li>
+<li><a href="_mithic_collections.MaybeAsyncSetUpdateBatch.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Set<wbr/>Update<wbr/>Batch</span></a></li>
 <li><a href="_mithic_collections.PeekableDeque.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Peekable<wbr/>Deque</span></a></li>
 <li><a href="_mithic_collections.PeekableQueue.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Peekable<wbr/>Queue</span></a></li>
 <li><a href="_mithic_collections.PeekableStack.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Peekable<wbr/>Stack</span></a></li>
@@ -228,6 +250,7 @@
 <li><a href="_mithic_commons.Semaphore.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Semaphore</span></a></li>
 <li><a href="_mithic_commons.Startable.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Startable</span></a></li>
 <li><a href="_mithic_commons.StringEquatable.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>String<wbr/>Equatable</span></a></li>
+<li><a href="_mithic_commons.ToString.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>To<wbr/>String</span></a></li>
 <li><a href="_mithic_commons.TypedEventEmitter.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Typed<wbr/>Event<wbr/>Emitter</span></a></li>
 <li><a href="../types/_mithic_commons.EventHandler.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-4194304-path"></use><use href="#icon-4194304-text"></use></svg><span>Event<wbr/>Handler</span></a></li>
 <li><a href="../types/_mithic_commons.EventType.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-4194304-path"></use><use href="#icon-4194304-text"></use></svg><span>Event<wbr/>Type</span></a></li>
@@ -290,9 +313,11 @@
 <details class="tsd-index-accordion" data-key="@mithic/crdt"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4.93896 8.531L12 15.591L19.061 8.531L16.939 6.409L12 11.349L7.06098 6.409L4.93896 8.531Z" fill="var(--color-text)"></path></svg><a href="../modules/_mithic_crdt.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-4-path"></use><use href="#icon-4-text"></use></svg><span>@mithic/crdt -<wbr/> v0.2.0</span></a></summary>
 <div class="tsd-accordion-details">
 <ul class="tsd-nested-navigation">
+<li><a href="../classes/_mithic_crdt.BaseMapEventStore.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Base<wbr/>Map<wbr/>Event<wbr/>Store</span></a></li>
 <li><a href="../classes/_mithic_crdt.SimpleEventStore.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Simple<wbr/>Event<wbr/>Store</span></a></li>
 <li><a href="_mithic_crdt.Event.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Event</span></a></li>
 <li><a href="_mithic_crdt.EventMetadata.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Event<wbr/>Metadata</span></a></li>
+<li><a href="_mithic_crdt.EventRelationship.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Event<wbr/>Relationship</span></a></li>
 <li><a href="_mithic_crdt.EventStore.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Event<wbr/>Store</span></a></li>
 <li><a href="_mithic_crdt.EventStoreQueryOptions.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Event<wbr/>Store<wbr/>Query<wbr/>Options</span></a></li>
 <li><a href="_mithic_crdt.EventStoreQueryOptionsExt.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Event<wbr/>Store<wbr/>Query<wbr/>Options<wbr/>Ext</span></a></li>
