@@ -37,7 +37,7 @@ describe(ContentAddressedMapStore.name, () => {
   describe('getMany', () => {
     it.each([
       [() => store],
-      [() => new ContentAddressedMapStore<Uint8Array>(new Map())],
+      [() => new ContentAddressedMapStore(new Map())],
     ])('should return multiple stored blocks from the store', async (storeCreator) => {
       store = storeCreator();
 
@@ -74,7 +74,7 @@ describe(ContentAddressedMapStore.name, () => {
   describe('hasMany', () => {
     it.each([
       [() => new ContentAddressedMapStore()],
-      [() => new ContentAddressedMapStore<Uint8Array>(new Map())],
+      [() => new ContentAddressedMapStore(new Map())],
     ])('should return true/false for existent/non-existent blocks', async (storeCreator) => {
       store = storeCreator();
 
@@ -132,7 +132,7 @@ describe(ContentAddressedMapStore.name, () => {
   describe('deleteMany', () => {
     it.each([
       [() => new ContentAddressedMapStore()],
-      [() => new ContentAddressedMapStore<Uint8Array>(new Map())],
+      [() => new ContentAddressedMapStore(new Map())],
     ])('should delete multiple blocks from the store', async (storeCreator) => {
       store = storeCreator();
 

@@ -36,15 +36,15 @@ const EVENT1: EventType = { type: TYPE1, payload: [1, ID1], meta: { parents: [] 
 const EVENT2: EventType = { type: TYPE2, payload: [2, ID2], meta: { parents: [ID1], root: ID1 } };
 
 describe(SimpleEventStore.name, () => {
-  let store: SimpleEventStore<EventType>;
-  let data: ContentAddressedMapStore<EventType>;
+  let store: SimpleEventStore<Id, EventType>;
+  let data: ContentAddressedMapStore<Id, EventType>;
   let index: BTreeMap<Uint8Array, Id>;
 
   beforeEach(async () => {
     store = new SimpleEventStore({
       data: new ContentAddressedMapStore(void 0, (event) => event.payload[1])
     });
-    data = store['data'] as ContentAddressedMapStore<EventType>;
+    data = store['data'] as ContentAddressedMapStore<Id, EventType>;
     index = store['index'] as BTreeMap<Uint8Array, Id>;
 
     await store.put(EVENT1);

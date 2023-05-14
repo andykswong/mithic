@@ -16,21 +16,22 @@ const PAGE_SIZE = 50;
  * It uses an atomic hybrid time to order events.
  */
 export class SimpleEventStore<
-  E extends Event<unknown, EventMetadata<ContentId>> = Event<unknown, EventMetadata<ContentId>>
-> implements EventStore<ContentId, E, EventStoreQueryOptionsExt<ContentId>>
+  Id extends ContentId = ContentId,
+  E extends Event<unknown, EventMetadata<Id>> = Event<unknown, EventMetadata<Id>>
+> implements EventStore<Id, E, EventStoreQueryOptionsExt<Id>>
 {
   protected readonly tick: (refTime?: number) => MaybePromise<number>;
-  protected readonly data: AppendOnlyAutoKeyMap<ContentId, E> & Partial<AutoKeyMapBatch<ContentId, E>>;
+  protected readonly data: AppendOnlyAutoKeyMap<Id, E> & Partial<AutoKeyMapBatch<Id, E>>;
   protected readonly index:
-    MaybeAsyncMap<Uint8Array, ContentId> & Partial<MaybeAsyncMapBatch<Uint8Array, ContentId>> & RangeQueryable<Uint8Array, ContentId>;
+    MaybeAsyncMap<Uint8Array, Id> & Partial<MaybeAsyncMapBatch<Uint8Array, Id>> & RangeQueryable<Uint8Array, Id>;
   protected readonly eventTypeSeparator: RegExp;
 
   public constructor({
     tick = atomicHybridTime(),
-    data = new ContentAddressedMapStore(),
-    index = new BTreeMap<Uint8Array, ContentId>(5, compareBuffers),
+    data = new ContentAddressedMapStore<Id, E>(),
+    index = new BTreeMap<Uint8Array, Id>(5, compareBuffers),
     eventTypeSeparator = DEFAULT_EVENT_TYPE_SEPARATOR
-  }: SimpleEventStoreOptions<E, ContentId> = {}) {
+  }: SimpleEventStoreOptions<E, Id> = {}) {
     this.tick = tick;
     this.data = data;
     this.index = index;
@@ -39,18 +40,18 @@ export class SimpleEventStore<
 
   /**
    * Puts given event into this store and returns its key.
-   * @throws {CodedError<ContentId[]>} If error.code === ErrorCode.MissingDep,
+   * @throws {CodedError<Id[]>} If error.code === ErrorCode.MissingDep,
    *  the error detail contains the list of invalid or missing events.
    */
-  public async put(event: E, options?: AbortOptions): Promise<ContentId> {
+  public async put(event: E, options?: AbortOptions): Promise<Id> {
     if (!event.meta.root && event.meta.parents.length) { // root Id must be specified if there are dependencies
       throw operationError('Missing root Id', ErrorCode.InvalidArg);
     }
 
     let latestTime = event.meta.createdAt || 0;
-    const parents: [ContentId, E][] = [];
+    const parents: [Id, E][] = [];
     if (event.meta.parents.length) {
-      const missing: ContentId[] = [];
+      const missing: Id[] = [];
       let i = 0;
       for await (const parent of this.getMany(event.meta.parents, options)) {
         const key = event.meta.parents[i++];
@@ -74,7 +75,7 @@ export class SimpleEventStore<
 
     { // 1. add indices
       const keys = getEventIndexKeys(key, event, false, this.eventTypeSeparator)
-        .map(indexKey => [indexKey, key] as [Uint8Array, ContentId]);
+        .map(indexKey => [indexKey, key] as [Uint8Array, Id]);
 
       if (this.index.setMany) {
         for await (const error of this.index.setMany(keys, options)) {
@@ -114,15 +115,15 @@ export class SimpleEventStore<
     return key;
   }
 
-  public getKey(value: E, options?: AbortOptions): MaybePromise<ContentId> {
+  public getKey(value: E, options?: AbortOptions): MaybePromise<Id> {
     return this.data.getKey(value, options);
   }
 
-  public get(key: ContentId, options?: AbortOptions): MaybePromise<E | undefined> {
+  public get(key: Id, options?: AbortOptions): MaybePromise<E | undefined> {
     return this.data.get(key, options);
   }
 
-  public has(key: ContentId, options?: AbortOptions): MaybePromise<boolean> {
+  public has(key: Id, options?: AbortOptions): MaybePromise<boolean> {
     return this.data.has(key, options);
   }
 
@@ -133,7 +134,7 @@ export class SimpleEventStore<
    */
   public async * putMany(
     values: Iterable<E>, options?: AbortOptions
-  ): AsyncIterableIterator<[key: ContentId, error?: CodedError<ContentId[]>]> {
+  ): AsyncIterableIterator<[key: Id, error?: CodedError<Id[]>]> {
     for await (const value of values) {
       try {
         yield [await this.put(value, options)];
@@ -142,14 +143,14 @@ export class SimpleEventStore<
         yield [
           key,
           (error as CodedError)?.code === ErrorCode.MissingDep ?
-            error as CodedError<ContentId[]> :
+            error as CodedError<Id[]> :
             operationError('Failed to put', ErrorCode.OpFailed, [key], error)
         ];
       }
     }
   }
 
-  public async * getMany(keys: Iterable<ContentId>, options?: AbortOptions): AsyncIterableIterator<E | undefined> {
+  public async * getMany(keys: Iterable<Id>, options?: AbortOptions): AsyncIterableIterator<E | undefined> {
     if (this.data.getMany) {
       return yield* this.data.getMany(keys, options);
     } else {
@@ -159,7 +160,7 @@ export class SimpleEventStore<
     }
   }
 
-  public async * hasMany(keys: Iterable<ContentId>, options?: AbortOptions): AsyncIterableIterator<boolean> {
+  public async * hasMany(keys: Iterable<Id>, options?: AbortOptions): AsyncIterableIterator<boolean> {
     if (this.data.hasMany) {
       return yield* this.data.hasMany(keys, options);
     } else {
@@ -169,7 +170,7 @@ export class SimpleEventStore<
     }
   }
 
-  public async * keys(options?: EventStoreQueryOptions<ContentId> & EventStoreQueryOptionsExt<ContentId>): AsyncGenerator<ContentId, ContentId[]> {
+  public async * keys(options?: EventStoreQueryOptions<Id> & EventStoreQueryOptionsExt<Id>): AsyncGenerator<Id, Id[]> {
     let sinceTime = 0;
     if (options?.since) {
       for await (const value of this.getMany(options.since, options)) {
@@ -179,7 +180,7 @@ export class SimpleEventStore<
       }
     }
 
-    let checkpoint: ContentId | undefined;
+    let checkpoint: Id | undefined;
     const range = getEventIndexRangeQueryOptions(sinceTime, options?.type, options?.root, options?.head);
     for await (const key of this.index.values({ ...range, limit: options?.limit, signal: options?.signal })) {
       yield (checkpoint = key);
@@ -188,7 +189,7 @@ export class SimpleEventStore<
     return checkpoint ? [checkpoint] : [];
   }
 
-  public async * entries(options?: EventStoreQueryOptions<ContentId> & EventStoreQueryOptionsExt<ContentId>): AsyncGenerator<[ContentId, E], ContentId[]> {
+  public async * entries(options?: EventStoreQueryOptions<Id> & EventStoreQueryOptionsExt<Id>): AsyncGenerator<[Id, E], Id[]> {
     const keys = this.keys(options);
     const buffer = [];
     let result;
@@ -205,7 +206,7 @@ export class SimpleEventStore<
     return result.value;
   }
 
-  public async * values(options?: EventStoreQueryOptions<ContentId> & EventStoreQueryOptionsExt<ContentId>): AsyncGenerator<E, ContentId[]> {
+  public async * values(options?: EventStoreQueryOptions<Id> & EventStoreQueryOptionsExt<Id>): AsyncGenerator<E, Id[]> {
     const entries = this.entries(options);
     let result;
     for (result = await entries.next(); !result.done; result = await entries.next()) {
@@ -214,12 +215,12 @@ export class SimpleEventStore<
     return result.value;
   }
 
-  public [Symbol.asyncIterator](): AsyncIterator<[ContentId, E]> {
+  public [Symbol.asyncIterator](): AsyncIterator<[Id, E]> {
     return this.entries();
   }
 
-  protected async * entriesFromKeys(keys: ContentId[], options?: AbortOptions): AsyncGenerator<[ContentId, E], ContentId[]> {
-    let checkpoint: ContentId | undefined;
+  protected async * entriesFromKeys(keys: Id[], options?: AbortOptions): AsyncGenerator<[Id, E], Id[]> {
+    let checkpoint: Id | undefined;
     let i = 0;
     for await (const value of this.getMany(keys, options)) {
       if (value) {

@@ -7,8 +7,8 @@ import { MockIpfs } from './mocks.js';
 import { ErrorCode, operationError } from '@mithic/commons';
 
 const DATA = new Uint8Array([1, 2, 3]);
-const DATA_CID = CID.createV1(0, identity.digest(DATA));
-const CID2 = CID.createV1(0, identity.digest(new Uint8Array([1, 3, 3, 7])));
+const DATA_CID = CID.createV1(0x999, identity.digest(DATA));
+const CID2 = CID.createV1(0x999, identity.digest(new Uint8Array([1, 3, 3, 7])));
 
 describe(IpfsMap.name, () => {
   const mockCodec: BlockCodec<number, Uint8Array> = {
@@ -52,6 +52,12 @@ describe(IpfsMap.name, () => {
 
     it('should return undefined if not exist', async () => {
       expect(await map.get(CID.createV1(0, identity.digest(new Uint8Array([1]))), {})).toBeUndefined();
+    });
+  });
+
+  describe('getKey', () => {
+    it('returns the correct key', () => {
+      expect(map.getKey(DATA)).toEqual(DATA_CID);
     });
   });
 

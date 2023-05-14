@@ -18,7 +18,7 @@ export class IpfsMap<T = Uint8Array>
     ipfs: IPFS,
     /** Codec to encode data for storage. */
     protected readonly codec: BlockCodec<number, T>,
-    /** Hash function to use for generating CIDs for block data. */
+    /** Hash function to use for generating ContentIds for block data. */
     protected readonly hasher: SyncMultihashHasher<number> = sha256
   ) {
     this.ipfs = ipfs as CIPFS;
@@ -52,6 +52,10 @@ export class IpfsMap<T = Uint8Array>
     }
   }
 
+  public getKey(value: T): CID {
+    return CID.create(1, this.codec.code, this.hasher.digest(this.codec.encode(value)));
+  }
+
   public async * getMany(keys: Iterable<CID>, options?: AbortOptions): AsyncIterableIterator<T | undefined> {
     for (const key of keys) {
       yield this.get(key, options);
@@ -78,11 +82,12 @@ export class IpfsMap<T = Uint8Array>
     values: Iterable<T>, options?: AbortOptions
   ): AsyncIterableIterator<[key: CID, error?: Error | undefined]> {
     for (const value of values) {
-      const bytes = this.codec.encode(value);
       try {
-        yield [await this.ipfs.block.put(bytes, { ...options, format: this.codec.code, version: 1 })];
+        yield [
+          await this.ipfs.block.put(this.codec.encode(value), { ...options, format: this.codec.code, version: 1 })
+        ];
       } catch (error) {
-        const key = CID.create(1, this.codec.code, this.hasher.digest(bytes));
+        const key = this.getKey(value);
         yield [
           key,
           operationError('Failed to put', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error)

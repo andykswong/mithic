@@ -9,47 +9,47 @@ import { AutoKeyMap, AutoKeyMapBatch, MaybeAsyncMap, MaybeAsyncMapBatch } from '
 import { EncodedMap } from './encodedmap.js';
 
 /** A content-addressable map store that persists values in a backing {@link MaybeAsyncMap}. */
-export class ContentAddressedMapStore<T = Uint8Array>
-  implements AutoKeyMap<ContentId, T>, AutoKeyMapBatch<ContentId, T>
+export class ContentAddressedMapStore<Id extends ContentId = ContentId, T = Uint8Array>
+  implements AutoKeyMap<Id, T>, AutoKeyMapBatch<Id, T>
 {
   public constructor(
     /** The underlying map. */
-    public readonly map: MaybeAsyncMap<ContentId, T> & Partial<MaybeAsyncMapBatch<ContentId, T>>
-      = new EncodedMap<ContentId, T, string>(new Map(), { encodeKey: (cid) => cid.toString(base64) }),
+    public readonly map: MaybeAsyncMap<Id, T> & Partial<MaybeAsyncMapBatch<Id, T>>
+      = new EncodedMap<Id, T, string>(new Map(), { encodeKey: (cid) => cid.toString(base64) }),
     /** Hash function to use for generating keys for values. */
-    protected readonly hash: (value: T) => ContentId = defaultHasher as (value: T) => ContentId
+    protected readonly hash: (value: T) => Id = defaultHasher as unknown as (value: T) => Id
   ) {
   }
 
-  public put = maybeAsync(function* (this: ContentAddressedMapStore<T>, value: T, options?: AbortOptions) {
+  public put = maybeAsync(function* (this: ContentAddressedMapStore<Id, T>, value: T, options?: AbortOptions) {
     const cid = this.getKey(value);
     yield this.map.set(cid, value, options);
-    return cid as ContentId;
+    return cid;
   }, this);
 
-  public delete(key: ContentId, options?: AbortOptions): MaybePromise<void> {
+  public delete(key: Id, options?: AbortOptions): MaybePromise<void> {
     return this.map.delete(key, options) as MaybePromise<void>;
   }
 
-  public get(key: ContentId, options?: AbortOptions): MaybePromise<T | undefined> {
+  public get(key: Id, options?: AbortOptions): MaybePromise<T | undefined> {
     return this.map.get(key, options);
   }
 
-  public getKey(value: T): ContentId {
+  public getKey(value: T): Id {
     return this.hash(value);
   }
 
-  public has(key: ContentId, options?: AbortOptions): MaybePromise<boolean> {
+  public has(key: Id, options?: AbortOptions): MaybePromise<boolean> {
     return this.map.has(key, options);
   }
 
-  public deleteMany(keys: Iterable<ContentId>, options?: AbortOptions): MaybeAsyncIterableIterator<Error | undefined> {
+  public deleteMany(keys: Iterable<Id>, options?: AbortOptions): MaybeAsyncIterableIterator<Error | undefined> {
     return this.map.deleteMany ? this.map.deleteMany(keys, options) : this.deleteEach(keys, options);
   }
 
   public async * putMany(
     values: Iterable<T>, options?: AbortOptions
-  ): AsyncIterableIterator<[key: ContentId, error?: CodedError]> {
+  ): AsyncIterableIterator<[key: Id, error?: CodedError]> {
     if (this.map.setMany) {
       const entries = this.entriesOf(values);
       let i = 0;
@@ -81,7 +81,7 @@ export class ContentAddressedMapStore<T = Uint8Array>
     }
   }
 
-  public async * getMany(keys: Iterable<ContentId>, options?: AbortOptions): AsyncIterableIterator<T | undefined> {
+  public async * getMany(keys: Iterable<Id>, options?: AbortOptions): AsyncIterableIterator<T | undefined> {
     if (this.map.getMany) {
       return yield* this.map.getMany(keys, options);
     } else {
@@ -91,7 +91,7 @@ export class ContentAddressedMapStore<T = Uint8Array>
     }
   }
 
-  public async * hasMany(keys: Iterable<ContentId>, options?: AbortOptions): AsyncIterableIterator<boolean> {
+  public async * hasMany(keys: Iterable<Id>, options?: AbortOptions): AsyncIterableIterator<boolean> {
     if (this.map.hasMany) {
       return yield* this.map.hasMany(keys, options);
     } else {
@@ -105,7 +105,7 @@ export class ContentAddressedMapStore<T = Uint8Array>
     return ContentAddressedMapStore.name;
   }
 
-  protected async * deleteEach(keys: Iterable<ContentId>, options?: AbortOptions) {
+  protected async * deleteEach(keys: Iterable<Id>, options?: AbortOptions) {
     for (const key of keys) {
       try {
         await this.delete(key, options);
@@ -116,8 +116,8 @@ export class ContentAddressedMapStore<T = Uint8Array>
     }
   }
 
-  protected entriesOf(values: Iterable<T>): [ContentId, T][] {
-    const entries: [ContentId, T][] = [];
+  protected entriesOf(values: Iterable<T>): [Id, T][] {
+    const entries: [Id, T][] = [];
     for (const value of values) {
       entries.push([this.getKey(value), value]);
     }
@@ -125,7 +125,7 @@ export class ContentAddressedMapStore<T = Uint8Array>
   }
 }
 
-function defaultHasher(value: Uint8Array): ContentId {
+function defaultHasher(value: Uint8Array): CID {
   const bytes = raw.encode(value);
   const hash = sha256.digest(bytes);
   return CID.create(1, raw.code, hash);
