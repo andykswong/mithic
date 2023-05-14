@@ -17,13 +17,14 @@ const K3 = new Key('val3');
 
 describe.each([
   () => new Map<string, string>(),
-  () => new EncodedMap<string, string>(new Map())
-])(EncodedMap.name, (backingMapFactory: () => MaybeAsyncMap<string, string>) => {
-  let map: EncodedMap<Key, number, string, string>;
+  () => new EncodedMap<string, string, string, string, Map<string, string>>(new Map())
+])(EncodedMap.name, (backingMapFactory: () => MaybeAsyncMap<string, string> & Iterable<[string, string]>) => {
+  let map: EncodedMap<Key, number, string, string, MaybeAsyncMap<string, string> & Iterable<[string, string]>>;
 
   beforeEach(async () => {
     map = new EncodedMap(backingMapFactory(), {
       encodeKey: (key) => key.toString(),
+      decodeKey: (key) => new Key(key),
       encodeValue: (value) => `${value}`,
       decodeValue: (value) => parseFloat(value),
     });
@@ -87,7 +88,7 @@ describe.each([
     });
 
     it('should return errors from underlying map', async () => {
-      if (map.map.setMany) return; // skip test
+      if ('setMany' in map.map) return; // skip test
 
       jest.spyOn(map.map, 'set').mockImplementation(() => { throw new Error('error'); });
 
@@ -112,7 +113,7 @@ describe.each([
     });
 
     it('should return errors from underlying map', async () => {
-      if (map.map.deleteMany) return; // skip test
+      if ('deleteMany' in map.map) return; // skip test
 
       jest.spyOn(map.map, 'delete').mockImplementation(() => { throw new Error('error'); });
 
@@ -140,7 +141,7 @@ describe.each([
     });
 
     it('should return errors from underlying map', async () => {
-      if (map.map.updateMany) return; // skip test
+      if ('updateMany' in map.map) return; // skip test
 
       jest.spyOn(map.map, 'set').mockImplementation(() => { throw new Error('error'); });
       jest.spyOn(map.map, 'delete').mockImplementation(() => { throw new Error('error'); });
@@ -153,6 +154,22 @@ describe.each([
         operationError(`Failed to update key`, ErrorCode.OpFailed, K1, new Error('error')),
         operationError(`Failed to update key`, ErrorCode.OpFailed, K2, new Error('error')),
       ])
+    });
+  });
+
+  describe('iterator', () => {
+    it('should iterate over keys', () => {
+      expect([...map]).toEqual([[K1, 1], [K2, 2]]);
+    });
+  });
+
+  describe('asyncIterator', () => {
+    it('should async iterate over keys', async () => {
+      const results = [];
+      for await (const entry of map[Symbol.asyncIterator]()) {
+        results.push(entry);
+      }
+      expect(results).toEqual([[K1, 1], [K2, 2]]);
     });
   });
 });

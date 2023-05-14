@@ -17,12 +17,12 @@ const K3 = new Key('val3');
 
 describe.each([
   () => new Set<string>(),
-  () => new EncodedSet<string>(new Set())
-])(EncodedSet.name, (backingSetFactory: () => MaybeAsyncSet<string>) => {
-  let set: EncodedSet<Key, string>;
+  () => new EncodedSet<string, string, Set<string>>(new Set())
+])(EncodedSet.name, (backingSetFactory: () => MaybeAsyncSet<string> & Iterable<string>) => {
+  let set: EncodedSet<Key, string, MaybeAsyncSet<string> & Iterable<string>>;
 
   beforeEach(() => {
-    set = new EncodedSet(backingSetFactory(), (k) => k.toString());
+    set = new EncodedSet(backingSetFactory(), (k) => k.toString(), (k) => new Key(k));
     set.add(K1);
     set.add(K2);
   });
@@ -77,7 +77,7 @@ describe.each([
     });
 
     it('should return errors from underlying set', async () => {
-      if (set.set.addMany) return; // skip test
+      if ('addMany' in set.set) return; // skip test
 
       jest.spyOn(set.set, 'add').mockImplementation(() => { throw new Error('error'); });
 
@@ -102,7 +102,7 @@ describe.each([
     });
 
     it('should return errors from underlying set', async () => {
-      if (set.set.deleteMany) return; // skip test
+      if ('deleteMany' in set.set) return; // skip test
 
       jest.spyOn(set.set, 'delete').mockImplementation(() => { throw new Error('error'); });
 
@@ -127,7 +127,7 @@ describe.each([
     });
 
     it('should return errors from underlying set', async () => {
-      if (set.set.addMany) return; // skip test
+      if ('addMany' in set.set) return; // skip test
 
       jest.spyOn(set.set, 'add').mockImplementation(() => { throw new Error('error'); });
       jest.spyOn(set.set, 'delete').mockImplementation(() => { throw new Error('error'); });
@@ -140,6 +140,22 @@ describe.each([
         operationError(`Failed to delete key`, ErrorCode.OpFailed, K1, new Error('error')),
         operationError(`Failed to add key`, ErrorCode.OpFailed, K3, new Error('error')),
       ])
+    });
+  });
+
+  describe('iterator', () => {
+    it('should iterate over keys', () => {
+      expect([...set]).toEqual([K1, K2]);
+    });
+  });
+
+  describe('asyncIterator', () => {
+    it('should async iterate over keys', async () => {
+      const results = [];
+      for await (const key of set[Symbol.asyncIterator]()) {
+        results.push(key);
+      }
+      expect(results).toEqual([K1, K2]);
     });
   });
 });

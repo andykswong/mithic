@@ -2,6 +2,7 @@ import { ContentId, sha256 } from '@mithic/commons';
 import { CID } from 'multiformats';
 import * as Block from 'multiformats/block';
 import * as raw from 'multiformats/codecs/raw';
+import { MaybeAsyncMap } from '../../map.js';
 import { ContentAddressedMapStore } from '../camap.js';
 
 const BLOCK = new Uint8Array([0x68, 0x65, 0x6C, 0x6C, 0x6F]);
@@ -10,8 +11,10 @@ const BLOCK_ENCODED = await Block.encode({ value: BLOCK, codec: raw, hasher: sha
 const BLOCK2_ENCODED = await Block.encode({ value: BLOCK2, codec: raw, hasher: sha256 });
 const RANDOM_CID = CID.createV1(0, sha256.digest(new Uint8Array([1])));
 
+type IterableBackingMap = MaybeAsyncMap<ContentId, Uint8Array> & Iterable<[ContentId, Uint8Array]>;
+
 describe(ContentAddressedMapStore.name, () => {
-  let store: ContentAddressedMapStore;
+  let store: ContentAddressedMapStore<ContentId, Uint8Array, IterableBackingMap>;
 
   beforeEach(() => {
     store = new ContentAddressedMapStore();
@@ -73,7 +76,7 @@ describe(ContentAddressedMapStore.name, () => {
 
   describe('hasMany', () => {
     it.each([
-      [() => new ContentAddressedMapStore()],
+      [() => new ContentAddressedMapStore<ContentId, Uint8Array, IterableBackingMap>()],
       [() => new ContentAddressedMapStore(new Map())],
     ])('should return true/false for existent/non-existent blocks', async (storeCreator) => {
       store = storeCreator();
@@ -131,7 +134,7 @@ describe(ContentAddressedMapStore.name, () => {
 
   describe('deleteMany', () => {
     it.each([
-      [() => new ContentAddressedMapStore()],
+      [() => new ContentAddressedMapStore<ContentId, Uint8Array, IterableBackingMap>()],
       [() => new ContentAddressedMapStore(new Map())],
     ])('should delete multiple blocks from the store', async (storeCreator) => {
       store = storeCreator();
@@ -144,6 +147,29 @@ describe(ContentAddressedMapStore.name, () => {
       }
       expect(await store['map'].has(cid1)).toBe(false);
       expect(await store['map'].has(cid2)).toBe(false);
+    });
+  });
+  
+  describe('iterator', () => {
+    it('should iterate over keys', async () => {
+      const cid1 = await store.put(BLOCK);
+      const cid2 = await store.put(BLOCK2);
+
+      expect([...store].map(([k, v]) => [k.toString(), v]))
+        .toEqual([[cid1.toString(), BLOCK], [cid2.toString(), BLOCK2]]);
+    });
+  });
+
+  describe('asyncIterator', () => {
+    it('should async iterate over keys', async () => {
+      const cid1 = await store.put(BLOCK);
+      const cid2 = await store.put(BLOCK2);
+
+      const results = [];
+      for await (const [k, v] of store[Symbol.asyncIterator]()) {
+        results.push([k.toString(), v]);
+      }
+      expect(results).toEqual([[cid1.toString(), BLOCK], [cid2.toString(), BLOCK2]]);
     });
   });
 });

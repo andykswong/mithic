@@ -2,23 +2,46 @@ import { AbortOptions, CodedError, ErrorCode, MaybePromise, operationError } fro
 import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
 
 /** A map adapter that encodes keys and/or values. */
-export class EncodedMap<K, V, TK = K, TV = V> implements MaybeAsyncMap<K, V>, MaybeAsyncMapBatch<K, V> {
-  protected encodeKey: (key: K) => TK;
-  protected encodeValue: (value: V) => TV;
-  protected decodeValue: (value: TV) => V;
+export class EncodedMap<
+  K, V, TK = K, TV = V,
+  M extends MaybeAsyncMap<TK, TV> & Partial<MaybeAsyncMapBatch<TK, TV> & Iterable<[TK, TV]> & AsyncIterable<[TK, TV]>>
+  = MaybeAsyncMap<TK, TV> & Partial<MaybeAsyncMapBatch<TK, TV> & Iterable<[TK, TV]> & AsyncIterable<[TK, TV]>>
+> implements MaybeAsyncMap<K, V>, MaybeAsyncMapBatch<K, V>, Partial<Iterable<[K, V]> & AsyncIterable<[K, V]>> {
+  protected readonly encodeKey: (key: K) => TK;
+  protected readonly decodeKey: (key: TK) => K;
+  protected readonly encodeValue: (value: V) => TV;
+  protected readonly decodeValue: (value: TV) => V;
+
+  public [Symbol.iterator]!: M extends Iterable<[TK, TV]> ? () => IterableIterator<[K, V]> : undefined;
+  public [Symbol.asyncIterator]!:
+    M extends (Iterable<[TK, TV]> | AsyncIterable<[TK, TV]>) ? () => AsyncIterableIterator<[K, V]> : undefined;
 
   public constructor(
     /** The underlying map. */
-    public readonly map: MaybeAsyncMap<TK, TV> & Partial<MaybeAsyncMapBatch<TK, TV>>,
+    public readonly map: M,
     {
       encodeKey = (key: K) => key as unknown as TK,
+      decodeKey = (key: TK) => key as unknown as K,
       encodeValue = (value: V) => value as unknown as TV,
       decodeValue = (value: TV) => value as unknown as V,
     }: EncodedMapOptions<K, V, TK, TV> = {}
   ) {
     this.encodeKey = encodeKey;
+    this.decodeKey = decodeKey;
     this.encodeValue = encodeValue;
     this.decodeValue = decodeValue;
+
+    this[Symbol.iterator] = (Symbol.iterator in map && function* () {
+      for (const [key, value] of map as Iterable<[TK, TV]>) {
+        yield [decodeKey(key), decodeValue(value)];
+      }
+    }) as M extends Iterable<[TK, TV]> ? () => IterableIterator<[K, V]> : undefined;
+
+    this[Symbol.asyncIterator] = ((Symbol.iterator in map || Symbol.asyncIterator in map) && async function* () {
+      for await (const [key, value] of map as AsyncIterable<[TK, TV]>) {
+        yield [decodeKey(key), decodeValue(value)];
+      }
+    }) as M extends (Iterable<[TK, TV]> | AsyncIterable<[TK, TV]>) ? () => AsyncIterableIterator<[K, V]> : undefined;
   }
 
   public get(key: K, options?: AbortOptions): MaybePromise<V | undefined> {
@@ -145,6 +168,9 @@ export class EncodedMap<K, V, TK = K, TV = V> implements MaybeAsyncMap<K, V>, Ma
 export interface EncodedMapOptions<K, V, TK, TV> {
   /** The key encoder. */
   encodeKey?: (key: K) => TK;
+
+  /** The key decoder. Optional if map key iteration is not needed. */
+  decodeKey?: (key: TK) => K;
 
   /** The value encoder. */
   encodeValue?: (value: V) => TV;

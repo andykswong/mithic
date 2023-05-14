@@ -8,16 +8,32 @@ import { AutoKeyMap, AutoKeyMapBatch, MaybeAsyncMap, MaybeAsyncMapBatch } from '
 import { EncodedMap } from './encodedmap.js';
 
 /** A content-addressable map store that persists values in a backing {@link MaybeAsyncMap}. */
-export class ContentAddressedMapStore<Id = ContentId, T = Uint8Array>
-  implements AutoKeyMap<Id, T>, AutoKeyMapBatch<Id, T>
+export class ContentAddressedMapStore<
+  Id = ContentId, T = Uint8Array,
+  M extends MaybeAsyncMap<Id, T> & Partial<MaybeAsyncMapBatch<Id, T> & Iterable<[Id, T]> & AsyncIterable<[Id, T]>>
+  = MaybeAsyncMap<Id, T> & Partial<MaybeAsyncMapBatch<Id, T> & Iterable<[Id, T]> & AsyncIterable<[Id, T]>>
+> implements AutoKeyMap<Id, T>, AutoKeyMapBatch<Id, T>, Partial<Iterable<[Id, T]> & AsyncIterable<[Id, T]>>
 {
+  public [Symbol.iterator]!: M extends Iterable<[Id, T]> ? () => IterableIterator<[Id, T]> : undefined;
+  public [Symbol.asyncIterator]!:
+    M extends (Iterable<[Id, T]> | AsyncIterable<[Id, T]>) ? () => AsyncIterableIterator<[Id, T]> : undefined;
+
   public constructor(
     /** The underlying map. */
-    public readonly map: MaybeAsyncMap<Id, T> & Partial<MaybeAsyncMapBatch<Id, T>>
-      = new EncodedMap<Id, T, string>(new Map(), { encodeKey: (key) => `${key}` }),
+    public readonly map: M =
+      new EncodedMap<Id, T, string, T, Map<string, T>>(new Map(), {
+        encodeKey: (key) => `${key}`,
+        decodeKey: (key) => CID.parse(key) as Id
+      }) as unknown as M,
     /** Hash function to use for generating keys for values. */
     protected readonly hash: (value: T) => Id = defaultHasher as unknown as (value: T) => Id
   ) {
+    this[Symbol.iterator] = (Symbol.iterator in map && (() => (map as Iterable<[Id, T]>)[Symbol.iterator]())) as
+      M extends Iterable<[Id, T]> ? () => IterableIterator<[Id, T]> : undefined;
+
+    this[Symbol.asyncIterator] = ((Symbol.iterator in map || Symbol.asyncIterator in map) &&
+      (() => (map as AsyncIterable<[Id, T]>)[Symbol.asyncIterator]())
+    ) as M extends (Iterable<[Id, T]> | AsyncIterable<[Id, T]>) ? () => AsyncIterableIterator<[Id, T]> : undefined;
   }
 
   public put = maybeAsync(function* (this: ContentAddressedMapStore<Id, T>, value: T, options?: AbortOptions) {
