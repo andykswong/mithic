@@ -1,14 +1,14 @@
 import crypto from 'crypto';
 import { ByteView, MultibaseEncoder, MultihashDigest, Phantom, SyncMultihashHasher } from 'multiformats';
 import * as Digest from 'multiformats/hashes/digest';
-import { Equal } from './equal.js';
+import { Equal, ToString } from './equal.js';
 
 /** A content hash ID. */
 export interface ContentId<
   Data = unknown,
   Format extends number = number,
   Alg extends number = number
-> extends Equal<ContentId<Data, Format, Alg>>, Phantom<Data> {
+> extends Equal<ContentId<Data, Format, Alg>>, Phantom<Data>, ToString {
   /** Multicodec code of this ID. */
   readonly code: Format;
 
@@ -25,8 +25,8 @@ export interface ContentId<
 }
 
 /** An implementation of SyncMultihashHasher. */
-export class Hasher<Code extends number = number> implements SyncMultihashHasher<Code> { 
-  public constructor (
+export class Hasher<Code extends number = number> implements SyncMultihashHasher<Code> {
+  public constructor(
     public readonly name: string,
     public readonly code: Code,
     private readonly encode: (input: Uint8Array) => Uint8Array

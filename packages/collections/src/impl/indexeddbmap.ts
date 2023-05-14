@@ -101,7 +101,7 @@ export class IndexedDBMap<K extends IDBValidKey, V>
     }
   }
 
-  public async * updateMany(entries: Iterable<[K, V | undefined]>, options?: AbortOptions): AsyncIterableIterator<Error | undefined> {
+  public async * updateMany(entries: Iterable<[K, V?]>, options?: AbortOptions): AsyncIterableIterator<Error | undefined> {
     options?.signal?.throwIfAborted();
     const store = await this.openObjectStore(true);
     for (const [key, value] of entries) {

@@ -1,3 +1,5 @@
+import { jest } from '@jest/globals';
+import { ErrorCode, operationError } from '@mithic/commons';
 import { MaybeAsyncMap } from '../../map.js';
 import { EncodedMap } from '../encodedmap.js';
 
@@ -83,6 +85,21 @@ describe.each([
       }
       expect(results).toEqual([value1, 2, value3, undefined]);
     });
+
+    it('should return errors from underlying map', async () => {
+      if (map.map.setMany) return; // skip test
+
+      jest.spyOn(map.map, 'set').mockImplementation(() => { throw new Error('error'); });
+
+      const results = [];
+      for await (const error of map.setMany([[K1, 1], [K3, 3]])) {
+        results.push(error);
+      }
+      expect(results).toEqual([
+        operationError(`Failed to set key`, ErrorCode.OpFailed, K1, new Error('error')),
+        operationError(`Failed to set key`, ErrorCode.OpFailed, K3, new Error('error')),
+      ])
+    });
   });
 
   describe('deleteMany', () => {
@@ -92,6 +109,21 @@ describe.each([
       }
       expect(await map.has(K1)).toBe(false);
       expect(await map.has(K2)).toBe(false);
+    });
+
+    it('should return errors from underlying map', async () => {
+      if (map.map.deleteMany) return; // skip test
+
+      jest.spyOn(map.map, 'delete').mockImplementation(() => { throw new Error('error'); });
+
+      const results = [];
+      for await (const error of map.deleteMany([K1, K2])) {
+        results.push(error);
+      }
+      expect(results).toEqual([
+        operationError(`Failed to delete key`, ErrorCode.OpFailed, K1, new Error('error')),
+        operationError(`Failed to delete key`, ErrorCode.OpFailed, K2, new Error('error')),
+      ])
     });
   });
 
@@ -105,6 +137,22 @@ describe.each([
       expect(await map.get(K1)).toBe(value1);
       expect(await map.has(K2)).toBe(false);
       expect(await map.get(K3)).toBe(value3);
+    });
+
+    it('should return errors from underlying map', async () => {
+      if (map.map.updateMany) return; // skip test
+
+      jest.spyOn(map.map, 'set').mockImplementation(() => { throw new Error('error'); });
+      jest.spyOn(map.map, 'delete').mockImplementation(() => { throw new Error('error'); });
+
+      const results = [];
+      for await (const error of map.updateMany([[K1, 123], [K2, void 0]])) {
+        results.push(error);
+      }
+      expect(results).toEqual([
+        operationError(`Failed to update key`, ErrorCode.OpFailed, K1, new Error('error')),
+        operationError(`Failed to update key`, ErrorCode.OpFailed, K2, new Error('error')),
+      ])
     });
   });
 });

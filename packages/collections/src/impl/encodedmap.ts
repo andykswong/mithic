@@ -79,7 +79,7 @@ export class EncodedMap<K, V, TK = K, TV = V> implements MaybeAsyncMap<K, V>, Ma
         await this.set(key, value, options);
         yield;
       } catch (error) {
-        yield operationError('Failed to set value', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+        yield operationError('Failed to set key', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
       }
     }
   }
@@ -103,7 +103,7 @@ export class EncodedMap<K, V, TK = K, TV = V> implements MaybeAsyncMap<K, V>, Ma
   }
 
   public async * updateMany(
-    entries: Iterable<[K, V | undefined]>, options?: AbortOptions
+    entries: Iterable<[K, V?]>, options?: AbortOptions
   ): AsyncIterableIterator<Error | undefined> {
     options?.signal?.throwIfAborted();
     if (this.map.updateMany) {
@@ -126,7 +126,7 @@ export class EncodedMap<K, V, TK = K, TV = V> implements MaybeAsyncMap<K, V>, Ma
         }
         yield;
       } catch (error) {
-        yield operationError('Failed to update value', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+        yield operationError('Failed to update key', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
       }
     }
   }

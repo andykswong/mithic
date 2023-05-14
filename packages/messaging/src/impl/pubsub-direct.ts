@@ -11,7 +11,7 @@ export const PUBSUB_DIRECT_CHANNEL_PROTOCOL_NAME = 'pubsub-direct';
 export const PUBSUB_DIRECT_CHANNEL_PROTOCOL_SEMVER = '0.1.0';
 
 /** An implementation of {@link PeerChannel} that uses a unique {@link PubSub} topic for messaging. */
-export class PubSubDirectChannel<Msg = Uint8Array, Peer extends StringEquatable = string>
+export class PubSubDirectChannel<Msg = Uint8Array, Peer extends StringEquatable<Peer> = string>
   implements PeerChannel<Msg, Peer>
 {
   public readonly id: string;

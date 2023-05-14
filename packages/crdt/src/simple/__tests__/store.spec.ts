@@ -64,7 +64,7 @@ describe(SimpleEventStore.name, () => {
 
     it('should replace head event indices', async () => {
       const key = new Id(new Uint8Array([1, 3, 5]));
-      const event: EventType = { type: TYPE1, payload: [3, key], meta: { root: ID2, parents: [ID2] } };
+      const event: EventType = { type: TYPE1, payload: [3, key], meta: { root: ID1, parents: [ID2] } };
       const result = await store.put(event);
       expect(key).toEqual(result);
       expect(data.has(key)).toBeTruthy();
@@ -86,6 +86,16 @@ describe(SimpleEventStore.name, () => {
       };
       await expect(store.put(event)).rejects
         .toThrowError(operationError('Missing dependencies', ErrorCode.MissingDep, [ID3]));
+    });
+
+    it('should throw an error if root Id is invalid', async () => {
+      const event: EventType = {
+        type: TYPE1,
+        payload: [3, new Id(new Uint8Array([1, 3, 5]))],
+        meta: { root: ID2, parents: [ID1] }
+      };
+      await expect(store.put(event)).rejects
+        .toThrowError(operationError('Invalid root Id', ErrorCode.InvalidArg));
     });
 
     it('should throw an error if the root Id is missing', async () => {

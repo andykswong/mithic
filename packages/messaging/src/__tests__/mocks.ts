@@ -60,7 +60,7 @@ export class MockPeer implements Equal<MockPeer> {
     return this.multihash.bytes;
   }
 
-  equals(other: string | MockPeer | Uint8Array): boolean {
+  equals(other: MockPeer): boolean {
     return other === this;
   }
 }

@@ -1,6 +1,6 @@
 import { StringEquatable, equalsOrSameString } from '../equal.js';
 
-class WithEqual implements StringEquatable {
+class WithEqual implements StringEquatable<WithEqual> {
   constructor(public value: string) {}
 
   equals(rhs: WithEqual) {

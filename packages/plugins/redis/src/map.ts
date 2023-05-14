@@ -112,7 +112,7 @@ export class RedisMap<UseBuffer extends boolean = false, R extends RedisClientTy
   }
 
   public async * updateMany(
-    entries: Iterable<[string, RedisValueType<UseBuffer> | undefined]>
+    entries: Iterable<[string, RedisValueType<UseBuffer>?]>
   ): AsyncIterableIterator<Error | undefined> {
     let error: unknown | undefined;
     try {

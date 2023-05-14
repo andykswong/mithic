@@ -12,11 +12,14 @@ export interface Event<T = unknown, Meta = unknown> {
   meta: Meta;
 }
 
-/** Common {@link Event} metadata. */
-export interface EventMetadata<Id = ContentId> {
+/** {@link Event} relationship metadata. */
+export interface EventRelationship<Id = ContentId> {
   /** Parent event IDs, on which this event depends. */
   parents: Id[];
+}
 
+/** Common {@link Event} metadata. */
+export interface EventMetadata<Id = ContentId> extends EventRelationship<Id> {
   /** Event target aggregate root ID. */
   root?: Id;
 

@@ -5,7 +5,7 @@ import { PubSubPeerEvent, PubSubPeerEvents, PubSubPeerState } from '../pubsub.js
 export const DEFAULT_PUBSUB_PEER_MONITOR_REFRESH_MS = 1000;
 
 /** Monitor of topic peers from {@link PubSubPeerState}. */
-export class PubSubPeerMonitor<Peer extends StringEquatable>
+export class PubSubPeerMonitor<Peer extends StringEquatable<Peer>>
   extends EventEmitter<PubSubPeerEvents<Peer>>
   implements Startable {
 

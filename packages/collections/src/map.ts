@@ -49,7 +49,9 @@ export interface MaybeAsyncMapSetBatch<K, V> {
 /** Batch update API for a {@link MaybeAsyncMap}. */
 export interface MaybeAsyncMapUpdateBatch<K, V> {
   /** Sets or deletes given list of entries. */
-  updateMany(entries: Iterable<[K, V | undefined]>, options?: AbortOptions): MaybeAsyncIterableIterator<Error | undefined>;
+  updateMany(
+    entries: Iterable<[key: K, value?: V]>, options?: AbortOptions
+  ): MaybeAsyncIterableIterator<Error | undefined>;
 }
 
 /** Batch APIs for a {@link MaybeAsyncMap}. */

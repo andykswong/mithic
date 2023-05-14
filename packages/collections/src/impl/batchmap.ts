@@ -46,7 +46,7 @@ export abstract class SyncMapBatchAdapter<K, V> implements MaybeAsyncMap<K, V>, 
     }
   }
 
-  public * updateMany(entries: Iterable<[K, V | undefined]>, options?: AbortOptions): IterableIterator<Error | undefined> {
+  public * updateMany(entries: Iterable<[K, V?]>, options?: AbortOptions): IterableIterator<Error | undefined> {
     for (const [key, value] of entries) {
       options?.signal?.throwIfAborted();
       try {

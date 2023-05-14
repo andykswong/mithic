@@ -1,3 +1,5 @@
+import { jest } from '@jest/globals';
+import { ErrorCode, operationError } from '@mithic/commons';
 import { MaybeAsyncSet } from '../../set.js';
 import { EncodedSet } from '../encodedset.js';
 
@@ -73,6 +75,21 @@ describe.each([
       expect(await set.has(K1)).toBe(true);
       expect(await set.has(K3)).toBe(true);
     });
+
+    it('should return errors from underlying set', async () => {
+      if (set.set.addMany) return; // skip test
+
+      jest.spyOn(set.set, 'add').mockImplementation(() => { throw new Error('error'); });
+
+      const results = [];
+      for await (const error of set.addMany([K1, K2])) {
+        results.push(error);
+      }
+      expect(results).toEqual([
+        operationError(`Failed to add key`, ErrorCode.OpFailed, K1, new Error('error')),
+        operationError(`Failed to add key`, ErrorCode.OpFailed, K2, new Error('error')),
+      ])
+    });
   });
 
   describe('deleteMany', () => {
@@ -82,6 +99,47 @@ describe.each([
       }
       expect(await set.has(K1)).toBe(false);
       expect(await set.has(K2)).toBe(false);
+    });
+
+    it('should return errors from underlying set', async () => {
+      if (set.set.deleteMany) return; // skip test
+
+      jest.spyOn(set.set, 'delete').mockImplementation(() => { throw new Error('error'); });
+
+      const results = [];
+      for await (const error of set.deleteMany([K1, K2])) {
+        results.push(error);
+      }
+      expect(results).toEqual([
+        operationError(`Failed to delete key`, ErrorCode.OpFailed, K1, new Error('error')),
+        operationError(`Failed to delete key`, ErrorCode.OpFailed, K2, new Error('error')),
+      ])
+    });
+  });
+
+  describe('updateMany', () => {
+    it('should add or delete values', async () => {
+      for await (const error of set.updateMany([[K1, true], [K3]])) {
+        expect(error).toBeUndefined();
+      }
+      expect(await set.has(K1)).toBe(false);
+      expect(await set.has(K3)).toBe(true);
+    });
+
+    it('should return errors from underlying set', async () => {
+      if (set.set.addMany) return; // skip test
+
+      jest.spyOn(set.set, 'add').mockImplementation(() => { throw new Error('error'); });
+      jest.spyOn(set.set, 'delete').mockImplementation(() => { throw new Error('error'); });
+
+      const results = [];
+      for await (const error of set.updateMany([[K1, true], [K3]])) {
+        results.push(error);
+      }
+      expect(results).toEqual([
+        operationError(`Failed to delete key`, ErrorCode.OpFailed, K1, new Error('error')),
+        operationError(`Failed to add key`, ErrorCode.OpFailed, K3, new Error('error')),
+      ])
     });
   });
 });

@@ -114,7 +114,7 @@ export class LevelMap<K, V, T = any>
     }
   }
 
-  public async * updateMany(entries: Iterable<[K, V | undefined]>): AsyncIterableIterator<Error | undefined> {
+  public async * updateMany(entries: Iterable<[K, V?]>): AsyncIterableIterator<Error | undefined> {
     let batch = this.level.batch();
     for (const [key, value] of entries) {
       if (value === void 0) {

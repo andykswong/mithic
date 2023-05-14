@@ -72,6 +72,31 @@ export class EncodedSet<T, U = T> implements MaybeAsyncSet<T>, MaybeAsyncSetBatc
     }
   }
 
+  public async * updateMany(
+    keys: Iterable<[key: T, isDelete?: boolean]>, options?: AbortOptions
+  ): AsyncIterableIterator<Error | undefined> {
+    options?.signal?.throwIfAborted();
+    if (this.set.updateMany) {
+      yield* this.set.updateMany([...keys].map(([key, isDelete]) => [this.encode(key), isDelete]), options);
+      return;
+    }
+
+    for (const [key, isDelete] of keys) {
+      options?.signal?.throwIfAborted();
+      try {
+        if (isDelete) {
+          await this.delete(key, options);
+        } else {
+          await this.add(key, options);
+        }
+        yield;
+      } catch (error) {
+        yield operationError(`Failed to ${isDelete ? 'delete' : 'add'} key`,
+          (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+      }
+    }
+  }
+
   public get [Symbol.toStringTag](): string {
     return EncodedSet.name;
   }

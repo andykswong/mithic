@@ -5,7 +5,7 @@ import { PeerAwarePubSub, PubSubPeerState } from '../pubsub.js';
 export const CONNECTION_CHECK_INTERVAL_MS = 200;
 
 /** Waits for peer to be connected. */
-export async function waitForPeer<Peer extends StringEquatable>(
+export async function waitForPeer<Peer extends StringEquatable<Peer>>(
   pubsub: PeerAwarePubSub<unknown, Peer>, topic: string, peer: Peer, options?: AbortOptions
 ): Promise<void> {
   if (await isPeerConnected(pubsub, topic, peer, options)) {
@@ -42,7 +42,7 @@ export async function waitForPeer<Peer extends StringEquatable>(
 }
 
 /** Checks if peer is connected. */
-export async function isPeerConnected<Peer extends StringEquatable>(
+export async function isPeerConnected<Peer extends StringEquatable<Peer>>(
   pubsub: PubSubPeerState<Peer>, topic: string, peer: Peer, options?: AbortOptions
 ): Promise<boolean> {
   const subscribers = await pubsub.subscribers(topic, options);

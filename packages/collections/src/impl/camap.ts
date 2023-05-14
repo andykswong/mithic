@@ -3,19 +3,18 @@ import {
   operationError, ErrorCode
 } from '@mithic/commons';
 import { CID } from 'multiformats';
-import { base64 } from 'multiformats/bases/base64';
 import * as raw from 'multiformats/codecs/raw';
 import { AutoKeyMap, AutoKeyMapBatch, MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
 import { EncodedMap } from './encodedmap.js';
 
 /** A content-addressable map store that persists values in a backing {@link MaybeAsyncMap}. */
-export class ContentAddressedMapStore<Id extends ContentId = ContentId, T = Uint8Array>
+export class ContentAddressedMapStore<Id = ContentId, T = Uint8Array>
   implements AutoKeyMap<Id, T>, AutoKeyMapBatch<Id, T>
 {
   public constructor(
     /** The underlying map. */
     public readonly map: MaybeAsyncMap<Id, T> & Partial<MaybeAsyncMapBatch<Id, T>>
-      = new EncodedMap<Id, T, string>(new Map(), { encodeKey: (cid) => cid.toString(base64) }),
+      = new EncodedMap<Id, T, string>(new Map(), { encodeKey: (key) => `${key}` }),
     /** Hash function to use for generating keys for values. */
     protected readonly hash: (value: T) => Id = defaultHasher as unknown as (value: T) => Id
   ) {
