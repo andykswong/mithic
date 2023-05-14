@@ -25,7 +25,7 @@
 <li>
 <h4><span class="tsd-kind-type-parameter">E</span><span class="tsd-signature-symbol"> extends </span><a href="_mithic_cqrs.EventTypeMap.html" class="tsd-signature-type tsd-kind-Type-alias">EventTypeMap</a> = <a href="_mithic_cqrs.EventTypeMap.html" class="tsd-signature-type tsd-kind-Type-alias">EventTypeMap</a></h4></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/bda5d7f/packages/cqrs/src/command.ts#L10">cqrs/src/command.ts:10</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/079f920/packages/cqrs/src/command.ts#L10">cqrs/src/command.ts:10</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
@@ -85,6 +85,7 @@
 <li><a href="../interfaces/_mithic_collections.MaybeAsyncMap.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Map</span></a></li>
 <li><a href="../interfaces/_mithic_collections.MaybeAsyncMapBatch.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Map<wbr/>Batch</span></a></li>
 <li><a href="../interfaces/_mithic_collections.MaybeAsyncMapSetBatch.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Map<wbr/>Set<wbr/>Batch</span></a></li>
+<li><a href="../interfaces/_mithic_collections.MaybeAsyncMapUpdateBatch.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Map<wbr/>Update<wbr/>Batch</span></a></li>
 <li><a href="../interfaces/_mithic_collections.MaybeAsyncReadonlyMap.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Readonly<wbr/>Map</span></a></li>
 <li><a href="../interfaces/_mithic_collections.MaybeAsyncReadonlyMapBatch.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Readonly<wbr/>Map<wbr/>Batch</span></a></li>
 <li><a href="../interfaces/_mithic_collections.MaybeAsyncReadonlySet.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Maybe<wbr/>Async<wbr/>Readonly<wbr/>Set</span></a></li>
@@ -240,7 +241,28 @@
 <li><a href="../variables/_mithic_messaging.DEFAULT_BROADCAST_CHANNEL_PUBSUB_KEEPALIVE_MS.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-32-path"></use><use href="#icon-32-text"></use></svg><span>DEFAULT_<wbr/>BROADCAST_<wbr/>CHANNEL_<wbr/>PUBSUB_<wbr/>KEEPALIVE_<wbr/>MS</span></a></li>
 <li><a href="../variables/_mithic_messaging.DEFAULT_PUBSUB_PEER_MONITOR_REFRESH_MS.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-32-path"></use><use href="#icon-32-text"></use></svg><span>DEFAULT_<wbr/>PUBSUB_<wbr/>PEER_<wbr/>MONITOR_<wbr/>REFRESH_<wbr/>MS</span></a></li>
 <li><a href="../variables/_mithic_messaging.PUBSUB_DIRECT_CHANNEL_PROTOCOL_NAME.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-32-path"></use><use href="#icon-32-text"></use></svg><span>PUBSUB_<wbr/>DIRECT_<wbr/>CHANNEL_<wbr/>PROTOCOL_<wbr/>NAME</span></a></li>
-<li><a href="../variables/_mithic_messaging.PUBSUB_DIRECT_CHANNEL_PROTOCOL_SEMVER.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-32-path"></use><use href="#icon-32-text"></use></svg><span>PUBSUB_<wbr/>DIRECT_<wbr/>CHANNEL_<wbr/>PROTOCOL_<wbr/>SEMVER</span></a></li></ul></div></details></li></ul></nav></div></div></div>
+<li><a href="../variables/_mithic_messaging.PUBSUB_DIRECT_CHANNEL_PROTOCOL_SEMVER.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-32-path"></use><use href="#icon-32-text"></use></svg><span>PUBSUB_<wbr/>DIRECT_<wbr/>CHANNEL_<wbr/>PROTOCOL_<wbr/>SEMVER</span></a></li></ul></div></details></li>
+<li>
+<details class="tsd-index-accordion" data-key="@mithic/ipfs"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4.93896 8.531L12 15.591L19.061 8.531L16.939 6.409L12 11.349L7.06098 6.409L4.93896 8.531Z" fill="var(--color-text)"></path></svg><a href="../modules/_mithic_ipfs.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-4-path"></use><use href="#icon-4-text"></use></svg><span>@mithic/ipfs -<wbr/> v0.2.0</span></a></summary>
+<div class="tsd-accordion-details">
+<ul class="tsd-nested-navigation">
+<li><a href="../classes/_mithic_ipfs.IpfsMap.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Ipfs<wbr/>Map</span></a></li>
+<li><a href="../classes/_mithic_ipfs.IpfsPubSub.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Ipfs<wbr/>Pub<wbr/>Sub</span></a></li>
+<li><a href="../classes/_mithic_ipfs.Libp2pPubSub.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Libp2p<wbr/>Pub<wbr/>Sub</span></a></li>
+<li><a href="../interfaces/_mithic_ipfs.IpfsPubSubOptions.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Ipfs<wbr/>Pub<wbr/>Sub<wbr/>Options</span></a></li>
+<li><a href="../interfaces/_mithic_ipfs.Libp2pPubSubOptions.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Libp2p<wbr/>Pub<wbr/>Sub<wbr/>Options</span></a></li></ul></div></details></li>
+<li>
+<details class="tsd-index-accordion" data-key="@mithic/level"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4.93896 8.531L12 15.591L19.061 8.531L16.939 6.409L12 11.349L7.06098 6.409L4.93896 8.531Z" fill="var(--color-text)"></path></svg><a href="../modules/_mithic_level.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-4-path"></use><use href="#icon-4-text"></use></svg><span>@mithic/level -<wbr/> v0.2.0</span></a></summary>
+<div class="tsd-accordion-details">
+<ul class="tsd-nested-navigation">
+<li><a href="../classes/_mithic_level.LevelMap.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Level<wbr/>Map</span></a></li></ul></div></details></li>
+<li>
+<details class="tsd-index-accordion" data-key="@mithic/redis"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4.93896 8.531L12 15.591L19.061 8.531L16.939 6.409L12 11.349L7.06098 6.409L4.93896 8.531Z" fill="var(--color-text)"></path></svg><a href="../modules/_mithic_redis.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-4-path"></use><use href="#icon-4-text"></use></svg><span>@mithic/redis -<wbr/> v0.2.0</span></a></summary>
+<div class="tsd-accordion-details">
+<ul class="tsd-nested-navigation">
+<li><a href="../classes/_mithic_redis.RedisMap.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Redis<wbr/>Map</span></a></li>
+<li><a href="../classes/_mithic_redis.RedisPubSub.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-128-path"></use><use href="#icon-128-text"></use></svg><span>Redis<wbr/>Pub<wbr/>Sub</span></a></li>
+<li><a href="_mithic_redis.RedisValueType.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-4194304-path"></use><use href="#icon-4194304-text"></use></svg><span>Redis<wbr/>Value<wbr/>Type</span></a></li></ul></div></details></li></ul></nav></div></div></div>
 <div class="tsd-generator">
 <p>Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p></div>
 <div class="overlay"></div></body></html>
