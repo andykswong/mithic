@@ -1,20 +1,23 @@
 import { AppendOnlyAutoKeyMap, AutoKeyMapBatch } from '@mithic/collections';
 import { AbortOptions, CodedError, ContentId, ErrorCode, MaybePromise, SyncOrAsyncGenerator, operationError } from '@mithic/commons';
-import { Event } from './event.js';
-import { EventStore, EventStoreQueryOptions } from './store.js';
-import { DEFAULT_QUERY_PAGE_SIZE } from './defaults.js';
+import { Event } from '../event.js';
+import { EventStore, EventStoreQueryOptions } from '../store.js';
+import { DEFAULT_BATCH_SIZE } from '../defaults.js';
 
-/** An abstract {@link EventStore} that stores events in an append-only auto-keyed map. */
+/**
+ * An abstract {@link EventStore} that stores events in an append-only auto-keyed map.
+ * One of `entries` or `keys` query functions must be overridden in subclass, as by default they refer to each other.
+ * `put` is usually overridden by subclass to prepare event indices for efficient queries.
+ */
 export abstract class BaseMapEventStore<
-  K = ContentId, V = Event, QueryExt = Record<string, never>
+  // eslint-disable-next-line @typescript-eslint/ban-types
+  K = ContentId, V = Event, QueryExt extends object = {}
 > implements EventStore<K, V, QueryExt>, AsyncIterable<[K, V]> {
   public constructor(
     protected readonly data: AppendOnlyAutoKeyMap<K, V> & Partial<AutoKeyMapBatch<K, V>>,
-    protected readonly queryPageSize = DEFAULT_QUERY_PAGE_SIZE,
+    protected readonly queryPageSize = DEFAULT_BATCH_SIZE,
   ) {
   }
-
-  public abstract keys(options?: (EventStoreQueryOptions<K> & QueryExt)): SyncOrAsyncGenerator<K, K[]>;
 
   public getKey(value: V, options?: AbortOptions): MaybePromise<K> {
     return this.data.getKey(value, options);
@@ -69,7 +72,7 @@ export abstract class BaseMapEventStore<
     }
   }
 
-  public async * entries(options?: (EventStoreQueryOptions<K> & QueryExt)): AsyncGenerator<[K, V], K[]> {
+  public async * entries(options?: EventStoreQueryOptions<K> & QueryExt): SyncOrAsyncGenerator<[K, V], K[]> {
     const keys = this.keys(options);
     const buffer = [];
     let result;
@@ -86,7 +89,16 @@ export abstract class BaseMapEventStore<
     return result.value;
   }
 
-  public async * values(options?: (EventStoreQueryOptions<K> & QueryExt)): AsyncGenerator<V, K[]> {
+  public async * keys(options?: EventStoreQueryOptions<K> & QueryExt): SyncOrAsyncGenerator<K, K[]> {
+    const entries = this.entries(options);
+    let result;
+    for (result = await entries.next(); !result.done; result = await entries.next()) {
+      yield result.value[0];
+    }
+    return result.value;
+  }
+
+  public async * values(options?: EventStoreQueryOptions<K> & QueryExt): SyncOrAsyncGenerator<V, K[]> {
     const entries = this.entries(options);
     let result;
     for (result = await entries.next(); !result.done; result = await entries.next()) {
@@ -95,8 +107,8 @@ export abstract class BaseMapEventStore<
     return result.value;
   }
 
-  public [Symbol.asyncIterator](): AsyncIterator<[K, V]> {
-    return this.entries();
+  public async *[Symbol.asyncIterator](): AsyncIterableIterator<[K, V]> {
+    yield* this.entries();
   }
 
   protected async * entriesForKeys(keys: K[], options?: AbortOptions): AsyncGenerator<[K, V]> {

@@ -3,7 +3,7 @@ import { ContentId, ErrorCode, operationError } from '@mithic/commons';
 import { SimpleEventStore } from '../store.js';
 import { MultihashDigest, MultibaseEncoder } from 'multiformats';
 import { base64 } from 'multiformats/bases/base64';
-import { Event, EventMetadata } from '../../event.js';
+import { Event, EventMetadata } from '../../../event.js';
 
 class Id implements ContentId {
   code = 123;

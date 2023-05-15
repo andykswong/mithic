@@ -5,12 +5,12 @@ import {
 import {
   AbortOptions, ContentId, ErrorCode, MaybePromise, StringEquatable, compareBuffers, equalsOrSameString, operationError
 } from '@mithic/commons';
-import { DEFAULT_EVENT_TYPE_SEPARATOR, DEFAULT_KEY_ENCODER } from '../defaults.js';
-import { Event, EventMetadata } from '../event.js';
+import { DEFAULT_EVENT_TYPE_SEPARATOR, DEFAULT_KEY_ENCODER } from '../../defaults.js';
+import { Event, EventMetadata } from '../../event.js';
+import { EventStore, EventStoreQueryOptions, EventStoreQueryOptionsExt } from '../../store.js';
+import { atomicHybridTime } from '../../time.js';
 import { BaseMapEventStore } from '../mapstore.js';
-import { EventStore, EventStoreQueryOptions, EventStoreQueryOptionsExt } from '../store.js';
 import { getEventIndexKeys, getEventIndexRangeQueryOptions } from './indices.js';
-import { atomicHybridTime } from './time.js';
 
 /**
  * A simple {@link EventStore} implementation, backed by {@link RangeQueryable} {@link MaybeAsyncMap}s.

@@ -1,7 +1,7 @@
 import { RangeQueryOptions } from '@mithic/collections';
 import { concatBuffers } from '@mithic/commons';
-import { Event, EventMetadata } from '../event.js';
-import { DEFAULT_EVENT_TYPE_SEPARATOR, DEFAULT_KEY_ENCODER, TEXT_ENCODER } from '../defaults.js';
+import { DEFAULT_EVENT_TYPE_SEPARATOR, DEFAULT_KEY_ENCODER, TEXT_ENCODER } from '../../defaults.js';
+import { Event, EventMetadata } from '../../event.js';
 
 const INT64_BUFFER = new Uint8Array(8);
 const INT64_VIEW = new DataView(INT64_BUFFER.buffer);

@@ -1,7 +1,7 @@
 import { ContentId } from '@mithic/commons';
 
-/** Default page size for queries. */
-export const DEFAULT_QUERY_PAGE_SIZE = 64;
+/** Default page size for batch operations. */
+export const DEFAULT_BATCH_SIZE = 64;
 
 /** Default text encoder. */
 export const TEXT_ENCODER = new TextEncoder();

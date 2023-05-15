@@ -4,15 +4,21 @@ import {
 import { AbortOptions, ContentId, SyncOrAsyncGenerator } from '@mithic/commons';
 import { Event } from './event.js';
 
-/** An append-only event log graph store. */
-export interface EventStore<K = ContentId, V = Event, QueryExt = Record<string, never>>
+/** An append-only event store. */
+// eslint-disable-next-line @typescript-eslint/ban-types
+export interface EventStore<K = ContentId, V = Event, QueryExt extends object = {}>
   extends ReadonlyEventStore<K, V, QueryExt>, AppendOnlyAutoKeyMap<K, V>, AutoKeyMapPutBatch<K, V> {
 }
 
-/** A read-only event log graph store. */
-export interface ReadonlyEventStore<K = ContentId, V = Event, QueryExt = Record<string, never>>
-  extends MaybeAsyncReadonlyMap<K, V>, MaybeAsyncReadonlyMapBatch<K, V> {
+/** A read-only event store. */
+// eslint-disable-next-line @typescript-eslint/ban-types
+export interface ReadonlyEventStore<K = ContentId, V = Event, QueryExt extends object = {}>
+  extends MaybeAsyncReadonlyMap<K, V>, MaybeAsyncReadonlyMapBatch<K, V>, EventStoreQuery<K, V, QueryExt> {
+}
 
+/** Query APIs for an event store. */
+// eslint-disable-next-line @typescript-eslint/ban-types
+export interface EventStoreQuery<K = ContentId, V = Event, QueryExt extends object = {}> {
   /** Queries entries by given criteria. */
   entries(options?: EventStoreQueryOptions<K> & QueryExt): SyncOrAsyncGenerator<[K, V], K[]>;
 
@@ -23,7 +29,7 @@ export interface ReadonlyEventStore<K = ContentId, V = Event, QueryExt = Record<
   values(options?: EventStoreQueryOptions<K> & QueryExt): SyncOrAsyncGenerator<V, K[]>;
 }
 
-/** Options for a {@link ReadonlyEventStore} query. */
+/** Options for a {@link EventStoreQuery} query. */
 export interface EventStoreQueryOptions<K> extends AbortOptions {
   /** Events after which result shall be returned. */
   since?: K[];

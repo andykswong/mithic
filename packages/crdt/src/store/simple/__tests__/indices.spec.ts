@@ -1,6 +1,6 @@
 import { ContentId } from '@mithic/commons';
 import { getEventIndexKey, getEventIndexKeys, getEventIndexRangeQueryOptions, getEventTypePrefixes, serializeNumber } from '../indices.js';
-import { Event, EventMetadata } from '../../event.js';
+import { Event, EventMetadata } from '../../../event.js';
 
 const ENCODER = new TextEncoder();
 
