@@ -31,7 +31,7 @@
 <ul class="tsd-hierarchy">
 <li><span class="target">SimpleEventStoreOptions</span></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5595ee1/packages/crdt/src/simple/store.ts#L142">crdt/src/simple/store.ts:142</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/2584942/packages/crdt/src/store/simple/store.ts#L142">crdt/src/store/simple/store.ts:142</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-index-accordion" open><summary class="tsd-accordion-summary tsd-index-summary">
@@ -53,7 +53,7 @@
 <div class="tsd-comment tsd-typography"><p>Backing data store map.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5595ee1/packages/crdt/src/simple/store.ts#L144">crdt/src/simple/store.ts:144</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/2584942/packages/crdt/src/store/simple/store.ts#L144">crdt/src/store/simple/store.ts:144</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="encodeKey" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <span>encode<wbr/>Key</span><a href="#encodeKey" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-Property">encode<wbr/>Key</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">key</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type ">Uint8Array</span><span class="tsd-signature-symbol">)</span></div>
@@ -73,21 +73,21 @@
 <h5><span class="tsd-kind-parameter">key</span>: <span class="tsd-signature-type tsd-kind-type-parameter">Id</span></h5></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type ">Uint8Array</span></h4></li></ul></li></ul></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5595ee1/packages/crdt/src/simple/store.ts#L150">crdt/src/simple/store.ts:150</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/2584942/packages/crdt/src/store/simple/store.ts#L150">crdt/src/store/simple/store.ts:150</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="eventTypeSeparator" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <span>event<wbr/>Type<wbr/>Separator</span><a href="#eventTypeSeparator" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-Property">event<wbr/>Type<wbr/>Separator</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type ">RegExp</span></div>
 <div class="tsd-comment tsd-typography"><p>Regex to split scoped event type.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5595ee1/packages/crdt/src/simple/store.ts#L156">crdt/src/simple/store.ts:156</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/2584942/packages/crdt/src/store/simple/store.ts#L156">crdt/src/store/simple/store.ts:156</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="index" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <span>index</span><a href="#index" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-Property">index</span><span class="tsd-signature-symbol">?:</span> <a href="_mithic_collections.MaybeAsyncMap.html" class="tsd-signature-type tsd-kind-Interface">MaybeAsyncMap</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type ">Uint8Array</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Id</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> &amp; </span><span class="tsd-signature-type ">Partial</span><span class="tsd-signature-symbol">&lt;</span><a href="_mithic_collections.MaybeAsyncMapBatch.html" class="tsd-signature-type tsd-kind-Interface">MaybeAsyncMapBatch</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type ">Uint8Array</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Id</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> &amp; </span><a href="_mithic_collections.RangeQueryable.html" class="tsd-signature-type tsd-kind-Interface">RangeQueryable</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type ">Uint8Array</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Id</span><span class="tsd-signature-symbol">&gt;</span></div>
 <div class="tsd-comment tsd-typography"><p>Backing index store map.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5595ee1/packages/crdt/src/simple/store.ts#L147">crdt/src/simple/store.ts:147</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/2584942/packages/crdt/src/store/simple/store.ts#L147">crdt/src/store/simple/store.ts:147</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="tick" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <span>tick</span><a href="#tick" aria-label="Permalink" class="tsd-anchor-icon"><svg class="icon icon-tabler icon-tabler-link" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-anchor-a"></use><use href="#icon-anchor-b"></use><use href="#icon-anchor-c"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-Property">tick</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">refTime</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-Variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">)</span></div>
@@ -107,7 +107,7 @@
 <h5><code class="tsd-tag ts-flagOptional">Optional</code> <span class="tsd-kind-parameter">refTime</span>: <span class="tsd-signature-type">number</span></h5></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-Variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">&gt;</span></h4></li></ul></li></ul></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5595ee1/packages/crdt/src/simple/store.ts#L153">crdt/src/simple/store.ts:153</a></li></ul></aside></section></section></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/2584942/packages/crdt/src/store/simple/store.ts#L153">crdt/src/store/simple/store.ts:153</a></li></ul></aside></section></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
@@ -302,11 +302,14 @@
 <li><a href="_mithic_crdt.EventMetadata.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Event<wbr/>Metadata</span></a></li>
 <li><a href="_mithic_crdt.EventRelationship.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Event<wbr/>Relationship</span></a></li>
 <li><a href="_mithic_crdt.EventStore.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Event<wbr/>Store</span></a></li>
+<li><a href="_mithic_crdt.EventStoreQuery.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Event<wbr/>Store<wbr/>Query</span></a></li>
 <li><a href="_mithic_crdt.EventStoreQueryOptions.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Event<wbr/>Store<wbr/>Query<wbr/>Options</span></a></li>
 <li><a href="_mithic_crdt.EventStoreQueryOptionsExt.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Event<wbr/>Store<wbr/>Query<wbr/>Options<wbr/>Ext</span></a></li>
 <li><a href="_mithic_crdt.ReadonlyEventStore.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Readonly<wbr/>Event<wbr/>Store</span></a></li>
+<li><a href="_mithic_crdt.ReplicateEventsOptions.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Replicate<wbr/>Events<wbr/>Options</span></a></li>
 <li><a href="_mithic_crdt.SimpleEventStoreOptions.html" class="current"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-256-path"></use><use href="#icon-256-text"></use></svg><span>Simple<wbr/>Event<wbr/>Store<wbr/>Options</span></a></li>
-<li><a href="../functions/_mithic_crdt.atomicHybridTime.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-64-path"></use><use href="#icon-64-text"></use></svg><span>atomic<wbr/>Hybrid<wbr/>Time</span></a></li></ul></div></details></li>
+<li><a href="../functions/_mithic_crdt.atomicHybridTime.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-64-path"></use><use href="#icon-64-text"></use></svg><span>atomic<wbr/>Hybrid<wbr/>Time</span></a></li>
+<li><a href="../functions/_mithic_crdt.replicateEvents.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-64-path"></use><use href="#icon-64-text"></use></svg><span>replicate<wbr/>Events</span></a></li></ul></div></details></li>
 <li>
 <details class="tsd-index-accordion" data-key="@mithic/messaging"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4.93896 8.531L12 15.591L19.061 8.531L16.939 6.409L12 11.349L7.06098 6.409L4.93896 8.531Z" fill="var(--color-text)"></path></svg><a href="../modules/_mithic_messaging.html"><svg class="tsd-kind-icon" width="24" height="24" viewBox="0 0 24 24"><use href="#icon-4-path"></use><use href="#icon-4-text"></use></svg><span>@mithic/messaging -<wbr/> v0.2.0</span></a></summary>
 <div class="tsd-accordion-details">
