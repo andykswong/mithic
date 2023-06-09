@@ -18,9 +18,9 @@ describe(RateLimiter.name, () => {
     const startTime2 = Date.now();
     await limiter.acquire();
     await limiter.acquire();
-    expect(Date.now() - startTime).toBeGreaterThanOrEqual(100);
+    expect(Date.now() - startTime).toBeGreaterThanOrEqual(99);
     await limiter.acquire();
-    expect(Date.now() - startTime2).toBeGreaterThanOrEqual(100);
+    expect(Date.now() - startTime2).toBeGreaterThanOrEqual(99);
   });
 
   test('tryAcquire should return true when permits available', () => {

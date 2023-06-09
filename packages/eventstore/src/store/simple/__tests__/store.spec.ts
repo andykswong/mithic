@@ -1,51 +1,27 @@
 import { BTreeMap, ContentAddressedMapStore } from '@mithic/collections';
-import { ContentId, ErrorCode, operationError } from '@mithic/commons';
+import { ErrorCode, operationError } from '@mithic/commons';
 import { SimpleEventStore } from '../store.js';
-import { MultihashDigest, MultibaseEncoder } from 'multiformats';
-import { base64 } from 'multiformats/bases/base64';
-import { Event, EventMetadata } from '../../../event.js';
-
-class Id implements ContentId {
-  code = 123;
-  multihash!: MultihashDigest<number>;
-
-  constructor(public bytes: Uint8Array) {
-  }
-
-  toJSON(): { '/': string; } {
-    return { '/': this.toString() };
-  }
-
-  toString(base: MultibaseEncoder<string> = base64): string {
-    return base.encode(this.bytes);
-  }
-
-  equals(rhs: Id): boolean {
-    return this.toString() === rhs.toString();
-  }
-}
-
-type EventType = Event<[number, Id], EventMetadata<Id>>;
+import { MockEventType, MockId } from '../../../__tests__/mocks.js';
 
 const TYPE1 = 'EVENT_CREATED';
 const TYPE2 = 'EVENT_UPDATED';
-const ID1 = new Id(new Uint8Array([1, 1, 1]));
-const ID2 = new Id(new Uint8Array([2, 2, 2]));
-const ID3 = new Id(new Uint8Array([3, 3, 3]));
-const EVENT1: EventType = { type: TYPE1, payload: [1, ID1], meta: { parents: [] } };
-const EVENT2: EventType = { type: TYPE2, payload: [2, ID2], meta: { parents: [ID1], root: ID1 } };
+const ID1 = new MockId(new Uint8Array([1, 1, 1]));
+const ID2 = new MockId(new Uint8Array([2, 2, 2]));
+const ID3 = new MockId(new Uint8Array([3, 3, 3]));
+const EVENT1: MockEventType = { type: TYPE1, payload: [1, ID1], meta: { parents: [] } };
+const EVENT2: MockEventType = { type: TYPE2, payload: [2, ID2], meta: { parents: [ID1], root: ID1 } };
 
 describe(SimpleEventStore.name, () => {
-  let store: SimpleEventStore<Id, EventType>;
-  let data: ContentAddressedMapStore<Id, EventType>;
-  let index: BTreeMap<Uint8Array, Id>;
+  let store: SimpleEventStore<MockId, MockEventType>;
+  let data: ContentAddressedMapStore<MockId, MockEventType>;
+  let index: BTreeMap<Uint8Array, MockId>;
 
   beforeEach(async () => {
     store = new SimpleEventStore({
       data: new ContentAddressedMapStore(void 0, (event) => event.payload[1])
     });
-    data = store['data'] as ContentAddressedMapStore<Id, EventType>;
-    index = store['index'] as BTreeMap<Uint8Array, Id>;
+    data = store['data'] as ContentAddressedMapStore<MockId, MockEventType>;
+    index = store['index'] as BTreeMap<Uint8Array, MockId>;
 
     await store.put(EVENT1);
     await store.put(EVENT2);
@@ -54,8 +30,8 @@ describe(SimpleEventStore.name, () => {
 
   describe('put', () => {
     it('should save event and return the key', async () => {
-      const key = new Id(new Uint8Array([1, 3, 5]));
-      const event: EventType = { type: TYPE1, payload: [3, key], meta: { root: ID1, parents: [ID1] } };
+      const key = new MockId(new Uint8Array([1, 3, 5]));
+      const event: MockEventType = { type: TYPE1, payload: [3, key], meta: { root: ID1, parents: [ID1] } };
       const result = await store.put(event);
       expect(key).toEqual(result);
       expect(data.has(key)).toBeTruthy();
@@ -63,8 +39,8 @@ describe(SimpleEventStore.name, () => {
     });
 
     it('should replace head event indices', async () => {
-      const key = new Id(new Uint8Array([1, 3, 5]));
-      const event: EventType = { type: TYPE1, payload: [3, key], meta: { root: ID1, parents: [ID2] } };
+      const key = new MockId(new Uint8Array([1, 3, 5]));
+      const event: MockEventType = { type: TYPE1, payload: [3, key], meta: { root: ID1, parents: [ID2] } };
       const result = await store.put(event);
       expect(key).toEqual(result);
       expect(data.has(key)).toBeTruthy();
@@ -79,9 +55,9 @@ describe(SimpleEventStore.name, () => {
     });
 
     it('should throw an error if there are missing dependencies', async () => {
-      const event: EventType = {
+      const event: MockEventType = {
         type: TYPE1,
-        payload: [3, new Id(new Uint8Array([1, 3, 5]))],
+        payload: [3, new MockId(new Uint8Array([1, 3, 5]))],
         meta: { root: ID1, parents: [ID1, ID3] }
       };
       await expect(store.put(event)).rejects
@@ -89,9 +65,9 @@ describe(SimpleEventStore.name, () => {
     });
 
     it('should throw an error if root Id is invalid', async () => {
-      const event: EventType = {
+      const event: MockEventType = {
         type: TYPE1,
-        payload: [3, new Id(new Uint8Array([1, 3, 5]))],
+        payload: [3, new MockId(new Uint8Array([1, 3, 5]))],
         meta: { root: ID2, parents: [ID1] }
       };
       await expect(store.put(event)).rejects
@@ -99,9 +75,9 @@ describe(SimpleEventStore.name, () => {
     });
 
     it('should throw an error if the root Id is missing', async () => {
-      const event: EventType = {
+      const event: MockEventType = {
         type: TYPE1,
-        payload: [3, new Id(new Uint8Array([1, 3, 5]))],
+        payload: [3, new MockId(new Uint8Array([1, 3, 5]))],
         meta: { parents: [ID1] }
       };
       await expect(store.put(event)).rejects.toThrowError(operationError('Missing root Id', ErrorCode.InvalidArg));
@@ -110,10 +86,10 @@ describe(SimpleEventStore.name, () => {
 
   describe('putMany', () => {
     it('should save event and return the key / error', async () => {
-      const key1 = new Id(new Uint8Array([1]));
-      const key2 = new Id(new Uint8Array([2]));
-      const event1: EventType = { type: TYPE1, payload: [3, key1], meta: { root: ID1, parents: [ID1] } };
-      const event2: EventType = { type: TYPE2, payload: [4, key2], meta: { root: ID3, parents: [ID3] } };
+      const key1 = new MockId(new Uint8Array([1]));
+      const key2 = new MockId(new Uint8Array([2]));
+      const event1: MockEventType = { type: TYPE1, payload: [3, key1], meta: { root: ID1, parents: [ID1] } };
+      const event2: MockEventType = { type: TYPE2, payload: [4, key2], meta: { root: ID3, parents: [ID3] } };
 
       const results = [];
       for await (const result of store.putMany([event1, event2])) {
@@ -152,8 +128,8 @@ describe(SimpleEventStore.name, () => {
   
   describe('getKey', () => {
     it('should return the correct key', async () => {
-      const key = new Id(new Uint8Array([1, 3, 5]));
-      const event: EventType = { type: TYPE1, payload: [3, key], meta: { root: ID1, parents: [ID1] } };
+      const key = new MockId(new Uint8Array([1, 3, 5]));
+      const event: MockEventType = { type: TYPE1, payload: [3, key], meta: { root: ID1, parents: [ID1] } };
       const result = await store.getKey(event);
       expect(key).toEqual(result);
     });
@@ -193,15 +169,15 @@ describe(SimpleEventStore.name, () => {
 
   describe('query', () => {
     const TYPE3 = 'EVENT_DELETED';
-    const ID4 = new Id(new Uint8Array([3, 4]));
-    const ID5 = new Id(new Uint8Array([3, 5]));
-    const ID6 = new Id(new Uint8Array([4, 6]));
-    const ID7 = new Id(new Uint8Array([1, 7]));
-    const EVENT3: EventType = { type: TYPE1, payload: [3, ID3], meta: { parents: [] } };
-    const EVENT4: EventType = { type: TYPE2, payload: [4, ID4], meta: { parents: [ID3], root: ID3 } };
-    const EVENT5: EventType = { type: TYPE2, payload: [5, ID5], meta: { parents: [ID3], root: ID3 } };
-    const EVENT6: EventType = { type: TYPE2, payload: [6, ID6], meta: { parents: [ID4], root: ID3 } };
-    const EVENT7: EventType = { type: TYPE3, payload: [7, ID7], meta: { parents: [ID2], root: ID1 } };
+    const ID4 = new MockId(new Uint8Array([3, 4]));
+    const ID5 = new MockId(new Uint8Array([3, 5]));
+    const ID6 = new MockId(new Uint8Array([4, 6]));
+    const ID7 = new MockId(new Uint8Array([1, 7]));
+    const EVENT3: MockEventType = { type: TYPE1, payload: [3, ID3], meta: { parents: [] } };
+    const EVENT4: MockEventType = { type: TYPE2, payload: [4, ID4], meta: { parents: [ID3], root: ID3 } };
+    const EVENT5: MockEventType = { type: TYPE2, payload: [5, ID5], meta: { parents: [ID3], root: ID3 } };
+    const EVENT6: MockEventType = { type: TYPE2, payload: [6, ID6], meta: { parents: [ID4], root: ID3 } };
+    const EVENT7: MockEventType = { type: TYPE3, payload: [7, ID7], meta: { parents: [ID2], root: ID1 } };
 
     beforeEach(async () => {
       await store.put(EVENT3);

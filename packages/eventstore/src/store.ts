@@ -29,7 +29,7 @@ export interface EventStoreQuery<K = ContentId, V = Event, QueryExt extends obje
   values(options?: EventStoreQueryOptions<K> & QueryExt): SyncOrAsyncGenerator<V, K[]>;
 }
 
-/** Options for a {@link EventStoreQuery} query. */
+/** Standard options for a {@link EventStoreQuery} query. */
 export interface EventStoreQueryOptions<K> extends AbortOptions {
   /** Events after which result shall be returned. */
   since?: K[];

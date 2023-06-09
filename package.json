@@ -30,6 +30,7 @@
     "decentralized",
     "distributed",
     "eventsourcing",
+    "eventstore",
     "p2p",
     "offline-first",
     "state-channel",
@@ -47,6 +48,7 @@
     "@mithic/commons": "^0.2",
     "@mithic/cqrs": "^0.2",
     "@mithic/crdt": "^0.2",
+    "@mithic/eventstore": "^0.2",
     "@mithic/messaging": "^0.2"
   },
   "devDependencies": {
@@ -59,6 +61,7 @@
     "./packages/messaging",
     "./packages/cqrs",
     "./packages/crdt",
+    "./packages/eventstore",
     "./packages/plugins/ipfs",
     "./packages/plugins/level",
     "./packages/plugins/redis",

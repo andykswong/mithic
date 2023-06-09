@@ -8,5 +8,6 @@
         "NODE_OPTIONS": "--experimental-vm-modules"
     },
     "jest.showCoverageOnLoad": true,
-    "jest.coverageFormatter": "GutterFormatter"
+    "jest.coverageFormatter": "GutterFormatter",
+    "typescript.tsdk": "node_modules/typescript/lib"
 }

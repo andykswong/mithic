@@ -13,10 +13,22 @@ component_management:
         - "packages/cqrs"
     - component_id: "@mithic/crdt"
       paths:
-        - "packages/crdt"
+        - "packages/cqrs"
+    - component_id: "@mithic/eventstore"
+      paths:
+        - "packages/eventstore"
     - component_id: "@mithic/messaging"
       paths:
         - "packages/messaging"
+    - component_id: "@mithic/ipfs"
+      paths:
+        - "packages/plugins/ipfs"
+    - component_id: "@mithic/level"
+      paths:
+        - "packages/plugins/level"
+    - component_id: "@mithic/redis"
+      paths:
+        - "packages/plugins/redis"
 coverage:
   status:
     project:

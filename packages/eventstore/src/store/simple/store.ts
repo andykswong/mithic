@@ -57,6 +57,7 @@ export class SimpleEventStore<
       }
 
       const missing: Id[] = [];
+      let hasMatchingParentRoot = false;
       let i = 0;
       for await (const parent of this.getMany(event.meta.parents, options)) {
         const key = event.meta.parents[i++];
@@ -65,19 +66,21 @@ export class SimpleEventStore<
           continue;
         }
 
-        if (!equalsOrSameString(rootId, parent.meta.root ?? key)) { // root Id must match parent root Id
-          throw operationError('Invalid root Id', ErrorCode.InvalidArg);
-        }
-
         parents.push([key, parent]);
         latestTime = Math.max(latestTime, (parent.meta.createdAt || 0) + 1);
+        hasMatchingParentRoot = hasMatchingParentRoot || equalsOrSameString(rootId, parent.meta.root ?? key);
       }
 
       if (missing.length) {
         throw operationError('Missing dependencies', ErrorCode.MissingDep, missing);
       }
+
+      if (!hasMatchingParentRoot) { // root Id must match one of parents' root
+        throw operationError('Invalid root Id', ErrorCode.InvalidArg);
+      }
     }
-    event.meta.createdAt = await this.tick(latestTime);
+
+    event.meta.createdAt = await this.tick(latestTime); // assign timestamp
 
     const key = await this.getKey(event);
     if (await this.data.has(key, options)) {
