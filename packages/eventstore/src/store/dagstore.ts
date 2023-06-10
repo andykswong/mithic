@@ -35,7 +35,7 @@ export class DagEventStore<
   }
 
   /** The head event keys. */
-  public get head(): MaybeAsyncReadonlySet<K> & SyncOrAsyncIterable<K> {
+  public get heads(): MaybeAsyncReadonlySet<K> & SyncOrAsyncIterable<K> {
     return this.headSet;
   }
 
@@ -135,22 +135,18 @@ export class DagEventStore<
       const [key, value] = entries[i];
 
       // yield matching entires. skip if head = true, as we will do this later
-      if (!headOnly && value.type.startsWith(options?.type || '')) {
+      if (!headOnly) {
         yield [key, value];
         ++count;
       }
 
       // update head set
       heads.set(key, value);
-      if (value.meta.parents.length && heads.deleteMany) {
+      if (value.meta.parents.length) {
         for await (const error of heads.deleteMany(value.meta.parents, options)) {
           if (error) {
             throw operationError('Failed to update head', ErrorCode.OpFailed, void 0, error);
           }
-        }
-      } else {
-        for (const key of value.meta.parents) {
-          await heads.delete(key, options);
         }
       }
     }
@@ -164,7 +160,7 @@ export class DagEventStore<
           break;
         }
         headList.push(entry[0]);
-        if (headOnly && entry[1].type.startsWith(options?.type || '') && count++ < limit) {
+        if (headOnly && count++ < limit) {
           yield entry;
         }
       }
@@ -175,9 +171,9 @@ export class DagEventStore<
 
   /** Traverses the graph of events from given keys and returns the max level. */
   protected async * predecessors(
-    keys: K[], visited: MaybeAsyncMap<K, number>,
+    keys: readonly K[], visited: MaybeAsyncMap<K, number>,
     options?: EventStoreQueryOptions<K> & EventStoreQueryOptionsExt<K>,
-  ): AsyncGenerator<[key: K, value: V, level: number]> {
+  ): AsyncIterableIterator<[key: K, value: V, level: number]> {
     for (let i = 0; i < keys.length; i += DEFAULT_BATCH_SIZE) {
       const keyBatch = keys.slice(i, Math.min(i + DEFAULT_BATCH_SIZE, keys.length));
       let j = -1;
@@ -193,13 +189,16 @@ export class DagEventStore<
         if (keyVisited) {
           continue;
         }
-        if (options?.root === void 0 || equalsOrSameString(options.root, value.meta.root ?? keyBatch[j])) {
-          if (!options?.head && value.meta.parents.length) {
-            for await (const entry of this.predecessors(value.meta.parents, visited, options)) {
-              yield entry;
-              level = Math.max(level, entry[2] + 1);
-            }
+        if (!options?.head && value.meta.parents.length) {
+          for await (const entry of this.predecessors(value.meta.parents, visited, options)) {
+            yield entry;
+            level = Math.max(level, entry[2] + 1);
           }
+        }
+        if (
+          (options?.root === void 0 || equalsOrSameString(options.root, value.meta.root ?? keyBatch[j])) &&
+          value.type.startsWith(options?.type || '')
+        ) {
           yield [keyBatch[j], value, level];
         }
         visited.set(keyBatch[j], level, options);

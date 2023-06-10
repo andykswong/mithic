@@ -3,23 +3,23 @@ import { ContentId } from '@mithic/commons';
 /** An event object. */
 export interface Event<T = unknown, Meta = unknown> {
   /** Event type. */
-  type: string;
+  readonly type: string;
 
   /** Event payload. */
-  payload: T;
+  readonly payload: T;
 
   /** Event metadata. */
-  meta: Meta;
+  readonly meta: Meta;
 }
 
 /** Standard {@link Event} metadata. */
-export interface EventMetadata<Id = ContentId> {
-  /** Parent event IDs, on which this event depends. */
-  parents: Id[];
+export interface EventMetadata<K = ContentId> {
+  /** Parent event ID, on which this event depends. */
+  readonly parents: readonly K[];
 
   /** Event target aggregate root ID. */
-  root?: Id;
+  readonly root?: K;
 
   /** (Logical) timestamp at which the event is created/persisted. */
-  createdAt?: number;
+  readonly createdAt?: number;
 }

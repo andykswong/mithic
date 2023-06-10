@@ -8,7 +8,7 @@
 
 <br/>
 
-> Eventsourced CRDT library for mithic
+> Standard eventsourced CRDT library for mithic
 
 <br/>
 

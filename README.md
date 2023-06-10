@@ -9,14 +9,14 @@
 
 <br/>
 
-> Modular library for real-time isomorphic JavaScript applications
+> Modular library for real-time, offline-first isomorphic JavaScript applications
 
 <br />
 
 > **Status: ⚠️ heavily WIP, not for consumption yet.** <br/>
 
 ## Overview
-`mithic` provides the building blocks for creating real-time client-side, server-side and decentralized applications, using [CQRS](https://en.wikipedia.org/wiki/Command%E2%80%93query_separation) architecture with [CRDT](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type) [eventsourcing](https://en.wikipedia.org/wiki/Event_store) for storage and data replication. Targeted use cases include business web apps, collaborative editing, multiplayer gaming, etc.
+`mithic` provides the building blocks for creating real-time, offline-first client-server and decentralized applications, using [CQRS](https://en.wikipedia.org/wiki/Command%E2%80%93query_separation) architecture with [CRDT](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type) [eventsourcing](https://en.wikipedia.org/wiki/Event_store) for storage and data replication. Targeted use cases include business web apps, collaborative editing, multiplayer gaming, etc.
 
 ## Documentation
 See generated TypeDoc: https://andykswong.github.io/mithic/
@@ -45,7 +45,7 @@ Core:
 |[`@mithic/collections`](./packages/collections)|[![npm](https://img.shields.io/npm/v/@mithic/collections?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/collections)|collection library|
 |[`@mithic/commons`](./packages/commons)|[![npm](https://img.shields.io/npm/v/@mithic/commons?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/commons)|common utility components|
 |[`@mithic/cqrs`](./packages/cqrs)|[![npm](https://img.shields.io/npm/v/@mithic/cqrs?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/cqrs)|CQRS library|
-|[`@mithic/crdt`](./packages/crdt)|[![npm](https://img.shields.io/npm/v/@mithic/crdt?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/crdt)|eventsourced CRDT library|
+|[`@mithic/crdt`](./packages/crdt)|[![npm](https://img.shields.io/npm/v/@mithic/crdt?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/crdt)|Standard eventsourced CRDT library|
 |[`@mithic/eventstore`](./packages/eventstore)|[![npm](https://img.shields.io/npm/v/@mithic/eventstore?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/eventstore)|Eventsourcing data store library|
 |[`@mithic/messaging`](./packages/messaging)|[![npm](https://img.shields.io/npm/v/@mithic/messaging?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/messaging)|messaging interface|
 

@@ -24,8 +24,8 @@ describe(DagEventStore.name, () => {
 
     await store.put(EVENT1);
     await store.put(EVENT2);
-    expect(store.head.has(ID1)).toBe(false);
-    expect(store.head.has(ID2)).toBe(true);
+    expect(store.heads.has(ID1)).toBe(false);
+    expect(store.heads.has(ID2)).toBe(true);
   });
 
   describe('put', () => {
@@ -43,8 +43,8 @@ describe(DagEventStore.name, () => {
       const result = await store.put(event);
       expect(key).toEqual(result);
       expect(data.has(key)).toBeTruthy();
-      expect(store.head.has(ID2)).toBe(false);
-      expect(store.head.has(key)).toBe(true);
+      expect(store.heads.has(ID2)).toBe(false);
+      expect(store.heads.has(key)).toBe(true);
     });
 
     it('should return the key of event if already exists', async () => {
@@ -184,23 +184,23 @@ describe(DagEventStore.name, () => {
     });
 
     it.each([
-      [{ type: TYPE1 }, [EVENT1, EVENT3], [ID3, ID2], false],
-      [{ type: TYPE2 }, [EVENT2], [ID3, ID2], false],
+      [{ type: TYPE1 }, [EVENT1, EVENT3], [ID1, ID3], false],
+      [{ type: TYPE2 }, [EVENT2], [ID2], false],
       [{ type: 'EVENT' }, [EVENT1, EVENT3, EVENT2], [ID3, ID2], false],
       [{ type: 'EVENT', limit: 2 }, [EVENT1, EVENT3], [ID1, ID3], true],
-      [{ type: TYPE1, head: true }, [EVENT3], [ID2, ID3], false],
+      [{ type: TYPE1, head: true }, [EVENT3], [ID3], false],
       [{ root: ID1 }, [EVENT1, EVENT2], [ID2], false],
-      [{ root: ID1, type: TYPE1 }, [EVENT1], [ID2], false],
-      [{ root: ID1, type: TYPE1, head: true }, [], [ID2], false],
+      [{ root: ID1, type: TYPE1 }, [EVENT1], [ID1], false],
+      [{ root: ID1, type: TYPE1, head: true }, [], [], false],
       [{ root: ID1, type: 'EVENT', head: true }, [EVENT2], [ID2], false],
       [{ head: true }, [EVENT7, EVENT5, EVENT6], [ID7, ID5, ID6], true],
       [{ head: true, limit: 2 }, [EVENT7, EVENT5], [ID7, ID5], true],
       [{ since: [ID2, ID3] }, [EVENT7, EVENT4, EVENT5, EVENT6], [ID7, ID5, ID6], true],
       [{ since: [ID2, ID3], limit: 3 }, [EVENT7, EVENT4, EVENT5], [ID7, ID4, ID5], true],
-      [{ type: TYPE2, since: [ID2, ID3, ID4] }, [EVENT5, EVENT6], [ID7, ID5, ID6], true],
+      [{ type: TYPE2, since: [ID2, ID3, ID4] }, [EVENT5, EVENT6], [ID5, ID6], true],
       [{ root: ID1, type: 'EVENT', since: [ID2] }, [EVENT7], [ID7], true],
-      [{ since: [ID2, ID3], head: true, type: TYPE2 }, [EVENT5, EVENT6], [ID7, ID5, ID6], true],
-      [{ since: [ID3], head: true, type: TYPE2, root: ID1 }, [], [ID7], true],
+      [{ since: [ID2, ID3], head: true, type: TYPE2 }, [EVENT5, EVENT6], [ID5, ID6], true],
+      [{ since: [ID3], head: true, type: TYPE2, root: ID1 }, [], [], true],
     ])('should return values matching the query options: %j', async (options, expectedResults, expectedHeads, extraEvents) => {
       if (extraEvents) {
         await putExtraEvents();

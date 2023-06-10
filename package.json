@@ -1,7 +1,7 @@
 {
   "name": "mithic",
   "version": "0.2.0",
-  "description": "Modular library for real-time isomorphic applications",
+  "description": "Modular library for real-time, offline-first isomorphic applications",
   "type": "module",
   "sideEffects": false,
   "main": "./index.js",

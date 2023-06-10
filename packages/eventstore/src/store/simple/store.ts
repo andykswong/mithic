@@ -18,7 +18,7 @@ import { getEventIndexKeys, getEventIndexRangeQueryOptions } from './indices.js'
  */
 export class SimpleEventStore<
   Id extends StringEquatable<Id> = ContentId,
-  E extends Event<unknown, EventMetadata<Id>> = Event<unknown, EventMetadata<Id>>
+  E extends Event<unknown, SimpleEventMetadata<Id>> = Event<unknown, SimpleEventMetadata<Id>>
 > extends BaseMapEventStore<Id, E, EventStoreQueryOptionsExt<Id>>
   implements EventStore<Id, E, EventStoreQueryOptionsExt<Id>>, AsyncIterable<[Id, E]>
 {
@@ -157,4 +157,10 @@ export interface SimpleEventStoreOptions<Id, E> {
 
   /** Regex to split scoped event type. */
   eventTypeSeparator?: RegExp;
+}
+
+/** Base {@link EventMetadata} for {@link SimpleEventStore}. */
+export interface SimpleEventMetadata<Id = ContentId> extends EventMetadata<Id> {
+  /** (Logical) timestamp at which the event is created/persisted. */
+  createdAt?: number;
 }
