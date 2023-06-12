@@ -47,7 +47,7 @@
 <li><a href="../classes/_mithic_eventstore.IndexedEventStore.html" class="tsd-signature-type tsd-kind-class">IndexedEventStore</a></li>
 <li><a href="../classes/_mithic_eventstore.IndexedEventStore.html" class="tsd-signature-type tsd-kind-class">IndexedEventStore</a></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/06b7687/packages/eventstore/src/store.ts#L9">eventstore/src/store.ts:9</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4ee993a/packages/eventstore/src/store.ts#L9">eventstore/src/store.ts:9</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-index-accordion" open><summary class="tsd-accordion-summary tsd-index-summary">
@@ -64,6 +64,7 @@
 <a href="_mithic_eventstore.EventStore.html#keys" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>keys</span></a>
 <a href="_mithic_eventstore.EventStore.html#put" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>put</span></a>
 <a href="_mithic_eventstore.EventStore.html#putMany" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>put<wbr/>Many</span></a>
+<a href="_mithic_eventstore.EventStore.html#validate" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>validate</span></a>
 <a href="_mithic_eventstore.EventStore.html#values" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>values</span></a>
 </div></section></div></details></section></section>
 <section class="tsd-panel-group tsd-member-group">
@@ -84,7 +85,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_eventstore.ReadonlyEventStore.html">ReadonlyEventStore</a>.<a href="_mithic_eventstore.ReadonlyEventStore.html#entries">entries</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/06b7687/packages/eventstore/src/store.ts#L23">eventstore/src/store.ts:23</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4ee993a/packages/eventstore/src/store.ts#L25">eventstore/src/store.ts:25</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="get" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>get</span><a href="#get" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
@@ -196,7 +197,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_eventstore.ReadonlyEventStore.html">ReadonlyEventStore</a>.<a href="_mithic_eventstore.ReadonlyEventStore.html#keys">keys</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/06b7687/packages/eventstore/src/store.ts#L26">eventstore/src/store.ts:26</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4ee993a/packages/eventstore/src/store.ts#L28">eventstore/src/store.ts:28</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="put" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>put</span><a href="#put" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
@@ -235,6 +236,24 @@
 <p>Inherited from <a href="_mithic_collections.AutoKeyMapPutBatch.html">AutoKeyMapPutBatch</a>.<a href="_mithic_collections.AutoKeyMapPutBatch.html#putMany">putMany</a></p>
 <ul>
 <li>Defined in collections/dist/map.d.ts:50</li></ul></aside></li></ul></section>
+<section class="tsd-panel tsd-member"><a id="validate" class="tsd-anchor"></a>
+<h3 class="tsd-anchor-link"><span>validate</span><a href="#validate" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
+<ul class="tsd-signatures">
+<li class="tsd-signature tsd-anchor-link" id="validate.validate-1"><span class="tsd-kind-call-signature">validate</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">value</span>, <span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><a href="../classes/_mithic_commons.CodedError.html" class="tsd-signature-type tsd-kind-class">CodedError</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span><a href="#validate.validate-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
+<li class="tsd-description">
+<div class="tsd-comment tsd-typography"><p>Validates given event and returns any error.</p>
+</div>
+<div class="tsd-parameters">
+<h4 class="tsd-parameters-title">Parameters</h4>
+<ul class="tsd-parameter-list">
+<li>
+<h5><span class="tsd-kind-parameter">value</span>: <span class="tsd-signature-type tsd-kind-type-parameter">V</span></h5></li>
+<li>
+<h5><code class="tsd-tag ts-flagOptional">Optional</code> <span class="tsd-kind-parameter">options</span>: <a href="_mithic_commons.AbortOptions.html" class="tsd-signature-type tsd-kind-interface">AbortOptions</a></h5></li></ul></div>
+<h4 class="tsd-returns-title">Returns <a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><a href="../classes/_mithic_commons.CodedError.html" class="tsd-signature-type tsd-kind-class">CodedError</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span></h4>
+<div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4ee993a/packages/eventstore/src/store.ts#L12">eventstore/src/store.ts:12</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="values" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>values</span><a href="#values" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
@@ -251,7 +270,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_eventstore.ReadonlyEventStore.html">ReadonlyEventStore</a>.<a href="_mithic_eventstore.ReadonlyEventStore.html#values">values</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/06b7687/packages/eventstore/src/store.ts#L29">eventstore/src/store.ts:29</a></li></ul></aside></li></ul></section></section></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4ee993a/packages/eventstore/src/store.ts#L31">eventstore/src/store.ts:31</a></li></ul></aside></li></ul></section></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
@@ -280,6 +299,7 @@
 <li><a href="#keys" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>keys</span></a></li>
 <li><a href="#put" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>put</span></a></li>
 <li><a href="#putMany" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>put<wbr/>Many</span></a></li>
+<li><a href="#validate" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>validate</span></a></li>
 <li><a href="#values" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>values</span></a></li></ul></div></details></div>
 <div class="site-menu">
 <nav class="tsd-navigation"><a href="../index.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><g id="icon-4"><rect fill="var(--color-icon-background)" stroke="var(--color-ts-namespace)" stroke-width="1.5" x="1" y="1" width="22" height="22" rx="6"></rect><path d="M9.33 16V7.24H10.77L13.446 14.74C13.43 14.54 13.41 14.296 13.386 14.008C13.37 13.712 13.354 13.404 13.338 13.084C13.33 12.756 13.326 12.448 13.326 12.16V7.24H14.37V16H12.93L10.266 8.5C10.282 8.692 10.298 8.936 10.314 9.232C10.33 9.52 10.342 9.828 10.35 10.156C10.366 10.476 10.374 10.784 10.374 11.08V16H9.33Z" fill="var(--color-text)"></path></g></svg><span>mithic -<wbr/> v0.2.0</span></a>
@@ -300,9 +320,9 @@
 <li><a href="_mithic_eventstore.Event.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-256"></use></svg><span>Event</span></a></li>
 <li><a href="_mithic_eventstore.EventMetadata.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-256"></use></svg><span>Event<wbr/>Metadata</span></a></li>
 <li><a href="_mithic_eventstore.EventStore.html" class="current"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-256"></use></svg><span>Event<wbr/>Store</span></a></li>
+<li><a href="_mithic_eventstore.EventStoreMetaQueryOptions.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-256"></use></svg><span>Event<wbr/>Store<wbr/>Meta<wbr/>Query<wbr/>Options</span></a></li>
 <li><a href="_mithic_eventstore.EventStoreQuery.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-256"></use></svg><span>Event<wbr/>Store<wbr/>Query</span></a></li>
 <li><a href="_mithic_eventstore.EventStoreQueryOptions.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-256"></use></svg><span>Event<wbr/>Store<wbr/>Query<wbr/>Options</span></a></li>
-<li><a href="_mithic_eventstore.EventStoreQueryOptionsExt.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-256"></use></svg><span>Event<wbr/>Store<wbr/>Query<wbr/>Options<wbr/>Ext</span></a></li>
 <li><a href="_mithic_eventstore.IndexedEventMetadata.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-256"></use></svg><span>Indexed<wbr/>Event<wbr/>Metadata</span></a></li>
 <li><a href="_mithic_eventstore.IndexedEventStoreOptions.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-256"></use></svg><span>Indexed<wbr/>Event<wbr/>Store<wbr/>Options</span></a></li>
 <li><a href="_mithic_eventstore.ReadonlyEventStore.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-256"></use></svg><span>Readonly<wbr/>Event<wbr/>Store</span></a></li>
