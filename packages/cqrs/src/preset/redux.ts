@@ -1,53 +1,54 @@
 import { AbortOptions, MaybePromise, Startable } from '@mithic/commons';
-import { EventBus, EventConsumer, EventDispatcher, EventSubscription, Unsubscribe } from '../event.js';
-import { AsyncEventSubscriber, AsyncEventSubscriberOptions, SimpleEventBus } from '../event/index.js';
-import { EventReducer, EventReducerFn } from '../processor/index.js';
+import { MessageBus, MessageConsumer, MessageDispatcher, MessageSubscription, Unsubscribe } from '../bus.js';
+import { AsyncSubscriber, AsyncSubscriberOptions, SimpleMessageBus } from '../bus/index.js';
+import { MessageReducer, MessageReducerFn } from '../processor/index.js';
 
-/** Creates a simple Redux-compatible CQRS store using {@link EventBus} and {@link EventReducer}. */
-export function createReduxStore<State, Event>(
-  options: CreateReduxStoreOptions<State, Event>
-): ReduxStore<State, Event> {
-  const eventBus = options.eventBus ?? new SimpleEventBus();
-  const eventReducer = new EventReducer(eventBus, options.reducer, options.initialState);
-  return new SimpleReduxStore(eventBus, eventReducer);
+/** Creates a simple Redux-compatible CQRS store using {@link MessageBus} and {@link MessageReducer}. */
+export function createReduxStore<State, Msg>(
+  options: CreateReduxStoreOptions<State, Msg>
+): ReduxStore<State, Msg> {
+  const bus = options.bus ?? new SimpleMessageBus();
+  const reducer = new MessageReducer(bus, options.reducer, options.initialState);
+  return new SimpleReduxStore(bus, reducer);
 }
 
 /** Simple implementation of {@link ReduxStore}. */
-export class SimpleReduxStore<State, Event> implements ReduxStore<State, Event> {
+export class SimpleReduxStore<State, Command> implements ReduxStore<State, Command> {
   public constructor(
-    /** Event dispatcher to use. */
-    protected readonly eventDispatcher: EventDispatcher<Event>,
-    /** Event reducer to use. */
-    protected readonly eventReducer: EventReducer<Event, State>,
+    /** Dispatcher to use. */
+    protected readonly dispatcher: MessageDispatcher<Command>,
+    /** Reducer to use. */
+    protected readonly reducer: MessageReducer<Command, State>,
   ) {
+    this.dispatch = this.dispatch.bind(this);
   }
 
   public get started(): boolean {
-    return this.eventReducer.started;
+    return this.reducer.started;
   }
 
   public start(options?: AbortOptions): MaybePromise<void> {
-    return this.eventReducer.start(options);
+    return this.reducer.start(options);
   }
 
   public close(options?: AbortOptions): MaybePromise<void> {
-    return this.eventReducer.close(options);
+    return this.reducer.close(options);
   }
 
-  public dispatch = (event: Event, options?: AbortOptions): MaybePromise<void> => {
-    return this.eventDispatcher.dispatch(event, options);
-  };
+  public dispatch(event: Command, options?: AbortOptions): MaybePromise<void> {
+    return this.dispatcher.dispatch(event, options);
+  }
 
   public getState(): State {
-    return this.eventReducer.state;
+    return this.reducer.state;
   }
 
-  public subscribe(consumer: EventConsumer<State>): Unsubscribe {
-    return this.eventReducer.subscribe(consumer);
+  public subscribe(consumer: MessageConsumer<State>): Unsubscribe {
+    return this.reducer.subscribe(consumer);
   }
 
-  public iterator(options?: AsyncEventSubscriberOptions): AsyncIterableIterator<State> {
-    return new AsyncEventSubscriber(this, options);
+  public iterator(options?: AsyncSubscriberOptions): AsyncIterableIterator<State> {
+    return new AsyncSubscriber(this, options);
   }
 
   public [Symbol.asyncIterator](): AsyncIterableIterator<State> {
@@ -56,24 +57,24 @@ export class SimpleReduxStore<State, Event> implements ReduxStore<State, Event> 
 }
 
 /** Options for {@link createReduxStore}. */
-export interface CreateReduxStoreOptions<State, Event> {
-  /** Event bus to use. */
-  eventBus?: EventBus<Event>;
+export interface CreateReduxStoreOptions<State, Command> {
+  /** Message bus to use. */
+  bus?: MessageBus<Command>;
 
   /** Initial state. */
   initialState: State;
 
-  /** Event reducer function. */
-  reducer: EventReducerFn<Event, State>;
+  /** Reducer function. */
+  reducer: MessageReducerFn<Command, State>;
 }
 
 /** Interface for a Redux compatible store. */
-export interface ReduxStore<State = unknown, Event = unknown>
-  extends EventDispatcher<Event>, EventSubscription<State>, Startable, AsyncIterable<State> {
+export interface ReduxStore<State = unknown, Command = unknown>
+  extends MessageDispatcher<Command>, MessageSubscription<State>, Startable, AsyncIterable<State> {
 
   /** Returns the current state. */
   getState(): State;
 
   /** Returns an async iterator that yields the latest state on change. */
-  iterator(options?: AsyncEventSubscriberOptions): AsyncIterableIterator<State>;
+  iterator(options?: AsyncSubscriberOptions): AsyncIterableIterator<State>;
 } 

@@ -1,14 +1,14 @@
 import { ErrorName, immediate } from '@mithic/commons';
-import { SimpleEventBus } from '../../event/index.js';
-import { AsyncEventSubscriber } from '../iterator.js';
+import { SimpleMessageBus } from '../simple.js';
+import { AsyncSubscriber } from '../iterator.js';
 
-describe(AsyncEventSubscriber.name, () => {
-  let eventBus: SimpleEventBus<number>;
-  let subscriber: AsyncEventSubscriber<number>;
+describe(AsyncSubscriber.name, () => {
+  let eventBus: SimpleMessageBus<number>;
+  let subscriber: AsyncSubscriber<number>;
 
   beforeEach(() => {
-    eventBus = new SimpleEventBus();
-    subscriber = new AsyncEventSubscriber(eventBus);
+    eventBus = new SimpleMessageBus();
+    subscriber = new AsyncSubscriber(eventBus);
   });
 
   afterEach(async () => {
@@ -58,7 +58,7 @@ describe(AsyncEventSubscriber.name, () => {
     expect.assertions(3);
 
     const controller = new AbortController();
-    const subscriber = new AsyncEventSubscriber(eventBus, controller);
+    const subscriber = new AsyncSubscriber(eventBus, controller);
     const events = [1, 2, 3];
     events.forEach(eventBus.dispatch);
     const result = [];
@@ -111,7 +111,7 @@ describe(AsyncEventSubscriber.name, () => {
   });
 
   it('should drop overflowing values', async () => {
-    const subscriber = new AsyncEventSubscriber(eventBus, { bufferSize: 1 });
+    const subscriber = new AsyncSubscriber(eventBus, { bufferSize: 1 });
     const events = [1, 2, 3];
     events.forEach(eventBus.dispatch);
 
@@ -122,7 +122,7 @@ describe(AsyncEventSubscriber.name, () => {
   });
 
   it('should ignore new values on fcfs mode if buffer is full', async () => {
-    const subscriber = new AsyncEventSubscriber(eventBus, { bufferSize: 1, fcfs: true });
+    const subscriber = new AsyncSubscriber(eventBus, { bufferSize: 1, fcfs: true });
     const events = [1, 2, 3];
     events.forEach(eventBus.dispatch);
 

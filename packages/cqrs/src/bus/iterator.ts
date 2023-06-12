@@ -1,14 +1,14 @@
 import { ArrayDeque } from '@mithic/collections';
 import { AbortOptions, Closeable, MaybePromise } from '@mithic/commons';
-import { EventSubscription, Unsubscribe } from '../event.js';
+import { MessageSubscription, Unsubscribe } from '../bus.js';
 
 /**
- * Subscribe to an {@link EventSubscription} as AsyncIterator.
+ * Subscribe to an {@link MessageSubscription} as AsyncIterator.
  * This is useful for GraphQL subscriptions.
  */
-export class AsyncEventSubscriber<Event> implements AsyncIterableIterator<Event>, Closeable {
-  private readonly pullQueue: ArrayDeque<(value: IteratorResult<Event>) => void> = new ArrayDeque();
-  private readonly pushQueue: ArrayDeque<Event> = new ArrayDeque();
+export class AsyncSubscriber<Message> implements AsyncIterableIterator<Message>, Closeable {
+  private readonly pullQueue: ArrayDeque<(value: IteratorResult<Message>) => void> = new ArrayDeque();
+  private readonly pushQueue: ArrayDeque<Message> = new ArrayDeque();
   private readonly bufferSize: number;
   private readonly fcfs: boolean;
   private readonly abort: AbortSignal | undefined;
@@ -17,10 +17,11 @@ export class AsyncEventSubscriber<Event> implements AsyncIterableIterator<Event>
 
   public constructor(
     /** Subscription to listen to. */
-    subscription: EventSubscription<Event>,
+    subscription: MessageSubscription<Message>,
     /** Optional options. */
-    options?: AsyncEventSubscriberOptions,
+    options?: AsyncSubscriberOptions,
   ) {
+    this.push = this.push.bind(this);
     this.unsubscribe = subscription.subscribe(this.push);
     this.abort = options?.signal;
     this.bufferSize = (((options?.bufferSize || 0) > 0) && options?.bufferSize) || Infinity;
@@ -31,7 +32,7 @@ export class AsyncEventSubscriber<Event> implements AsyncIterableIterator<Event>
     return this;
   }
 
-  public async next(): Promise<IteratorResult<Event>> {
+  public async next(): Promise<IteratorResult<Message>> {
     try {
       this.abort?.throwIfAborted();
       this.unsubscribe = await this.unsubscribe;
@@ -42,12 +43,12 @@ export class AsyncEventSubscriber<Event> implements AsyncIterableIterator<Event>
     }
   }
 
-  public async return(): Promise<IteratorResult<Event>> {
+  public async return(): Promise<IteratorResult<Message>> {
     await this.close();
     return { value: void 0, done: true };
   }
 
-  public async throw(error: unknown): Promise<IteratorResult<Event>> {
+  public async throw(error: unknown): Promise<IteratorResult<Message>> {
     await this.close();
     throw error;
   }
@@ -65,7 +66,7 @@ export class AsyncEventSubscriber<Event> implements AsyncIterableIterator<Event>
     this.running = false;
   }
 
-  private push = async (value: Event) => {
+  private async push(value: Message) {
     const resolve = this.pullQueue.shift();
     if (resolve) {
       resolve(this.running ? { value, done: false } : { value: void 0, done: true });
@@ -77,7 +78,7 @@ export class AsyncEventSubscriber<Event> implements AsyncIterableIterator<Event>
     }
   }
 
-  private pull(): Promise<IteratorResult<Event>> {
+  private pull(): Promise<IteratorResult<Message>> {
     return new Promise((resolve) => {
       const value = this.pushQueue.shift();
       if (value !== void 0) {
@@ -89,7 +90,8 @@ export class AsyncEventSubscriber<Event> implements AsyncIterableIterator<Event>
   }
 }
 
-export interface AsyncEventSubscriberOptions extends AbortOptions {
+/** Options for creating an {@link AsyncSubscriber}. */
+export interface AsyncSubscriberOptions extends AbortOptions {
   /** Event buffer size. Events may be dropped if buffer size is reached. Defaults to Infinity. */
   bufferSize?: number;
 

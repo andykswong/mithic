@@ -1,25 +1,25 @@
 import { MaybePromise } from '@mithic/commons';
-import { EventConsumer, EventSubscription, Unsubscribe } from '../event.js';
-import { SimpleEventBus } from '../event/index.js';
-import { EventProcessor } from '../processor.js';
+import { MessageConsumer, MessageSubscription, Unsubscribe } from '../bus.js';
+import { SimpleMessageBus } from '../bus/index.js';
+import { MessageProcessor } from '../processor.js';
 
-/** {@link EventProcessor} that derives aggregate state from events. */
-export class EventReducer<Event = unknown, State = object>
-  extends EventProcessor<Event>
-  implements EventSubscription<State>
+/** {@link MessageProcessor} that derives aggregate state from messages. */
+export class MessageReducer<Msg = unknown, State = object>
+  extends MessageProcessor<Msg>
+  implements MessageSubscription<State>
 {
-  protected readonly eventBus = new SimpleEventBus<State>();
+  protected readonly eventBus = new SimpleMessageBus<State>();
   protected _state: State;
 
   public constructor(
-    /** {@link EventSubscription} to consume. */
-    subscription: EventSubscription<Event>,
+    /** {@link MessageSubscription} to consume. */
+    subscription: MessageSubscription<Msg>,
     /** Reducer function. */
-    reducer: EventReducerFn<Event, State>,
+    reducer: MessageReducerFn<Msg, State>,
     /** Initial state. */
     initialState: State,
   ) {
-    const consumer = (event: Event) => MaybePromise.map(reducer(this._state, event), this.setState);
+    const consumer = (event: Msg) => MaybePromise.map(reducer(this._state, event), this.setState);
     super(subscription, consumer);
     this._state = initialState;
   }
@@ -29,7 +29,7 @@ export class EventReducer<Event = unknown, State = object>
     return this._state;
   }
 
-  public subscribe(consumer: EventConsumer<State>): Unsubscribe {
+  public subscribe(consumer: MessageConsumer<State>): Unsubscribe {
     return this.eventBus.subscribe(consumer);
   }
 
@@ -39,5 +39,5 @@ export class EventReducer<Event = unknown, State = object>
   };
 }
 
-/** Event reducer function. */
-export type EventReducerFn<Event = unknown, State = object> = (state: State, event: Event) => MaybePromise<State>;
+/** Reducer function. */
+export type MessageReducerFn<Msg = unknown, State = object> = (state: State, message: Msg) => MaybePromise<State>;

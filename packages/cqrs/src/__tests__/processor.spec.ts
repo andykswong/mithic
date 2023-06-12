@@ -1,17 +1,17 @@
 import { jest } from '@jest/globals';
-import { EventConsumer, EventSubscription, Unsubscribe } from '../event.js';
-import { SimpleEventBus } from '../index.js';
-import { EventProcessor } from '../processor.js';
+import { MessageConsumer, MessageSubscription, Unsubscribe } from '../bus.js';
+import { SimpleMessageBus } from '../bus/index.js';
+import { MessageProcessor } from '../processor.js';
 
-describe(EventProcessor.name, () => {
-  let subscription: EventSubscription<string>;
-  let mockConsumer: jest.MockedFunction<EventConsumer<string>>;
-  let eventProcessor: EventProcessor<string>;
+describe(MessageProcessor.name, () => {
+  let subscription: MessageSubscription<string>;
+  let mockConsumer: jest.MockedFunction<MessageConsumer<string>>;
+  let processor: MessageProcessor<string>;
 
   beforeEach(() => {
-    subscription = new SimpleEventBus();
+    subscription = new SimpleMessageBus();
     mockConsumer = jest.fn();
-    eventProcessor = new EventProcessor(subscription, mockConsumer);
+    processor = new MessageProcessor(subscription, mockConsumer);
   });
 
   describe('start', () => {
@@ -19,9 +19,9 @@ describe(EventProcessor.name, () => {
       const subscribeSpy = jest.spyOn(subscription, 'subscribe');
       const mockOptions = { signal: undefined };
 
-      await eventProcessor.start(mockOptions);
+      await processor.start(mockOptions);
 
-      expect(eventProcessor.started).toBe(true);
+      expect(processor.started).toBe(true);
       expect(subscribeSpy).toHaveBeenCalledWith(mockConsumer, mockOptions);
     });
   });
@@ -30,13 +30,13 @@ describe(EventProcessor.name, () => {
     it('should unsubscribe consumer and set started to false', async () => {
       const mockOptions = { signal: undefined };
 
-      await eventProcessor.start();
-      const unsubscribeSpy = jest.fn<Unsubscribe>(eventProcessor['handle']);
-      eventProcessor['handle'] = unsubscribeSpy;
+      await processor.start();
+      const unsubscribeSpy = jest.fn<Unsubscribe>(processor['handle']);
+      processor['handle'] = unsubscribeSpy;
 
-      await eventProcessor.close(mockOptions);
+      await processor.close(mockOptions);
 
-      expect(eventProcessor.started).toBe(false);
+      expect(processor.started).toBe(false);
       expect(unsubscribeSpy).toHaveBeenCalledWith(mockOptions);
     });
   });

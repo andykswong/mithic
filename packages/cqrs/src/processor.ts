@@ -1,16 +1,16 @@
 import { AbortOptions, Startable, maybeAsync } from '@mithic/commons';
 import { resolve } from '@mithic/commons/maybeAsync';
-import { EventConsumer, EventSubscription, Unsubscribe } from './event.js';
+import { MessageConsumer, MessageSubscription, Unsubscribe } from './bus.js';
 
-/** Processor of events from an {@link EventSubscription}. */
-export class EventProcessor<Event = unknown> implements Startable {
+/** Processor of messages from an {@link MessageSubscription}. */
+export class MessageProcessor<Msg = unknown> implements Startable {
   private handle: Unsubscribe | undefined;
 
   public constructor(
-    /** {@link EventSubscription} to consume. */
-    protected readonly subscription: EventSubscription<Event>,
-    /** Consumer of events. */
-    protected readonly consumer: EventConsumer<Event>
+    /** {@link MessageSubscription} to consume. */
+    protected readonly subscription: MessageSubscription<Msg>,
+    /** Consumer of messages. */
+    protected readonly consumer: MessageConsumer<Msg>
   ) {
   }
 
@@ -18,11 +18,11 @@ export class EventProcessor<Event = unknown> implements Startable {
     return !!this.handle;
   }
 
-  public start = maybeAsync(function* (this: EventProcessor<Event>, options?: AbortOptions) {
+  public start = maybeAsync(function* (this: MessageProcessor<Msg>, options?: AbortOptions) {
     this.handle = yield* resolve(this.subscription.subscribe(this.consumer, options));
   }, this);
 
-  public close = maybeAsync(function* (this: EventProcessor<Event>, options?: AbortOptions) {
+  public close = maybeAsync(function* (this: MessageProcessor<Msg>, options?: AbortOptions) {
     if (this.handle) {
       yield* resolve(this.handle(options));
       this.handle = void 0;

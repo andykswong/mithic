@@ -1,29 +1,29 @@
 import { jest } from '@jest/globals';
-import { SimpleEventBus } from '../../event/index.js';
+import { SimpleMessageBus } from '../../bus/index.js';
 import { createReduxStore, ReduxStore, SimpleReduxStore } from '../redux.js';
-import { EventReducer } from '../../processor/index.js';
-import { EventConsumer } from '../../event.js';
+import { MessageReducer } from '../../processor/index.js';
+import { MessageConsumer } from '../../bus.js';
 
 type State = { count: number; };
-type Event = { type: string };
-const INCR_EVENT: Event = { type: 'increment' };
+type Command = { type: string };
+const INCR_EVENT: Command = { type: 'increment' };
 
 describe(createReduxStore.name, () => {
-  it('should create a SimpleReduxStore with event bus, initial state and reducer function', async () => {
+  it('should create a SimpleReduxStore with message bus, initial state and reducer function', async () => {
     // Setup test data
     const initialState = { count: 0 };
-    const reducer = jest.fn((state: State, event: Event) =>
+    const reducer = jest.fn((state: State, event: Command) =>
       (event.type === INCR_EVENT.type ? { ...state, count: state.count + 1 } : state)
     );
-    const eventBus = new SimpleEventBus<Event>();
+    const bus = new SimpleMessageBus<Command>();
 
-    const store = createReduxStore({ initialState, reducer, eventBus });
+    const store = createReduxStore({ initialState, reducer, bus: bus });
     await store.start();
 
     expect(store.started).toBe(true);
     expect(store.getState()).toEqual(initialState);
 
-    const consumerFn = jest.fn<EventConsumer<State>>();
+    const consumerFn = jest.fn<MessageConsumer<State>>();
     const unsubscribe = await store.subscribe(consumerFn);
 
     await store.dispatch({ type: 'increment' });
@@ -42,16 +42,16 @@ describe(createReduxStore.name, () => {
 });
 
 describe(SimpleReduxStore.name, () => {
-  let store: ReduxStore<State, Event>;
+  let store: ReduxStore<State, Command>;
 
   beforeEach(async () => {
     const initialState = { count: 0 };
-    const reducer = jest.fn((state: State, event: Event) =>
+    const reducer = jest.fn((state: State, event: Command) =>
       (event.type === INCR_EVENT.type ? { ...state, count: state.count + 1 } : state)
     );
-    const eventBus = new SimpleEventBus<Event>();
+    const bus = new SimpleMessageBus<Command>();
 
-    store = new SimpleReduxStore(eventBus, new EventReducer(eventBus, reducer, initialState));
+    store = new SimpleReduxStore(bus, new MessageReducer(bus, reducer, initialState));
     await store.start();
     expect(store.started).toBe(true);
   });
@@ -61,13 +61,13 @@ describe(SimpleReduxStore.name, () => {
     expect(store.started).toBe(false);
   });
 
-  it('should dispatch events and update state', async () => {
+  it('should dispatch commands and update state', async () => {
     await store.dispatch(INCR_EVENT);
     expect(store.getState()).toEqual({ count: 1 });
   });
 
   it('should subscribe to changes and invoke the consumer function', async () => {
-    const consumerFn = jest.fn<EventConsumer<State>>();
+    const consumerFn = jest.fn<MessageConsumer<State>>();
     const unsubscribe = await store.subscribe(consumerFn);
     await store.dispatch(INCR_EVENT);
     expect(store.getState()).toEqual({ count: 1 });

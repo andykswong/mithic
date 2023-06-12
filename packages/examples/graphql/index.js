@@ -1,17 +1,17 @@
 import assert from 'assert';
-import { bindEventCreators, AsyncEventSubscriber, SimpleEventBus, EventReducer } from '@mithic/cqrs';
+import { bindMessageCreators, AsyncSubscriber, SimpleMessageBus, MessageReducer } from '@mithic/cqrs';
 import { graphql, parse, subscribe, GraphQLSchema, GraphQLObjectType, GraphQLBoolean, GraphQLInt } from 'graphql';
 
-// Create the event bus
-const eventBus = new SimpleEventBus();
+// Create the message bus
+const bus = new SimpleMessageBus();
 
-// Derive state using an event reducer
-const stateReducer = new EventReducer(
-  eventBus,
-  function reduce(state, event) {
-    switch (event?.type) {
+// Derive state using a reducer
+const stateReducer = new MessageReducer(
+  bus,
+  function reduce(state, msg) {
+    switch (msg?.type) {
       case 'INCREASED':
-        return { ...state, counter: state.counter + (event.count ?? 1) };
+        return { ...state, counter: state.counter + (msg.count ?? 1) };
     }
     return state;
   },
@@ -26,9 +26,9 @@ process.on('beforeExit', async () => {
 });
 
 // Route commands to the event bus
-const commands = bindEventCreators({
+const commands = bindMessageCreators({
   increment: (count) => ({ type: 'INCREASED', count }),
-}, eventBus);
+}, bus);
 
 // Define the GraphQL schema
 const stateType = new GraphQLObjectType({
@@ -66,7 +66,7 @@ const schema = new GraphQLSchema({
     fields: {
       stateChanged: {
         type: stateType,
-        subscribe: () => new AsyncEventSubscriber(stateReducer), // subscribes to derived state change
+        subscribe: () => new AsyncSubscriber(stateReducer), // subscribes to derived state change
         resolve: (state) => state,
       },
     },

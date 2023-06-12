@@ -1,5 +1,5 @@
 import assert from 'assert';
-import { bindEventCreators } from '@mithic/cqrs';
+import { bindMessageCreators } from '@mithic/cqrs';
 import { createReduxStore } from '@mithic/cqrs/preset';
 
 // Create a Redux-like store for a counter
@@ -22,7 +22,7 @@ const store = createReduxStore({
 await store.start();
 
 // Define and bind the commands to the store
-const commands = bindEventCreators({
+const commands = bindMessageCreators({
   increment: (count) => ({ type: 'INCREASED', count }),
   decrement: (count) => ({ type: 'DECREASED', count }),
 }, store);

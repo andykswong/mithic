@@ -1,21 +1,21 @@
-import { EventSubscription, EventTransformer } from '../event.js';
-import { EventProcessor } from '../processor.js';
+import { MessageSubscription, MessageTransformer } from '../bus.js';
+import { MessageProcessor } from '../processor.js';
 import { AbortOptions, MaybePromise } from '@mithic/commons';
 
-/** {@link EventProcessor} that persists events using an {@link ObjectWriter}. */
-export class EventPersister<Event, SrcEvent = Event>
-  extends EventProcessor<SrcEvent>
+/** {@link MessageProcessor} that persists message using an {@link ObjectWriter}. */
+export class MessagePersister<Msg, SrcMsg = Msg>
+  extends MessageProcessor<SrcMsg>
 {
   public constructor(
-    /** {@link EventSubscription} to consume. */
-    subscription: EventSubscription<SrcEvent>,
+    /** {@link MessageSubscription} to consume. */
+    subscription: MessageSubscription<SrcMsg>,
     /** Event store writer to use. */
-    writer: ObjectWriter<Event>,
+    writer: ObjectWriter<Msg>,
     /** Function to transform incoming events for storage. */
-    transform: EventTransformer<SrcEvent, Event> = identity,
+    transform: MessageTransformer<SrcMsg, Msg> = identity,
   ) {
-    const consumer = async (event: SrcEvent) => {
-      const targetEvent = await transform(event);
+    const consumer = async (msg: SrcMsg) => {
+      const targetEvent = await transform(msg);
       targetEvent && await writer.put(targetEvent);
     };
     super(subscription, consumer);

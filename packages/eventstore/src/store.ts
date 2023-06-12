@@ -1,13 +1,15 @@
 import {
   AppendOnlyAutoKeyMap, AutoKeyMapPutBatch, MaybeAsyncReadonlyMapBatch, MaybeAsyncReadonlyMap
 } from '@mithic/collections';
-import { AbortOptions, ContentId, SyncOrAsyncGenerator } from '@mithic/commons';
+import { AbortOptions, CodedError, ContentId, MaybePromise, SyncOrAsyncGenerator } from '@mithic/commons';
 import { Event } from './event.js';
 
 /** An append-only event store. */
 // eslint-disable-next-line @typescript-eslint/ban-types
 export interface EventStore<K = ContentId, V = Event, QueryExt extends object = {}>
   extends ReadonlyEventStore<K, V, QueryExt>, AppendOnlyAutoKeyMap<K, V>, AutoKeyMapPutBatch<K, V> {
+  /** Validates given event and returns any error. */
+  validate(value: V, options?: AbortOptions): MaybePromise<CodedError<K[]> | undefined>;
 }
 
 /** A read-only event store. */
@@ -41,8 +43,8 @@ export interface EventStoreQueryOptions<K> extends AbortOptions {
   limit?: number;
 }
 
-/** Extended options for filtering event results by attributes. */
-export interface EventStoreQueryOptionsExt<K> {
+/** Extended options for filtering {@link EventStoreQuery} query results by metadata. */
+export interface EventStoreMetaQueryOptions<K> {
   /** Event type prefixes to query. */
   type?: string;
 

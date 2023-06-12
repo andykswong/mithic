@@ -7,7 +7,7 @@ import {
 } from '@mithic/commons';
 import { DEFAULT_EVENT_TYPE_SEPARATOR, DEFAULT_KEY_ENCODER } from '../../defaults.js';
 import { Event, EventMetadata } from '../../event.js';
-import { EventStore, EventStoreQueryOptions, EventStoreQueryOptionsExt } from '../../store.js';
+import { EventStore, EventStoreQueryOptions, EventStoreMetaQueryOptions } from '../../store.js';
 import { atomicHybridTime } from '../../time.js';
 import { BaseDagEventStore } from '../base.js';
 import { getEventIndexKeys, getEventIndexRangeQueryOptions } from './indices.js';
@@ -19,8 +19,8 @@ import { getEventIndexKeys, getEventIndexRangeQueryOptions } from './indices.js'
 export class IndexedEventStore<
   K extends StringEquatable<K> = ContentId,
   V extends Event<unknown, IndexedEventMetadata<K>> = Event<unknown, IndexedEventMetadata<K>>
-> extends BaseDagEventStore<K, V, EventStoreQueryOptionsExt<K>>
-  implements EventStore<K, V, EventStoreQueryOptionsExt<K>>, AsyncIterable<[K, V]>
+> extends BaseDagEventStore<K, V, EventStoreMetaQueryOptions<K>>
+  implements EventStore<K, V, EventStoreMetaQueryOptions<K>>, AsyncIterable<[K, V]>
 {
   protected readonly index:
     MaybeAsyncMap<Uint8Array, K> & Partial<MaybeAsyncMapBatch<Uint8Array, K>> & RangeQueryable<Uint8Array, K>;
@@ -83,7 +83,7 @@ export class IndexedEventStore<
     parents.length = 0;
   }
 
-  public async * keys(options?: EventStoreQueryOptions<K> & EventStoreQueryOptionsExt<K>): AsyncGenerator<K, K[]> {
+  public async * keys(options?: EventStoreQueryOptions<K> & EventStoreMetaQueryOptions<K>): AsyncGenerator<K, K[]> {
     let sinceTime = 0;
     if (options?.since) {
       for await (const value of this.getMany(options.since, options)) {

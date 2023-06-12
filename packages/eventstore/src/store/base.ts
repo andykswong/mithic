@@ -26,7 +26,6 @@ export abstract class BaseMapEventStore<
     // NOOP
   }
 
-  /** Validates given event and returns any error. */
   public async validate(value: V, options?: AbortOptions): Promise<CodedError<K[]> | undefined> {
     const key = await this.data.getKey(value, options);
     if (await this.data.has(key, options)) {

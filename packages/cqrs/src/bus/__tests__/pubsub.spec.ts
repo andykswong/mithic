@@ -1,22 +1,22 @@
 import { jest } from '@jest/globals';
 import { MessageHandler, PubSubMessage } from '@mithic/messaging';
 import { MockPubSub } from '../../__tests__/mocks.js';
-import { PubSubEventBus } from '../pubsub.js';
+import { PubSubMessageBus } from '../pubsub.js';
 
 const TOPIC = 'topic';
 const EVENT = new Uint8Array([65, 66, 67]);
 const MSG: PubSubMessage<Uint8Array> = { topic: TOPIC, data: EVENT };
 
-describe(PubSubEventBus.name, () => {
+describe(PubSubMessageBus.name, () => {
   let pubsub: MockPubSub;
-  let eventBus: PubSubEventBus<Uint8Array>;
+  let eventBus: PubSubMessageBus<Uint8Array>;
 
   beforeEach(() => {
     pubsub = new MockPubSub();
-    eventBus = new PubSubEventBus(pubsub, TOPIC);
+    eventBus = new PubSubMessageBus(pubsub, TOPIC);
   });
 
-  it('should dispatch event using pubsub', async () => {
+  it('should dispatch message using pubsub', async () => {
     const publishSpy = jest.spyOn(pubsub, 'publish');
     const options = {};
 

@@ -9,15 +9,15 @@ import {
 import { CID } from 'multiformats';
 import { DEFAULT_BATCH_SIZE } from '../defaults.js';
 import { Event, EventMetadata } from '../event.js';
-import { EventStore, EventStoreQueryOptions, EventStoreQueryOptionsExt } from '../store.js';
+import { EventStore, EventStoreQueryOptions, EventStoreMetaQueryOptions } from '../store.js';
 import { BaseDagEventStore } from './base.js';
 
 /** An {@link EventStore} implementation that stores a direct-acyclic graph of content-addressable events. */
 export class DagEventStore<
   K extends StringEquatable<K> = ContentId,
   V extends Event<unknown, EventMetadata<K>> = Event<unknown, EventMetadata<K>>
-> extends BaseDagEventStore<K, V, EventStoreQueryOptionsExt<K>>
-  implements EventStore<K, V, EventStoreQueryOptionsExt<K>>, AsyncIterable<[K, V]>
+> extends BaseDagEventStore<K, V, EventStoreMetaQueryOptions<K>>
+  implements EventStore<K, V, EventStoreMetaQueryOptions<K>>, AsyncIterable<[K, V]>
 {
   protected readonly encodeKey: (key: K) => string;
   protected readonly decodeKey: (key: string) => K;
@@ -58,7 +58,7 @@ export class DagEventStore<
 
   /** Queries entries by given criteria. */
   public async * entries(
-    options?: EventStoreQueryOptions<K> & EventStoreQueryOptionsExt<K>
+    options?: EventStoreQueryOptions<K> & EventStoreMetaQueryOptions<K>
   ): AsyncGenerator<[K, V], K[]> {
     const headOnly = options?.head || false;
     const limit = options?.limit ?? Infinity;
@@ -155,7 +155,7 @@ export class DagEventStore<
   /** Traverses the graph of events from given keys and returns the max level. */
   protected async * predecessors(
     keys: readonly K[], visited: MaybeAsyncMap<K, number>,
-    options?: EventStoreQueryOptions<K> & EventStoreQueryOptionsExt<K>,
+    options?: EventStoreQueryOptions<K> & EventStoreMetaQueryOptions<K>,
   ): AsyncIterableIterator<[key: K, value: V, level: number]> {
     for (let i = 0; i < keys.length; i += DEFAULT_BATCH_SIZE) {
       const keyBatch = keys.slice(i, Math.min(i + DEFAULT_BATCH_SIZE, keys.length));

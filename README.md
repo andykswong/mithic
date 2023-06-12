@@ -45,8 +45,8 @@ Core:
 |[`@mithic/collections`](./packages/collections)|[![npm](https://img.shields.io/npm/v/@mithic/collections?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/collections)|collection library|
 |[`@mithic/commons`](./packages/commons)|[![npm](https://img.shields.io/npm/v/@mithic/commons?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/commons)|common utility components|
 |[`@mithic/cqrs`](./packages/cqrs)|[![npm](https://img.shields.io/npm/v/@mithic/cqrs?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/cqrs)|CQRS library|
-|[`@mithic/crdt`](./packages/crdt)|[![npm](https://img.shields.io/npm/v/@mithic/crdt?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/crdt)|Standard eventsourced CRDT library|
-|[`@mithic/eventstore`](./packages/eventstore)|[![npm](https://img.shields.io/npm/v/@mithic/eventstore?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/eventstore)|Eventsourcing data store library|
+|[`@mithic/crdt`](./packages/crdt)|[![npm](https://img.shields.io/npm/v/@mithic/crdt?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/crdt)|eventsourced CRDT library|
+|[`@mithic/eventstore`](./packages/eventstore)|[![npm](https://img.shields.io/npm/v/@mithic/eventstore?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/eventstore)|eventstore library|
 |[`@mithic/messaging`](./packages/messaging)|[![npm](https://img.shields.io/npm/v/@mithic/messaging?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/messaging)|messaging interface|
 
 Plugins:

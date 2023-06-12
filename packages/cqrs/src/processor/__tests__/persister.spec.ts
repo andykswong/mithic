@@ -1,63 +1,63 @@
 import { jest } from '@jest/globals';
 import { delay } from '@mithic/commons';
-import { EventTransformer } from '../../event.js';
-import { SimpleEventBus } from '../../event/index.js';
-import { EventPersister, ObjectWriter } from '../persister.js';
+import { MessageTransformer } from '../../bus.js';
+import { SimpleMessageBus } from '../../bus/index.js';
+import { MessagePersister, ObjectWriter } from '../persister.js';
 
 const RAW_EVENT = { type: 'rawEvent' };
 const TRANSFORMED_EVENT = { type: 'transformedEvent' };
 
-describe(EventPersister.name, () => {
-  let subscription: SimpleEventBus<{ type: string }>;
+describe(MessagePersister.name, () => {
+  let subscription: SimpleMessageBus<{ type: string }>;
   let writer: MockObjectWriter<{ type: string }>;
 
   beforeEach(() => {
-    subscription = new SimpleEventBus();
+    subscription = new SimpleMessageBus();
     writer = new MockObjectWriter();
   });
 
-  it('should transform and persist incoming events', async () => {
-    const transformer: jest.MockedFunction<EventTransformer<{ type: string }>> = jest.fn();
+  it('should transform and persist incoming messages', async () => {
+    const transformer: jest.MockedFunction<MessageTransformer<{ type: string }>> = jest.fn();
     transformer.mockReturnValue(Promise.resolve(TRANSFORMED_EVENT));
 
-    const persister = new EventPersister(subscription, writer, transformer);
+    const persister = new MessagePersister(subscription, writer, transformer);
     await persister.start();
     subscription.dispatch(RAW_EVENT);
 
     await delay(); // wait for event to be consumed
 
-    expect(writer.events).toEqual([TRANSFORMED_EVENT]);
+    expect(writer.messages).toEqual([TRANSFORMED_EVENT]);
   });
   
-  it('should persist incoming events as is if transformer is not supplied', async () => {
-    const persister = new EventPersister(subscription, writer);
+  it('should persist incoming messages as is if transformer is not supplied', async () => {
+    const persister = new MessagePersister(subscription, writer);
     await persister.start();
     subscription.dispatch(RAW_EVENT);
 
     await delay(); // wait for event to be consumed
 
-    expect(writer.events).toEqual([RAW_EVENT]);
+    expect(writer.messages).toEqual([RAW_EVENT]);
   });
 
   it('should not call ObjectWriter if transformer returns undefined', async () => {
-    const transformer: jest.MockedFunction<EventTransformer<{ type: string }>> = jest.fn();
+    const transformer: jest.MockedFunction<MessageTransformer<{ type: string }>> = jest.fn();
     transformer.mockReturnValue(Promise.resolve(undefined));
 
-    const persister = new EventPersister(subscription, writer, transformer);
+    const persister = new MessagePersister(subscription, writer, transformer);
     await persister.start();
     subscription.dispatch(RAW_EVENT);
 
     await delay(); // wait for event to be consumed
 
-    expect(writer.events).toEqual([]);
+    expect(writer.messages).toEqual([]);
   });
 });
 
-class MockObjectWriter<Event> implements ObjectWriter<Event, number> {
-  public readonly events: Event[] = [];
+class MockObjectWriter<Msg> implements ObjectWriter<Msg, number> {
+  public readonly messages: Msg[] = [];
 
-  public async put(event: Event): Promise<number> {
-    this.events.push(event);
-    return this.events.length - 1;
+  public async put(event: Msg): Promise<number> {
+    this.messages.push(event);
+    return this.messages.length - 1;
   }
 }

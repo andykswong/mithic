@@ -8,7 +8,7 @@
 
 <br/>
 
-> CQRS library for mithic
+> minimal CQRS library for mithic
 
 <br/>
 
