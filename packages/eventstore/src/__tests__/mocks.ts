@@ -2,7 +2,7 @@ import { ContentId } from '@mithic/commons';
 import { MultihashDigest, MultibaseEncoder } from 'multiformats';
 import { base64 } from 'multiformats/bases/base64';
 import { Event } from '../event.js';
-import { SimpleEventMetadata } from '../store/index.js';
+import { IndexedEventMetadata } from '../store/index.js';
 
 export class MockId implements ContentId {
   code = 123;
@@ -28,4 +28,4 @@ export class MockId implements ContentId {
   }
 }
 
-export type MockEventType = Event<[i: number, id: MockId], SimpleEventMetadata<MockId>>;
+export type MockEventType = Event<[i: number, id: MockId], IndexedEventMetadata<MockId>>;

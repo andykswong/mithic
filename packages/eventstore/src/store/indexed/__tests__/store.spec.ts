@@ -1,6 +1,6 @@
 import { BTreeMap, ContentAddressedMapStore } from '@mithic/collections';
 import { ErrorCode, operationError } from '@mithic/commons';
-import { SimpleEventStore } from '../store.js';
+import { IndexedEventStore } from '../store.js';
 import { MockEventType, MockId } from '../../../__tests__/mocks.js';
 
 const TYPE1 = 'EVENT_CREATED';
@@ -11,13 +11,13 @@ const ID3 = new MockId(new Uint8Array([3, 3, 3]));
 const EVENT1: MockEventType = { type: TYPE1, payload: [1, ID1], meta: { parents: [] } };
 const EVENT2: MockEventType = { type: TYPE2, payload: [2, ID2], meta: { parents: [ID1], root: ID1 } };
 
-describe(SimpleEventStore.name, () => {
-  let store: SimpleEventStore<MockId, MockEventType>;
+describe(IndexedEventStore.name, () => {
+  let store: IndexedEventStore<MockId, MockEventType>;
   let data: ContentAddressedMapStore<MockId, MockEventType>;
   let index: BTreeMap<Uint8Array, MockId>;
 
   beforeEach(async () => {
-    store = new SimpleEventStore({
+    store = new IndexedEventStore({
       data: new ContentAddressedMapStore(void 0, (event) => event.payload[1])
     });
     data = store['data'] as ContentAddressedMapStore<MockId, MockEventType>;
@@ -71,7 +71,7 @@ describe(SimpleEventStore.name, () => {
         meta: { root: ID2, parents: [ID1] }
       };
       await expect(store.put(event)).rejects
-        .toThrowError(operationError('Invalid root Id', ErrorCode.InvalidArg));
+        .toThrowError(operationError('Missing dependency to root Id', ErrorCode.InvalidArg));
     });
 
     it('should throw an error if the root Id is missing', async () => {

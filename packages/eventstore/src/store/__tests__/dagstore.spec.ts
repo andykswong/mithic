@@ -8,8 +8,8 @@ const TYPE2 = 'EVENT_UPDATED';
 const ID1 = new MockId(new Uint8Array([1, 1, 1]));
 const ID2 = new MockId(new Uint8Array([2, 2, 2]));
 const ID3 = new MockId(new Uint8Array([3, 3, 3]));
-const EVENT1: MockEventType = { type: TYPE1, payload: [1, ID1], meta: { parents: [] } };
-const EVENT2: MockEventType = { type: TYPE2, payload: [2, ID2], meta: { parents: [ID1], root: ID1 } };
+const EVENT1: MockEventType = { type: TYPE1, payload: [1, ID1], meta: { parents: [], createdAt: 1 } };
+const EVENT2: MockEventType = { type: TYPE2, payload: [2, ID2], meta: { parents: [ID1], root: ID1, createdAt: 2 } };
 
 describe(DagEventStore.name, () => {
   let store: DagEventStore<MockId, MockEventType>;
@@ -71,7 +71,7 @@ describe(DagEventStore.name, () => {
         meta: { root: ID2, parents: [ID1] }
       };
       await expect(store.put(event)).rejects
-        .toThrowError(operationError('Invalid root Id', ErrorCode.InvalidArg));
+        .toThrowError(operationError('Missing dependency to root Id', ErrorCode.InvalidArg));
     });
 
     it('should throw an error if the root Id is missing', async () => {
@@ -81,6 +81,16 @@ describe(DagEventStore.name, () => {
         meta: { parents: [ID1] }
       };
       await expect(store.put(event)).rejects.toThrowError(operationError('Missing root Id', ErrorCode.InvalidArg));
+    });
+
+    it('should throw an error if timestamp is invalid', async () => {
+      const event: MockEventType = {
+        type: TYPE1,
+        payload: [3, new MockId(new Uint8Array([1, 3, 5]))],
+        meta: { root: ID2, parents: [ID2], createdAt: 1 }
+      };
+      await expect(store.put(event)).rejects
+        .toThrowError(operationError('Invalid event time', ErrorCode.InvalidArg));
     });
   });
 

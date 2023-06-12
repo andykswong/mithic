@@ -1,6 +1,9 @@
 import { AppendOnlyAutoKeyMap, AutoKeyMapBatch } from '@mithic/collections';
-import { AbortOptions, CodedError, ContentId, ErrorCode, MaybePromise, SyncOrAsyncGenerator, operationError } from '@mithic/commons';
-import { Event } from '../event.js';
+import {
+  AbortOptions, CodedError, ContentId, ErrorCode, MaybePromise, StringEquatable, SyncOrAsyncGenerator,
+  equalsOrSameString, operationError
+} from '@mithic/commons';
+import { Event, EventMetadata } from '../event.js';
 import { EventStore, EventStoreQueryOptions } from '../store.js';
 import { DEFAULT_BATCH_SIZE } from '../defaults.js';
 
@@ -10,13 +13,25 @@ import { DEFAULT_BATCH_SIZE } from '../defaults.js';
  * `put` is usually overridden by subclass to prepare event indices for efficient queries.
  */
 export abstract class BaseMapEventStore<
-  // eslint-disable-next-line @typescript-eslint/ban-types
-  K = ContentId, V = Event, QueryExt extends object = {}
+  K = ContentId, V = Event, QueryExt extends object = NonNullable<unknown>
 > implements EventStore<K, V, QueryExt>, AsyncIterable<[K, V]> {
   public constructor(
     protected readonly data: AppendOnlyAutoKeyMap<K, V> & Partial<AutoKeyMapBatch<K, V>>,
     protected readonly queryPageSize = DEFAULT_BATCH_SIZE,
   ) {
+  }
+
+  /** Hook to do extra processing before putting an event value to store. */
+  protected prePut(_value: V, _options?: AbortOptions): MaybePromise<void> {
+    // NOOP
+  }
+
+  /** Validates given event and returns any error. */
+  public async validate(value: V, options?: AbortOptions): Promise<CodedError<K[]> | undefined> {
+    const key = await this.data.getKey(value, options);
+    if (await this.data.has(key, options)) {
+      return operationError('Already exists', ErrorCode.Exist, [key]);
+    }
   }
 
   public getKey(value: V, options?: AbortOptions): MaybePromise<K> {
@@ -51,7 +66,15 @@ export abstract class BaseMapEventStore<
     }
   }
 
-  public put(value: V, options?: AbortOptions): MaybePromise<K> {
+  public async put(value: V, options?: AbortOptions): Promise<K> {
+    const error = await this.validate(value, options);
+    if (error) {
+      if (error.code === ErrorCode.Exist) {
+        return (error.detail as K[])[0];
+      }
+      throw error;
+    }
+    await this.prePut(value, options);
     return this.data.put(value, options);
   }
 
@@ -118,6 +141,81 @@ export abstract class BaseMapEventStore<
         yield [keys[i], value];
       }
       ++i;
+    }
+  }
+}
+
+/** An abstract {@link EventStore} storing events that form a DAG. */
+export abstract class BaseDagEventStore<
+  K extends StringEquatable<K> = ContentId,
+  V extends Event<unknown, EventMetadata<K>> = Event<unknown, EventMetadata<K>>,
+  QueryExt extends object = NonNullable<unknown>
+> extends BaseMapEventStore<K, V, QueryExt> {
+  /** Cache of event parents during a put operation. */
+  protected currentEventDeps: [K, V][] = [];
+  private useCache = false;
+
+  public constructor(
+    protected readonly data: AppendOnlyAutoKeyMap<K, V> & Partial<AutoKeyMapBatch<K, V>>,
+    protected readonly queryPageSize = DEFAULT_BATCH_SIZE,
+  ) {
+    super(data, queryPageSize);
+  }
+
+  public async validate(value: V, options?: AbortOptions): Promise<CodedError<K[]> | undefined> {
+    const error = await super.validate(value, options);
+    if (error) {
+      return error;
+    }
+
+    const rootId = value.meta.root;
+
+    if (!value.meta.parents.length) {
+      if (rootId != void 0) { // if specified, root Id must be a dependency
+        return operationError('Missing dependency to root Id', ErrorCode.MissingDep, [rootId]);
+      }
+      return;
+    }
+
+    if (rootId == void 0) { // root Id must be specified if there are dependencies
+      return operationError('Missing root Id', ErrorCode.InvalidArg);
+    }
+
+    const parents = this.useCache ? this.currentEventDeps : [];
+    parents.length = 0;
+
+    const missing: K[] = [];
+    let hasLinkToRoot = false;
+    let i = 0;
+    for await (const parent of this.getMany(value.meta.parents, options)) {
+      const key = value.meta.parents[i++];
+      if (!parent) {
+        missing.push(key);
+        continue;
+      }
+      parents.push([key, parent]);
+      hasLinkToRoot = hasLinkToRoot ||
+        (parent.meta.root != void 0 && equalsOrSameString(rootId, parent.meta.root)) ||
+        equalsOrSameString(rootId, key);
+    }
+
+    if (missing.length) {
+      return operationError('Missing dependencies', ErrorCode.MissingDep, missing);
+    }
+
+    if (!hasLinkToRoot) { // root Id must match one of parents' root
+      return operationError('Missing dependency to root Id', ErrorCode.MissingDep, [rootId]);
+    }
+  }
+
+  public async put(value: V, options?: AbortOptions): Promise<K> {
+    try {
+      this.useCache = true;
+      this.currentEventDeps.length = 0;
+      return await super.put(value, options);
+    } finally {
+      this.useCache = false;
+      this.currentEventDeps.length = 0;
     }
   }
 }

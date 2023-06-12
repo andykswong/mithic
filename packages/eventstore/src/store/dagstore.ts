@@ -3,19 +3,20 @@ import {
   MaybeAsyncReadonlySet, MaybeAsyncSet, MaybeAsyncSetBatch
 } from '@mithic/collections';
 import {
-  AbortOptions, ContentId, ErrorCode, StringEquatable, SyncOrAsyncIterable, equalsOrSameString, operationError
+  AbortOptions, CodedError, ContentId, ErrorCode, StringEquatable, SyncOrAsyncIterable, equalsOrSameString,
+  operationError
 } from '@mithic/commons';
 import { CID } from 'multiformats';
 import { DEFAULT_BATCH_SIZE } from '../defaults.js';
 import { Event, EventMetadata } from '../event.js';
 import { EventStore, EventStoreQueryOptions, EventStoreQueryOptionsExt } from '../store.js';
-import { BaseMapEventStore } from './mapstore.js';
+import { BaseDagEventStore } from './base.js';
 
 /** An {@link EventStore} implementation that stores a direct-acyclic graph of content-addressable events. */
 export class DagEventStore<
   K extends StringEquatable<K> = ContentId,
   V extends Event<unknown, EventMetadata<K>> = Event<unknown, EventMetadata<K>>
-> extends BaseMapEventStore<K, V, EventStoreQueryOptionsExt<K>>
+> extends BaseDagEventStore<K, V, EventStoreQueryOptionsExt<K>>
   implements EventStore<K, V, EventStoreQueryOptionsExt<K>>, AsyncIterable<[K, V]>
 {
   protected readonly encodeKey: (key: K) => string;
@@ -39,58 +40,20 @@ export class DagEventStore<
     return this.headSet;
   }
 
-  public async put(value: V, options?: AbortOptions): Promise<K> {
-    const key = await this.data.getKey(value, options);
-    if (await this.data.has(key, options)) {
-      return key;
+  public async validate(value: V, options?: AbortOptions): Promise<CodedError<K[]> | undefined> {
+    const error = await super.validate(value, options);
+    if (error) {
+      return error;
     }
 
-    // TODO: share parent validation code with SimpleEventStore
-    if (value.meta.parents.length) {
-      const rootId = value.meta.root;
-      if (!rootId) { // root Id must be specified if there are dependencies
-        throw operationError('Missing root Id', ErrorCode.InvalidArg);
-      }
-
-      const missing: K[] = [];
-      let hasMatchingParentRoot = false;
-      let i = 0;
-      for await (const parent of this.getMany(value.meta.parents, options)) {
-        const key = value.meta.parents[i++];
-        if (!parent) {
-          missing.push(key);
-          continue;
-        }
-        hasMatchingParentRoot = hasMatchingParentRoot || equalsOrSameString(rootId, parent.meta.root ?? key);
-      }
-
-      if (missing.length) {
-        throw operationError('Missing dependencies', ErrorCode.MissingDep, missing);
-      }
-
-      if (!hasMatchingParentRoot) { // root Id must match one of parents' root
-        throw operationError('Invalid root Id', ErrorCode.InvalidArg);
-      }
+    let latestTime = 0;
+    for (const [, parent] of this.currentEventDeps) {
+      latestTime = Math.max(latestTime, parent.meta.createdAt || 0);
     }
 
-    // update head
-    if (value.meta.parents.length && this.headSet.updateMany) {
-      for await (const error of this.headSet.updateMany(
-        [[key], ...value.meta.parents.map((key) => [key, true] as [K, boolean])], options
-      )) {
-        if (error) {
-          throw operationError('Failed to update head', ErrorCode.OpFailed, void 0, error);
-        }
-      }
-    } else {
-      await this.headSet.add(key, options);
-      for (const parentKey of value.meta.parents) {
-        await this.headSet.delete(parentKey, options);
-      }
+    if (value.meta.createdAt && latestTime > value.meta.createdAt) {
+      return operationError('Invalid event time', ErrorCode.InvalidArg);
     }
-
-    // save event
-    return super.put(value, options);
   }
 
   /** Queries entries by given criteria. */
@@ -167,6 +130,26 @@ export class DagEventStore<
     }
 
     return headList;
+  }
+
+  protected async prePut(value: V, options?: AbortOptions): Promise<void> {
+    const key = await this.getKey(value);
+
+    // update head
+    if (value.meta.parents.length && this.headSet.updateMany) {
+      for await (const error of this.headSet.updateMany(
+        [[key], ...value.meta.parents.map((key) => [key, true] as [K, boolean])], options
+      )) {
+        if (error) {
+          throw operationError('Failed to update head', ErrorCode.OpFailed, void 0, error);
+        }
+      }
+    } else {
+      await this.headSet.add(key, options);
+      for (const parentKey of value.meta.parents) {
+        await this.headSet.delete(parentKey, options);
+      }
+    }
   }
 
   /** Traverses the graph of events from given keys and returns the max level. */
