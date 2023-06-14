@@ -19,6 +19,12 @@ export interface MaybeAsyncMap<K, V> extends MaybeAsyncReadonlyMap<K, V> {
   set(key: K, value: V, options?: AbortOptions): MaybePromise<unknown>;
 }
 
+/** A readyonly map store with auto-generated key. */
+export interface ReadonlyAutoKeyMap<K = ContentId, V = Uint8Array> extends MaybeAsyncReadonlyMap<K, V> {
+  /** Gets the key of given value. */
+  getKey(value: V, options?: AbortOptions): MaybePromise<K>;
+}
+
 /** A map store with auto-generated key. */
 export interface AutoKeyMap<K = ContentId, V = Uint8Array> extends AppendOnlyAutoKeyMap<K, V> {
   /** Deletes the value with given key. */
@@ -26,12 +32,9 @@ export interface AutoKeyMap<K = ContentId, V = Uint8Array> extends AppendOnlyAut
 }
 
 /** An append-only map store with auto-generated key. */
-export interface AppendOnlyAutoKeyMap<K = ContentId, V = Uint8Array> extends MaybeAsyncReadonlyMap<K, V> {
+export interface AppendOnlyAutoKeyMap<K = ContentId, V = Uint8Array> extends ReadonlyAutoKeyMap<K, V> {
   /** Puts given value and returns its key. */
   put(value: V, options?: AbortOptions): MaybePromise<K>;
-
-  /** Gets the key of given value. */
-  getKey(value: V, options?: AbortOptions): MaybePromise<K>;
 }
 
 /** Batch APIs for a {@link MaybeAsyncReadonlyMap}. */

@@ -1,51 +1,60 @@
 import { ContentId } from '@mithic/commons';
-import { getEventIndexKey, getEventIndexKeys, getEventIndexRangeQueryOptions, getEventTypePrefixes, serializeNumber } from '../indices.js';
+import { getEventIndexKey, getEventIndexKeys, getEventIndexRangeQueryOptions, getEventTypePrefixes } from '../indices.js';
 import { Event, EventMetadata } from '../../../event.js';
+import { MockId } from '../../../__tests__/mocks.js';
 
 const ENCODER = new TextEncoder();
 
 describe(getEventIndexKeys.name, () => {
   it('should return the correct keys for a given event', () => {
-    const key = { bytes: ENCODER.encode('12345') } as ContentId;
+    const key = new MockId(ENCODER.encode('12345'));
+    const root = new MockId(ENCODER.encode('abcde'));
+    const type = 'test';
+    const createdAt = 12345;
+    const createdAtStr = createdAt.toString(16).padStart(16, '0');
     const event: Event<unknown, EventMetadata<ContentId>> = {
-      type: 'test',
+      type,
       payload: undefined,
       meta: {
         parents: [],
-        root: { bytes: ENCODER.encode('abcde') } as ContentId,
-        createdAt: 12345
+        root,
+        createdAt,
       }
     };
     const expectedKeys = [
-      Uint8Array.from([104, 116, 95, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([104, 114, 95, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([104, 101, 95, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([104, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([97, 116, 95, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([97, 114, 95, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([97, 101, 95, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([97, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
+      `HT::${createdAtStr}::${key}`,
+      `HR::${root}::${createdAtStr}::${key}`,
+      `HE::${type}::${createdAtStr}::${key}`,
+      `HRE::${root}::${type}::${createdAtStr}::${key}`,
+      `T::${createdAtStr}::${key}`,
+      `R::${root}::${createdAtStr}::${key}`,
+      `E::${type}::${createdAtStr}::${key}`,
+      `RE::${root}::${type}::${createdAtStr}::${key}`,
     ];
     const results = getEventIndexKeys(key, event);
     expect(results).toEqual(expectedKeys);
   });
 
   it('should return only head keys if headOnly is true', () => {
-    const key = { bytes: ENCODER.encode('12345') } as ContentId;
+    const key = new MockId(ENCODER.encode('12345'));
+    const root = new MockId(ENCODER.encode('abcde'));
+    const type = 'test';
+    const createdAt = 12345;
+    const createdAtStr = createdAt.toString(16).padStart(16, '0');
     const event: Event<unknown, EventMetadata<ContentId>> = {
-      type: 'test',
+      type,
       payload: undefined,
       meta: {
         parents: [],
-        root: { bytes: ENCODER.encode('abcde') } as ContentId,
-        createdAt: 12345
+        root,
+        createdAt
       }
     };
     const expectedKeys = [
-      Uint8Array.from([104, 116, 95, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([104, 114, 95, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([104, 101, 95, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([104, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
+      `HT::${createdAtStr}::${key}`,
+      `HR::${root}::${createdAtStr}::${key}`,
+      `HE::${type}::${createdAtStr}::${key}`,
+      `HRE::${root}::${type}::${createdAtStr}::${key}`,
     ];
     const results = getEventIndexKeys(key, event, true);
     expect(results).toEqual(expectedKeys);
@@ -54,23 +63,23 @@ describe(getEventIndexKeys.name, () => {
 
 describe(getEventIndexRangeQueryOptions.name, () => {
   it('should return the correct range query options', () => {
-    const root = { bytes: ENCODER.encode('abcde') } as ContentId;
+    const root = new MockId(ENCODER.encode('abcde'));
     const type = 'test';
     const sinceTime = 12345;
     const expectedOptions = {
-      gt: Uint8Array.from([97, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 58, 58, 58, 58]),
-      lt: Uint8Array.from([97, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 255, 255, 255])
+      gt: `RE::${root}::${type}::${(sinceTime + 1).toString(16).padStart(16, '0')}::`,
+      lt: `RE::${root}::${type}::\udbff\udfff`,
     };
     expect(getEventIndexRangeQueryOptions(sinceTime, type, root)).toEqual(expectedOptions);
   });
 
   it('should return the correct range query options when headOnly is true', () => {
-    const root = { bytes: ENCODER.encode('abcde') } as ContentId;
+    const root = new MockId(ENCODER.encode('abcde'));
     const type = 'test';
     const sinceTime = 12345;
     const expectedOptions = {
-      gt: Uint8Array.from([104, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 58, 58, 58, 58]),
-      lt: Uint8Array.from([104, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 255, 255, 255])
+      gt: `HRE::${root}::${type}::${(sinceTime + 1).toString(16).padStart(16, '0')}::`,
+      lt: `HRE::${root}::${type}::\udbff\udfff`,
     };
     expect(getEventIndexRangeQueryOptions(sinceTime, type, root, true)).toEqual(expectedOptions);
   });
@@ -78,42 +87,42 @@ describe(getEventIndexRangeQueryOptions.name, () => {
 
 describe(getEventIndexKey.name, () => {
   it('should return the correct key', () => {
-    const key = ENCODER.encode('12345');
-    const type = ENCODER.encode('test');
-    const root = ENCODER.encode('abcde');
+    const key = '12345';
+    const root = 'abcde';
+    const type = 'test';
     const time = 12345;
-    const expectedKey = Uint8Array.from([104, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]);
+    const expectedKey = `HRE::${root}::${type}::${time.toString(16).padStart(16, '0')}::${key}`;
     expect(getEventIndexKey(true, key, type, root, time)).toEqual(expectedKey);
   });
 
   it('should return the correct key when only time is provided', () => {
-    const key = ENCODER.encode('12345');
+    const key = '12345';
     const time = 12345;
-    const expectedKey = Uint8Array.from([104, 116, 95, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]);
+    const expectedKey = `HT::${time.toString(16).padStart(16, '0')}::${key}`;
     expect(getEventIndexKey(true, key, void 0, void 0, time)).toEqual(expectedKey);
   });
 
   it('should return the correct key when no time is provided', () => {
-    const key = ENCODER.encode('12345');
-    const type = ENCODER.encode('test');
-    const root = ENCODER.encode('abcde');
-    const expectedKey = Uint8Array.from([104, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 49, 50, 51, 52, 53]);
+    const key = '12345';
+    const root = 'abcde';
+    const type = 'test';
+    const expectedKey = `HRE::${root}::${type}::${key}`;
     expect(getEventIndexKey(true, key, type, root)).toEqual(expectedKey);
   });
 
   it('should return the correct key when no type is provided', () => {
-    const key = ENCODER.encode('12345');
-    const root = ENCODER.encode('abcde');
+    const key = '12345';
+    const root = 'abcde';
     const time = 12345;
-    const expectedKey = Uint8Array.from([97, 114, 95, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]);
+    const expectedKey = `R::${root}::${time.toString(16).padStart(16, '0')}::${key}`;
     expect(getEventIndexKey(false, key, void 0, root, time)).toEqual(expectedKey);
   });
 
   it('should return the correct key when no key is provided', () => {
-    const type = ENCODER.encode('test');
-    const root = ENCODER.encode('abcde');
+    const root = 'abcde';
+    const type = 'test';
     const time = 12345;
-    const expectedKey = Uint8Array.from([97, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57]);
+    const expectedKey = `RE::${root}::${type}::${time.toString(16).padStart(16, '0')}`;
     expect(getEventIndexKey(false, void 0, type, root, time)).toEqual(expectedKey);
   });
 });
@@ -123,17 +132,9 @@ describe(getEventTypePrefixes.name, () => {
     const type = 'test.example';
     const separator = /[._]+/g;
     const expectedPrefixes = [
-      Uint8Array.from([116, 101, 115, 116, 46, 101, 120, 97, 109, 112, 108, 101]),
-      Uint8Array.from([116, 101, 115, 116])
+      'test.example',
+      'test'
     ];
     expect(getEventTypePrefixes(type, separator)).toEqual(expectedPrefixes);
-  });
-});
-
-describe(serializeNumber.name, () => {
-  it('should return the correct serialized number for a given value', () => {
-    const value = 12345;
-    const expectedSerializedNumber = Uint8Array.from([0, 0, 0, 0, 0, 0, 48, 57]);
-    expect(serializeNumber(value)).toEqual(expectedSerializedNumber);
   });
 });

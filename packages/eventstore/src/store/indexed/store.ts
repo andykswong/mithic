@@ -2,9 +2,7 @@ import {
   AppendOnlyAutoKeyMap, AutoKeyMapBatch, BTreeMap, ContentAddressedMapStore, MaybeAsyncMap, MaybeAsyncMapBatch,
   RangeQueryable
 } from '@mithic/collections';
-import {
-  AbortOptions, ContentId, ErrorCode, MaybePromise, StringEquatable, compareBuffers, operationError
-} from '@mithic/commons';
+import { AbortOptions, ContentId, ErrorCode, MaybePromise, StringEquatable, operationError } from '@mithic/commons';
 import { DEFAULT_EVENT_TYPE_SEPARATOR, DEFAULT_KEY_ENCODER } from '../../defaults.js';
 import { Event, EventMetadata } from '../../event.js';
 import { EventStore, EventStoreQueryOptions, EventStoreMetaQueryOptions } from '../../store.js';
@@ -23,14 +21,14 @@ export class IndexedEventStore<
   implements EventStore<K, V, EventStoreMetaQueryOptions<K>>, AsyncIterable<[K, V]>
 {
   protected readonly index:
-    MaybeAsyncMap<Uint8Array, K> & Partial<MaybeAsyncMapBatch<Uint8Array, K>> & RangeQueryable<Uint8Array, K>;
-  protected readonly encodeKey: (key: K) => Uint8Array;
+    MaybeAsyncMap<string, K> & Partial<MaybeAsyncMapBatch<string, K>> & RangeQueryable<string, K>;
+  protected readonly encodeKey: (key: K) => string;
   protected readonly tick: (refTime?: number) => MaybePromise<number>;
   protected readonly eventTypeSeparator: RegExp;
 
   public constructor({
     data = new ContentAddressedMapStore<K, V>(),
-    index = new BTreeMap<Uint8Array, K>(5, compareBuffers),
+    index = new BTreeMap<string, K>(5),
     encodeKey = DEFAULT_KEY_ENCODER,
     tick = atomicHybridTime(),
     eventTypeSeparator = DEFAULT_EVENT_TYPE_SEPARATOR
@@ -55,12 +53,12 @@ export class IndexedEventStore<
 
     // update indices
     const entries = getEventIndexKeys(key, event, false, this.encodeKey, this.eventTypeSeparator)
-      .map(indexKey => [indexKey, key] as [Uint8Array, K?]);
+      .map(indexKey => [indexKey, key] as [string, K?]);
 
     if (parents.length) { // remove parents from head indices
       entries.push(...parents
         .flatMap(([key, event]) => getEventIndexKeys(key, event, true, this.encodeKey, this.eventTypeSeparator))
-        .map(index => [index, void 0] as [Uint8Array, K?])
+        .map(index => [index, void 0] as [string, K?])
       );
     }
 
@@ -106,15 +104,15 @@ export class IndexedEventStore<
 }
 
 /** Options for creating a {@link IndexedEventStore}. */
-export interface IndexedEventStoreOptions<Id, E> {
+export interface IndexedEventStoreOptions<K, V> {
   /** Backing data store map. */
-  data?: AppendOnlyAutoKeyMap<Id, E> & Partial<AutoKeyMapBatch<Id, E>>;
+  data?: AppendOnlyAutoKeyMap<K, V> & Partial<AutoKeyMapBatch<K, V>>;
 
   /** Backing index store map. */
-  index?: MaybeAsyncMap<Uint8Array, Id> & Partial<MaybeAsyncMapBatch<Uint8Array, Id>> & RangeQueryable<Uint8Array, Id>;
+  index?: MaybeAsyncMap<string, K> & Partial<MaybeAsyncMapBatch<string, K>> & RangeQueryable<string, K>;
 
   /** Encoder of event key to bytes. */
-  encodeKey?: (key: Id) => Uint8Array;
+  encodeKey?: (key: K) => string;
 
   /** Function to atomically return a logical timestamp used as auto-incremented index of next event. */
   tick?: (refTime?: number) => MaybePromise<number>;
@@ -124,7 +122,7 @@ export interface IndexedEventStoreOptions<Id, E> {
 }
 
 /** Base {@link EventMetadata} for {@link IndexedEventStore}. */
-export interface IndexedEventMetadata<Id = ContentId> extends EventMetadata<Id> {
+export interface IndexedEventMetadata<K = ContentId> extends EventMetadata<K> {
   /** (Logical) timestamp at which the event is created/persisted. */
   createdAt?: number;
 }

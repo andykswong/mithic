@@ -1,5 +1,5 @@
 import {
-  AppendOnlyAutoKeyMap, AutoKeyMapPutBatch, MaybeAsyncReadonlyMapBatch, MaybeAsyncReadonlyMap
+  AppendOnlyAutoKeyMap, AutoKeyMapPutBatch, MaybeAsyncReadonlyMapBatch, ReadonlyAutoKeyMap
 } from '@mithic/collections';
 import { AbortOptions, CodedError, ContentId, MaybePromise, SyncOrAsyncGenerator } from '@mithic/commons';
 import { Event } from './event.js';
@@ -8,14 +8,15 @@ import { Event } from './event.js';
 // eslint-disable-next-line @typescript-eslint/ban-types
 export interface EventStore<K = ContentId, V = Event, QueryExt extends object = {}>
   extends ReadonlyEventStore<K, V, QueryExt>, AppendOnlyAutoKeyMap<K, V>, AutoKeyMapPutBatch<K, V> {
-  /** Validates given event and returns any error. */
-  validate(value: V, options?: AbortOptions): MaybePromise<CodedError<K[]> | undefined>;
 }
 
 /** A read-only event store. */
 // eslint-disable-next-line @typescript-eslint/ban-types
 export interface ReadonlyEventStore<K = ContentId, V = Event, QueryExt extends object = {}>
-  extends MaybeAsyncReadonlyMap<K, V>, MaybeAsyncReadonlyMapBatch<K, V>, EventStoreQuery<K, V, QueryExt> {
+  extends ReadonlyAutoKeyMap<K, V>, MaybeAsyncReadonlyMapBatch<K, V>, EventStoreQuery<K, V, QueryExt> {
+
+  /** Validates given event and returns any error. */
+  validate(value: V, options?: AbortOptions): MaybePromise<CodedError<K[]> | undefined>;
 }
 
 /** Query APIs for an event store. */

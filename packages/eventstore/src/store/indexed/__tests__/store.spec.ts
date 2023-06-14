@@ -14,14 +14,14 @@ const EVENT2: MockEventType = { type: TYPE2, payload: [2, ID2], meta: { parents:
 describe(IndexedEventStore.name, () => {
   let store: IndexedEventStore<MockId, MockEventType>;
   let data: ContentAddressedMapStore<MockId, MockEventType>;
-  let index: BTreeMap<Uint8Array, MockId>;
+  let index: BTreeMap<string, MockId>;
 
   beforeEach(async () => {
     store = new IndexedEventStore({
       data: new ContentAddressedMapStore(void 0, (event) => event.payload[1])
     });
     data = store['data'] as ContentAddressedMapStore<MockId, MockEventType>;
-    index = store['index'] as BTreeMap<Uint8Array, MockId>;
+    index = store['index'] as BTreeMap<string, MockId>;
 
     await store.put(EVENT1);
     await store.put(EVENT2);

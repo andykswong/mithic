@@ -11,6 +11,10 @@ export class MockId implements ContentId {
   constructor(public bytes: Uint8Array) {
   }
 
+  get ['/']() {
+    return this.bytes;
+  }
+
   toJSON(): { '/': string; } {
     return { '/': this.toString() };
   }

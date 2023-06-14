@@ -1,6 +1,6 @@
 {
   "name": "@mithic/commons",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Common utility components for mithic",
   "type": "module",
   "sideEffects": false,

@@ -18,6 +18,9 @@ export interface ContentId<
   /** Byte representation of this ID. */
   readonly bytes: ByteView<ContentId<Data, Format, Alg>>;
 
+  /** Byte representation of this ID. */
+  readonly ['/']: ByteView<ContentId<Data, Format, Alg>>;
+
   /** Returns a JSON representation of this ID. */
   toJSON(): { '/': string };
 
