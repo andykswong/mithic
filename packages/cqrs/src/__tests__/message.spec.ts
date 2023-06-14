@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { MessageCreator, MessageCreators, MessageGenerator, MessageGenerators, bindMessageCreator, bindMessageCreators, bindMessageGenerator, bindMessageGenerators } from '../message.js';
+import { MessageCreator, MessageGenerator, bindMessageCreator, bindMessageCreators, bindMessageGenerator, bindMessageGenerators } from '../message.js';
 import { MessageDispatcher } from '../bus.js';
 import { SimpleMessageBus } from '../index.js';
 
@@ -18,7 +18,7 @@ describe(bindMessageCreator.name, () => {
   });
 
   it('should bind sync message creator', () => {
-    const eventCreator = jest.fn<MessageCreator<[number, boolean], string>>()
+    const eventCreator = jest.fn<MessageCreator<string, [a: number, b: boolean]>>()
       .mockReturnValueOnce(EVENT);
     const command = bindMessageCreator(eventCreator, dispatcher);
     expect(command(ARG0, ARG1)).toBeUndefined();
@@ -27,7 +27,7 @@ describe(bindMessageCreator.name, () => {
   });
 
   it('should bind async event creator', async () => {
-    const eventCreator = jest.fn<MessageCreator<[number, boolean], string>>()
+    const eventCreator = jest.fn<MessageCreator<string, [a: number, b: boolean]>>()
       .mockReturnValueOnce(Promise.resolve(EVENT));
     const command = bindMessageCreator(eventCreator, dispatcher);
     await expect(command(ARG0, ARG1)).resolves.toBeUndefined();
@@ -46,7 +46,7 @@ describe(bindMessageGenerator.name, () => {
   });
 
   it('should bind sync message generator', () => {
-    const eventGenerator = jest.fn<MessageGenerator<[number, boolean], string>>(function* (arg0: number, arg1: boolean) {
+    const eventGenerator = jest.fn<MessageGenerator<string, [number, boolean]>>(function* (arg0: number, arg1: boolean) {
       yield `${arg0}`;
       yield `${arg1}`;
     });
@@ -58,7 +58,7 @@ describe(bindMessageGenerator.name, () => {
   });
 
   it('should bind async message generator', async () => {
-    const eventGenerator = jest.fn<MessageGenerator<[number, boolean], string>>(async function* (arg0: number, arg1: boolean) {
+    const eventGenerator = jest.fn<MessageGenerator<string, [number, boolean]>>(async function* (arg0: number, arg1: boolean) {
       yield Promise.resolve(`${arg0}`);
       yield Promise.resolve(`${arg1}`);
     });
@@ -70,23 +70,23 @@ describe(bindMessageGenerator.name, () => {
   });
 });
 
-type TestMessageCreatorTypes = {
-  event1: [[number], string];
-  event2: [[boolean], string];
+type TestMessageCreators = {
+  event1: MessageCreator<string, [a: number]>,
+  event2: MessageCreator<string, [b: boolean]>
 };
 
 describe(bindMessageCreators.name, () => {
   let dispatcher: MessageDispatcher<string>;
   let dispatchSpy: jest.SpiedFunction<MessageDispatcher<string>['dispatch']>;
-  let creators: MessageCreators<TestMessageCreatorTypes>;
+  let creators: TestMessageCreators;
 
   beforeEach(() => {
     dispatcher = new SimpleMessageBus();
     dispatchSpy = jest.spyOn(dispatcher, 'dispatch');
     creators = {
-      event1: jest.fn<MessageCreator<[number], string>>()
+      event1: jest.fn<MessageCreator<string, [number]>>()
         .mockReturnValueOnce(Promise.resolve(EVENT)),
-      event2: jest.fn<MessageCreator<[boolean], string>>()
+      event2: jest.fn<MessageCreator<string, [boolean]>>()
         .mockReturnValueOnce(Promise.resolve(EVENT2)),
     };
   });
@@ -104,20 +104,25 @@ describe(bindMessageCreators.name, () => {
   });
 });
 
+type TestMessageGenerators = {
+  event1: MessageGenerator<string, [a: number]>,
+  event2: MessageGenerator<string, [b: boolean]>
+};
+
 describe(bindMessageGenerators.name, () => {
   let dispatcher: MessageDispatcher<string>;
   let dispatchSpy: jest.SpiedFunction<MessageDispatcher<string>['dispatch']>;
-  let generators: MessageGenerators<TestMessageCreatorTypes>;
+  let generators: TestMessageGenerators;
 
   beforeEach(() => {
     dispatcher = new SimpleMessageBus();
     dispatchSpy = jest.spyOn(dispatcher, 'dispatch');
     generators = {
-      event1: jest.fn<MessageGenerator<[number], string>>(async function* (arg: number) {
+      event1: jest.fn<MessageGenerator<string, [a: number]>>(async function* (arg: number) {
         expect(arg).toBe(ARG0);
         yield Promise.resolve(EVENT);
       }),
-      event2: jest.fn<MessageGenerator<[boolean], string>>(async function* (arg: boolean) {
+      event2: jest.fn<MessageGenerator<string, [b: boolean]>>(async function* (arg: boolean) {
         expect(arg).toBe(ARG1);
         yield Promise.resolve(EVENT2);
       }),

@@ -17,14 +17,14 @@ describe(getEventIndexKeys.name, () => {
       }
     };
     const expectedKeys = [
-      Uint8Array.from([104, 116, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([104, 114, 58, 58, 97, 98, 99, 100, 101, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([104, 101, 58, 58, 116, 101, 115, 116, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([104, 114, 101, 58, 58, 97, 98, 99, 100, 101, 58, 58, 116, 101, 115, 116, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([116, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([114, 58, 58, 97, 98, 99, 100, 101, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([101, 58, 58, 116, 101, 115, 116, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([114, 101, 58, 58, 97, 98, 99, 100, 101, 58, 58, 116, 101, 115, 116, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 49, 50, 51, 52, 53]),
+      Uint8Array.from([104, 116, 95, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
+      Uint8Array.from([104, 114, 95, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
+      Uint8Array.from([104, 101, 95, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
+      Uint8Array.from([104, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
+      Uint8Array.from([97, 116, 95, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
+      Uint8Array.from([97, 114, 95, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
+      Uint8Array.from([97, 101, 95, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
+      Uint8Array.from([97, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
     ];
     const results = getEventIndexKeys(key, event);
     expect(results).toEqual(expectedKeys);
@@ -42,10 +42,10 @@ describe(getEventIndexKeys.name, () => {
       }
     };
     const expectedKeys = [
-      Uint8Array.from([104, 116, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([104, 114, 58, 58, 97, 98, 99, 100, 101, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([104, 101, 58, 58, 116, 101, 115, 116, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 49, 50, 51, 52, 53]),
-      Uint8Array.from([104, 114, 101, 58, 58, 97, 98, 99, 100, 101, 58, 58, 116, 101, 115, 116, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 49, 50, 51, 52, 53]),
+      Uint8Array.from([104, 116, 95, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
+      Uint8Array.from([104, 114, 95, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
+      Uint8Array.from([104, 101, 95, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
+      Uint8Array.from([104, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]),
     ];
     const results = getEventIndexKeys(key, event, true);
     expect(results).toEqual(expectedKeys);
@@ -58,8 +58,8 @@ describe(getEventIndexRangeQueryOptions.name, () => {
     const type = 'test';
     const sinceTime = 12345;
     const expectedOptions = {
-      gt: Uint8Array.from([114, 101, 58, 58, 97, 98, 99, 100, 101, 58, 58, 116, 101, 115, 116, 58, 58, 0, 0, 0, 0, 0, 0, 48, 58, 58, 58]),
-      lt: Uint8Array.from([114, 101, 58, 58, 97, 98, 99, 100, 101, 58, 58, 116, 101, 115, 116, 58, 58, 255])
+      gt: Uint8Array.from([97, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 58, 58, 58, 58]),
+      lt: Uint8Array.from([97, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 255, 255, 255])
     };
     expect(getEventIndexRangeQueryOptions(sinceTime, type, root)).toEqual(expectedOptions);
   });
@@ -69,8 +69,8 @@ describe(getEventIndexRangeQueryOptions.name, () => {
     const type = 'test';
     const sinceTime = 12345;
     const expectedOptions = {
-      gt: Uint8Array.from([104, 114, 101, 58, 58, 97, 98, 99, 100, 101, 58, 58, 116, 101, 115, 116, 58, 58, 0, 0, 0, 0, 0, 0, 48, 58, 58, 58]),
-      lt: Uint8Array.from([104, 114, 101, 58, 58, 97, 98, 99, 100, 101, 58, 58, 116, 101, 115, 116, 58, 58, 255])
+      gt: Uint8Array.from([104, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 58, 58, 58, 58]),
+      lt: Uint8Array.from([104, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 255, 255, 255])
     };
     expect(getEventIndexRangeQueryOptions(sinceTime, type, root, true)).toEqual(expectedOptions);
   });
@@ -82,14 +82,14 @@ describe(getEventIndexKey.name, () => {
     const type = ENCODER.encode('test');
     const root = ENCODER.encode('abcde');
     const time = 12345;
-    const expectedKey = Uint8Array.from([104, 114, 101, 58, 58, 97, 98, 99, 100, 101, 58, 58, 116, 101, 115, 116, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 49, 50, 51, 52, 53]);
+    const expectedKey = Uint8Array.from([104, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]);
     expect(getEventIndexKey(true, key, type, root, time)).toEqual(expectedKey);
   });
 
   it('should return the correct key when only time is provided', () => {
     const key = ENCODER.encode('12345');
     const time = 12345;
-    const expectedKey = Uint8Array.from([104, 116, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 49, 50, 51, 52, 53]);
+    const expectedKey = Uint8Array.from([104, 116, 95, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]);
     expect(getEventIndexKey(true, key, void 0, void 0, time)).toEqual(expectedKey);
   });
 
@@ -97,7 +97,7 @@ describe(getEventIndexKey.name, () => {
     const key = ENCODER.encode('12345');
     const type = ENCODER.encode('test');
     const root = ENCODER.encode('abcde');
-    const expectedKey = Uint8Array.from([104, 114, 101, 58, 58, 97, 98, 99, 100, 101, 58, 58, 116, 101, 115, 116, 58, 58, 49, 50, 51, 52, 53]);
+    const expectedKey = Uint8Array.from([104, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 49, 50, 51, 52, 53]);
     expect(getEventIndexKey(true, key, type, root)).toEqual(expectedKey);
   });
 
@@ -105,7 +105,7 @@ describe(getEventIndexKey.name, () => {
     const key = ENCODER.encode('12345');
     const root = ENCODER.encode('abcde');
     const time = 12345;
-    const expectedKey = Uint8Array.from([114, 58, 58, 97, 98, 99, 100, 101, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 49, 50, 51, 52, 53]);
+    const expectedKey = Uint8Array.from([97, 114, 95, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57, 58, 58, 58, 49, 50, 51, 52, 53]);
     expect(getEventIndexKey(false, key, void 0, root, time)).toEqual(expectedKey);
   });
 
@@ -113,7 +113,7 @@ describe(getEventIndexKey.name, () => {
     const type = ENCODER.encode('test');
     const root = ENCODER.encode('abcde');
     const time = 12345;
-    const expectedKey = Uint8Array.from([114, 101, 58, 58, 97, 98, 99, 100, 101, 58, 58, 116, 101, 115, 116, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57]);
+    const expectedKey = Uint8Array.from([97, 114, 101, 58, 58, 58, 97, 98, 99, 100, 101, 58, 58, 58, 116, 101, 115, 116, 58, 58, 58, 0, 0, 0, 0, 0, 0, 48, 57]);
     expect(getEventIndexKey(false, void 0, type, root, time)).toEqual(expectedKey);
   });
 });

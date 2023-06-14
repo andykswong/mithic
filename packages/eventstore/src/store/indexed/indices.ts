@@ -6,12 +6,14 @@ import { Event, EventMetadata } from '../../event.js';
 const INT64_BUFFER = new Uint8Array(8);
 const INT64_VIEW = new DataView(INT64_BUFFER.buffer);
 
-const KEY_SEPARATOR = TEXT_ENCODER.encode('::');
-const KEY_TERMINAL = new Uint8Array([255]);
+// tokens are chosen to be 3-bytes wide to align with base64 encoding
+const KEY_SEPARATOR = TEXT_ENCODER.encode(':::');
+const KEY_TERMINAL = new Uint8Array([255, 255, 255]);
 const KEY_HEAD = TEXT_ENCODER.encode('h');
-const KEY_TIME = TEXT_ENCODER.encode('t');
-const KEY_ROOT_TIME = TEXT_ENCODER.encode('r');
-const KEY_TYPE_TIME = TEXT_ENCODER.encode('e');
+const KEY_ALL = TEXT_ENCODER.encode('a');
+const KEY_TIME = TEXT_ENCODER.encode('t_');
+const KEY_ROOT_TIME = TEXT_ENCODER.encode('r_');
+const KEY_TYPE_TIME = TEXT_ENCODER.encode('e_');
 const KEY_ROOT_TYPE_TIME = TEXT_ENCODER.encode('re');
 
 /** Gets all event store index keys for an event. */
@@ -57,7 +59,7 @@ export function getEventIndexRangeQueryOptions<Id>(
 export function getEventIndexKey(
   head: boolean, key?: Uint8Array, type?: Uint8Array, root?: Uint8Array, time?: number
 ): Uint8Array {
-  const keyParts = head ? [KEY_HEAD] : [];
+  const keyParts = head ? [KEY_HEAD] : [KEY_ALL];
   keyParts.push(
     root && type ? KEY_ROOT_TYPE_TIME :
       root ? KEY_ROOT_TIME :

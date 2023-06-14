@@ -1,6 +1,6 @@
+import { AbortOptions, MaybePromise } from '@mithic/commons';
 import { MessageSubscription, MessageTransformer } from '../bus.js';
 import { MessageProcessor } from '../processor.js';
-import { AbortOptions, MaybePromise } from '@mithic/commons';
 
 /** {@link MessageProcessor} that persists message using an {@link ObjectWriter}. */
 export class MessagePersister<Msg, SrcMsg = Msg>
