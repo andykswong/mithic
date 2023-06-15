@@ -6,11 +6,20 @@ import {
   AbortOptions, CodedError, ContentId, ErrorCode, StringEquatable, SyncOrAsyncIterable, equalsOrSameString,
   operationError
 } from '@mithic/commons';
-import { CID } from 'multiformats';
 import { DEFAULT_BATCH_SIZE } from '../defaults.js';
 import { Event, EventMetadata } from '../event.js';
 import { EventStore, EventStoreQueryOptions, EventStoreMetaQueryOptions } from '../store.js';
 import { BaseDagEventStore } from './base.js';
+
+/** Default decodeKey implementation that uses multiformats as optional dependency. */
+const decodeCID = await (async () => {
+  try {
+    const { CID } = await import('multiformats');
+    return <K>(key: string) => CID.parse(key) as unknown as K;
+  } catch (_) {
+    return () => { throw operationError('multiformats not available', ErrorCode.InvalidState); };
+  }
+})();
 
 /** An {@link EventStore} implementation that stores a direct-acyclic graph of content-addressable events. */
 export class DagEventStore<
@@ -26,7 +35,7 @@ export class DagEventStore<
   public constructor({
     data = new ContentAddressedMapStore<K, V>(),
     encodeKey = (key) => `${key}`,
-    decodeKey = (key) => CID.parse(key) as unknown as K,
+    decodeKey = decodeCID,
     head = new EncodedSet<K, string, Set<string>>(new Set(), encodeKey, decodeKey),
   }: DagEventStoreOptions<K, V> = {}) {
     super(data);

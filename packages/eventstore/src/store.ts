@@ -1,18 +1,20 @@
 import {
   AppendOnlyAutoKeyMap, AutoKeyMapPutBatch, MaybeAsyncReadonlyMapBatch, ReadonlyAutoKeyMap
 } from '@mithic/collections';
-import { AbortOptions, CodedError, ContentId, MaybePromise, SyncOrAsyncGenerator } from '@mithic/commons';
+import { AbortOptions, CodedError, ContentId, MaybeAsyncIterableIterator, MaybePromise, SyncOrAsyncGenerator } from '@mithic/commons';
 import { Event } from './event.js';
 
 /** An append-only event store. */
-// eslint-disable-next-line @typescript-eslint/ban-types
-export interface EventStore<K = ContentId, V = Event, QueryExt extends object = {}>
-  extends ReadonlyEventStore<K, V, QueryExt>, AppendOnlyAutoKeyMap<K, V>, AutoKeyMapPutBatch<K, V> {
+export interface EventStore<K = ContentId, V = Event, QueryExt extends object = NonNullable<unknown>>
+  extends ReadonlyEventStore<K, V, QueryExt>, AppendOnlyAutoKeyMap<K, V>, AutoKeyMapPutBatch<K, V>
+{
+  put(value: V, options?: EventStorePutOptions): MaybePromise<K>;
+
+  putMany(values: Iterable<V>, options?: EventStorePutOptions): MaybeAsyncIterableIterator<[key: K, error?: Error]>;
 }
 
 /** A read-only event store. */
-// eslint-disable-next-line @typescript-eslint/ban-types
-export interface ReadonlyEventStore<K = ContentId, V = Event, QueryExt extends object = {}>
+export interface ReadonlyEventStore<K = ContentId, V = Event, QueryExt extends object = NonNullable<unknown>>
   extends ReadonlyAutoKeyMap<K, V>, MaybeAsyncReadonlyMapBatch<K, V>, EventStoreQuery<K, V, QueryExt> {
 
   /** Validates given event and returns any error. */
@@ -20,8 +22,7 @@ export interface ReadonlyEventStore<K = ContentId, V = Event, QueryExt extends o
 }
 
 /** Query APIs for an event store. */
-// eslint-disable-next-line @typescript-eslint/ban-types
-export interface EventStoreQuery<K = ContentId, V = Event, QueryExt extends object = {}> {
+export interface EventStoreQuery<K = ContentId, V = Event, QueryExt extends object = NonNullable<unknown>> {
   /** Queries entries by given criteria. */
   entries(options?: EventStoreQueryOptions<K> & QueryExt): SyncOrAsyncGenerator<[K, V], K[]>;
 
@@ -51,4 +52,10 @@ export interface EventStoreMetaQueryOptions<K> {
 
   /** Aggregate root to query. */
   root?: K;
+}
+
+/** Options for putting event into {@link EventStore} */
+export interface EventStorePutOptions extends AbortOptions {
+  /** Whether to validate input. Defaults to true. */
+  readonly validate?: boolean;
 }

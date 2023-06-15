@@ -1,6 +1,6 @@
 import { ContentId } from '@mithic/commons';
 
-/** An event object. */
+/** An event object in Flux standard action format. */
 export interface Event<T = unknown, Meta = unknown> {
   /** Event type. */
   readonly type: string;

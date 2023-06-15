@@ -1,7 +1,7 @@
 import { ContentAddressedMapStore } from '@mithic/collections';
+import { operationError, ErrorCode } from '@mithic/commons';
 import { DagEventStore } from '../dagstore.js';
 import { MockEventType, MockId } from '../../__tests__/mocks.js';
-import { operationError, ErrorCode } from '@mithic/commons';
 
 const TYPE1 = 'EVENT_CREATED';
 const TYPE2 = 'EVENT_UPDATED';

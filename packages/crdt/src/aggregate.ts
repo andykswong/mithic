@@ -1,9 +1,9 @@
 import { AbortOptions, CodedError, MaybePromise } from '@mithic/commons';
-import { Event, EventMetadata } from '@mithic/eventstore';
 
 /** Aggregate root type. */
 export interface AggregateRoot<
-  Command, QueryResult, Event extends AggregateEvent = AggregateEvent, QueryOptions extends AbortOptions = AbortOptions,
+  Command, QueryResult,
+  Event extends AggregateEvent = AggregateEvent, QueryOptions extends AbortOptions = AbortOptions,
 > {
   /** Accepted event types of this aggregate. */
   readonly event: Readonly<Record<string, Event['type']>>;
@@ -15,15 +15,38 @@ export interface AggregateRoot<
   command(command: Command, options?: AbortOptions): MaybePromise<Event>;
 
   /** Applies given event. */
-  apply(event: Event, options?: AbortOptions): MaybePromise<void>;
+  apply(event: Event, options?: AggregateApplyOptions): MaybePromise<void>;
   
   /** Validates given event. */
   validate(event: Event, options?: AbortOptions): MaybePromise<CodedError | undefined>;
 }
 
-/** Aggregate event type. */
-export interface AggregateEvent<
-  A extends string = string, K = unknown, T = unknown
-> extends Event<T, EventMetadata<K>> {
-  type: A;
+/** Aggregate event interface in Flux standard action format. */
+export interface AggregateEvent<A extends string = string, Ref = unknown, T = unknown> {
+  /** Event type. */
+  readonly type: A;
+
+  /** Event payload. */
+  readonly payload: T;
+
+  /** Event metadata. */
+  readonly meta: AggregateEventMeta<Ref>;
+}
+
+/** {@link AggregateEvent} metadata. */
+export interface AggregateEventMeta<Ref = unknown> {
+  /** Parent event references, on which this event depends. */
+  readonly parents: readonly Ref[];
+
+  /** Event target aggregate root ID. */
+  readonly root?: Ref;
+
+  /** (Logical) timestamp at which the event is created/persisted. */
+  readonly createdAt?: number;
+}
+
+/** Options for {@link AggregateRoot} apply method. */
+export interface AggregateApplyOptions extends AbortOptions {
+  /** Whether to validate input. Defaults to true. */
+  readonly validate?: boolean;
 }

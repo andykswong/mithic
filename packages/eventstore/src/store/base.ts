@@ -4,7 +4,7 @@ import {
   equalsOrSameString, operationError
 } from '@mithic/commons';
 import { Event, EventMetadata } from '../event.js';
-import { EventStore, EventStoreQueryOptions } from '../store.js';
+import { EventStore, EventStorePutOptions, EventStoreQueryOptions } from '../store.js';
 import { DEFAULT_BATCH_SIZE } from '../defaults.js';
 
 /**
@@ -65,20 +65,22 @@ export abstract class BaseMapEventStore<
     }
   }
 
-  public async put(value: V, options?: AbortOptions): Promise<K> {
-    const error = await this.validate(value, options);
-    if (error) {
-      if (error.code === ErrorCode.Exist) {
-        return (error.detail as K[])[0];
+  public async put(value: V, options?: EventStorePutOptions): Promise<K> {
+    if (options?.validate ?? true) {
+      const error = await this.validate(value, options);
+      if (error) {
+        if (error.code === ErrorCode.Exist) {
+          return (error.detail as K[])[0];
+        }
+        throw error;
       }
-      throw error;
     }
     await this.prePut(value, options);
     return this.data.put(value, options);
   }
 
   public async * putMany(
-    values: Iterable<V>, options?: AbortOptions
+    values: Iterable<V>, options?: EventStorePutOptions
   ): AsyncIterableIterator<[key: K, error?: Error]> {
     for await (const value of values) {
       try {
@@ -207,7 +209,7 @@ export abstract class BaseDagEventStore<
     }
   }
 
-  public async put(value: V, options?: AbortOptions): Promise<K> {
+  public async put(value: V, options?: EventStorePutOptions): Promise<K> {
     try {
       this.useCache = true;
       this.currentEventDeps.length = 0;
