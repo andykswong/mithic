@@ -1,10 +1,10 @@
 import {
-  AbortOptions, CodedError, ContentId, ErrorCode, MaybePromise, StringEquatable, equalsOrSameString, operationError,
+  AbortOptions, CodedError, ContentId, ErrorCode, MaybePromise, StringEquatable, operationError,
 } from '@mithic/commons';
 import { BTreeMap, MaybeAsyncMapBatch, RangeQueryable } from '@mithic/collections';
 import { AggregateApplyOptions, AggregateCommandMeta, AggregateEvent, AggregateRoot } from '../aggregate.js';
 import { getEventIndexKey, getFieldNameFromKey, getFieldValueKey, getHeadIndexKey, getPrefixEndKey } from './keys.js';
-import { defaultEventRef, defaultIsRef, defaultVoidRef } from './defaults.js';
+import { defaultEventRef } from './defaults.js';
 
 /** Observed-remove map of values. */
 export class ORMap<
@@ -13,21 +13,15 @@ export class ORMap<
 > implements AggregateRoot<ORMapCommand<Ref, V>, AsyncIterable<[string, V]>, ORMapEvent<Ref, V>, ORMapQuery<Ref>>
 {
   protected readonly eventRef: (event: ORMapEvent<Ref, V>, options?: AbortOptions) => MaybePromise<Ref>;
-  protected readonly isRef: (value: unknown) => value is Ref;
-  protected readonly voidRef: () => Ref;
   protected readonly store: MaybeAsyncMapBatch<string, Ref | V | number> & RangeQueryable<string, Ref | V | number>;
 
   public readonly event = ORMapEventType;
 
   public constructor({
     eventRef = defaultEventRef,
-    isRef = defaultIsRef,
-    voidRef = defaultVoidRef,
     store = new BTreeMap<string, V>(5),
   }: ORMapOptions<Ref, V> = {}) {
     this.eventRef = eventRef;
-    this.isRef = isRef;
-    this.voidRef = voidRef;
     this.store = store;
   }
 
@@ -35,16 +29,16 @@ export class ORMap<
     const rootRef = command.ref;
     const rootRefStr = `${rootRef}`;
     const type = rootRef === void 0 ? this.event.New : this.event.Update;
-    const ops: [string, Ref | V, ...number[]][] = [];
+    const ops: [string, V | null, boolean, ...number[]][] = [];
 
-    const voidRef = this.voidRef();
     const entries = command.entries || {};
-    const fields = Object.keys(entries);
+    const fields = [...(command.del || []), ...Object.keys(entries)];
     const parents: Ref[] = [];
     const parentsMap: Record<string, number> = {};
 
+    let i = 0;
     for (const field of fields) {
-      const value = entries[field];
+      const value = entries[field] ?? null;
 
       const thisParents: number[] = [];
       if (type === this.event.Update) { // find parents if this is an update event
@@ -53,19 +47,18 @@ export class ORMap<
           lt: getPrefixEndKey(getHeadIndexKey(rootRefStr, field)),
           signal: options?.signal,
         })) {
-          if (this.isRef(parentRef)) {
-            const parentRefStr = `${parentRef}`;
-            thisParents.push(parentsMap[parentRefStr] ?? (parents.push(parentRef) - 1));
-            parentsMap[parentRefStr] = thisParents[thisParents.length - 1];
-          }
+          const parentRefStr = `${parentRef}`;
+          thisParents.push(parentsMap[parentRefStr] ?? (parents.push(parentRef as Ref) - 1));
+          parentsMap[parentRefStr] = thisParents[thisParents.length - 1];
         }
       }
 
-      if (this.isRef(value) && equalsOrSameString(value, voidRef) && !thisParents.length) {
+      const isDelete = i++ < (command.del?.length || 0);
+      if (isDelete && !thisParents.length) {
         continue; // nothing to delete
       }
 
-      ops.push([field, value, ...thisParents]);
+      ops.push([field, value, isDelete, ...thisParents]);
     }
 
     if (type === this.event.Update && !fields.length) {
@@ -85,7 +78,6 @@ export class ORMap<
       if (error) { throw error; }
     }
 
-    const voidRef = this.voidRef();
     const eventKey = await this.eventRef(event, options);
     const eventKeyStr = `${eventKey}`;
     const root = event.type === this.event.Update ? event.meta.root as Ref : eventKey;
@@ -102,11 +94,11 @@ export class ORMap<
     ];
 
     // update field values
-    for (const [field, value, ...parents] of event.payload.ops) {
-      if (!(this.isRef(value) && equalsOrSameString(voidRef, value))) { // upsert
+    for (const [field, value, isDelete, ...parents] of event.payload.ops) {
+      if (!isDelete) { // upsert
         entries.push(
           [getHeadIndexKey(rootRefStr, field, eventKeyStr), eventKey],
-          [getFieldValueKey(rootRefStr, field, eventKeyStr), value],
+          [getFieldValueKey(rootRefStr, field, eventKeyStr), value as V],
         );
       }
       for (const parentIndex of parents) {
@@ -134,9 +126,8 @@ export class ORMap<
     }
 
     // verify that set operations are well formed
-    const voidRef = this.voidRef();
-    for (const [field, value, ...parents] of event.payload.ops) {
-      let isValid = !!field && (!!parents.length || !(this.isRef(value) && equalsOrSameString(voidRef, value)));
+    for (const [field, _, isDelete, ...parents] of event.payload.ops) {
+      let isValid = !!field && (!!parents.length || !isDelete);
       for (const parent of parents) {
         if (event.meta.parents[parent] === void 0) {
           isValid = false;
@@ -307,16 +298,19 @@ export interface ORMapQuery<Ref> extends AbortOptions {
 /** Command for {@link ORMap}. */
 export interface ORMapCommand<Ref, V> extends AggregateCommandMeta<Ref> {
   /** Sets given field-value pairs to the map. */
-  readonly entries?: Readonly<Record<string, Ref | V>>;
+  readonly entries?: Readonly<Record<string, V>>;
+
+  /** Deletes given fields from the map. */
+  readonly del?: readonly string[];
 }
 
 /** Event for {@link ORMap}. */
-export type ORMapEvent<Ref, V> = AggregateEvent<ORMapEventType, Ref, ORMapEventPayload<Ref, V>>;
+export type ORMapEvent<Ref, V> = AggregateEvent<ORMapEventType, Ref, ORMapEventPayload<V>>;
 
 /** Event payload for {@link ORMap}. */
-export interface ORMapEventPayload<Ref, V> {
+export interface ORMapEventPayload<V> {
   /** Operations to set given field pairs to the map with references to parent event indices. */
-  readonly ops: readonly [field: string, value: Ref | V, ...parentIndices: number[]][];
+  readonly ops: readonly [field: string, value: V | null, isDelete: boolean, ...parentIndices: number[]][];
 
   /** A random number to make a unique event when creating a new map. Undefined for `Set` events. */
   readonly nounce?: number;
@@ -326,12 +320,6 @@ export interface ORMapEventPayload<Ref, V> {
 export interface ORMapOptions<Ref, V> {
   /** Gets the reference to event from given event. */
   readonly eventRef?: (event: ORMapEvent<Ref, V>, options?: AbortOptions) => MaybePromise<Ref>;
-
-  /** Returns if value is a reference type. */
-  readonly isRef?: (value: unknown) => value is Ref;
-
-  /** Creates a void reference. */
-  readonly voidRef?: () => Ref;
 
   /** Backing data store. */
   readonly store?: MaybeAsyncMapBatch<string, Ref | V | number> & RangeQueryable<string, Ref | V | number>;

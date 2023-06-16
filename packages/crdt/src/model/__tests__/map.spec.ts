@@ -22,7 +22,7 @@ const CMD_EMPTY = { entries: {}, createdAt: 1 };
 const CMD_NEW = { entries: { [FIELD0]: VALUE0 }, nounce: 123, createdAt: 1 };
 const CMD_WITH_FIELDS = { ref: ROOT, entries: { [FIELD1]: VALUE1, [FIELD2]: VALUE2 }, createdAt: 2 };
 const CMD_WITH_FIELDS2 = { ref: ROOT, entries: { [FIELD3]: VALUE3 }, createdAt: 3 };
-const CMD_WITH_UPDEL = { ref: ROOT, entries: { [FIELD1]: new MockId(), [FIELD2]: VALUE22, [FIELD3]: VALUE32 }, createdAt: 4 };
+const CMD_WITH_UPDEL = { ref: ROOT, entries: { [FIELD2]: VALUE22, [FIELD3]: VALUE32 }, del: [FIELD1], createdAt: 4 };
 const CMD_WITH_FIELDS_CONCURRENT = { ref: ROOT, entries: { [FIELD1]: VALUE12 }, createdAt: 5 };
 
 describe(ORMap.name, () => {
@@ -32,7 +32,6 @@ describe(ORMap.name, () => {
   beforeEach(() => {
     map = new ORMap({
       eventRef: (event) => new MockId(new Uint8Array(event.meta.createdAt || 0)),
-      voidRef: () => new MockId(),
     });
     store = map['store'] as BTreeMap<string, MockId | V>;
   });
@@ -56,7 +55,7 @@ describe(ORMap.name, () => {
       expect(event).toEqual({
         type: ORMapEventType.New,
         payload: {
-          ops: [[FIELD0, VALUE0]],
+          ops: [[FIELD0, VALUE0, false]],
           nounce: 123,
         },
         meta: { parents: [], createdAt: 1 },
@@ -69,8 +68,8 @@ describe(ORMap.name, () => {
         type: ORMapEventType.Update,
         payload: {
           ops: [
-            [FIELD1, VALUE1],
-            [FIELD2, VALUE2]
+            [FIELD1, VALUE1, false],
+            [FIELD2, VALUE2, false]
           ]
         },
         meta: { parents: [], root: ROOT, createdAt: 2 },
@@ -85,9 +84,9 @@ describe(ORMap.name, () => {
         type: ORMapEventType.Update,
         payload: {
           ops: [
-            [FIELD1, new MockId(), 0],
-            [FIELD2, VALUE22, 0],
-            [FIELD3, VALUE32, 1],
+            [FIELD1, null, true, 0],
+            [FIELD2, VALUE22, false, 0],
+            [FIELD3, VALUE32, false, 1],
           ]
         },
         meta: {
@@ -104,8 +103,8 @@ describe(ORMap.name, () => {
         type: ORMapEventType.Update,
         payload: {
           ops: [
-            [FIELD2, VALUE22],
-            [FIELD3, VALUE32, 0],
+            [FIELD2, VALUE22, false],
+            [FIELD3, VALUE32, false, 0],
           ]
         },
         meta: {
@@ -136,25 +135,25 @@ describe(ORMap.name, () => {
 
       expect(await map.validate({
         type: ORMapEventType.Update,
-        payload: { ops: [['field', true]] },
+        payload: { ops: [['field', true, false]] },
         meta: { parents: [], createdAt: 2 },
       })).toEqual(operationError('Missing root', ErrorCode.InvalidArg));
 
       expect(await map.validate({
         type: ORMapEventType.Update,
-        payload: { ops: [['', true]] },
+        payload: { ops: [['', true, false]] },
         meta: { parents: [], root: ROOT, createdAt: 2 },
       })).toEqual(operationError(`Invalid operation: ""`, ErrorCode.InvalidArg));
 
       expect(await map.validate({
         type: ORMapEventType.Update,
-        payload: { ops: [['field', new MockId()]] },
+        payload: { ops: [['field', 123, true]] },
         meta: { parents: [], root: ROOT, createdAt: 2 },
       })).toEqual(operationError(`Invalid operation: "field"`, ErrorCode.InvalidArg));
 
       expect(await map.validate({
         type: ORMapEventType.Update,
-        payload: { ops: [['field', true, 0]] },
+        payload: { ops: [['field', true, false, 0]] },
         meta: { parents: [], root: ROOT, createdAt: 2 },
       })).toEqual(operationError(`Invalid operation: "field"`, ErrorCode.InvalidArg));
     });
@@ -162,7 +161,7 @@ describe(ORMap.name, () => {
     it('should return error for missing dependent events', async () => {
       expect(await map.validate({
         type: ORMapEventType.Update,
-        payload: { ops: [['field', true, 0]] },
+        payload: { ops: [['field', true, false, 0]] },
         meta: { parents: [new MockId(new Uint8Array(2))], root: ROOT, createdAt: 2 },
       })).toEqual(operationError('Missing dependencies', ErrorCode.MissingDep, [new MockId(new Uint8Array(2)), ROOT]));
     });

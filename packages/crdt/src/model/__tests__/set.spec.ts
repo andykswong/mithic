@@ -25,12 +25,10 @@ describe(ORSet.name, () => {
   beforeEach(() => {
     const map = new ORMap<MockId, V>({
       eventRef: (event) => new MockId(new Uint8Array(event.meta.createdAt || 0)),
-      voidRef: () => new MockId(),
     })
     set = new ORSet({
       map,
       stringify: (value) => `${value}`,
-      voidRef: () => new MockId(),
     });
     store = map['store'] as BTreeMap<string, MockId | V>;
   });

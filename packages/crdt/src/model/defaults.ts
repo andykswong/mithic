@@ -12,18 +12,3 @@ export const defaultEventRef = await (async () => {
     return () => { throw operationError('multiformats or @ipld/dag-cbor not available', ErrorCode.InvalidState); };
   }
 })();
-
-/** Default voidRef implementation that uses multiformats as optional dependency. */
-export const defaultVoidRef = await (async () => {
-  try {
-    const { CID } = await import('multiformats');
-    const { identity } = await import('multiformats/hashes/identity');
-    return <Ref>() => CID.createV1(0x55, identity.digest(new Uint8Array())) as unknown as Ref;
-  } catch (_) {
-    return () => { throw operationError('multiformats not available', ErrorCode.InvalidState); };
-  }
-})();
-
-/** Default isRef implementation. */
-export const defaultIsRef = <Ref>(value: unknown): value is Ref =>
-  value !== null && !['boolean', 'number', 'string'].includes(typeof value);

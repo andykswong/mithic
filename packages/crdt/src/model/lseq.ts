@@ -1,7 +1,6 @@
 import { AbortOptions, CodedError, ContentId, StringEquatable } from '@mithic/commons';
 import { AggregateApplyOptions, AggregateCommandMeta, AggregateEvent, AggregateRoot } from '../aggregate.js';
 import { ORMap, ORMapCommand, ORMapEvent, ORMapEventPayload, ORMapQuery } from './map.js';
-import { defaultVoidRef } from './defaults.js';
 import { getFractionalIndices } from './keys.js';
 
 /** Linear sequence of values based on {@link ORMap} of base64 fractional index to values. */
@@ -11,7 +10,6 @@ export class LSeq<
 > implements AggregateRoot<LSeqCommand<Ref, V>, AsyncIterable<[string, V]>, LSeqEvent<Ref, V>, ORMapQuery<Ref>>
 {
   protected readonly map: ORMap<Ref, V>;
-  protected readonly voidRef: () => Ref;
   protected readonly rand: () => number;
   protected readonly indexRandomness: number;
 
@@ -19,12 +17,10 @@ export class LSeq<
 
   public constructor({
     map = new ORMap(),
-    voidRef = defaultVoidRef,
     rand = Math.random,
     indexRandomness = 2,
   }: LSeqOptions<Ref, V> = {}) {
     this.map = map;
-    this.voidRef = voidRef;
     this.rand = rand;
     this.indexRandomness = indexRandomness;
   }
@@ -36,13 +32,14 @@ export class LSeq<
   public async command(command: LSeqCommand<Ref, V> = {}, options?: AbortOptions): Promise<LSeqEvent<Ref, V>> {
     const type = command.ref === void 0 ? this.event.New : this.event.Update;
     const toDeleteCount = type === this.event.New ? 0 : command.del || 0;
-    const voidRef = this.voidRef();
-    const entries: Record<string, Ref | V> = {};
+    const entries: Record<string, V> = {};
+    const del: string[] = [];
     const mapCmd: ORMapCommand<Ref, V> = {
       ref: command.ref,
       createdAt: command.createdAt,
       nounce: command.nounce,
       entries,
+      del,
     };
 
     const deletedIndices: string[] = [];
@@ -73,7 +70,11 @@ export class LSeq<
     let i = 0;
     const adds = command.add || [];
     for (; i < deletedIndices.length; ++i) {
-      entries[deletedIndices[i]] = i < adds.length ? adds[i] : voidRef;
+      if (i < adds.length) {
+        entries[deletedIndices[i]] = adds[i];
+      } else {
+        del.push(deletedIndices[i]);
+      }
     }
     if (i < adds.length) {
       startIndex = deletedIndices[i - 1] || startIndex;
@@ -123,15 +124,12 @@ export interface LSeqCommand<Ref, V> extends AggregateCommandMeta<Ref> {
 }
 
 /** Event for {@link LSeq}. */
-export type LSeqEvent<Ref, V> = AggregateEvent<LSeqEventType, Ref, ORMapEventPayload<Ref, V>>;
+export type LSeqEvent<Ref, V> = AggregateEvent<LSeqEventType, Ref, ORMapEventPayload<V>>;
 
 /** Options for creating an {@link LSeq}. */
 export interface LSeqOptions<Ref extends StringEquatable<Ref>, V> {
   /** Backing {@link ORMap}. */
   readonly map?: ORMap<Ref, V>;
-
-  /** Creates a void reference. */
-  readonly voidRef?: () => Ref;
 
   /** Returns a random number from 0 to 1 (exclusive). */
   readonly rand?: () => number;

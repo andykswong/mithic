@@ -30,11 +30,9 @@ describe(LSeq.name, () => {
   beforeEach(() => {
     const map = new ORMap<MockId, V>({
       eventRef: (event) => new MockId(new Uint8Array(event.meta.createdAt || 0)),
-      voidRef: () => new MockId(),
     });
     lseq = new LSeq({
       map,
-      voidRef: () => new MockId(),
       rand: () => 0.5,
     });
     store = map['store'] as BTreeMap<string, MockId | V>;
@@ -59,7 +57,7 @@ describe(LSeq.name, () => {
       expect(event).toEqual({
         type: LSeqEventType.New,
         payload: {
-          ops: [[INDEX0, VALUE0], [INDEX1, VALUE1]],
+          ops: [[INDEX0, VALUE0, false], [INDEX1, VALUE1, false]],
           nounce: 123,
         },
         meta: { parents: [], createdAt: 1 },
@@ -71,7 +69,7 @@ describe(LSeq.name, () => {
       expect(event).toEqual({
         type: LSeqEventType.Update,
         payload: {
-          ops: [[INDEX0, VALUE0], [INDEX1, VALUE1]]
+          ops: [[INDEX0, VALUE0, false], [INDEX1, VALUE1, false]]
         },
         meta: { parents: [], root: ROOT, createdAt: 2 },
       });
@@ -85,7 +83,7 @@ describe(LSeq.name, () => {
       expect(event).toEqual({
         type: LSeqEventType.Update,
         payload: {
-          ops: [[INDEX0, VALUE1, 0, 1], [INDEX4, VALUE3]]
+          ops: [[INDEX0, VALUE1, false, 0, 1], [INDEX4, VALUE3, false]]
         },
         meta: {
           parents: [new MockId(new Uint8Array(2)), new MockId(new Uint8Array(5))],
@@ -99,7 +97,7 @@ describe(LSeq.name, () => {
       expect(event).toEqual({
         type: LSeqEventType.Update,
         payload: {
-          ops: [[INDEX1, VALUE1], ['ssssssss', VALUE3]]
+          ops: [[INDEX1, VALUE1, false], ['ssssssss', VALUE3, false]]
         },
         meta: {
           parents: [],
