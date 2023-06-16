@@ -23,3 +23,7 @@ export const defaultVoidRef = await (async () => {
     return () => { throw operationError('multiformats not available', ErrorCode.InvalidState); };
   }
 })();
+
+/** Default isRef implementation. */
+export const defaultIsRef = <Ref>(value: unknown): value is Ref =>
+  value !== null && !['boolean', 'number', 'string'].includes(typeof value);

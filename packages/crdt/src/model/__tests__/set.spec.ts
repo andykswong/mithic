@@ -3,6 +3,7 @@ import { ORSet, ORSetCommand, ORSetEventType, ORSetQuery } from '../set.js';
 import { MockId } from '../../__tests__/mocks.js';
 import { ErrorCode, operationError } from '@mithic/commons';
 import { getEventIndexKey, getFieldValueKey, getHeadIndexKey } from '../keys.js';
+import { ORMap } from '../map.js';
 
 type V = string | number | boolean;
 
@@ -22,11 +23,16 @@ describe(ORSet.name, () => {
   let store: BTreeMap<string, MockId | V>;
 
   beforeEach(() => {
-    set = new ORSet({
+    const map = new ORMap<MockId, V>({
       eventRef: (event) => new MockId(new Uint8Array(event.meta.createdAt || 0)),
+      voidRef: () => new MockId(),
+    })
+    set = new ORSet({
+      map,
       stringify: (value) => `${value}`,
+      voidRef: () => new MockId(),
     });
-    store = set['store'] as BTreeMap<string, MockId | V>;
+    store = map['store'] as BTreeMap<string, MockId | V>;
   });
 
   describe('query', () => {
@@ -71,7 +77,7 @@ describe(ORSet.name, () => {
       expect(results).toEqual([VALUE2, VALUE3, VALUE1]);
     });
   });
-  
+
   describe('command', () => {
     beforeEach(async () => {
       await applyCommand();
@@ -103,7 +109,7 @@ describe(ORSet.name, () => {
       expect(event).toEqual({
         type: ORSetEventType.Update,
         payload: {
-          ops: [[VALUE1], [VALUE2]]
+          ops: [[VALUE2], [VALUE1]]
         },
         meta: { parents: [], root: ROOT, createdAt: 2 },
       });
@@ -170,7 +176,7 @@ describe(ORSet.name, () => {
         type: ORSetEventType.Update,
         payload: { ops: [['value', 0]] },
         meta: { parents: [], root: ROOT, createdAt: 2 },
-      })).toEqual(operationError(`Invalid delete operation: "value"`, ErrorCode.InvalidArg));
+      })).toEqual(operationError(`Invalid operation: "value"`, ErrorCode.InvalidArg));
     });
 
     it('should return error for missing dependent events', async () => {

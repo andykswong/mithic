@@ -1,4 +1,4 @@
-import { getEventIndexKey, getFieldNameFromKey, getFieldValueKey, getHeadIndexKey, getPrefixEndKey } from '../keys.js';
+import { fractionalIndexToString, getEventIndexKey, getFieldNameFromKey, getFieldValueKey, getFractionalIndices, getHeadIndexKey, getPrefixEndKey } from '../keys.js';
 
 describe(getFieldValueKey.name, () => {
   it('should return the correct key', () => {
@@ -38,5 +38,19 @@ describe(getFieldNameFromKey.name, () => {
 
   it('returns an empty string if the key does not have a field key', () => {
     expect(getFieldNameFromKey('V::foo:bar')).toBe('');
+  });
+});
+
+describe(getFractionalIndices.name, () => {
+  it('should return the correct indices', () => {
+    expect([...getFractionalIndices(void 0, void 0, 2, () => 0.5)]).toEqual(['UUUUUUUU', 'kkkkkkkk']);
+    expect([...getFractionalIndices('AA', 'AZ', 3, () => 0.5)]).toEqual(['AMUUUUUU', 'ASkkkkkk', 'AVssssss']);
+  });
+});
+
+describe(fractionalIndexToString.name, () => {
+  it('should convert a fractional index array to string', () => {
+    expect(fractionalIndexToString([0, 0, 0])).toBe('+++');
+    expect(fractionalIndexToString([63, 0, 1])).toBe('z+/');
   });
 });

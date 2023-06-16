@@ -1,192 +1,114 @@
-import {
-  AbortOptions, CodedError, ContentId, ErrorCode, MaybePromise, StringEquatable, operationError
-} from '@mithic/commons';
-import { AggregateApplyOptions, AggregateEvent, AggregateRoot } from '../aggregate.js';
-import { BTreeMap, MaybeAsyncMapBatch, RangeQueryable } from '@mithic/collections';
-import { getEventIndexKey, getFieldNameFromKey, getFieldValueKey, getHeadIndexKey, getPrefixEndKey } from './keys.js';
-import { defaultEventRef } from './defaults.js';
+import { AbortOptions, CodedError, ContentId, MaybePromise, StringEquatable } from '@mithic/commons';
+import { AggregateApplyOptions, AggregateCommandMeta, AggregateEvent, AggregateRoot } from '../aggregate.js';
+import { ORMap, ORMapCommand, ORMapEvent } from './map.js';
+import { defaultVoidRef } from './defaults.js';
 
-/** Observed-remove set of values and references. */
+/** Observed-remove set of values based on {@link ORMap} of stringified values to values. */
 export class ORSet<
   Ref extends StringEquatable<Ref> = ContentId,
-  V = string | number | boolean
->
-  implements AggregateRoot<ORSetCommand<Ref, V>, AsyncIterable<Ref | V>, ORSetEvent<Ref, V>, ORSetQuery<Ref, V>>
+  V = string | number | boolean | null
+> implements AggregateRoot<ORSetCommand<Ref, V>, AsyncIterable<V>, ORSetEvent<Ref, V>, ORSetQuery<Ref, V>>
 {
-  protected readonly store: MaybeAsyncMapBatch<string, Ref | V | number> & RangeQueryable<string, Ref | V | number>;
-  protected readonly eventRef: (event: ORSetEvent<Ref, V>, options?: AbortOptions) => MaybePromise<Ref>;
+  protected readonly map: ORMap<Ref, V>;
   protected readonly stringify: (value: V, options?: AbortOptions) => MaybePromise<string>;
+  protected readonly voidRef: () => Ref;
 
   public readonly event = ORSetEventType;
 
   public constructor({
-    store = new BTreeMap<string, V>(5),
-    eventRef = defaultEventRef,
+    map = new ORMap(),
     stringify = (value) => JSON.stringify(value),
-  }: ORSetOptions<Ref, V>) {
-    this.store = store;
-    this.eventRef = eventRef;
+    voidRef = defaultVoidRef,
+  }: ORSetOptions<Ref, V> = {}) {
+    this.map = map;
     this.stringify = stringify;
+    this.voidRef = voidRef;
   }
 
-  public async * query(options?: ORSetQuery<Ref, V>): AsyncIterable<Ref | V> {
-    if (!options) { return }
+  public async * query(options?: ORSetQuery<Ref, V>): AsyncIterable<V> {
+    if (!options) { return; }
 
-    const root = `${options.ref}`;
-    const limit = options.limit ?? Infinity;
     const gte = options.gte && await this.stringify(options.gte, options);
     const lte = options.lte && await this.stringify(options.lte, options);
     let currentHash: string | undefined;
-    let valueCount = 0;
 
-    for await (const [key, value] of this.store.entries({
-      gt: getFieldValueKey(root, gte),
-      lt: getPrefixEndKey(getFieldValueKey(root, lte)),
+    for await (const [hash, value] of this.map.query({
+      gte, lte,
+      ref: options.ref,
       reverse: options.reverse,
+      limit: options.limit,
       signal: options.signal,
     })) {
-      const hash = getFieldNameFromKey(key);
-      if (hash && currentHash !== hash) {
+      if (currentHash !== hash) {
         currentHash = hash;
-        if (++valueCount > limit) {
-          break;
-        }
         yield value as V;
       }
     }
   }
 
   public async command(command: ORSetCommand<Ref, V> = {}, options?: AbortOptions): Promise<ORSetEvent<Ref, V>> {
-    const rootRef = command.ref;
-    const rootRefStr = `${rootRef}`;
-    const type = rootRef === void 0 ? this.event.New : this.event.Update;
-    const ops: [V, ...number[]][] = [];
+    const type = command.ref === void 0 ? this.event.New : this.event.Update;
+    const voidRef = this.voidRef();
+    const values: Record<string, V> = {};
+    const entries: Record<string, Ref | V> = {};
+    const mapCmd: ORMapCommand<Ref, V> = {
+      ref: command.ref,
+      createdAt: command.createdAt,
+      nounce: command.nounce,
+      entries,
+    };
 
-    const entries = [
-      ...(command.add || []).map(value => [value, true] as [value: V, add: boolean]),
-      ...(command.del || []).map(value => [value, false] as [value: V, add: boolean]),
-    ];
-
-    const parents: Ref[] = [];
-    const parentsMap: Record<string, number> = {};
-
-    for (const [value, isAdd] of entries) {
+    for (const value of command.add || []) {
       const hash = await this.stringify(value, options);
-      const thisParents: number[] = [];
-
-      if (type === this.event.Update) { // find parents for updated value
-        for await (const parentRef of this.store.values({
-          gt: getHeadIndexKey(rootRefStr, hash),
-          lt: getPrefixEndKey(getHeadIndexKey(rootRefStr, hash)),
-          signal: options?.signal,
-        })) {
-          const parentRefStr = `${parentRef}`;
-          thisParents.push(parentsMap[parentRefStr] ?? (parents.push(parentRef as Ref) - 1));
-          parentsMap[parentRefStr] = thisParents[thisParents.length - 1];
-        }
-      }
-      if ((!isAdd && !thisParents.length) || (isAdd && thisParents.length)) {
-        continue;  // nothing to delete or already added
-      }
-
-      ops.push([value, ...thisParents]);
+      entries[hash] = value;
+      values[hash] = value;
+    }
+    for (const value of command.del || []) {
+      const hash = await this.stringify(value, options);
+      entries[hash] = voidRef;
+      values[hash] = value;
     }
 
-    if (type === this.event.Update && !entries.length) {
-      throw operationError('Empty operation', ErrorCode.InvalidArg);
+    const mapEvent = await this.map.command(mapCmd, options);
+    const ops: [V, ...number[]][] = [];
+    for (const [hash, _, ...parents] of mapEvent.payload.ops) {
+      if (entries[hash] === voidRef) { // delete op
+        ops.push([values[hash], ...parents]);
+      } else if (!parents.length) { // add new value
+        ops.push([values[hash]]);
+      }
     }
 
     return {
       type,
-      payload: { ops, nounce: type === this.event.New ? command.nounce : void 0 },
-      meta: { parents, root: rootRef, createdAt: command.createdAt }
+      payload: { ops, nounce: mapEvent.payload.nounce },
+      meta: mapEvent.meta,
     };
   }
 
   public async apply(event: ORSetEvent<Ref, V>, options?: AggregateApplyOptions): Promise<void> {
-    if (options?.validate ?? true) {
-      const error = await this.validate(event, options);
-      if (error) { throw error; }
-    }
-
-    const eventKey = await this.eventRef(event, options);
-    const eventKeyStr = `${eventKey}`;
-    const root = event.type === this.event.Update ? event.meta.root as Ref : eventKey;
-    const rootRefStr = `${root}`;
-
-    // return early if event is already applied
-    for await (const value of this.store.getMany([getEventIndexKey(eventKeyStr)], options)) {
-      if (value !== void 0) { return; }
-    }
-
-    // save event key with its timestamp
-    const entries: [string, (Ref | V | number)?][] = [
-      [getEventIndexKey(eventKeyStr), event.meta.createdAt || 0],
-    ];
-
-    // update field values
-    for (const [value, ...parentsToDel] of event.payload.ops) {
-      const hash = await this.stringify(value, options);
-      if (!parentsToDel.length) { // add
-        entries.push(
-          [getHeadIndexKey(rootRefStr, hash, eventKeyStr), eventKey],
-          [getFieldValueKey(rootRefStr, hash, eventKeyStr), value],
-        );
-      }
-      for (const parentIndex of parentsToDel) { // delete
-        const parentRef = `${event.meta.parents[parentIndex]}`;
-        entries.push(
-          [getHeadIndexKey(rootRefStr, hash, parentRef), void 0],
-          [getFieldValueKey(rootRefStr, hash, parentRef), void 0]
-        );
-      }
-    }
-
-    for await (const error of this.store.updateMany(entries, options)) {
-      if (error) { throw operationError('Failed to save indices', ErrorCode.OpFailed, void 0, error); }
-    }
+    const mapEvent = await this.toORMapEvent(event, options);
+    return this.map.apply(mapEvent, options);
   }
 
   public async validate(event: ORSetEvent<Ref, V>, options?: AbortOptions): Promise<CodedError<Ref[]> | undefined> {
-    if (event.type === this.event.Update) {
-      if (!event.payload.ops.length) {
-        return operationError('Empty operation', ErrorCode.InvalidArg);
-      }
-      if (event.meta.root === void 0) {
-        return operationError('Missing root', ErrorCode.InvalidArg);
-      }
+    const mapEvent = await this.toORMapEvent(event, options);
+    return this.map.validate(mapEvent, options);
+  }
+
+  protected async toORMapEvent(event: ORSetEvent<Ref, V>, options?: AbortOptions): Promise<ORMapEvent<Ref, V>> {
+    const voidRef = this.voidRef();
+    const ops: [string, Ref | V, ...number[]][] = [];
+    for (const [value, ...parents] of event.payload.ops) {
+      const hash = await this.stringify(value, options);
+      ops.push([hash, parents.length ? voidRef : value, ...parents]);
     }
 
-    // verify that delete operations have valid parents
-    for (const [value, ...parentsToDel] of event.payload.ops) {
-      let isValid = true;
-      for (const parent of parentsToDel) {
-        if (event.meta.parents[parent] === void 0) {
-          isValid = false;
-          break;
-        }
-      }
-      if (!isValid) {
-        return operationError(`Invalid delete operation: "${value}"`, ErrorCode.InvalidArg);
-      }
-    }
-
-    // verify that event parents are already processed
-    const parentKeys = event.meta.parents.map((parent) => getEventIndexKey(`${parent}`));
-    if (event.meta.root !== void 0) {
-      parentKeys.push(getEventIndexKey(`${event.meta.root}`));
-    }
-    const missing = [];
-    let i = 0;
-    for await (const value of this.store.getMany(parentKeys, options)) {
-      if (value === void 0) {
-        missing.push(event.meta.parents[i]);
-      }
-      ++i;
-    }
-    if (missing.length) {
-      return operationError('Missing dependencies', ErrorCode.MissingDep, missing);
-    }
+    return {
+      type: event.type === this.event.New ? this.map.event.New : this.map.event.Update,
+      payload: { ops, nounce: event.payload.nounce },
+      meta: event.meta,
+    };
   }
 }
 
@@ -218,21 +140,12 @@ export interface ORSetQuery<Ref, V> extends AbortOptions {
 }
 
 /** Command for {@link ORSet}. */
-export interface ORSetCommand<Ref, V> {
-  /** Reference to (root event of) the set. */
-  readonly ref?: Ref;
-
+export interface ORSetCommand<Ref, V> extends AggregateCommandMeta<Ref> {
   /** Adds given values to the set. */
   readonly add?: readonly V[];
 
   /** Deletes given values from the set. */
   readonly del?: readonly V[];
-
-  /** Timestamp of this command. */
-  readonly createdAt?: number;
-
-  /** A random number to make a unique event when creating a new set. */
-  readonly nounce?: number;
 }
 
 /** Event for {@link ORSet}. */
@@ -248,13 +161,13 @@ export interface ORSetEventPayload<V> {
 }
 
 /** Options for creating an {@link ORSet}. */
-export interface ORSetOptions<Ref, V> {
-  /** Backing data store. */
-  readonly store?: MaybeAsyncMapBatch<string, Ref | V | number> & RangeQueryable<string, Ref | V | number>;
-
-  /** Gets the reference to event from given event. */
-  readonly eventRef?: (event: ORSetEvent<Ref, V>, options?: AbortOptions) => MaybePromise<Ref>;
+export interface ORSetOptions<Ref extends StringEquatable<Ref>, V> {
+  /** Backing {@link ORMap}. */
+  readonly map?: ORMap<Ref, V>;
 
   /** Function for converting value to unique string. Defaults to `JSON.stringify`. */
   readonly stringify?: (value: V, options?: AbortOptions) => MaybePromise<string>;
+
+  /** Creates a void reference. */
+  readonly voidRef?: () => Ref;
 }

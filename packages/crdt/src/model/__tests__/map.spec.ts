@@ -144,19 +144,19 @@ describe(ORMap.name, () => {
         type: ORMapEventType.Update,
         payload: { ops: [['', true]] },
         meta: { parents: [], root: ROOT, createdAt: 2 },
-      })).toEqual(operationError(`Invalid field operation: ""`, ErrorCode.InvalidArg));
+      })).toEqual(operationError(`Invalid operation: ""`, ErrorCode.InvalidArg));
 
       expect(await map.validate({
         type: ORMapEventType.Update,
         payload: { ops: [['field', new MockId()]] },
         meta: { parents: [], root: ROOT, createdAt: 2 },
-      })).toEqual(operationError(`Invalid field operation: "field"`, ErrorCode.InvalidArg));
+      })).toEqual(operationError(`Invalid operation: "field"`, ErrorCode.InvalidArg));
 
       expect(await map.validate({
         type: ORMapEventType.Update,
-        payload: {ops: [['field', true, 0]] },
+        payload: { ops: [['field', true, 0]] },
         meta: { parents: [], root: ROOT, createdAt: 2 },
-      })).toEqual(operationError(`Invalid field operation: "field"`, ErrorCode.InvalidArg));
+      })).toEqual(operationError(`Invalid operation: "field"`, ErrorCode.InvalidArg));
     });
 
     it('should return error for missing dependent events', async () => {
@@ -292,6 +292,12 @@ describe(ORMap.name, () => {
         results.push(entry);
       }
       expect(results).toEqual([[FIELD1, VALUE1], [FIELD2, VALUE22], [FIELD3, VALUE32]]);
+
+      results.length = 0;
+      for await (const entry of map.query({ ref: ROOT, gte: FIELD1, lww: true, limit: 2 })) {
+        results.push(entry);
+      }
+      expect(results).toEqual([[FIELD1, VALUE1], [FIELD2, VALUE22]]);
     });
   });
 

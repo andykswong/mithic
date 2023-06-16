@@ -16,7 +16,7 @@ export interface AggregateRoot<
 
   /** Applies given event. */
   apply(event: Event, options?: AggregateApplyOptions): MaybePromise<void>;
-  
+
   /** Validates given event. */
   validate(event: Event, options?: AbortOptions): MaybePromise<CodedError | undefined>;
 }
@@ -43,6 +43,18 @@ export interface AggregateEventMeta<Ref = unknown> {
 
   /** (Logical) timestamp at which the event is created/persisted. */
   readonly createdAt?: number;
+}
+
+/** Common metadata for {@link AggregateRoot} command. */
+export interface AggregateCommandMeta<Ref> {
+  /** Reference to (root event of) the target aggregate. Creates a new aggregate if not given. */
+  readonly ref?: Ref;
+
+  /** Timestamp of this command. */
+  readonly createdAt?: number;
+
+  /** A random number to make a unique event when creating a new aggregate. */
+  readonly nounce?: number;
 }
 
 /** Options for {@link AggregateRoot} apply method. */

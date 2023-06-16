@@ -2,11 +2,11 @@ import {
   AbortOptions, CodedError, ContentId, ErrorCode, MaybePromise, StringEquatable, equalsOrSameString, operationError,
 } from '@mithic/commons';
 import { BTreeMap, MaybeAsyncMapBatch, RangeQueryable } from '@mithic/collections';
-import { AggregateApplyOptions, AggregateEvent, AggregateRoot } from '../aggregate.js';
+import { AggregateApplyOptions, AggregateCommandMeta, AggregateEvent, AggregateRoot } from '../aggregate.js';
 import { getEventIndexKey, getFieldNameFromKey, getFieldValueKey, getHeadIndexKey, getPrefixEndKey } from './keys.js';
-import { defaultEventRef, defaultVoidRef } from './defaults.js';
+import { defaultEventRef, defaultIsRef, defaultVoidRef } from './defaults.js';
 
-/** Observed-remove map of values and references. */
+/** Observed-remove map of values. */
 export class ORMap<
   Ref extends StringEquatable<Ref> = ContentId,
   V = string | number | boolean | null | Ref
@@ -21,10 +21,10 @@ export class ORMap<
 
   public constructor({
     eventRef = defaultEventRef,
-    isRef = (value): value is Ref => value !== null && !['boolean', 'number', 'string'].includes(typeof value),
+    isRef = defaultIsRef,
     voidRef = defaultVoidRef,
     store = new BTreeMap<string, V>(5),
-  }: ORMapOptions<Ref, V>) {
+  }: ORMapOptions<Ref, V> = {}) {
     this.eventRef = eventRef;
     this.isRef = isRef;
     this.voidRef = voidRef;
@@ -144,7 +144,7 @@ export class ORMap<
         }
       }
       if (!isValid) {
-        return operationError(`Invalid field operation: "${field}"`, ErrorCode.InvalidArg);
+        return operationError(`Invalid operation: "${field}"`, ErrorCode.InvalidArg);
       }
     }
 
@@ -166,7 +166,7 @@ export class ORMap<
     }
   }
 
-  public async * query(options?: ORMapQuery<Ref>): AsyncIterable<[string, V]> {
+  public async * query(options?: ORMapQuery<Ref>): AsyncIterable<[field: string, value: V]> {
     if (options) {
       if (options?.lww) {
         yield* this.queryLWW(options);
@@ -305,18 +305,9 @@ export interface ORMapQuery<Ref> extends AbortOptions {
 }
 
 /** Command for {@link ORMap}. */
-export interface ORMapCommand<Ref, V> {
-  /** Reference to (root event of) the map. Creates a new map if not given. */
-  readonly ref?: Ref;
-
+export interface ORMapCommand<Ref, V> extends AggregateCommandMeta<Ref> {
   /** Sets given field-value pairs to the map. */
   readonly entries?: Readonly<Record<string, Ref | V>>;
-
-  /** Timestamp of this command. */
-  readonly createdAt?: number;
-
-  /** A random number to make a unique event when creating a new map. */
-  readonly nounce?: number;
 }
 
 /** Event for {@link ORMap}. */
