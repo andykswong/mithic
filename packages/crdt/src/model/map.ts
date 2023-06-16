@@ -1,41 +1,16 @@
 import {
   AbortOptions, CodedError, ContentId, ErrorCode, MaybePromise, StringEquatable, equalsOrSameString, operationError,
-  sha256
 } from '@mithic/commons';
 import { BTreeMap, MaybeAsyncMapBatch, RangeQueryable } from '@mithic/collections';
 import { AggregateApplyOptions, AggregateEvent, AggregateRoot } from '../aggregate.js';
 import { getEventIndexKey, getFieldNameFromKey, getFieldValueKey, getHeadIndexKey, getPrefixEndKey } from './keys.js';
+import { defaultEventRef, defaultVoidRef } from './defaults.js';
 
-/** Default eventRef implementation that uses multiformats and @ipld/dag-cbor as optional dependency. */
-const defaultEventRef = await (async () => {
-  try {
-    const { CID } = await import('multiformats');
-    const dagCbor = await import('@ipld/dag-cbor');
-    return <Ref, V>(event: ORMapEvent<Ref, V>) =>
-      CID.createV1(dagCbor.code, sha256.digest(dagCbor.encode(event))) as unknown as Ref;
-  } catch (_) {
-    return () => { throw operationError('multiformats or @ipld/dag-cbor not available', ErrorCode.InvalidState); };
-  }
-})();
-
-/** Default voidRef implementation that uses multiformats as optional dependency. */
-const defaultVoidRef = await (async () => {
-  try {
-    const { CID } = await import('multiformats');
-    const { identity } = await import('multiformats/hashes/identity');
-    return <Ref>() => CID.createV1(0x55, identity.digest(new Uint8Array())) as unknown as Ref;
-  } catch (_) {
-    return () => { throw operationError('multiformats not available', ErrorCode.InvalidState); };
-  }
-})();
-
-const DEFAULT_NAME = 'default';
-
-/** Observed-remove CRDT map of values and references. */
+/** Observed-remove map of values and references. */
 export class ORMap<
   Ref extends StringEquatable<Ref> = ContentId,
-  V = string | number | boolean | null
-> implements AggregateRoot<ORMapCommand<Ref, V>, AsyncIterable<[string, Ref | V]>, ORMapEvent<Ref, V>, ORMapQuery>
+  V = string | number | boolean | null | Ref
+> implements AggregateRoot<ORMapCommand<Ref, V>, AsyncIterable<[string, V]>, ORMapEvent<Ref, V>, ORMapQuery<Ref>>
 {
   protected readonly eventRef: (event: ORMapEvent<Ref, V>, options?: AbortOptions) => MaybePromise<Ref>;
   protected readonly isRef: (value: unknown) => value is Ref;
@@ -56,26 +31,33 @@ export class ORMap<
     this.store = store;
   }
 
-  public async command(command: ORMapCommand<Ref, V>, options?: AbortOptions): Promise<ORMapEvent<Ref, V>> {
+  public async command(command: ORMapCommand<Ref, V> = {}, options?: AbortOptions): Promise<ORMapEvent<Ref, V>> {
+    const rootRef = command.ref;
+    const rootRefStr = `${rootRef}`;
+    const type = rootRef === void 0 ? this.event.New : this.event.Update;
+    const ops: [string, Ref | V, ...number[]][] = [];
+
     const voidRef = this.voidRef();
-    const name = command.name ?? DEFAULT_NAME;
-    const fields = Object.keys(command.set);
-    const set: [string, Ref | V, ...number[]][] = [];
+    const entries = command.entries || {};
+    const fields = Object.keys(entries);
     const parents: Ref[] = [];
     const parentsMap: Record<string, number> = {};
 
     for (const field of fields) {
-      const value = command.set[field];
+      const value = entries[field];
 
       const thisParents: number[] = [];
-      for await (const parentRef of this.store.values({
-        gt: getHeadIndexKey(name, field),
-        lt: getPrefixEndKey(getHeadIndexKey(name, field)),
-      })) {
-        if (this.isRef(parentRef)) {
-          const parentRefStr = `${parentRef}`;
-          thisParents.push(parentsMap[parentRefStr] ?? (parents.push(parentRef) - 1));
-          parentsMap[parentRefStr] = thisParents[thisParents.length - 1];
+      if (type === this.event.Update) { // find parents if this is an update event
+        for await (const parentRef of this.store.values({
+          gt: getHeadIndexKey(rootRefStr, field),
+          lt: getPrefixEndKey(getHeadIndexKey(rootRefStr, field)),
+          signal: options?.signal,
+        })) {
+          if (this.isRef(parentRef)) {
+            const parentRefStr = `${parentRef}`;
+            thisParents.push(parentsMap[parentRefStr] ?? (parents.push(parentRef) - 1));
+            parentsMap[parentRefStr] = thisParents[thisParents.length - 1];
+          }
         }
       }
 
@@ -83,81 +65,77 @@ export class ORMap<
         continue; // nothing to delete
       }
 
-      set.push([field, value, ...thisParents]);
+      ops.push([field, value, ...thisParents]);
     }
 
-    if (!fields.length) {
+    if (type === this.event.Update && !fields.length) {
       throw operationError('Empty operation', ErrorCode.InvalidArg);
     }
 
-    let root: Ref | undefined;
-    for await (const rootRef of this.store.getMany([getHeadIndexKey(name)], options)) {
-      if (this.isRef(rootRef)) {
-        root = rootRef;
-      }
-    }
-
     return {
-      type: this.event.Set,
-      payload: { name, set },
-      meta: { parents, root, createdAt: command.createdAt }
+      type,
+      payload: { ops, nounce: type === this.event.New ? command.nounce : void 0 },
+      meta: { parents, root: rootRef, createdAt: command.createdAt }
     };
   }
 
   public async apply(event: ORMapEvent<Ref, V>, options?: AggregateApplyOptions): Promise<void> {
     if (options?.validate ?? true) {
       const error = await this.validate(event, options);
-      if (error) {
-        throw error;
-      }
+      if (error) { throw error; }
     }
 
     const voidRef = this.voidRef();
     const eventKey = await this.eventRef(event, options);
     const eventKeyStr = `${eventKey}`;
+    const root = event.type === this.event.Update ? event.meta.root as Ref : eventKey;
+    const rootRefStr = `${root}`;
 
-    // save event time and root event
+    // return early if event is already applied
+    for await (const value of this.store.getMany([getEventIndexKey(eventKeyStr)], options)) {
+      if (value !== void 0) { return; }
+    }
+
+    // save event key with its timestamp
     const entries: [string, (Ref | V | number)?][] = [
       [getEventIndexKey(eventKeyStr), event.meta.createdAt || 0],
-      [getHeadIndexKey(event.payload.name), event.meta.root ?? eventKey],
     ];
 
     // update field values
-    for (const [field, value, ...parents] of event.payload.set) {
-      if (!(this.isRef(value) && equalsOrSameString(voidRef, value))) {
+    for (const [field, value, ...parents] of event.payload.ops) {
+      if (!(this.isRef(value) && equalsOrSameString(voidRef, value))) { // upsert
         entries.push(
-          [getHeadIndexKey(event.payload.name, field, eventKeyStr), eventKey],
-          [getFieldValueKey(event.payload.name, field, eventKeyStr), value],
+          [getHeadIndexKey(rootRefStr, field, eventKeyStr), eventKey],
+          [getFieldValueKey(rootRefStr, field, eventKeyStr), value],
         );
       }
       for (const parentIndex of parents) {
         const parentRef = `${event.meta.parents[parentIndex]}`;
         entries.push(
-          [getHeadIndexKey(event.payload.name, field, parentRef), void 0],
-          [getFieldValueKey(event.payload.name, field, parentRef), void 0]
+          [getHeadIndexKey(rootRefStr, field, parentRef), void 0],
+          [getFieldValueKey(rootRefStr, field, parentRef), void 0]
         );
       }
     }
 
     for await (const error of this.store.updateMany(entries, options)) {
-      if (error) {
-        throw operationError('Failed to save indices', ErrorCode.OpFailed, void 0, error);
-      }
+      if (error) { throw operationError('Failed to save indices', ErrorCode.OpFailed, void 0, error); }
     }
   }
 
   public async validate(event: ORMapEvent<Ref, V>, options?: AbortOptions): Promise<CodedError<Ref[]> | undefined> {
-    if (event.type !== this.event.Set) {
-      return operationError('Unsupported event type', ErrorCode.UnsupportedOp);
-    }
-
-    if (!event.payload.set.length) {
-      return operationError('Empty operation', ErrorCode.InvalidArg);
+    if (event.type === this.event.Update) {
+      if (!event.payload.ops.length) {
+        return operationError('Empty operation', ErrorCode.InvalidArg);
+      }
+      if (event.meta.root === void 0) {
+        return operationError('Missing root', ErrorCode.InvalidArg);
+      }
     }
 
     // verify that set operations are well formed
     const voidRef = this.voidRef();
-    for (const [field, value, ...parents] of event.payload.set) {
+    for (const [field, value, ...parents] of event.payload.ops) {
       let isValid = !!field && (!!parents.length || !(this.isRef(value) && equalsOrSameString(voidRef, value)));
       for (const parent of parents) {
         if (event.meta.parents[parent] === void 0) {
@@ -188,20 +166,28 @@ export class ORMap<
     }
   }
 
-  public query(options?: ORMapQuery): AsyncIterable<[string, Ref | V]> {
-    return options?.lww ? this.queryLWW(options) : this.queryMV(options);
+  public async * query(options?: ORMapQuery<Ref>): AsyncIterable<[string, V]> {
+    if (options) {
+      if (options?.lww) {
+        yield* this.queryLWW(options);
+      } else {
+        yield* this.queryMV(options);
+      }
+    }
   }
 
   /** Query map entries and return all concurrent field values. */
-  protected async * queryMV(options?: ORMapQuery): AsyncIterable<[string, Ref | V]> {
-    const name = options?.name ?? DEFAULT_NAME;
-    const limit = options?.limit ?? Infinity;
+  protected async * queryMV(options: ORMapQuery<Ref>): AsyncIterable<[string, V]> {
+    const map = `${options.ref}`;
+    const limit = options.limit ?? Infinity;
     let currentField: string | undefined;
     let fieldCount = 0;
+
     for await (const [key, value] of this.store.entries({
-      gt: getFieldValueKey(name, options?.gte),
-      lt: getPrefixEndKey(getFieldValueKey(name, options?.lte)),
-      reverse: options?.reverse,
+      gt: getFieldValueKey(map, options.gte),
+      lt: getPrefixEndKey(getFieldValueKey(map, options.lte)),
+      reverse: options.reverse,
+      signal: options.signal,
     })) {
       const field = getFieldNameFromKey(key);
       if (field) {
@@ -211,23 +197,24 @@ export class ORMap<
             break;
           }
         }
-        yield [field, value as (Ref | V)];
+        yield [field, value as V];
       }
     }
   }
 
   /** Queries entries by last-write-wins. */
-  protected async * queryLWW(options?: ORMapQuery): AsyncIterable<[string, Ref | V]> {
-    const name = options?.name ?? DEFAULT_NAME;
-    const limit = options?.limit ?? Infinity;
+  protected async * queryLWW(options: ORMapQuery<Ref>): AsyncIterable<[string, V]> {
+    const map = `${options.ref}`;
+    const limit = options.limit ?? Infinity;
 
     // Get concurrent event refs for each field
     const fields: [name: string, eventRefs: string[]][] = [];
     let currentField: string | undefined;
     for await (const [key, value] of this.store.entries({
-      gt: getHeadIndexKey(name, options?.gte),
-      lt: getPrefixEndKey(getHeadIndexKey(name, options?.lte)),
-      reverse: options?.reverse,
+      gt: getHeadIndexKey(map, options.gte),
+      lt: getPrefixEndKey(getHeadIndexKey(map, options.lte)),
+      reverse: options.reverse,
+      signal: options.signal,
     })) {
       const field = getFieldNameFromKey(key);
       if (field) {
@@ -273,14 +260,14 @@ export class ORMap<
           lwwRef = ref;
         }
       }
-      lwwRef && lwwKeys.push(getFieldValueKey(name, field, lwwRef));
+      lwwRef && lwwKeys.push(getFieldValueKey(map, field, lwwRef));
     }
 
     // query the values for each LWW event reference
     let i = 0;
     for await (const value of this.store.getMany(lwwKeys, options)) {
       if (value !== void 0) {
-        yield [getFieldNameFromKey(lwwKeys[i]), value as (Ref | V)];
+        yield [getFieldNameFromKey(lwwKeys[i]), value as V];
       }
       ++i;
     }
@@ -289,41 +276,47 @@ export class ORMap<
 
 /** Event type for {@link ORMap}. */
 export enum ORMapEventType {
+  /** Creates a new map. */
+  New = 'MAP_NEW',
+
   /** Sets or deletes map fields. */
-  Set = 'MAP_SET',
+  Update = 'MAP_SET',
 }
 
 /** Query options for {@link ORMap}.  */
-export interface ORMapQuery extends AbortOptions {
-  /** Unique name of the map. Defaults to `default`. */
-  name?: string;
+export interface ORMapQuery<Ref> extends AbortOptions {
+  /** Reference to (root event of) the map. */
+  readonly ref: Ref;
 
-  /** Whether to resolve concurrent values by last-write-wins using createdAt time. Defaults to `true`. */
-  lww?: boolean;
+  /** Whether to resolve concurrent values by last-write-wins using createdAt time. Defaults to `false`. */
+  readonly lww?: boolean;
 
   /** Returns only entries with field names greater than or equal to given name. */
-  gte?: string;
+  readonly gte?: string;
 
   /** Returns only entries with field names less than or equal to given name. */
-  lte?: string;
+  readonly lte?: string;
 
   /** Returns entries in reverse order. */
-  reverse?: boolean;
+  readonly reverse?: boolean;
 
   /** Maximum number of results to return. Defaults to `Infinity`. */
-  limit?: number;
+  readonly limit?: number;
 }
 
 /** Command for {@link ORMap}. */
 export interface ORMapCommand<Ref, V> {
-  /** Unique string name that identifies this map. Defaults to `default`. */
-  name?: string;
+  /** Reference to (root event of) the map. Creates a new map if not given. */
+  readonly ref?: Ref;
 
   /** Sets given field-value pairs to the map. */
-  set: Readonly<Record<string, Ref | V>>;
+  readonly entries?: Readonly<Record<string, Ref | V>>;
 
   /** Timestamp of this command. */
-  createdAt?: number;
+  readonly createdAt?: number;
+
+  /** A random number to make a unique event when creating a new map. */
+  readonly nounce?: number;
 }
 
 /** Event for {@link ORMap}. */
@@ -331,11 +324,11 @@ export type ORMapEvent<Ref, V> = AggregateEvent<ORMapEventType, Ref, ORMapEventP
 
 /** Event payload for {@link ORMap}. */
 export interface ORMapEventPayload<Ref, V> {
-  /** Unique string name that identifies this map. */
-  readonly name: string;
-
   /** Operations to set given field pairs to the map with references to parent event indices. */
-  readonly set: readonly [field: string, value: Ref | V, ...parentIndices: number[]][];
+  readonly ops: readonly [field: string, value: Ref | V, ...parentIndices: number[]][];
+
+  /** A random number to make a unique event when creating a new map. Undefined for `Set` events. */
+  readonly nounce?: number;
 }
 
 /** Options for creating an {@link ORMap}. */
