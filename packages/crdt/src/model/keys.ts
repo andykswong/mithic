@@ -44,7 +44,7 @@ export function getFieldNameFromKey(key: string): string {
 /** Generates random fractional index strings from a range of (start, end). */
 export function * getFractionalIndices(
   start: string | undefined, end: string | undefined, count: number,
-  rand: () => number = Math.random, randomness = 2
+  rand: () => number = Math.random, minRandBits = 48
 ): IterableIterator<string> {
   const endBytes = [...(end || ASCII64_DIGIT[64])].map(char => {
     const index = ASCII64_DIGIT.indexOf(char);
@@ -56,17 +56,24 @@ export function * getFractionalIndices(
   });
 
   for (let i = 0, start = startBytes; i < count; ++i) {
-    const index: number[] = [];
-    for (let j = 0, equalPrefix = true, needMore = true; needMore || j < 4 * randomness; ++j) {
+    const result: number[] = [];
+    for (
+      let j = 0, randBits = 0, equalStartEnd = true, resultEqualStart = true;
+      resultEqualStart || Math.round(randBits) < minRandBits;
+      ++j
+    ) {
       const rangeStart = start[j] ?? 0;
-      const rangeEnd: number = equalPrefix ? (endBytes[j] ?? 64) : 64;
-      equalPrefix = equalPrefix && rangeStart === rangeEnd;
-      const next = equalPrefix ? rangeStart : Math.floor(rand() * (rangeEnd - rangeStart) + rangeStart);
-      index.push(next);
-      needMore = needMore && next === rangeStart;
+      const rangeEnd: number = equalStartEnd ? (endBytes[j] ?? 64) : 64;
+      equalStartEnd = equalStartEnd && rangeStart === rangeEnd;
+      const next = equalStartEnd ? rangeStart : Math.floor(rand() * (rangeEnd - rangeStart) + rangeStart);
+      result.push(next);
+      resultEqualStart = resultEqualStart && next === rangeStart;
+      if (!equalStartEnd) {
+        randBits += Math.log2(rangeEnd - rangeStart);
+      }
     }
-    yield fractionalIndexToString(index);
-    start = index;
+    yield fractionalIndexToString(result);
+    start = result;
   }
 }
 

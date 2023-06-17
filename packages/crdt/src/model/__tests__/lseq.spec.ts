@@ -1,9 +1,9 @@
 import { BTreeMap } from '@mithic/collections';
 import { MockId } from '../../__tests__/mocks.js';
 import { LSeq, LSeqCommand, LSeqEventType } from '../lseq.js';
-import { ORMap, ORMapQuery } from '../map.js';
+import { ORMap, MapQuery } from '../map.js';
 import { ErrorCode, operationError } from '@mithic/commons';
-import { getEventIndexKey, getFieldValueKey, getHeadIndexKey } from '../keys.js';
+import { getFieldValueKey, getHeadIndexKey } from '../keys.js';
 
 type V = string | number | boolean;
 
@@ -13,10 +13,10 @@ const VALUE1 = 'v1';
 const VALUE2 = 123;
 const VALUE3 = true;
 const INDEX0 = 'UUUUUUUU';
-const INDEX1 = 'kkkkkkkk';
-const INDEX2 = 'KUUUUUUU';
-const INDEX3 = 'Pkkkkkkk';
-const INDEX4 = 'ckkkkkkk';
+const INDEX1 = 'kkkkkkkkUU';
+const INDEX2 = 'KUUUUUUUU';
+const INDEX3 = 'PkkkkkkkkU';
+const INDEX4 = 'ckkkkkkkUU';
 const CMD_EMPTY = { createdAt: 1 };
 const CMD_ADD = { ref: ROOT, add: [VALUE0, VALUE1], createdAt: 2 };
 const CMD_ADD2 = { ref: ROOT, index: 'A', add: [VALUE1, VALUE2], createdAt: 3 };
@@ -53,12 +53,12 @@ describe(LSeq.name, () => {
     });
 
     it('should return valid event for new set command', async () => {
-      const event = await lseq.command({ add: [VALUE0, VALUE1], nounce: 123, createdAt: 1 });
+      const event = await lseq.command({ add: [VALUE0, VALUE1], nonce: 123, createdAt: 1 });
       expect(event).toEqual({
         type: LSeqEventType.New,
         payload: {
           ops: [[INDEX0, VALUE0, false], [INDEX1, VALUE1, false]],
-          nounce: 123,
+          nonce: 123,
         },
         meta: { parents: [], createdAt: 1 },
       });
@@ -97,7 +97,7 @@ describe(LSeq.name, () => {
       expect(event).toEqual({
         type: LSeqEventType.Update,
         payload: {
-          ops: [[INDEX1, VALUE1, false], ['ssssssss', VALUE3, false]]
+          ops: [[INDEX1, VALUE1, false], ['sssssssskkU', VALUE3, false]]
         },
         meta: {
           parents: [],
@@ -128,7 +128,7 @@ describe(LSeq.name, () => {
       [[CMD_ADD, CMD_ADD2, CMD_DEL], { ref: ROOT }, [[INDEX2, VALUE1], [INDEX3, VALUE2], [INDEX0, VALUE1], [INDEX4, VALUE3], [INDEX1, VALUE1]] as const],
     ])(
       'should return correct results for non-empty LSeqs',
-      async (cmds: LSeqCommand<MockId, V>[], query: ORMapQuery<MockId>, expected: readonly (readonly [string, V])[]) => {
+      async (cmds: LSeqCommand<MockId, V>[], query: MapQuery<MockId>, expected: readonly (readonly [string, V])[]) => {
         await applyCommand();
         for (const cmd of cmds) {
           await applyCommand(cmd);
@@ -173,13 +173,12 @@ describe(LSeq.name, () => {
 
   describe('apply', () => {
     it('should save new set with fields correctly', async () => {
-      await applyCommand();
-      await applyCommand(CMD_ADD);
-
-      expect(store.size).toEqual(6);
-      expect(store.get(getEventIndexKey(`${ROOT}`))).toEqual(1);
       const expectedEventRef = new MockId(new Uint8Array(2));
-      expect(store.get(getEventIndexKey(expectedEventRef.toString()))).toEqual(2);
+
+      expect(await applyCommand()).toEqual(ROOT);
+      expect(await applyCommand(CMD_ADD)).toEqual(expectedEventRef);
+
+      expect(store.size).toEqual(4);
       expect(store.get(getHeadIndexKey(`${ROOT}`, INDEX0, expectedEventRef.toString()))).toEqual(expectedEventRef);
       expect(store.get(getHeadIndexKey(`${ROOT}`, INDEX1, expectedEventRef.toString()))).toEqual(expectedEventRef);
       expect(store.get(getFieldValueKey(`${ROOT}`, INDEX0, expectedEventRef.toString()))).toEqual(VALUE0);
@@ -211,6 +210,6 @@ describe(LSeq.name, () => {
   });
 
   async function applyCommand(cmd: LSeqCommand<MockId, V> = CMD_EMPTY) {
-    await lseq.apply(await lseq.command(cmd));
+    return await lseq.apply(await lseq.command(cmd));
   }
 });

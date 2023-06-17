@@ -1,17 +1,22 @@
-import { AbortOptions, CodedError, ContentId, MaybePromise, StringEquatable } from '@mithic/commons';
-import { AggregateApplyOptions, AggregateCommandMeta, AggregateEvent, AggregateRoot } from '../aggregate.js';
-import { ORMap, ORMapCommand, ORMapEvent } from './map.js';
+import {
+  AbortOptions, CodedError, ContentId, MaybePromise, StringEquatable, SyncOrAsyncIterable
+} from '@mithic/commons';
+import { AggregateApplyOptions, AggregateCommandMeta, AggregateEvent, Aggregate } from '../aggregate.js';
+import { ORMap, MapCommand, MapEvent, MapAggregate } from './map.js';
+
+/** Abstract set aggregate type. */
+export type SetAggregate<Ref, V> =
+  Aggregate<SetCommand<Ref, V>, Ref, SetEvent<Ref, V>, SyncOrAsyncIterable<V>, SetQuery<Ref, V>>;
 
 /** Observed-remove set of values based on {@link ORMap} of stringified values to values. */
 export class ORSet<
   Ref extends StringEquatable<Ref> = ContentId,
   V = string | number | boolean | null
-> implements AggregateRoot<ORSetCommand<Ref, V>, AsyncIterable<V>, ORSetEvent<Ref, V>, ORSetQuery<Ref, V>>
-{
-  protected readonly map: ORMap<Ref, V>;
+> implements SetAggregate<Ref, V> {
+  protected readonly map: MapAggregate<Ref, V>;
   protected readonly stringify: (value: V, options?: AbortOptions) => MaybePromise<string>;
 
-  public readonly event = ORSetEventType;
+  public readonly event = SetEventType;
 
   public constructor({
     map = new ORMap(),
@@ -21,7 +26,7 @@ export class ORSet<
     this.stringify = stringify;
   }
 
-  public async * query(options?: ORSetQuery<Ref, V>): AsyncIterable<V> {
+  public async * query(options?: SetQuery<Ref, V>): AsyncIterable<V> {
     if (!options) { return; }
 
     const gte = options.gte && await this.stringify(options.gte, options);
@@ -42,16 +47,16 @@ export class ORSet<
     }
   }
 
-  public async command(command: ORSetCommand<Ref, V> = {}, options?: AbortOptions): Promise<ORSetEvent<Ref, V>> {
+  public async command(command: SetCommand<Ref, V> = {}, options?: AbortOptions): Promise<SetEvent<Ref, V>> {
     const type = command.ref === void 0 ? this.event.New : this.event.Update;
     const values: Record<string, V> = {};
-    const entries: Record<string, V> = {};
+    const set: Record<string, V> = {};
     const del: string[] = [];
-    const mapCmd: ORMapCommand<Ref, V> = {
+    const mapCmd: MapCommand<Ref, V> = {
       ref: command.ref,
       createdAt: command.createdAt,
-      nounce: command.nounce,
-      entries,
+      nonce: command.nonce,
+      set,
       del,
     };
 
@@ -63,7 +68,7 @@ export class ORSet<
     for (const value of command.add || []) {
       const hash = await this.stringify(value, options);
       values[hash] = value;
-      entries[hash] = value;
+      set[hash] = value;
     }
 
     const mapEvent = await this.map.command(mapCmd, options);
@@ -78,22 +83,22 @@ export class ORSet<
 
     return {
       type,
-      payload: { ops, nounce: mapEvent.payload.nounce },
+      payload: { ops, nonce: mapEvent.payload.nonce },
       meta: mapEvent.meta,
     };
   }
 
-  public async apply(event: ORSetEvent<Ref, V>, options?: AggregateApplyOptions): Promise<void> {
+  public async apply(event: SetEvent<Ref, V>, options?: AggregateApplyOptions): Promise<Ref> {
     const mapEvent = await this.toORMapEvent(event, options);
     return this.map.apply(mapEvent, options);
   }
 
-  public async validate(event: ORSetEvent<Ref, V>, options?: AbortOptions): Promise<CodedError<Ref[]> | undefined> {
+  public async validate(event: SetEvent<Ref, V>, options?: AbortOptions): Promise<CodedError | undefined> {
     const mapEvent = await this.toORMapEvent(event, options);
     return this.map.validate(mapEvent, options);
   }
 
-  protected async toORMapEvent(event: ORSetEvent<Ref, V>, options?: AbortOptions): Promise<ORMapEvent<Ref, V>> {
+  protected async toORMapEvent(event: SetEvent<Ref, V>, options?: AbortOptions): Promise<MapEvent<Ref, V>> {
     const ops: [string, V, boolean, ...number[]][] = [];
     for (const [value, ...parents] of event.payload.ops) {
       const hash = await this.stringify(value, options);
@@ -102,14 +107,14 @@ export class ORSet<
 
     return {
       type: event.type === this.event.New ? this.map.event.New : this.map.event.Update,
-      payload: { ops, nounce: event.payload.nounce },
+      payload: { ops, nonce: event.payload.nonce },
       meta: event.meta,
     };
   }
 }
 
-/** Event type for {@link ORSet}. */
-export enum ORSetEventType {
+/** Event type for {@link SetAggregate}. */
+export enum SetEventType {
   /** Creates a new set. */
   New = 'SET_NEW',
 
@@ -117,8 +122,8 @@ export enum ORSetEventType {
   Update = 'SET_OPS',
 }
 
-/** Query options for {@link ORSet}.  */
-export interface ORSetQuery<Ref, V> extends AbortOptions {
+/** Query options for {@link SetAggregate}.  */
+export interface SetQuery<Ref, V> extends AbortOptions {
   /** Reference to (root event of) the set. */
   readonly ref: Ref;
 
@@ -135,8 +140,8 @@ export interface ORSetQuery<Ref, V> extends AbortOptions {
   readonly limit?: number;
 }
 
-/** Command for {@link ORSet}. */
-export interface ORSetCommand<Ref, V> extends AggregateCommandMeta<Ref> {
+/** Command for {@link SetAggregate}. */
+export interface SetCommand<Ref, V> extends AggregateCommandMeta<Ref> {
   /** Adds given values to the set. */
   readonly add?: readonly V[];
 
@@ -144,22 +149,22 @@ export interface ORSetCommand<Ref, V> extends AggregateCommandMeta<Ref> {
   readonly del?: readonly V[];
 }
 
-/** Event for {@link ORSet}. */
-export type ORSetEvent<Ref, V> = AggregateEvent<ORSetEventType, Ref, ORSetEventPayload<V>>;
+/** Event for {@link SetAggregate}. */
+export type SetEvent<Ref, V> = AggregateEvent<SetEventType, Ref, SetEventPayload<V>>;
 
-/** Event payload for {@link ORSet}. */
-export interface ORSetEventPayload<V> {
+/** Event payload for {@link SetAggregate}. */
+export interface SetEventPayload<V> {
   /** Operations to add or delete given values in the set. */
   readonly ops: readonly [value: V, ...parentIdxToDelete: number[]][];
 
   /** A random number to make a unique event when creating a new set. */
-  readonly nounce?: number;
+  readonly nonce?: number;
 }
 
 /** Options for creating an {@link ORSet}. */
 export interface ORSetOptions<Ref extends StringEquatable<Ref>, V> {
-  /** Backing {@link ORMap}. */
-  readonly map?: ORMap<Ref, V>;
+  /** Backing {@link MapAggregate}. */
+  readonly map?: MapAggregate<Ref, V>;
 
   /** Function for converting value to unique string. Defaults to `JSON.stringify`. */
   readonly stringify?: (value: V, options?: AbortOptions) => MaybePromise<string>;

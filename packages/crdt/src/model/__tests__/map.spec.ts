@@ -1,5 +1,5 @@
 import { BTreeMap } from '@mithic/collections';
-import { ORMap, ORMapCommand, ORMapEventType, ORMapQuery } from '../map.js';
+import { ORMap, MapCommand, MapEventType, MapQuery } from '../map.js';
 import { MockId } from '../../__tests__/mocks.js';
 import { getEventIndexKey, getFieldValueKey, getHeadIndexKey } from '../keys.js';
 import { ErrorCode, operationError } from '@mithic/commons';
@@ -18,12 +18,12 @@ const VALUE2 = 123;
 const VALUE22 = 456;
 const VALUE3 = true;
 const VALUE32 = false;
-const CMD_EMPTY = { entries: {}, createdAt: 1 };
-const CMD_NEW = { entries: { [FIELD0]: VALUE0 }, nounce: 123, createdAt: 1 };
-const CMD_WITH_FIELDS = { ref: ROOT, entries: { [FIELD1]: VALUE1, [FIELD2]: VALUE2 }, createdAt: 2 };
-const CMD_WITH_FIELDS2 = { ref: ROOT, entries: { [FIELD3]: VALUE3 }, createdAt: 3 };
-const CMD_WITH_UPDEL = { ref: ROOT, entries: { [FIELD2]: VALUE22, [FIELD3]: VALUE32 }, del: [FIELD1], createdAt: 4 };
-const CMD_WITH_FIELDS_CONCURRENT = { ref: ROOT, entries: { [FIELD1]: VALUE12 }, createdAt: 5 };
+const CMD_EMPTY = { set: {}, createdAt: 1 } satisfies MapCommand<MockId, V>;
+const CMD_NEW = { set: { [FIELD0]: VALUE0 }, nonce: 123, createdAt: 1 } satisfies MapCommand<MockId, V>;
+const CMD_WITH_FIELDS = { ref: ROOT, set: { [FIELD1]: VALUE1, [FIELD2]: VALUE2 }, createdAt: 2 } satisfies MapCommand<MockId, V>;
+const CMD_WITH_FIELDS2 = { ref: ROOT, set: { [FIELD3]: VALUE3 }, createdAt: 3 } satisfies MapCommand<MockId, V>;
+const CMD_WITH_UPDEL = { ref: ROOT, set: { [FIELD2]: VALUE22, [FIELD3]: VALUE32 }, del: [FIELD1], createdAt: 4 } satisfies MapCommand<MockId, V>;
+const CMD_WITH_FIELDS_CONCURRENT = { ref: ROOT, set: { [FIELD1]: VALUE12 }, createdAt: 5 } satisfies MapCommand<MockId, V>;
 
 describe(ORMap.name, () => {
   let map: ORMap<MockId, V>;
@@ -32,6 +32,7 @@ describe(ORMap.name, () => {
   beforeEach(() => {
     map = new ORMap({
       eventRef: (event) => new MockId(new Uint8Array(event.meta.createdAt || 0)),
+      trackEventTime: true,
     });
     store = map['store'] as BTreeMap<string, MockId | V>;
   });
@@ -44,7 +45,7 @@ describe(ORMap.name, () => {
     it('should return valid event for new empty map command', async () => {
       const event = await map.command(CMD_EMPTY);
       expect(event).toEqual({
-        type: ORMapEventType.New,
+        type: MapEventType.New,
         payload: { ops: [] },
         meta: { parents: [], createdAt: 1 },
       });
@@ -53,10 +54,10 @@ describe(ORMap.name, () => {
     it('should return valid event for new map command', async () => {
       const event = await map.command(CMD_NEW);
       expect(event).toEqual({
-        type: ORMapEventType.New,
+        type: MapEventType.New,
         payload: {
           ops: [[FIELD0, VALUE0, false]],
-          nounce: 123,
+          nonce: 123,
         },
         meta: { parents: [], createdAt: 1 },
       });
@@ -65,7 +66,7 @@ describe(ORMap.name, () => {
     it('should return valid event for set map command', async () => {
       const event = await map.command(CMD_WITH_FIELDS);
       expect(event).toEqual({
-        type: ORMapEventType.Update,
+        type: MapEventType.Update,
         payload: {
           ops: [
             [FIELD1, VALUE1, false],
@@ -81,7 +82,7 @@ describe(ORMap.name, () => {
       await applyCommand(CMD_WITH_FIELDS2);
       const event = await map.command(CMD_WITH_UPDEL);
       expect(event).toEqual({
-        type: ORMapEventType.Update,
+        type: MapEventType.Update,
         payload: {
           ops: [
             [FIELD1, null, true, 0],
@@ -100,7 +101,7 @@ describe(ORMap.name, () => {
       await applyCommand(CMD_WITH_FIELDS2);
       const event = await map.command(CMD_WITH_UPDEL);
       expect(event).toEqual({
-        type: ORMapEventType.Update,
+        type: MapEventType.Update,
         payload: {
           ops: [
             [FIELD2, VALUE22, false],
@@ -115,7 +116,7 @@ describe(ORMap.name, () => {
     });
 
     it('should throw for empty set command', async () => {
-      await expect(() => map.command({ ref: ROOT, entries: {}, createdAt: 2 }))
+      await expect(() => map.command({ ref: ROOT, set: {}, createdAt: 2 }))
         .rejects.toEqual(operationError('Empty operation', ErrorCode.InvalidArg));
     });
   });
@@ -129,30 +130,30 @@ describe(ORMap.name, () => {
 
     it('should return error for malformed events', async () => {
       expect(await map.validate({
-        type: ORMapEventType.Update, payload: { ops: [] },
+        type: MapEventType.Update, payload: { ops: [] },
         meta: { parents: [], root: ROOT, createdAt: 2 },
       })).toEqual(operationError('Empty operation', ErrorCode.InvalidArg));
 
       expect(await map.validate({
-        type: ORMapEventType.Update,
+        type: MapEventType.Update,
         payload: { ops: [['field', true, false]] },
         meta: { parents: [], createdAt: 2 },
       })).toEqual(operationError('Missing root', ErrorCode.InvalidArg));
 
       expect(await map.validate({
-        type: ORMapEventType.Update,
+        type: MapEventType.Update,
         payload: { ops: [['', true, false]] },
         meta: { parents: [], root: ROOT, createdAt: 2 },
       })).toEqual(operationError(`Invalid operation: ""`, ErrorCode.InvalidArg));
 
       expect(await map.validate({
-        type: ORMapEventType.Update,
+        type: MapEventType.Update,
         payload: { ops: [['field', 123, true]] },
         meta: { parents: [], root: ROOT, createdAt: 2 },
       })).toEqual(operationError(`Invalid operation: "field"`, ErrorCode.InvalidArg));
 
       expect(await map.validate({
-        type: ORMapEventType.Update,
+        type: MapEventType.Update,
         payload: { ops: [['field', true, false, 0]] },
         meta: { parents: [], root: ROOT, createdAt: 2 },
       })).toEqual(operationError(`Invalid operation: "field"`, ErrorCode.InvalidArg));
@@ -160,7 +161,7 @@ describe(ORMap.name, () => {
 
     it('should return error for missing dependent events', async () => {
       expect(await map.validate({
-        type: ORMapEventType.Update,
+        type: MapEventType.Update,
         payload: { ops: [['field', true, false, 0]] },
         meta: { parents: [new MockId(new Uint8Array(2))], root: ROOT, createdAt: 2 },
       })).toEqual(operationError('Missing dependencies', ErrorCode.MissingDep, [new MockId(new Uint8Array(2)), ROOT]));
@@ -169,12 +170,13 @@ describe(ORMap.name, () => {
 
   describe('apply', () => {
     it('should save new map with fields correctly', async () => {
-      await applyCommand();
-      await applyCommand(CMD_WITH_FIELDS);
+      const expectedEventRef = new MockId(new Uint8Array(2));
+
+      expect(await applyCommand()).toEqual(ROOT);
+      expect(await applyCommand(CMD_WITH_FIELDS)).toEqual(expectedEventRef);
 
       expect(store.size).toEqual(6);
       expect(store.get(getEventIndexKey(`${ROOT}`))).toEqual(1);
-      const expectedEventRef = new MockId(new Uint8Array(2));
       expect(store.get(getEventIndexKey(expectedEventRef.toString()))).toEqual(2);
       expect(store.get(getHeadIndexKey(`${ROOT}`, FIELD1, expectedEventRef.toString()))).toEqual(expectedEventRef);
       expect(store.get(getHeadIndexKey(`${ROOT}`, FIELD2, expectedEventRef.toString()))).toEqual(expectedEventRef);
@@ -226,7 +228,7 @@ describe(ORMap.name, () => {
 
     it('should throw error for malformed events when validate = true', async () => {
       await expect(() => map.apply({
-        type: ORMapEventType.Update,
+        type: MapEventType.Update,
         payload: { ops: [] }, meta: { parents: [], createdAt: 1 },
       })).rejects.toEqual(operationError('Empty operation', ErrorCode.UnsupportedOp));
     });
@@ -248,7 +250,7 @@ describe(ORMap.name, () => {
       [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { ref: ROOT, gte: FIELD2, lte: FIELD2 }, [[FIELD2, VALUE2]] as const],
     ])(
       'should return correct results for non-empty maps',
-      async (cmds: ORMapCommand<MockId, V>[], query: ORMapQuery<MockId>, expected: readonly (readonly [string, V])[]) => {
+      async (cmds: MapCommand<MockId, V>[], query: MapQuery<MockId>, expected: readonly (readonly [string, V])[]) => {
         await applyCommand();
         for (const cmd of cmds) {
           await applyCommand(cmd);
@@ -300,7 +302,7 @@ describe(ORMap.name, () => {
     });
   });
 
-  async function applyCommand(cmd: ORMapCommand<MockId, V> = CMD_EMPTY) {
-    await map.apply(await map.command(cmd));
+  async function applyCommand(cmd: MapCommand<MockId, V> = CMD_EMPTY) {
+    return await map.apply(await map.command(cmd));
   }
 });

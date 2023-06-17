@@ -43,8 +43,8 @@ describe(getFieldNameFromKey.name, () => {
 
 describe(getFractionalIndices.name, () => {
   it('should return the correct indices', () => {
-    expect([...getFractionalIndices(void 0, void 0, 2, () => 0.5)]).toEqual(['UUUUUUUU', 'kkkkkkkk']);
-    expect([...getFractionalIndices('AA', 'AZ', 3, () => 0.5)]).toEqual(['AMUUUUUU', 'ASkkkkkk', 'AVssssss']);
+    expect([...getFractionalIndices(void 0, void 0, 2, () => 0.5)]).toEqual(['UUUUUUUU', 'kkkkkkkkUU']);
+    expect([...getFractionalIndices('AA', 'AZ', 3, () => 0.5)]).toEqual(['AMUUUUUUUU', 'ASkkkkkkkkU', 'AVsssssssskUU']);
   });
 });
 

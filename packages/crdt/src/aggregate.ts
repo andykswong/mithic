@@ -1,23 +1,24 @@
 import { AbortOptions, CodedError, MaybePromise } from '@mithic/commons';
 
-/** Aggregate root type. */
-export interface AggregateRoot<
-  Command, QueryResult,
-  Event extends AggregateEvent = AggregateEvent, QueryOptions extends AbortOptions = AbortOptions,
+/** Abstract aggregate type. */
+export interface Aggregate<
+  Command,
+  EventRef, Event extends AggregateEvent<string, EventRef>,
+  QueryResult, QueryOptions extends AbortOptions = AbortOptions,
 > {
   /** Accepted event types of this aggregate. */
   readonly event: Readonly<Record<string, Event['type']>>;
 
-  /** Queries the state of this {@link AggregateRoot}. */
+  /** Queries the state of this {@link Aggregate}. */
   query(options?: QueryOptions): QueryResult;
 
   /** Handles a command and produces an event. */
   command(command: Command, options?: AbortOptions): MaybePromise<Event>;
 
-  /** Applies given event. */
-  apply(event: Event, options?: AggregateApplyOptions): MaybePromise<void>;
+  /** Applies given event and returns a reference to it. */
+  apply(event: Event, options?: AggregateApplyOptions): MaybePromise<EventRef>;
 
-  /** Validates given event. */
+  /** Validates given event and returns any error. */
   validate(event: Event, options?: AbortOptions): MaybePromise<CodedError | undefined>;
 }
 
@@ -45,19 +46,19 @@ export interface AggregateEventMeta<Ref = unknown> {
   readonly createdAt?: number;
 }
 
-/** Common metadata for {@link AggregateRoot} command. */
+/** Common metadata for {@link Aggregate} command. */
 export interface AggregateCommandMeta<Ref> {
-  /** Reference to (root event of) the target aggregate. Creates a new aggregate if not given. */
+  /** Reference to (root event of) the target aggregate. Creates a new aggregate if not specified. */
   readonly ref?: Ref;
 
   /** Timestamp of this command. */
   readonly createdAt?: number;
 
   /** A random number to make a unique event when creating a new aggregate. */
-  readonly nounce?: number;
+  readonly nonce?: number;
 }
 
-/** Options for {@link AggregateRoot} apply method. */
+/** Options for {@link Aggregate} apply method. */
 export interface AggregateApplyOptions extends AbortOptions {
   /** Whether to validate input. Defaults to true. */
   readonly validate?: boolean;
