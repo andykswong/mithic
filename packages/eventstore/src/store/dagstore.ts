@@ -49,7 +49,7 @@ export class DagEventStore<
     return this.headSet;
   }
 
-  public async validate(value: V, options?: AbortOptions): Promise<CodedError<K[]> | undefined> {
+  public override async validate(value: V, options?: AbortOptions): Promise<CodedError<K[]> | undefined> {
     const error = await super.validate(value, options);
     if (error) {
       return error;
@@ -66,7 +66,7 @@ export class DagEventStore<
   }
 
   /** Queries entries by given criteria. */
-  public async * entries(
+  public override async * entries(
     options?: EventStoreQueryOptions<K> & EventStoreMetaQueryOptions<K>
   ): AsyncGenerator<[K, V], K[]> {
     const headOnly = options?.head || false;
@@ -141,7 +141,7 @@ export class DagEventStore<
     return headList;
   }
 
-  protected async prePut(value: V, options?: AbortOptions): Promise<void> {
+  protected override async prePut(value: V, options?: AbortOptions): Promise<void> {
     const key = await this.getKey(value);
 
     // update head

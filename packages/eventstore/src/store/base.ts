@@ -157,13 +157,13 @@ export abstract class BaseDagEventStore<
   private useCache = false;
 
   public constructor(
-    protected readonly data: AppendOnlyAutoKeyMap<K, V> & Partial<AutoKeyMapBatch<K, V>>,
-    protected readonly queryPageSize = DEFAULT_BATCH_SIZE,
+    data: AppendOnlyAutoKeyMap<K, V> & Partial<AutoKeyMapBatch<K, V>>,
+    queryPageSize = DEFAULT_BATCH_SIZE,
   ) {
     super(data, queryPageSize);
   }
 
-  public async validate(value: V, options?: AbortOptions): Promise<CodedError<K[]> | undefined> {
+  public override async validate(value: V, options?: AbortOptions): Promise<CodedError<K[]> | undefined> {
     const error = await super.validate(value, options);
     if (error) {
       return error;
@@ -209,7 +209,7 @@ export abstract class BaseDagEventStore<
     }
   }
 
-  public async put(value: V, options?: EventStorePutOptions): Promise<K> {
+  public override async put(value: V, options?: EventStorePutOptions): Promise<K> {
     try {
       this.useCache = true;
       this.currentEventDeps.length = 0;

@@ -8,6 +8,7 @@
     "strict": true,
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
+    "noImplicitOverride": true,
     "skipLibCheck": true,
     "declaration": true,
     "declarationMap": true,

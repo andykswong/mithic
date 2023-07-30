@@ -6,7 +6,7 @@ export class CodedError<T = unknown, E = unknown> extends Error {
   public readonly code: ErrorCode | string;
 
   /** The error cause. */
-  public readonly cause?: E;
+  public override readonly cause?: E;
 
   /** Returns any data passed when initializing the error. */
   public detail?: T;

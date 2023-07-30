@@ -1,6 +1,6 @@
-import { EventEmitter, StringEquatable } from '@mithic/commons';
+import { StringEquatable, TypedCustomEvent, TypedEventTarget, createEvent } from '@mithic/commons';
 import {
-  MessageHandler, MessageValidator, MessageValidatorResult, PeerAwarePubSub, PubSubMessage, PubSubPeerChangeEvent,
+  MessageHandler, MessageValidator, MessageValidatorResult, PeerAwarePubSub, PubSubMessage, PubSubPeerChangeData,
   PubSubPeerEvent, PubSubPeerEvents, SubscribeOptions,
 } from '../pubsub.js';
 import { DEFAULT_PUBSUB_PEER_MONITOR_REFRESH_MS, PubSubPeerMonitor } from './monitor.js';
@@ -12,7 +12,7 @@ const NUM_KEEPALIVES_TO_WAIT = 3;
 
 /** {@link PubSub} implementation using browser BroadcastChannel. */
 export class BroadcastChannelPubSub<Msg = Uint8Array, PeerId extends StringEquatable = string>
-  extends EventEmitter<PubSubPeerEvents<PeerId>>
+  extends TypedEventTarget<PubSubPeerEvents<PeerId>>
   implements PeerAwarePubSub<Msg, PeerId>
 {
   /** This peer's ID. */
@@ -73,9 +73,8 @@ export class BroadcastChannelPubSub<Msg = Uint8Array, PeerId extends StringEquat
 
     if (this.peerRefreshMs && !this.peerMonitor?.started) {
       this.peerMonitor = this.peerMonitor || new PubSubPeerMonitor(this, this.peerRefreshMs, false);
-      this.peerMonitor
-        .addListener(PubSubPeerEvent.Join, this.onPeerJoinEvent)
-        .addListener(PubSubPeerEvent.Leave, this.onPeerLeaveEvent);
+      this.peerMonitor.addEventListener(PubSubPeerEvent.Join, this.onPeerJoin);
+      this.peerMonitor.addEventListener(PubSubPeerEvent.Leave, this.onPeerLeave);
       this.peerMonitor.start();
     }
   }
@@ -96,10 +95,11 @@ export class BroadcastChannelPubSub<Msg = Uint8Array, PeerId extends StringEquat
       clearInterval(this.keepAliveTimer);
       this.keepAliveTimer = 0;
 
-      this.peerMonitor
-        ?.removeListener(PubSubPeerEvent.Join, this.onPeerJoinEvent)
-        .removeListener(PubSubPeerEvent.Leave, this.onPeerLeaveEvent)
-        .close();
+      if (this.peerMonitor) {
+        this.peerMonitor.removeEventListener(PubSubPeerEvent.Join, this.onPeerJoin);
+        this.peerMonitor.removeEventListener(PubSubPeerEvent.Leave, this.onPeerLeave);
+        this.peerMonitor.close();
+      }
     }
   }
 
@@ -173,12 +173,12 @@ export class BroadcastChannelPubSub<Msg = Uint8Array, PeerId extends StringEquat
     }
   }
 
-  private onPeerJoinEvent = (event: PubSubPeerChangeEvent<PeerId>) => {
-    this.emit(PubSubPeerEvent.Join, event);
+  private onPeerJoin = (event: TypedCustomEvent<PubSubPeerEvent.Join, PubSubPeerChangeData<PeerId>>) => {
+    this.dispatchEvent(createEvent(PubSubPeerEvent.Join, event.detail));
   };
 
-  private onPeerLeaveEvent = (event: PubSubPeerChangeEvent<PeerId>) => {
-    this.emit(PubSubPeerEvent.Leave, event);
+  private onPeerLeave = (event: TypedCustomEvent<PubSubPeerEvent.Leave, PubSubPeerChangeData<PeerId>>) => {
+    this.dispatchEvent(createEvent(PubSubPeerEvent.Leave, event.detail));
   };
 }
 

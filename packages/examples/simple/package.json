@@ -1,6 +1,6 @@
 {
   "name": "example-simple",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": "true",
   "description": "simple mithic redux store example",
   "type": "module",
@@ -23,7 +23,7 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/cqrs": "^0.2"
+    "@mithic/cqrs": "^0.3"
   },
   "devDependencies": {
     "jest": "^29.5"

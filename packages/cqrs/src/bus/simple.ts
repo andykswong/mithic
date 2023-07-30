@@ -1,12 +1,12 @@
-import { EventEmitter, TypedEventEmitter } from '@mithic/commons';
+import { EventDispatcher, TypedCustomEvent, TypedEventTarget, createEvent } from '@mithic/commons';
 import { MessageBus, MessageConsumer, Unsubscribe } from '../bus.js';
 
-/** Simple implementation of {@link MessageBus} that wraps an EventEmitter. */
+/** Simple implementation of {@link MessageBus} that wraps an EventTarget. */
 export class SimpleMessageBus<Message> implements MessageBus<Message> {
   public constructor(
-    /** Underlying emitter to use. */
-    private readonly emitter: TypedEventEmitter<Record<string, [Message]>>
-      = new EventEmitter<Record<string, [Message]>>(),
+    /** Underlying dispatcher to use. */
+    private readonly dispatcher: EventDispatcher<[TypedCustomEvent<string, Message>]> =
+      new TypedEventTarget<[TypedCustomEvent<string, Message>]>(),
     /** Name of the event type to emit. */
     private readonly eventName = 'event'
   ) {
@@ -14,16 +14,12 @@ export class SimpleMessageBus<Message> implements MessageBus<Message> {
   }
 
   public dispatch(message: Message): void {
-    this.emitter.emit(this.eventName, message);
+    this.dispatcher.dispatchEvent(createEvent(this.eventName, message));
   }
 
   public subscribe(consumer: MessageConsumer<Message>): Unsubscribe {
-    this.emitter.addListener(this.eventName, consumer);
-    return () => this.unsubscribe(consumer);
-  }
-
-  /** Unsubscribes consumer from new events. */
-  public unsubscribe(consumer: MessageConsumer<Message>): void {
-    this.emitter.removeListener(this.eventName, consumer);
+    const listener = (event: TypedCustomEvent<string, Message>) => consumer(event.detail);
+    this.dispatcher.addEventListener(this.eventName, listener);
+    return () => this.dispatcher.removeEventListener(this.eventName, listener);
   }
 }

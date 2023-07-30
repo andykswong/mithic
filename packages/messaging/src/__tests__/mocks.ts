@@ -1,11 +1,11 @@
-import { Equal, EventEmitter } from '@mithic/commons';
+import { Equal, TypedEventTarget } from '@mithic/commons';
 import { CID, MultihashDigest } from 'multiformats';
 import { identity } from 'multiformats/hashes/identity';
 import { MessageHandler, PeerAwarePubSub, PubSubMessage, PubSubPeerEvents, SubscribeOptions, MessageValidator } from '../pubsub.js';
 
 export const LIBP2P_KEY_CODE = 0x72;
 
-export class MockPubSub<PeerId = MockPeer> extends EventEmitter<PubSubPeerEvents<PeerId>> implements PeerAwarePubSub<Uint8Array, PeerId> {
+export class MockPubSub<PeerId = MockPeer> extends TypedEventTarget<PubSubPeerEvents<PeerId>> implements PeerAwarePubSub<Uint8Array, PeerId> {
   topicHandlers = new Map<string, MessageHandler<PubSubMessage<Uint8Array, PeerId>>>();
   topicValidators = new Map<string, MessageValidator<PubSubMessage<Uint8Array, PeerId>>>();
   subscriberMap = new Map<string, PeerId[]>();

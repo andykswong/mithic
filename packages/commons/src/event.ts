@@ -1,71 +1,84 @@
-import { EventEmitter as NodeEventEmitter } from 'events';
-import { MaybePromise, SyncOrAsyncGenerator } from './async/index.js';
+import { MaybePromise, MaybePromiseFn, SyncOrAsyncGenerator } from './async/index.js';
 
-/** Type-safe event emitter interface. */
-export interface TypedEventEmitter<E extends EventTypeMap> extends EventSource<E> {
-  /**
-   * Calls each of the listeners registered for the given event type,
-   * in the order they were registered, passing the supplied arguments to each.
-   * Returns true if the event had listeners, false otherwise.
-   */
-  emit<K extends EventType<E>>(type: K, ...args: E[K]): boolean;
+/** Typed Event. */
+export interface TypedEvent<T extends string = string> extends Event {
+  type: T;
 }
 
-/** Type-safe event source interface. */
-export interface EventSource<E extends EventTypeMap> {
-  /** Adds the listener function to the end of the listeners array for the given event type. */
-  addListener<K extends EventType<E>>(type: K, listener: EventHandler<E[K]>): this;
-
-  /** Removes the specified listener from the listener array for the given event type. */
-  removeListener<K extends EventType<E>>(type: K, listener: EventHandler<E[K]>): this;
-
-  /** Removes all listeners, or those of the given event type. */
-  removeAllListeners<K extends EventType<E>>(type?: K): this;
+/** Typed CustomEvent. */
+export interface TypedCustomEvent<T extends string = string, V = unknown> extends CustomEvent<V>, TypedEvent<T> {
+  type: T;
 }
 
-/** Event type to argument type map. */
-export type EventTypeMap<K extends string = string> = Record<K, unknown[]>;
-
-/** Event name type from {@link EventTypeMap}. */
-export type EventType<E> = E extends EventTypeMap<infer T> ? T : never;
+/** Type-safe event handler. */
+export type TypedEventHandler<E extends TypedEvent, R = unknown> = TypedEventHandlerFn<E, R> | TypedEventHandlerObject<E, R>;
 
 /** Type-safe event handler function. */
-export type EventHandler<Args extends unknown[] = unknown[], R = void> = (...args: Args) => MaybePromise<R>;
+export type TypedEventHandlerFn<E extends TypedEvent, R = unknown> = MaybePromiseFn<[E], R>;
 
-/**
- * {@link TypedEventEmitter} implementation. Most useful as a base class to enable a class to emit type-safe events.
- * If not extending, EventEmitter from node:events can be casted to {@link TypedEventEmitter} and be used directly.
- */
-export class EventEmitter<E extends EventTypeMap = Record<string, unknown[]>> implements TypedEventEmitter<E> {
-  public constructor(
-    protected emitter: NodeEventEmitter = new NodeEventEmitter()
-  ) { }
+/** Type-safe event handler object. */
+export interface TypedEventHandlerObject<E extends TypedEvent, R = unknown> {
+  handleEvent: TypedEventHandlerFn<E, R>;
+}
 
-  public addListener<K extends EventType<E>>(type: K, listener: EventHandler<E[K]>): this {
-    this.emitter.addListener(type, listener as (...args: unknown[]) => void);
-    return this;
+/** The union of all possible event types from a TypedEvent tuple. */
+export type EventTypes<Events> = Events extends TypedEvent<infer T>[] ? T : string;
+
+//{
+//  [K in keyof Events]: Events[K] extends TypedEvent<infer T> ? T : never;
+//}[keyof Events];
+
+/** Picks event of given type from a TypedEvent tuple. */
+export type EventsOfType<Events, T extends string> = Extract<Events[keyof Events], TypedEvent<T>>;
+
+/** Type-safe event dispatcher. */
+export interface EventDispatcher<Events extends TypedEvent[]> extends EventSource<Events> {
+  /**
+   * Dispatches the `event` to the list of handlers for `event.type`.
+   * @returns `false` if event is cancelled; `true` otherwise.
+   */
+  dispatchEvent(event: Events[keyof Events]): boolean;
+}
+
+/** Type-safe event source. */
+export interface EventSource<Events extends TypedEvent[]> {
+  /** Registers an event handler of a specific event type. */
+  addEventListener<K extends EventTypes<Events>>(type: K, listener: TypedEventHandler<EventsOfType<Events, K>>): void;
+
+  /** Removes an event listener. */
+  removeEventListener<K extends EventTypes<Events>>(type: K, listener: TypedEventHandler<EventsOfType<Events, K>>): void;
+}
+
+/** Type-safe EventTarget. */
+export class TypedEventTarget<Events extends TypedEvent[]>
+  extends EventTarget implements EventDispatcher<Events>
+{
+  public override addEventListener<K extends EventTypes<Events>>(
+    type: K, listener: TypedEventHandler<EventsOfType<Events, K>> | null
+  ): void {
+    super.addEventListener(type, listener as EventListenerOrEventListenerObject);
   }
 
-  public removeListener<K extends EventType<E>>(type: K, listener: EventHandler<E[K]>): this {
-    this.emitter.removeListener(type, listener as (...args: unknown[]) => void);
-    return this;
+  public override removeEventListener<K extends EventTypes<Events>>(
+    type: K, listener: TypedEventHandler<EventsOfType<Events, K>> | null
+  ): void {
+    super.removeEventListener(type, listener as EventListenerOrEventListenerObject);
   }
 
-  public removeAllListeners<K extends EventType<E>>(type?: K): this {
-    this.emitter.removeAllListeners(type);
-    return this;
+  public override dispatchEvent<K extends EventTypes<Events>>(event: EventsOfType<Events, K>): boolean {
+    return super.dispatchEvent(event);
   }
+}
 
-  public emit<K extends EventType<E>>(type: K, ...args: E[K]): boolean {
-    return this.emitter.emit(type, ...args);
-  }
+/** Creates a {@link TypedCustomEvent}. */
+export function createEvent<T extends string, V>(type: T, detail: V): TypedCustomEvent<T, V> {
+  return new CustomEvent(type, { detail }) as TypedCustomEvent<T, V>;
 }
 
 /** Creates a consumer function from a coroutine. Useful for defining event handlers. */
-export function consumer<V = unknown>(
-  coroutine: () => SyncOrAsyncGenerator<unknown, unknown, V>,
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-): EventHandler<[V], any> {
+export function consumer<E = unknown>(
+  coroutine: () => SyncOrAsyncGenerator<unknown, unknown, E>,
+): MaybePromiseFn<[E], IteratorResult<unknown>> {
   const generator = coroutine();
   let execution = generator.next(); // execute until the first yield
   return (input) =>

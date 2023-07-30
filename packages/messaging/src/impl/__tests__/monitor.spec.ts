@@ -51,14 +51,14 @@ describe(PubSubPeerMonitor.name, () => {
       jest.advanceTimersByTime(DEFAULT_PUBSUB_PEER_MONITOR_REFRESH_MS);
       await flushPromises();
 
-      peerMonitor.addListener(PubSubPeerEvent.Join, (event) => {
-        expect(event.topic).toBe(TOPIC);
-        expect(event.peers).toEqual([PEER_ID3]);
+      peerMonitor.addEventListener(PubSubPeerEvent.Join, (event) => {
+        expect(event.detail.topic).toBe(TOPIC);
+        expect(event.detail.peers).toEqual([PEER_ID3]);
       });
 
-      peerMonitor.addListener(PubSubPeerEvent.Leave, (event) => {
-        expect(event.topic).toBe(TOPIC);
-        expect(event.peers).toEqual([PEER_ID]);
+      peerMonitor.addEventListener(PubSubPeerEvent.Leave, (event) => {
+        expect(event.detail.topic).toBe(TOPIC);
+        expect(event.detail.peers).toEqual([PEER_ID]);
       });
 
       mockPubSub.subscriberMap.set(TOPIC, [PEER_ID2, PEER_ID3]);

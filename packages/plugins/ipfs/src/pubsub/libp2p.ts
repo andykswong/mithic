@@ -1,6 +1,6 @@
 import { PeerId } from '@libp2p/interface-peer-id';
 import { Message, PubSub as ILibp2pPubSub, StrictSign, TopicValidatorResult } from '@libp2p/interface-pubsub';
-import { EventHandler } from '@mithic/commons';
+import { EventsOfType, TypedEventHandler } from '@mithic/commons';
 import {
   DEFAULT_PUBSUB_PEER_MONITOR_REFRESH_MS, MessageHandler, PeerAwarePubSub, PubSubMessage, PubSubPeerEvent,
   PubSubPeerEvents, PubSubPeerMonitor, SubscribeOptions
@@ -69,29 +69,16 @@ export class Libp2pPubSub implements PeerAwarePubSub<Uint8Array, PeerId> {
     return this.pubsub.getSubscribers(topic);
   }
 
-  public addListener<K extends keyof PubSubPeerEvents<PeerId>>(
-    type: K, listener: EventHandler<PubSubPeerEvents<PeerId>[K], void>
-  ): this {
-    this.monitor?.addListener(
-      type,
-      listener as EventHandler<PubSubPeerEvents<PeerId>[PubSubPeerEvent.Join | PubSubPeerEvent.Leave]>,
-    );
-    return this;
+  public addEventListener<K extends PubSubPeerEvent>(
+    type: K, listener: TypedEventHandler<EventsOfType<PubSubPeerEvents<PeerId>, K>>
+  ): void {
+    this.monitor?.addEventListener(type, listener);
   }
 
-  public removeListener<K extends keyof PubSubPeerEvents<PeerId>>(
-    type: K, listener: EventHandler<PubSubPeerEvents<PeerId>[K], void>
-  ): this {
-    this.monitor?.removeListener(
-      type,
-      listener as EventHandler<PubSubPeerEvents<PeerId>[PubSubPeerEvent.Join | PubSubPeerEvent.Leave]>,
-    );
-    return this;
-  }
-
-  public removeAllListeners<K extends keyof PubSubPeerEvents<PeerId>>(type?: K | undefined): this {
-    this.monitor?.removeAllListeners(type);
-    return this;
+  public removeEventListener<K extends PubSubPeerEvent>(
+    type: K, listener: TypedEventHandler<EventsOfType<PubSubPeerEvents<PeerId>, K>>
+  ): void {
+    this.monitor?.removeEventListener(type, listener);
   }
 
   protected onMessage = (message: CustomEvent<Message>) => {

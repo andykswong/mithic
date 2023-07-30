@@ -13,11 +13,11 @@ export class DualBroadcastChannel extends BroadcastChannel {
     this.publisher = new BroadcastChannel(name);
   }
 
-  public postMessage(message: unknown): void {
+  public override postMessage(message: unknown): void {
     this.publisher.postMessage(message);
   }
 
-  public close(): void {
+  public override close(): void {
     super.close();
     this.publisher.close();
   }

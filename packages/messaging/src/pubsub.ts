@@ -1,4 +1,4 @@
-import { AbortOptions, Closeable, EventSource, MaybePromise } from '@mithic/commons';
+import { AbortOptions, Closeable, EventSource, MaybePromise, TypedCustomEvent } from '@mithic/commons';
 
 /**
  * A generalized publish/subscribe service,
@@ -83,8 +83,8 @@ export interface PubSubMessage<T = unknown, Peer = unknown> {
   from?: Peer;
 }
 
-/** {@link PeerAwarePubSub} event. */
-export interface PubSubPeerChangeEvent<Peer = unknown> {
+/** {@link PeerAwarePubSub} peer change data. */
+export interface PubSubPeerChangeData<Peer = unknown> {
   /** The message's target topic. */
   topic: string;
 
@@ -102,8 +102,7 @@ export enum PubSubPeerEvent {
 }
 
 /** Event types for {@link PeerAwarePubSub}. */
-export type PubSubPeerEvents<Peer> = {
-  [PubSubPeerEvent.Join]: [PubSubPeerChangeEvent<Peer>],
-
-  [PubSubPeerEvent.Leave]: [PubSubPeerChangeEvent<Peer>],
-};
+export type PubSubPeerEvents<Peer> = [
+  TypedCustomEvent<PubSubPeerEvent.Join, PubSubPeerChangeData<Peer>>,
+  TypedCustomEvent<PubSubPeerEvent.Leave, PubSubPeerChangeData<Peer>>
+];

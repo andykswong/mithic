@@ -1,6 +1,6 @@
 {
   "name": "@mithic/collections",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Collection library for mithic",
   "type": "module",
   "sideEffects": false,
@@ -39,7 +39,7 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/commons": "^0.2",
+    "@mithic/commons": "^0.3",
     "multiformats": "^12.0"
   },
   "devDependencies": {
@@ -49,8 +49,8 @@
     "@babel/preset-typescript": "^7.20",
     "@types/jest": "^29.5",
     "@types/node": "^20.0",
-    "@typescript-eslint/eslint-plugin": "^5.50",
-    "@typescript-eslint/parser": "^5.50",
+    "@typescript-eslint/eslint-plugin": "^6.0",
+    "@typescript-eslint/parser": "^6.0",
     "babel-jest": "^29.5",
     "cross-env": "^7.0",
     "eslint": "^8.40",

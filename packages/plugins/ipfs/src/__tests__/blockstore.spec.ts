@@ -1,16 +1,16 @@
 import { jest } from '@jest/globals';
-import { IPFS } from 'ipfs-core-types';
+import { MemoryBlockstore } from 'blockstore-core';
+import { Blockstore } from 'interface-blockstore';
 import { BlockCodec, CID } from 'multiformats';
 import { identity } from 'multiformats/hashes/identity';
-import { IpfsMap } from '../map.js';
-import { MockIpfs } from './mocks.js';
+import { BlockstoreMap } from '../blockstore.js';
 import { ErrorCode, operationError } from '@mithic/commons';
 
 const DATA = new Uint8Array([1, 2, 3]);
 const DATA_CID = CID.createV1(0x999, identity.digest(DATA));
 const CID2 = CID.createV1(0x999, identity.digest(new Uint8Array([1, 3, 3, 7])));
 
-describe(IpfsMap.name, () => {
+describe(BlockstoreMap.name, () => {
   const mockCodec: BlockCodec<number, Uint8Array> = {
     name: 'mock',
     code: 0x999,
@@ -22,28 +22,26 @@ describe(IpfsMap.name, () => {
     }
   };
 
-  let map: IpfsMap;
-  let mockIpfs: IPFS;
+  let map: BlockstoreMap;
+  let blockstore: Blockstore;
 
   afterAll(() => {
     jest.restoreAllMocks();
   });
 
-  beforeEach(() => {
-    const _mockIpfs = new MockIpfs();
-    _mockIpfs.block.data.set(DATA_CID.toString(), [DATA_CID, DATA]);
-
-    mockIpfs = _mockIpfs;
-    map = new IpfsMap(mockIpfs, mockCodec, identity);
+  beforeEach(async () => {
+    blockstore = new MemoryBlockstore();
+    await blockstore.put(DATA_CID, DATA);
+    map = new BlockstoreMap(blockstore, mockCodec, identity);
   });
 
   it('should have the correct string tag', () => {
-    expect(`${map}`).toBe(`[object ${IpfsMap.name}]`);
+    expect(`${map}`).toBe(`[object ${BlockstoreMap.name}]`);
   });
 
   describe('get', () => {
-    it('should return response from IPFS.block.get', async () => {
-      const getSpy = jest.spyOn(mockIpfs.block, 'get');
+    it('should return response from blockstore.get', async () => {
+      const getSpy = jest.spyOn(blockstore, 'get');
       const options = { signal: AbortSignal.timeout(1000) };
 
       expect(await map.get(DATA_CID, options)).toBe(DATA);
@@ -63,7 +61,7 @@ describe(IpfsMap.name, () => {
 
   describe('has', () => {
     it('should return true if block is found', async () => {
-      const getSpy = jest.spyOn(mockIpfs.block, 'get');
+      const getSpy = jest.spyOn(blockstore, 'get');
       const options = { signal: AbortSignal.timeout(1000) };
 
       expect(await map.has(DATA_CID, options)).toBe(true);
@@ -71,43 +69,38 @@ describe(IpfsMap.name, () => {
     });
 
     it('should return false if CID is not found', async () => {
-      expect.assertions(1);
       expect(await map.has(CID.createV1(0, identity.digest(new Uint8Array([1]))), {})).toBe(false);
     });
   });
 
   describe('put', () => {
-    it('should pass given options to IPFS.block.put', async () => {
+    it('should pass given options to blockstore.put', async () => {
       const encodeSpy = jest.spyOn(mockCodec, 'encode');
-      const putSpy = jest.spyOn(mockIpfs.block, 'put');
+      const putSpy = jest.spyOn(blockstore, 'put');
 
       const options = { signal: AbortSignal.timeout(1000) };
-      const link = await map.put(DATA, options);
+      const result = await map.put(DATA, options);
 
-      expect(link).toBe(DATA_CID);
+      expect(result).toStrictEqual(DATA_CID);
       expect(encodeSpy).toBeCalledWith(DATA);
-      expect(putSpy).toHaveBeenCalledWith(DATA, { ...options, format: mockCodec.code, version: 1 });
+      expect(putSpy).toHaveBeenCalledWith(DATA_CID, DATA, options);
     });
   });
 
   describe('delete', () => {
-    it('should pass given options to IPFS.block.rm', async () => {
-      const rmSpy = jest.spyOn(mockIpfs.block, 'rm');
+    it('should pass given options to blockstore.delete', async () => {
+      const deleteSpy = jest.spyOn(blockstore, 'delete');
 
       const options = { signal: AbortSignal.timeout(1000) };
       await map.delete(DATA_CID, options);
 
-      expect(rmSpy).toHaveBeenCalledWith(DATA_CID, { ...options, force: true });
-    });
-
-    it('should throw errors returned from IPFS.block.rm', async () => {
-      await expect(map.delete(CID2)).rejects.toThrow('mismatched data');
+      expect(deleteSpy).toHaveBeenCalledWith(DATA_CID, options);
     });
   });
 
   describe('getMany', () => {
-    it('should return response from IPFS.block.get', async () => {
-      const getSpy = jest.spyOn(mockIpfs.block, 'get');
+    it('should return response from blockstore.get', async () => {
+      const getSpy = jest.spyOn(blockstore, 'get');
       const options = { signal: AbortSignal.timeout(1000) };
 
       const results = [];
@@ -123,7 +116,7 @@ describe(IpfsMap.name, () => {
 
   describe('hasMany', () => {
     it('should return true if key is found and false otherwise', async () => {
-      const getSpy = jest.spyOn(mockIpfs.block, 'get');
+      const getSpy = jest.spyOn(blockstore, 'get');
       const options = { signal: AbortSignal.timeout(1000) };
 
       const results = [];
@@ -138,12 +131,20 @@ describe(IpfsMap.name, () => {
   });
 
   describe('putMany', () => {
-    it('should pass given options to IPFS.block.put', async () => {
-      const putSpy = jest.spyOn(mockIpfs.block, 'put');
+    it('should pass given options to blockstore.put', async () => {
       const options = { signal: AbortSignal.timeout(1000) };
-
+      const error = new Error('ERROR_DATA2');
       const data2 = new Uint8Array([1, 3, 3, 7]);
       const cid2 = CID.createV1(mockCodec.code, identity.digest(data2));
+
+      const blockstorePut = blockstore.put.bind(blockstore);
+      const putMock = jest.spyOn(blockstore, 'put')
+        .mockImplementation(async (key, data, options) => {
+          if (cid2.equals(key)) {
+            throw error;
+          }
+          return blockstorePut(key, data, options);
+        });
 
       const results = [];
       for await (const result of map.putMany([DATA, data2], options)) {
@@ -152,16 +153,16 @@ describe(IpfsMap.name, () => {
 
       expect(results).toEqual([
         [DATA_CID],
-        [cid2, operationError('Failed to put', ErrorCode.OpFailed, cid2, new Error('mismatched data'))]
+        [cid2, operationError('Failed to put', ErrorCode.OpFailed, cid2, error)]
       ]);
-      expect(putSpy).toHaveBeenCalledWith(DATA, { ...options, format: mockCodec.code, version: 1 });
-      expect(putSpy).toHaveBeenCalledWith(data2, { ...options, format: mockCodec.code, version: 1 });
+      expect(putMock).toHaveBeenCalledWith(DATA_CID, DATA, options);
+      expect(putMock).toHaveBeenCalledWith(cid2, data2, options);
     });
   });
 
   describe('deleteMany', () => {
-    it('should pass given options to IPFS.block.rm', async () => {
-      const rmSpy = jest.spyOn(mockIpfs.block, 'rm');
+    it('should pass given options to blockstore.delete', async () => {
+      const deleteSpy = jest.spyOn(blockstore, 'delete');
 
       const options = { signal: AbortSignal.timeout(1000) };
 
@@ -170,8 +171,9 @@ describe(IpfsMap.name, () => {
         results.push(error);
       }
 
-      expect(results).toEqual([undefined, new Error('mismatched data')]);
-      expect(rmSpy).toHaveBeenCalledWith([DATA_CID, CID2], { ...options, force: true });
+      expect(results).toEqual([undefined, undefined]);
+      expect(deleteSpy).toHaveBeenCalledWith(DATA_CID, options);
+      expect(deleteSpy).toHaveBeenCalledWith(CID2, options);
     });
   });
 });

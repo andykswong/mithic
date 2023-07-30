@@ -3,6 +3,9 @@ import { reduce } from './maybe-async.js';
 /** A value that may be wrapped with a PromiseLike. */
 export type MaybePromise<T> = T | PromiseLike<T>;
 
+/** Type-safe function that returns a {@link MaybePromise}. */
+export type MaybePromiseFn<Args extends unknown[] = unknown[], R = void> = (...args: Args) => MaybePromise<R>;
+
 export const MaybePromise = {
   /** Transforms a value or promise with a maybe-async value mapper (and optionally error mapper). */
   map: mapAsync,

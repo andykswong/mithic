@@ -104,22 +104,14 @@ describe(Libp2pPubSub.name, () => {
     ])('should add/remove peer %s listener in underlying peer monitor', (type: PubSubPeerEvent) => {
       const listener = () => { /* do nothing */ };
 
-      const addListenerSpy = jest.spyOn(peerMonitor, 'addListener');
-      const removeListenerSpy = jest.spyOn(peerMonitor, 'removeListener');
+      const addListenerSpy = jest.spyOn(peerMonitor, 'addEventListener');
+      const removeListenerSpy = jest.spyOn(peerMonitor, 'removeEventListener');
 
-      pubsub.addListener(type, listener);
+      pubsub.addEventListener(type, listener);
       expect(addListenerSpy).toHaveBeenCalledWith(type, listener);
 
-      pubsub.removeListener(type, listener);
+      pubsub.removeEventListener(type, listener);
       expect(removeListenerSpy).toHaveBeenCalledWith(type, listener);
-    });
-  });
-
-  describe('removeAllListeners', () => {
-    it('should remove all listeners in underlying peer monitor', () => {
-      const removeAllListenersSpy = jest.spyOn(peerMonitor, 'removeAllListeners');
-      pubsub.removeAllListeners(PubSubPeerEvent.Join);
-      expect(removeAllListenersSpy).toHaveBeenCalledWith(PubSubPeerEvent.Join);
     });
   });
 });

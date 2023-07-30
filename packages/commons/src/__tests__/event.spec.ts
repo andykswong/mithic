@@ -1,59 +1,41 @@
 import { jest } from '@jest/globals';
-import { EventEmitter as NodeEventEmitter } from 'events';
 import { delay } from '../async/index.js';
-import { EventEmitter, EventHandler, TypedEventEmitter, consumer } from '../event.js';
+import { EventDispatcher, TypedCustomEvent, TypedEvent, TypedEventTarget, consumer, createEvent } from '../event.js';
 
-describe('TypedEventEmitter', () => {
-  it('should be compatible with EventEmitter from node:events', () => {
-    const _ = new NodeEventEmitter() as TypedEventEmitter<{ test: [] }>;
+enum Events {
+  Test = 'test',
+  Test2 = 'test2'
+}
+
+describe('EventDispatcher', () => {
+  it('should be compatible with EventTarget', () => {
+    const _ = new EventTarget() as EventDispatcher<[TypedEvent<Events.Test>]>;
   });
 });
 
-describe(EventEmitter.name, () => {
-  const TYPE = 'test';
-  const TYPE2 = 'test2';
+describe(TypedEventTarget.name, () => {
+  it('should dispatch events correctly', () => {
+    const target = new TypedEventTarget<[TypedCustomEvent<Events.Test, string>, TypedCustomEvent<Events.Test2, number>]>();
+    const listener = jest.fn<(event: TypedCustomEvent<Events.Test2, number>) => void>();
 
-  it('should add listener correctly', () => {
-    const emitter = new EventEmitter<{ [TYPE]: [string] }>();
-    const addListenerSpy = jest.spyOn(emitter['emitter'], 'addListener');
-    const listener = jest.fn<EventHandler<[string]>>();
+    target.addEventListener(Events.Test2, listener);
 
-    expect(emitter.addListener(TYPE, listener)).toBe(emitter);
-    expect(addListenerSpy).toHaveBeenCalledWith(TYPE, listener);
+    expect(target.dispatchEvent(createEvent(Events.Test, 'testing'))).toBe(true);
+    expect(listener).not.toHaveBeenCalled();
+
+    const event2 = createEvent(Events.Test2, 123);
+    expect(target.dispatchEvent(event2)).toBe(true);
+    expect(listener).toHaveBeenCalledWith(event2);
   });
 
   it('should remove listener correctly', () => {
-    const emitter = new EventEmitter<{ [TYPE]: [string] }>();
-    const removeListenerSpy = jest.spyOn(emitter['emitter'], 'removeListener');
-    const listener = jest.fn<EventHandler<[string]>>();
+    const target = new TypedEventTarget<[TypedCustomEvent<Events.Test, string>]>();
+    const listener = jest.fn<(event: TypedCustomEvent<Events.Test, string>) => void>();
+    target.addEventListener(Events.Test, listener);
+    target.removeEventListener(Events.Test, listener);
 
-    expect(emitter.removeListener(TYPE, listener)).toBe(emitter);
-    expect(removeListenerSpy).toHaveBeenCalledWith(TYPE, listener);
-  });
-
-  it('should remove all listeners correctly', () => {
-    const emitter = new EventEmitter<{ [TYPE]: [string] }>();
-    const removeAllListenersSpy = jest.spyOn(emitter['emitter'], 'removeAllListeners');
-
-    expect(emitter.removeAllListeners(TYPE)).toBe(emitter);
-    expect(removeAllListenersSpy).toHaveBeenCalledWith(TYPE);
-
-    expect(emitter.removeAllListeners()).toBe(emitter);
-    expect(removeAllListenersSpy).toHaveBeenLastCalledWith(undefined);
-  });
-
-  it('should dispatch events correctly', () => {
-    const emitter = new EventEmitter<{ [TYPE]: [string];[TYPE2]: [number, boolean]; }>();
-    const listener = jest.fn<EventHandler<[number]>>();
-
-    emitter.addListener(TYPE2, listener);
-
-    expect(emitter.emit(TYPE, 'test')).toBe(false);
+    expect(target.dispatchEvent(createEvent(Events.Test, 'testing'))).toBe(true);
     expect(listener).not.toHaveBeenCalled();
-
-    const event2 = [123, true] as const;
-    expect(emitter.emit(TYPE2, ...event2)).toBe(true);
-    expect(listener).toHaveBeenCalledWith(...event2);
   });
 });
 
@@ -69,9 +51,9 @@ describe('consumer', () => {
       expect(c).toBe(2);
     });
 
-    expect(consumerFn(1).done).toBe(false);
-    expect(consumerFn(2).done).toBe(true);
-    expect(consumerFn(3).done).toBe(true);
+    expect(consumerFn(1)).toEqual({ done: false, value: undefined });
+    expect(consumerFn(2)).toEqual({ done: true, value: undefined });
+    expect(consumerFn(3)).toEqual({ done: true, value: undefined });
   });
 
   it('should handle async coroutines', async () => {

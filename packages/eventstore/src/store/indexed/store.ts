@@ -40,7 +40,7 @@ export class IndexedEventStore<
     this.eventTypeSeparator = eventTypeSeparator;
   }
 
-  protected async prePut(event: V, options?: AbortOptions): Promise<void> {
+  protected override async prePut(event: V, options?: AbortOptions): Promise<void> {
     const key = await this.getKey(event);
     const parents = this.currentEventDeps;
     let latestTime = 0;
@@ -81,7 +81,7 @@ export class IndexedEventStore<
     parents.length = 0;
   }
 
-  public async * keys(options?: EventStoreQueryOptions<K> & EventStoreMetaQueryOptions<K>): AsyncGenerator<K, K[]> {
+  public override async * keys(options?: EventStoreQueryOptions<K> & EventStoreMetaQueryOptions<K>): AsyncGenerator<K, K[]> {
     let sinceTime = 0;
     if (options?.since) {
       for await (const value of this.getMany(options.since, options)) {

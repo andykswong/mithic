@@ -1,2 +1,2 @@
 export * from './pubsub/index.js';
-export * from './map.js';
+export * from './blockstore.js';

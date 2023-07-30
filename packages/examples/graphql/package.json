@@ -1,6 +1,6 @@
 {
   "name": "example-graphql",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": "true",
   "description": "mithic GraphQL integration example",
   "type": "module",
@@ -23,8 +23,8 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/cqrs": "^0.2",
-    "@mithic/crdt": "^0.2",
+    "@mithic/cqrs": "^0.3",
+    "@mithic/crdt": "^0.3",
     "graphql": "^16.6",
     "multiformats": "^12.0"
   },

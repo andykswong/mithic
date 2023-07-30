@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
-import { delay } from '@mithic/commons';
-import { PubSubPeerChangeEvent, PubSubMessage, MessageValidator, MessageValidatorResult, PubSubPeerEvent, MessageHandler } from '../../index.js';
+import { createEvent, delay } from '@mithic/commons';
+import { PubSubPeerChangeData, PubSubMessage, MessageValidator, MessageValidatorResult, PubSubPeerEvent, MessageHandler } from '../../index.js';
 import { BroadcastChannelPubSub, BroadcastChannelPubSubMessage, BroadcastChannelPubSubMessageType } from '../broadcast-channel.js';
 
 const PEER_ID = 'mockPeerId';
@@ -46,8 +46,8 @@ describe(BroadcastChannelPubSub.name, () => {
     expect(pubsub['topicHandlers'].size).toBe(0);
     expect(pubsub['topicSubscribers'].size).toBe(0);
 
-    expect(peerMonRemoveListenerSpy).toHaveBeenCalledWith(PubSubPeerEvent.Join, pubsub['onPeerJoinEvent']);
-    expect(peerMonRemoveListenerSpy).toHaveBeenCalledWith(PubSubPeerEvent.Leave, pubsub['onPeerLeaveEvent']);
+    expect(peerMonRemoveListenerSpy).toHaveBeenCalledWith(PubSubPeerEvent.Join, pubsub['onPeerJoin']);
+    expect(peerMonRemoveListenerSpy).toHaveBeenCalledWith(PubSubPeerEvent.Leave, pubsub['onPeerLeave']);
 
     expect(channelCloseSpy).toBeCalled();
   });
@@ -227,22 +227,22 @@ describe(BroadcastChannelPubSub.name, () => {
 
   test('onPeerEvent', () => {
     const handler = jest.fn<MessageHandler<PubSubMessage<number, string>>>();
-    const receivedMessages: PubSubPeerChangeEvent<string>[] = [];
+    const receivedMessages: PubSubPeerChangeData<string>[] = [];
 
-    pubsub.addListener(PubSubPeerEvent.Join, (event) => {
-      receivedMessages.push(event);
+    pubsub.addEventListener(PubSubPeerEvent.Join, (event) => {
+      receivedMessages.push(event.detail);
     });
-    pubsub.addListener(PubSubPeerEvent.Leave, (event) => {
-      receivedMessages.push(event);
+    pubsub.addEventListener(PubSubPeerEvent.Leave, (event) => {
+      receivedMessages.push(event.detail);
     });
     pubsub.subscribe(TOPIC, handler);
 
     const [peerMonitor,] = spyOnPeerMonitor(pubsub);
-    const event: PubSubPeerChangeEvent<string> = { topic: TOPIC, peers: [OTHER_PEER_ID] };
+    const event: PubSubPeerChangeData<string> = { topic: TOPIC, peers: [OTHER_PEER_ID] };
 
     for (const eventType of [PubSubPeerEvent.Join, PubSubPeerEvent.Leave] as const) {
       receivedMessages.length = 0;
-      peerMonitor.emit(eventType, event);
+      peerMonitor.dispatchEvent(createEvent(eventType, event));
       expect(receivedMessages).toEqual([event]);
     }
   });
@@ -257,5 +257,5 @@ function spyOnChannel<T>(pubsub: BroadcastChannelPubSub<T>) {
 function spyOnPeerMonitor<T>(pubsub: BroadcastChannelPubSub<T>) {
   const peerMonitor = pubsub['peerMonitor'];
   if (!peerMonitor) { throw new Error('peerMonitor is undefined'); }
-  return [peerMonitor, jest.spyOn(peerMonitor, 'removeListener')] as const;
+  return [peerMonitor, jest.spyOn(peerMonitor, 'removeEventListener')] as const;
 }

@@ -1,4 +1,4 @@
-import { equalsOrSameString, EventEmitter, Startable, StringEquatable } from '@mithic/commons';
+import { createEvent, equalsOrSameString, Startable, StringEquatable, TypedEventTarget } from '@mithic/commons';
 import { PubSubPeerEvent, PubSubPeerEvents, PubSubPeerState } from '../pubsub.js';
 
 /** Default peer refresh interval in milliseconds */
@@ -6,7 +6,7 @@ export const DEFAULT_PUBSUB_PEER_MONITOR_REFRESH_MS = 1000;
 
 /** Monitor of topic peers from {@link PubSubPeerState}. */
 export class PubSubPeerMonitor<Peer extends StringEquatable<Peer>>
-  extends EventEmitter<PubSubPeerEvents<Peer>>
+  extends TypedEventTarget<PubSubPeerEvents<Peer>>
   implements Startable {
 
   private readonly peers: Map<string, Peer[]> = new Map();
@@ -99,14 +99,14 @@ export class PubSubPeerMonitor<Peer extends StringEquatable<Peer>>
     // remove leaving peers from peers list and emit event
     if (leaving) {
       const leavingPeers = peers.splice(peers.length - leaving, leaving);
-      this.emit(PubSubPeerEvent.Leave, { topic, peers: leavingPeers });
+      this.dispatchEvent(createEvent(PubSubPeerEvent.Leave, { topic, peers: leavingPeers }));
     }
 
     // add joining peers to peers list and emit event
     if (newPeers.length - existing) {
       const joiningPeers = newPeers.slice(existing);
       peers.push(...joiningPeers);
-      this.emit(PubSubPeerEvent.Join, { topic, peers: joiningPeers });
+      this.dispatchEvent(createEvent(PubSubPeerEvent.Join, { topic, peers: joiningPeers }));
     }
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "mithic",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Modular library for real-time, offline-first isomorphic applications",
   "type": "module",
   "sideEffects": false,
@@ -44,12 +44,12 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/collections": "^0.2",
-    "@mithic/commons": "^0.2",
-    "@mithic/cqrs": "^0.2",
-    "@mithic/crdt": "^0.2",
-    "@mithic/eventstore": "^0.2",
-    "@mithic/messaging": "^0.2"
+    "@mithic/collections": "^0.3",
+    "@mithic/commons": "^0.3",
+    "@mithic/cqrs": "^0.3",
+    "@mithic/crdt": "^0.3",
+    "@mithic/eventstore": "^0.3",
+    "@mithic/messaging": "^0.3"
   },
   "devDependencies": {
     "rimraf": "^5.0",

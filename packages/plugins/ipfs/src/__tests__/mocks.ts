@@ -1,8 +1,6 @@
 import { Ed25519PeerId, PeerId } from '@libp2p/interface-peer-id';
 import { PublishResult as Libp2pPubSubResult, PubSub as ILibp2pPubSub, PubSubEvents as Libp2pPubSubEvents, StrictSign, TopicValidatorFn as Libp2pTopicValidatorFn } from '@libp2p/interface-pubsub';
 import { EventEmitter } from '@libp2p/interfaces/events';
-import { notFoundError } from '@mithic/commons';
-import { IPFS } from 'ipfs-core-types';
 import { CID, MultihashDigest } from 'multiformats';
 import { identity } from 'multiformats/hashes/identity';
 
@@ -75,73 +73,4 @@ export class MockEvent<T = unknown> extends Event {
     super(type, eventInitDict);
     this.detail = eventInitDict?.detail as T;
   }
-}
-
-export class MockIpfs implements IPFS {
-  bitswap!: IPFS['bitswap'];
-  bootstrap!: IPFS['bootstrap'];
-  config!: IPFS['config'];
-  dag!: IPFS['dag'];
-  dht!: IPFS['dht'];
-  diag!: IPFS['diag'];
-  files!: IPFS['files'];
-  key!: IPFS['key'];
-  log!: IPFS['log'];
-  name!: IPFS['name'];
-  object!: IPFS['object'];
-  pin!: IPFS['pin'];
-  refs!: IPFS['refs'];
-  repo!: IPFS['repo'];
-  stats!: IPFS['stats'];
-  swarm!: IPFS['swarm'];
-  bases!: IPFS['bases'];
-  codecs!: IPFS['codecs'];
-  hashers!: IPFS['hashers'];
-
-  block = {
-    data: new Map<string, [CID, Uint8Array]>(),
-
-    async get(cid: CID): Promise<Uint8Array> {
-      const data = this.data.get(cid.toString());
-      if (data) {
-        return data[1];
-      }
-      throw notFoundError('not found');
-    },
-    async put(input: Uint8Array): Promise<CID> {
-      const cid = ([...this.data].find(([, val]) => val[1] === input))?.[1][0];
-      if (cid) {
-        return cid;
-      }
-      throw new Error('mismatched data');
-    },
-    async * rm(cid: CID | CID[]): AsyncIterable<{ cid: CID, error?: Error }> {
-      const cids = !Array.isArray(cid) ? [cid] : cid;
-      for (const cid of cids) {
-        if (!this.data.delete(cid.toString())) {
-          yield { cid, error: new Error('mismatched data') };
-          return;
-        }
-        yield { cid };
-      }
-    }
-  };
-
-  pubsub = {
-    subscribers: new Map<string, PeerId[]>(),
-
-    async subscribe(topic: string) {
-      this.subscribers.set(topic, this.subscribers.get(topic) || []);
-    },
-    async unsubscribe(topic: string) {
-      this.subscribers.delete(topic);
-    },
-    async publish() { return; },
-    async ls(): Promise<string[]> {
-      return Array.from(this.subscribers.keys());
-    },
-    async peers(topic: string): Promise<PeerId[]> {
-      return this.subscribers.get(topic) || [];
-    }
-  };
 }
