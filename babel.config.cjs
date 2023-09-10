@@ -20,7 +20,9 @@ module.exports = api => {
       'node_modules'
     ],
     minified: true,
-    plugins: [],
+    plugins: [
+      '@babel/plugin-proposal-explicit-resource-management'
+    ],
     presets: [
       [
         '@babel/preset-env',

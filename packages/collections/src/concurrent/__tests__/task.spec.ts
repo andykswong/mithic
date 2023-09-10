@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { CountingSemaphore, delay } from '@mithic/commons';
+import { SharedCountingSemaphore, delay } from '@mithic/commons';
 import { RunnableTask, TaskQueue } from '../task.js';
 
 describe(TaskQueue.name, () => {
@@ -19,8 +19,8 @@ describe(TaskQueue.name, () => {
       expect(taskQueue['queue']).toHaveLength(0);
     });
 
-    it('should initialize the semaphore with a CountingSemaphore instance by default', () => {
-      expect(taskQueue['semaphore']).toBeInstanceOf(CountingSemaphore);
+    it('should initialize the semaphore with a SharedCountingSemaphore instance by default', () => {
+      expect(taskQueue['lock']).toBeInstanceOf(SharedCountingSemaphore);
     });
   });
 
@@ -43,9 +43,9 @@ describe(TaskQueue.name, () => {
     });
 
     it('should queue tasks to be executed with semaphore locking', async () => {
-      const tryAcquireSpy = jest.spyOn(taskQueue['semaphore'], 'tryAcquire');
-      const acquireSpy = jest.spyOn(taskQueue['semaphore'], 'acquire');
-      const releaseSpy = jest.spyOn(taskQueue['semaphore'], 'release');
+      const tryAcquireSpy = jest.spyOn(taskQueue['lock'], 'tryAcquire');
+      const acquireSpy = jest.spyOn(taskQueue['lock'], 'acquire');
+      const releaseSpy = jest.spyOn(taskQueue['lock'], 'release');
       const options = { signal: AbortSignal.timeout(1000) };
       const expected1 = 'result';
       const expected2 = 'result2';
@@ -87,8 +87,8 @@ describe(TaskQueue.name, () => {
     it('should wait for the top task in the queue to complete with semaphore lock', async () => {
       taskQueue.pause();
 
-      const acquireSpy = jest.spyOn(taskQueue['semaphore'], 'acquire');
-      const releaseSpy = jest.spyOn(taskQueue['semaphore'], 'release');
+      const acquireSpy = jest.spyOn(taskQueue['lock'], 'acquire');
+      const releaseSpy = jest.spyOn(taskQueue['lock'], 'release');
       const options = { signal: AbortSignal.timeout(1000) };
       const task = jest.fn<() => Promise<void>>();
       taskQueue.push(task);
@@ -103,7 +103,7 @@ describe(TaskQueue.name, () => {
     });
 
     it('should do nothing if queue is empty', async () => {
-      const acquireSpy = jest.spyOn(taskQueue['semaphore'], 'acquire');
+      const acquireSpy = jest.spyOn(taskQueue['lock'], 'acquire');
       await taskQueue.poll();
       expect(acquireSpy).not.toBeCalled();
     });
@@ -113,8 +113,8 @@ describe(TaskQueue.name, () => {
     it('should wait for the top task in the queue to complete with semaphore lock', async () => {
       taskQueue.pause();
 
-      const acquireSpy = jest.spyOn(taskQueue['semaphore'], 'tryAcquire');
-      const releaseSpy = jest.spyOn(taskQueue['semaphore'], 'release');
+      const acquireSpy = jest.spyOn(taskQueue['lock'], 'tryAcquire');
+      const releaseSpy = jest.spyOn(taskQueue['lock'], 'release');
       const task = jest.fn<() => Promise<void>>();
       taskQueue.push(task);
 
@@ -131,13 +131,13 @@ describe(TaskQueue.name, () => {
       taskQueue.push(task);
       taskQueue.push(task);
 
-      const acquireSpy = jest.spyOn(taskQueue['semaphore'], 'tryAcquire');
+      const acquireSpy = jest.spyOn(taskQueue['lock'], 'tryAcquire');
       expect(await taskQueue.tryPoll()).toBeUndefined();
       expect(acquireSpy).nthReturnedWith(1, false);
     });
 
     it('should do nothing if queue is empty', async () => {
-      const acquireSpy = jest.spyOn(taskQueue['semaphore'], 'tryAcquire');
+      const acquireSpy = jest.spyOn(taskQueue['lock'], 'tryAcquire');
       expect(await taskQueue.tryPoll()).toBeUndefined();
       expect(acquireSpy).not.toBeCalled();
     });
@@ -166,7 +166,7 @@ describe(TaskQueue.name, () => {
     });
 
     it('should do nothing if already started', async () => {
-      const acquireSpy = jest.spyOn(taskQueue['semaphore'], 'tryAcquire');
+      const acquireSpy = jest.spyOn(taskQueue['lock'], 'tryAcquire');
       taskQueue.start();
       await delay();
       expect(acquireSpy).not.toBeCalled();

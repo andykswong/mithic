@@ -1,11 +1,12 @@
-import { AbortOptions, Startable } from '@mithic/commons';
+import { AbortOptions, AsyncDisposableCloseable, Startable } from '@mithic/commons';
 import { MessageHandler, MessageValidatorResult, PubSub, PubSubMessage, SubscribeOptions } from '@mithic/messaging';
 import { RedisClientType, commandOptions } from '@redis/client';
 import { RedisValueType } from './type.js';
 
 /** Redis implementation of {@link PubSub}. */
 export class RedisPubSub<UseBuffer extends boolean = false, R extends RedisClientType = RedisClientType>
-  implements PubSub<UseBuffer extends true ? Buffer : string>, Startable {
+  extends AsyncDisposableCloseable
+  implements PubSub<UseBuffer extends true ? Buffer : string>, Startable, AsyncDisposable {
 
   public constructor(
     /** Redis client to use. */
@@ -13,6 +14,7 @@ export class RedisPubSub<UseBuffer extends boolean = false, R extends RedisClien
     /** Whether to use buffers for messages. */
     protected readonly useBuffer?: UseBuffer,
   ) {
+    super();
   }
 
   public get started(): boolean {

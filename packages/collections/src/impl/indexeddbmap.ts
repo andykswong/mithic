@@ -1,10 +1,11 @@
-import { AbortOptions, CodedError, ErrorCode, Startable, operationError } from '@mithic/commons';
+import { AbortOptions, CodedError, DisposableCloseable, ErrorCode, Startable, operationError } from '@mithic/commons';
 import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
 import { RangeQueryOptions, RangeQueryable } from '../query.js';
 
 /** A map that stores data in IndexedDB. */
 export class IndexedDBMap<K extends IDBValidKey, V>
-  implements MaybeAsyncMap<K, V>, MaybeAsyncMapBatch<K, V>, AsyncIterable<[K, V]>, RangeQueryable<K, V>, Startable {
+  extends DisposableCloseable
+  implements MaybeAsyncMap<K, V>, MaybeAsyncMapBatch<K, V>, AsyncIterable<[K, V]>, RangeQueryable<K, V>, Startable, Disposable {
   private db?: IDBDatabase;
 
   public constructor(
@@ -13,6 +14,7 @@ export class IndexedDBMap<K extends IDBValidKey, V>
     /** Name of IndexedDB store to use. */
     private readonly storeName: string
   ) {
+    super();
   }
 
   public get started(): boolean {

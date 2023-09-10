@@ -1,4 +1,4 @@
-import { CountingSemaphore } from '../semaphore.js';
+import { CountingSemaphore, SharedCountingSemaphore } from '../semaphore.js';
 
 describe(CountingSemaphore.name, () => {
   let semaphore: CountingSemaphore;
@@ -7,61 +7,137 @@ describe(CountingSemaphore.name, () => {
     semaphore = new CountingSemaphore(2);
   });
 
-  test('acquire with available permits should succeed', async () => {
-    expect.assertions(1);
+  describe('acquire', () => {
+    it('should block until permits are available', async () => {
+      expect.assertions(2);
 
-    await semaphore.acquire();
-    expect(semaphore.tryAcquire()).toBe(true);
+      await semaphore.acquire();
+      await semaphore.acquire();
+
+      setTimeout(() => {
+        expect(semaphore.availablePermits).toBe(0);
+        semaphore.release();
+        semaphore.release();
+      }, 100);
+
+      await semaphore.acquire();
+      expect(semaphore.availablePermits).toBe(1);
+    });
+
+    it('should throw an error if aborted', async () => {
+      await semaphore.acquire();
+      await semaphore.acquire();
+
+      const abortController = new AbortController();
+      const promise = semaphore.acquire({ signal: abortController.signal });
+      abortController.abort();
+      expect(promise).rejects.toThrow();
+    });
   });
 
-  test('acquire with no available permits should block', async () => {
-    expect.assertions(2);
+  describe('tryAcquire', () => {
+    it('should return true when permits are available', () => {
+      expect(semaphore.tryAcquire()).toBe(true);
+    });
 
-    semaphore.acquire();
-    semaphore.acquire();
+    it('should return true when there is 1 permit left', async () => {
+      await semaphore.acquire();
+      expect(semaphore.tryAcquire()).toBe(true);
+    });
 
-    setTimeout(() => {
+    it('should return false when no permit available', async () => {
+      await semaphore.acquire();
+      await semaphore.acquire();
+      expect(semaphore.tryAcquire()).toBe(false);
+    });
+  });
+
+  describe('release', () => {
+    it('should increase available permits', async () => {
+      await semaphore.acquire();
+      await semaphore.acquire();
       expect(semaphore.tryAcquire()).toBe(false);
       semaphore.release();
+      expect(semaphore.tryAcquire()).toBe(true);
+    });
+
+    it('should not increase available permits beyond total', () => {
       semaphore.release();
-    }, 100);
+      expect(semaphore.tryAcquire()).toBe(true);
+      expect(semaphore.tryAcquire()).toBe(true);
+      expect(semaphore.tryAcquire()).toBe(false);
+    });
+  });
+});
 
-    await semaphore.acquire();
-    expect(semaphore.tryAcquire()).toBe(true);
+describe(SharedCountingSemaphore.name, () => {
+  let semaphore: SharedCountingSemaphore;
+  let semaphore2: SharedCountingSemaphore;
+
+  beforeEach(() => {
+    semaphore = new SharedCountingSemaphore({ permits: 2 });
+    semaphore2 = new SharedCountingSemaphore(semaphore);
   });
 
-  test('release should increase available permits', async () => {
-    expect.assertions(1);
-    
-    await semaphore.acquire();
-    semaphore.release();
-    expect(semaphore.tryAcquire()).toBe(true);
+  describe('acquire', () => {
+    it('should block until permits are available', async () => {
+      expect.assertions(2);
+
+      await semaphore.acquire();
+      await semaphore.acquire();
+
+      setTimeout(() => {
+        expect(semaphore.availablePermits).toBe(0);
+        semaphore.release();
+        semaphore.release();
+      }, 500);
+
+      await semaphore2.acquire();
+      expect(semaphore.availablePermits).toBe(1);
+    });
+
+    it('should throw an error if aborted', async () => {
+      await semaphore.acquire();
+      await semaphore.acquire();
+
+      const abortController = new AbortController();
+      const promise = semaphore2.acquire({ signal: abortController.signal });
+      abortController.abort();
+      expect(promise).rejects.toThrow();
+    });
   });
 
-  test('tryAcquire should return true when permits available', () => {
-    expect(semaphore.tryAcquire()).toBe(true);
+  describe('tryAcquire', () => {
+    it('should return true when permits are available', () => {
+      expect(semaphore.tryAcquire()).toBe(true);
+    });
+
+    it('should return true when there is 1 permit left', async () => {
+      await semaphore.acquire();
+      expect(semaphore2.tryAcquire()).toBe(true);
+    });
+
+    it('should return false when no permit available', async () => {
+      await semaphore.acquire();
+      await semaphore.acquire();
+      expect(semaphore2.tryAcquire()).toBe(false);
+    });
   });
 
-  test('tryAcquire should return false when no permits available', () => {
-    semaphore.acquire();
-    semaphore.acquire();
-    expect(semaphore.tryAcquire()).toBe(false);
-  });
+  describe('release', () => {
+    it('should increase available permits', async () => {
+      await semaphore.acquire();
+      await semaphore.acquire();
+      expect(semaphore2.tryAcquire()).toBe(false);
+      semaphore.release();
+      expect(semaphore2.tryAcquire()).toBe(true);
+    });
 
-  test('release should not increase available permits beyond total', () => {
-    semaphore.release();
-    expect(semaphore.tryAcquire()).toBe(true);
-    expect(semaphore.tryAcquire()).toBe(true);
-    expect(semaphore.tryAcquire()).toBe(false);
-  });
-
-  test('aborting the acquire should throw an error', () => {
-    semaphore.acquire();
-    semaphore.acquire();
-
-    const abortController = new AbortController();
-    const promise = semaphore.acquire({ signal: abortController.signal });
-    abortController.abort();
-    expect(promise).rejects.toThrow();
+    it('should not increase available permits beyond total', () => {
+      semaphore.release();
+      expect(semaphore.tryAcquire()).toBe(true);
+      expect(semaphore.tryAcquire()).toBe(true);
+      expect(semaphore.tryAcquire()).toBe(false);
+    });
   });
 });

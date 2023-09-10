@@ -1,9 +1,9 @@
-import { AbortOptions, Startable, maybeAsync } from '@mithic/commons';
+import { AbortOptions, AsyncDisposableCloseable, Startable, maybeAsync } from '@mithic/commons';
 import { resolve } from '@mithic/commons/maybeAsync';
 import { MessageConsumer, MessageSubscription, Unsubscribe } from './bus.js';
 
 /** Processor of messages from an {@link MessageSubscription}. */
-export class MessageProcessor<Msg = unknown> implements Startable {
+export class MessageProcessor<Msg = unknown> extends AsyncDisposableCloseable implements Startable, AsyncDisposable {
   private handle: Unsubscribe | undefined;
 
   public constructor(
@@ -12,6 +12,7 @@ export class MessageProcessor<Msg = unknown> implements Startable {
     /** Consumer of messages. */
     protected readonly consumer: MessageConsumer<Msg>
   ) {
+    super();
   }
 
   public get started(): boolean {
@@ -22,7 +23,7 @@ export class MessageProcessor<Msg = unknown> implements Startable {
     this.handle = yield* resolve(this.subscription.subscribe(this.consumer, options));
   }, this);
 
-  public close = maybeAsync(function* (this: MessageProcessor<Msg>, options?: AbortOptions) {
+  public override close = maybeAsync(function* (this: MessageProcessor<Msg>, options?: AbortOptions) {
     if (this.handle) {
       yield* resolve(this.handle(options));
       this.handle = void 0;

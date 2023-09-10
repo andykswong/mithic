@@ -1,12 +1,14 @@
 import { MaybeAsyncMap, MaybeAsyncMapBatch, RangeQueryOptions, RangeQueryable } from '@mithic/collections';
-import { AbortOptions, CodedError, ErrorCode, Startable, operationError } from '@mithic/commons';
+import { AbortOptions, AsyncDisposableCloseable, CodedError, ErrorCode, Startable, operationError } from '@mithic/commons';
 import { commandOptions, RedisClientType } from '@redis/client';
 import { RedisValueType } from './type.js';
 
 /** Redis implementation of an async queryable map. */
 export class RedisMap<UseBuffer extends boolean = false, R extends RedisClientType = RedisClientType>
+  extends AsyncDisposableCloseable
   implements AsyncIterable<[string, RedisValueType<UseBuffer>]>, MaybeAsyncMap<string, RedisValueType<UseBuffer>>,
-  MaybeAsyncMapBatch<string, RedisValueType<UseBuffer>>, RangeQueryable<string, RedisValueType<UseBuffer>>, Startable {
+  MaybeAsyncMapBatch<string, RedisValueType<UseBuffer>>, RangeQueryable<string, RedisValueType<UseBuffer>>,
+  Startable, AsyncDisposable {
 
   public constructor(
     /** Redis client to use. */
@@ -18,6 +20,7 @@ export class RedisMap<UseBuffer extends boolean = false, R extends RedisClientTy
     /** Whether to use buffers or strings as values. */
     protected readonly useBuffer?: UseBuffer,
   ) {
+    super();
   }
 
   public get started(): boolean {

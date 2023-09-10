@@ -42,7 +42,7 @@ export function bindMessageCreator<Msg, Args extends unknown[]>(
   creator: MessageCreator<Msg, Args>,
   dispatcher: MessageDispatcher<Msg>
 ): Command<Args> {
-  const dispatch = dispatcher.dispatch.bind(dispatcher);
+  const dispatch = (msg: Msg) => dispatcher.dispatch(msg);
   return (...args: Args) => MaybePromise.map(creator(...args), dispatch);
 }
 

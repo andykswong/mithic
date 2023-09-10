@@ -1,6 +1,6 @@
 import { PeerId } from '@libp2p/interface-peer-id';
 import { Message, PubSub as ILibp2pPubSub, StrictSign, TopicValidatorResult } from '@libp2p/interface-pubsub';
-import { EventsOfType, TypedEventHandler } from '@mithic/commons';
+import { DisposableCloseable, EventsOfType, TypedEventHandler } from '@mithic/commons';
 import {
   DEFAULT_PUBSUB_PEER_MONITOR_REFRESH_MS, MessageHandler, PeerAwarePubSub, PubSubMessage, PubSubPeerEvent,
   PubSubPeerEvents, PubSubPeerMonitor, SubscribeOptions
@@ -9,11 +9,12 @@ import {
 const EVENT_MSG = 'message';
 
 /** Libp2p implementation of {@link PubSub}. */
-export class Libp2pPubSub implements PeerAwarePubSub<Uint8Array, PeerId> {
+export class Libp2pPubSub extends DisposableCloseable implements PeerAwarePubSub<Uint8Array, PeerId>, Disposable {
   protected readonly handlers = new Map<string, MessageHandler<PubSubMessage<Uint8Array, PeerId>>>();
   protected readonly monitor?: PubSubPeerMonitor<PeerId>;
 
   public constructor(protected readonly pubsub: ILibp2pPubSub, options?: Libp2pPubSubOptions) {
+    super();
     const refreshMs = (options?.monitorPeers ?? DEFAULT_PUBSUB_PEER_MONITOR_REFRESH_MS) || 0;
     if (refreshMs > 0) {
       this.monitor = new PubSubPeerMonitor(this, refreshMs, false);

@@ -7,7 +7,7 @@ export const DEFAULT_PUBSUB_PEER_MONITOR_REFRESH_MS = 1000;
 /** Monitor of topic peers from {@link PubSubPeerState}. */
 export class PubSubPeerMonitor<Peer extends StringEquatable<Peer>>
   extends TypedEventTarget<PubSubPeerEvents<Peer>>
-  implements Startable {
+  implements Startable, Disposable {
 
   private readonly peers: Map<string, Peer[]> = new Map();
   private pollTimer = 0;
@@ -28,6 +28,10 @@ export class PubSubPeerMonitor<Peer extends StringEquatable<Peer>>
     clearInterval(this.pollTimer);
     this.pollTimer = 0;
     this.peers.clear();
+  }
+
+  public [Symbol.dispose](): void {
+    this.close();
   }
 
   /** Returns if this monitor is running. */

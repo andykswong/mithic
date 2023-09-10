@@ -6,7 +6,7 @@ import { MessageSubscription, Unsubscribe } from '../bus.js';
  * Subscribe to an {@link MessageSubscription} as AsyncIterator.
  * This is useful for GraphQL subscriptions.
  */
-export class AsyncSubscriber<Message> implements AsyncIterableIterator<Message>, Closeable {
+export class AsyncSubscriber<Message> implements AsyncIterableIterator<Message>, Closeable, AsyncDisposable {
   private readonly pullQueue: ArrayDeque<(value: IteratorResult<Message>) => void> = new ArrayDeque();
   private readonly pushQueue: ArrayDeque<Message> = new ArrayDeque();
   private readonly bufferSize: number;
@@ -64,6 +64,10 @@ export class AsyncSubscriber<Message> implements AsyncIterableIterator<Message>,
     this.pushQueue.clear();
     await (await this.unsubscribe)();
     this.running = false;
+  }
+
+  public [Symbol.asyncDispose](): Promise<void> {
+    return this.close();
   }
 
   private async push(value: Message) {

@@ -2,10 +2,9 @@ import {
   AppendOnlyAutoKeyMap, AutoKeyMapPutBatch, MaybeAsyncReadonlyMapBatch, ReadonlyAutoKeyMap
 } from '@mithic/collections';
 import { AbortOptions, CodedError, ContentId, MaybeAsyncIterableIterator, MaybePromise, SyncOrAsyncGenerator } from '@mithic/commons';
-import { Event } from './event.js';
 
 /** An append-only event store. */
-export interface EventStore<K = ContentId, V = Event, QueryExt extends object = NonNullable<unknown>>
+export interface EventStore<K = ContentId, V = unknown, QueryExt extends object = NonNullable<unknown>>
   extends ReadonlyEventStore<K, V, QueryExt>, AppendOnlyAutoKeyMap<K, V>, AutoKeyMapPutBatch<K, V>
 {
   put(value: V, options?: EventStorePutOptions): MaybePromise<K>;
@@ -14,7 +13,7 @@ export interface EventStore<K = ContentId, V = Event, QueryExt extends object = 
 }
 
 /** A read-only event store. */
-export interface ReadonlyEventStore<K = ContentId, V = Event, QueryExt extends object = NonNullable<unknown>>
+export interface ReadonlyEventStore<K = ContentId, V = unknown, QueryExt extends object = NonNullable<unknown>>
   extends ReadonlyAutoKeyMap<K, V>, MaybeAsyncReadonlyMapBatch<K, V>, EventStoreQuery<K, V, QueryExt> {
 
   /** Validates given event and returns any error. */
@@ -22,7 +21,7 @@ export interface ReadonlyEventStore<K = ContentId, V = Event, QueryExt extends o
 }
 
 /** Query APIs for an event store. */
-export interface EventStoreQuery<K = ContentId, V = Event, QueryExt extends object = NonNullable<unknown>> {
+export interface EventStoreQuery<K = ContentId, V = unknown, QueryExt extends object = NonNullable<unknown>> {
   /** Queries entries by given criteria. */
   entries(options?: EventStoreQueryOptions<K> & QueryExt): SyncOrAsyncGenerator<[K, V], K[]>;
 

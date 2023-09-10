@@ -1,5 +1,5 @@
 import { MaybeAsyncMap, MaybeAsyncMapBatch, RangeQueryOptions, RangeQueryable } from '@mithic/collections';
-import { AbortOptions, CodedError, ErrorCode, Startable, operationError } from '@mithic/commons';
+import { AbortOptions, AsyncDisposableCloseable, CodedError, ErrorCode, Startable, operationError } from '@mithic/commons';
 import { AbstractLevel, AbstractOpenOptions } from 'abstract-level';
 
 const LEVEL_NOT_FOUND = 'LEVEL_NOT_FOUND';
@@ -7,7 +7,9 @@ const LEVEL_NOT_FOUND = 'LEVEL_NOT_FOUND';
 /** {@link AbstractLevel} implementation of an async queryable map. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export class LevelMap<K, V, T = any>
-  implements AsyncIterable<[K, V]>, MaybeAsyncMap<K, V>, MaybeAsyncMapBatch<K, V>, RangeQueryable<K, V>, Startable {
+  extends AsyncDisposableCloseable
+  implements AsyncIterable<[K, V]>, MaybeAsyncMap<K, V>, MaybeAsyncMapBatch<K, V>, RangeQueryable<K, V>,
+  Startable, AsyncDisposable {
 
   private opened: boolean;
 
@@ -15,6 +17,7 @@ export class LevelMap<K, V, T = any>
     /** Backing AbstractLevel storage. */
     protected readonly level: AbstractLevel<T, K, V>,
   ) {
+    super();
     this.opened = level.status === 'open';
   }
 

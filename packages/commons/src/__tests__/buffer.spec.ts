@@ -1,6 +1,6 @@
-import { sha256 } from '@mithic/commons';
-import { compareContentIds, compareBuffers, concatBuffers } from '../buffer.js';
 import { CID } from 'multiformats';
+import { sha256 } from '../hash.js';
+import { compareContentIds, compareBuffers, concatBuffers } from '../buffer.js';
 
 describe('compareBuffers', () => {
   it('should return 0 when two buffers have same data and length', () => {

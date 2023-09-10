@@ -52,8 +52,21 @@
     "@mithic/messaging": "^0.3"
   },
   "devDependencies": {
+    "@babel/cli": "^7.20",
+    "@babel/core": "^7.20",
+    "@babel/plugin-proposal-explicit-resource-management": "^7.20",
+    "@babel/preset-env": "^7.20",
+    "@babel/preset-typescript": "^7.20",
+    "@typescript-eslint/eslint-plugin": "^6.0",
+    "@typescript-eslint/parser": "^6.0",
+    "babel-jest": "^29.5",
+    "core-js": "^3.30",
+    "cross-env": "^7.0",
+    "eslint": "^8.40",
+    "jest": "^29.5",
     "rimraf": "^5.0",
-    "typedoc": "^0.24"
+    "typedoc": "^0.25",
+    "typescript": "^5.2"
   },
   "workspaces": [
     "./packages/commons",

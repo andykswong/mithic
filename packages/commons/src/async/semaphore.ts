@@ -1,27 +1,22 @@
-import { AbortOptions, MaybePromise } from '@mithic/commons';
+import { Lock } from './lock.js';
+import { AbortOptions } from './options.js';
+import { MaybePromise } from './promise.js';
 
-/** A data structure that maintains a set of permits to limit access. */
-export interface Semaphore {
-  /** Waits for a permit to be acquired. */
-  acquire(options?: AbortOptions): MaybePromise<void>;
-
-  /** Tried to acquire a permit. Returns true if success, false otherwise. */
-  tryAcquire(): boolean;
-
-  /** Releases a permit. */
-  release(): void;
-}
-
-/** A counting {@link Semaphore} limits access to resources with a fixed number of permits. */
-export class CountingSemaphore implements Semaphore {
+/** A simple counting semaphore that limits access to resources with a fixed number of permits. */
+export class CountingSemaphore implements Lock {
   private leased = 0;
   private released?: Promise<void>;
   private onRelease?: () => void;
 
   public constructor(
     /** Total number of permits. */
-    private readonly permits = 1,
+    public readonly permits = 1,
   ) {
+  }
+
+  /** Returns the number of permits available for use. */
+  public get availablePermits(): number {
+    return this.permits - this.leased;
   }
 
   public acquire(options?: AbortOptions): MaybePromise<void> {
@@ -56,4 +51,71 @@ export class CountingSemaphore implements Semaphore {
       options?.signal?.throwIfAborted();
     } while (!this.tryAcquire());
   }
+}
+
+/** A counting semaphore that uses a shared array buffer for synchronization. */
+export class SharedCountingSemaphore implements Lock {
+  public readonly buffer: Int32Array;
+  public readonly permits: number;
+  public readonly waitInterval: number;
+
+  public constructor({ buffer, permits = 1, waitInterval = 200 }: SharedCountingSemaphoreOptions = {}) {
+    this.permits = permits;
+    this.waitInterval = waitInterval;
+    if (buffer && buffer.length > 0) {
+      this.buffer = buffer;
+    } else {
+      this.buffer = new Int32Array(new SharedArrayBuffer(4));
+      Atomics.store(this.buffer, 0, permits);
+    }
+  }
+
+  /** Returns the number of permits available for use. */
+  public get availablePermits(): number {
+    return Atomics.load(this.buffer, 0);
+  }
+
+  public async acquire(options?: AbortOptions): Promise<void> {
+    while (!this.tryAcquire()) {
+      options?.signal?.throwIfAborted();
+      await Atomics.waitAsync(this.buffer, 0, 0, this.waitInterval).value;
+    }
+  }
+
+  public tryAcquire(): boolean {
+    for (; ;) {
+      const permits = this.availablePermits;
+      if (permits <= 0) {
+        return false;
+      }
+      if (Atomics.compareExchange(this.buffer, 0, permits, permits - 1) === permits) {
+        return true;
+      }
+    }
+  }
+
+  public release(): void {
+    for (; ;) {
+      const permits = Atomics.load(this.buffer, 0);
+      if (permits >= this.permits) {
+        break;
+      }
+      if (Atomics.compareExchange(this.buffer, 0, permits, permits + 1) === permits) {
+        Atomics.notify(this.buffer, 0);
+        break;
+      }
+    }
+  }
+}
+
+/** Options for creating a {@link SharedCountingSemaphore}. */
+export interface SharedCountingSemaphoreOptions {
+  /** Max number of permits. Defaults to 1. */
+  permits?: number;
+
+  /** Shared array buffer for permit synchronization. */
+  buffer?: Int32Array;
+
+  /** The interval in milliseconds to wait for a permit. Defaults to 200. */
+  waitInterval?: number;
 }

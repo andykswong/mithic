@@ -1,4 +1,4 @@
-import { AbortOptions, MaybePromise, Startable } from '@mithic/commons';
+import { AbortOptions, AsyncDisposableCloseable, MaybePromise, Startable } from '@mithic/commons';
 import { MessageBus, MessageConsumer, MessageDispatcher, MessageSubscription, Unsubscribe } from '../bus.js';
 import { AsyncSubscriber, AsyncSubscriberOptions, SimpleMessageBus } from '../bus/index.js';
 import { MessageReducer, MessageReducerFn } from '../processor/index.js';
@@ -13,13 +13,17 @@ export function createReduxStore<State, Msg>(
 }
 
 /** Simple implementation of {@link ReduxStore}. */
-export class SimpleReduxStore<State, Command> implements ReduxStore<State, Command> {
+export class SimpleReduxStore<State, Command>
+  extends AsyncDisposableCloseable
+  implements ReduxStore<State, Command>, AsyncDisposable {
+
   public constructor(
     /** Dispatcher to use. */
     protected readonly dispatcher: MessageDispatcher<Command>,
     /** Reducer to use. */
     protected readonly reducer: MessageReducer<Command, State>,
   ) {
+    super();
     this.dispatch = this.dispatch.bind(this);
   }
 
@@ -31,7 +35,7 @@ export class SimpleReduxStore<State, Command> implements ReduxStore<State, Comma
     return this.reducer.start(options);
   }
 
-  public close(options?: AbortOptions): MaybePromise<void> {
+  public override close(options?: AbortOptions): MaybePromise<void> {
     return this.reducer.close(options);
   }
 

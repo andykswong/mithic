@@ -13,7 +13,7 @@ const NUM_KEEPALIVES_TO_WAIT = 3;
 /** {@link PubSub} implementation using browser BroadcastChannel. */
 export class BroadcastChannelPubSub<Msg = Uint8Array, PeerId extends StringEquatable = string>
   extends TypedEventTarget<PubSubPeerEvents<PeerId>>
-  implements PeerAwarePubSub<Msg, PeerId>
+  implements PeerAwarePubSub<Msg, PeerId>, Disposable
 {
   /** This peer's ID. */
   public readonly peerId: PeerId;
@@ -48,6 +48,10 @@ export class BroadcastChannelPubSub<Msg = Uint8Array, PeerId extends StringEquat
     for (const topic of this.topicChannels.keys()) {
       this.unsubscribe(topic);
     }
+  }
+
+  public [Symbol.dispose](): void {
+    this.close();
   }
 
   public subscribe(

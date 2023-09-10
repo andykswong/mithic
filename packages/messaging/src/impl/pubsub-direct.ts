@@ -1,4 +1,4 @@
-import { AbortOptions, MaybePromise, StringEquatable, equalsOrSameString } from '@mithic/commons';
+import { AbortOptions, AsyncDisposableCloseable, MaybePromise, StringEquatable, equalsOrSameString } from '@mithic/commons';
 import { PeerChannel, PeerMessage } from '../p2p.js';
 import { PubSubMessage, MessageValidatorResult, PeerAwarePubSub, MessageValidator, MessageHandler } from '../pubsub.js';
 import { waitForPeer } from './wait-peer.js';
@@ -12,7 +12,8 @@ export const PUBSUB_DIRECT_CHANNEL_PROTOCOL_SEMVER = '0.1.0';
 
 /** An implementation of {@link PeerChannel} that uses a unique {@link PubSub} topic for messaging. */
 export class PubSubDirectChannel<Msg = Uint8Array, Peer extends StringEquatable<Peer> = string>
-  implements PeerChannel<Msg, Peer>
+  extends AsyncDisposableCloseable
+  implements PeerChannel<Msg, Peer>, AsyncDisposable
 {
   public readonly id: string;
   protected readonly protocol: string;
@@ -29,6 +30,7 @@ export class PubSubDirectChannel<Msg = Uint8Array, Peer extends StringEquatable<
       validator
     }: PubSubDirectChannelOptions<Msg, Peer> = {},
   ) {
+    super();
     this.id = `${protocol}/${Array.from([self.toString(), peer.toString()]).sort().join('/')}`;
     this.protocol = protocol;
     this.validator = validator;
@@ -53,7 +55,7 @@ export class PubSubDirectChannel<Msg = Uint8Array, Peer extends StringEquatable<
     return this.pubsub.publish(this.id, message, options);
   }
 
-  public close(): MaybePromise<void> {
+  public override close(): MaybePromise<void> {
     if (!this._started) {
       return;
     }

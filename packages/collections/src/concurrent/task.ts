@@ -1,17 +1,18 @@
-import { AbortOptions, CountingSemaphore, MaybePromise, Semaphore, Startable } from '@mithic/commons';
+import { AbortOptions, AsyncDisposableCloseable, Lock, MaybePromise, SharedCountingSemaphore, Startable } from '@mithic/commons';
 import { Queue } from '../queue.js';
 
 /** A queue of async tasks. */
-export class TaskQueue implements Startable {
+export class TaskQueue extends AsyncDisposableCloseable implements Startable, AsyncDisposable {
   private paused;
   private _pending = 0;
   private queued = 0;
 
   constructor(
-    private readonly semaphore: Semaphore = new CountingSemaphore(),
+    private readonly lock: Lock = new SharedCountingSemaphore(),
     private readonly queue: Queue<RunnableTask> = [],
     autoStart = true,
   ) {
+    super();
     this.paused = !autoStart;
   }
 
@@ -81,20 +82,20 @@ export class TaskQueue implements Startable {
       return;
     }
 
-    await this.semaphore.acquire(options);
+    await this.lock.acquire(options);
     await this.runOnceThenRelease();
   }
 
   /** Tries to poll the top queue task and waits for it to complete if not throttled. */
   public tryPoll(): Promise<void> | undefined {
-    if (!this.queued || !this.semaphore.tryAcquire()) {
+    if (!this.queued || !this.lock.tryAcquire()) {
       return;
     }
     return this.runOnceThenRelease();
   }
 
   private pollLoop(): boolean {
-    if (this.paused || !this.queued || !this.semaphore.tryAcquire()) {
+    if (this.paused || !this.queued || !this.lock.tryAcquire()) {
       return false;
     }
 
@@ -112,7 +113,7 @@ export class TaskQueue implements Startable {
     try {
       await this.runOnce();
     } finally {
-      this.semaphore.release();
+      await this.lock.release();
     }
   }
 
