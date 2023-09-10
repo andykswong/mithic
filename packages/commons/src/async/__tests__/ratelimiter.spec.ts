@@ -32,9 +32,9 @@ describe(RateLimiter.name, () => {
       await limiter.acquire();
 
       const abortController = new AbortController();
-      const promise = limiter.acquire({ signal: abortController.signal });
       abortController.abort();
-      expect(promise).rejects.toThrow();
+      const promise = limiter.acquire({ signal: abortController.signal });
+      await expect(promise).rejects.toThrow();
     });
   });
 
