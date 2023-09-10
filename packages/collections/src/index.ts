@@ -10,3 +10,5 @@ export * from './stack.js';
 export * from './concurrent/index.js';
 export * from './generational/index.js';
 export * from './impl/index.js';
+
+export * as Batch from './batch.js';

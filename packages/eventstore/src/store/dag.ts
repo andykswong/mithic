@@ -1,15 +1,14 @@
 import {
-  AppendOnlyAutoKeyMap, AutoKeyMapBatch, BinaryHeap, ContentAddressedMapStore, EncodedMap, EncodedSet, MaybeAsyncMap,
+  AppendOnlyAutoKeyMap, AutoKeyMapBatch, Batch, BinaryHeap, ContentAddressedMapStore, EncodedMap, EncodedSet, MaybeAsyncMap,
   MaybeAsyncReadonlySet, MaybeAsyncSet, MaybeAsyncSetBatch
 } from '@mithic/collections';
 import {
-  AbortOptions, CodedError, ContentId, ErrorCode, StringEquatable, SyncOrAsyncIterable, equalsOrSameString,
-  operationError
+  AbortOptions, ContentId, ErrorCode, StringEquatable, SyncOrAsyncIterable, equalsOrSameString, operationError
 } from '@mithic/commons';
+import { StandardEvent } from '@mithic/cqrs/event';
+import { BaseDagEventStore } from '../base/index.js';
 import { DEFAULT_BATCH_SIZE } from '../defaults.js';
-import { Event, EventMetadata } from '../event.js';
 import { EventStore, EventStoreQueryOptions, EventStoreMetaQueryOptions } from '../store.js';
-import { BaseDagEventStore } from './base.js';
 
 /** Default decodeKey implementation that uses multiformats as optional dependency. */
 const decodeCID = await (async () => {
@@ -24,7 +23,7 @@ const decodeCID = await (async () => {
 /** An {@link EventStore} implementation that stores a direct-acyclic graph of content-addressable events. */
 export class DagEventStore<
   K extends StringEquatable<K> = ContentId,
-  V extends Event<unknown, EventMetadata<K>> = Event<unknown, EventMetadata<K>>
+  V = unknown
 > extends BaseDagEventStore<K, V, EventStoreMetaQueryOptions<K>>
   implements EventStore<K, V, EventStoreMetaQueryOptions<K>>, AsyncIterable<[K, V]>
 {
@@ -37,8 +36,9 @@ export class DagEventStore<
     encodeKey = (key) => `${key}`,
     decodeKey = decodeCID,
     head = new EncodedSet<K, string, Set<string>>(new Set(), encodeKey, decodeKey),
+    toStandardEvent,
   }: DagEventStoreOptions<K, V> = {}) {
-    super(data);
+    super(data, toStandardEvent);
     this.encodeKey = encodeKey;
     this.decodeKey = decodeKey;
     this.headSet = head;
@@ -47,22 +47,6 @@ export class DagEventStore<
   /** The head event keys. */
   public get heads(): MaybeAsyncReadonlySet<K> & SyncOrAsyncIterable<K> {
     return this.headSet;
-  }
-
-  public override async validate(value: V, options?: AbortOptions): Promise<CodedError<K[]> | undefined> {
-    const error = await super.validate(value, options);
-    if (error) {
-      return error;
-    }
-
-    let latestTime = 0;
-    for (const [, parent] of this.currentEventDeps) {
-      latestTime = Math.max(latestTime, parent.meta.createdAt || 0);
-    }
-
-    if (value.meta.createdAt && latestTime > value.meta.createdAt) {
-      return operationError('Invalid event time', ErrorCode.InvalidArg);
-    }
   }
 
   /** Queries entries by given criteria. */
@@ -114,8 +98,9 @@ export class DagEventStore<
 
       // update head set
       heads.set(key, value);
-      if (value.meta.parents.length) {
-        for await (const error of heads.deleteMany(value.meta.parents, options)) {
+      const parents = this.toStandardEvent(value)?.meta?.prev;
+      if (parents?.length) {
+        for await (const error of heads.deleteMany(parents, options)) {
           if (error) {
             throw operationError('Failed to update head', ErrorCode.OpFailed, void 0, error);
           }
@@ -141,24 +126,23 @@ export class DagEventStore<
     return headList;
   }
 
-  protected override async prePut(value: V, options?: AbortOptions): Promise<void> {
+  protected override async prePut(value: V, options?: AbortOptions): Promise<V> {
     const key = await this.getKey(value);
+    const event = this.toStandardEvent(value);
 
     // update head
-    if (value.meta.parents.length && this.headSet.updateMany) {
-      for await (const error of this.headSet.updateMany(
-        [[key], ...value.meta.parents.map((key) => [key, true] as [K, boolean])], options
-      )) {
-        if (error) {
-          throw operationError('Failed to update head', ErrorCode.OpFailed, void 0, error);
-        }
-      }
-    } else {
-      await this.headSet.add(key, options);
-      for (const parentKey of value.meta.parents) {
-        await this.headSet.delete(parentKey, options);
+    const parents = event?.meta?.prev || [];
+    for await (const error of Batch.updateSetMany(
+      this.headSet,
+      [[key], ...parents.map((key) => [key, true] as [K, boolean])],
+      options
+    )) {
+      if (error) {
+        throw operationError('Failed to update head', ErrorCode.OpFailed, void 0, error);
       }
     }
+
+    return value;
   }
 
   /** Traverses the graph of events from given keys and returns the max level. */
@@ -174,6 +158,10 @@ export class DagEventStore<
         if (value === void 0) {
           continue;
         }
+        const event = this.toStandardEvent(value);
+        if (event === void 0) {
+          continue;
+        }
 
         let level = await visited.get(keyBatch[j], options);
         const keyVisited = level !== void 0;
@@ -181,15 +169,16 @@ export class DagEventStore<
         if (keyVisited) {
           continue;
         }
-        if (!options?.head && value.meta.parents.length) {
-          for await (const entry of this.predecessors(value.meta.parents, visited, options)) {
+        const parents = event.meta?.prev;
+        if (!options?.head && parents?.length) {
+          for await (const entry of this.predecessors(parents, visited, options)) {
             yield entry;
             level = Math.max(level, entry[2] + 1);
           }
         }
         if (
-          (options?.root === void 0 || equalsOrSameString(options.root, value.meta.root ?? keyBatch[j])) &&
-          value.type.startsWith(options?.type || '')
+          (options?.root === void 0 || equalsOrSameString(options.root, event.meta?.root ?? keyBatch[j])) &&
+          event.type.startsWith(options?.type || '')
         ) {
           yield [keyBatch[j], value, level];
         }
@@ -211,7 +200,10 @@ export interface DagEventStoreOptions<K, V> {
   encodeKey?: (key: K) => string;
 
   /** Function to decode event key string. */
-  decodeKey?: (key: string) => K,
+  decodeKey?: (key: string) => K;
+
+  /** Function to get given event as {@link StandardEvent} format. */
+  toStandardEvent?: (event: V) => StandardEvent<string, unknown, K> | undefined,
 }
 
 function* range(length: number): IterableIterator<number> {

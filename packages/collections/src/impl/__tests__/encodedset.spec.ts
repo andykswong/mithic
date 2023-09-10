@@ -137,8 +137,8 @@ describe.each([
         results.push(error);
       }
       expect(results).toEqual([
-        operationError(`Failed to delete key`, ErrorCode.OpFailed, K1, new Error('error')),
-        operationError(`Failed to add key`, ErrorCode.OpFailed, K3, new Error('error')),
+        operationError(`Failed to update key`, ErrorCode.OpFailed, K1, new Error('error')),
+        operationError(`Failed to update key`, ErrorCode.OpFailed, K3, new Error('error')),
       ])
     });
   });

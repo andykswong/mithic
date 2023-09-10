@@ -1,5 +1,6 @@
-import { AbortOptions, CodedError, ErrorCode, MaybePromise, operationError } from '@mithic/commons';
+import { AbortOptions, MaybePromise } from '@mithic/commons';
 import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
+import { deleteMany, getMany, hasMany, setMany, updateMapMany } from '../batch.js';
 
 /** A map adapter that encodes keys and/or values. */
 export class EncodedMap<
@@ -61,99 +62,37 @@ export class EncodedMap<
   }
 
   public async * getMany(keys: Iterable<K>, options?: AbortOptions): AsyncIterableIterator<V | undefined> {
-    options?.signal?.throwIfAborted();
-    if (this.map.getMany) {
-      for await (const value of this.map.getMany([...keys].map(this.encodeKey), options)) {
-        options?.signal?.throwIfAborted();
-        yield this.decodeOptionalValue(value);
-      }
-      return;
-    }
-
-    for (const key of keys) {
+    for await (const value of getMany(this.map, [...keys].map(this.encodeKey), options)) {
       options?.signal?.throwIfAborted();
-      yield this.get(key, options);
+      yield this.decodeOptionalValue(value);
     }
   }
 
-  public async * hasMany(keys: Iterable<K>, options?: AbortOptions): AsyncIterableIterator<boolean> {
-    options?.signal?.throwIfAborted();
-    if (this.map.hasMany) {
-      yield* this.map.hasMany([...keys].map(this.encodeKey), options);
-      return;
-    }
-
-    for (const key of keys) {
-      options?.signal?.throwIfAborted();
-      yield this.has(key, options);
-    }
+  public hasMany(keys: Iterable<K>, options?: AbortOptions): AsyncIterableIterator<boolean> {
+    return hasMany(this.map, [...keys].map(this.encodeKey), options);
   }
 
-  public async * setMany(entries: Iterable<[K, V]>, options?: AbortOptions): AsyncIterableIterator<Error | undefined> {
-    options?.signal?.throwIfAborted();
-    if (this.map.setMany) {
-      yield* this.map.setMany([...entries].map(([key, value]) => [this.encodeKey(key), this.encodeValue(value)]), options);
-      return;
-    }
-
-    for (const [key, value] of entries) {
-      options?.signal?.throwIfAborted();
-      try {
-        await this.set(key, value, options);
-        yield;
-      } catch (error) {
-        yield operationError('Failed to set key', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
-      }
-    }
+  public setMany(entries: Iterable<[K, V]>, options?: AbortOptions): AsyncIterableIterator<Error | undefined> {
+    return setMany(
+      this.map, [...entries].map(([key, value]) => [this.encodeKey(key), this.encodeValue(value)]), options
+    );
   }
 
-  public async * deleteMany(keys: Iterable<K>, options?: AbortOptions): AsyncIterableIterator<Error | undefined> {
-    options?.signal?.throwIfAborted();
-    if (this.map.deleteMany) {
-      yield* this.map.deleteMany([...keys].map(this.encodeKey), options);
-      return;
-    }
-
-    for (const key of keys) {
-      options?.signal?.throwIfAborted();
-      try {
-        await this.delete(key, options);
-        yield;
-      } catch (error) {
-        yield operationError('Failed to delete key', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
-      }
-    }
+  public deleteMany(keys: Iterable<K>, options?: AbortOptions): AsyncIterableIterator<Error | undefined> {
+    return deleteMany(this.map, [...keys].map(this.encodeKey), options);
   }
 
-  public async * updateMany(
+  public updateMany(
     entries: Iterable<[K, V?]>, options?: AbortOptions
   ): AsyncIterableIterator<Error | undefined> {
-    options?.signal?.throwIfAborted();
-    if (this.map.updateMany) {
-      yield* this.map.updateMany(
-        [...entries].map(
-          ([key, value]) => [this.encodeKey(key), value === void 0 ? void 0 : this.encodeValue(value)]
-        ),
-        options
-      );
-      return;
-    }
-
-    for (const [key, value] of entries) {
-      options?.signal?.throwIfAborted();
-      try {
-        if (value !== void 0) {
-          await this.set(key, value, options);
-        } else {
-          await this.delete(key, options);
-        }
-        yield;
-      } catch (error) {
-        yield operationError('Failed to update key', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
-      }
-    }
+    return updateMapMany(
+      this.map,
+      [...entries].map(
+        ([key, value]) => [this.encodeKey(key), value === void 0 ? void 0 : this.encodeValue(value)]
+      ),
+      options
+    );
   }
-
 
   public get [Symbol.toStringTag](): string {
     return EncodedMap.name;

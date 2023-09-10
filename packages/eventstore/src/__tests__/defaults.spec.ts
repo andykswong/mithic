@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { atomicHybridTime } from '../time.js';
+import { atomicHybridTime } from '../defaults.js';
 
 describe(atomicHybridTime.name, () => {
   let nowSpy: jest.SpiedFunction<() => number>;

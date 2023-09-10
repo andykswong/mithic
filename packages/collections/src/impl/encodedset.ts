@@ -1,5 +1,6 @@
-import { AbortOptions, CodedError, ErrorCode, MaybePromise, operationError } from '@mithic/commons';
+import { AbortOptions, MaybePromise } from '@mithic/commons';
 import { MaybeAsyncSet, MaybeAsyncSetBatch } from '../set.js';
+import { addMany, deleteMany, hasMany, updateSetMany } from '../batch.js';
 
 /** A set adapter that encodes keys. */
 export class EncodedSet<
@@ -44,78 +45,22 @@ export class EncodedSet<
     return this.set.has(this.encode(value), options);
   }
 
-  public async * addMany(keys: Iterable<T>, options?: AbortOptions): AsyncIterableIterator<Error | undefined> {
-    options?.signal?.throwIfAborted();
-    if (this.set.addMany) {
-      yield* this.set.addMany([...keys].map(this.encode), options);
-      return;
-    }
-
-    for (const key of keys) {
-      options?.signal?.throwIfAborted();
-      try {
-        await this.add(key, options);
-        yield;
-      } catch (error) {
-        yield operationError('Failed to add key', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
-      }
-    }
+  public addMany(keys: Iterable<T>, options?: AbortOptions): AsyncIterableIterator<Error | undefined> {
+    return addMany(this.set, [...keys].map(this.encode), options);
   }
 
-  public async * deleteMany(keys: Iterable<T>, options?: AbortOptions): AsyncIterableIterator<Error | undefined> {
-    options?.signal?.throwIfAborted();
-    if (this.set.deleteMany) {
-      yield* this.set.deleteMany([...keys].map(this.encode), options);
-      return;
-    }
-
-    for (const key of keys) {
-      options?.signal?.throwIfAborted();
-      try {
-        this.delete(key, options);
-        yield;
-      } catch (error) {
-        yield operationError('Failed to delete key', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
-      }
-    }
+  public deleteMany(keys: Iterable<T>, options?: AbortOptions): AsyncIterableIterator<Error | undefined> {
+    return deleteMany(this.set, [...keys].map(this.encode), options);
   }
 
-  public async * hasMany(keys: Iterable<T>, options?: AbortOptions): AsyncIterableIterator<boolean> {
-    options?.signal?.throwIfAborted();
-    if (this.set.hasMany) {
-      yield* this.set.hasMany([...keys].map(this.encode), options);
-      return;
-    }
-
-    for (const key of keys) {
-      options?.signal?.throwIfAborted();
-      yield this.has(key, options);
-    }
+  public hasMany(keys: Iterable<T>, options?: AbortOptions): AsyncIterableIterator<boolean> {
+    return hasMany(this.set, [...keys].map(this.encode), options);
   }
 
-  public async * updateMany(
+  public updateMany(
     keys: Iterable<[key: T, isDelete?: boolean]>, options?: AbortOptions
   ): AsyncIterableIterator<Error | undefined> {
-    options?.signal?.throwIfAborted();
-    if (this.set.updateMany) {
-      yield* this.set.updateMany([...keys].map(([key, isDelete]) => [this.encode(key), isDelete]), options);
-      return;
-    }
-
-    for (const [key, isDelete] of keys) {
-      options?.signal?.throwIfAborted();
-      try {
-        if (isDelete) {
-          await this.delete(key, options);
-        } else {
-          await this.add(key, options);
-        }
-        yield;
-      } catch (error) {
-        yield operationError(`Failed to ${isDelete ? 'delete' : 'add'} key`,
-          (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
-      }
-    }
+    return updateSetMany(this.set, [...keys].map(([key, isDelete]) => [this.encode(key), isDelete]), options);
   }
 
   public get [Symbol.toStringTag](): string {

@@ -50,11 +50,7 @@ export abstract class SyncMapBatchAdapter<K, V> implements MaybeAsyncMap<K, V>, 
     for (const [key, value] of entries) {
       options?.signal?.throwIfAborted();
       try {
-        if (value !== void 0) {
-          this.set(key, value, options);
-        } else {
-          this.delete(key, options);
-        }
+        (value !== void 0) ? this.set(key, value, options) : this.delete(key, options);
         yield;
       } catch (error) {
         yield operationError('Failed to update key', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);

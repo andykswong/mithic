@@ -1,19 +1,16 @@
-import { AppendOnlyAutoKeyMap, AutoKeyMapBatch } from '@mithic/collections';
+import { AppendOnlyAutoKeyMap, AutoKeyMapBatch, Batch } from '@mithic/collections';
 import {
-  AbortOptions, CodedError, ContentId, ErrorCode, MaybePromise, StringEquatable, SyncOrAsyncGenerator,
-  equalsOrSameString, operationError
+  AbortOptions, CodedError, ContentId, ErrorCode, MaybePromise, SyncOrAsyncGenerator, operationError
 } from '@mithic/commons';
-import { Event, EventMetadata } from '../event.js';
 import { EventStore, EventStorePutOptions, EventStoreQueryOptions } from '../store.js';
 import { DEFAULT_BATCH_SIZE } from '../defaults.js';
 
 /**
  * An abstract {@link EventStore} that stores events in an append-only auto-keyed map.
  * One of `entries` or `keys` query functions must be overridden in subclass, as by default they refer to each other.
- * `put` is usually overridden by subclass to prepare event indices for efficient queries.
  */
 export abstract class BaseMapEventStore<
-  K = ContentId, V = Event, QueryExt extends object = NonNullable<unknown>
+  K = ContentId, V = unknown, QueryExt extends object = NonNullable<unknown>
 > implements EventStore<K, V, QueryExt>, AsyncIterable<[K, V]> {
   public constructor(
     protected readonly data: AppendOnlyAutoKeyMap<K, V> & Partial<AutoKeyMapBatch<K, V>>,
@@ -22,8 +19,9 @@ export abstract class BaseMapEventStore<
   }
 
   /** Hook to do extra processing before putting an event value to store. */
-  protected prePut(_value: V, _options?: AbortOptions): MaybePromise<void> {
-    // NOOP
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  protected prePut(value: V, options?: AbortOptions): MaybePromise<V> {
+    return value;
   }
 
   public async validate(value: V, options?: AbortOptions): Promise<CodedError<K[]> | undefined> {
@@ -41,28 +39,16 @@ export abstract class BaseMapEventStore<
     return this.data.get(key, options);
   }
 
-  public async * getMany(keys: Iterable<K>, options?: AbortOptions): AsyncIterableIterator<V | undefined> {
-    if (this.data.getMany) {
-      return yield* this.data.getMany(keys, options);
-    } else {
-      for (const key of keys) {
-        yield this.get(key, options);
-      }
-    }
+  public getMany(keys: Iterable<K>, options?: AbortOptions): AsyncIterableIterator<V | undefined> {
+    return Batch.getMany(this.data, keys, options);
   }
 
   public has(key: K, options?: AbortOptions): MaybePromise<boolean> {
     return this.data.has(key, options);
   }
 
-  public async * hasMany(keys: Iterable<K>, options?: AbortOptions): AsyncIterableIterator<boolean> {
-    if (this.data.hasMany) {
-      return yield* this.data.hasMany(keys, options);
-    } else {
-      for (const key of keys) {
-        yield this.has(key, options);
-      }
-    }
+  public hasMany(keys: Iterable<K>, options?: AbortOptions): AsyncIterableIterator<boolean> {
+    return Batch.hasMany(this.data, keys, options);
   }
 
   public async put(value: V, options?: EventStorePutOptions): Promise<K> {
@@ -75,8 +61,7 @@ export abstract class BaseMapEventStore<
         throw error;
       }
     }
-    await this.prePut(value, options);
-    return this.data.put(value, options);
+    return this.data.put(await this.prePut(value, options), options);
   }
 
   public async * putMany(
@@ -142,81 +127,6 @@ export abstract class BaseMapEventStore<
         yield [keys[i], value];
       }
       ++i;
-    }
-  }
-}
-
-/** An abstract {@link EventStore} storing events that form a DAG. */
-export abstract class BaseDagEventStore<
-  K extends StringEquatable<K> = ContentId,
-  V extends Event<unknown, EventMetadata<K>> = Event<unknown, EventMetadata<K>>,
-  QueryExt extends object = NonNullable<unknown>
-> extends BaseMapEventStore<K, V, QueryExt> {
-  /** Cache of event parents during a put operation. */
-  protected currentEventDeps: [K, V][] = [];
-  private useCache = false;
-
-  public constructor(
-    data: AppendOnlyAutoKeyMap<K, V> & Partial<AutoKeyMapBatch<K, V>>,
-    queryPageSize = DEFAULT_BATCH_SIZE,
-  ) {
-    super(data, queryPageSize);
-  }
-
-  public override async validate(value: V, options?: AbortOptions): Promise<CodedError<K[]> | undefined> {
-    const error = await super.validate(value, options);
-    if (error) {
-      return error;
-    }
-
-    const rootId = value.meta.root;
-
-    if (!value.meta.parents.length) {
-      if (rootId != void 0) { // if specified, root Id must be a dependency
-        return operationError('Missing dependency to root Id', ErrorCode.MissingDep, [rootId]);
-      }
-      return;
-    }
-
-    if (rootId == void 0) { // root Id must be specified if there are dependencies
-      return operationError('Missing root Id', ErrorCode.InvalidArg);
-    }
-
-    const parents = this.useCache ? this.currentEventDeps : [];
-    parents.length = 0;
-
-    const missing: K[] = [];
-    let hasLinkToRoot = false;
-    let i = 0;
-    for await (const parent of this.getMany(value.meta.parents, options)) {
-      const key = value.meta.parents[i++];
-      if (!parent) {
-        missing.push(key);
-        continue;
-      }
-      parents.push([key, parent]);
-      hasLinkToRoot = hasLinkToRoot ||
-        (parent.meta.root != void 0 && equalsOrSameString(rootId, parent.meta.root)) ||
-        equalsOrSameString(rootId, key);
-    }
-
-    if (missing.length) {
-      return operationError('Missing dependencies', ErrorCode.MissingDep, missing);
-    }
-
-    if (!hasLinkToRoot) { // root Id must match one of parents' root
-      return operationError('Missing dependency to root Id', ErrorCode.MissingDep, [rootId]);
-    }
-  }
-
-  public override async put(value: V, options?: EventStorePutOptions): Promise<K> {
-    try {
-      this.useCache = true;
-      this.currentEventDeps.length = 0;
-      return await super.put(value, options);
-    } finally {
-      this.useCache = false;
-      this.currentEventDeps.length = 0;
     }
   }
 }

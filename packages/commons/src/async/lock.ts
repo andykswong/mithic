@@ -24,3 +24,18 @@ export interface ReadWriteLockAcquireOptions extends AbortOptions {
   /** True if the lock should be shared, false if exclusive. */
   shared?: boolean;
 } 
+
+/** A lock that does nothing. Useful for testing / running single-threaded. */
+export class NoOpLock implements Lock {
+  acquire(): void {
+    // no-op
+  }
+
+  tryAcquire(): boolean {
+    return true;
+  }
+
+  release(): void {
+    // no-op
+  }
+}

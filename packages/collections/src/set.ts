@@ -8,7 +8,7 @@ export interface MaybeAsyncReadonlySet<T> {
 
 /** A Set that may have async operations. */
 export interface MaybeAsyncSet<T> extends MaybeAsyncAppendOnlySet<T> {
-  /** Deletes an entry from the set. */
+  /** Deletes an entry from the set. Returns `MaybePromise<unknown>` to be compatible with ES Set. */
   delete(value: T, options?: AbortOptions): MaybePromise<unknown>;
 }
 
@@ -20,7 +20,7 @@ export interface MaybeAsyncAppendOnlySet<T> extends MaybeAsyncReadonlySet<T> {
 
 /** Batch APIs for a {@link MaybeAsyncReadonlySet}. */
 export interface MaybeAsyncReadonlySetBatch<T> {
-  /** Gets the list of data identified by given keys. */
+  /** Checks if given keys exist in the set. */
   hasMany(keys: Iterable<T>, options?: AbortOptions): MaybeAsyncIterableIterator<boolean>;
 }
 
@@ -32,7 +32,7 @@ export interface MaybeAsyncSetDeleteBatch<T> {
 
 /** Batch add API for a {@link MaybeAsyncSet}. */
 export interface MaybeAsyncSetAddBatch<T> {
-  /** Deletes the values with given keys. */
+  /** Adds the values with given keys to the set. */
   addMany(keys: Iterable<T>, options?: AbortOptions): MaybeAsyncIterableIterator<Error | undefined>;
 }
 

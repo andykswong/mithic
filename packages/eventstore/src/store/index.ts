@@ -1,3 +1,2 @@
-export * from './dagstore.js';
-export * from './base.js';
-export * from './indexed/index.js';
+export * from './dag.js';
+export * from './indexed.js';

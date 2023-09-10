@@ -1,7 +1,7 @@
 import { ContentId } from '@mithic/commons';
+import { StandardEvent } from '@mithic/cqrs/event';
 import { getEventIndexKey, getEventIndexKeys, getEventIndexRangeQueryOptions, getEventTypePrefixes } from '../indices.js';
-import { Event, EventMetadata } from '../../../event.js';
-import { MockId } from '../../../__tests__/mocks.js';
+import { MockId } from '../../__tests__/mocks.js';
 
 const ENCODER = new TextEncoder();
 
@@ -12,13 +12,13 @@ describe(getEventIndexKeys.name, () => {
     const type = 'test';
     const createdAt = 12345;
     const createdAtStr = createdAt.toString(16).padStart(16, '0');
-    const event: Event<unknown, EventMetadata<ContentId>> = {
+    const event: StandardEvent<string, unknown, ContentId> = {
       type,
       payload: undefined,
       meta: {
-        parents: [],
+        prev: [],
         root,
-        createdAt,
+        time: createdAt,
       }
     };
     const expectedKeys = [
@@ -41,13 +41,13 @@ describe(getEventIndexKeys.name, () => {
     const type = 'test';
     const createdAt = 12345;
     const createdAtStr = createdAt.toString(16).padStart(16, '0');
-    const event: Event<unknown, EventMetadata<ContentId>> = {
+    const event: StandardEvent<string, unknown, ContentId> = {
       type,
       payload: undefined,
       meta: {
-        parents: [],
+        prev: [],
         root,
-        createdAt
+        time: createdAt
       }
     };
     const expectedKeys = [

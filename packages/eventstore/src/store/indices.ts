@@ -1,6 +1,6 @@
 import { RangeQueryOptions } from '@mithic/collections';
-import { DEFAULT_EVENT_TYPE_SEPARATOR, DEFAULT_KEY_ENCODER } from '../../defaults.js';
-import { Event, EventMetadata } from '../../event.js';
+import { StandardEvent } from '@mithic/cqrs/event';
+import { DEFAULT_EVENT_TYPE_SEPARATOR, DEFAULT_KEY_ENCODER } from '../defaults.js';
 
 const KEY_SEPARATOR = '::';
 const KEY_TERMINAL = '\udbff\udfff';
@@ -11,13 +11,13 @@ const KEY_TYPE_TIME = 'E';
 const KEY_ROOT_TYPE_TIME = 'RE';
 
 /** Gets all event store index keys for an event. */
-export function getEventIndexKeys<K, E extends Event<unknown, EventMetadata<K>>>(
+export function getEventIndexKeys<K, E extends StandardEvent<string, unknown, K>>(
   key: K, event: E, headOnly = false, encodeKey: (key: K) => string = DEFAULT_KEY_ENCODER,
   typeSeparator = DEFAULT_EVENT_TYPE_SEPARATOR
 ): string[] {
   const keyBytes = encodeKey(key);
-  const root = event.meta.root !== void 0 ? encodeKey(event.meta.root) : keyBytes;
-  const time = event.meta.createdAt;
+  const root = event.meta?.root !== void 0 ? encodeKey(event.meta.root) : keyBytes;
+  const time = event.meta?.time;
   const typePrefixes = getEventTypePrefixes(event.type, typeSeparator);
 
   const keys = [];

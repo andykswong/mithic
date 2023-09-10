@@ -1,11 +1,11 @@
 import {
-  AbortOptions, ContentId, MaybePromise, maybeAsync, sha256, CodedError, MaybeAsyncIterableIterator,
-  operationError, ErrorCode
+  AbortOptions, CodedError, ContentId, ErrorCode, MaybePromise, maybeAsync, operationError, sha256
 } from '@mithic/commons';
 import { CID } from 'multiformats';
 import * as raw from 'multiformats/codecs/raw';
 import { AutoKeyMap, AutoKeyMapBatch, MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
 import { EncodedMap } from './encodedmap.js';
+import { deleteMany, getMany, hasMany, setMany } from '../batch.js';
 
 /** A content-addressable map store that persists values in a backing {@link MaybeAsyncMap}. */
 export class ContentAddressedMapStore<
@@ -58,77 +58,39 @@ export class ContentAddressedMapStore<
     return this.map.has(key, options);
   }
 
-  public deleteMany(keys: Iterable<Id>, options?: AbortOptions): MaybeAsyncIterableIterator<Error | undefined> {
-    return this.map.deleteMany ? this.map.deleteMany(keys, options) : this.deleteEach(keys, options);
+  public deleteMany(keys: Iterable<Id>, options?: AbortOptions): AsyncIterableIterator<Error | undefined> {
+    return deleteMany(this.map, keys, options);
   }
 
   public async * putMany(
     values: Iterable<T>, options?: AbortOptions
   ): AsyncIterableIterator<[key: Id, error?: CodedError]> {
-    if (this.map.setMany) {
-      const entries = this.entriesOf(values);
-      let i = 0;
-      for await (const error of this.map.setMany(entries, options)) {
-        const key = entries[i++][0];
-        yield [
+    const entries = this.entriesOf(values);
+    let i = 0;
+    for await (const error of setMany(this.map, entries, options)) {
+      const key = entries[i++][0];
+      yield [
+        key,
+        error && operationError(
+          'Failed to put',
+          (error as CodedError)?.code ?? ErrorCode.OpFailed,
           key,
-          error && operationError(
-            'Failed to put',
-            (error as CodedError)?.code ?? ErrorCode.OpFailed,
-            key,
-            error
-          )
-        ];
-      }
-    } else {
-      for (const value of values) {
-        const key = this.getKey(value);
-        try {
-          await this.map.set(key, value, options);
-          yield [key];
-        } catch (error) {
-          yield [
-            key,
-            operationError('Failed to put', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error)
-          ];
-        }
-      }
+          error
+        )
+      ];
     }
   }
 
-  public async * getMany(keys: Iterable<Id>, options?: AbortOptions): AsyncIterableIterator<T | undefined> {
-    if (this.map.getMany) {
-      return yield* this.map.getMany(keys, options);
-    } else {
-      for (const cid of keys) {
-        yield this.get(cid, options);
-      }
-    }
+  public getMany(keys: Iterable<Id>, options?: AbortOptions): AsyncIterableIterator<T | undefined> {
+    return getMany(this.map, keys, options);
   }
 
-  public async * hasMany(keys: Iterable<Id>, options?: AbortOptions): AsyncIterableIterator<boolean> {
-    if (this.map.hasMany) {
-      return yield* this.map.hasMany(keys, options);
-    } else {
-      for (const cid of keys) {
-        yield this.has(cid, options);
-      }
-    }
+  public hasMany(keys: Iterable<Id>, options?: AbortOptions): AsyncIterableIterator<boolean> {
+    return hasMany(this.map, keys, options);
   }
 
   public get [Symbol.toStringTag](): string {
     return ContentAddressedMapStore.name;
-  }
-
-  protected async * deleteEach(keys: Iterable<Id>, options?: AbortOptions) {
-    for (const key of keys) {
-      try {
-        await this.delete(key, options);
-        yield;
-      } catch (error) {
-        yield operationError('Failed to delete', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
-      }
-    }
   }
 
   protected entriesOf(values: Iterable<T>): [Id, T][] {

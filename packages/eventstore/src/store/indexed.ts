@@ -1,13 +1,12 @@
 import {
-  AppendOnlyAutoKeyMap, AutoKeyMapBatch, BTreeMap, ContentAddressedMapStore, MaybeAsyncMap, MaybeAsyncMapBatch,
+  AppendOnlyAutoKeyMap, AutoKeyMapBatch, BTreeMap, Batch, ContentAddressedMapStore, MaybeAsyncMap, MaybeAsyncMapBatch,
   RangeQueryable
 } from '@mithic/collections';
 import { AbortOptions, ContentId, ErrorCode, MaybePromise, StringEquatable, operationError } from '@mithic/commons';
-import { DEFAULT_EVENT_TYPE_SEPARATOR, DEFAULT_KEY_ENCODER } from '../../defaults.js';
-import { Event, EventMetadata } from '../../event.js';
-import { EventStore, EventStoreQueryOptions, EventStoreMetaQueryOptions } from '../../store.js';
-import { atomicHybridTime } from '../../time.js';
-import { BaseDagEventStore } from '../base.js';
+import { StandardEvent } from '@mithic/cqrs/event';
+import { BaseDagEventStore } from '../base/index.js';
+import { DEFAULT_EVENT_TYPE_SEPARATOR, DEFAULT_KEY_ENCODER, atomicHybridTime } from '../defaults.js';
+import { EventStore, EventStoreQueryOptions, EventStoreMetaQueryOptions } from '../store.js';
 import { getEventIndexKeys, getEventIndexRangeQueryOptions } from './indices.js';
 
 /**
@@ -16,13 +15,14 @@ import { getEventIndexKeys, getEventIndexRangeQueryOptions } from './indices.js'
  */
 export class IndexedEventStore<
   K extends StringEquatable<K> = ContentId,
-  V extends Event<unknown, IndexedEventMetadata<K>> = Event<unknown, IndexedEventMetadata<K>>
+  V = unknown
 > extends BaseDagEventStore<K, V, EventStoreMetaQueryOptions<K>>
   implements EventStore<K, V, EventStoreMetaQueryOptions<K>>, AsyncIterable<[K, V]>
 {
   protected readonly index:
     MaybeAsyncMap<string, K> & Partial<MaybeAsyncMapBatch<string, K>> & RangeQueryable<string, K>;
   protected readonly encodeKey: (key: K) => string;
+  protected readonly setEventTime: (event: V, time: number) => V;
   protected readonly tick: (refTime?: number) => MaybePromise<number>;
   protected readonly eventTypeSeparator: RegExp;
 
@@ -31,25 +31,37 @@ export class IndexedEventStore<
     index = new BTreeMap<string, K>(5),
     encodeKey = DEFAULT_KEY_ENCODER,
     tick = atomicHybridTime(),
-    eventTypeSeparator = DEFAULT_EVENT_TYPE_SEPARATOR
+    eventTypeSeparator = DEFAULT_EVENT_TYPE_SEPARATOR,
+    toStandardEvent,
+    setEventTime = (event: V, time: number) => ({
+      ...(event as StandardEvent),
+      meta: { ...(event as StandardEvent).meta, time },
+    } as V),
   }: IndexedEventStoreOptions<K, V> = {}) {
-    super(data);
+    super(data, toStandardEvent);
     this.index = index;
     this.encodeKey = encodeKey;
+    this.setEventTime = setEventTime;
     this.tick = tick;
     this.eventTypeSeparator = eventTypeSeparator;
   }
 
-  protected override async prePut(event: V, options?: AbortOptions): Promise<void> {
-    const key = await this.getKey(event);
+  protected override async prePut(value: V, options?: AbortOptions): Promise<V> {
+    const key = await this.getKey(value);
     const parents = this.currentEventDeps;
     let latestTime = 0;
 
     // assign timestamp
     for (const [, parent] of parents) {
-      latestTime = Math.max(latestTime, parent.meta.createdAt || 0);
+      const parentEvent = this.toStandardEvent(parent);
+      latestTime = Math.max(latestTime, parentEvent?.meta?.time || 0);
     }
-    event.meta.createdAt = await this.tick(latestTime);
+    const newValue = this.setEventTime(value, await this.tick(latestTime));
+
+    const event = this.toStandardEvent(newValue);
+    if (!event) {
+      throw operationError('Invalid event', ErrorCode.InvalidArg);
+    }
 
     // update indices
     const entries = getEventIndexKeys(key, event, false, this.encodeKey, this.eventTypeSeparator)
@@ -57,37 +69,29 @@ export class IndexedEventStore<
 
     if (parents.length) { // remove parents from head indices
       entries.push(...parents
-        .flatMap(([key, event]) => getEventIndexKeys(key, event, true, this.encodeKey, this.eventTypeSeparator))
+        .flatMap(([key, value]) => {
+          const event = this.toStandardEvent(value);
+          return event ? getEventIndexKeys(key, event, true, this.encodeKey, this.eventTypeSeparator) : [];
+        })
         .map(index => [index, void 0] as [string, K?])
       );
     }
 
-    if (this.index.updateMany) {
-      for await (const error of this.index.updateMany(entries, options)) {
-        if (error) {
-          throw operationError('Failed to save indices', ErrorCode.OpFailed, void 0, error);
-        }
-      }
-    } else {
-      for (const [key, value] of entries) {
-        if (value === void 0) {
-          await this.index.delete(key, options);
-        } else {
-          await this.index.set(key, value, options);
-        }
+    for await (const error of Batch.updateMapMany(this.index, entries, options)) {
+      if (error) {
+        throw operationError('Failed to save indices', ErrorCode.OpFailed, void 0, error);
       }
     }
 
-    parents.length = 0;
+    return newValue;
   }
 
   public override async * keys(options?: EventStoreQueryOptions<K> & EventStoreMetaQueryOptions<K>): AsyncGenerator<K, K[]> {
     let sinceTime = 0;
     if (options?.since) {
       for await (const value of this.getMany(options.since, options)) {
-        if (value) {
-          sinceTime = Math.max(sinceTime, value.meta.createdAt || 0);
-        }
+        const event = value && this.toStandardEvent(value);
+        sinceTime = Math.max(sinceTime, event?.meta?.time || 0);
       }
     }
 
@@ -119,10 +123,10 @@ export interface IndexedEventStoreOptions<K, V> {
 
   /** Regex to split scoped event type. */
   eventTypeSeparator?: RegExp;
-}
 
-/** Base {@link EventMetadata} for {@link IndexedEventStore}. */
-export interface IndexedEventMetadata<K = ContentId> extends EventMetadata<K> {
-  /** (Logical) timestamp at which the event is created/persisted. */
-  createdAt?: number;
+  /** Function to get given event as {@link StandardEvent} format. */
+  toStandardEvent?: (event: V) => StandardEvent<string, unknown, K> | undefined,
+
+  /** Function to set event time and return updated event. */
+  setEventTime?: (event: V, time: number) => V,
 }
