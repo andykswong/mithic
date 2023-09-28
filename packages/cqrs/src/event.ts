@@ -1,5 +1,5 @@
 /** Standard aggregate event interface in Flux standard action format. */
-export interface StandardEvent<A extends string = string, T = unknown, Ref = unknown> {
+export interface StandardEvent<A extends string = string, T = unknown, Ref = unknown, Meta = StandardEventMeta<Ref>> {
   /** Event type. */
   readonly type: A;
 
@@ -7,10 +7,14 @@ export interface StandardEvent<A extends string = string, T = unknown, Ref = unk
   readonly payload: T;
 
   /** Event metadata. */
-  readonly meta?: StandardEventMeta<Ref>;
+  readonly meta?: Meta;
 }
 
-/** {@link StandardEvent} metadata. */
+/** Standard aggregate command interface in Flux standard action format. */
+export type StandardCommand<A extends string = string, T = unknown, Ref = unknown, Meta = StanardCommandMeta<Ref>>
+  = StandardEvent<A, T, Ref, Meta>;
+
+/** Common metadata for {@link StandardEvent}. */
 export interface StandardEventMeta<Ref = unknown> extends StanardCommandMeta<Ref> {
   /** Parent event references. */
   readonly prev?: readonly Ref[];
@@ -19,13 +23,13 @@ export interface StandardEventMeta<Ref = unknown> extends StanardCommandMeta<Ref
   readonly refs?: readonly Ref[];
 }
 
-/** Common metadata for a stanard aggregate command. */
+/** Common metadata for {@link StandardCommand}. */
 export interface StanardCommandMeta<Ref = unknown> {
+  /** Unique correlation ID. */
+  readonly id?: string;
+
   /** Reference to target aggregate root. */
   readonly root?: Ref;
-
-  /** Unique sequence number. */
-  readonly seq?: number;
 
   /** (Logical) timestamp. */
   readonly time?: number;

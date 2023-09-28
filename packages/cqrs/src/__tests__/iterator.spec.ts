@@ -1,5 +1,5 @@
 import { ErrorName, immediate } from '@mithic/commons';
-import { SimpleMessageBus } from '../simple.js';
+import { SimpleMessageBus } from '../bus/simple.js';
 import { AsyncSubscriber } from '../iterator.js';
 
 describe(AsyncSubscriber.name, () => {

@@ -10,7 +10,7 @@ export class MessageProcessor<Msg = unknown> extends AsyncDisposableCloseable im
     /** {@link MessageSubscription} to consume. */
     protected readonly subscription: MessageSubscription<Msg>,
     /** Consumer of messages. */
-    protected readonly consumer: MessageConsumer<Msg>
+    protected readonly consumer: MessageConsumer<Msg>,
   ) {
     super();
   }

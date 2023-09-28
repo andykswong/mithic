@@ -1,22 +1,20 @@
 import { AbortOptions, MaybePromise } from '@mithic/commons';
-import { MessageSubscription, MessageTransformer } from '../bus.js';
+import { MessageSubscription } from '../bus.js';
 import { MessageProcessor } from '../processor.js';
 
 /** {@link MessageProcessor} that persists message using an {@link ObjectWriter}. */
-export class MessagePersister<Msg, SrcMsg = Msg>
-  extends MessageProcessor<SrcMsg>
-{
+export class MessagePersister<Msg, SrcMsg = Msg> extends MessageProcessor<SrcMsg> {
   public constructor(
     /** {@link MessageSubscription} to consume. */
     subscription: MessageSubscription<SrcMsg>,
     /** Event store writer to use. */
     writer: ObjectWriter<Msg>,
-    /** Function to transform incoming events for storage. */
-    transform: MessageTransformer<SrcMsg, Msg> = identity,
+    /** Function to translate incoming events for storage. */
+    translate: (src: SrcMsg, options?: AbortOptions) => MaybePromise<Msg | undefined> = identity,
   ) {
-    const consumer = async (msg: SrcMsg) => {
-      const targetEvent = await transform(msg);
-      targetEvent && await writer.put(targetEvent);
+    const consumer = async (msg: SrcMsg, options?: AbortOptions) => {
+      const targetEvent = await translate(msg, options);
+      targetEvent && await writer.put(targetEvent, options);
     };
     super(subscription, consumer);
   }

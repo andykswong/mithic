@@ -1,7 +1,7 @@
 import { AbortOptions, MaybePromise } from '@mithic/commons';
 
 /** A message bus service. */
-export interface MessageBus<Msg> extends MessageDispatcher<Msg>, MessageSubscription<Msg> {
+export interface MessageBus<SrcMsg, OutMsg = SrcMsg> extends MessageDispatcher<SrcMsg>, MessageSubscription<OutMsg> {
 }
 
 /** A message dispatcher service. */
@@ -17,10 +17,7 @@ export interface MessageSubscription<Msg> {
 }
 
 /** Consumer function of messages. */
-export type MessageConsumer<Msg> = (msg: Msg) => MaybePromise<void>;
-
-/** Function to transform and/or filter a source message into target message type. */
-export type MessageTransformer<Src, Target = Src> = (src: Src) => MaybePromise<Target | undefined>;
+export type MessageConsumer<Msg> = (msg: Msg, options?: AbortOptions) => MaybePromise<void>;
 
 /** Function to unsubscribe consumers added by {@link MessageSubscription#subscribe}. */
 export type Unsubscribe = (options?: AbortOptions) => MaybePromise<void>;

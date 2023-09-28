@@ -1,43 +1,40 @@
-import { MaybePromise } from '@mithic/commons';
-import { MessageConsumer, MessageSubscription, Unsubscribe } from '../bus.js';
-import { SimpleMessageBus } from '../bus/index.js';
+import { AbortOptions, MaybePromise } from '@mithic/commons';
+import { MessageDispatcher, MessageSubscription } from '../bus.js';
 import { MessageProcessor } from '../processor.js';
 
 /** {@link MessageProcessor} that derives aggregate state from messages. */
-export class MessageReducer<Msg = unknown, State = object>
-  extends MessageProcessor<Msg>
-  implements MessageSubscription<State>
-{
-  protected readonly eventBus = new SimpleMessageBus<State>();
+export class MessageReducer<State = object, Msg = unknown> extends MessageProcessor<Msg> {
   protected _state: State;
 
   public constructor(
     /** {@link MessageSubscription} to consume. */
     subscription: MessageSubscription<Msg>,
+    /** Output {@link MessageDispatcher} to use. */
+    protected readonly dispatcher: MessageDispatcher<State>,
     /** Reducer function. */
-    reducer: MessageReducerFn<Msg, State>,
+    reducer: MessageReducerFn<State, Msg>,
     /** Initial state. */
     initialState: State,
   ) {
-    const consumer = (event: Msg) => MaybePromise.map(reducer(this._state, event), this.setState);
+    const consumer = (event: Msg, options?: AbortOptions) =>
+      MaybePromise.map(reducer(this._state, event, options), this.setState);
     super(subscription, consumer);
     this._state = initialState;
+    this.getState = this.getState.bind(this);
   }
 
   /** Returns the current state. */
-  public get state(): State {
+  public getState(): State {
     return this._state;
-  }
-
-  public subscribe(consumer: MessageConsumer<State>): Unsubscribe {
-    return this.eventBus.subscribe(consumer);
   }
 
   private setState = (state: State) => {
     this._state = state;
-    this.eventBus.dispatch(state);
+    this.dispatcher.dispatch(state);
   };
 }
 
-/** Reducer function. */
-export type MessageReducerFn<Msg = unknown, State = object> = (state: State, message: Msg) => MaybePromise<State>;
+/** Reducer function of messages to state. */
+export interface MessageReducerFn<State = unknown, Msg = unknown> {
+  (state: State, message: Msg, options?: AbortOptions): MaybePromise<State>;
+}

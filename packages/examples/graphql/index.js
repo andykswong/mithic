@@ -1,34 +1,42 @@
 import assert from 'assert';
-import { bindMessageCreators, AsyncSubscriber, SimpleMessageBus, MessageReducer } from '@mithic/cqrs';
+import { AsyncSubscriber, ReduceStore, SimpleMessageBus, bindCommandHandler } from '@mithic/cqrs';
 import { graphql, parse, subscribe, GraphQLSchema, GraphQLObjectType, GraphQLBoolean, GraphQLInt } from 'graphql';
 
-// Create the message bus
-const bus = new SimpleMessageBus();
-
-// Derive state using a reducer
-const stateReducer = new MessageReducer(
-  bus,
-  function reduce(state, msg) {
-    switch (msg?.type) {
+// Create the message buses and store
+const commandBus = new SimpleMessageBus();
+const eventBus = new SimpleMessageBus();
+const store = new ReduceStore(
+  function reduce(state, event) {
+    switch (event?.type) {
       case 'INCREASED':
-        return { ...state, counter: state.counter + (msg.count ?? 1) };
+        return { ...state, counter: state.counter + (event.payload ?? 1) };
     }
     return state;
   },
-  { counter: 0 }
+  { counter: 0 },
+  eventBus,
 );
 
-// Start processing events
-await stateReducer.start();
+// Process commands to events
+const commandHandler = bindCommandHandler(
+  commandBus, eventBus,
+  (_state, command) => {
+    switch (command?.type) {
+      case 'INCREASE':
+        return { type: 'INCREASED', payload: command.payload };
+    }
+  },
+  store
+);
+
+// Start processing commands and events
+await store.start();
+await commandHandler.start();
 process.on('beforeExit', async () => {
-  await stateReducer.close();
+  await commandHandler.close();
+  await store.close();
   process.exit(0);
 });
-
-// Route commands to the event bus
-const commands = bindMessageCreators({
-  increment: (count) => ({ type: 'INCREASED', count }),
-}, bus);
 
 // Define the GraphQL schema
 const stateType = new GraphQLObjectType({
@@ -42,7 +50,7 @@ const schema = new GraphQLSchema({
     fields: {
       state: {
         type: stateType,
-        resolve: () => stateReducer.state // Returns derived state
+        resolve: () => store.getState() // Returns derived state
       },
     },
   }),
@@ -54,7 +62,7 @@ const schema = new GraphQLSchema({
         type: GraphQLBoolean,
         args: { count: { type: GraphQLInt } },
         async resolve(_, args) {
-          await commands.increment(args.count);
+          await commandBus.dispatch({ type: 'INCREASE', payload: args.count });
           return true;
         }
       }
@@ -66,7 +74,7 @@ const schema = new GraphQLSchema({
     fields: {
       stateChanged: {
         type: stateType,
-        subscribe: () => new AsyncSubscriber(stateReducer), // subscribes to derived state change
+        subscribe: () => new AsyncSubscriber(store), // subscribes to derived state change
         resolve: (state) => state,
       },
     },

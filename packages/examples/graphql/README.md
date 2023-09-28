@@ -1,4 +1,4 @@
-# Simple GraphQL Example
+# GraphQL CQRS Example
 
 [![mithic](https://img.shields.io/badge/project-mithic-blueviolet.svg?style=flat-square&logo=github)](https://github.com/andykswong/mithic)
 [![license: MIT](https://img.shields.io/badge/License-MIT-red.svg?style=flat-square)](../../../LICENSE)

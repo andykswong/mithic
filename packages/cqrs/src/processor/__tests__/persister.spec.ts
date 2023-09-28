@@ -1,6 +1,5 @@
 import { jest } from '@jest/globals';
 import { delay } from '@mithic/commons';
-import { MessageTransformer } from '../../bus.js';
 import { SimpleMessageBus } from '../../bus/index.js';
 import { MessagePersister, ObjectWriter } from '../persister.js';
 
@@ -17,7 +16,7 @@ describe(MessagePersister.name, () => {
   });
 
   it('should transform and persist incoming messages', async () => {
-    const transformer: jest.MockedFunction<MessageTransformer<{ type: string }>> = jest.fn();
+    const transformer = jest.fn();
     transformer.mockReturnValue(Promise.resolve(TRANSFORMED_EVENT));
 
     const persister = new MessagePersister(subscription, writer, transformer);
@@ -40,7 +39,7 @@ describe(MessagePersister.name, () => {
   });
 
   it('should not call ObjectWriter if transformer returns undefined', async () => {
-    const transformer: jest.MockedFunction<MessageTransformer<{ type: string }>> = jest.fn();
+    const transformer = jest.fn();
     transformer.mockReturnValue(Promise.resolve(undefined));
 
     const persister = new MessagePersister(subscription, writer, transformer);

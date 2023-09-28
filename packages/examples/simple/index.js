@@ -1,42 +1,35 @@
 import assert from 'assert';
-import { bindMessageCreators } from '@mithic/cqrs';
-import { createReduxStore } from '@mithic/cqrs/preset';
+import { ReduxStore } from '@mithic/cqrs';
 
 // Create a Redux-like store for a counter
-const store = createReduxStore({
-  initialState: { counter: 0 }, // Initialize count to 0
-
+const store = new ReduxStore(
   // Define a reducer that handles increment and decrement events
-  reducer(state, event) {
+  (state, event) => {
     switch (event?.type) {
       case 'INCREASED':
-        return { ...state, counter: state.counter + (event.count ?? 1) };
+        return { ...state, counter: state.counter + (event.payload ?? 1) };
       case 'DECREASED':
-        return { ...state, counter: state.counter - (event.count ?? 1) };
+        return { ...state, counter: state.counter - (event.payload ?? 1) };
     }
     return state;
-  }
-});
+  },
+  // Initialize count to 0
+  { counter: 0 },
+);
 
 // Start the store
 await store.start();
-
-// Define and bind the commands to the store
-const commands = bindMessageCreators({
-  increment: (count) => ({ type: 'INCREASED', count }),
-  decrement: (count) => ({ type: 'DECREASED', count }),
-}, store);
 
 // Run some commands and queries
 
 console.log('Initial state:', store.getState());
 assert.deepStrictEqual(store.getState(), { counter: 0 });
 
-await commands.increment(3);
+await store.dispatch({ type: 'INCREASED', payload: 3 });
 console.log('State after increment(3):', store.getState());
 assert.deepStrictEqual(store.getState(), { counter: 3 });
 
-await commands.decrement(1);
+await store.dispatch({ type: 'DECREASED', payload: 1 });
 console.log('State after increment(1):', store.getState());
 assert.deepStrictEqual(store.getState(), { counter: 2 });
 
