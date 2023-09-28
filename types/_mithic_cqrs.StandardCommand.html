@@ -1,4 +1,4 @@
-<!DOCTYPE html><html class="default" lang="en"><head><meta charSet="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>MessageName | mithic - v0.3.0</title><meta name="description" content="Documentation for mithic"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os"</script><header class="tsd-page-toolbar">
+<!DOCTYPE html><html class="default" lang="en"><head><meta charSet="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>StandardCommand | mithic - v0.3.0</title><meta name="description" content="Documentation for mithic"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os"</script><header class="tsd-page-toolbar">
 <div class="tsd-toolbar-contents container">
 <div class="table-cell" id="tsd-search" data-base="..">
 <div class="field"><label for="tsd-search-field" class="tsd-widget tsd-toolbar-icon search no-caption"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><use href="#icon-search"></use></svg></label><input type="text" id="tsd-search-field" aria-label="Search"/></div>
@@ -14,19 +14,25 @@
 <ul class="tsd-breadcrumb">
 <li><a href="../index.html">mithic</a></li>
 <li><a href="../modules/_mithic_cqrs.html">@mithic/cqrs</a></li>
-<li><a href="_mithic_cqrs.MessageName.html">MessageName</a></li></ul>
-<h1>Type alias MessageName&lt;M&gt;</h1></div>
-<div class="tsd-signature"><span class="tsd-kind-type-alias">Message<wbr/>Name</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">M</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type tsd-kind-type-parameter">M</span><span class="tsd-signature-symbol"> extends </span><a href="_mithic_cqrs.MessageCreators.html" class="tsd-signature-type tsd-kind-type-alias">MessageCreators</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-symbol">infer </span> <span class="tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span><br/><span>    </span><span class="tsd-signature-symbol">? </span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><br/><span>    </span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type tsd-kind-type-parameter">M</span><span class="tsd-signature-symbol"> extends </span><a href="_mithic_cqrs.MessageGenerators.html" class="tsd-signature-type tsd-kind-type-alias">MessageGenerators</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-symbol">infer </span> <span class="tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span><br/><span>        </span><span class="tsd-signature-symbol">? </span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><br/><span>        </span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">never</span></div>
-<div class="tsd-comment tsd-typography"><p><a href="../interfaces/_mithic_cqrs.MessageCreator.html" class="tsd-kind-interface">MessageCreator</a> or <a href="../interfaces/_mithic_cqrs.MessageGenerator.html" class="tsd-kind-interface">MessageGenerator</a> name type from MessageTypeMap.</p>
+<li><a href="_mithic_cqrs.StandardCommand.html">StandardCommand</a></li></ul>
+<h1>Type alias StandardCommand&lt;A, T, Ref, Meta&gt;</h1></div>
+<div class="tsd-signature"><span class="tsd-kind-type-alias">Standard<wbr/>Command</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">A</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Ref</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Meta</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/_mithic_cqrs.StandardEvent.html" class="tsd-signature-type tsd-kind-interface">StandardEvent</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">A</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Ref</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Meta</span><span class="tsd-signature-symbol">&gt;</span></div>
+<div class="tsd-comment tsd-typography"><p>Standard aggregate command interface in Flux standard action format.</p>
 </div>
 <section class="tsd-panel">
 <h4>Type Parameters</h4>
 <ul class="tsd-type-parameter-list">
 <li>
-<h4><span class="tsd-kind-type-parameter">M</span><span class="tsd-signature-symbol"> extends </span><a href="_mithic_cqrs.MessageCreators.html" class="tsd-signature-type tsd-kind-type-alias">MessageCreators</a><span class="tsd-signature-symbol"> | </span><a href="_mithic_cqrs.MessageGenerators.html" class="tsd-signature-type tsd-kind-type-alias">MessageGenerators</a></h4></li></ul></section>
+<h4><span class="tsd-kind-type-parameter">A</span><span class="tsd-signature-symbol"> extends </span><span class="tsd-signature-type">string</span> = <span class="tsd-signature-type">string</span></h4></li>
+<li>
+<h4><span class="tsd-kind-type-parameter">T</span> = <span class="tsd-signature-type">unknown</span></h4></li>
+<li>
+<h4><span class="tsd-kind-type-parameter">Ref</span> = <span class="tsd-signature-type">unknown</span></h4></li>
+<li>
+<h4><span class="tsd-kind-type-parameter">Meta</span> = <a href="../interfaces/_mithic_cqrs.StanardCommandMeta.html" class="tsd-signature-type tsd-kind-interface">StanardCommandMeta</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Ref</span><span class="tsd-signature-symbol">&gt;</span></h4></li></ul></section>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/22f3aa3/packages/cqrs/src/message.ts#L25">packages/cqrs/src/message.ts:25</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/event.ts#L14">cqrs/src/event.ts:14</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

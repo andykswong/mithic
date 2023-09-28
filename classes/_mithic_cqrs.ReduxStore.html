@@ -1,4 +1,4 @@
-<!DOCTYPE html><html class="default" lang="en"><head><meta charSet="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>SimpleAggregateStore | mithic - v0.3.0</title><meta name="description" content="Documentation for mithic"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os"</script><header class="tsd-page-toolbar">
+<!DOCTYPE html><html class="default" lang="en"><head><meta charSet="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>ReduxStore | mithic - v0.3.0</title><meta name="description" content="Documentation for mithic"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os"</script><header class="tsd-page-toolbar">
 <div class="tsd-toolbar-contents container">
 <div class="table-cell" id="tsd-search" data-base="..">
 <div class="field"><label for="tsd-search-field" class="tsd-widget tsd-toolbar-icon search no-caption"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><use href="#icon-search"></use></svg></label><input type="text" id="tsd-search-field" aria-label="Search"/></div>
@@ -14,33 +14,34 @@
 <ul class="tsd-breadcrumb">
 <li><a href="../index.html">mithic</a></li>
 <li><a href="../modules/_mithic_cqrs.html">@mithic/cqrs</a></li>
-<li><a href="_mithic_cqrs.SimpleAggregateStore.html">SimpleAggregateStore</a></li></ul>
-<h1>Class SimpleAggregateStore&lt;Model, Event, Cmds&gt;</h1></div>
+<li><a href="_mithic_cqrs.ReduxStore.html">ReduxStore</a></li></ul>
+<h1>Class ReduxStore&lt;State, Event, Action&gt;</h1></div>
 <section class="tsd-panel tsd-comment">
-<div class="tsd-comment tsd-typography"><p>Simple implementation of <a href="../interfaces/_mithic_cqrs.ReduxStore.html" class="tsd-kind-interface">ReduxStore</a> for aggregate.</p>
+<div class="tsd-comment tsd-typography"><p><a href="_mithic_cqrs.ReduceStore.html" class="tsd-kind-class">ReduceStore</a> with Redux-compatible interface.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div></section> 
 <section class="tsd-panel">
 <h4>Type Parameters</h4>
 <ul class="tsd-type-parameter-list">
 <li>
-<h4><span class="tsd-kind-type-parameter">Model</span></h4></li>
+<h4><span class="tsd-kind-type-parameter">State</span></h4></li>
 <li>
 <h4><span class="tsd-kind-type-parameter">Event</span></h4></li>
 <li>
-<h4><span class="tsd-kind-type-parameter">Cmds</span><span class="tsd-signature-symbol"> extends </span><a href="../types/_mithic_cqrs.MessageCreators.html" class="tsd-signature-type tsd-kind-type-alias">MessageCreators</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type tsd-kind-type-parameter">Model</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-symbol">...</span><span class="tsd-signature-type">any</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span></h4></li></ul></section> 
+<h4><span class="tsd-kind-type-parameter">Action</span> = <span class="tsd-signature-type tsd-kind-type-parameter">Event</span></h4></li></ul></section> 
 <section class="tsd-panel tsd-hierarchy">
 <h4>Hierarchy</h4>
 <ul class="tsd-hierarchy">
-<li><a href="_mithic_cqrs.SimpleReduxStore.html" class="tsd-signature-type tsd-kind-class">SimpleReduxStore</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Model</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">&gt;</span>
+<li><a href="_mithic_cqrs.ReduceStore.html" class="tsd-signature-type tsd-kind-class">ReduceStore</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">&gt;</span>
 <ul class="tsd-hierarchy">
-<li><span class="target">SimpleAggregateStore</span></li></ul></li></ul></section>
+<li><span class="target">ReduxStore</span></li></ul></li></ul></section>
 <section class="tsd-panel">
 <h4>Implements</h4>
 <ul class="tsd-hierarchy">
-<li><a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html" class="tsd-signature-type tsd-kind-interface">AggregateReduxStore</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Model</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Cmds</span><span class="tsd-signature-symbol">&gt;</span></li></ul></section><aside class="tsd-sources">
+<li><a href="../interfaces/_mithic_cqrs.ReactiveStore.html" class="tsd-signature-type tsd-kind-interface">ReactiveStore</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">&gt;</span></li>
+<li><a href="../interfaces/_mithic_cqrs.MessageDispatcher.html" class="tsd-signature-type tsd-kind-interface">MessageDispatcher</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Action</span><span class="tsd-signature-symbol">&gt;</span></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/22f3aa3/packages/cqrs/src/preset/aggregate.ts#L72">packages/cqrs/src/preset/aggregate.ts:72</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/preset/redux.ts#L8">cqrs/src/preset/redux.ts:8</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-index-accordion" open><summary class="tsd-accordion-summary tsd-index-summary">
@@ -48,96 +49,95 @@
 <div class="tsd-accordion-details">
 <section class="tsd-index-section">
 <h3 class="tsd-index-heading">Constructors</h3>
-<div class="tsd-index-list"><a href="_mithic_cqrs.SimpleAggregateStore.html#constructor" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-512"></use></svg><span>constructor</span></a>
+<div class="tsd-index-list"><a href="_mithic_cqrs.ReduxStore.html#constructor" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-512"></use></svg><span>constructor</span></a>
 </div></section>
 <section class="tsd-index-section">
 <h3 class="tsd-index-heading">Properties</h3>
-<div class="tsd-index-list"><a href="_mithic_cqrs.SimpleAggregateStore.html#command" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>command</span></a>
-<a href="_mithic_cqrs.SimpleAggregateStore.html#dispatcher" class="tsd-index-link tsd-is-protected tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>dispatcher</span></a>
-<a href="_mithic_cqrs.SimpleAggregateStore.html#reducer" class="tsd-index-link tsd-is-protected tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>reducer</span></a>
+<div class="tsd-index-list"><a href="_mithic_cqrs.ReduxStore.html#bus" class="tsd-index-link tsd-is-protected"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>bus</span></a>
+<a href="_mithic_cqrs.ReduxStore.html#eventBus" class="tsd-index-link tsd-is-protected tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>event<wbr/>Bus</span></a>
+<a href="_mithic_cqrs.ReduxStore.html#reducer" class="tsd-index-link tsd-is-protected tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>reducer</span></a>
 </div></section>
 <section class="tsd-index-section">
 <h3 class="tsd-index-heading">Accessors</h3>
-<div class="tsd-index-list"><a href="_mithic_cqrs.SimpleAggregateStore.html#started" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-262144"></use></svg><span>started</span></a>
+<div class="tsd-index-list"><a href="_mithic_cqrs.ReduxStore.html#started" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-262144"></use></svg><span>started</span></a>
 </div></section>
 <section class="tsd-index-section">
 <h3 class="tsd-index-heading">Methods</h3>
-<div class="tsd-index-list"><a href="_mithic_cqrs.SimpleAggregateStore.html#_asyncDispose_" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>[async<wbr/>Dispose]</span></a>
-<a href="_mithic_cqrs.SimpleAggregateStore.html#_asyncIterator_" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>[async<wbr/>Iterator]</span></a>
-<a href="_mithic_cqrs.SimpleAggregateStore.html#close" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>close</span></a>
-<a href="_mithic_cqrs.SimpleAggregateStore.html#dispatch" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>dispatch</span></a>
-<a href="_mithic_cqrs.SimpleAggregateStore.html#getState" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>get<wbr/>State</span></a>
-<a href="_mithic_cqrs.SimpleAggregateStore.html#iterator" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>iterator</span></a>
-<a href="_mithic_cqrs.SimpleAggregateStore.html#start" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>start</span></a>
-<a href="_mithic_cqrs.SimpleAggregateStore.html#subscribe" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>subscribe</span></a>
+<div class="tsd-index-list"><a href="_mithic_cqrs.ReduxStore.html#_asyncDispose_" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>[async<wbr/>Dispose]</span></a>
+<a href="_mithic_cqrs.ReduxStore.html#_asyncIterator_" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>[async<wbr/>Iterator]</span></a>
+<a href="_mithic_cqrs.ReduxStore.html#close" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>close</span></a>
+<a href="_mithic_cqrs.ReduxStore.html#dispatch" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>dispatch</span></a>
+<a href="_mithic_cqrs.ReduxStore.html#getState" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>get<wbr/>State</span></a>
+<a href="_mithic_cqrs.ReduxStore.html#iterator" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>iterator</span></a>
+<a href="_mithic_cqrs.ReduxStore.html#start" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>start</span></a>
+<a href="_mithic_cqrs.ReduxStore.html#subscribe" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>subscribe</span></a>
 </div></section></div></details></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Constructors</h2>
 <section class="tsd-panel tsd-member"><a id="constructor" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>constructor</span><a href="#constructor" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
-<li class="tsd-signature tsd-anchor-link" id="constructor.new_SimpleAggregateStore"><span class="tsd-kind-constructor-signature">new <wbr/>Simple<wbr/>Aggregate<wbr/>Store</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Model</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Cmds</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">dispatcher</span>, <span class="tsd-kind-parameter">command</span>, <span class="tsd-kind-parameter">reducer</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="_mithic_cqrs.SimpleAggregateStore.html" class="tsd-signature-type tsd-kind-class">SimpleAggregateStore</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Model</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Cmds</span><span class="tsd-signature-symbol">&gt;</span><a href="#constructor.new_SimpleAggregateStore" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
+<li class="tsd-signature tsd-anchor-link" id="constructor.new_ReduxStore"><span class="tsd-kind-constructor-signature">new <wbr/>Redux<wbr/>Store</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Action</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">reducer</span>, <span class="tsd-kind-parameter">initialState</span>, <span class="tsd-kind-parameter">bus</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="_mithic_cqrs.ReduxStore.html" class="tsd-signature-type tsd-kind-class">ReduxStore</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Action</span><span class="tsd-signature-symbol">&gt;</span><a href="#constructor.new_ReduxStore" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
 <li class="tsd-description">
 <section class="tsd-panel">
 <h4>Type Parameters</h4>
 <ul class="tsd-type-parameter-list">
 <li>
-<h4><span class="tsd-kind-type-parameter">Model</span></h4></li>
+<h4><span class="tsd-kind-type-parameter">State</span></h4></li>
 <li>
 <h4><span class="tsd-kind-type-parameter">Event</span></h4></li>
 <li>
-<h4><span class="tsd-kind-type-parameter">Cmds</span><span class="tsd-signature-symbol"> extends </span><a href="../types/_mithic_cqrs.MessageCreators.html" class="tsd-signature-type tsd-kind-type-alias">MessageCreators</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type tsd-kind-type-parameter">Model</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-symbol">...</span><span class="tsd-signature-type">any</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span></h4></li></ul></section>
+<h4><span class="tsd-kind-type-parameter">Action</span> = <span class="tsd-signature-type tsd-kind-type-parameter">Event</span></h4></li></ul></section>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
 <li>
-<h5><span class="tsd-kind-parameter">dispatcher</span>: <a href="../interfaces/_mithic_cqrs.MessageDispatcher.html" class="tsd-signature-type tsd-kind-interface">MessageDispatcher</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">&gt;</span></h5>
-<div class="tsd-comment tsd-typography"><p>Dispatcher to use.</p>
+<h5><span class="tsd-kind-parameter">reducer</span>: <a href="../interfaces/_mithic_cqrs.MessageReducerFn.html" class="tsd-signature-type tsd-kind-interface">MessageReducerFn</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">&gt;</span></h5>
+<div class="tsd-comment tsd-typography"><p>Reducer function.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div></li>
 <li>
-<h5><span class="tsd-kind-parameter">command</span>: <a href="../types/_mithic_cqrs.AggregateCommands.html" class="tsd-signature-type tsd-kind-type-alias">AggregateCommands</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Model</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Cmds</span><span class="tsd-signature-symbol">&gt;</span></h5>
-<div class="tsd-comment tsd-typography"><p>Commands for this store.</p>
+<h5><span class="tsd-kind-parameter">initialState</span>: <span class="tsd-signature-type tsd-kind-type-parameter">State</span></h5>
+<div class="tsd-comment tsd-typography"><p>Initial state.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div></li>
 <li>
-<h5><span class="tsd-kind-parameter">reducer</span>: <a href="_mithic_cqrs.MessageReducer.html" class="tsd-signature-type tsd-kind-class">MessageReducer</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Model</span><span class="tsd-signature-symbol">&gt;</span></h5>
-<div class="tsd-comment tsd-typography"><p>Reducer to use.</p>
+<h5><span class="tsd-kind-parameter">bus</span>: <a href="../interfaces/_mithic_cqrs.MessageBus.html" class="tsd-signature-type tsd-kind-interface">MessageBus</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Action</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> = ...</span></h5>
+<div class="tsd-comment tsd-typography"><p><a href="../interfaces/_mithic_cqrs.MessageBus.html" class="tsd-kind-interface">MessageBus</a> to use.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div></li></ul></div>
-<h4 class="tsd-returns-title">Returns <a href="_mithic_cqrs.SimpleAggregateStore.html" class="tsd-signature-type tsd-kind-class">SimpleAggregateStore</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Model</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Cmds</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
-<p>Overrides <a href="_mithic_cqrs.SimpleReduxStore.html">SimpleReduxStore</a>.<a href="_mithic_cqrs.SimpleReduxStore.html#constructor">constructor</a></p>
+<h4 class="tsd-returns-title">Returns <a href="_mithic_cqrs.ReduxStore.html" class="tsd-signature-type tsd-kind-class">ReduxStore</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Action</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
+<p>Overrides <a href="_mithic_cqrs.ReduceStore.html">ReduceStore</a>.<a href="_mithic_cqrs.ReduceStore.html#constructor">constructor</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/22f3aa3/packages/cqrs/src/preset/aggregate.ts#L75">packages/cqrs/src/preset/aggregate.ts:75</a></li></ul></aside></li></ul></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/preset/redux.ts#L12">cqrs/src/preset/redux.ts:12</a></li></ul></aside></li></ul></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Properties</h2>
-<section class="tsd-panel tsd-member"><a id="command" class="tsd-anchor"></a>
-<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagReadonly">Readonly</code> <span>command</span><a href="#command" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">command</span><span class="tsd-signature-symbol">:</span> <a href="../types/_mithic_cqrs.AggregateCommands.html" class="tsd-signature-type tsd-kind-type-alias">AggregateCommands</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Model</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Cmds</span><span class="tsd-signature-symbol">&gt;</span></div>
-<div class="tsd-comment tsd-typography"><p>Commands for this store.</p>
+<section class="tsd-panel tsd-member tsd-is-protected"><a id="bus" class="tsd-anchor"></a>
+<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>bus</span><a href="#bus" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">bus</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/_mithic_cqrs.MessageBus.html" class="tsd-signature-type tsd-kind-interface">MessageBus</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Action</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> = ...</span></div>
+<div class="tsd-comment tsd-typography"><p><a href="../interfaces/_mithic_cqrs.MessageBus.html" class="tsd-kind-interface">MessageBus</a> to use.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Implementation of <a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html">AggregateReduxStore</a>.<a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html#command">command</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/22f3aa3/packages/cqrs/src/preset/aggregate.ts#L79">packages/cqrs/src/preset/aggregate.ts:79</a></li></ul></aside></section>
-<section class="tsd-panel tsd-member tsd-is-protected tsd-is-inherited"><a id="dispatcher" class="tsd-anchor"></a>
-<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>dispatcher</span><a href="#dispatcher" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">dispatcher</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/_mithic_cqrs.MessageDispatcher.html" class="tsd-signature-type tsd-kind-interface">MessageDispatcher</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">&gt;</span></div>
-<div class="tsd-comment tsd-typography"><p>Dispatcher to use.</p>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/preset/redux.ts#L18">cqrs/src/preset/redux.ts:18</a></li></ul></aside></section>
+<section class="tsd-panel tsd-member tsd-is-protected tsd-is-inherited"><a id="eventBus" class="tsd-anchor"></a>
+<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>event<wbr/>Bus</span><a href="#eventBus" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">event<wbr/>Bus</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/_mithic_cqrs.MessageBus.html" class="tsd-signature-type tsd-kind-interface">MessageBus</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> = ...</span></div>
+<div class="tsd-comment tsd-typography"><p>Output event bus.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Inherited from <a href="_mithic_cqrs.SimpleReduxStore.html">SimpleReduxStore</a>.<a href="_mithic_cqrs.SimpleReduxStore.html#dispatcher">dispatcher</a></p>
+<p>Inherited from <a href="_mithic_cqrs.ReduceStore.html">ReduceStore</a>.<a href="_mithic_cqrs.ReduceStore.html#eventBus">eventBus</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/22f3aa3/packages/cqrs/src/preset/redux.ts#L22">packages/cqrs/src/preset/redux.ts:22</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/preset/store.ts#L35">cqrs/src/preset/store.ts:35</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-protected tsd-is-inherited"><a id="reducer" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>reducer</span><a href="#reducer" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">reducer</span><span class="tsd-signature-symbol">:</span> <a href="_mithic_cqrs.MessageReducer.html" class="tsd-signature-type tsd-kind-class">MessageReducer</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Model</span><span class="tsd-signature-symbol">&gt;</span></div>
+<div class="tsd-signature"><span class="tsd-kind-property">reducer</span><span class="tsd-signature-symbol">:</span> <a href="_mithic_cqrs.MessageReducer.html" class="tsd-signature-type tsd-kind-class">MessageReducer</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">&gt;</span></div>
 <div class="tsd-comment tsd-typography"><p>Reducer to use.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Inherited from <a href="_mithic_cqrs.SimpleReduxStore.html">SimpleReduxStore</a>.<a href="_mithic_cqrs.SimpleReduxStore.html#reducer">reducer</a></p>
+<p>Inherited from <a href="_mithic_cqrs.ReduceStore.html">ReduceStore</a>.<a href="_mithic_cqrs.ReduceStore.html#reducer">reducer</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/22f3aa3/packages/cqrs/src/preset/redux.ts#L24">packages/cqrs/src/preset/redux.ts:24</a></li></ul></aside></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/preset/store.ts#L25">cqrs/src/preset/store.ts:25</a></li></ul></aside></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Accessors</h2>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="started" class="tsd-anchor"></a>
@@ -149,10 +149,10 @@
 </div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">boolean</span></h4>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Implementation of <a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html">AggregateReduxStore</a>.<a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html#started">started</a></p>
-<p>Inherited from SimpleReduxStore.started</p>
+<p>Implementation of <a href="../interfaces/_mithic_cqrs.ReactiveStore.html">ReactiveStore</a>.<a href="../interfaces/_mithic_cqrs.ReactiveStore.html#started">started</a></p>
+<p>Inherited from ReduceStore.started</p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/22f3aa3/packages/cqrs/src/preset/redux.ts#L30">packages/cqrs/src/preset/redux.ts:30</a></li></ul></aside></li></ul></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/preset/store.ts#L42">cqrs/src/preset/store.ts:42</a></li></ul></aside></li></ul></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Methods</h2>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="_asyncDispose_" class="tsd-anchor"></a>
@@ -161,19 +161,18 @@
 <li class="tsd-signature tsd-anchor-link" id="_asyncDispose_._asyncDispose_-1"><span class="tsd-kind-call-signature">[async<wbr/>Dispose]</span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type ">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span><a href="#_asyncDispose_._asyncDispose_-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
 <li class="tsd-description">
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type ">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
-<p>Inherited from <a href="_mithic_cqrs.SimpleReduxStore.html">SimpleReduxStore</a>.<a href="_mithic_cqrs.SimpleReduxStore.html#_asyncDispose_">[asyncDispose]</a></p>
+<p>Inherited from <a href="_mithic_cqrs.ReduceStore.html">ReduceStore</a>.<a href="_mithic_cqrs.ReduceStore.html#_asyncDispose_">[asyncDispose]</a></p>
 <ul>
-<li>Defined in packages/commons/dist/lifecycle/closeable.d.ts:15</li></ul></aside></li></ul></section>
+<li>Defined in commons/dist/lifecycle/closeable.d.ts:15</li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="_asyncIterator_" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>[async<wbr/>Iterator]</span><a href="#_asyncIterator_" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
-<li class="tsd-signature tsd-anchor-link" id="_asyncIterator_._asyncIterator_-1"><span class="tsd-kind-call-signature">[async<wbr/>Iterator]</span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Model</span><span class="tsd-signature-symbol">&gt;</span><a href="#_asyncIterator_._asyncIterator_-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
+<li class="tsd-signature tsd-anchor-link" id="_asyncIterator_._asyncIterator_-1"><span class="tsd-kind-call-signature">[async<wbr/>Iterator]</span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">&gt;</span><a href="#_asyncIterator_._asyncIterator_-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
 <li class="tsd-description">
-<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Model</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
-<p>Implementation of <a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html">AggregateReduxStore</a>.<a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html#_asyncIterator_">[asyncIterator]</a></p>
-<p>Inherited from <a href="_mithic_cqrs.SimpleReduxStore.html">SimpleReduxStore</a>.<a href="_mithic_cqrs.SimpleReduxStore.html#_asyncIterator_">[asyncIterator]</a></p>
+<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
+<p>Inherited from <a href="_mithic_cqrs.ReduceStore.html">ReduceStore</a>.<a href="_mithic_cqrs.ReduceStore.html#_asyncIterator_">[asyncIterator]</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/22f3aa3/packages/cqrs/src/preset/redux.ts#L58">packages/cqrs/src/preset/redux.ts:58</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/preset/store.ts#L66">cqrs/src/preset/store.ts:66</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="close" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>close</span><a href="#close" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
@@ -188,14 +187,14 @@
 <h5><code class="tsd-tag ts-flagOptional">Optional</code> <span class="tsd-kind-parameter">options</span>: <a href="../interfaces/_mithic_commons.AbortOptions.html" class="tsd-signature-type tsd-kind-interface">AbortOptions</a></h5></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span></h4>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Implementation of <a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html">AggregateReduxStore</a>.<a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html#close">close</a></p>
-<p>Inherited from <a href="_mithic_cqrs.SimpleReduxStore.html">SimpleReduxStore</a>.<a href="_mithic_cqrs.SimpleReduxStore.html#close">close</a></p>
+<p>Implementation of <a href="../interfaces/_mithic_cqrs.ReactiveStore.html">ReactiveStore</a>.<a href="../interfaces/_mithic_cqrs.ReactiveStore.html#close">close</a></p>
+<p>Inherited from <a href="_mithic_cqrs.ReduceStore.html">ReduceStore</a>.<a href="_mithic_cqrs.ReduceStore.html#close">close</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/22f3aa3/packages/cqrs/src/preset/redux.ts#L38">packages/cqrs/src/preset/redux.ts:38</a></li></ul></aside></li></ul></section>
-<section class="tsd-panel tsd-member tsd-is-inherited"><a id="dispatch" class="tsd-anchor"></a>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/preset/store.ts#L50">cqrs/src/preset/store.ts:50</a></li></ul></aside></li></ul></section>
+<section class="tsd-panel tsd-member"><a id="dispatch" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>dispatch</span><a href="#dispatch" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<ul class="tsd-signatures tsd-is-inherited">
-<li class="tsd-signature tsd-anchor-link" id="dispatch.dispatch-1"><span class="tsd-kind-call-signature">dispatch</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">event</span>, <span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span><a href="#dispatch.dispatch-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
+<ul class="tsd-signatures">
+<li class="tsd-signature tsd-anchor-link" id="dispatch.dispatch-1"><span class="tsd-kind-call-signature">dispatch</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">action</span>, <span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span><a href="#dispatch.dispatch-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
 <li class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Dispatches a message.</p>
 </div>
@@ -203,32 +202,31 @@
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
 <li>
-<h5><span class="tsd-kind-parameter">event</span>: <span class="tsd-signature-type tsd-kind-type-parameter">Event</span></h5></li>
+<h5><span class="tsd-kind-parameter">action</span>: <span class="tsd-signature-type tsd-kind-type-parameter">Action</span></h5></li>
 <li>
 <h5><code class="tsd-tag ts-flagOptional">Optional</code> <span class="tsd-kind-parameter">options</span>: <a href="../interfaces/_mithic_commons.AbortOptions.html" class="tsd-signature-type tsd-kind-interface">AbortOptions</a></h5></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span></h4>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Implementation of <a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html">AggregateReduxStore</a>.<a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html#dispatch">dispatch</a></p>
-<p>Inherited from <a href="_mithic_cqrs.SimpleReduxStore.html">SimpleReduxStore</a>.<a href="_mithic_cqrs.SimpleReduxStore.html#dispatch">dispatch</a></p>
+<p>Implementation of <a href="../interfaces/_mithic_cqrs.MessageDispatcher.html">MessageDispatcher</a>.<a href="../interfaces/_mithic_cqrs.MessageDispatcher.html#dispatch">dispatch</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/22f3aa3/packages/cqrs/src/preset/redux.ts#L42">packages/cqrs/src/preset/redux.ts:42</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/preset/redux.ts#L24">cqrs/src/preset/redux.ts:24</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="getState" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>get<wbr/>State</span><a href="#getState" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
-<li class="tsd-signature tsd-anchor-link" id="getState.getState-1"><span class="tsd-kind-call-signature">get<wbr/>State</span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type tsd-kind-type-parameter">Model</span><a href="#getState.getState-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
+<li class="tsd-signature tsd-anchor-link" id="getState.getState-1"><span class="tsd-kind-call-signature">get<wbr/>State</span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><a href="#getState.getState-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
 <li class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Returns the current state.</p>
 </div>
-<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type tsd-kind-type-parameter">Model</span></h4>
+<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type tsd-kind-type-parameter">State</span></h4>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Implementation of <a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html">AggregateReduxStore</a>.<a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html#getState">getState</a></p>
-<p>Inherited from <a href="_mithic_cqrs.SimpleReduxStore.html">SimpleReduxStore</a>.<a href="_mithic_cqrs.SimpleReduxStore.html#getState">getState</a></p>
+<p>Implementation of <a href="../interfaces/_mithic_cqrs.ReactiveStore.html">ReactiveStore</a>.<a href="../interfaces/_mithic_cqrs.ReactiveStore.html#getState">getState</a></p>
+<p>Inherited from <a href="_mithic_cqrs.ReduceStore.html">ReduceStore</a>.<a href="_mithic_cqrs.ReduceStore.html#getState">getState</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/22f3aa3/packages/cqrs/src/preset/redux.ts#L46">packages/cqrs/src/preset/redux.ts:46</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/preset/store.ts#L54">cqrs/src/preset/store.ts:54</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="iterator" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>iterator</span><a href="#iterator" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
-<li class="tsd-signature tsd-anchor-link" id="iterator.iterator-1"><span class="tsd-kind-call-signature">iterator</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Model</span><span class="tsd-signature-symbol">&gt;</span><a href="#iterator.iterator-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
+<li class="tsd-signature tsd-anchor-link" id="iterator.iterator-1"><span class="tsd-kind-call-signature">iterator</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">&gt;</span><a href="#iterator.iterator-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
 <li class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Returns an async iterator that yields the latest state on change.</p>
 </div>
@@ -237,12 +235,12 @@
 <ul class="tsd-parameter-list">
 <li>
 <h5><code class="tsd-tag ts-flagOptional">Optional</code> <span class="tsd-kind-parameter">options</span>: <a href="../interfaces/_mithic_cqrs.AsyncSubscriberOptions.html" class="tsd-signature-type tsd-kind-interface">AsyncSubscriberOptions</a></h5></li></ul></div>
-<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Model</span><span class="tsd-signature-symbol">&gt;</span></h4>
+<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">&gt;</span></h4>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Implementation of <a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html">AggregateReduxStore</a>.<a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html#iterator">iterator</a></p>
-<p>Inherited from <a href="_mithic_cqrs.SimpleReduxStore.html">SimpleReduxStore</a>.<a href="_mithic_cqrs.SimpleReduxStore.html#iterator">iterator</a></p>
+<p>Implementation of <a href="../interfaces/_mithic_cqrs.ReactiveStore.html">ReactiveStore</a>.<a href="../interfaces/_mithic_cqrs.ReactiveStore.html#iterator">iterator</a></p>
+<p>Inherited from <a href="_mithic_cqrs.ReduceStore.html">ReduceStore</a>.<a href="_mithic_cqrs.ReduceStore.html#iterator">iterator</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/22f3aa3/packages/cqrs/src/preset/redux.ts#L54">packages/cqrs/src/preset/redux.ts:54</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/preset/store.ts#L62">cqrs/src/preset/store.ts:62</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="start" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>start</span><a href="#start" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
@@ -257,14 +255,14 @@
 <h5><code class="tsd-tag ts-flagOptional">Optional</code> <span class="tsd-kind-parameter">options</span>: <a href="../interfaces/_mithic_commons.AbortOptions.html" class="tsd-signature-type tsd-kind-interface">AbortOptions</a></h5></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span></h4>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Implementation of <a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html">AggregateReduxStore</a>.<a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html#start">start</a></p>
-<p>Inherited from <a href="_mithic_cqrs.SimpleReduxStore.html">SimpleReduxStore</a>.<a href="_mithic_cqrs.SimpleReduxStore.html#start">start</a></p>
+<p>Implementation of <a href="../interfaces/_mithic_cqrs.ReactiveStore.html">ReactiveStore</a>.<a href="../interfaces/_mithic_cqrs.ReactiveStore.html#start">start</a></p>
+<p>Inherited from <a href="_mithic_cqrs.ReduceStore.html">ReduceStore</a>.<a href="_mithic_cqrs.ReduceStore.html#start">start</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/22f3aa3/packages/cqrs/src/preset/redux.ts#L34">packages/cqrs/src/preset/redux.ts:34</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/preset/store.ts#L46">cqrs/src/preset/store.ts:46</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="subscribe" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>subscribe</span><a href="#subscribe" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
-<li class="tsd-signature tsd-anchor-link" id="subscribe.subscribe-1"><span class="tsd-kind-call-signature">subscribe</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">consumer</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../types/_mithic_cqrs.Unsubscribe.html" class="tsd-signature-type tsd-kind-type-alias">Unsubscribe</a><a href="#subscribe.subscribe-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
+<li class="tsd-signature tsd-anchor-link" id="subscribe.subscribe-1"><span class="tsd-kind-call-signature">subscribe</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">consumer</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><a href="../types/_mithic_cqrs.Unsubscribe.html" class="tsd-signature-type tsd-kind-type-alias">Unsubscribe</a><span class="tsd-signature-symbol">&gt;</span><a href="#subscribe.subscribe-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
 <li class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Subscribes consumer to new messages and returns a handle to unsubscribe.</p>
 </div>
@@ -272,13 +270,13 @@
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
 <li>
-<h5><span class="tsd-kind-parameter">consumer</span>: <a href="../types/_mithic_cqrs.MessageConsumer.html" class="tsd-signature-type tsd-kind-type-alias">MessageConsumer</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Model</span><span class="tsd-signature-symbol">&gt;</span></h5></li></ul></div>
-<h4 class="tsd-returns-title">Returns <a href="../types/_mithic_cqrs.Unsubscribe.html" class="tsd-signature-type tsd-kind-type-alias">Unsubscribe</a></h4>
+<h5><span class="tsd-kind-parameter">consumer</span>: <a href="../types/_mithic_cqrs.MessageConsumer.html" class="tsd-signature-type tsd-kind-type-alias">MessageConsumer</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">&gt;</span></h5></li></ul></div>
+<h4 class="tsd-returns-title">Returns <a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><a href="../types/_mithic_cqrs.Unsubscribe.html" class="tsd-signature-type tsd-kind-type-alias">Unsubscribe</a><span class="tsd-signature-symbol">&gt;</span></h4>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Implementation of <a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html">AggregateReduxStore</a>.<a href="../interfaces/_mithic_cqrs.AggregateReduxStore.html#subscribe">subscribe</a></p>
-<p>Inherited from <a href="_mithic_cqrs.SimpleReduxStore.html">SimpleReduxStore</a>.<a href="_mithic_cqrs.SimpleReduxStore.html#subscribe">subscribe</a></p>
+<p>Implementation of <a href="../interfaces/_mithic_cqrs.ReactiveStore.html">ReactiveStore</a>.<a href="../interfaces/_mithic_cqrs.ReactiveStore.html#subscribe">subscribe</a></p>
+<p>Inherited from <a href="_mithic_cqrs.ReduceStore.html">ReduceStore</a>.<a href="_mithic_cqrs.ReduceStore.html#subscribe">subscribe</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/22f3aa3/packages/cqrs/src/preset/redux.ts#L50">packages/cqrs/src/preset/redux.ts:50</a></li></ul></aside></li></ul></section></section></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/preset/store.ts#L58">cqrs/src/preset/store.ts:58</a></li></ul></aside></li></ul></section></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
@@ -299,14 +297,14 @@
 <div class="tsd-accordion-details">
 <ul>
 <li><a href="#constructor" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-512"></use></svg><span>constructor</span></a></li>
-<li><a href="#command" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>command</span></a></li>
-<li><a href="#dispatcher" class="tsd-is-protected tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>dispatcher</span></a></li>
+<li><a href="#bus" class="tsd-is-protected"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>bus</span></a></li>
+<li><a href="#eventBus" class="tsd-is-protected tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>event<wbr/>Bus</span></a></li>
 <li><a href="#reducer" class="tsd-is-protected tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>reducer</span></a></li>
 <li><a href="#started" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-262144"></use></svg><span>started</span></a></li>
 <li><a href="#_asyncDispose_" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>[async<wbr/>Dispose]</span></a></li>
 <li><a href="#_asyncIterator_" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>[async<wbr/>Iterator]</span></a></li>
 <li><a href="#close" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>close</span></a></li>
-<li><a href="#dispatch" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>dispatch</span></a></li>
+<li><a href="#dispatch" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>dispatch</span></a></li>
 <li><a href="#getState" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>get<wbr/>State</span></a></li>
 <li><a href="#iterator" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>iterator</span></a></li>
 <li><a href="#start" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>start</span></a></li>

@@ -15,7 +15,7 @@
 <li><a href="../index.html">mithic</a></li>
 <li><a href="../modules/_mithic_cqrs.html">@mithic/cqrs</a></li>
 <li><a href="_mithic_cqrs.MessageBus.html">MessageBus</a></li></ul>
-<h1>Interface MessageBus&lt;Msg&gt;</h1></div>
+<h1>Interface MessageBus&lt;SrcMsg, OutMsg&gt;</h1></div>
 <section class="tsd-panel tsd-comment">
 <div class="tsd-comment tsd-typography"><p>A message bus service.</p>
 </div>
@@ -24,12 +24,14 @@
 <h4>Type Parameters</h4>
 <ul class="tsd-type-parameter-list">
 <li>
-<h4><span class="tsd-kind-type-parameter">Msg</span></h4></li></ul></section> 
+<h4><span class="tsd-kind-type-parameter">SrcMsg</span></h4></li>
+<li>
+<h4><span class="tsd-kind-type-parameter">OutMsg</span> = <span class="tsd-signature-type tsd-kind-type-parameter">SrcMsg</span></h4></li></ul></section> 
 <section class="tsd-panel tsd-hierarchy">
 <h4>Hierarchy</h4>
 <ul class="tsd-hierarchy">
-<li><a href="_mithic_cqrs.MessageDispatcher.html" class="tsd-signature-type tsd-kind-interface">MessageDispatcher</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">&gt;</span></li>
-<li><a href="_mithic_cqrs.MessageSubscription.html" class="tsd-signature-type tsd-kind-interface">MessageSubscription</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">&gt;</span>
+<li><a href="_mithic_cqrs.MessageDispatcher.html" class="tsd-signature-type tsd-kind-interface">MessageDispatcher</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">SrcMsg</span><span class="tsd-signature-symbol">&gt;</span></li>
+<li><a href="_mithic_cqrs.MessageSubscription.html" class="tsd-signature-type tsd-kind-interface">MessageSubscription</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">OutMsg</span><span class="tsd-signature-symbol">&gt;</span>
 <ul class="tsd-hierarchy">
 <li><span class="target">MessageBus</span></li></ul></li></ul></section>
 <section class="tsd-panel">
@@ -38,7 +40,7 @@
 <li><a href="../classes/_mithic_cqrs.PubSubMessageBus.html" class="tsd-signature-type tsd-kind-class">PubSubMessageBus</a></li>
 <li><a href="../classes/_mithic_cqrs.SimpleMessageBus.html" class="tsd-signature-type tsd-kind-class">SimpleMessageBus</a></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/22f3aa3/packages/cqrs/src/bus.ts#L4">packages/cqrs/src/bus.ts:4</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/bus.ts#L4">cqrs/src/bus.ts:4</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-index-accordion" open><summary class="tsd-accordion-summary tsd-index-summary">
@@ -62,14 +64,14 @@
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
 <li>
-<h5><span class="tsd-kind-parameter">message</span>: <span class="tsd-signature-type tsd-kind-type-parameter">Msg</span></h5></li>
+<h5><span class="tsd-kind-parameter">message</span>: <span class="tsd-signature-type tsd-kind-type-parameter">SrcMsg</span></h5></li>
 <li>
 <h5><code class="tsd-tag ts-flagOptional">Optional</code> <span class="tsd-kind-parameter">options</span>: <a href="_mithic_commons.AbortOptions.html" class="tsd-signature-type tsd-kind-interface">AbortOptions</a></h5></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span></h4>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_cqrs.MessageDispatcher.html">MessageDispatcher</a>.<a href="_mithic_cqrs.MessageDispatcher.html#dispatch">dispatch</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/22f3aa3/packages/cqrs/src/bus.ts#L10">packages/cqrs/src/bus.ts:10</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/bus.ts#L10">cqrs/src/bus.ts:10</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="subscribe" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>subscribe</span><a href="#subscribe" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
@@ -81,14 +83,14 @@
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
 <li>
-<h5><span class="tsd-kind-parameter">consumer</span>: <a href="../types/_mithic_cqrs.MessageConsumer.html" class="tsd-signature-type tsd-kind-type-alias">MessageConsumer</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">&gt;</span></h5></li>
+<h5><span class="tsd-kind-parameter">consumer</span>: <a href="../types/_mithic_cqrs.MessageConsumer.html" class="tsd-signature-type tsd-kind-type-alias">MessageConsumer</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">OutMsg</span><span class="tsd-signature-symbol">&gt;</span></h5></li>
 <li>
 <h5><code class="tsd-tag ts-flagOptional">Optional</code> <span class="tsd-kind-parameter">options</span>: <a href="_mithic_commons.AbortOptions.html" class="tsd-signature-type tsd-kind-interface">AbortOptions</a></h5></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><a href="../types/_mithic_cqrs.Unsubscribe.html" class="tsd-signature-type tsd-kind-type-alias">Unsubscribe</a><span class="tsd-signature-symbol">&gt;</span></h4>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_cqrs.MessageSubscription.html">MessageSubscription</a>.<a href="_mithic_cqrs.MessageSubscription.html#subscribe">subscribe</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/22f3aa3/packages/cqrs/src/bus.ts#L16">packages/cqrs/src/bus.ts:16</a></li></ul></aside></li></ul></section></section></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/bus.ts#L16">cqrs/src/bus.ts:16</a></li></ul></aside></li></ul></section></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

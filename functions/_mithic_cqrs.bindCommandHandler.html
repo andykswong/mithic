@@ -1,4 +1,4 @@
-<!DOCTYPE html><html class="default" lang="en"><head><meta charSet="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>MessageTransformer | mithic - v0.3.0</title><meta name="description" content="Documentation for mithic"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os"</script><header class="tsd-page-toolbar">
+<!DOCTYPE html><html class="default" lang="en"><head><meta charSet="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>bindCommandHandler | mithic - v0.3.0</title><meta name="description" content="Documentation for mithic"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os"</script><header class="tsd-page-toolbar">
 <div class="tsd-toolbar-contents container">
 <div class="table-cell" id="tsd-search" data-base="..">
 <div class="field"><label for="tsd-search-field" class="tsd-widget tsd-toolbar-icon search no-caption"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><use href="#icon-search"></use></svg></label><input type="text" id="tsd-search-field" aria-label="Search"/></div>
@@ -14,34 +14,50 @@
 <ul class="tsd-breadcrumb">
 <li><a href="../index.html">mithic</a></li>
 <li><a href="../modules/_mithic_cqrs.html">@mithic/cqrs</a></li>
-<li><a href="_mithic_cqrs.MessageTransformer.html">MessageTransformer</a></li></ul>
-<h1>Type alias MessageTransformer&lt;Src, Target&gt;</h1></div>
-<div class="tsd-signature"><span class="tsd-kind-type-alias">Message<wbr/>Transformer</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Src</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Target</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">src</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Target</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">)</span></div>
+<li><a href="_mithic_cqrs.bindCommandHandler.html">bindCommandHandler</a></li></ul>
+<h1>Function bindCommandHandler</h1></div>
+<section class="tsd-panel">
+<ul class="tsd-signatures">
+<li class="tsd-signature tsd-anchor-link" id="bindCommandHandler"><span class="tsd-kind-call-signature">bind<wbr/>Command<wbr/>Handler</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Command</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">commandBus</span>, <span class="tsd-kind-parameter">eventBus</span>, <span class="tsd-kind-parameter">handler</span>, <span class="tsd-kind-parameter">store</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../interfaces/_mithic_commons.Startable.html" class="tsd-signature-type tsd-kind-interface">Startable</a><span class="tsd-signature-symbol"> &amp; </span><span class="tsd-signature-type ">AsyncDisposable</span><a href="#bindCommandHandler" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
+<li class="tsd-description">
+<div class="tsd-comment tsd-typography"><p>Binds a command handler to command and event bus and returns a disposable <a href="../interfaces/_mithic_commons.Startable.html" class="tsd-kind-interface">Startable</a>.</p>
+</div>
 <section class="tsd-panel">
 <h4>Type Parameters</h4>
 <ul class="tsd-type-parameter-list">
 <li>
-<h4><span class="tsd-kind-type-parameter">Src</span></h4></li>
+<h4><span class="tsd-kind-type-parameter">Command</span> = <a href="../types/_mithic_cqrs.StandardCommand.html" class="tsd-signature-type tsd-kind-type-alias">StandardCommand</a></h4></li>
 <li>
-<h4><span class="tsd-kind-type-parameter">Target</span> = <span class="tsd-signature-type tsd-kind-type-parameter">Src</span></h4></li></ul></section>
-<div class="tsd-type-declaration">
-<h4>Type declaration</h4>
-<ul class="tsd-parameters">
-<li class="tsd-parameter-signature">
-<ul class="tsd-signatures">
-<li class="tsd-signature" id="__type.__type-1"><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">src</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Target</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">&gt;</span></li>
-<li class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>Function to transform and/or filter a source message into target message type.</p>
-</div>
+<h4><span class="tsd-kind-type-parameter">Event</span> = <a href="../interfaces/_mithic_cqrs.StandardEvent.html" class="tsd-signature-type tsd-kind-interface">StandardEvent</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">, </span><a href="../interfaces/_mithic_cqrs.StandardEventMeta.html" class="tsd-signature-type tsd-kind-interface">StandardEventMeta</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span></h4></li>
+<li>
+<h4><span class="tsd-kind-type-parameter">State</span> = <span class="tsd-signature-type">undefined</span></h4></li></ul></section>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
 <li>
-<h5><span class="tsd-kind-parameter">src</span>: <span class="tsd-signature-type tsd-kind-type-parameter">Src</span></h5></li></ul></div>
-<h4 class="tsd-returns-title">Returns <a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Target</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">&gt;</span></h4>
-<div class="tsd-comment tsd-typography"></div></li></ul></li></ul></div><aside class="tsd-sources">
+<h5><span class="tsd-kind-parameter">commandBus</span>: <a href="../interfaces/_mithic_cqrs.MessageSubscription.html" class="tsd-signature-type tsd-kind-interface">MessageSubscription</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Command</span><span class="tsd-signature-symbol">&gt;</span></h5>
+<div class="tsd-comment tsd-typography"><p>Source command <a href="../interfaces/_mithic_cqrs.MessageSubscription.html" class="tsd-kind-interface">MessageSubscription</a> to consume.</p>
+</div>
+<div class="tsd-comment tsd-typography"></div></li>
+<li>
+<h5><span class="tsd-kind-parameter">eventBus</span>: <a href="../interfaces/_mithic_cqrs.MessageDispatcher.html" class="tsd-signature-type tsd-kind-interface">MessageDispatcher</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">&gt;</span></h5>
+<div class="tsd-comment tsd-typography"><p>Output event <a href="../interfaces/_mithic_cqrs.MessageDispatcher.html" class="tsd-kind-interface">MessageDispatcher</a> to use.</p>
+</div>
+<div class="tsd-comment tsd-typography"></div></li>
+<li>
+<h5><span class="tsd-kind-parameter">handler</span>: <a href="../interfaces/_mithic_cqrs.CommandHandler.html" class="tsd-signature-type tsd-kind-interface">CommandHandler</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Command</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">&gt;</span></h5>
+<div class="tsd-comment tsd-typography"><p>Command handler.</p>
+</div>
+<div class="tsd-comment tsd-typography"></div></li>
+<li>
+<h5><code class="tsd-tag ts-flagOptional">Optional</code> <span class="tsd-kind-parameter">store</span>: <a href="../interfaces/_mithic_cqrs.Store.html" class="tsd-signature-type tsd-kind-interface">Store</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">&gt;</span></h5>
+<div class="tsd-comment tsd-typography"><p>State store to use.</p>
+</div>
+<div class="tsd-comment tsd-typography"></div></li></ul></div>
+<h4 class="tsd-returns-title">Returns <a href="../interfaces/_mithic_commons.Startable.html" class="tsd-signature-type tsd-kind-interface">Startable</a><span class="tsd-signature-symbol"> &amp; </span><span class="tsd-signature-type ">AsyncDisposable</span></h4>
+<div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/22f3aa3/packages/cqrs/src/bus.ts#L23">packages/cqrs/src/bus.ts:23</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/preset/command.ts#L8">cqrs/src/preset/command.ts:8</a></li></ul></aside></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
