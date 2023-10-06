@@ -1,6 +1,5 @@
 import { AbortOptions, MaybePromise } from '@mithic/commons';
-import { MessageBus, MessageDispatcher } from '../bus.js';
-import { SimpleMessageBus } from '../bus/index.js';
+import { MessageBus, MessageDispatcher, SimpleMessageBus } from '@mithic/messaging';
 import { MessageReducerFn } from '../processor/index.js';
 import { ReactiveStore, ReduceStore } from './store.js';
 
@@ -15,7 +14,7 @@ export class ReduxStore<State, Event, Action = Event>
     /** Initial state. */
     initialState: State,
     /** {@link MessageBus} to use. */
-    protected readonly bus = new SimpleMessageBus() as MessageBus<Action, Event>,
+    protected readonly bus = new SimpleMessageBus() as unknown as MessageBus<Action, Event>,
   ) {
     super(reducer, initialState, bus);
     this.dispatch = this.dispatch.bind(this);

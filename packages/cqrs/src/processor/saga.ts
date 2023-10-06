@@ -1,6 +1,6 @@
 import { AbortOptions, MaybeAsyncIterableIterator, maybeAsync } from '@mithic/commons';
-import { MessageDispatcher, MessageSubscription } from '../bus.js';
 import { MessageProcessor } from '../processor.js';
+import { MessageDispatcher, MessageSubscription } from '@mithic/messaging';
 
 /** {@link MessageProcessor} that handles messages and dispatches more messages. */
 export class SagaProcessor<SrcMsg, OutMsg = SrcMsg> extends MessageProcessor<SrcMsg> {

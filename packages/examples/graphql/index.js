@@ -1,5 +1,6 @@
 import assert from 'assert';
-import { AsyncSubscriber, ReduceStore, SimpleMessageBus, bindCommandHandler } from '@mithic/cqrs';
+import { AsyncSubscriber, ReduceStore, bindCommandHandler } from '@mithic/cqrs';
+import { SimpleMessageBus } from '@mithic/messaging';
 import { graphql, parse, subscribe, GraphQLSchema, GraphQLObjectType, GraphQLBoolean, GraphQLInt } from 'graphql';
 
 // Create the message buses and store

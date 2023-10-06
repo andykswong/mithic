@@ -1,14 +1,16 @@
-import { MessageHandler, PubSub, PubSubMessage, SubscribeOptions, MessageValidator } from '@mithic/messaging';
+import { MessageHandler, SubscribeOptions, MessageValidator, MessageBus, Unsubscribe } from '@mithic/messaging';
 
 export const LIBP2P_KEY_CODE = 0x72;
 
-export class MockPubSub implements PubSub<Uint8Array> {
-  topicHandlers = new Map<string, MessageHandler<PubSubMessage<Uint8Array>>>();
-  topicValidators = new Map<string, MessageValidator<PubSubMessage<Uint8Array>>>();
+export class MockMessageBus<Msg = Uint8Array> implements MessageBus<Msg> {
+  topicHandlers = new Map<string, MessageHandler<Msg>>();
+  topicValidators = new Map<string, MessageValidator<Msg>>();
 
-  subscribe(topic: string, handler: MessageHandler<PubSubMessage<Uint8Array>>, options?: SubscribeOptions<PubSubMessage<Uint8Array>>): void {
+  subscribe(handler: MessageHandler<Msg>, options?: SubscribeOptions<Msg>): Unsubscribe {
+    const topic = options?.topic ?? '';
     this.topicHandlers.set(topic, handler);
     options?.validator && this.topicValidators.set(topic, options.validator);
+    return () => this.unsubscribe(topic);
   }
 
   unsubscribe(topic: string): void {
@@ -16,7 +18,7 @@ export class MockPubSub implements PubSub<Uint8Array> {
     this.topicValidators.delete(topic);
   }
 
-  publish(): void {
+  dispatch(): void {
     // NO-OP
   }
 

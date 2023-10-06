@@ -1,7 +1,7 @@
 import { jest } from '@jest/globals';
 import { ErrorName } from '@mithic/commons';
 import { CONNECTION_CHECK_INTERVAL_MS, isPeerConnected, waitForPeer } from '../wait-peer.js';
-import { MockPeer, MockPubSub } from '../../__tests__/mocks.js';
+import { MockPeer, MockMessageBus } from '../../__tests__/mocks.js';
 import { flushPromises } from '../../__tests__/utils.js';
 
 const PEER_ID = new MockPeer(new Uint8Array([6, 6, 6]));
@@ -11,24 +11,24 @@ const TOPIC = 'testTopic';
 const TOPIC2 = 'testTopic2';
 
 describe(isPeerConnected.name, () => {
-  let mockPubSub: MockPubSub;
+  let bus: MockMessageBus;
 
   beforeEach(() => {
-    mockPubSub = new MockPubSub();
-    mockPubSub.subscriberMap.set(TOPIC, [PEER_ID, PEER_ID2]);
+    bus = new MockMessageBus();
+    bus.subscriberMap.set(TOPIC, [PEER_ID, PEER_ID2]);
   });
 
   it('should return true if peer is in subscribers list', async () => {
-    expect(await isPeerConnected(mockPubSub, TOPIC, PEER_ID)).toBe(true);
+    expect(await isPeerConnected(bus, TOPIC, PEER_ID)).toBe(true);
   });
 
   it('should return false if peer is in not subscribers list', async () => {
-    expect(await isPeerConnected(mockPubSub, TOPIC, PEER_ID3)).toBe(false);
+    expect(await isPeerConnected(bus, TOPIC, PEER_ID3)).toBe(false);
   });
 });
 
 describe(waitForPeer.name, () => {
-  let mockPubSub: MockPubSub;
+  let mockPubSub: MockMessageBus;
 
   beforeAll(() => {
     jest.useFakeTimers();
@@ -39,7 +39,7 @@ describe(waitForPeer.name, () => {
   });
 
   beforeEach(() => {
-    mockPubSub = new MockPubSub();
+    mockPubSub = new MockMessageBus();
     mockPubSub.subscriberMap.set(TOPIC, [PEER_ID, PEER_ID2]);
   });
 

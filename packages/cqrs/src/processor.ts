@@ -1,6 +1,6 @@
 import { AbortOptions, AsyncDisposableCloseable, Startable, maybeAsync } from '@mithic/commons';
 import { resolve } from '@mithic/commons/maybeAsync';
-import { MessageConsumer, MessageSubscription, Unsubscribe } from './bus.js';
+import { MessageHandler, MessageSubscription, Unsubscribe } from '@mithic/messaging';
 
 /** Processor of messages from an {@link MessageSubscription}. */
 export class MessageProcessor<Msg = unknown> extends AsyncDisposableCloseable implements Startable, AsyncDisposable {
@@ -10,7 +10,7 @@ export class MessageProcessor<Msg = unknown> extends AsyncDisposableCloseable im
     /** {@link MessageSubscription} to consume. */
     protected readonly subscription: MessageSubscription<Msg>,
     /** Consumer of messages. */
-    protected readonly consumer: MessageConsumer<Msg>,
+    protected readonly consumer: MessageHandler<Msg>,
   ) {
     super();
   }

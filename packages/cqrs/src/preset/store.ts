@@ -1,17 +1,12 @@
 import { AbortOptions, AsyncDisposableCloseable, MaybePromise, Startable } from '@mithic/commons';
-import { MessageBus, MessageConsumer, MessageSubscription, Unsubscribe } from '../bus.js';
+import {
+  MessageBus, MessageHandler, MessageSubscription, SimpleMessageBus, StateProvider, Unsubscribe
+} from '@mithic/messaging';
 import { AsyncSubscriber, AsyncSubscriberOptions } from '../iterator.js';
 import { MessageReducer, MessageReducerFn } from '../processor/index.js';
-import { SimpleMessageBus } from '../bus/index.js';
-
-/** Interface for a simple stateful store. */
-export interface Store<State = unknown> {
-  /** Returns the current state. */
-  getState(): State;
-}
 
 /** Interface for a store that can be subscribed for changes. */
-export interface ReactiveStore<State = unknown> extends Store<State>, MessageSubscription<State>, Startable {
+export interface ReactiveStore<State = unknown> extends StateProvider<State>, MessageSubscription<State>, Startable {
   /** Returns an async iterator that yields the latest state on change. */
   iterator(options?: AsyncSubscriberOptions): AsyncIterableIterator<State>;
 }
@@ -55,7 +50,7 @@ export class ReduceStore<State, Event>
     return this.reducer.getState();
   }
 
-  public subscribe(consumer: MessageConsumer<State>): MaybePromise<Unsubscribe> {
+  public subscribe(consumer: MessageHandler<State>): MaybePromise<Unsubscribe> {
     return this.eventBus.subscribe(consumer);
   }
 

@@ -1,11 +1,10 @@
 import { jest } from '@jest/globals';
-import { MessageConsumer, MessageSubscription, Unsubscribe } from '../bus.js';
-import { SimpleMessageBus } from '../bus/index.js';
 import { MessageProcessor } from '../processor.js';
+import { MessageHandler, MessageSubscription, SimpleMessageBus, Unsubscribe } from '@mithic/messaging';
 
 describe(MessageProcessor.name, () => {
   let subscription: MessageSubscription<string>;
-  let mockConsumer: jest.MockedFunction<MessageConsumer<string>>;
+  let mockConsumer: jest.MockedFunction<MessageHandler<string>>;
   let processor: MessageProcessor<string>;
 
   beforeEach(() => {

@@ -1,6 +1,6 @@
 import { ArrayDeque } from '@mithic/collections';
 import { AbortOptions, Closeable, MaybePromise } from '@mithic/commons';
-import { MessageSubscription, Unsubscribe } from './bus.js';
+import { MessageSubscription, Unsubscribe } from '@mithic/messaging';
 
 /**
  * Subscribe to an {@link MessageSubscription} as AsyncIterator.

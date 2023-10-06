@@ -1,8 +1,10 @@
 import { jest } from '@jest/globals';
 import { createEvent, delay } from '@mithic/commons';
-import { PubSubPeerChangeData, PubSubMessage, MessageValidator, MessageValidatorResult, PubSubPeerEvent, MessageHandler } from '../../index.js';
-import { BroadcastChannelPubSub, BroadcastChannelPubSubMessage, BroadcastChannelPubSubMessageType } from '../broadcast-channel.js';
+import { BroadcastChannelMessageBus, BroadcastChannelMessage, BroadcastChannelMessageType } from '../broadcast-channel.js';
+import { PeerAwareMessageOptions, PeerChangeData, PeerEvent } from '../../peer-aware.js';
+import { MessageValidationError } from '../../error.js';
 
+const CHANNEL = 'test-channel';
 const PEER_ID = 'mockPeerId';
 const OTHER_PEER_ID = 'mockOtherPeerId';
 const INACTIVE_PEER_ID = 'mockInactivePeerId';
@@ -10,90 +12,83 @@ const KEEPALIVE_MS = 50;
 const TOPIC = 'test-topic';
 const MESSAGE = 123;
 
-describe(BroadcastChannelPubSub.name, () => {
-  let pubsub: BroadcastChannelPubSub<number>;
+describe(BroadcastChannelMessageBus.name, () => {
+  let bus: BroadcastChannelMessageBus<number>;
   let subscriber: BroadcastChannel;
   let now = 0;
 
   beforeEach(() => {
-    pubsub = new BroadcastChannelPubSub({
+    bus = new BroadcastChannelMessageBus({
       peerId: PEER_ID,
       keepaliveMs: KEEPALIVE_MS,
       now: () => now,
+      channel: new BroadcastChannel(CHANNEL),
     });
-    subscriber = new BroadcastChannel(TOPIC);
+    subscriber = new BroadcastChannel(CHANNEL);
   });
 
   afterEach(() => {
-    pubsub.close();
+    bus.close();
     subscriber.close();
   });
 
   test('close', () => {
-    const handler = jest.fn<MessageHandler<PubSubMessage<number, string>>>();
-    pubsub.subscribe(TOPIC, handler);
-    pubsub['topicSubscribers'].set(TOPIC, new Map([
+    const handler = jest.fn(() => undefined);
+    bus.subscribe(handler, { topic: TOPIC });
+    bus['topicSubscribers'].set(TOPIC, new Map([
       [OTHER_PEER_ID, [OTHER_PEER_ID, now]]
     ]));
 
-    const [, peerMonRemoveListenerSpy] = spyOnPeerMonitor(pubsub);
-    const [, channelCloseSpy] = spyOnChannel(pubsub);
+    const channelCloseSpy = jest.spyOn(bus['channel'], 'close');
+    const [, peerMonRemoveListenerSpy] = spyOnPeerMonitor(bus);
 
-    pubsub.close();
+    bus.close();
 
-    expect(pubsub['keepAliveTimer']).toBe(0);
-    expect(Array.from(pubsub.topics())).toEqual([]);
-    expect(pubsub['topicHandlers'].size).toBe(0);
-    expect(pubsub['topicSubscribers'].size).toBe(0);
+    expect(bus['keepAliveTimer']).toBe(0);
+    expect(Array.from(bus.topics())).toEqual([]);
+    expect(bus['topicHandlers'].size).toBe(0);
+    expect(bus['topicSubscribers'].size).toBe(0);
 
-    expect(peerMonRemoveListenerSpy).toHaveBeenCalledWith(PubSubPeerEvent.Join, pubsub['onPeerJoin']);
-    expect(peerMonRemoveListenerSpy).toHaveBeenCalledWith(PubSubPeerEvent.Leave, pubsub['onPeerLeave']);
-
-    expect(channelCloseSpy).toBeCalled();
+    expect(channelCloseSpy).toHaveBeenCalledTimes(1);
+    expect(peerMonRemoveListenerSpy).toHaveBeenCalledWith(PeerEvent.Join, bus['onPeerJoin']);
+    expect(peerMonRemoveListenerSpy).toHaveBeenCalledWith(PeerEvent.Leave, bus['onPeerLeave']);
   });
 
   test('subscribe and unsubscribe', () => {
-    const handler = jest.fn<MessageHandler<PubSubMessage<number, string>>>();
-    const validator = jest.fn<MessageValidator<PubSubMessage<number, string>>>();
+    const handler = jest.fn(() => undefined);
+    const validator = jest.fn(() => undefined);
 
-    expect(pubsub.topics()).not.toContain(TOPIC);
+    expect(bus.topics()).not.toContain(TOPIC);
 
-    pubsub.subscribe(TOPIC, handler, { validator });
-    expect(pubsub.topics()).toContain(TOPIC);
-    expect(pubsub['keepAliveTimer']).not.toBe(0);
-    expect(pubsub['topicHandlers'].get(TOPIC)).toBe(handler);
-    expect(pubsub['topicValidators'].get(TOPIC)).toBe(validator);
+    const unsubscribe = bus.subscribe(handler, { topic: TOPIC, validator });
+    expect(bus.topics()).toContain(TOPIC);
+    expect(bus['keepAliveTimer']).not.toBe(0);
+    expect(bus['topicHandlers'].get(TOPIC)?.length).toBe(1);
+    bus['topicHandlers'].get(TOPIC)?.[0](MESSAGE, { topic: TOPIC, from: OTHER_PEER_ID });
+    expect(handler).toHaveBeenCalledWith(MESSAGE, { topic: TOPIC, from: OTHER_PEER_ID });
+    expect(validator).toHaveBeenCalledWith(MESSAGE, { topic: TOPIC, from: OTHER_PEER_ID });
 
-    const [channel, channelCloseSpy] = spyOnChannel(pubsub);
-
-    pubsub.subscribe(TOPIC, handler, { validator });
-    expect(pubsub['topicChannels'].get(TOPIC)).toBe(channel); // should reuse channel
-
-    pubsub.unsubscribe(TOPIC);
-    expect(pubsub.topics()).not.toContain(TOPIC);
-    expect(pubsub['topicHandlers'].has(TOPIC)).toBe(false);
-    expect(pubsub['topicValidators'].has(TOPIC)).toBe(false);
-    expect(channelCloseSpy).toBeCalled();
-
-    pubsub.unsubscribe(TOPIC); // should do nothing
-    expect(channelCloseSpy).toBeCalledTimes(1);
+    unsubscribe();
+    expect(bus.topics()).not.toContain(TOPIC);
+    expect(bus['topicHandlers'].has(TOPIC)).toBe(false);
   });
 
-  test('publish', async () => {
-    const handler = jest.fn<MessageHandler<PubSubMessage<number, string>>>();
-    const receivedMessages: BroadcastChannelPubSubMessage<number, string>[] = [];
+  test('dispatch', async () => {
+    const handler = jest.fn(() => undefined);
+    const receivedMessages: BroadcastChannelMessage<number, string>[] = [];
 
     subscriber.addEventListener('message', (event) => {
       receivedMessages.push(event.data);
     });
 
-    pubsub.subscribe(TOPIC, handler);
-    pubsub.publish(TOPIC, MESSAGE);
+    bus.subscribe(handler, { topic: TOPIC });
+    bus.dispatch(MESSAGE, { topic: TOPIC });
 
     await delay(100); // Wait for the message to be delivered
 
     expect(receivedMessages).toContainEqual({
-      type: BroadcastChannelPubSubMessageType.Message,
+      type: BroadcastChannelMessageType.Message,
+      topic: TOPIC,
       from: PEER_ID,
       data: MESSAGE,
     });
@@ -101,92 +96,94 @@ describe(BroadcastChannelPubSub.name, () => {
 
   describe('subscribers', () => {
     it('should return topic subscribers', () => {
-      pubsub['topicSubscribers'].set(TOPIC, new Map([
+      bus['topicSubscribers'].set(TOPIC, new Map([
         [OTHER_PEER_ID, [OTHER_PEER_ID, now]]
       ]));
 
-      expect(Array.from(pubsub.subscribers(TOPIC))).toEqual([OTHER_PEER_ID]);
+      expect(Array.from(bus.subscribers({ topic: TOPIC }))).toEqual([OTHER_PEER_ID]);
     });
 
     it('should clean up inactive topic subscribers', () => {
       const origTime = now;
       now += KEEPALIVE_MS * 1000;
-      pubsub['topicSubscribers'].set(TOPIC, new Map([
+      bus['topicSubscribers'].set(TOPIC, new Map([
         [OTHER_PEER_ID, [OTHER_PEER_ID, now]],
         [INACTIVE_PEER_ID, [INACTIVE_PEER_ID, origTime]]
       ]));
 
-      expect(Array.from(pubsub.subscribers(TOPIC))).toEqual([OTHER_PEER_ID]);
-      expect(pubsub['topicSubscribers'].get(TOPIC)?.has(INACTIVE_PEER_ID)).toBe(false);
+      expect(Array.from(bus.subscribers({ topic: TOPIC }))).toEqual([OTHER_PEER_ID]);
+      expect(bus['topicSubscribers'].get(TOPIC)?.has(INACTIVE_PEER_ID)).toBe(false);
     });
   });
 
   test('keepalive', async () => {
-    const handler = jest.fn<MessageHandler<PubSubMessage<number, string>>>();
-    const receivedMessages: BroadcastChannelPubSubMessage<number, string>[] = [];
+    const handler = jest.fn(() => undefined);
+    const receivedMessages: BroadcastChannelMessage<number, string>[] = [];
 
     subscriber.addEventListener('message', (event) => {
       receivedMessages.push(event.data);
     });
 
-    pubsub.subscribe(TOPIC, handler);
+    bus.subscribe(handler, { topic: TOPIC });
 
     await delay(100); // Wait for keepalive message to be delivered
 
     expect(receivedMessages).toContainEqual({
-      type: BroadcastChannelPubSubMessageType.Keepalive,
+      type: BroadcastChannelMessageType.Keepalive,
+      topic: TOPIC,
       from: PEER_ID,
     });
   });
 
   describe('onMessage', () => {
     it('should emit event for valid message', async () => {
-      const receivedMessages: PubSubMessage<number, string>[] = [];
-      const handler = jest.fn<MessageHandler<PubSubMessage<number, string>>>((event) => {
-        receivedMessages.push(event);
+      const receivedMessages: [number, PeerAwareMessageOptions<string> | undefined][] = [];
+      const handler = jest.fn((msg: number, options?: PeerAwareMessageOptions<string>) => {
+        receivedMessages.push([msg, options]);
       });
 
-      pubsub.subscribe(TOPIC, handler);
+      bus.subscribe(handler, { topic: TOPIC });
       subscriber.postMessage({
-        type: BroadcastChannelPubSubMessageType.Message,
+        type: BroadcastChannelMessageType.Message,
+        topic: TOPIC,
         from: OTHER_PEER_ID,
         data: MESSAGE,
       });
 
       await delay(100); // Wait for the message to be delivered
 
-      expect(receivedMessages).toContainEqual({
+      expect(receivedMessages).toContainEqual([MESSAGE, {
         topic: TOPIC,
-        data: MESSAGE,
         from: OTHER_PEER_ID,
-      });
+      }]);
 
-      expect(pubsub['topicSubscribers'].get(TOPIC)?.get(OTHER_PEER_ID)).toEqual([OTHER_PEER_ID, now]);
+      expect(bus['topicSubscribers'].get(TOPIC)?.get(OTHER_PEER_ID)).toEqual([OTHER_PEER_ID, now]);
     });
 
     it('should update peer lastSeen on keepalive message', async () => {
-      const handler = jest.fn<MessageHandler<PubSubMessage<number, string>>>();
-      pubsub.subscribe(TOPIC, handler);
+      const handler = jest.fn(() => undefined);
+      bus.subscribe(handler, { topic: TOPIC });
 
       for (let i = 0; i < 2; ++i, now += 1000) {
         subscriber.postMessage({
-          type: BroadcastChannelPubSubMessageType.Keepalive,
+          type: BroadcastChannelMessageType.Keepalive,
+          topic: TOPIC,
           from: OTHER_PEER_ID,
         });
 
         await delay(100); // Wait for the message to be delivered
 
-        expect(pubsub['topicSubscribers'].get(TOPIC)?.get(OTHER_PEER_ID)).toEqual([OTHER_PEER_ID, now]);
+        expect(bus['topicSubscribers'].get(TOPIC)?.get(OTHER_PEER_ID)).toEqual([OTHER_PEER_ID, now]);
       }
     });
 
     it('should drop malformed message', async () => {
-      const receivedMessages: PubSubMessage<number, string>[] = [];
-      const handler = jest.fn<MessageHandler<PubSubMessage<number, string>>>((event) => {
+      const receivedMessages: unknown[] = [];
+      const handler = jest.fn((event) => {
         receivedMessages.push(event);
       });
 
-      pubsub.subscribe(TOPIC, handler);
+      bus.subscribe(handler, { topic: TOPIC });
       subscriber.postMessage('rubbish');
 
       await delay(100); // Wait for the message to be delivered
@@ -195,52 +192,50 @@ describe(BroadcastChannelPubSub.name, () => {
     });
 
     it('should drop invalid message', async () => {
-      const receivedMessages: PubSubMessage<number, string>[] = [];
-      const deliveredMessages: PubSubMessage<number, string>[] = [];
+      const receivedMessages: unknown[] = [];
+      const deliveredMessages: unknown[] = [];
+      const handler = jest.fn((message, options) => { deliveredMessages.push([message, options]) });
 
-      const handler = jest.fn<MessageHandler<PubSubMessage<number, string>>>((event) => {
-        deliveredMessages.push(event);
-      });
-
-      pubsub.subscribe(TOPIC, handler, {
-        validator: (message) => {
-          receivedMessages.push(message);
-          return MessageValidatorResult.Reject;
+      bus.subscribe(handler, {
+        topic: TOPIC,
+        validator: (message, options) => {
+          receivedMessages.push([message, options]);
+          return new MessageValidationError();
         }
       });
       subscriber.postMessage({
-        type: BroadcastChannelPubSubMessageType.Message,
+        type: BroadcastChannelMessageType.Message,
+        topic: TOPIC,
         from: OTHER_PEER_ID,
         data: MESSAGE,
       });
 
       await delay(100); // Wait for the message to be delivered
 
-      expect(receivedMessages).toContainEqual({
+      expect(receivedMessages).toContainEqual([MESSAGE, {
         topic: TOPIC,
-        data: MESSAGE,
         from: OTHER_PEER_ID,
-      });
+      }]);
       expect(deliveredMessages.length).toBe(0);
     });
   });
 
   test('onPeerEvent', () => {
-    const handler = jest.fn<MessageHandler<PubSubMessage<number, string>>>();
-    const receivedMessages: PubSubPeerChangeData<string>[] = [];
+    const handler = jest.fn(() => undefined);
+    const receivedMessages: unknown[] = [];
 
-    pubsub.addEventListener(PubSubPeerEvent.Join, (event) => {
+    bus.addEventListener(PeerEvent.Join, (event) => {
       receivedMessages.push(event.detail);
     });
-    pubsub.addEventListener(PubSubPeerEvent.Leave, (event) => {
+    bus.addEventListener(PeerEvent.Leave, (event) => {
       receivedMessages.push(event.detail);
     });
-    pubsub.subscribe(TOPIC, handler);
+    bus.subscribe(handler, { topic: TOPIC });
 
-    const [peerMonitor,] = spyOnPeerMonitor(pubsub);
-    const event: PubSubPeerChangeData<string> = { topic: TOPIC, peers: [OTHER_PEER_ID] };
+    const [peerMonitor,] = spyOnPeerMonitor(bus);
+    const event: PeerChangeData<string> = { topic: TOPIC, peers: [OTHER_PEER_ID] };
 
-    for (const eventType of [PubSubPeerEvent.Join, PubSubPeerEvent.Leave] as const) {
+    for (const eventType of [PeerEvent.Join, PeerEvent.Leave] as const) {
       receivedMessages.length = 0;
       peerMonitor.dispatchEvent(createEvent(eventType, event));
       expect(receivedMessages).toEqual([event]);
@@ -248,13 +243,7 @@ describe(BroadcastChannelPubSub.name, () => {
   });
 });
 
-function spyOnChannel<T>(pubsub: BroadcastChannelPubSub<T>) {
-  const channel = pubsub['topicChannels'].get(TOPIC);
-  if (!channel) { throw new Error('channel is undefined'); }
-  return [channel, jest.spyOn(channel, 'close')] as const;
-}
-
-function spyOnPeerMonitor<T>(pubsub: BroadcastChannelPubSub<T>) {
+function spyOnPeerMonitor<T>(pubsub: BroadcastChannelMessageBus<T>) {
   const peerMonitor = pubsub['peerMonitor'];
   if (!peerMonitor) { throw new Error('peerMonitor is undefined'); }
   return [peerMonitor, jest.spyOn(peerMonitor, 'removeEventListener')] as const;

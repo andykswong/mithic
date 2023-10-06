@@ -1,8 +1,9 @@
 import { jest } from '@jest/globals';
 import { delay } from '@mithic/commons';
-import { MessageConsumer } from '../../bus.js';
-import { SimpleMessageBus } from '../../bus/index.js';
 import { MessageReducer } from '../reducer.js';
+import { SimpleMessageBus } from '@mithic/messaging';
+
+const TOPIC = 'message';
 
 describe(MessageReducer.name, () => {
   let subscription: SimpleMessageBus<string>;
@@ -33,15 +34,15 @@ describe(MessageReducer.name, () => {
       const reducer = new MessageReducer(subscription, dispatcher, reduce, state);
 
       await reducer.start();
-      subscription.dispatch(event);
+      subscription.dispatch(event, { topic: TOPIC });
 
-      expect(reduce).toHaveBeenLastCalledWith(state, event, undefined);
+      expect(reduce).toHaveBeenLastCalledWith(state, event, { topic: TOPIC });
       const newState = { events: [event] };
       expect(reducer.getState()).toEqual(newState);
 
-      subscription.dispatch(event2);
+      subscription.dispatch(event2, { topic: TOPIC });
 
-      expect(reduce).toHaveBeenLastCalledWith(newState, event2, undefined);
+      expect(reduce).toHaveBeenLastCalledWith(newState, event2, { topic: TOPIC });
       expect(reducer.getState()).toEqual({ events: [event, event2] });
     });
 
@@ -65,13 +66,13 @@ describe(MessageReducer.name, () => {
           return { events: [...s.events, e] };
         }, state);
 
-        const consumerFn = jest.fn<MessageConsumer<typeof state>>();
+        const consumerFn = jest.fn(() => undefined);
 
         await reducer.start();
         dispatcher.subscribe(consumerFn);
-        subscription.dispatch(event);
+        subscription.dispatch(event, { topic: TOPIC });
 
-        expect(consumerFn).toHaveBeenCalledWith({ events: [event] });
+        expect(consumerFn).toHaveBeenCalledWith({ events: [event] }, { topic: TOPIC });
       });
     });
   });

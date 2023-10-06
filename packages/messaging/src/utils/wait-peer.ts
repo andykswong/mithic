@@ -1,14 +1,14 @@
 import { abortError, AbortOptions, equalsOrSameString, StringEquatable } from '@mithic/commons';
-import { PeerAwarePubSub, PubSubPeerState } from '../pubsub.js';
+import { MessageSubscriptionPeers, MessageSubscriptionState } from '../peer-aware.js';
 
 /** Interval in milliseconds to wait for next connection check. */
 export const CONNECTION_CHECK_INTERVAL_MS = 200;
 
-/** Waits for peer to be connected. */
+/** Waits for peer to be connected to specified topic. */
 export async function waitForPeer<Peer extends StringEquatable<Peer>>(
-  pubsub: PeerAwarePubSub<unknown, Peer>, topic: string, peer: Peer, options?: AbortOptions
+  sub: MessageSubscriptionState<Peer>, topic: string, peer: Peer, options?: AbortOptions
 ): Promise<void> {
-  if (await isPeerConnected(pubsub, topic, peer, options)) {
+  if (await isPeerConnected(sub, topic, peer, options)) {
     return; // return immediately if already connected
   }
 
@@ -22,7 +22,7 @@ export async function waitForPeer<Peer extends StringEquatable<Peer>>(
       }
 
       let subscribed = false;
-      for (const subscribedTopic of await pubsub.topics()) {
+      for (const subscribedTopic of await sub.topics(options)) {
         if (topic === subscribedTopic) {
           subscribed = true;
           break;
@@ -33,7 +33,7 @@ export async function waitForPeer<Peer extends StringEquatable<Peer>>(
         return reject(abortError('channel closed'));
       }
 
-      if (await isPeerConnected(pubsub, topic, peer, options)) {
+      if (await isPeerConnected(sub, topic, peer, options)) {
         clearInterval(interval);
         return resolve();
       }
@@ -43,9 +43,9 @@ export async function waitForPeer<Peer extends StringEquatable<Peer>>(
 
 /** Checks if peer is connected. */
 export async function isPeerConnected<Peer extends StringEquatable<Peer>>(
-  pubsub: PubSubPeerState<Peer>, topic: string, peer: Peer, options?: AbortOptions
+  sub: MessageSubscriptionPeers<Peer>, topic: string, peer: Peer, options?: AbortOptions
 ): Promise<boolean> {
-  const subscribers = await pubsub.subscribers(topic, options);
+  const subscribers = await sub.subscribers({ ...options, topic });
   for (const subscriber of subscribers) {
     if (equalsOrSameString(peer, subscriber)) {
       return true;

@@ -1,6 +1,6 @@
 import { AbortOptions, MaybePromise } from '@mithic/commons';
-import { MessageDispatcher, MessageSubscription } from '../bus.js';
 import { MessageProcessor } from '../processor.js';
+import { MessageDispatcher, MessageSubscription } from '@mithic/messaging';
 
 /** {@link MessageProcessor} that derives aggregate state from messages. */
 export class MessageReducer<State = object, Msg = unknown> extends MessageProcessor<Msg> {

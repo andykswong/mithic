@@ -1,6 +1,6 @@
 import { delay } from '@mithic/commons';
-import { SimpleMessageBus } from '../../bus/index.js';
 import { SagaProcessor } from '../saga.js';
+import { SimpleMessageBus } from '@mithic/messaging';
 
 const IN_COMMAND = { type: 'rawEvent' };
 const OUT_EVENT1 = { type: 'transformedEvent', value: 1 };

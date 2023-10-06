@@ -1,22 +1,22 @@
 import { createEvent, equalsOrSameString, Startable, StringEquatable, TypedEventTarget } from '@mithic/commons';
-import { PubSubPeerEvent, PubSubPeerEvents, PubSubPeerState } from '../pubsub.js';
+import { MessageSubscriptionState, PeerEvent, PeerEvents } from '../peer-aware.js';
 
 /** Default peer refresh interval in milliseconds */
-export const DEFAULT_PUBSUB_PEER_MONITOR_REFRESH_MS = 1000;
+export const DEFAULT_PEER_MONITOR_REFRESH_MS = 1000;
 
-/** Monitor of topic peers from {@link PubSubPeerState}. */
-export class PubSubPeerMonitor<Peer extends StringEquatable<Peer>>
-  extends TypedEventTarget<PubSubPeerEvents<Peer>>
+/** Monitor of topic peers from {@link MessageSubscriptionState}. */
+export class PeerSubscriptionMonitor<Peer extends StringEquatable<Peer>>
+  extends TypedEventTarget<PeerEvents<Peer>>
   implements Startable, Disposable {
 
   private readonly peers: Map<string, Peer[]> = new Map();
   private pollTimer = 0;
 
   public constructor(
-    /** {@link PubSubPeerState} instance. */
-    private readonly pubsub: PubSubPeerState<Peer>,
+    /** {@link MessageSubscriptionState} instance. */
+    private readonly bus: MessageSubscriptionState<Peer>,
     /** Peer list refresh interval in milliseconds. */
-    private readonly refreshMs = DEFAULT_PUBSUB_PEER_MONITOR_REFRESH_MS,
+    private readonly refreshMs = DEFAULT_PEER_MONITOR_REFRESH_MS,
     /** whether to start the monitor immediately. */
     start = true,
   ) {
@@ -55,7 +55,7 @@ export class PubSubPeerMonitor<Peer extends StringEquatable<Peer>>
 
   /** Clean up the `peers` list based on currently subscribed topics. */
   private async updateTopics() {
-    const topics = new Set(await this.pubsub.topics());
+    const topics = new Set(await this.bus.topics());
     for (const topic of this.peers.keys()) {
       if (!topics.has(topic)) {
         this.peers.delete(topic);
@@ -70,7 +70,7 @@ export class PubSubPeerMonitor<Peer extends StringEquatable<Peer>>
 
   /** Updates the `peers` list with the latest peers and emit join/leave events */
   private async updateTopicPeers(topic: string, peers: Peer[]) {
-    const newPeers = Array.from(await this.pubsub.subscribers(topic));
+    const newPeers = Array.from(await this.bus.subscribers({ topic }));
     let existing = 0; // count of existing peers
     let leaving = 0; // count of leaving peers
 
@@ -103,14 +103,14 @@ export class PubSubPeerMonitor<Peer extends StringEquatable<Peer>>
     // remove leaving peers from peers list and emit event
     if (leaving) {
       const leavingPeers = peers.splice(peers.length - leaving, leaving);
-      this.dispatchEvent(createEvent(PubSubPeerEvent.Leave, { topic, peers: leavingPeers }));
+      this.dispatchEvent(createEvent(PeerEvent.Leave, { topic, peers: leavingPeers }));
     }
 
     // add joining peers to peers list and emit event
     if (newPeers.length - existing) {
       const joiningPeers = newPeers.slice(existing);
       peers.push(...joiningPeers);
-      this.dispatchEvent(createEvent(PubSubPeerEvent.Join, { topic, peers: joiningPeers }));
+      this.dispatchEvent(createEvent(PeerEvent.Join, { topic, peers: joiningPeers }));
     }
   }
 }

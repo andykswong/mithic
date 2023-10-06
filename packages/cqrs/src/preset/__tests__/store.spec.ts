@@ -1,10 +1,10 @@
 import { jest } from '@jest/globals';
-import { MessageConsumer } from '../../bus.js';
-import { SimpleMessageBus } from '../../bus/index.js';
+import { SimpleMessageBus } from '@mithic/messaging';
 import { ReduceStore } from '../store.js';
 
 type State = { count: number; };
 type Event = { type: string };
+const TOPIC = 'message';
 const INCR_EVENT: Event = { type: 'increment' };
 
 describe(ReduceStore.name, () => {
@@ -33,12 +33,12 @@ describe(ReduceStore.name, () => {
   });
 
   it('should subscribe to changes and invoke the consumer function', async () => {
-    const consumerFn = jest.fn<MessageConsumer<State>>();
+    const consumerFn = jest.fn(() => undefined);
     const unsubscribe = await store.subscribe(consumerFn);
-    await bus.dispatch(INCR_EVENT);
+    await bus.dispatch(INCR_EVENT, { topic: TOPIC });
     expect(store.getState()).toEqual({ count: 1 });
     expect(consumerFn).toHaveBeenCalledTimes(1);
-    expect(consumerFn).toHaveBeenCalledWith(store.getState());
+    expect(consumerFn).toHaveBeenCalledWith(store.getState(), { topic: TOPIC });
 
     await unsubscribe();
     await bus.dispatch(INCR_EVENT);

@@ -1,6 +1,6 @@
 import { ErrorName, immediate } from '@mithic/commons';
-import { SimpleMessageBus } from '../bus/simple.js';
 import { AsyncSubscriber } from '../iterator.js';
+import { SimpleMessageBus } from '@mithic/messaging';
 
 describe(AsyncSubscriber.name, () => {
   let eventBus: SimpleMessageBus<number>;
@@ -17,7 +17,7 @@ describe(AsyncSubscriber.name, () => {
 
   it('should return values from the subscription', async () => {
     const events = [1, 2, 3];
-    events.forEach(eventBus.dispatch);
+    events.forEach((event) => eventBus.dispatch(event));
     const result = [];
 
     for await (const event of subscriber) {
@@ -36,7 +36,7 @@ describe(AsyncSubscriber.name, () => {
 
     const error = new Error('stop');
     const events = [1, 2, 3];
-    events.forEach(eventBus.dispatch);
+    events.forEach((event) => eventBus.dispatch(event));
     const result = [];
 
     try {
@@ -60,7 +60,7 @@ describe(AsyncSubscriber.name, () => {
     const controller = new AbortController();
     const subscriber = new AsyncSubscriber(eventBus, controller);
     const events = [1, 2, 3];
-    events.forEach(eventBus.dispatch);
+    events.forEach((event) => eventBus.dispatch(event));
     const result = [];
 
     try {
@@ -96,7 +96,7 @@ describe(AsyncSubscriber.name, () => {
 
   it('should resolve pending pulls on close', async () => {
     const events = [1, 2];
-    events.forEach(eventBus.dispatch);
+    events.forEach((event) => eventBus.dispatch(event));
     const result = [];
     for (let i = 0; i < 4; ++i) {
       result.push(subscriber.next());
@@ -113,7 +113,7 @@ describe(AsyncSubscriber.name, () => {
   it('should drop overflowing values', async () => {
     const subscriber = new AsyncSubscriber(eventBus, { bufferSize: 1 });
     const events = [1, 2, 3];
-    events.forEach(eventBus.dispatch);
+    events.forEach((event) => eventBus.dispatch(event));
 
     for await (const event of subscriber) {
       expect(event).toEqual(events[2]); // previous events dropped
@@ -124,7 +124,7 @@ describe(AsyncSubscriber.name, () => {
   it('should ignore new values on fcfs mode if buffer is full', async () => {
     const subscriber = new AsyncSubscriber(eventBus, { bufferSize: 1, fcfs: true });
     const events = [1, 2, 3];
-    events.forEach(eventBus.dispatch);
+    events.forEach((event) => eventBus.dispatch(event));
 
     for await (const event of subscriber) {
       expect(event).toEqual(events[0]); // later events dropped

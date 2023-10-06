@@ -1,6 +1,6 @@
 import { AbortOptions, MaybePromise } from '@mithic/commons';
-import { MessageDispatcher, MessageSubscription } from '../bus.js';
 import { MessageProcessor } from '../processor.js';
+import { MessageDispatcher, MessageSubscription } from '@mithic/messaging';
 
 /** {@link MessageProcessor} that handles input message and translates it to output message. */
 export class MessageTranslator<SrcMsg, OutMsg = SrcMsg> extends MessageProcessor<SrcMsg> {

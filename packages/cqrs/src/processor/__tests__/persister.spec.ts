@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
 import { delay } from '@mithic/commons';
-import { SimpleMessageBus } from '../../bus/index.js';
+import { SimpleMessageBus } from '@mithic/messaging';
 import { MessagePersister, ObjectWriter } from '../persister.js';
 
 const RAW_EVENT = { type: 'rawEvent' };
