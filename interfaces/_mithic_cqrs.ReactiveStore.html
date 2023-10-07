@@ -28,8 +28,8 @@
 <section class="tsd-panel tsd-hierarchy">
 <h4>Hierarchy</h4>
 <ul class="tsd-hierarchy">
-<li><a href="_mithic_cqrs.Store.html" class="tsd-signature-type tsd-kind-interface">Store</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">&gt;</span></li>
-<li><a href="_mithic_cqrs.MessageSubscription.html" class="tsd-signature-type tsd-kind-interface">MessageSubscription</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">&gt;</span></li>
+<li><a href="_mithic_messaging.StateProvider.html" class="tsd-signature-type tsd-kind-interface">StateProvider</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">&gt;</span></li>
+<li><a href="_mithic_messaging.MessageSubscription.html" class="tsd-signature-type tsd-kind-interface">MessageSubscription</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">&gt;</span></li>
 <li><a href="_mithic_commons.Startable.html" class="tsd-signature-type tsd-kind-interface">Startable</a>
 <ul class="tsd-hierarchy">
 <li><span class="target">ReactiveStore</span></li></ul></li></ul></section>
@@ -39,7 +39,7 @@
 <li><a href="../classes/_mithic_cqrs.ReduceStore.html" class="tsd-signature-type tsd-kind-class">ReduceStore</a></li>
 <li><a href="../classes/_mithic_cqrs.ReduxStore.html" class="tsd-signature-type tsd-kind-class">ReduxStore</a></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/preset/store.ts#L14">cqrs/src/preset/store.ts:14</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5b03d3f/packages/cqrs/src/preset/store.ts#L9">cqrs/src/preset/store.ts:9</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-index-accordion" open><summary class="tsd-accordion-summary tsd-index-summary">
@@ -96,9 +96,9 @@
 </div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type tsd-kind-type-parameter">State</span></h4>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Inherited from <a href="_mithic_cqrs.Store.html">Store</a>.<a href="_mithic_cqrs.Store.html#getState">getState</a></p>
+<p>Inherited from <a href="_mithic_messaging.StateProvider.html">StateProvider</a>.<a href="_mithic_messaging.StateProvider.html#getState">getState</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/preset/store.ts#L10">cqrs/src/preset/store.ts:10</a></li></ul></aside></li></ul></section>
+<li>Defined in messaging/dist/utils/middleware.d.ts:32</li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="iterator" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>iterator</span><a href="#iterator" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -114,7 +114,7 @@
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">&gt;</span></h4>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/preset/store.ts#L16">cqrs/src/preset/store.ts:16</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5b03d3f/packages/cqrs/src/preset/store.ts#L11">cqrs/src/preset/store.ts:11</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="start" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>start</span><a href="#start" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
@@ -135,22 +135,22 @@
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="subscribe" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>subscribe</span><a href="#subscribe" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
-<li class="tsd-signature tsd-anchor-link" id="subscribe.subscribe-1"><span class="tsd-kind-call-signature">subscribe</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">consumer</span>, <span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><a href="../types/_mithic_cqrs.Unsubscribe.html" class="tsd-signature-type tsd-kind-type-alias">Unsubscribe</a><span class="tsd-signature-symbol">&gt;</span><a href="#subscribe.subscribe-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
+<li class="tsd-signature tsd-anchor-link" id="subscribe.subscribe-1"><span class="tsd-kind-call-signature">subscribe</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">handler</span>, <span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><a href="../types/_mithic_messaging.Unsubscribe.html" class="tsd-signature-type tsd-kind-type-alias">Unsubscribe</a><span class="tsd-signature-symbol">&gt;</span><a href="#subscribe.subscribe-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
 <li class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>Subscribes consumer to new messages and returns a handle to unsubscribe.</p>
+<div class="tsd-comment tsd-typography"><p>Subscribes to new messages and returns a handle to unsubscribe.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
 <li>
-<h5><span class="tsd-kind-parameter">consumer</span>: <a href="../types/_mithic_cqrs.MessageConsumer.html" class="tsd-signature-type tsd-kind-type-alias">MessageConsumer</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">&gt;</span></h5></li>
+<h5><span class="tsd-kind-parameter">handler</span>: <a href="../types/_mithic_messaging.MessageHandler.html" class="tsd-signature-type tsd-kind-type-alias">MessageHandler</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">object</span><span class="tsd-signature-symbol">&gt;</span></h5></li>
 <li>
-<h5><code class="tsd-tag ts-flagOptional">Optional</code> <span class="tsd-kind-parameter">options</span>: <a href="_mithic_commons.AbortOptions.html" class="tsd-signature-type tsd-kind-interface">AbortOptions</a></h5></li></ul></div>
-<h4 class="tsd-returns-title">Returns <a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><a href="../types/_mithic_cqrs.Unsubscribe.html" class="tsd-signature-type tsd-kind-type-alias">Unsubscribe</a><span class="tsd-signature-symbol">&gt;</span></h4>
+<h5><code class="tsd-tag ts-flagOptional">Optional</code> <span class="tsd-kind-parameter">options</span>: <a href="_mithic_messaging.SubscribeOptions.html" class="tsd-signature-type tsd-kind-interface">SubscribeOptions</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">object</span><span class="tsd-signature-symbol">&gt;</span></h5></li></ul></div>
+<h4 class="tsd-returns-title">Returns <a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><a href="../types/_mithic_messaging.Unsubscribe.html" class="tsd-signature-type tsd-kind-type-alias">Unsubscribe</a><span class="tsd-signature-symbol">&gt;</span></h4>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Inherited from <a href="_mithic_cqrs.MessageSubscription.html">MessageSubscription</a>.<a href="_mithic_cqrs.MessageSubscription.html#subscribe">subscribe</a></p>
+<p>Inherited from <a href="_mithic_messaging.MessageSubscription.html">MessageSubscription</a>.<a href="_mithic_messaging.MessageSubscription.html#subscribe">subscribe</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/756ee68/packages/cqrs/src/bus.ts#L16">cqrs/src/bus.ts:16</a></li></ul></aside></li></ul></section></section></div>
+<li>Defined in messaging/dist/messaging.d.ts:17</li></ul></aside></li></ul></section></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
