@@ -1,3 +1,4 @@
+import { beforeEach, describe, expect, it } from '@jest/globals';
 import { BTreeMap, ContentAddressedMapStore } from '@mithic/collections';
 import { ErrorCode, operationError } from '@mithic/commons';
 import { StandardEventMeta } from '@mithic/cqrs/event';
@@ -27,6 +28,9 @@ describe(IndexedEventStore.name, () => {
 
     await store.put(EVENT1);
     await store.put(EVENT2);
+  });
+
+  it('should have the correct index size', () => {
     expect(index.size).toBe(18);
   });
 
@@ -138,12 +142,12 @@ describe(IndexedEventStore.name, () => {
   });
 
   describe('has', () => {
-    test('should return true when the key is valid', async () => {
+    it('should return true when the key is valid', async () => {
       const hasKey = await store.has(ID1);
       expect(hasKey).toBe(true);
     });
 
-    test('should return false when the key is invalid', async () => {
+    it('should return false when the key is invalid', async () => {
       const hasKey = await store.has(ID3);
       expect(hasKey).toBe(false);
     });

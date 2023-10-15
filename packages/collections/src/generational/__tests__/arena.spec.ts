@@ -1,3 +1,4 @@
+import { describe, expect, it, test } from '@jest/globals';
 import { GenerationalArena } from '../arena.js';
 
 describe('GenerationalArena', () => {

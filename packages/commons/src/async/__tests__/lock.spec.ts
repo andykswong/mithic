@@ -1,3 +1,4 @@
+import { beforeEach, describe, expect, it } from '@jest/globals';
 import { NoOpLock } from '../lock.js';
 
 describe(NoOpLock.name, () => {

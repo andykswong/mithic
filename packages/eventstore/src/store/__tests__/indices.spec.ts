@@ -1,3 +1,4 @@
+import { describe, expect, it } from '@jest/globals';
 import { ContentId } from '@mithic/commons';
 import { StandardEvent } from '@mithic/cqrs/event';
 import { getEventIndexKey, getEventIndexKeys, getEventIndexRangeQueryOptions, getEventTypePrefixes } from '../indices.js';

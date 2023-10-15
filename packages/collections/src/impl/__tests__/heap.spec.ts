@@ -1,3 +1,4 @@
+import { describe, expect, it } from '@jest/globals';
 import { BinaryHeap } from '../heap.js';
 
 describe(BinaryHeap.name, () => {

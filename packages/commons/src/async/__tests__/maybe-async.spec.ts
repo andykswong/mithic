@@ -1,3 +1,4 @@
+import { describe, expect, it } from '@jest/globals';
 import { delay } from '../delay.js';
 import { reduce, resolve } from '../maybe-async.js';
 import { maybeAsync } from '../promise.js';

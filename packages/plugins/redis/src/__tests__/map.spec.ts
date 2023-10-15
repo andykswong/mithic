@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { RedisClientType, commandOptions } from '@redis/client';
 import { createMockRedisClient, createMockRedisClientMultiCommand } from '../__tests__/mocks.js';
 import { RedisMap } from '../map.js';
@@ -21,16 +21,25 @@ describe(RedisMap.name, () => {
     mockRedis = createMockRedisClient();
     map = new RedisMap(mockRedis, HASH_KEY, RANGE_KEY, false);
     await map.start();
-    expect(map.started).toBe(true);
   });
 
   afterEach(async () => {
     await map.close();
-    expect(map.started).toBe(false);
+  });
+
+  it('should be started', () => {
+    expect(map.started).toBe(true);
   });
 
   it('should have the correct string tag', () => {
     expect(`${map}`).toBe(`[object ${RedisMap.name}]`);
+  });
+
+  describe('close', () => {
+    it('should set started to false', async () => {
+      await map.close();
+      expect(map.started).toBe(false);
+    });
   });
 
   describe('get', () => {

@@ -1,3 +1,4 @@
+import { describe, expect, it, test } from '@jest/globals';
 import { GenerationalIdMap } from '../genidmap.js';
 import { SparseSetMap } from '../sparseset.js';
 import { GenerationalId } from '../index.js';

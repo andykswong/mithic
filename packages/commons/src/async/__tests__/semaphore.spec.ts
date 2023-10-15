@@ -1,3 +1,4 @@
+import { beforeEach, describe, expect, it } from '@jest/globals';
 import { CountingSemaphore, SharedCountingSemaphore } from '../semaphore.js';
 
 describe(CountingSemaphore.name, () => {
@@ -9,18 +10,16 @@ describe(CountingSemaphore.name, () => {
 
   describe('acquire', () => {
     it('should block until permits are available', async () => {
-      expect.assertions(2);
-
       await semaphore.acquire();
       await semaphore.acquire();
 
-      setTimeout(() => {
-        expect(semaphore.availablePermits).toBe(0);
-        semaphore.release();
-        semaphore.release();
-      }, 100);
+      expect(semaphore.availablePermits).toBe(0);
 
-      await semaphore.acquire();
+      const p = semaphore.acquire();
+      semaphore.release();
+      semaphore.release();
+      await p;
+
       expect(semaphore.availablePermits).toBe(1);
     });
 
@@ -81,19 +80,28 @@ describe(SharedCountingSemaphore.name, () => {
 
   describe('acquire', () => {
     it('should block until permits are available', async () => {
-      expect.assertions(2);
-
       await semaphore.acquire();
       await semaphore.acquire();
 
-      setTimeout(() => {
-        expect(semaphore.availablePermits).toBe(0);
-        semaphore.release();
-        semaphore.release();
-      }, 500);
+      expect(semaphore.availablePermits).toBe(0);
 
-      await semaphore2.acquire();
+      const p = semaphore2.acquire();
+      semaphore.release();
+      semaphore.release();
+      await p;
+
       expect(semaphore.availablePermits).toBe(1);
+    });
+
+    it('should acquire on the correct buffer index', async () => {
+      const semaphore = new SharedCountingSemaphore({
+        permits: 2,
+        buffer: new Int32Array(new SharedArrayBuffer(8)),
+        index: 1,
+      });
+      semaphore.buffer[1] = 2;
+      await semaphore.acquire();
+      expect(semaphore.buffer[1]).toBe(1);
     });
 
     it('should throw an error if aborted', async () => {
@@ -122,6 +130,17 @@ describe(SharedCountingSemaphore.name, () => {
       await semaphore.acquire();
       expect(semaphore2.tryAcquire()).toBe(false);
     });
+
+    it('should try acquire on the correct buffer index', () => {
+      const semaphore = new SharedCountingSemaphore({
+        permits: 2,
+        buffer: new Int32Array(new SharedArrayBuffer(8)),
+        index: 1,
+      });
+      semaphore.buffer[1] = 2;
+      expect(semaphore.tryAcquire()).toBe(true);
+      expect(semaphore.buffer[1]).toBe(1);
+    });
   });
 
   describe('release', () => {
@@ -138,6 +157,21 @@ describe(SharedCountingSemaphore.name, () => {
       expect(semaphore.tryAcquire()).toBe(true);
       expect(semaphore.tryAcquire()).toBe(true);
       expect(semaphore.tryAcquire()).toBe(false);
+    });
+
+    it('should release on the correct buffer index', async () => {
+      const semaphore = new SharedCountingSemaphore({
+        permits: 2,
+        buffer: new Int32Array(new SharedArrayBuffer(8)),
+        index: 1,
+      });
+      semaphore.buffer[1] = 2;
+
+      await semaphore.acquire();
+      await semaphore.acquire();
+      expect(semaphore.tryAcquire()).toBe(false);
+      semaphore.release();
+      expect(semaphore.tryAcquire()).toBe(true);
     });
   });
 });

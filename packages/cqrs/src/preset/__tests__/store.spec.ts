@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { SimpleMessageBus } from '@mithic/messaging';
 import { ReduceStore } from '../store.js';
 
@@ -19,12 +19,21 @@ describe(ReduceStore.name, () => {
     bus = new SimpleMessageBus<Event>();
     store = new ReduceStore(reducer, initialState, bus);
     await store.start();
-    expect(store.started).toBe(true);
   });
 
   afterEach(async () => {
     await store.close();
-    expect(store.started).toBe(false);
+  });
+
+  describe('close', () => {
+    it('should set started to false', async () => {
+      await store.close();
+      expect(store.started).toBe(false);
+    });
+  });
+
+  it('should have started', () => {
+    expect(store.started).toBe(true);
   });
 
   it('should dispatch commands and update state', async () => {

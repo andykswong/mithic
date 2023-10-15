@@ -13,18 +13,6 @@ export interface Lock {
   release(options?: AbortOptions): MaybePromise<void>;
 }
 
-/** Options for acquiring/releasing a {@link Lock} with a key. */
-export interface LockKeyOptions<K = string> extends AbortOptions {
-  /** key of the lock to acquire/release. */
-  key?: K;
-} 
-
-/** Options for acquiring a {@link Lock} that may be shared. */
-export interface ReadWriteLockAcquireOptions extends AbortOptions {
-  /** True if the lock should be shared, false if exclusive. */
-  shared?: boolean;
-} 
-
 /** A lock that does nothing. Useful for testing / running single-threaded. */
 export class NoOpLock implements Lock {
   acquire(): void {

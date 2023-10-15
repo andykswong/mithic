@@ -1,3 +1,4 @@
+import { describe, expect, it } from '@jest/globals';
 import { mapJoin, mapJoinAsync } from '../join.js';
 import { MaybeAsyncMap } from '../map.js';
 

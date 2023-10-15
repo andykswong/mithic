@@ -45,7 +45,8 @@
   "dependencies": {
     "@mithic/collections": "^0.3",
     "@mithic/commons": "^0.3",
-    "@mithic/cqrs": "^0.3"
+    "@mithic/cqrs": "^0.3",
+    "@mithic/messaging": "^0.3"
   },
   "optionalDependencies": {
     "@ipld/dag-cbor": "^9.0",

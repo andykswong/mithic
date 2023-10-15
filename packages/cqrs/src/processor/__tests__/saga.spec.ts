@@ -1,6 +1,7 @@
+import { beforeEach, describe, expect, it } from '@jest/globals';
 import { delay } from '@mithic/commons';
-import { SagaProcessor } from '../saga.js';
 import { SimpleMessageBus } from '@mithic/messaging';
+import { SagaProcessor } from '../saga.js';
 
 const IN_COMMAND = { type: 'rawEvent' };
 const OUT_EVENT1 = { type: 'transformedEvent', value: 1 };
@@ -17,7 +18,6 @@ describe(SagaProcessor.name, () => {
 
   it('should handle incoming message and dispatch output messages from saga', async () => {
     const msgs: unknown[] = [];
-    expect.assertions(2);
 
     const saga = new SagaProcessor(
       subscription,

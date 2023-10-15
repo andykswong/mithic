@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { SharedCountingSemaphore, delay } from '@mithic/commons';
 import { RunnableTask, TaskQueue } from '../task.js';
 
@@ -26,8 +26,6 @@ describe(TaskQueue.name, () => {
 
   describe('push', () => {
     it('should add a task to the queue', async () => {
-      expect.assertions(4);
-
       const expected = 'result';
       const task = jest.fn<() => Promise<string>>().mockImplementation(async () => {
         expect(taskQueue.pending).toBe(1);

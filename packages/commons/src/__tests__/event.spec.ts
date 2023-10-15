@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import { delay } from '../async/index.js';
 import { EventDispatcher, TypedCustomEvent, TypedEvent, TypedEventTarget, consumer, createEvent } from '../event.js';
 
@@ -41,8 +41,6 @@ describe(TypedEventTarget.name, () => {
 
 describe('consumer', () => {
   it('should execute the entire coroutine', () => {
-    expect.assertions(5);
-
     const consumerFn = consumer<number>(function* () {
       const _ = 3 + 5; // just do some work
       const b = yield;
@@ -57,8 +55,6 @@ describe('consumer', () => {
   });
 
   it('should handle async coroutines', async () => {
-    expect.assertions(5);
-
     const consumerFn = consumer<number>(async function* () {
       await delay(); // just do some work
       const b = yield;

@@ -1,3 +1,4 @@
+import { describe, expect, it } from '@jest/globals';
 import { StringEquatable, equalsOrSameString } from '../equal.js';
 
 class WithEqual implements StringEquatable<WithEqual> {
@@ -11,7 +12,7 @@ class WithEqual implements StringEquatable<WithEqual> {
 const OBJ = { a: 1 };
 
 describe('equals', () => {
-  test.each([
+  it.each([
     [true, 'receiving same objects', OBJ, OBJ],
     [true, 'receiving 2 equal strings', 'str', 'str'],
     [false, 'receiving 2 different strings', 'str1', 'str2'],

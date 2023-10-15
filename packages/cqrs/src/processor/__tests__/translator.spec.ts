@@ -1,6 +1,7 @@
+import { beforeEach, describe, expect, it } from '@jest/globals';
 import { delay } from '@mithic/commons';
-import { MessageTranslator } from '../translator.js';
 import { SimpleMessageBus } from '@mithic/messaging';
+import { MessageTranslator } from '../translator.js';
 
 const IN_COMMAND = { type: 'rawEvent' };
 const OUT_EVENT = { type: 'transformedEvent' };
@@ -15,38 +16,44 @@ describe(MessageTranslator.name, () => {
   });
 
   it('should transform incoming message', async () => {
-    expect.assertions(2);
+    let inCommand, outEvent;
 
     const translator = new MessageTranslator(
       subscription,
       dispatcher,
       (msg) => {
-        expect(msg).toEqual(IN_COMMAND);
+        inCommand = msg;
         return OUT_EVENT;
       }
     );
     await translator.start();
-    dispatcher.subscribe((msg) => expect(msg).toEqual(OUT_EVENT));
+    dispatcher.subscribe((msg) => { outEvent = msg; });
     subscription.dispatch(IN_COMMAND);
 
     await delay(); // wait for event to be consumed
+
+    expect(inCommand).toEqual(IN_COMMAND);
+    expect(outEvent).toEqual(OUT_EVENT)
   });
 
   it('should not dispatch message if handler returns undefined', async () => {
-    expect.assertions(1);
+    let inCommand, outEvent;
 
     const translator = new MessageTranslator(
       subscription,
       dispatcher,
       (msg) => {
-        expect(msg).toEqual(IN_COMMAND);
+        inCommand = msg;
         return undefined;
       }
     );
     await translator.start();
-    dispatcher.subscribe(() => expect(true).toBe(false));
+    dispatcher.subscribe((msg) => { outEvent = msg || true; });
     subscription.dispatch(IN_COMMAND);
 
     await delay(); // wait for event to be consumed
+
+    expect(inCommand).toEqual(IN_COMMAND);
+    expect(outEvent).toBeUndefined();
   });
 });

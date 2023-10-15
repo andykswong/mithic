@@ -1,3 +1,4 @@
+import { describe, expect, it, test } from '@jest/globals';
 import { DualStackDeque } from '../dsdeque.js';
 
 describe(DualStackDeque.name, () => {

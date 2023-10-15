@@ -1,3 +1,4 @@
+import { describe, expect, it } from '@jest/globals';
 import { CID } from 'multiformats';
 import { sha256 } from '../hash.js';
 import { compareContentIds, compareBuffers, concatBuffers } from '../buffer.js';

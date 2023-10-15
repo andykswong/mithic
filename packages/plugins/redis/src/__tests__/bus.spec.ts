@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { MessageValidationError } from '@mithic/messaging';
 import { RedisClientType, commandOptions } from '@redis/client';
 import { createMockRedisClient } from './mocks.js';
@@ -18,12 +18,21 @@ describe(RedisMessageBus.name, () => {
     mockRedis = createMockRedisClient();
     bus = new RedisMessageBus(mockRedis);
     await bus.start();
-    expect(bus.started).toBe(true);
   });
 
   afterEach(async () => {
     await bus.close();
-    expect(bus.started).toBe(false);
+  });
+
+  it('should be started', () => {
+    expect(bus.started).toBe(true);
+  });
+
+  describe('close', () => {
+    it('should set started to false', async () => {
+      await bus.close();
+      expect(bus.started).toBe(false);
+    });
   });
 
   describe('dispatch', () => {

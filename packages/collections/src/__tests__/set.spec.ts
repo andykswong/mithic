@@ -1,3 +1,4 @@
+import { describe, it } from '@jest/globals';
 import { MaybeAsyncSet } from '../set.js';
 
 describe('MaybeAsyncSet', () => {

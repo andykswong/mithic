@@ -54,12 +54,14 @@ export class CountingSemaphore implements Lock {
 }
 
 /** A counting semaphore that uses a shared array buffer for synchronization. */
-export class SharedCountingSemaphore implements Lock {
+export class SharedCountingSemaphore implements Lock, SharedCountingSemaphoreOptions {
   public readonly buffer: Int32Array;
+  public readonly index: number;
   public readonly permits: number;
   public readonly waitInterval: number;
 
-  public constructor({ buffer, permits = 1, waitInterval = 200 }: SharedCountingSemaphoreOptions = {}) {
+  public constructor({ buffer, index = 0, permits = 1, waitInterval = 200 }: SharedCountingSemaphoreOptions = {}) {
+    this.index = index;
     this.permits = permits;
     this.waitInterval = waitInterval;
     if (buffer && buffer.length > 0) {
@@ -72,13 +74,13 @@ export class SharedCountingSemaphore implements Lock {
 
   /** Returns the number of permits available for use. */
   public get availablePermits(): number {
-    return Atomics.load(this.buffer, 0);
+    return Atomics.load(this.buffer, this.index);
   }
 
   public async acquire(options?: AbortOptions): Promise<void> {
     while (!this.tryAcquire()) {
       options?.signal?.throwIfAborted();
-      await Atomics.waitAsync(this.buffer, 0, 0, this.waitInterval).value;
+      await Atomics.waitAsync(this.buffer, this.index, 0, this.waitInterval).value;
     }
   }
 
@@ -88,7 +90,7 @@ export class SharedCountingSemaphore implements Lock {
       if (permits <= 0) {
         return false;
       }
-      if (Atomics.compareExchange(this.buffer, 0, permits, permits - 1) === permits) {
+      if (Atomics.compareExchange(this.buffer, this.index, permits, permits - 1) === permits) {
         return true;
       }
     }
@@ -96,12 +98,12 @@ export class SharedCountingSemaphore implements Lock {
 
   public release(): void {
     for (; ;) {
-      const permits = Atomics.load(this.buffer, 0);
+      const permits = this.availablePermits;
       if (permits >= this.permits) {
         break;
       }
-      if (Atomics.compareExchange(this.buffer, 0, permits, permits + 1) === permits) {
-        Atomics.notify(this.buffer, 0);
+      if (Atomics.compareExchange(this.buffer, this.index, permits, permits + 1) === permits) {
+        Atomics.notify(this.buffer, this.index);
         break;
       }
     }
@@ -115,6 +117,9 @@ export interface SharedCountingSemaphoreOptions {
 
   /** Shared array buffer for permit synchronization. */
   buffer?: Int32Array;
+
+  /** The buffer index to use for permit synchronization. Defaults to 0. */
+  index?: number;
 
   /** The interval in milliseconds to wait for a permit. Defaults to 200. */
   waitInterval?: number;

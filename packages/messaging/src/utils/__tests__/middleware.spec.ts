@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import { delay } from '@mithic/commons';
 import { MessageBus, MessageHandler } from '../../messaging.js';
 import { SimpleMessageBus } from '../../impl/simple.js';
@@ -13,18 +13,20 @@ describe(applyDispatchMiddleware.name, () => {
   let dispatcher: MessageBus<typeof COMMAND>;
 
   it('should decorate dispatcher with middleware', async () => {
-    expect.assertions(6);
+    let middlewaresCalled = 0;
 
     const Dispatcher = applyDispatchMiddleware(
       SimpleMessageBus, STORE,
       (store) => (dispatch) => (command, options) => {
         expect(store.getState()).toBe(STATE);
         expect(command).toEqual(COMMAND);
+        middlewaresCalled |= 1;
         return dispatch({ ...COMMAND, value: 1 }, options);
       },
       (store) => (dispatch) => (command, options) => {
         expect(store.getState()).toBe(STATE);
         expect(command).toEqual({ ...COMMAND, value: 1 });
+        middlewaresCalled |= 2;
         return dispatch({ ...COMMAND, value: 2 }, options);
       },
     );
@@ -38,6 +40,7 @@ describe(applyDispatchMiddleware.name, () => {
 
     expect(consumer).toHaveBeenCalledTimes(1);
     expect(consumer).toHaveBeenCalledWith({ ...COMMAND, value: 2 }, { topic: TOPIC });
+    expect(middlewaresCalled).toBe(3);
   });
 });
 
@@ -45,7 +48,7 @@ describe(applySubscribeMiddleware.name, () => {
   let subscription: MessageBus<typeof COMMAND>;
 
   it('should decorate subscription with middleware', async () => {
-    expect.assertions(6);
+    let middlewaresCalled = 0;
 
     const Subscription = applySubscribeMiddleware(
       SimpleMessageBus, STORE,
@@ -53,6 +56,7 @@ describe(applySubscribeMiddleware.name, () => {
         expect(store.getState()).toBe(STATE);
         return subscribe((command, options) => {
           expect(command).toEqual(COMMAND);
+          middlewaresCalled |= 1;
           return consumer({ ...COMMAND, value: 1 }, options);
         }, options);
       },
@@ -60,6 +64,7 @@ describe(applySubscribeMiddleware.name, () => {
         expect(store.getState()).toBe(STATE);
         return subscribe((command, options) => {
           expect(command).toEqual({ ...COMMAND, value: 1 });
+          middlewaresCalled |= 2;
           return consumer({ ...COMMAND, value: 2 }, options);
         }, options);
       },
@@ -74,5 +79,6 @@ describe(applySubscribeMiddleware.name, () => {
 
     expect(consumer).toHaveBeenCalledTimes(1);
     expect(consumer).toHaveBeenCalledWith({ ...COMMAND, value: 2 }, { topic: TOPIC });
+    expect(middlewaresCalled).toBe(3);
   });
 });

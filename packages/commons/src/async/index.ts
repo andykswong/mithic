@@ -6,5 +6,6 @@ export * from './options.js';
 export * from './promise.js';
 export * from './ratelimiter.js';
 export * from './semaphore.js';
+export * from './web-lock.js';
 
 export * as MaybeAsync from './maybe-async.js';

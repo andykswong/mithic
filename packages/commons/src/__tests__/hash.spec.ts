@@ -1,3 +1,4 @@
+import { describe, expect, it } from '@jest/globals';
 import { Hasher, sha256, sha512 } from '../hash.js';
 
 const DATA = new Uint8Array([0, 1, 2, 3]);

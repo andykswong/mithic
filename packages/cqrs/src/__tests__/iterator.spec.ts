@@ -1,3 +1,4 @@
+import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { ErrorName, immediate } from '@mithic/commons';
 import { AsyncSubscriber } from '../iterator.js';
 import { SimpleMessageBus } from '@mithic/messaging';
@@ -32,13 +33,12 @@ describe(AsyncSubscriber.name, () => {
   });
 
   it('should close when error is thrown', async () => {
-    expect.assertions(3);
-
     const error = new Error('stop');
     const events = [1, 2, 3];
     events.forEach((event) => eventBus.dispatch(event));
     const result = [];
 
+    let actualError;
     try {
       for await (const event of subscriber) {
         result.push(event);
@@ -47,22 +47,22 @@ describe(AsyncSubscriber.name, () => {
         }
       }
     } catch (e) {
-      expect(e).toBe(error);
+      actualError = e;
     }
 
+    expect(actualError).toBe(error);
     expect(result).toEqual(events.slice(0, 2));
     expect(subscriber['running']).toBe(false);
   });
 
   it('should close when aborted', async () => {
-    expect.assertions(3);
-
     const controller = new AbortController();
     const subscriber = new AsyncSubscriber(eventBus, controller);
     const events = [1, 2, 3];
     events.forEach((event) => eventBus.dispatch(event));
     const result = [];
 
+    let actualError;
     try {
       for await (const event of subscriber) {
         result.push(event);
@@ -71,9 +71,10 @@ describe(AsyncSubscriber.name, () => {
         }
       }
     } catch (e) {
-      expect((e as Error).name).toBe(ErrorName.Abort);
+      actualError = e;
     }
 
+    expect((actualError as Error).name).toBe(ErrorName.Abort);
     expect(result).toEqual(events.slice(0, 2));
     expect(subscriber['running']).toBe(false);
   });

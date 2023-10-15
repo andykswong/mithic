@@ -1,3 +1,4 @@
+import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { AbstractLevel } from 'abstract-level';
 import { MemoryLevel } from 'memory-level';
 import { LevelMap } from '../map.js';
@@ -10,16 +11,25 @@ describe(LevelMap.name, () => {
     backingMap = new MemoryLevel();
     map = new LevelMap(backingMap);
     await map.start();
-    expect(map.started).toBe(true);
   });
 
   afterEach(async () => {
     await map.close();
-    expect(map.started).toBe(false);
+  });
+
+  it('should have started', () => {
+    expect(map.started).toBe(true);
   });
 
   it('should have the correct string tag', () => {
     expect(`${map}`).toBe(`[object ${LevelMap.name}]`);
+  });
+
+  describe('close', () => {
+    it('should set started to false', async () => {
+      await map.close();
+      expect(map.started).toBe(false);
+    });
   });
 
   describe('clear', () => {

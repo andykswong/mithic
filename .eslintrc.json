@@ -19,8 +19,7 @@
   "env": {
     "es2023": true,
     "browser": true,
-    "node": true,
-    "jest": true
+    "node": true
   },
   "ignorePatterns": [
     "/packages/**/dist/"

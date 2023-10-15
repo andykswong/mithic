@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { DEFAULT_PEER_MONITOR_REFRESH_MS, PeerSubscriptionMonitor } from '../peer-monitor.js';
 import { MockPeer, MockMessageBus } from '../../__tests__/mocks.js';
 import { flushPromises } from '../../__tests__/utils.js';
@@ -46,7 +46,8 @@ describe(PeerSubscriptionMonitor.name, () => {
 
   describe('event', () => {
     it('should emit join and leave events when peer list changes', async () => {
-      expect.assertions(4);
+      let joinCount = 0;
+      let leaveCount = 0;
 
       jest.advanceTimersByTime(DEFAULT_PEER_MONITOR_REFRESH_MS);
       await flushPromises();
@@ -54,23 +55,28 @@ describe(PeerSubscriptionMonitor.name, () => {
       peerMonitor.addEventListener(PeerEvent.Join, (event) => {
         expect(event.detail.topic).toBe(TOPIC);
         expect(event.detail.peers).toEqual([PEER_ID3]);
+        ++joinCount;
       });
 
       peerMonitor.addEventListener(PeerEvent.Leave, (event) => {
         expect(event.detail.topic).toBe(TOPIC);
         expect(event.detail.peers).toEqual([PEER_ID]);
+        ++leaveCount;
       });
 
       mockPubSub.subscriberMap.set(TOPIC, [PEER_ID2, PEER_ID3]);
 
       jest.advanceTimersByTime(DEFAULT_PEER_MONITOR_REFRESH_MS);
+      await flushPromises();
+
+      expect(joinCount).toBe(1);
+      expect(leaveCount).toBe(1);
     });
 
     it('should update peers map on subscribe/unsubscribe', async () => {
-      expect.assertions(2);
-
       jest.advanceTimersByTime(DEFAULT_PEER_MONITOR_REFRESH_MS);
       await flushPromises();
+
       expect(peerMonitor['peers'].get(TOPIC)).toEqual([PEER_ID, PEER_ID2]);
 
       mockPubSub.subscriberMap.clear();

@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto';
+import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { IndexedDBMap } from '../indexeddbmap.js';
 
 describe(IndexedDBMap.name, () => {
@@ -10,7 +11,6 @@ describe(IndexedDBMap.name, () => {
   beforeEach(async () => {
     dbMap = new IndexedDBMap(dbName, storeName);
     await dbMap.start();
-    expect(dbMap.started).toBe(true);
   });
 
   afterEach(async () => {
@@ -18,9 +18,20 @@ describe(IndexedDBMap.name, () => {
     dbMap.close();
   });
 
+  it('should be started', () => {
+    expect(dbMap.started).toBe(true);
+  })
+
   it('should have correct string tag', () => {
     expect(dbMap.toString()).toBe(`[object ${IndexedDBMap.name}]`);
   });
+
+  describe('close', () => {
+    it('should close the map', () => {
+      dbMap.close();
+      expect(dbMap.started).toBe(false);
+    });
+  })
 
   describe('set/get', () => {
     it('should set and get a value', async () => {
@@ -189,7 +200,9 @@ describe(IndexedDBMap.name, () => {
 
     beforeEach(async () => {
       for await (const error of dbMap.setMany(ENTRIES)) {
-        expect(error).toBeUndefined();
+        if (error) {
+          throw error;
+        }
       }
     });
 

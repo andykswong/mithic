@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { ErrorName } from '@mithic/commons';
 import { CONNECTION_CHECK_INTERVAL_MS, isPeerConnected, waitForPeer } from '../wait-peer.js';
 import { MockPeer, MockMessageBus } from '../../__tests__/mocks.js';
@@ -44,35 +44,32 @@ describe(waitForPeer.name, () => {
   });
 
   it('should return immediately if peer is already connected', async () => {
-    expect.assertions(1);
     await waitForPeer(mockPubSub, TOPIC, PEER_ID);
-    expect(true).toBe(true);
   });
 
   it('should resolve once peer is connected', async () => {
-    expect.assertions(1);
     const p = waitForPeer(mockPubSub, TOPIC, PEER_ID3);
     await flushPromises();
     mockPubSub.subscriberMap.set(TOPIC, [PEER_ID3]);
     jest.advanceTimersByTime(CONNECTION_CHECK_INTERVAL_MS);
     await p;
-    expect(true).toBe(true);
   });
 
   it('should reject with AbortError if topic closed', async () => {
-    expect.assertions(1);
+    let err: unknown;
     try {
       const p = waitForPeer(mockPubSub, TOPIC2, PEER_ID3);
       await flushPromises();
       jest.advanceTimersByTime(CONNECTION_CHECK_INTERVAL_MS);
       await p;
     } catch (e) {
-      expect((e as Error).name).toBe(ErrorName.Abort);
+      err = e;
     }
+    expect((err as Error)?.name).toBe(ErrorName.Abort);
   });
 
   it('should reject with AbortError if aborted', async () => {
-    expect.assertions(1);
+    let err: unknown;
     const controller = new AbortController();
     try {
       const p = waitForPeer(mockPubSub, TOPIC, PEER_ID3, { signal: controller.signal });
@@ -81,7 +78,8 @@ describe(waitForPeer.name, () => {
       jest.advanceTimersByTime(CONNECTION_CHECK_INTERVAL_MS);
       await p;
     } catch (e) {
-      expect((e as Error).name).toBe(ErrorName.Abort);
+      err = e;
     }
+    expect((err as Error)?.name).toBe(ErrorName.Abort);
   });
 });

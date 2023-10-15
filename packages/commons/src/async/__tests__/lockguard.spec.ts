@@ -1,3 +1,4 @@
+import { describe, expect, it } from '@jest/globals';
 import { LockGuard } from '../lockguard.js';
 import { CountingSemaphore } from '../semaphore.js';
 

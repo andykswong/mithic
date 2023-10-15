@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { immediate, delay } from '../delay.js';
 
 describe(delay.name, () => {

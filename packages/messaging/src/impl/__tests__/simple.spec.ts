@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { SimpleMessageBus } from '../simple.js';
 import { MessageValidationError } from '../../error.js';
 
@@ -27,6 +27,13 @@ describe(SimpleMessageBus.name, () => {
       bus.dispatch(MSG, { topic: TOPIC });
       expect(callback).toHaveBeenCalledWith(MSG, { topic: TOPIC });
       expect(callback2).toHaveBeenCalledWith(MSG, { topic: TOPIC });
+    });
+
+    it('should throw error from handlers', () => {
+      const error = new Error('test error');
+      const callback = jest.fn(() => { throw error; });
+      bus.subscribe(callback);
+      expect(() => bus.dispatch(MSG)).toThrow(error);
     });
   });
 
