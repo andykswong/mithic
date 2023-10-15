@@ -1,4 +1,4 @@
-<!DOCTYPE html><html class="default" lang="en"><head><meta charSet="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>ReadWriteLockAcquireOptions | mithic - v0.3.0</title><meta name="description" content="Documentation for mithic"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os"</script><header class="tsd-page-toolbar">
+<!DOCTYPE html><html class="default" lang="en"><head><meta charSet="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>WebLockOptions | mithic - v0.3.0</title><meta name="description" content="Documentation for mithic"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os"</script><header class="tsd-page-toolbar">
 <div class="tsd-toolbar-contents container">
 <div class="table-cell" id="tsd-search" data-base="..">
 <div class="field"><label for="tsd-search-field" class="tsd-widget tsd-toolbar-icon search no-caption"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><use href="#icon-search"></use></svg></label><input type="text" id="tsd-search-field" aria-label="Search"/></div>
@@ -14,20 +14,18 @@
 <ul class="tsd-breadcrumb">
 <li><a href="../index.html">mithic</a></li>
 <li><a href="../modules/_mithic_commons.html">@mithic/commons</a></li>
-<li><a href="_mithic_commons.ReadWriteLockAcquireOptions.html">ReadWriteLockAcquireOptions</a></li></ul>
-<h1>Interface ReadWriteLockAcquireOptions</h1></div>
+<li><a href="_mithic_commons.WebLockOptions.html">WebLockOptions</a></li></ul>
+<h1>Interface WebLockOptions</h1></div>
 <section class="tsd-panel tsd-comment">
-<div class="tsd-comment tsd-typography"><p>Options for acquiring a <a href="_mithic_commons.Lock.html" class="tsd-kind-interface">Lock</a> that may be shared.</p>
+<div class="tsd-comment tsd-typography"><p>Options for creating a <a href="../classes/_mithic_commons.WebLock.html" class="tsd-kind-class">WebLock</a>.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div></section>
 <section class="tsd-panel tsd-hierarchy">
 <h4>Hierarchy</h4>
 <ul class="tsd-hierarchy">
-<li><a href="_mithic_commons.AbortOptions.html" class="tsd-signature-type tsd-kind-interface">AbortOptions</a>
-<ul class="tsd-hierarchy">
-<li><span class="target">ReadWriteLockAcquireOptions</span></li></ul></li></ul></section><aside class="tsd-sources">
+<li><span class="target">WebLockOptions</span></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5b03d3f/packages/commons/src/async/lock.ts#L23">packages/commons/src/async/lock.ts:23</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/web-lock.ts#L93">packages/commons/src/async/web-lock.ts:93</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-index-accordion" open><summary class="tsd-accordion-summary tsd-index-summary">
@@ -35,28 +33,36 @@
 <div class="tsd-accordion-details">
 <section class="tsd-index-section">
 <h3 class="tsd-index-heading">Properties</h3>
-<div class="tsd-index-list"><a href="_mithic_commons.ReadWriteLockAcquireOptions.html#shared" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>shared?</span></a>
-<a href="_mithic_commons.ReadWriteLockAcquireOptions.html#signal" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>signal?</span></a>
+<div class="tsd-index-list"><a href="_mithic_commons.WebLockOptions.html#locks" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>locks?</span></a>
+<a href="_mithic_commons.WebLockOptions.html#name" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>name?</span></a>
+<a href="_mithic_commons.WebLockOptions.html#shared" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>shared?</span></a>
 </div></section></div></details></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Properties</h2>
+<section class="tsd-panel tsd-member"><a id="locks" class="tsd-anchor"></a>
+<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <span>locks</span><a href="#locks" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">locks</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type ">LockManager</span></div>
+<div class="tsd-comment tsd-typography"><p>Instance of LockManager.</p>
+</div>
+<div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/web-lock.ts#L101">packages/commons/src/async/web-lock.ts:101</a></li></ul></aside></section>
+<section class="tsd-panel tsd-member"><a id="name" class="tsd-anchor"></a>
+<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <span>name</span><a href="#name" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">name</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
+<div class="tsd-comment tsd-typography"><p>Unique name of the lock. Defaults to <code>lock</code>.</p>
+</div>
+<div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/web-lock.ts#L95">packages/commons/src/async/web-lock.ts:95</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="shared" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <span>shared</span><a href="#shared" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">shared</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
-<div class="tsd-comment tsd-typography"><p>True if the lock should be shared, false if exclusive.</p>
+<div class="tsd-comment tsd-typography"><p>Whether the lock is shared. Defaults to <code>false</code>.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5b03d3f/packages/commons/src/async/lock.ts#L25">packages/commons/src/async/lock.ts:25</a></li></ul></aside></section>
-<section class="tsd-panel tsd-member tsd-is-inherited"><a id="signal" class="tsd-anchor"></a>
-<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <span>signal</span><a href="#signal" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">signal</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type ">AbortSignal</span></div>
-<div class="tsd-comment tsd-typography"><p>An optional AbortSignal that can be used to abort an async task.</p>
-</div>
-<div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Inherited from <a href="_mithic_commons.AbortOptions.html">AbortOptions</a>.<a href="_mithic_commons.AbortOptions.html#signal">signal</a></p>
-<ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5b03d3f/packages/commons/src/async/options.ts#L4">packages/commons/src/async/options.ts:4</a></li></ul></aside></section></section></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/web-lock.ts#L98">packages/commons/src/async/web-lock.ts:98</a></li></ul></aside></section></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
@@ -76,8 +82,9 @@
 <h3><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><use href="#icon-chevronDown"></use></svg>On This Page</h3></summary>
 <div class="tsd-accordion-details">
 <ul>
-<li><a href="#shared" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>shared</span></a></li>
-<li><a href="#signal" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>signal</span></a></li></ul></div></details></div>
+<li><a href="#locks" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>locks</span></a></li>
+<li><a href="#name" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>name</span></a></li>
+<li><a href="#shared" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>shared</span></a></li></ul></div></details></div>
 <div class="site-menu">
 <nav class="tsd-navigation"><a href="../index.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1"></use></svg><span>mithic - v0.3.0</span></a>
 <ul class="tsd-small-nested-navigation" id="tsd-nav-container" data-base="..">

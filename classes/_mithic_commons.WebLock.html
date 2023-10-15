@@ -1,4 +1,4 @@
-<!DOCTYPE html><html class="default" lang="en"><head><meta charSet="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>SharedCountingSemaphore | mithic - v0.3.0</title><meta name="description" content="Documentation for mithic"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os"</script><header class="tsd-page-toolbar">
+<!DOCTYPE html><html class="default" lang="en"><head><meta charSet="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>WebLock | mithic - v0.3.0</title><meta name="description" content="Documentation for mithic"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os"</script><header class="tsd-page-toolbar">
 <div class="tsd-toolbar-contents container">
 <div class="table-cell" id="tsd-search" data-base="..">
 <div class="field"><label for="tsd-search-field" class="tsd-widget tsd-toolbar-icon search no-caption"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><use href="#icon-search"></use></svg></label><input type="text" id="tsd-search-field" aria-label="Search"/></div>
@@ -14,23 +14,22 @@
 <ul class="tsd-breadcrumb">
 <li><a href="../index.html">mithic</a></li>
 <li><a href="../modules/_mithic_commons.html">@mithic/commons</a></li>
-<li><a href="_mithic_commons.SharedCountingSemaphore.html">SharedCountingSemaphore</a></li></ul>
-<h1>Class SharedCountingSemaphore</h1></div>
+<li><a href="_mithic_commons.WebLock.html">WebLock</a></li></ul>
+<h1>Class WebLock</h1></div>
 <section class="tsd-panel tsd-comment">
-<div class="tsd-comment tsd-typography"><p>A counting semaphore that uses a shared array buffer for synchronization.</p>
+<div class="tsd-comment tsd-typography"><p>A <a href="../interfaces/_mithic_commons.Lock.html" class="tsd-kind-interface">Lock</a> implement using Web Lock API.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div></section>
 <section class="tsd-panel tsd-hierarchy">
 <h4>Hierarchy</h4>
 <ul class="tsd-hierarchy">
-<li><span class="target">SharedCountingSemaphore</span></li></ul></section>
+<li><span class="target">WebLock</span></li></ul></section>
 <section class="tsd-panel">
 <h4>Implements</h4>
 <ul class="tsd-hierarchy">
-<li><a href="../interfaces/_mithic_commons.Lock.html" class="tsd-signature-type tsd-kind-interface">Lock</a></li>
-<li><a href="../interfaces/_mithic_commons.SharedCountingSemaphoreOptions.html" class="tsd-signature-type tsd-kind-interface">SharedCountingSemaphoreOptions</a></li></ul></section><aside class="tsd-sources">
+<li><a href="../interfaces/_mithic_commons.Lock.html" class="tsd-signature-type tsd-kind-interface">Lock</a></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/semaphore.ts#L57">packages/commons/src/async/semaphore.ts:57</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/web-lock.ts#L6">packages/commons/src/async/web-lock.ts:6</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-index-accordion" open><summary class="tsd-accordion-summary tsd-index-summary">
@@ -38,91 +37,86 @@
 <div class="tsd-accordion-details">
 <section class="tsd-index-section">
 <h3 class="tsd-index-heading">Constructors</h3>
-<div class="tsd-index-list"><a href="_mithic_commons.SharedCountingSemaphore.html#constructor" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-512"></use></svg><span>constructor</span></a>
+<div class="tsd-index-list"><a href="_mithic_commons.WebLock.html#constructor" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-512"></use></svg><span>constructor</span></a>
 </div></section>
 <section class="tsd-index-section">
 <h3 class="tsd-index-heading">Properties</h3>
-<div class="tsd-index-list"><a href="_mithic_commons.SharedCountingSemaphore.html#buffer" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>buffer</span></a>
-<a href="_mithic_commons.SharedCountingSemaphore.html#index" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>index</span></a>
-<a href="_mithic_commons.SharedCountingSemaphore.html#permits" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>permits</span></a>
-<a href="_mithic_commons.SharedCountingSemaphore.html#waitInterval" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>wait<wbr/>Interval</span></a>
-</div></section>
-<section class="tsd-index-section">
-<h3 class="tsd-index-heading">Accessors</h3>
-<div class="tsd-index-list"><a href="_mithic_commons.SharedCountingSemaphore.html#availablePermits" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-262144"></use></svg><span>available<wbr/>Permits</span></a>
+<div class="tsd-index-list"><a href="_mithic_commons.WebLock.html#count" class="tsd-index-link tsd-is-protected"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>count</span></a>
+<a href="_mithic_commons.WebLock.html#handle" class="tsd-index-link tsd-is-private"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>handle?</span></a>
+<a href="_mithic_commons.WebLock.html#locks" class="tsd-index-link tsd-is-protected"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>locks</span></a>
+<a href="_mithic_commons.WebLock.html#name" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>name</span></a>
+<a href="_mithic_commons.WebLock.html#resolve" class="tsd-index-link tsd-is-protected"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>resolve?</span></a>
+<a href="_mithic_commons.WebLock.html#shared" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>shared</span></a>
 </div></section>
 <section class="tsd-index-section">
 <h3 class="tsd-index-heading">Methods</h3>
-<div class="tsd-index-list"><a href="_mithic_commons.SharedCountingSemaphore.html#acquire" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>acquire</span></a>
-<a href="_mithic_commons.SharedCountingSemaphore.html#release" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>release</span></a>
-<a href="_mithic_commons.SharedCountingSemaphore.html#tryAcquire" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>try<wbr/>Acquire</span></a>
+<div class="tsd-index-list"><a href="_mithic_commons.WebLock.html#acquire" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>acquire</span></a>
+<a href="_mithic_commons.WebLock.html#getHandle" class="tsd-index-link tsd-is-protected"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>get<wbr/>Handle</span></a>
+<a href="_mithic_commons.WebLock.html#release" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>release</span></a>
+<a href="_mithic_commons.WebLock.html#requestLock" class="tsd-index-link tsd-is-protected"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>request<wbr/>Lock</span></a>
+<a href="_mithic_commons.WebLock.html#tryAcquire" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>try<wbr/>Acquire</span></a>
 </div></section></div></details></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Constructors</h2>
 <section class="tsd-panel tsd-member"><a id="constructor" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>constructor</span><a href="#constructor" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
-<li class="tsd-signature tsd-anchor-link" id="constructor.new_SharedCountingSemaphore"><span class="tsd-kind-constructor-signature">new <wbr/>Shared<wbr/>Counting<wbr/>Semaphore</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">__namedParameters</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="_mithic_commons.SharedCountingSemaphore.html" class="tsd-signature-type tsd-kind-class">SharedCountingSemaphore</a><a href="#constructor.new_SharedCountingSemaphore" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
+<li class="tsd-signature tsd-anchor-link" id="constructor.new_WebLock"><span class="tsd-kind-constructor-signature">new <wbr/>Web<wbr/>Lock</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">__namedParameters</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="_mithic_commons.WebLock.html" class="tsd-signature-type tsd-kind-class">WebLock</a><a href="#constructor.new_WebLock" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
 <li class="tsd-description">
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
 <li>
-<h5><span class="tsd-kind-parameter">__namedParameters</span>: <a href="../interfaces/_mithic_commons.SharedCountingSemaphoreOptions.html" class="tsd-signature-type tsd-kind-interface">SharedCountingSemaphoreOptions</a><span class="tsd-signature-symbol"> = {}</span></h5></li></ul></div>
-<h4 class="tsd-returns-title">Returns <a href="_mithic_commons.SharedCountingSemaphore.html" class="tsd-signature-type tsd-kind-class">SharedCountingSemaphore</a></h4><aside class="tsd-sources">
+<h5><span class="tsd-kind-parameter">__namedParameters</span>: <a href="../interfaces/_mithic_commons.WebLockOptions.html" class="tsd-signature-type tsd-kind-interface">WebLockOptions</a><span class="tsd-signature-symbol"> = {}</span></h5></li></ul></div>
+<h4 class="tsd-returns-title">Returns <a href="_mithic_commons.WebLock.html" class="tsd-signature-type tsd-kind-class">WebLock</a></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/semaphore.ts#L63">packages/commons/src/async/semaphore.ts:63</a></li></ul></aside></li></ul></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/web-lock.ts#L18">packages/commons/src/async/web-lock.ts:18</a></li></ul></aside></li></ul></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Properties</h2>
-<section class="tsd-panel tsd-member"><a id="buffer" class="tsd-anchor"></a>
-<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagReadonly">Readonly</code> <span>buffer</span><a href="#buffer" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">buffer</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type ">Int32Array</span></div>
-<div class="tsd-comment tsd-typography"><p>Shared array buffer for permit synchronization.</p>
+<section class="tsd-panel tsd-member tsd-is-protected"><a id="count" class="tsd-anchor"></a>
+<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <span>count</span><a href="#count" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">count</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol"> = 0</span></div><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/web-lock.ts#L14">packages/commons/src/async/web-lock.ts:14</a></li></ul></aside></section>
+<section class="tsd-panel tsd-member tsd-is-private"><a id="handle" class="tsd-anchor"></a>
+<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagPrivate">Private</code> <code class="tsd-tag ts-flagOptional">Optional</code> <span>handle</span><a href="#handle" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">handle</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type ">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span></div><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/web-lock.ts#L16">packages/commons/src/async/web-lock.ts:16</a></li></ul></aside></section>
+<section class="tsd-panel tsd-member tsd-is-protected"><a id="locks" class="tsd-anchor"></a>
+<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>locks</span><a href="#locks" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">locks</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type ">LockManager</span></div><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/web-lock.ts#L13">packages/commons/src/async/web-lock.ts:13</a></li></ul></aside></section>
+<section class="tsd-panel tsd-member"><a id="name" class="tsd-anchor"></a>
+<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagReadonly">Readonly</code> <span>name</span><a href="#name" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">name</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
+<div class="tsd-comment tsd-typography"><p>Unique name of the lock.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Implementation of <a href="../interfaces/_mithic_commons.SharedCountingSemaphoreOptions.html">SharedCountingSemaphoreOptions</a>.<a href="../interfaces/_mithic_commons.SharedCountingSemaphoreOptions.html#buffer">buffer</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/semaphore.ts#L58">packages/commons/src/async/semaphore.ts:58</a></li></ul></aside></section>
-<section class="tsd-panel tsd-member"><a id="index" class="tsd-anchor"></a>
-<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagReadonly">Readonly</code> <span>index</span><a href="#index" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">index</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
-<div class="tsd-comment tsd-typography"><p>The buffer index to use for permit synchronization. Defaults to 0.</p>
-</div>
-<div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Implementation of <a href="../interfaces/_mithic_commons.SharedCountingSemaphoreOptions.html">SharedCountingSemaphoreOptions</a>.<a href="../interfaces/_mithic_commons.SharedCountingSemaphoreOptions.html#index">index</a></p>
-<ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/semaphore.ts#L59">packages/commons/src/async/semaphore.ts:59</a></li></ul></aside></section>
-<section class="tsd-panel tsd-member"><a id="permits" class="tsd-anchor"></a>
-<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagReadonly">Readonly</code> <span>permits</span><a href="#permits" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">permits</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
-<div class="tsd-comment tsd-typography"><p>Max number of permits. Defaults to 1.</p>
-</div>
-<div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Implementation of <a href="../interfaces/_mithic_commons.SharedCountingSemaphoreOptions.html">SharedCountingSemaphoreOptions</a>.<a href="../interfaces/_mithic_commons.SharedCountingSemaphoreOptions.html#permits">permits</a></p>
-<ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/semaphore.ts#L60">packages/commons/src/async/semaphore.ts:60</a></li></ul></aside></section>
-<section class="tsd-panel tsd-member"><a id="waitInterval" class="tsd-anchor"></a>
-<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagReadonly">Readonly</code> <span>wait<wbr/>Interval</span><a href="#waitInterval" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">wait<wbr/>Interval</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
-<div class="tsd-comment tsd-typography"><p>The interval in milliseconds to wait for a permit. Defaults to 200.</p>
-</div>
-<div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Implementation of <a href="../interfaces/_mithic_commons.SharedCountingSemaphoreOptions.html">SharedCountingSemaphoreOptions</a>.<a href="../interfaces/_mithic_commons.SharedCountingSemaphoreOptions.html#waitInterval">waitInterval</a></p>
-<ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/semaphore.ts#L61">packages/commons/src/async/semaphore.ts:61</a></li></ul></aside></section></section>
-<section class="tsd-panel-group tsd-member-group">
-<h2>Accessors</h2>
-<section class="tsd-panel tsd-member"><a id="availablePermits" class="tsd-anchor"></a>
-<h3 class="tsd-anchor-link"><span>available<wbr/>Permits</span><a href="#availablePermits" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/web-lock.ts#L8">packages/commons/src/async/web-lock.ts:8</a></li></ul></aside></section>
+<section class="tsd-panel tsd-member tsd-is-protected"><a id="resolve" class="tsd-anchor"></a>
+<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <code class="tsd-tag ts-flagOptional">Optional</code> <span>resolve</span><a href="#resolve" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">resolve</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">)</span></div>
+<div class="tsd-type-declaration">
+<h4>Type declaration</h4>
+<ul class="tsd-parameters">
+<li class="tsd-parameter-signature">
 <ul class="tsd-signatures">
-<li class="tsd-signature" id="availablePermits.availablePermits-1"><span class="tsd-signature-symbol">get</span> availablePermits<span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">number</span></li>
+<li class="tsd-signature" id="resolve.__type.__type-1"><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">void</span></li>
 <li class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>Returns the number of permits available for use.</p>
+<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4></li></ul></li></ul></div><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/web-lock.ts#L15">packages/commons/src/async/web-lock.ts:15</a></li></ul></aside></section>
+<section class="tsd-panel tsd-member"><a id="shared" class="tsd-anchor"></a>
+<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagReadonly">Readonly</code> <span>shared</span><a href="#shared" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">shared</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span></div>
+<div class="tsd-comment tsd-typography"><p>Whether the lock is shared.</p>
 </div>
-<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">number</span></h4>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/semaphore.ts#L76">packages/commons/src/async/semaphore.ts:76</a></li></ul></aside></li></ul></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/web-lock.ts#L11">packages/commons/src/async/web-lock.ts:11</a></li></ul></aside></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Methods</h2>
 <section class="tsd-panel tsd-member"><a id="acquire" class="tsd-anchor"></a>
@@ -141,7 +135,15 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_commons.Lock.html">Lock</a>.<a href="../interfaces/_mithic_commons.Lock.html#acquire">acquire</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/semaphore.ts#L80">packages/commons/src/async/semaphore.ts:80</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/web-lock.ts#L28">packages/commons/src/async/web-lock.ts:28</a></li></ul></aside></li></ul></section>
+<section class="tsd-panel tsd-member tsd-is-protected"><a id="getHandle" class="tsd-anchor"></a>
+<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <span>get<wbr/>Handle</span><a href="#getHandle" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
+<ul class="tsd-signatures tsd-is-protected">
+<li class="tsd-signature tsd-anchor-link" id="getHandle.getHandle-1"><span class="tsd-kind-call-signature">get<wbr/>Handle</span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type ">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span><a href="#getHandle.getHandle-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
+<li class="tsd-description">
+<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type ">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/web-lock.ts#L87">packages/commons/src/async/web-lock.ts:87</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="release" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>release</span><a href="#release" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -153,19 +155,32 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_commons.Lock.html">Lock</a>.<a href="../interfaces/_mithic_commons.Lock.html#release">release</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/semaphore.ts#L99">packages/commons/src/async/semaphore.ts:99</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/web-lock.ts#L56">packages/commons/src/async/web-lock.ts:56</a></li></ul></aside></li></ul></section>
+<section class="tsd-panel tsd-member tsd-is-protected"><a id="requestLock" class="tsd-anchor"></a>
+<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <span>request<wbr/>Lock</span><a href="#requestLock" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
+<ul class="tsd-signatures tsd-is-protected">
+<li class="tsd-signature tsd-anchor-link" id="requestLock.requestLock-1"><span class="tsd-kind-call-signature">request<wbr/>Lock</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type ">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span><a href="#requestLock.requestLock-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
+<li class="tsd-description">
+<div class="tsd-parameters">
+<h4 class="tsd-parameters-title">Parameters</h4>
+<ul class="tsd-parameter-list">
+<li>
+<h5><span class="tsd-kind-parameter">options</span>: <a href="../interfaces/_mithic_commons.AbortOptions.html" class="tsd-signature-type tsd-kind-interface">AbortOptions</a><span class="tsd-signature-symbol"> &amp; </span><span class="tsd-signature-symbol">{ </span><br/><span>    </span><span class="tsd-kind-property">ifAvailable</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">; </span><br/><span class="tsd-signature-symbol">}</span></h5></li></ul></div>
+<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type ">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/web-lock.ts#L64">packages/commons/src/async/web-lock.ts:64</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="tryAcquire" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>try<wbr/>Acquire</span><a href="#tryAcquire" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
-<li class="tsd-signature tsd-anchor-link" id="tryAcquire.tryAcquire-1"><span class="tsd-kind-call-signature">try<wbr/>Acquire</span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">boolean</span><a href="#tryAcquire.tryAcquire-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
+<li class="tsd-signature tsd-anchor-link" id="tryAcquire.tryAcquire-1"><span class="tsd-kind-call-signature">try<wbr/>Acquire</span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span><a href="#tryAcquire.tryAcquire-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
 <li class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Tried to acquire a lock. Returns true if success, false otherwise.</p>
 </div>
-<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">boolean</span></h4>
+<h4 class="tsd-returns-title">Returns <a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span></h4>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_commons.Lock.html">Lock</a>.<a href="../interfaces/_mithic_commons.Lock.html#tryAcquire">tryAcquire</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/semaphore.ts#L87">packages/commons/src/async/semaphore.ts:87</a></li></ul></aside></li></ul></section></section></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/a655cfa/packages/commons/src/async/web-lock.ts#L42">packages/commons/src/async/web-lock.ts:42</a></li></ul></aside></li></ul></section></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
@@ -186,13 +201,16 @@
 <div class="tsd-accordion-details">
 <ul>
 <li><a href="#constructor" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-512"></use></svg><span>constructor</span></a></li>
-<li><a href="#buffer" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>buffer</span></a></li>
-<li><a href="#index" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>index</span></a></li>
-<li><a href="#permits" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>permits</span></a></li>
-<li><a href="#waitInterval" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>wait<wbr/>Interval</span></a></li>
-<li><a href="#availablePermits" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-262144"></use></svg><span>available<wbr/>Permits</span></a></li>
+<li><a href="#count" class="tsd-is-protected"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>count</span></a></li>
+<li><a href="#handle" class="tsd-is-private"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>handle</span></a></li>
+<li><a href="#locks" class="tsd-is-protected"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>locks</span></a></li>
+<li><a href="#name" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>name</span></a></li>
+<li><a href="#resolve" class="tsd-is-protected"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>resolve</span></a></li>
+<li><a href="#shared" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>shared</span></a></li>
 <li><a href="#acquire" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>acquire</span></a></li>
+<li><a href="#getHandle" class="tsd-is-protected"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>get<wbr/>Handle</span></a></li>
 <li><a href="#release" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>release</span></a></li>
+<li><a href="#requestLock" class="tsd-is-protected"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>request<wbr/>Lock</span></a></li>
 <li><a href="#tryAcquire" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2048"></use></svg><span>try<wbr/>Acquire</span></a></li></ul></div></details></div>
 <div class="site-menu">
 <nav class="tsd-navigation"><a href="../index.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1"></use></svg><span>mithic - v0.3.0</span></a>
