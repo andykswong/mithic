@@ -1,10 +1,10 @@
 import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { OperationError } from '@mithic/commons';
 import { MemoryBlockstore } from 'blockstore-core';
 import { Blockstore } from 'interface-blockstore';
 import { BlockCodec, CID } from 'multiformats';
 import { identity } from 'multiformats/hashes/identity';
 import { BlockstoreMap } from '../blockstore.js';
-import { ErrorCode, operationError } from '@mithic/commons';
 
 const DATA = new Uint8Array([1, 2, 3]);
 const DATA_CID = CID.createV1(0x999, identity.digest(DATA));
@@ -153,7 +153,7 @@ describe(BlockstoreMap.name, () => {
 
       expect(results).toEqual([
         [DATA_CID],
-        [cid2, operationError('Failed to put', ErrorCode.OpFailed, cid2, error)]
+        [cid2, new OperationError('failed to put', { detail: cid2, cause: error })]
       ]);
       expect(putMock).toHaveBeenCalledWith(DATA_CID, DATA, options);
       expect(putMock).toHaveBeenCalledWith(cid2, data2, options);

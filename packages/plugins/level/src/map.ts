@@ -1,5 +1,5 @@
 import { MaybeAsyncMap, MaybeAsyncMapBatch, RangeQueryOptions, RangeQueryable } from '@mithic/collections';
-import { AbortOptions, AsyncDisposableCloseable, CodedError, ErrorCode, Startable, operationError } from '@mithic/commons';
+import { AbortOptions, AsyncDisposableCloseable, CodedError, OperationError, Startable } from '@mithic/commons';
 import { AbstractLevel, AbstractOpenOptions } from 'abstract-level';
 
 const LEVEL_NOT_FOUND = 'LEVEL_NOT_FOUND';
@@ -88,7 +88,7 @@ export class LevelMap<K, V, T = any>
 
     for (const [key] of entries) {
       if (error) {
-        yield operationError('Failed to delete', ErrorCode.OpFailed, key, error);
+        yield new OperationError('failed to set', { detail: key, cause: error });
       } else {
         yield;
       }
@@ -110,7 +110,7 @@ export class LevelMap<K, V, T = any>
 
     for (const key of keys) {
       if (error) {
-        yield operationError('Failed to delete', ErrorCode.OpFailed, key, error);
+        yield new OperationError('failed to delete', { detail: key, cause: error });
       } else {
         yield;
       }
@@ -136,7 +136,7 @@ export class LevelMap<K, V, T = any>
 
     for (const [key] of entries) {
       if (error) {
-        yield operationError('Failed to update', ErrorCode.OpFailed, key, error);
+        yield new OperationError('failed to update', { detail: key, cause: error });
       } else {
         yield;
       }

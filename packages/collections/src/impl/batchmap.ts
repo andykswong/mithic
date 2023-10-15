@@ -1,4 +1,4 @@
-import { AbortOptions, CodedError, ErrorCode, operationError } from '@mithic/commons';
+import { AbortOptions, CodedError, OperationError } from '@mithic/commons';
 import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
 
 /** Abstract base class to provide default synchronous batch API implementations for a {@link MaybeAsyncMap}. */
@@ -28,8 +28,12 @@ export abstract class SyncMapBatchAdapter<K, V> implements MaybeAsyncMap<K, V>, 
       try {
         this.set(key, value, options);
         yield;
-      } catch (error) {
-        yield operationError('Failed to set value', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+      } catch (cause) {
+        yield new OperationError('failed to set value', {
+          cause,
+          code: (cause as CodedError)?.code,
+          detail: key
+        });
       }
     }
   }
@@ -40,8 +44,12 @@ export abstract class SyncMapBatchAdapter<K, V> implements MaybeAsyncMap<K, V>, 
       try {
         this.delete(key, options);
         yield;
-      } catch (error) {
-        yield operationError('Failed to delete key', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+      } catch (cause) {
+        yield new OperationError('failed to delete key', {
+          cause,
+          code: (cause as CodedError)?.code,
+          detail: key
+        });
       }
     }
   }
@@ -52,8 +60,12 @@ export abstract class SyncMapBatchAdapter<K, V> implements MaybeAsyncMap<K, V>, 
       try {
         (value !== void 0) ? this.set(key, value, options) : this.delete(key, options);
         yield;
-      } catch (error) {
-        yield operationError('Failed to update key', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+      } catch (cause) {
+        yield new OperationError('failed to update key', {
+          cause,
+          code: (cause as CodedError)?.code,
+          detail: key
+        });
       }
     }
   }

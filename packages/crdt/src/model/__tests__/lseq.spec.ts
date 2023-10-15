@@ -1,8 +1,7 @@
 import { BTreeMap } from '@mithic/collections';
 import { MockId } from '../../__tests__/mocks.js';
-import { LSeq, LSeqCommand, LSeqEventType } from '../lseq.js';
+import { LSeqAggregate, LSeqCommand, LSeqCommandType, LSeqEvent, LSeqEventType } from '../lseq.js';
 import { ORMap, MapQuery } from '../map.js';
-import { ErrorCode, operationError } from '@mithic/commons';
 import { getFieldValueKey, getHeadIndexKey } from '../keys.js';
 
 type V = string | number | boolean;
@@ -17,21 +16,21 @@ const INDEX1 = 'kkkkkkkkUU';
 const INDEX2 = 'KUUUUUUUU';
 const INDEX3 = 'PkkkkkkkkU';
 const INDEX4 = 'ckkkkkkkUU';
-const CMD_EMPTY = { createdAt: 1 };
-const CMD_ADD = { ref: ROOT, add: [VALUE0, VALUE1], createdAt: 2 };
-const CMD_ADD2 = { ref: ROOT, index: 'A', add: [VALUE1, VALUE2], createdAt: 3 };
-const CMD_DEL = { ref: ROOT, index: 'UUUUUUUU', add: [VALUE1, VALUE3], del: 1, createdAt: 4 };
-const CMD_ADD_CONCURRENT = { ref: ROOT, add: [VALUE2, VALUE3], createdAt: 5 };
+const CMD_EMPTY = { type: LSeqCommandType.Update, payload: {}, meta: { time: 1 } } satisfies LSeqCommand<MockId, V>;
+const CMD_ADD = { type: LSeqCommandType.Update, payload: { add: [VALUE0, VALUE1] }, meta: { root: ROOT, time: 2 } } satisfies LSeqCommand<MockId, V>;
+const CMD_ADD2 = { type: LSeqCommandType.Update, payload: { index: 'A', add: [VALUE1, VALUE2] }, meta: { root: ROOT, time: 3 } } satisfies LSeqCommand<MockId, V>;
+const CMD_DEL = { type: LSeqCommandType.Update, payload: {index: 'UUUUUUUU', add: [VALUE1, VALUE3], del: 1 }, meta: { root: ROOT, time: 4 } } satisfies LSeqCommand<MockId, V>;
+const CMD_ADD_CONCURRENT = { type: LSeqCommandType.Update, payload: { add: [VALUE2, VALUE3] }, meta: { root: ROOT, time: 5 } } satisfies LSeqCommand<MockId, V>;
 
-describe(LSeq.name, () => {
-  let lseq: LSeq<MockId, V>;
+describe(LSeqAggregate.name, () => {
+  let lseq: LSeqAggregate<MockId, V>;
   let store: BTreeMap<string, MockId | V>;
 
   beforeEach(() => {
     const map = new ORMap<MockId, V>({
-      eventRef: (event) => new MockId(new Uint8Array(event.meta.createdAt || 0)),
+      eventRef: (event) => new MockId(new Uint8Array(event.meta?.time || 0)),
     });
-    lseq = new LSeq({
+    lseq = new LSeqAggregate({
       map,
       rand: () => 0.5,
     });
@@ -48,20 +47,19 @@ describe(LSeq.name, () => {
       expect(event).toEqual({
         type: LSeqEventType.New,
         payload: { ops: [] },
-        meta: { parents: [], createdAt: 1 },
-      });
+        meta: { prev: [], time: 1 },
+      } satisfies LSeqEvent<MockId, V>);
     });
 
     it('should return valid event for new set command', async () => {
-      const event = await lseq.command({ add: [VALUE0, VALUE1], nonce: 123, createdAt: 1 });
+      const event = await lseq.command({ type: LSeqCommandType.Update, payload: { add: [VALUE0, VALUE1] }, meta: { id: '123', time: 1 } });
       expect(event).toEqual({
         type: LSeqEventType.New,
         payload: {
           ops: [[INDEX0, VALUE0, false], [INDEX1, VALUE1, false]],
-          nonce: 123,
         },
-        meta: { parents: [], createdAt: 1 },
-      });
+        meta: { prev: [], id: '123', time: 1 },
+      } satisfies LSeqEvent<MockId, V>);
     });
 
     it('should return valid event for set set command', async () => {
@@ -71,14 +69,14 @@ describe(LSeq.name, () => {
         payload: {
           ops: [[INDEX0, VALUE0, false], [INDEX1, VALUE1, false]]
         },
-        meta: { parents: [], root: ROOT, createdAt: 2 },
-      });
+        meta: { prev: [], root: ROOT, time: 2 },
+      } satisfies LSeqEvent<MockId, V>);
     });
 
     it('should return valid event for set delete/replace command', async () => {
       const concurrentEvent = await lseq.command(CMD_ADD_CONCURRENT);
       await applyCommand(CMD_ADD);
-      await lseq.apply(concurrentEvent);
+      await lseq.reduce(concurrentEvent);
       const event = await lseq.command(CMD_DEL);
       expect(event).toEqual({
         type: LSeqEventType.Update,
@@ -86,10 +84,10 @@ describe(LSeq.name, () => {
           ops: [[INDEX0, VALUE1, false, 0, 1], [INDEX4, VALUE3, false]]
         },
         meta: {
-          parents: [new MockId(new Uint8Array(2)), new MockId(new Uint8Array(5))],
-          root: ROOT, createdAt: 4
+          prev: [new MockId(new Uint8Array(2)), new MockId(new Uint8Array(5))],
+          root: ROOT, time: 4
         },
-      });
+      } satisfies LSeqEvent<MockId, V>);
     });
 
     it('should ignore delete operation if nothing can be deleted', async () => {
@@ -100,32 +98,32 @@ describe(LSeq.name, () => {
           ops: [[INDEX1, VALUE1, false], ['sssssssskkU', VALUE3, false]]
         },
         meta: {
-          parents: [],
-          root: ROOT, createdAt: 4
+          prev: [],
+          root: ROOT, time: 4
         },
-      });
+      } satisfies LSeqEvent<MockId, V>);
     });
 
     it('should throw for empty update command', async () => {
-      await expect(() => lseq.command({ ref: ROOT, createdAt: 2 }))
-        .rejects.toEqual(operationError('Empty operation', ErrorCode.InvalidArg));
+      await expect(() => lseq.command({ type: LSeqCommandType.Update, payload: {}, meta: { root: ROOT, time: 2 } }))
+        .rejects.toEqual(new TypeError('empty operation'));
     });
   });
 
   describe('query', () => {
     it('should return empty result for empty / undefined maps', async () => {
       await applyCommand();
-      for await (const _ of lseq.query({ ref: ROOT })) {
+      for await (const _ of lseq.query({ root: ROOT })) {
         throw new Error('should not be called');
       }
     });
 
     it.each([
-      [[CMD_ADD], { ref: ROOT }, [[INDEX0, VALUE0], [INDEX1, VALUE1]] as const],
-      [[CMD_ADD, CMD_ADD2], { ref: ROOT }, [[INDEX2, VALUE1], [INDEX3, VALUE2], [INDEX0, VALUE0], [INDEX1, VALUE1]] as const],
-      [[CMD_ADD, CMD_ADD2], { ref: ROOT, limit: 2 }, [[INDEX2, VALUE1], [INDEX3, VALUE2]] as const],
-      [[CMD_ADD, CMD_ADD2], { ref: ROOT, limit: 2, reverse: true }, [[INDEX1, VALUE1], [INDEX0, VALUE0]] as const],
-      [[CMD_ADD, CMD_ADD2, CMD_DEL], { ref: ROOT }, [[INDEX2, VALUE1], [INDEX3, VALUE2], [INDEX0, VALUE1], [INDEX4, VALUE3], [INDEX1, VALUE1]] as const],
+      [[CMD_ADD], { root: ROOT }, [[INDEX0, VALUE0], [INDEX1, VALUE1]] as const],
+      [[CMD_ADD, CMD_ADD2], { root: ROOT }, [[INDEX2, VALUE1], [INDEX3, VALUE2], [INDEX0, VALUE0], [INDEX1, VALUE1]] as const],
+      [[CMD_ADD, CMD_ADD2], { root: ROOT, limit: 2 }, [[INDEX2, VALUE1], [INDEX3, VALUE2]] as const],
+      [[CMD_ADD, CMD_ADD2], { root: ROOT, limit: 2, reverse: true }, [[INDEX1, VALUE1], [INDEX0, VALUE0]] as const],
+      [[CMD_ADD, CMD_ADD2, CMD_DEL], { root: ROOT }, [[INDEX2, VALUE1], [INDEX3, VALUE2], [INDEX0, VALUE1], [INDEX4, VALUE3], [INDEX1, VALUE1]] as const],
     ])(
       'should return correct results for non-empty LSeqs',
       async (cmds: LSeqCommand<MockId, V>[], query: MapQuery<MockId>, expected: readonly (readonly [string, V])[]) => {
@@ -145,10 +143,10 @@ describe(LSeq.name, () => {
       await applyCommand();
       const concurrentEvent = await lseq.command(CMD_ADD_CONCURRENT);
       await applyCommand(CMD_ADD);
-      await lseq.apply(concurrentEvent);
+      await lseq.reduce(concurrentEvent);
 
       const results = [];
-      for await (const entry of lseq.query({ ref: ROOT })) {
+      for await (const entry of lseq.query({ root: ROOT })) {
         results.push(entry);
       }
       expect(results).toEqual([[INDEX0, VALUE0], [INDEX0, VALUE2], [INDEX1, VALUE1], [INDEX1, VALUE3]]);
@@ -166,8 +164,8 @@ describe(LSeq.name, () => {
     it('should return error for malformed events', async () => {
       expect(await lseq.validate({
         type: LSeqEventType.Update, payload: { ops: [] },
-        meta: { parents: [], root: ROOT, createdAt: 2 },
-      })).toEqual(operationError('Empty operation', ErrorCode.InvalidArg));
+        meta: { prev: [], root: ROOT, time: 2 },
+      })).toEqual(new TypeError('empty operation'));
     });
   });
 
@@ -186,13 +184,13 @@ describe(LSeq.name, () => {
     });
 
     it('should remove all concurrent values on delete', async () => {
-      const eventRef1 = new MockId(new Uint8Array(CMD_ADD.createdAt));
-      const eventRef2 = new MockId(new Uint8Array(CMD_ADD_CONCURRENT.createdAt));
+      const eventRef1 = new MockId(new Uint8Array(CMD_ADD.meta.time));
+      const eventRef2 = new MockId(new Uint8Array(CMD_ADD_CONCURRENT.meta.time));
 
       await applyCommand();
       const concurrentEvent = await lseq.command(CMD_ADD_CONCURRENT);
       await applyCommand(CMD_ADD);
-      await lseq.apply(concurrentEvent);
+      await lseq.reduce(concurrentEvent);
       await applyCommand(CMD_DEL);
 
       expect(store.get(getHeadIndexKey(`${ROOT}`, `${INDEX0}`, eventRef1.toString()))).toBeUndefined();
@@ -202,14 +200,14 @@ describe(LSeq.name, () => {
     });
 
     it('should throw error for malformed events when validate = true', async () => {
-      await expect(() => lseq.apply({
+      await expect(() => lseq.reduce({
         type: LSeqEventType.Update,
-        payload: { ops: [] }, meta: { parents: [], createdAt: 1 },
-      })).rejects.toEqual(operationError('Empty operation', ErrorCode.UnsupportedOp));
+        payload: { ops: [] }, meta: { prev: [], time: 1 },
+      })).rejects.toEqual(new TypeError('empty operation'));
     });
   });
 
   async function applyCommand(cmd: LSeqCommand<MockId, V> = CMD_EMPTY) {
-    return await lseq.apply(await lseq.command(cmd));
+    return await lseq.reduce(await lseq.command(cmd));
   }
 });

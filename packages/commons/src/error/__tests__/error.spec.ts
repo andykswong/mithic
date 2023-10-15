@@ -1,5 +1,4 @@
 import { describe, expect, it } from '@jest/globals';
-import { ErrorCode } from '../enums.js';
 import { CodedError } from '../error.js';
 
 describe(CodedError.name, () => {
@@ -7,7 +6,7 @@ describe(CodedError.name, () => {
     const cause = new Error('Error cause');
     const error = new CodedError('Error message', {
       name: 'TestError',
-      code: ErrorCode.Abort,
+      code: 'ABORT_ERR',
       detail: { 'this': 'is a testing' },
       cause
     });

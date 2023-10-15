@@ -1,8 +1,8 @@
 import { BTreeMap } from '@mithic/collections';
-import { ORMap, MapCommand, MapEventType, MapQuery } from '../map.js';
+import { ERR_DEPENDENCY_MISSING, OperationError } from '@mithic/commons';
+import { ORMap, MapCommand, MapEventType, MapQuery, MapCommandType, MapEvent } from '../map.js';
 import { MockId } from '../../__tests__/mocks.js';
 import { getEventIndexKey, getFieldValueKey, getHeadIndexKey } from '../keys.js';
-import { ErrorCode, operationError } from '@mithic/commons';
 
 type V = string | number | boolean | null;
 
@@ -18,12 +18,12 @@ const VALUE2 = 123;
 const VALUE22 = 456;
 const VALUE3 = true;
 const VALUE32 = false;
-const CMD_EMPTY = { set: {}, createdAt: 1 } satisfies MapCommand<MockId, V>;
-const CMD_NEW = { set: { [FIELD0]: VALUE0 }, nonce: 123, createdAt: 1 } satisfies MapCommand<MockId, V>;
-const CMD_WITH_FIELDS = { ref: ROOT, set: { [FIELD1]: VALUE1, [FIELD2]: VALUE2 }, createdAt: 2 } satisfies MapCommand<MockId, V>;
-const CMD_WITH_FIELDS2 = { ref: ROOT, set: { [FIELD3]: VALUE3 }, createdAt: 3 } satisfies MapCommand<MockId, V>;
-const CMD_WITH_UPDEL = { ref: ROOT, set: { [FIELD2]: VALUE22, [FIELD3]: VALUE32 }, del: [FIELD1], createdAt: 4 } satisfies MapCommand<MockId, V>;
-const CMD_WITH_FIELDS_CONCURRENT = { ref: ROOT, set: { [FIELD1]: VALUE12 }, createdAt: 5 } satisfies MapCommand<MockId, V>;
+const CMD_EMPTY = { type: MapCommandType.Update, payload: { set: {} }, meta: { time: 1 } } satisfies MapCommand<MockId, V>;
+const CMD_NEW = { type: MapCommandType.Update, payload: { set: { [FIELD0]: VALUE0 } }, meta: { id: '123', time: 1 } } satisfies MapCommand<MockId, V>;
+const CMD_WITH_FIELDS = { type: MapCommandType.Update, payload: { set: { [FIELD1]: VALUE1, [FIELD2]: VALUE2 } }, meta: { root: ROOT, time: 2 } } satisfies MapCommand<MockId, V>;
+const CMD_WITH_FIELDS2 = { type: MapCommandType.Update, payload: {set: { [FIELD3]: VALUE3 } }, meta: { root: ROOT, time: 3 } } satisfies MapCommand<MockId, V>;
+const CMD_WITH_UPDEL = { type: MapCommandType.Update, payload: { set: { [FIELD2]: VALUE22, [FIELD3]: VALUE32 }, del: [FIELD1] }, meta: { root: ROOT, time: 4 } } satisfies MapCommand<MockId, V>;
+const CMD_WITH_FIELDS_CONCURRENT = { type: MapCommandType.Update, payload: { set: { [FIELD1]: VALUE12 } }, meta: { root: ROOT, time: 5 } } satisfies MapCommand<MockId, V>;
 
 describe(ORMap.name, () => {
   let map: ORMap<MockId, V>;
@@ -31,7 +31,7 @@ describe(ORMap.name, () => {
 
   beforeEach(() => {
     map = new ORMap({
-      eventRef: (event) => new MockId(new Uint8Array(event.meta.createdAt || 0)),
+      eventRef: (event) => new MockId(new Uint8Array(event.meta?.time || 0)),
       trackEventTime: true,
     });
     store = map['store'] as BTreeMap<string, MockId | V>;
@@ -47,8 +47,8 @@ describe(ORMap.name, () => {
       expect(event).toEqual({
         type: MapEventType.New,
         payload: { ops: [] },
-        meta: { parents: [], createdAt: 1 },
-      });
+        meta: { prev: [], time: 1 },
+      } satisfies MapEvent<MockId, V>);
     });
 
     it('should return valid event for new map command', async () => {
@@ -57,10 +57,9 @@ describe(ORMap.name, () => {
         type: MapEventType.New,
         payload: {
           ops: [[FIELD0, VALUE0, false]],
-          nonce: 123,
         },
-        meta: { parents: [], createdAt: 1 },
-      });
+        meta: { prev: [], id: '123', time: 1 },
+      } satisfies MapEvent<MockId, V>);
     });
 
     it('should return valid event for set map command', async () => {
@@ -73,8 +72,8 @@ describe(ORMap.name, () => {
             [FIELD2, VALUE2, false]
           ]
         },
-        meta: { parents: [], root: ROOT, createdAt: 2 },
-      });
+        meta: { prev: [], root: ROOT, time: 2 },
+      } satisfies MapEvent<MockId, V>);
     });
 
     it('should return valid event for set map command with dependency', async () => {
@@ -91,10 +90,10 @@ describe(ORMap.name, () => {
           ]
         },
         meta: {
-          parents: [new MockId(new Uint8Array(2)), new MockId(new Uint8Array(3))],
-          root: ROOT, createdAt: 4
+          prev: [new MockId(new Uint8Array(2)), new MockId(new Uint8Array(3))],
+          root: ROOT, time: 4
         },
-      });
+      } satisfies MapEvent<MockId, V>);
     });
 
     it('should ignore delete operation if field does not already exist', async () => {
@@ -109,15 +108,15 @@ describe(ORMap.name, () => {
           ]
         },
         meta: {
-          parents: [new MockId(new Uint8Array(3))],
-          root: ROOT, createdAt: 4
+          prev: [new MockId(new Uint8Array(3))],
+          root: ROOT, time: 4
         },
-      });
+      } satisfies MapEvent<MockId, V>);
     });
 
     it('should throw for empty set command', async () => {
-      await expect(() => map.command({ ref: ROOT, set: {}, createdAt: 2 }))
-        .rejects.toEqual(operationError('Empty operation', ErrorCode.InvalidArg));
+      await expect(() => map.command({ type: MapCommandType.Update, payload: { set: {} }, meta: { root: ROOT, time: 2 } }))
+        .rejects.toEqual(new TypeError('empty operation'));
     });
   });
 
@@ -131,40 +130,40 @@ describe(ORMap.name, () => {
     it('should return error for malformed events', async () => {
       expect(await map.validate({
         type: MapEventType.Update, payload: { ops: [] },
-        meta: { parents: [], root: ROOT, createdAt: 2 },
-      })).toEqual(operationError('Empty operation', ErrorCode.InvalidArg));
+        meta: { prev: [], root: ROOT, time: 2 },
+      })).toEqual(new TypeError('empty operation'));
 
       expect(await map.validate({
         type: MapEventType.Update,
         payload: { ops: [['field', true, false]] },
-        meta: { parents: [], createdAt: 2 },
-      })).toEqual(operationError('Missing root', ErrorCode.InvalidArg));
+        meta: { prev: [], time: 2 },
+      })).toEqual(new TypeError('missing root'));
 
       expect(await map.validate({
         type: MapEventType.Update,
         payload: { ops: [['', true, false]] },
-        meta: { parents: [], root: ROOT, createdAt: 2 },
-      })).toEqual(operationError(`Invalid operation: ""`, ErrorCode.InvalidArg));
+        meta: { prev: [], root: ROOT, time: 2 },
+      })).toEqual(new TypeError(`invalid operation: ""`));
 
       expect(await map.validate({
         type: MapEventType.Update,
         payload: { ops: [['field', 123, true]] },
-        meta: { parents: [], root: ROOT, createdAt: 2 },
-      })).toEqual(operationError(`Invalid operation: "field"`, ErrorCode.InvalidArg));
+        meta: { prev: [], root: ROOT, time: 2 },
+      })).toEqual(new TypeError(`invalid operation: "field"`));
 
       expect(await map.validate({
         type: MapEventType.Update,
         payload: { ops: [['field', true, false, 0]] },
-        meta: { parents: [], root: ROOT, createdAt: 2 },
-      })).toEqual(operationError(`Invalid operation: "field"`, ErrorCode.InvalidArg));
+        meta: { prev: [], root: ROOT, time: 2 },
+      })).toEqual(new TypeError(`invalid operation: "field"`));
     });
 
     it('should return error for missing dependent events', async () => {
       expect(await map.validate({
         type: MapEventType.Update,
         payload: { ops: [['field', true, false, 0]] },
-        meta: { parents: [new MockId(new Uint8Array(2))], root: ROOT, createdAt: 2 },
-      })).toEqual(operationError('Missing dependencies', ErrorCode.MissingDep, [new MockId(new Uint8Array(2)), ROOT]));
+        meta: { prev: [new MockId(new Uint8Array(2))], root: ROOT, time: 2 },
+      })).toEqual(new OperationError('missing dependencies', { code: ERR_DEPENDENCY_MISSING, detail: [new MockId(new Uint8Array(2)), ROOT] }));
     });
   });
 
@@ -188,10 +187,10 @@ describe(ORMap.name, () => {
       await applyCommand(CMD_NEW); // 3 store entries
       const cmd1 = await map.command(CMD_WITH_FIELDS); // 5 store entries
       const cmd2 = await map.command(CMD_WITH_FIELDS_CONCURRENT); // 3 store entries
-      await map.apply(cmd1);
-      await map.apply(cmd2);
-      const eventRef1 = new MockId(new Uint8Array(CMD_WITH_FIELDS.createdAt));
-      const eventRef2 = new MockId(new Uint8Array(CMD_WITH_FIELDS_CONCURRENT.createdAt));
+      await map.reduce(cmd1);
+      await map.reduce(cmd2);
+      const eventRef1 = new MockId(new Uint8Array(CMD_WITH_FIELDS.meta.time));
+      const eventRef2 = new MockId(new Uint8Array(CMD_WITH_FIELDS_CONCURRENT.meta.time));
 
       expect(store.size).toEqual(11);
 
@@ -202,15 +201,15 @@ describe(ORMap.name, () => {
     });
 
     it('should resolve concurrent values on update', async () => {
-      const eventRef1 = new MockId(new Uint8Array(CMD_WITH_FIELDS.createdAt));
-      const eventRef2 = new MockId(new Uint8Array(CMD_WITH_FIELDS_CONCURRENT.createdAt));
-      const eventRef3 = new MockId(new Uint8Array(CMD_WITH_UPDEL.createdAt));
+      const eventRef1 = new MockId(new Uint8Array(CMD_WITH_FIELDS.meta.time));
+      const eventRef2 = new MockId(new Uint8Array(CMD_WITH_FIELDS_CONCURRENT.meta.time));
+      const eventRef3 = new MockId(new Uint8Array(CMD_WITH_UPDEL.meta.time));
 
       await applyCommand(CMD_NEW); // 3 store entries
       const cmd1 = await map.command(CMD_WITH_FIELDS); // 5 store entries
       const cmd2 = await map.command(CMD_WITH_FIELDS_CONCURRENT); // 3 store entries
-      await map.apply(cmd1);
-      await map.apply(cmd2);
+      await map.reduce(cmd1);
+      await map.reduce(cmd2);
       await applyCommand(CMD_WITH_UPDEL); // +5 -4 -2 store entries
 
       expect(store.size).toEqual(10);
@@ -227,27 +226,27 @@ describe(ORMap.name, () => {
     });
 
     it('should throw error for malformed events when validate = true', async () => {
-      await expect(() => map.apply({
+      await expect(() => map.reduce({
         type: MapEventType.Update,
-        payload: { ops: [] }, meta: { parents: [], createdAt: 1 },
-      })).rejects.toEqual(operationError('Empty operation', ErrorCode.UnsupportedOp));
+        payload: { ops: [] }, meta: { prev: [], time: 1 },
+      })).rejects.toEqual(new TypeError('empty operation'));
     });
   });
 
   describe('query', () => {
     it('should return empty result for empty / undefined maps', async () => {
       await applyCommand();
-      for await (const _ of map.query({ ref: ROOT })) {
+      for await (const _ of map.query({ root: ROOT })) {
         throw new Error('should not be called');
       }
     });
 
     it.each([
-      [[CMD_WITH_FIELDS], { ref: ROOT }, [[FIELD1, VALUE1], [FIELD2, VALUE2]] as const],
-      [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { ref: ROOT }, [[FIELD1, VALUE1], [FIELD2, VALUE2], [FIELD3, VALUE3]] as const],
-      [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { ref: ROOT, limit: 2 }, [[FIELD1, VALUE1], [FIELD2, VALUE2]] as const],
-      [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { ref: ROOT, limit: 2, reverse: true }, [[FIELD3, VALUE3], [FIELD2, VALUE2]] as const],
-      [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { ref: ROOT, gte: FIELD2, lte: FIELD2 }, [[FIELD2, VALUE2]] as const],
+      [[CMD_WITH_FIELDS], { root: ROOT }, [[FIELD1, VALUE1], [FIELD2, VALUE2]] as const],
+      [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { root: ROOT }, [[FIELD1, VALUE1], [FIELD2, VALUE2], [FIELD3, VALUE3]] as const],
+      [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { root: ROOT, limit: 2 }, [[FIELD1, VALUE1], [FIELD2, VALUE2]] as const],
+      [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { root: ROOT, limit: 2, reverse: true }, [[FIELD3, VALUE3], [FIELD2, VALUE2]] as const],
+      [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { root: ROOT, gte: FIELD2, lte: FIELD2 }, [[FIELD2, VALUE2]] as const],
     ])(
       'should return correct results for non-empty maps',
       async (cmds: MapCommand<MockId, V>[], query: MapQuery<MockId>, expected: readonly (readonly [string, V])[]) => {
@@ -267,11 +266,11 @@ describe(ORMap.name, () => {
       await applyCommand(CMD_NEW);
       const event1 = await map.command(CMD_WITH_FIELDS);
       const event2 = await map.command(CMD_WITH_UPDEL);
-      await map.apply(event1);
-      await map.apply(event2);
+      await map.reduce(event1);
+      await map.reduce(event2);
 
       const results = [];
-      for await (const entry of map.query({ ref: ROOT })) {
+      for await (const entry of map.query({ root: ROOT })) {
         results.push(entry);
       }
       expect(results).toEqual([
@@ -285,17 +284,17 @@ describe(ORMap.name, () => {
       await applyCommand(CMD_NEW);
       const event1 = await map.command(CMD_WITH_FIELDS);
       const event2 = await map.command(CMD_WITH_UPDEL);
-      await map.apply(event1);
-      await map.apply(event2);
+      await map.reduce(event1);
+      await map.reduce(event2);
 
       const results = [];
-      for await (const entry of map.query({ ref: ROOT, gte: FIELD1, lte: FIELD3, lww: true })) {
+      for await (const entry of map.query({ root: ROOT, gte: FIELD1, lte: FIELD3, lww: true })) {
         results.push(entry);
       }
       expect(results).toEqual([[FIELD1, VALUE1], [FIELD2, VALUE22], [FIELD3, VALUE32]]);
 
       results.length = 0;
-      for await (const entry of map.query({ ref: ROOT, gte: FIELD1, lww: true, limit: 2 })) {
+      for await (const entry of map.query({ root: ROOT, gte: FIELD1, lww: true, limit: 2 })) {
         results.push(entry);
       }
       expect(results).toEqual([[FIELD1, VALUE1], [FIELD2, VALUE22]]);
@@ -303,6 +302,6 @@ describe(ORMap.name, () => {
   });
 
   async function applyCommand(cmd: MapCommand<MockId, V> = CMD_EMPTY) {
-    return await map.apply(await map.command(cmd));
+    return await map.reduce(await map.command(cmd));
   }
 });

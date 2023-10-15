@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { ErrorCode, operationError } from '@mithic/commons';
+import { OperationError } from '@mithic/commons';
 import { MaybeAsyncSet } from '../../set.js';
 import { EncodedSet } from '../encodedset.js';
 
@@ -79,15 +79,16 @@ describe.each([
     it('should return errors from underlying set', async () => {
       if ('addMany' in set.set) return; // skip test
 
-      jest.spyOn(set.set, 'add').mockImplementation(() => { throw new Error('error'); });
+      const cause = new Error('error')
+      jest.spyOn(set.set, 'add').mockImplementation(() => { throw cause; });
 
       const results = [];
       for await (const error of set.addMany([K1, K2])) {
         results.push(error);
       }
       expect(results).toEqual([
-        operationError(`Failed to add key`, ErrorCode.OpFailed, K1, new Error('error')),
-        operationError(`Failed to add key`, ErrorCode.OpFailed, K2, new Error('error')),
+        new OperationError(`failed to add key`, { detail: K1, cause }),
+        new OperationError(`failed to add key`,  { detail: K2, cause }),
       ])
     });
   });
@@ -104,15 +105,16 @@ describe.each([
     it('should return errors from underlying set', async () => {
       if ('deleteMany' in set.set) return; // skip test
 
-      jest.spyOn(set.set, 'delete').mockImplementation(() => { throw new Error('error'); });
+      const cause = new Error('error')
+      jest.spyOn(set.set, 'delete').mockImplementation(() => { throw cause; });
 
       const results = [];
       for await (const error of set.deleteMany([K1, K2])) {
         results.push(error);
       }
       expect(results).toEqual([
-        operationError(`Failed to delete key`, ErrorCode.OpFailed, K1, new Error('error')),
-        operationError(`Failed to delete key`, ErrorCode.OpFailed, K2, new Error('error')),
+        new OperationError(`failed to delete key`, { detail: K1, cause }),
+        new OperationError(`failed to delete key`,  { detail: K2, cause }),
       ])
     });
   });
@@ -129,16 +131,17 @@ describe.each([
     it('should return errors from underlying set', async () => {
       if ('addMany' in set.set) return; // skip test
 
-      jest.spyOn(set.set, 'add').mockImplementation(() => { throw new Error('error'); });
-      jest.spyOn(set.set, 'delete').mockImplementation(() => { throw new Error('error'); });
+      const cause = new Error('error')
+      jest.spyOn(set.set, 'add').mockImplementation(() => { throw cause; });
+      jest.spyOn(set.set, 'delete').mockImplementation(() => { throw cause; });
 
       const results = [];
       for await (const error of set.updateMany([[K1, true], [K3]])) {
         results.push(error);
       }
       expect(results).toEqual([
-        operationError(`Failed to update key`, ErrorCode.OpFailed, K1, new Error('error')),
-        operationError(`Failed to update key`, ErrorCode.OpFailed, K3, new Error('error')),
+        new OperationError(`failed to update key`, { detail: K1, cause }),
+        new OperationError(`failed to update key`,  { detail: K3, cause }),
       ])
     });
   });

@@ -1,19 +1,18 @@
-import { AbortOptions, CodedError, ContentId, StringEquatable, SyncOrAsyncIterable } from '@mithic/commons';
-import { AggregateApplyOptions, AggregateCommandMeta, AggregateEvent, Aggregate } from '../aggregate.js';
-import { ORMap, MapCommand, MapEvent, MapEventPayload, MapQuery, MapAggregate } from './map.js';
+import { AbortOptions, ContentId, StringEquatable, SyncOrAsyncIterable } from '@mithic/commons';
+import { AggregateReduceOptions, Aggregate } from '../aggregate.js';
+import { ORMap, MapCommand, MapEvent, MapEventPayload, MapQuery, MapAggregate, MapEventType, MapCommandType } from './map.js';
 import { getFractionalIndices } from './keys.js';
+import { StandardCommand, StandardEvent } from '@mithic/cqrs';
 
 /** Linear sequence of values based on {@link ORMap} of base64 fractional index to values. */
-export class LSeq<
+export class LSeqAggregate<
   Ref extends StringEquatable<Ref> = ContentId,
   V = string | number | boolean | null
-> implements Aggregate<LSeqCommand<Ref, V>, Ref, LSeqEvent<Ref, V>, SyncOrAsyncIterable<[string, V]>, MapQuery<Ref>>
+> implements Aggregate<LSeqCommand<Ref, V>, LSeqEvent<Ref, V>, SyncOrAsyncIterable<[string, V]>, MapQuery<Ref>>
 {
   protected readonly map: MapAggregate<Ref, V>;
   protected readonly rand: () => number;
   protected readonly indexRandBits: number;
-
-  public readonly event = LSeqEventType;
 
   public constructor({
     map = new ORMap(),
@@ -29,28 +28,26 @@ export class LSeq<
     return this.map.query(options);
   }
 
-  public async command(command: LSeqCommand<Ref, V> = {}, options?: AbortOptions): Promise<LSeqEvent<Ref, V>> {
-    const type = command.ref === void 0 ? this.event.New : this.event.Update;
-    const toDeleteCount = type === this.event.New ? 0 : command.del || 0;
+  public async command(command: LSeqCommand<Ref, V>, options?: AbortOptions): Promise<LSeqEvent<Ref, V>> {
+    const type = command.meta?.root === void 0 ? LSeqEventType.New : LSeqEventType.Update;
+    const toDeleteCount = type === LSeqEventType.New ? 0 : command.payload.del || 0;
     const set: Record<string, V> = {};
     const del: string[] = [];
     const mapCmd: MapCommand<Ref, V> = {
-      ref: command.ref,
-      createdAt: command.createdAt,
-      nonce: command.nonce,
-      set,
-      del,
+      type: MapCommandType.Update,
+      payload: { set, del },
+      meta: command.meta,
     };
 
     const deletedIndices: string[] = [];
-    let startIndex = command.index;
+    let startIndex = command.payload.index;
     let endIndex;
 
-    if (command.ref) {
+    if (command.meta?.root) {
       let currentIndex: string | undefined;
       let indexCount = 0;
       for await (const [index] of this.map.query({
-        ref: command.ref,
+        root: command.meta.root,
         gte: startIndex,
         limit: toDeleteCount + 1,
         signal: options?.signal,
@@ -68,7 +65,7 @@ export class LSeq<
     }
 
     let i = 0;
-    const adds = command.add || [];
+    const adds = command.payload.add || [];
     for (; i < deletedIndices.length; ++i) {
       if (i < adds.length) {
         set[deletedIndices[i]] = adds[i];
@@ -87,22 +84,28 @@ export class LSeq<
     return { ...mapEvent, type };
   }
 
-  public async apply(event: LSeqEvent<Ref, V>, options?: AggregateApplyOptions): Promise<Ref> {
+  public async reduce(event: LSeqEvent<Ref, V>, options?: AggregateReduceOptions): Promise<Ref> {
     const mapEvent = this.toORMapEvent(event);
-    return this.map.apply(mapEvent, options);
+    return this.map.reduce(mapEvent, options);
   }
 
-  public async validate(event: LSeqEvent<Ref, V>, options?: AbortOptions): Promise<CodedError | undefined> {
+  public async validate(event: LSeqEvent<Ref, V>, options?: AbortOptions): Promise<Error | undefined> {
     const mapEvent = this.toORMapEvent(event);
     return this.map.validate(mapEvent, options);
   }
 
   protected toORMapEvent(event: LSeqEvent<Ref, V>): MapEvent<Ref, V> {
-    return { ...event, type: event.type === this.event.New ? this.map.event.New : this.map.event.Update };
+    return { ...event, type: event.type === LSeqEventType.New ? MapEventType.New : MapEventType.Update };
   }
 }
 
-/** Event type for {@link LSeq}. */
+/** Command type for {@link LSeqAggregate}. */
+export enum LSeqCommandType {
+  /** Sets or deletes set fields. */
+  Update = 'LSEQ_OPS',
+}
+
+/** Event type for {@link LSeqAggregate}. */
 export enum LSeqEventType {
   /** Creates a new lseq. */
   New = 'LSEQ_NEW',
@@ -111,8 +114,11 @@ export enum LSeqEventType {
   Update = 'LSEQ_OPS',
 }
 
-/** Command for {@link LSeq}. */
-export interface LSeqCommand<Ref, V> extends AggregateCommandMeta<Ref> {
+/** Command for {@link LSeqAggregate}. */
+export type LSeqCommand<Ref, V> = StandardCommand<LSeqCommandType, LSeqCommandPayload<V>, Ref>;
+
+/** Command payload for {@link LSeqAggregate}. */
+export interface LSeqCommandPayload<V> {
   /** The base64 fractional index at which insertion or deletion should occur. Defaults to the start. */
   readonly index?: string;
 
@@ -123,10 +129,10 @@ export interface LSeqCommand<Ref, V> extends AggregateCommandMeta<Ref> {
   readonly del?: number;
 }
 
-/** Event for {@link LSeq}. */
-export type LSeqEvent<Ref, V> = AggregateEvent<LSeqEventType, Ref, MapEventPayload<V>>;
+/** Event for {@link LSeqAggregate}. */
+export type LSeqEvent<Ref, V> = StandardEvent<LSeqEventType, MapEventPayload<V>, Ref>;
 
-/** Options for creating an {@link LSeq}. */
+/** Options for creating an {@link LSeqAggregate}. */
 export interface LSeqOptions<Ref extends StringEquatable<Ref>, V> {
   /** Backing {@link MapAggregate}. */
   readonly map?: MapAggregate<Ref, V>;

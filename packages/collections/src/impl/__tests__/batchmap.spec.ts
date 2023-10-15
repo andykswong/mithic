@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { ErrorCode, operationError } from '@mithic/commons';
 import { SyncMapBatchAdapter } from '../batchmap.js';
+import { OperationError } from '@mithic/commons';
 
 const DATA = [[1, 'value1'], [2, 'value2'], [3, 'value3']] as const;
 
@@ -43,7 +43,7 @@ describe(SyncMapBatchAdapter.name, () => {
 
     it('should handle errors while setting many values synchronously in the map', () => {
       const entries = [[1, 'x'], [2, 'y'], [3, 'z']] as [number, string][];
-      const error = new Error('Failed');
+      const error = new Error('failed');
       adapter.set = jest.fn(key => {
         if (key === 2) {
           throw error;
@@ -52,7 +52,7 @@ describe(SyncMapBatchAdapter.name, () => {
       const errors = [...adapter.setMany(entries)];
       expect(errors).toEqual([
         void 0,
-        operationError('Failed to set value', ErrorCode.OpFailed, 2, error),
+        new OperationError('failed to set value', { detail: 2, cause: error }),
         void 0
       ]);
     });
@@ -68,7 +68,7 @@ describe(SyncMapBatchAdapter.name, () => {
 
     it('should handle errors while deleting many values synchronously from the map', () => {
       const keys = [1, 2, 3];
-      const error = new Error('Failed');
+      const error = new Error('failed');
       adapter.delete = jest.fn(key => {
         if (key === 3) {
           throw error;
@@ -77,7 +77,7 @@ describe(SyncMapBatchAdapter.name, () => {
       const errors = [...adapter.deleteMany(keys)];
       expect(errors).toEqual([
         void 0, void 0,
-        operationError('Failed to delete key', ErrorCode.OpFailed, 3, error),
+        new OperationError('failed to delete key', { detail: 3, cause: error }),
       ]);
     });
   });
@@ -95,7 +95,7 @@ describe(SyncMapBatchAdapter.name, () => {
 
     it('should handle errors while setting many values synchronously in the map', () => {
       const entries = [[1, 'x'], [2], [3, 'z']] as [number, string | undefined][];
-      const error = new Error('Failed');
+      const error = new Error('failed');
       adapter.set = jest.fn(key => {
         if (key === 3) {
           throw error;
@@ -105,7 +105,7 @@ describe(SyncMapBatchAdapter.name, () => {
       expect(errors).toEqual([
         void 0,
         void 0,
-        operationError('Failed to update key', ErrorCode.OpFailed, 3, error),
+        new OperationError('failed to update key', { detail: 3, cause: error }),
       ]);
     });
   });

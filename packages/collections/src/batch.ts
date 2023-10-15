@@ -1,4 +1,4 @@
-import { AbortOptions, CodedError, ErrorCode, operationError } from '@mithic/commons';
+import { AbortOptions, CodedError, OperationError } from '@mithic/commons';
 import {
   MaybeAsyncAppendOnlySet, MaybeAsyncReadonlySet, MaybeAsyncReadonlySetBatch, MaybeAsyncSet, MaybeAsyncSetAddBatch,
   MaybeAsyncSetDeleteBatch, MaybeAsyncSetUpdateBatch
@@ -48,8 +48,12 @@ export async function* deleteMany<K>(
     try {
       await data.delete(key, options);
       yield;
-    } catch (error) {
-      yield operationError('Failed to delete key', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+    } catch (cause) {
+      yield new OperationError('failed to delete key', {
+        cause,
+        code: (cause as CodedError)?.code,
+        detail: key,
+      });
     }
   }
 }
@@ -67,8 +71,12 @@ export async function* addMany<K>(
     try {
       await data.add(key, options);
       yield;
-    } catch (error) {
-      yield operationError('Failed to add key', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+    } catch (cause) {
+      yield new OperationError('failed to add key', {
+        cause,
+        code: (cause as CodedError)?.code,
+        detail: key,
+      });
     }
   }
 }
@@ -86,8 +94,12 @@ export async function* setMany<K, V>(
     try {
       await data.set(key, value, options);
       yield;
-    } catch (error) {
-      yield operationError('Failed to set key', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+    } catch (cause) {
+      yield new OperationError('failed to set key', {
+        cause,
+        code: (cause as CodedError)?.code,
+        detail: key,
+      });
     }
   }
 }
@@ -107,8 +119,12 @@ export async function* updateSetMany<K>(
     try {
       await (isDelete ? data.delete(key, options) : data.add(key, options));
       yield;
-    } catch (error) {
-      yield operationError(`Failed to update key`, (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+    } catch (cause) {
+      yield new OperationError(`failed to update key`, {
+        cause,
+        code: (cause as CodedError)?.code,
+        detail: key,
+      });
     }
   }
 }
@@ -127,8 +143,12 @@ export async function* updateMapMany<K, V>(
     try {
       await ((value !== void 0) ? data.set(key, value, options) : data.delete(key, options));
       yield;
-    } catch (error) {
-      yield operationError('Failed to update key', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+    } catch (cause) {
+      yield new OperationError('failed to update key', {
+        cause,
+        code: (cause as CodedError)?.code,
+        detail: key,
+      });
     }
   }
 }
@@ -145,11 +165,15 @@ export async function* putMany<K, V>(
     options?.signal?.throwIfAborted();
     try {
       yield [await data.put(value, options)];
-    } catch (error) {
+    } catch (cause) {
       const key = await data.getKey(value, options);
       yield [
         key,
-        operationError('Failed to put key', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error)
+        new OperationError('failed to put key', {
+          cause,
+          code: (cause as CodedError)?.code,
+          detail: key,
+        })
       ];
     }
   }

@@ -1,4 +1,4 @@
-import { AbortOptions, CodedError, DisposableCloseable, ErrorCode, Startable, operationError } from '@mithic/commons';
+import { AbortOptions, CodedError, DisposableCloseable, OperationError, Startable } from '@mithic/commons';
 import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
 import { RangeQueryOptions, RangeQueryable } from '../query.js';
 
@@ -83,8 +83,12 @@ export class IndexedDBMap<K extends IDBValidKey, V>
       try {
         await asPromise(store.put(value, key));
         yield;
-      } catch (error) {
-        yield operationError('Failed to set value', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+      } catch (cause) {
+        yield new OperationError('failed to set value', {
+          cause,
+          code: (cause as CodedError)?.code,
+          detail: key
+        });
       }
     }
   }
@@ -97,8 +101,12 @@ export class IndexedDBMap<K extends IDBValidKey, V>
       try {
         await asPromise(store.delete(key));
         yield;
-      } catch (error) {
-        yield operationError('Failed to delete key', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+      } catch (cause) {
+        yield new OperationError('failed to delete key', {
+          cause,
+          code: (cause as CodedError)?.code,
+          detail: key
+        });
       }
     }
   }
@@ -115,8 +123,12 @@ export class IndexedDBMap<K extends IDBValidKey, V>
           await asPromise(store.put(value, key));
         }
         yield;
-      } catch (error) {
-        yield operationError('Failed to update value', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+      } catch (cause) {
+        yield new OperationError('failed to update value', {
+          cause,
+          code: (cause as CodedError)?.code,
+          detail: key
+        });
       }
     }
   }

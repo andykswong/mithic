@@ -1,7 +1,6 @@
 import { BTreeMap } from '@mithic/collections';
-import { ORSet, SetCommand, SetEventType, SetQuery } from '../set.js';
+import { ORSet, SetCommand, SetCommandType, SetEvent, SetEventType, SetQuery } from '../set.js';
 import { MockId } from '../../__tests__/mocks.js';
-import { ErrorCode, operationError } from '@mithic/commons';
 import { getFieldValueKey, getHeadIndexKey } from '../keys.js';
 import { ORMap } from '../map.js';
 
@@ -12,11 +11,11 @@ const VALUE0 = 'v0';
 const VALUE1 = 'v1';
 const VALUE2 = 123;
 const VALUE3 = true;
-const CMD_EMPTY = { createdAt: 1 };
-const CMD_NEW = { add: [VALUE0], nonce: 123, createdAt: 1 };
-const CMD_ADD = { ref: ROOT, add: [VALUE1, VALUE2], createdAt: 2 };
-const CMD_ADD_CONCURRENT = { ref: ROOT, add: [VALUE2, VALUE3], createdAt: 3 };
-const CMD_DEL = { ref: ROOT, add: [VALUE1], del: [VALUE2], createdAt: 4 };
+const CMD_EMPTY = { type: SetCommandType.Update, payload: {}, meta: { time: 1 } } satisfies SetCommand<MockId, V>;
+const CMD_NEW = { type: SetCommandType.Update, payload: { add: [VALUE0] }, meta: { id: '123', time: 1 } } satisfies SetCommand<MockId, V>;
+const CMD_ADD = { type: SetCommandType.Update, payload: { add: [VALUE1, VALUE2] }, meta: { root: ROOT, time: 2 } } satisfies SetCommand<MockId, V>;
+const CMD_ADD_CONCURRENT = { type: SetCommandType.Update, payload: { add: [VALUE2, VALUE3] }, meta: { root: ROOT, time: 3 } } satisfies SetCommand<MockId, V>;
+const CMD_DEL = { type: SetCommandType.Update, payload: { add: [VALUE1], del: [VALUE2] }, meta: { root: ROOT, time: 4 } } satisfies SetCommand<MockId, V>;
 
 describe(ORSet.name, () => {
   let set: ORSet<MockId, V>;
@@ -24,7 +23,7 @@ describe(ORSet.name, () => {
 
   beforeEach(() => {
     const map = new ORMap<MockId, V>({
-      eventRef: (event) => new MockId(new Uint8Array(event.meta.createdAt || 0)),
+      eventRef: (event) => new MockId(new Uint8Array(event.meta?.time || 0)),
     })
     set = new ORSet({
       map,
@@ -36,17 +35,17 @@ describe(ORSet.name, () => {
   describe('query', () => {
     it('should return empty result for empty / undefined sets', async () => {
       await applyCommand();
-      for await (const _ of set.query({ ref: ROOT })) {
+      for await (const _ of set.query({ root: ROOT })) {
         throw new Error('should not be called');
       }
     });
 
     it.each([
-      [[CMD_ADD], { ref: ROOT }, [VALUE2, VALUE1] as const],
-      [[CMD_ADD, CMD_ADD_CONCURRENT], { ref: ROOT }, [VALUE2, VALUE3, VALUE1] as const],
-      [[CMD_ADD, CMD_ADD_CONCURRENT], { ref: ROOT, limit: 2 }, [VALUE2, VALUE3] as const],
-      [[CMD_ADD, CMD_ADD_CONCURRENT], { ref: ROOT, limit: 2, reverse: true }, [VALUE1, VALUE3] as const],
-      [[CMD_ADD, CMD_ADD_CONCURRENT, CMD_DEL], { ref: ROOT, gte: VALUE2, lte: VALUE1 }, [VALUE3, VALUE1] as const],
+      [[CMD_ADD], { root: ROOT }, [VALUE2, VALUE1] as const],
+      [[CMD_ADD, CMD_ADD_CONCURRENT], { root: ROOT }, [VALUE2, VALUE3, VALUE1] as const],
+      [[CMD_ADD, CMD_ADD_CONCURRENT], { root: ROOT, limit: 2 }, [VALUE2, VALUE3] as const],
+      [[CMD_ADD, CMD_ADD_CONCURRENT], { root: ROOT, limit: 2, reverse: true }, [VALUE1, VALUE3] as const],
+      [[CMD_ADD, CMD_ADD_CONCURRENT, CMD_DEL], { root: ROOT, gte: VALUE2, lte: VALUE1 }, [VALUE3, VALUE1] as const],
     ])(
       'should return correct results for non-empty sets',
       async (cmds: SetCommand<MockId, V>[], query: SetQuery<MockId, V>, expected: readonly V[]) => {
@@ -66,10 +65,10 @@ describe(ORSet.name, () => {
       await applyCommand();
       const concurrentEvent = await set.command(CMD_ADD_CONCURRENT);
       await applyCommand(CMD_ADD);
-      await set.apply(concurrentEvent);
+      await set.reduce(concurrentEvent);
 
       const results = [];
-      for await (const entry of set.query({ ref: ROOT })) {
+      for await (const entry of set.query({ root: ROOT })) {
         results.push(entry);
       }
       expect(results).toEqual([VALUE2, VALUE3, VALUE1]);
@@ -86,8 +85,8 @@ describe(ORSet.name, () => {
       expect(event).toEqual({
         type: SetEventType.New,
         payload: { ops: [] },
-        meta: { parents: [], createdAt: 1 },
-      });
+        meta: { prev: [], time: 1 },
+      } satisfies SetEvent<MockId, V>);
     });
 
     it('should return valid event for new set command', async () => {
@@ -96,10 +95,9 @@ describe(ORSet.name, () => {
         type: SetEventType.New,
         payload: {
           ops: [[VALUE0]],
-          nonce: 123,
         },
-        meta: { parents: [], createdAt: 1 },
-      });
+        meta: { prev: [], id: '123', time: 1 },
+      } satisfies SetEvent<MockId, V>);
     });
 
     it('should return valid event for set set command', async () => {
@@ -109,14 +107,14 @@ describe(ORSet.name, () => {
         payload: {
           ops: [[VALUE2], [VALUE1]]
         },
-        meta: { parents: [], root: ROOT, createdAt: 2 },
-      });
+        meta: { prev: [], root: ROOT, time: 2 },
+      } satisfies SetEvent<MockId, V>);
     });
 
     it('should return valid event for set delete command', async () => {
       const concurrentEvent = await set.command(CMD_ADD_CONCURRENT);
       await applyCommand(CMD_ADD);
-      await set.apply(concurrentEvent);
+      await set.reduce(concurrentEvent);
       const event = await set.command(CMD_DEL);
       expect(event).toEqual({
         type: SetEventType.Update,
@@ -124,10 +122,10 @@ describe(ORSet.name, () => {
           ops: [[VALUE2, 0, 1]]
         },
         meta: {
-          parents: [new MockId(new Uint8Array(2)), new MockId(new Uint8Array(3))],
-          root: ROOT, createdAt: 4
+          prev: [new MockId(new Uint8Array(2)), new MockId(new Uint8Array(3))],
+          root: ROOT, time: 4
         },
-      });
+      } satisfies SetEvent<MockId, V>);
     });
 
     it('should ignore delete operation if field does not already exist', async () => {
@@ -139,15 +137,15 @@ describe(ORSet.name, () => {
           ops: [[VALUE1]]
         },
         meta: {
-          parents: [],
-          root: ROOT, createdAt: 4
+          prev: [],
+          root: ROOT, time: 4
         },
-      });
+      } satisfies SetEvent<MockId, V>);
     });
 
     it('should throw for empty update command', async () => {
-      await expect(() => set.command({ ref: ROOT, createdAt: 2 }))
-        .rejects.toEqual(operationError('Empty operation', ErrorCode.InvalidArg));
+      await expect(() => set.command({ type: SetCommandType.Update, payload: {}, meta: { root: ROOT, time: 2 } }))
+        .rejects.toEqual(new TypeError('empty operation'));
     });
   });
 
@@ -161,20 +159,20 @@ describe(ORSet.name, () => {
     it('should return error for malformed events', async () => {
       expect(await set.validate({
         type: SetEventType.Update, payload: { ops: [] },
-        meta: { parents: [], root: ROOT, createdAt: 2 },
-      })).toEqual(operationError('Empty operation', ErrorCode.InvalidArg));
+        meta: { prev: [], root: ROOT, time: 2 },
+      })).toEqual(new TypeError('empty operation'));
 
       expect(await set.validate({
         type: SetEventType.Update,
         payload: { ops: [['value']] },
-        meta: { parents: [], createdAt: 2 },
-      })).toEqual(operationError('Missing root', ErrorCode.InvalidArg));
+        meta: { prev: [], time: 2 },
+      })).toEqual(new TypeError('missing root'));
 
       expect(await set.validate({
         type: SetEventType.Update,
         payload: { ops: [['value', 0]] },
-        meta: { parents: [], root: ROOT, createdAt: 2 },
-      })).toEqual(operationError(`Invalid operation: "value"`, ErrorCode.InvalidArg));
+        meta: { prev: [], root: ROOT, time: 2 },
+      })).toEqual(new TypeError(`invalid operation: "value"`));
     });
   });
 
@@ -196,10 +194,10 @@ describe(ORSet.name, () => {
       await applyCommand(CMD_NEW);
       const cmd1 = await set.command(CMD_ADD);
       const cmd2 = await set.command(CMD_ADD_CONCURRENT);
-      await set.apply(cmd1);
-      await set.apply(cmd2);
-      const eventRef1 = new MockId(new Uint8Array(CMD_ADD.createdAt));
-      const eventRef2 = new MockId(new Uint8Array(CMD_ADD_CONCURRENT.createdAt));
+      await set.reduce(cmd1);
+      await set.reduce(cmd2);
+      const eventRef1 = new MockId(new Uint8Array(CMD_ADD.meta.time));
+      const eventRef2 = new MockId(new Uint8Array(CMD_ADD_CONCURRENT.meta.time));
 
       expect(store.get(getHeadIndexKey(`${ROOT}`, `${VALUE2}`, eventRef1.toString()))).toEqual(eventRef1);
       expect(store.get(getHeadIndexKey(`${ROOT}`, `${VALUE2}`, eventRef2.toString()))).toEqual(eventRef2);
@@ -208,14 +206,14 @@ describe(ORSet.name, () => {
     });
 
     it('should remove all concurrent values on delete', async () => {
-      const eventRef1 = new MockId(new Uint8Array(CMD_ADD.createdAt));
-      const eventRef2 = new MockId(new Uint8Array(CMD_ADD_CONCURRENT.createdAt));
+      const eventRef1 = new MockId(new Uint8Array(CMD_ADD.meta.time));
+      const eventRef2 = new MockId(new Uint8Array(CMD_ADD_CONCURRENT.meta.time));
 
       await applyCommand(CMD_NEW);
       const cmd1 = await set.command(CMD_ADD);
       const cmd2 = await set.command(CMD_ADD_CONCURRENT);
-      await set.apply(cmd1);
-      await set.apply(cmd2);
+      await set.reduce(cmd1);
+      await set.reduce(cmd2);
       await applyCommand(CMD_DEL);
 
       expect(store.size).toEqual(6); // 3 entries remaining
@@ -227,14 +225,14 @@ describe(ORSet.name, () => {
     });
 
     it('should throw error for malformed events when validate = true', async () => {
-      await expect(() => set.apply({
+      await expect(() => set.reduce({
         type: SetEventType.Update,
-        payload: { ops: [] }, meta: { parents: [], createdAt: 1 },
-      })).rejects.toEqual(operationError('Empty operation', ErrorCode.UnsupportedOp));
+        payload: { ops: [] }, meta: { prev: [], time: 1 },
+      })).rejects.toEqual(new TypeError('empty operation'));
     });
   });
 
   async function applyCommand(cmd: SetCommand<MockId, V> = CMD_EMPTY) {
-    return await set.apply(await set.command(cmd));
+    return await set.reduce(await set.command(cmd));
   }
 });

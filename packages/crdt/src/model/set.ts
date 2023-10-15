@@ -1,12 +1,13 @@
 import {
-  AbortOptions, CodedError, ContentId, MaybePromise, StringEquatable, SyncOrAsyncIterable
+  AbortOptions, ContentId, MaybePromise, StringEquatable, SyncOrAsyncIterable
 } from '@mithic/commons';
-import { AggregateApplyOptions, AggregateCommandMeta, AggregateEvent, Aggregate } from '../aggregate.js';
-import { ORMap, MapCommand, MapEvent, MapAggregate } from './map.js';
+import { AggregateReduceOptions, Aggregate } from '../aggregate.js';
+import { ORMap, MapCommand, MapEvent, MapAggregate, MapEventType, MapCommandType } from './map.js';
+import { StandardCommand, StandardEvent } from '@mithic/cqrs';
 
 /** Abstract set aggregate type. */
 export type SetAggregate<Ref, V> =
-  Aggregate<SetCommand<Ref, V>, Ref, SetEvent<Ref, V>, SyncOrAsyncIterable<V>, SetQuery<Ref, V>>;
+  Aggregate<SetCommand<Ref, V>, SetEvent<Ref, V>, SyncOrAsyncIterable<V>, SetQuery<Ref, V>>;
 
 /** Observed-remove set of values based on {@link ORMap} of stringified values to values. */
 export class ORSet<
@@ -15,8 +16,6 @@ export class ORSet<
 > implements SetAggregate<Ref, V> {
   protected readonly map: MapAggregate<Ref, V>;
   protected readonly stringify: (value: V, options?: AbortOptions) => MaybePromise<string>;
-
-  public readonly event = SetEventType;
 
   public constructor({
     map = new ORMap(),
@@ -35,7 +34,7 @@ export class ORSet<
 
     for await (const [hash, value] of this.map.query({
       gte, lte,
-      ref: options.ref,
+      root: options.root,
       reverse: options.reverse,
       limit: options.limit,
       signal: options.signal,
@@ -47,25 +46,23 @@ export class ORSet<
     }
   }
 
-  public async command(command: SetCommand<Ref, V> = {}, options?: AbortOptions): Promise<SetEvent<Ref, V>> {
-    const type = command.ref === void 0 ? this.event.New : this.event.Update;
+  public async command(command: SetCommand<Ref, V>, options?: AbortOptions): Promise<SetEvent<Ref, V>> {
+    const type = command.meta?.root === void 0 ? SetEventType.New : SetEventType.Update;
     const values: Record<string, V> = {};
     const set: Record<string, V> = {};
     const del: string[] = [];
     const mapCmd: MapCommand<Ref, V> = {
-      ref: command.ref,
-      createdAt: command.createdAt,
-      nonce: command.nonce,
-      set,
-      del,
+      type: MapCommandType.Update,
+      payload: { set, del },
+      meta: command.meta,
     };
 
-    for (const value of command.del || []) {
+    for (const value of command.payload.del || []) {
       const hash = await this.stringify(value, options);
       values[hash] = value;
       del.push(hash);
     }
-    for (const value of command.add || []) {
+    for (const value of command.payload.add || []) {
       const hash = await this.stringify(value, options);
       values[hash] = value;
       set[hash] = value;
@@ -83,17 +80,17 @@ export class ORSet<
 
     return {
       type,
-      payload: { ops, nonce: mapEvent.payload.nonce },
+      payload: { ops },
       meta: mapEvent.meta,
     };
   }
 
-  public async apply(event: SetEvent<Ref, V>, options?: AggregateApplyOptions): Promise<Ref> {
+  public async reduce(event: SetEvent<Ref, V>, options?: AggregateReduceOptions): Promise<Ref> {
     const mapEvent = await this.toORMapEvent(event, options);
-    return this.map.apply(mapEvent, options);
+    return this.map.reduce(mapEvent, options);
   }
 
-  public async validate(event: SetEvent<Ref, V>, options?: AbortOptions): Promise<CodedError | undefined> {
+  public async validate(event: SetEvent<Ref, V>, options?: AbortOptions): Promise<Error | undefined> {
     const mapEvent = await this.toORMapEvent(event, options);
     return this.map.validate(mapEvent, options);
   }
@@ -106,11 +103,17 @@ export class ORSet<
     }
 
     return {
-      type: event.type === this.event.New ? this.map.event.New : this.map.event.Update,
-      payload: { ops, nonce: event.payload.nonce },
+      type: event.type === SetEventType.New ? MapEventType.New : MapEventType.Update,
+      payload: { ops },
       meta: event.meta,
     };
   }
+}
+
+/** Command type for {@link SetAggregate}. */
+export enum SetCommandType {
+  /** Sets or deletes set fields. */
+  Update = 'SET_OPS',
 }
 
 /** Event type for {@link SetAggregate}. */
@@ -125,7 +128,7 @@ export enum SetEventType {
 /** Query options for {@link SetAggregate}.  */
 export interface SetQuery<Ref, V> extends AbortOptions {
   /** Reference to (root event of) the set. */
-  readonly ref: Ref;
+  readonly root: Ref;
 
   /** Returns only value greater than or equal to given value. */
   readonly gte?: V;
@@ -141,7 +144,10 @@ export interface SetQuery<Ref, V> extends AbortOptions {
 }
 
 /** Command for {@link SetAggregate}. */
-export interface SetCommand<Ref, V> extends AggregateCommandMeta<Ref> {
+export type SetCommand<Ref, V> = StandardCommand<SetCommandType, SetCommandPayload<V>, Ref>;
+
+/** Command payload for {@link SetAggregate}. */
+export interface SetCommandPayload<V> {
   /** Adds given values to the set. */
   readonly add?: readonly V[];
 
@@ -150,15 +156,12 @@ export interface SetCommand<Ref, V> extends AggregateCommandMeta<Ref> {
 }
 
 /** Event for {@link SetAggregate}. */
-export type SetEvent<Ref, V> = AggregateEvent<SetEventType, Ref, SetEventPayload<V>>;
+export type SetEvent<Ref, V> = StandardEvent<SetEventType, SetEventPayload<V>, Ref>;
 
 /** Event payload for {@link SetAggregate}. */
 export interface SetEventPayload<V> {
   /** Operations to add or delete given values in the set. */
   readonly ops: readonly [value: V, ...parentIdxToDelete: number[]][];
-
-  /** A random number to make a unique event when creating a new set. */
-  readonly nonce?: number;
 }
 
 /** Options for creating an {@link ORSet}. */

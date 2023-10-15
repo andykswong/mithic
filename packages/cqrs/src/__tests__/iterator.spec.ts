@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
-import { ErrorName, immediate } from '@mithic/commons';
+import { immediate } from '@mithic/commons';
 import { AsyncSubscriber } from '../iterator.js';
 import { SimpleMessageBus } from '@mithic/messaging';
 
@@ -74,7 +74,7 @@ describe(AsyncSubscriber.name, () => {
       actualError = e;
     }
 
-    expect((actualError as Error).name).toBe(ErrorName.Abort);
+    expect((actualError as Error).name).toBe('AbortError');
     expect(result).toEqual(events.slice(0, 2));
     expect(subscriber['running']).toBe(false);
   });

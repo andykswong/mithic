@@ -64,14 +64,14 @@ describe(DirectMessageBus.name, () => {
       const callback = jest.fn(() => undefined);
       bus.subscribe(callback);
       expect(mockBus.topicValidators.get(TOPIC)?.(DATA, { topic: TOPIC, from: PEER_ID_2 }))
-        .toEqual(new MessageValidationError('Invalid message', { code: MessageValidationErrorCode.Ignore }));
+        .toEqual(new MessageValidationError('invalid message', { code: MessageValidationErrorCode.Ignore }));
     });
 
     it('should ignore message from invalid topic ID', () => {
       const callback = jest.fn(() => undefined);
       bus.subscribe(callback);
       expect(mockBus.topicValidators.get(TOPIC)?.(DATA, { topic: FULL_TOPIC2, from: OTHER_PEER_ID }))
-        .toEqual(new MessageValidationError('Invalid message', { code: MessageValidationErrorCode.Ignore }));
+        .toEqual(new MessageValidationError('invalid message', { code: MessageValidationErrorCode.Ignore }));
     });
 
     it('should use given validator to validate messages before passing to handler', () => {

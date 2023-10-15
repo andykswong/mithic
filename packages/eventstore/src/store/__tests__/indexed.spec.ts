@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
 import { BTreeMap, ContentAddressedMapStore } from '@mithic/collections';
-import { ErrorCode, operationError } from '@mithic/commons';
+import { ERR_DEPENDENCY_MISSING, OperationError } from '@mithic/commons';
 import { StandardEventMeta } from '@mithic/cqrs/event';
 import { IndexedEventStore } from '../indexed.js';
 import { MockEventType, MockId } from '../../__tests__/mocks.js';
@@ -67,7 +67,7 @@ describe(IndexedEventStore.name, () => {
         meta: { root: ID1, prev: [ID1, ID3] }
       };
       await expect(store.put(event)).rejects
-        .toThrowError(operationError('Missing dependencies', ErrorCode.MissingDep, [ID3]));
+        .toThrowError(new OperationError('missing dependencies', { code: ERR_DEPENDENCY_MISSING, detail: [ID3] }));
     });
 
     it('should throw an error if root Id is invalid', async () => {
@@ -77,7 +77,7 @@ describe(IndexedEventStore.name, () => {
         meta: { root: ID2, prev: [ID1] }
       };
       await expect(store.put(event)).rejects
-        .toThrowError(operationError('Missing dependency to root Id', ErrorCode.InvalidArg));
+        .toThrowError(new TypeError('missing dependency to root Id'));
     });
 
     it('should throw an error if the root Id is missing', async () => {
@@ -86,7 +86,7 @@ describe(IndexedEventStore.name, () => {
         payload: [3, new MockId(new Uint8Array([1, 3, 5]))],
         meta: { prev: [ID1] }
       };
-      await expect(store.put(event)).rejects.toThrowError(operationError('Missing root Id', ErrorCode.InvalidArg));
+      await expect(store.put(event)).rejects.toThrowError(new TypeError('missing root Id'));
     });
   });
 
@@ -103,7 +103,7 @@ describe(IndexedEventStore.name, () => {
       }
       expect(results).toEqual([
         [key1],
-        [key2, operationError('Missing dependencies', ErrorCode.MissingDep, [ID3])]
+        [key2, new OperationError('missing dependencies', { code: ERR_DEPENDENCY_MISSING, detail: [ID3] })]
       ]);
     });
 

@@ -2,7 +2,7 @@ import {
   AppendOnlyAutoKeyMap, AutoKeyMapBatch, BTreeMap, Batch, ContentAddressedMapStore, MaybeAsyncMap, MaybeAsyncMapBatch,
   RangeQueryable
 } from '@mithic/collections';
-import { AbortOptions, ContentId, ErrorCode, MaybePromise, StringEquatable, operationError } from '@mithic/commons';
+import { AbortOptions, ContentId, MaybePromise, OperationError, StringEquatable } from '@mithic/commons';
 import { StandardEvent } from '@mithic/cqrs/event';
 import { BaseDagEventStore } from '../base/index.js';
 import { DEFAULT_EVENT_TYPE_SEPARATOR, DEFAULT_KEY_ENCODER, atomicHybridTime } from '../defaults.js';
@@ -60,7 +60,7 @@ export class IndexedEventStore<
 
     const event = this.toStandardEvent(newValue);
     if (!event) {
-      throw operationError('Invalid event', ErrorCode.InvalidArg);
+      throw new TypeError('invalid event');
     }
 
     // update indices
@@ -79,7 +79,7 @@ export class IndexedEventStore<
 
     for await (const error of Batch.updateMapMany(this.index, entries, options)) {
       if (error) {
-        throw operationError('Failed to save indices', ErrorCode.OpFailed, void 0, error);
+        throw new OperationError('failed to save indices', { cause: error });
       }
     }
 

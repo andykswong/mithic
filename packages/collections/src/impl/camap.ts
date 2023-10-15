@@ -1,5 +1,5 @@
 import {
-  AbortOptions, CodedError, ContentId, ErrorCode, MaybePromise, maybeAsync, operationError, sha256
+  AbortOptions, CodedError, ContentId, MaybePromise, OperationError, maybeAsync, sha256
 } from '@mithic/commons';
 import { CID } from 'multiformats';
 import * as raw from 'multiformats/codecs/raw';
@@ -71,12 +71,11 @@ export class ContentAddressedMapStore<
       const key = entries[i++][0];
       yield [
         key,
-        error && operationError(
-          'Failed to put',
-          (error as CodedError)?.code ?? ErrorCode.OpFailed,
-          key,
-          error
-        )
+        error && new OperationError('failed to put', {
+          code: (error as CodedError)?.code,
+          detail: key,
+          cause: error
+        })
       ];
     }
   }

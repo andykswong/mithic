@@ -3,7 +3,7 @@ import {
   MaybeAsyncReadonlySet, MaybeAsyncSet, MaybeAsyncSetBatch
 } from '@mithic/collections';
 import {
-  AbortOptions, ContentId, ErrorCode, StringEquatable, SyncOrAsyncIterable, equalsOrSameString, operationError
+  AbortOptions, ContentId, InvalidStateError, OperationError, StringEquatable, SyncOrAsyncIterable, equalsOrSameString
 } from '@mithic/commons';
 import { StandardEvent } from '@mithic/cqrs/event';
 import { BaseDagEventStore } from '../base/index.js';
@@ -16,7 +16,7 @@ const decodeCID = await (async () => {
     const { CID } = await import('multiformats');
     return <K>(key: string) => CID.parse(key) as unknown as K;
   } catch (_) {
-    return () => { throw operationError('multiformats not available', ErrorCode.InvalidState); };
+    return () => { throw new InvalidStateError('multiformats not available'); };
   }
 })();
 
@@ -102,7 +102,7 @@ export class DagEventStore<
       if (parents?.length) {
         for await (const error of heads.deleteMany(parents, options)) {
           if (error) {
-            throw operationError('Failed to update head', ErrorCode.OpFailed, void 0, error);
+            throw new OperationError('failed to update head', { cause: error });
           }
         }
       }
@@ -138,7 +138,7 @@ export class DagEventStore<
       options
     )) {
       if (error) {
-        throw operationError('Failed to update head', ErrorCode.OpFailed, void 0, error);
+        throw new OperationError('failed to update head', { cause: error });
       }
     }
 

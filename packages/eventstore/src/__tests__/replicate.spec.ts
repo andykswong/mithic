@@ -72,10 +72,10 @@ describe(replicateEvents.name, () => {
   it('should throw error if target.putMany() fails', async () => {
     jest.mocked(target.putMany).mockImplementation(async function * (values: string[]) {
       for (let i = 0; i < values.length; i++) {
-        yield ['key', new Error('Failed to put')];
+        yield ['key', new Error('failed to put')];
       }
     });
 
-    await expect(replicateEvents({ source, target, batchSize: 2 })).rejects.toThrow('Failed to put');
+    await expect(replicateEvents({ source, target, batchSize: 2 })).rejects.toThrow('failed to put');
   });
 });

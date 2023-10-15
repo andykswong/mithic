@@ -1,6 +1,6 @@
 import { AppendOnlyAutoKeyMap, AutoKeyMapBatch } from '@mithic/collections';
 import {
-  AbortOptions, CodedError, ContentId, ErrorCode, StringEquatable, equalsOrSameString, operationError
+  AbortOptions, ContentId, ERR_DEPENDENCY_MISSING, OperationError, StringEquatable, equalsOrSameString
 } from '@mithic/commons';
 import { StandardEvent } from '@mithic/cqrs/event';
 import { EventStore, EventStorePutOptions } from '../store.js';
@@ -31,7 +31,7 @@ export abstract class BaseDagEventStore<
     super(data, queryPageSize);
   }
 
-  public override async validate(value: V, options?: AbortOptions): Promise<CodedError<K[]> | undefined> {
+  public override async validate(value: V, options?: AbortOptions): Promise<Error | undefined> {
     const error = await super.validate(value, options);
     if (error) {
       return error;
@@ -39,7 +39,7 @@ export abstract class BaseDagEventStore<
 
     const event = this.toStandardEvent(value);
     if (!event) {
-      return operationError('Invalid event value', ErrorCode.InvalidArg);
+      return new TypeError('invalid event value');
     }
 
     const parents = this.useCache ? this.currentEventDeps : [];
@@ -49,12 +49,12 @@ export abstract class BaseDagEventStore<
     const rootId = event.meta?.root;
     if (!deps.length) {
       if (rootId !== void 0) { // if specified, root Id must be a dependency
-        return operationError('Missing dependency to root Id', ErrorCode.MissingDep, [rootId]);
+        return new TypeError('missing dependency to root Id');
       }
       return;
     }
     if (rootId === void 0) { // root Id must be specified if there are dependencies
-      return operationError('Missing root Id', ErrorCode.InvalidArg);
+      return new TypeError('missing root Id');
     }
 
     const missing: K[] = [];
@@ -72,11 +72,11 @@ export abstract class BaseDagEventStore<
     }
 
     if (missing.length) {
-      return operationError('Missing dependencies', ErrorCode.MissingDep, missing);
+      return new OperationError('missing dependencies', { code: ERR_DEPENDENCY_MISSING, detail: missing });
     }
 
     if (!hasSameRoot) { // root Id must match one of parents' root
-      return operationError('Missing dependency to root Id', ErrorCode.MissingDep, [rootId]);
+      return new OperationError('missing dependency to root Id', { code: ERR_DEPENDENCY_MISSING, detail: [rootId] });
     }
   }
 

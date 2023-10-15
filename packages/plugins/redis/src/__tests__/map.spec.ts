@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { OperationError } from '@mithic/commons';
 import { RedisClientType, commandOptions } from '@redis/client';
 import { createMockRedisClient, createMockRedisClientMultiCommand } from '../__tests__/mocks.js';
 import { RedisMap } from '../map.js';
 import { RangeQueryOptions } from '@mithic/collections';
-import { ErrorCode, operationError } from '@mithic/commons';
 
 const HASH_KEY = 'hash-key';
 const RANGE_KEY = 'range-key';
@@ -142,7 +142,10 @@ describe(RedisMap.name, () => {
       for await (const error of map.setMany([[KEY1, VALUE1], [KEY2, VALUE2]])) {
         results.push(error);
       }
-      expect(results).toEqual([operationError('Failed to set', ErrorCode.OpFailed, KEY1, 'error'), operationError('Failed to set', ErrorCode.OpFailed, KEY2, 'error')]);
+      expect(results).toEqual([
+        new OperationError('failed to set', { detail: KEY1, cause: 'error' }),
+        new OperationError('failed to set', { detail: KEY2, cause: 'error' })
+      ]);
     });
   });
 
@@ -169,7 +172,10 @@ describe(RedisMap.name, () => {
       for await (const error of map.deleteMany([KEY1, KEY2])) {
         results.push(error);
       }
-      expect(results).toEqual([operationError('Failed to delete', ErrorCode.OpFailed, KEY1, 'error'), operationError('Failed to delete', ErrorCode.OpFailed, KEY2, 'error')]);
+      expect(results).toEqual([
+        new OperationError('failed to delete', { detail: KEY1, cause: 'error' }), 
+        new OperationError('failed to delete', { detail: KEY2, cause: 'error' })
+      ]);
     });
   });
 
@@ -198,7 +204,10 @@ describe(RedisMap.name, () => {
       for await (const error of map.updateMany([[KEY1, VALUE1], [KEY2, void 0]])) {
         results.push(error);
       }
-      expect(results).toEqual([operationError('Failed to update', ErrorCode.OpFailed, KEY1, 'error'), operationError('Failed to update', ErrorCode.OpFailed, KEY2, 'error')]);
+      expect(results).toEqual([
+        new OperationError('failed to update', { detail: KEY1, cause: 'error' }),
+        new OperationError('failed to update', { detail: KEY2, cause: 'error' })
+      ]);
     });
   });
 

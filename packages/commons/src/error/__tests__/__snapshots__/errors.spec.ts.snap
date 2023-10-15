@@ -1,20 +1,22 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`abortError should initialize with given reason 1`] = `[AbortError: test reason]`;
+exports[`AbortError should initialize with given reason 1`] = `[AbortError: test reason]`;
 
-exports[`abortError should initialize with given reason 2`] = `
+exports[`AbortError should initialize with given reason 2`] = `
 {
   "code": "ABORT_ERR",
-  "detail": undefined,
+  "detail": {
+    "detail": "issue",
+  },
   "name": "AbortError",
 }
 `;
 
-exports[`invalidStateError should initialize with given reason 1`] = `[InvalidStateError: test reason]`;
+exports[`InvalidStateError should initialize with given reason 1`] = `[InvalidStateError: test reason]`;
 
-exports[`invalidStateError should initialize with given reason 2`] = `
+exports[`InvalidStateError should initialize with given reason 2`] = `
 {
-  "code": "ERR",
+  "code": "INVALID_STATE_ERR",
   "detail": {
     "detail": "issue",
   },
@@ -22,11 +24,11 @@ exports[`invalidStateError should initialize with given reason 2`] = `
 }
 `;
 
-exports[`notFoundError should initialize with given reason 1`] = `[NotFoundError: test reason]`;
+exports[`NotFoundError should initialize with given reason 1`] = `[NotFoundError: test reason]`;
 
-exports[`notFoundError should initialize with given reason 2`] = `
+exports[`NotFoundError should initialize with given reason 2`] = `
 {
-  "code": "ERR_NOT_FOUND",
+  "code": "NOT_FOUND_ERR",
   "detail": {
     "detail": "issue",
   },
@@ -34,14 +36,50 @@ exports[`notFoundError should initialize with given reason 2`] = `
 }
 `;
 
-exports[`operationError should initialize with given parameters 1`] = `[OperationError: test reason]`;
+exports[`NotSupportedError should initialize with given reason 1`] = `[NotSupportedError: test reason]`;
 
-exports[`operationError should initialize with given parameters 2`] = `
+exports[`NotSupportedError should initialize with given reason 2`] = `
 {
-  "code": "ERR_INVALID_ARG_VALUE",
+  "code": "NOT_SUPPORTED_ERR",
+  "detail": {
+    "detail": "issue",
+  },
+  "name": "NotSupportedError",
+}
+`;
+
+exports[`OperationError should initialize with given reason 1`] = `[OperationError: test reason]`;
+
+exports[`OperationError should initialize with given reason 2`] = `
+{
+  "code": "ERR_OPERATION_FAILED",
   "detail": {
     "detail": "issue",
   },
   "name": "OperationError",
+}
+`;
+
+exports[`OperationError should initialize with given reason and code 1`] = `[OperationError: test reason]`;
+
+exports[`OperationError should initialize with given reason and code 2`] = `
+{
+  "code": "TEST_ERR",
+  "detail": {
+    "detail": "issue",
+  },
+  "name": "OperationError",
+}
+`;
+
+exports[`TimeoutError should initialize with given reason 1`] = `[TimeoutError: test reason]`;
+
+exports[`TimeoutError should initialize with given reason 2`] = `
+{
+  "code": "TIMEOUT_ERR",
+  "detail": {
+    "detail": "issue",
+  },
+  "name": "TimeoutError",
 }
 `;

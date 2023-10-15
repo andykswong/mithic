@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { ErrorName } from '@mithic/commons';
 import { CONNECTION_CHECK_INTERVAL_MS, isPeerConnected, waitForPeer } from '../wait-peer.js';
 import { MockPeer, MockMessageBus } from '../../__tests__/mocks.js';
 import { flushPromises } from '../../__tests__/utils.js';
@@ -65,7 +64,7 @@ describe(waitForPeer.name, () => {
     } catch (e) {
       err = e;
     }
-    expect((err as Error)?.name).toBe(ErrorName.Abort);
+    expect((err as Error)?.name).toBe('AbortError');
   });
 
   it('should reject with AbortError if aborted', async () => {
@@ -80,6 +79,6 @@ describe(waitForPeer.name, () => {
     } catch (e) {
       err = e;
     }
-    expect((err as Error)?.name).toBe(ErrorName.Abort);
+    expect((err as Error)?.name).toBe('AbortError');
   });
 });

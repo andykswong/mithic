@@ -1,4 +1,4 @@
-import { abortError, AbortOptions, equalsOrSameString, StringEquatable } from '@mithic/commons';
+import { AbortError, AbortOptions, equalsOrSameString, StringEquatable } from '@mithic/commons';
 import { MessageSubscriptionPeers, MessageSubscriptionState } from '../peer-aware.js';
 
 /** Interval in milliseconds to wait for next connection check. */
@@ -30,7 +30,7 @@ export async function waitForPeer<Peer extends StringEquatable<Peer>>(
       }
       if (!subscribed) { // no longer subscribed = channel closed
         clearInterval(interval);
-        return reject(abortError('channel closed'));
+        return reject(new AbortError('channel closed'));
       }
 
       if (await isPeerConnected(sub, topic, peer, options)) {

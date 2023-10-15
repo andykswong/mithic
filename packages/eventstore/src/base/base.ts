@@ -1,6 +1,6 @@
 import { AppendOnlyAutoKeyMap, AutoKeyMapBatch, Batch } from '@mithic/collections';
 import {
-  AbortOptions, CodedError, ContentId, ErrorCode, MaybePromise, SyncOrAsyncGenerator, operationError
+  AbortOptions, CodedError, ContentId, ERR_EXIST, MaybePromise, OperationError, SyncOrAsyncGenerator
 } from '@mithic/commons';
 import { EventStore, EventStorePutOptions, EventStoreQueryOptions } from '../store.js';
 import { DEFAULT_BATCH_SIZE } from '../defaults.js';
@@ -24,10 +24,10 @@ export abstract class BaseMapEventStore<
     return value;
   }
 
-  public async validate(value: V, options?: AbortOptions): Promise<CodedError<K[]> | undefined> {
+  public async validate(value: V, options?: AbortOptions): Promise<Error | undefined> {
     const key = await this.data.getKey(value, options);
     if (await this.data.has(key, options)) {
-      return operationError('Already exists', ErrorCode.Exist, [key]);
+      return new OperationError('already exists', { code: ERR_EXIST, detail: [key] });
     }
   }
 
@@ -55,8 +55,8 @@ export abstract class BaseMapEventStore<
     if (options?.validate ?? true) {
       const error = await this.validate(value, options);
       if (error) {
-        if (error.code === ErrorCode.Exist) {
-          return (error.detail as K[])[0];
+        if ((error as CodedError)?.code === ERR_EXIST) {
+          return ((error as CodedError).detail as K[])[0];
         }
         throw error;
       }
@@ -75,7 +75,7 @@ export abstract class BaseMapEventStore<
         yield [
           key,
           error instanceof Error && (error as CodedError)?.code ?
-            error : operationError('Failed to put', ErrorCode.OpFailed, key, error)
+            error : new OperationError('failed to put', { cause: error, detail: [key] })
         ];
       }
     }

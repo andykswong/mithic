@@ -1,5 +1,5 @@
 import { MaybeAsyncMap, MaybeAsyncMapBatch, RangeQueryOptions, RangeQueryable } from '@mithic/collections';
-import { AbortOptions, AsyncDisposableCloseable, CodedError, ErrorCode, Startable, operationError } from '@mithic/commons';
+import { AbortOptions, AsyncDisposableCloseable, CodedError, OperationError, Startable } from '@mithic/commons';
 import { commandOptions, RedisClientType } from '@redis/client';
 import { RedisValueType } from './type.js';
 
@@ -89,7 +89,7 @@ export class RedisMap<UseBuffer extends boolean = false, R extends RedisClientTy
       if (error === void 0) {
         yield;
       } else {
-        yield operationError('Failed to set', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+        yield new OperationError('failed to set', { code: (error as CodedError)?.code, detail: key, cause: error });
       }
     }
   }
@@ -109,7 +109,7 @@ export class RedisMap<UseBuffer extends boolean = false, R extends RedisClientTy
       if (error === void 0) {
         yield;
       } else {
-        yield operationError('Failed to delete', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+        yield new OperationError('failed to delete', { code: (error as CodedError)?.code, detail: key, cause: error });
       }
     }
   }
@@ -142,7 +142,7 @@ export class RedisMap<UseBuffer extends boolean = false, R extends RedisClientTy
       if (error === void 0) {
         yield;
       } else {
-        yield operationError('Failed to update', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error);
+        yield new OperationError('failed to update', { code: (error as CodedError)?.code, detail: key, cause: error });
       }
     }
   }

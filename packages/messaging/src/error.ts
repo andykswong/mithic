@@ -1,4 +1,4 @@
-import { CodedError } from '@mithic/commons';
+import { CodedError, ErrorCodeDetailOptions } from '@mithic/commons';
 
 /** Message validation error. */
 export class MessageValidationError<T = unknown, E = unknown> extends CodedError<T, E> {
@@ -15,17 +15,14 @@ export class MessageValidationError<T = unknown, E = unknown> extends CodedError
 }
 
 /** Options for initializing a {@link MessageValidationError}. */
-export interface MessageValidationErrorOptions<T> extends ErrorOptions {
+export interface MessageValidationErrorOptions<T> extends ErrorCodeDetailOptions<T> {
   /** Error code. */
   code?: MessageValidationErrorCode;
-
-  /** Error details. */
-  detail?: T;
 }
 
 /** Message validation error code. */
 export enum MessageValidationErrorCode {
-  /** The message should be ignored. */
+  /** The message should be ignored, due to being duplicate or outdated. */
   Ignore = 'ignore',
 
   /** The message is considered invalid, and it should be rejected. */

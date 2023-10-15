@@ -1,9 +1,9 @@
-import { ErrorCode, ErrorName } from './enums.js';
+import { ERR } from './code.js';
 
 /** Error with error code. */
 export class CodedError<T = unknown, E = unknown> extends Error {
   /** Thr error code. */
-  public readonly code: ErrorCode | string;
+  public readonly code: string;
 
   /** The error cause. */
   public override readonly cause?: E;
@@ -11,25 +11,31 @@ export class CodedError<T = unknown, E = unknown> extends Error {
   /** Returns any data passed when initializing the error. */
   public detail?: T;
 
-  constructor(
+  public constructor(
     message?: string,
     options?: CodedErrorOptions<T>,
   ) {
     super(message, options);
-    this.name = options?.name ?? ErrorName.Coded;
-    this.code = options?.code ?? ErrorCode.Error;
+    this.name = options?.name ?? CodedError.name;
+    this.code = options?.code ?? ERR;
     this.detail = options?.detail;
   }
 }
 
 /** Options for initializing a {@link CodedError}. */
-export interface CodedErrorOptions<T> extends ErrorOptions {
-  /** Error code. */
-  code?: ErrorCode | string;
-
+export interface CodedErrorOptions<T> extends ErrorCodeDetailOptions<T> {
   /** Error name. */
   name?: string;
+}
 
+/** Options for initializing an error with code and detail. */
+export interface ErrorCodeDetailOptions<T> extends ErrorDetailOptions<T> {
+  /** Error code. */
+  code?: string;
+}
+
+/** Options for initializing an error with detail. */
+export interface ErrorDetailOptions<T> extends ErrorOptions {
   /** Error details. */
   detail?: T;
 }

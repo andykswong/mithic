@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { ErrorCode, operationError } from '@mithic/commons';
+import { OperationError } from '@mithic/commons';
 import { MaybeAsyncMap } from '../../map.js';
 import { EncodedMap } from '../encodedmap.js';
 
@@ -90,15 +90,16 @@ describe.each([
     it('should return errors from underlying map', async () => {
       if ('setMany' in map.map) return; // skip test
 
-      jest.spyOn(map.map, 'set').mockImplementation(() => { throw new Error('error'); });
+      const cause = new Error('error');
+      jest.spyOn(map.map, 'set').mockImplementation(() => { throw cause; });
 
       const results = [];
       for await (const error of map.setMany([[K1, 1], [K3, 3]])) {
         results.push(error);
       }
       expect(results).toEqual([
-        operationError(`Failed to set key`, ErrorCode.OpFailed, K1, new Error('error')),
-        operationError(`Failed to set key`, ErrorCode.OpFailed, K3, new Error('error')),
+        new OperationError(`failed to set key`, { detail: K1, cause }),
+        new OperationError(`failed to set key`,  { detail: K3, cause }),
       ])
     });
   });
@@ -115,15 +116,16 @@ describe.each([
     it('should return errors from underlying map', async () => {
       if ('deleteMany' in map.map) return; // skip test
 
-      jest.spyOn(map.map, 'delete').mockImplementation(() => { throw new Error('error'); });
+      const cause = new Error('error');
+      jest.spyOn(map.map, 'delete').mockImplementation(() => { throw cause; });
 
       const results = [];
       for await (const error of map.deleteMany([K1, K2])) {
         results.push(error);
       }
       expect(results).toEqual([
-        operationError(`Failed to delete key`, ErrorCode.OpFailed, K1, new Error('error')),
-        operationError(`Failed to delete key`, ErrorCode.OpFailed, K2, new Error('error')),
+        new OperationError(`failed to delete key`, { detail: K1, cause }),
+        new OperationError(`failed to delete key`,  { detail: K2, cause }),
       ])
     });
   });
@@ -143,16 +145,17 @@ describe.each([
     it('should return errors from underlying map', async () => {
       if ('updateMany' in map.map) return; // skip test
 
-      jest.spyOn(map.map, 'set').mockImplementation(() => { throw new Error('error'); });
-      jest.spyOn(map.map, 'delete').mockImplementation(() => { throw new Error('error'); });
+      const cause = new Error('error');
+      jest.spyOn(map.map, 'set').mockImplementation(() => { throw cause; });
+      jest.spyOn(map.map, 'delete').mockImplementation(() => { throw cause; });
 
       const results = [];
       for await (const error of map.updateMany([[K1, 123], [K2, void 0]])) {
         results.push(error);
       }
       expect(results).toEqual([
-        operationError(`Failed to update key`, ErrorCode.OpFailed, K1, new Error('error')),
-        operationError(`Failed to update key`, ErrorCode.OpFailed, K2, new Error('error')),
+        new OperationError(`failed to update key`, { detail: K1, cause }),
+        new OperationError(`failed to update key`,  { detail: K2, cause }),
       ])
     });
   });

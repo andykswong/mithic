@@ -1,5 +1,5 @@
 import { AutoKeyMap, AutoKeyMapBatch } from '@mithic/collections';
-import { AbortOptions, CodedError, ErrorCode, MaybePromise, operationError, sha256 } from '@mithic/commons';
+import { AbortOptions, CodedError, MaybePromise, OperationError, sha256 } from '@mithic/commons';
 import { Blockstore } from 'interface-blockstore';
 import { BlockCodec, CID, SyncMultihashHasher } from 'multiformats';
 
@@ -68,11 +68,11 @@ export class BlockstoreMap<T = Uint8Array>
     for (const value of values) {
       try {
         yield [await this.put(value, options)];
-      } catch (error) {
+      } catch (cause) {
         const key = this.getKey(value);
         yield [
           key,
-          operationError('Failed to put', (error as CodedError)?.code ?? ErrorCode.OpFailed, key, error)
+          new OperationError('failed to put', { cause, code: (cause as CodedError)?.code, detail: key })
         ];
       }
     }
@@ -84,7 +84,7 @@ export class BlockstoreMap<T = Uint8Array>
 }
 
 function mapGetError(err: unknown): void {
-  if ((err as CodedError)?.code === ErrorCode.NotFound) {
+  if ((err as CodedError)?.code === 'ERR_NOT_FOUND') {
     return;
   }
   throw err;

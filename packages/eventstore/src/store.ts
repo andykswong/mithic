@@ -1,7 +1,9 @@
 import {
   AppendOnlyAutoKeyMap, AutoKeyMapPutBatch, MaybeAsyncReadonlyMapBatch, ReadonlyAutoKeyMap
 } from '@mithic/collections';
-import { AbortOptions, CodedError, ContentId, MaybeAsyncIterableIterator, MaybePromise, SyncOrAsyncGenerator } from '@mithic/commons';
+import {
+  AbortOptions, ContentId, MaybeAsyncIterableIterator, MaybePromise, SyncOrAsyncGenerator
+} from '@mithic/commons';
 
 /** An append-only event store. */
 export interface EventStore<K = ContentId, V = unknown, QueryExt extends object = NonNullable<unknown>>
@@ -17,7 +19,7 @@ export interface ReadonlyEventStore<K = ContentId, V = unknown, QueryExt extends
   extends ReadonlyAutoKeyMap<K, V>, MaybeAsyncReadonlyMapBatch<K, V>, EventStoreQuery<K, V, QueryExt> {
 
   /** Validates given event and returns any error. */
-  validate(value: V, options?: AbortOptions): MaybePromise<CodedError<K[]> | undefined>;
+  validate(value: V, options?: AbortOptions): MaybePromise<Error | undefined>;
 }
 
 /** Query APIs for an event store. */

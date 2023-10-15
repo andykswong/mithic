@@ -68,7 +68,7 @@ export class DirectMessageBus<Msg = Uint8Array, Peer extends StringEquatable<Pee
       !options?.from ||
       !equalsOrSameString(options.from, this.peer)
     ) {
-      return new MessageValidationError('Invalid message', { code: MessageValidationErrorCode.Ignore });
+      return new MessageValidationError('invalid message', { code: MessageValidationErrorCode.Ignore });
     }
 
     return validator?.(message, { ...options, topic });
