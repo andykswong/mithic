@@ -8,7 +8,7 @@ import { StandardCommand, StandardEvent } from '@mithic/cqrs';
 export class LSeqAggregate<
   Ref extends StringEquatable<Ref> = ContentId,
   V = string | number | boolean | null
-> implements Aggregate<LSeqCommand<Ref, V>, LSeqEvent<Ref, V>, SyncOrAsyncIterable<[string, V]>, MapQuery<Ref>>
+> implements Aggregate<LSeqCommand<Ref, V>, LSeqEvent<Ref, V>, MapQuery<Ref, V>>
 {
   protected readonly map: MapAggregate<Ref, V>;
   protected readonly rand: () => number;
@@ -24,8 +24,8 @@ export class LSeqAggregate<
     this.indexRandBits = indexRandBits;
   }
 
-  public query(options?: MapQuery<Ref>): SyncOrAsyncIterable<[string, V]> {
-    return this.map.query(options);
+  public query(query: MapQuery<Ref, V>, options?: AbortOptions): SyncOrAsyncIterable<[string, V]> {
+    return this.map.query(query, options);
   }
 
   public async command(command: LSeqCommand<Ref, V>, options?: AbortOptions): Promise<LSeqEvent<Ref, V>> {
@@ -50,8 +50,7 @@ export class LSeqAggregate<
         root: command.meta.root,
         gte: startIndex,
         limit: toDeleteCount + 1,
-        signal: options?.signal,
-      })) {
+      }, options)) {
         if (currentIndex !== index) {
           currentIndex = index;
           if (indexCount++ < toDeleteCount) {

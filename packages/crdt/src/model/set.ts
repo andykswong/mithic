@@ -1,13 +1,13 @@
 import {
   AbortOptions, ContentId, MaybePromise, StringEquatable, SyncOrAsyncIterable
 } from '@mithic/commons';
-import { AggregateReduceOptions, Aggregate } from '../aggregate.js';
+import { AggregateReduceOptions, Aggregate, AggregateQuery } from '../aggregate.js';
 import { ORMap, MapCommand, MapEvent, MapAggregate, MapEventType, MapCommandType } from './map.js';
 import { StandardCommand, StandardEvent } from '@mithic/cqrs';
 
 /** Abstract set aggregate type. */
 export type SetAggregate<Ref, V> =
-  Aggregate<SetCommand<Ref, V>, SetEvent<Ref, V>, SyncOrAsyncIterable<V>, SetQuery<Ref, V>>;
+  Aggregate<SetCommand<Ref, V>, SetEvent<Ref, V>, SetQuery<Ref, V>>;
 
 /** Observed-remove set of values based on {@link ORMap} of stringified values to values. */
 export class ORSet<
@@ -25,20 +25,19 @@ export class ORSet<
     this.stringify = stringify;
   }
 
-  public async * query(options?: SetQuery<Ref, V>): AsyncIterable<V> {
-    if (!options) { return; }
+  public async * query(query: SetQuery<Ref, V>, options?: AbortOptions): AsyncIterable<V> {
+    if (!query) { return; }
 
-    const gte = options.gte && await this.stringify(options.gte, options);
-    const lte = options.lte && await this.stringify(options.lte, options);
+    const gte = query.gte && await this.stringify(query.gte, options);
+    const lte = query.lte && await this.stringify(query.lte, options);
     let currentHash: string | undefined;
 
     for await (const [hash, value] of this.map.query({
       gte, lte,
-      root: options.root,
-      reverse: options.reverse,
-      limit: options.limit,
-      signal: options.signal,
-    })) {
+      root: query.root,
+      reverse: query.reverse,
+      limit: query.limit,
+    }, options)) {
       if (currentHash !== hash) {
         currentHash = hash;
         yield value as V;
@@ -126,7 +125,7 @@ export enum SetEventType {
 }
 
 /** Query options for {@link SetAggregate}.  */
-export interface SetQuery<Ref, V> extends AbortOptions {
+export interface SetQuery<Ref, V> extends AggregateQuery<SyncOrAsyncIterable<V>> {
   /** Reference to (root event of) the set. */
   readonly root: Ref;
 

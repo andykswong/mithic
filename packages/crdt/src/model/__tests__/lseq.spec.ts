@@ -126,7 +126,7 @@ describe(LSeqAggregate.name, () => {
       [[CMD_ADD, CMD_ADD2, CMD_DEL], { root: ROOT }, [[INDEX2, VALUE1], [INDEX3, VALUE2], [INDEX0, VALUE1], [INDEX4, VALUE3], [INDEX1, VALUE1]] as const],
     ])(
       'should return correct results for non-empty LSeqs',
-      async (cmds: LSeqCommand<MockId, V>[], query: MapQuery<MockId>, expected: readonly (readonly [string, V])[]) => {
+      async (cmds: LSeqCommand<MockId, V>[], query: MapQuery<MockId, V>, expected: readonly (readonly [string, V])[]) => {
         await applyCommand();
         for (const cmd of cmds) {
           await applyCommand(cmd);

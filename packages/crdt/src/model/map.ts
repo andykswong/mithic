@@ -2,14 +2,14 @@ import {
   AbortOptions, ContentId, MaybePromise, OperationError, StringEquatable, SyncOrAsyncIterable,
 } from '@mithic/commons';
 import { BTreeMap, MaybeAsyncMapBatch, RangeQueryable } from '@mithic/collections';
-import { AggregateReduceOptions, Aggregate } from '../aggregate.js';
+import { AggregateReduceOptions, Aggregate, AggregateQuery } from '../aggregate.js';
 import { getEventIndexKey, getFieldNameFromKey, getFieldValueKey, getHeadIndexKey, getPrefixEndKey } from './keys.js';
 import { defaultEventRef } from './defaults.js';
 import { StandardCommand, StandardEvent } from '../../../cqrs/dist/event.js';
 
 /** Abstract map aggregate type. */
 export type MapAggregate<Ref, V> =
-  Aggregate<MapCommand<Ref, V>, MapEvent<Ref, V>, SyncOrAsyncIterable<[string, V]>, MapQuery<Ref>>;
+  Aggregate<MapCommand<Ref, V>, MapEvent<Ref, V>, MapQuery<Ref, V>>;
 
 /** Observed-remove multivalued map. */
 export class ORMap<
@@ -167,28 +167,26 @@ export class ORMap<
     }
   }
 
-  public async * query(options?: MapQuery<Ref>): AsyncIterable<[field: string, value: V]> {
-    if (options) {
-      if (options?.lww) {
-        yield* this.queryLWW(options);
-      } else {
-        yield* this.queryMV(options);
-      }
+  public async * query(query: MapQuery<Ref, V>, options?: AbortOptions): AsyncIterable<[field: string, value: V]> {
+    if (query.lww) {
+      yield* this.queryLWW(query, options);
+    } else {
+      yield* this.queryMV(query, options);
     }
   }
 
   /** Query map entries and return all concurrent field values. */
-  protected async * queryMV(options: MapQuery<Ref>): AsyncIterable<[string, V]> {
-    const map = `${options.root}`;
-    const limit = options.limit ?? Infinity;
+  protected async * queryMV(query: MapQuery<Ref, V>, options?: AbortOptions): AsyncIterable<[string, V]> {
+    const map = `${query.root}`;
+    const limit = query.limit ?? Infinity;
     let currentField: string | undefined;
     let fieldCount = 0;
 
     for await (const [key, value] of this.store.entries({
-      gt: getFieldValueKey(map, options.gte),
-      lt: getPrefixEndKey(getFieldValueKey(map, options.lte)),
-      reverse: options.reverse,
-      signal: options.signal,
+      gt: getFieldValueKey(map, query.gte),
+      lt: getPrefixEndKey(getFieldValueKey(map, query.lte)),
+      reverse: query.reverse,
+      signal: options?.signal,
     })) {
       const field = getFieldNameFromKey(key);
       if (field) {
@@ -204,18 +202,18 @@ export class ORMap<
   }
 
   /** Queries entries by last-write-wins. */
-  protected async * queryLWW(options: MapQuery<Ref>): AsyncIterable<[string, V]> {
-    const map = `${options.root}`;
-    const limit = options.limit ?? Infinity;
+  protected async * queryLWW(query: MapQuery<Ref, V>, options?: AbortOptions): AsyncIterable<[string, V]> {
+    const map = `${query.root}`;
+    const limit = query.limit ?? Infinity;
 
     // Get concurrent event refs for each field
     const fields: [name: string, eventRefs: string[]][] = [];
     let currentField: string | undefined;
     for await (const [key, value] of this.store.entries({
-      gt: getHeadIndexKey(map, options.gte),
-      lt: getPrefixEndKey(getHeadIndexKey(map, options.lte)),
-      reverse: options.reverse,
-      signal: options.signal,
+      gt: getHeadIndexKey(map, query.gte),
+      lt: getPrefixEndKey(getHeadIndexKey(map, query.lte)),
+      reverse: query.reverse,
+      signal: options?.signal,
     })) {
       const field = getFieldNameFromKey(key);
       if (field) {
@@ -291,7 +289,7 @@ export enum MapEventType {
 }
 
 /** Query options for {@link MapAggregate}.  */
-export interface MapQuery<Ref> extends AbortOptions {
+export interface MapQuery<Ref, V> extends AggregateQuery<SyncOrAsyncIterable<[string, V]>> {
   /** Reference to (root event of) the map. */
   readonly root: Ref;
 

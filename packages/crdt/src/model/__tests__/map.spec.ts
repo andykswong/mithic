@@ -249,7 +249,7 @@ describe(ORMap.name, () => {
       [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { root: ROOT, gte: FIELD2, lte: FIELD2 }, [[FIELD2, VALUE2]] as const],
     ])(
       'should return correct results for non-empty maps',
-      async (cmds: MapCommand<MockId, V>[], query: MapQuery<MockId>, expected: readonly (readonly [string, V])[]) => {
+      async (cmds: MapCommand<MockId, V>[], query: MapQuery<MockId, V>, expected: readonly (readonly [string, V])[]) => {
         await applyCommand();
         for (const cmd of cmds) {
           await applyCommand(cmd);
