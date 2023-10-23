@@ -134,7 +134,7 @@ export class DagEventStore<
     const parents = event?.meta?.prev || [];
     for await (const error of Batch.updateSetMany(
       this.headSet,
-      [[key], ...parents.map((key) => [key, true] as [K, boolean])],
+      [[key, true], ...parents.map((key) => [key, false] as [K, boolean])],
       options
     )) {
       if (error) {

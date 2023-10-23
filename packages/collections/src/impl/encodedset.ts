@@ -58,9 +58,9 @@ export class EncodedSet<
   }
 
   public updateMany(
-    keys: Iterable<[key: T, isDelete?: boolean]>, options?: AbortOptions
+    keys: Iterable<[key: T, isAdd?: boolean]>, options?: AbortOptions
   ): AsyncIterableIterator<Error | undefined> {
-    return updateSetMany(this.set, [...keys].map(([key, isDelete]) => [this.encode(key), isDelete]), options);
+    return updateSetMany(this.set, [...keys].map(([key, isAdd]) => [this.encode(key), isAdd]), options);
   }
 
   public get [Symbol.toStringTag](): string {

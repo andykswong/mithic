@@ -4,13 +4,13 @@ import { MessageTranslator } from '../processor/index.js';
 import { StandardCommand, StandardEvent } from '../event.js';
 
 /** Binds a command handler to command and event bus and returns a disposable {@link Startable}. */
-export function bindCommandHandler<Command = StandardCommand, Event = StandardEvent, State = undefined>(
+export function bindCommandHandler<State = undefined, Command = StandardCommand, Event = StandardEvent>(
   /** Source command {@link MessageSubscription} to consume. */
   commandBus: MessageSubscription<Command>,
   /** Output event {@link MessageDispatcher} to use. */
   eventBus: MessageDispatcher<Event>,
   /** Command handler. */
-  handler: CommandHandler<Command, Event, State>,
+  handler: CommandHandler<State, Command, Event>,
   /** State provider to use. */
   store?: StateProvider<State>,
 ): Startable & AsyncDisposable {
@@ -21,6 +21,6 @@ export function bindCommandHandler<Command = StandardCommand, Event = StandardEv
 }
 
 /** Command handler function. */
-export interface CommandHandler<Command = StandardCommand, Event = StandardEvent, State = undefined> {
+export interface CommandHandler<State = undefined, Command = StandardCommand, Event = StandardEvent> {
   (state: State, command: Command, options?: AbortOptions): MaybePromise<Event | undefined>;
 }

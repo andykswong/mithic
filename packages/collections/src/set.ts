@@ -38,8 +38,8 @@ export interface MaybeAsyncSetAddBatch<T> {
 
 /** Batch update API for a {@link MaybeAsyncSet}. */
 export interface MaybeAsyncSetUpdateBatch<T> {
-  /** Sets or deletes given list of keys. */
-  updateMany(keys: Iterable<[key: T, isDelete?: boolean]>, options?: AbortOptions): MaybeAsyncIterableIterator<Error | undefined>;
+  /** Adds or deletes given list of keys. */
+  updateMany(keys: Iterable<[key: T, isAdd?: boolean]>, options?: AbortOptions): MaybeAsyncIterableIterator<Error | undefined>;
 }
 
 /** Batch APIs for a {@link MaybeAsyncSet}. */

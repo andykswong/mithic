@@ -107,17 +107,17 @@ export async function* setMany<K, V>(
 /** Adds or deletes given keys from set. */
 export async function* updateSetMany<K>(
   data: MaybeAsyncSet<K> & Partial<MaybeAsyncSetUpdateBatch<K>>,
-  keys: Iterable<[key: K, isDelete?: boolean]>,
+  keys: Iterable<[key: K, isAdd?: boolean]>,
   options?: AbortOptions
 ): AsyncIterableIterator<Error | undefined> {
   if (data.updateMany) {
     yield* data.updateMany(keys, options);
     return;
   }
-  for (const [key, isDelete] of keys) {
+  for (const [key, isAdd] of keys) {
     options?.signal?.throwIfAborted();
     try {
-      await (isDelete ? data.delete(key, options) : data.add(key, options));
+      await (isAdd ? data.add(key, options) : data.delete(key, options));
       yield;
     } catch (cause) {
       yield new OperationError(`failed to update key`, {

@@ -121,7 +121,7 @@ describe.each([
 
   describe('updateMany', () => {
     it('should add or delete values', async () => {
-      for await (const error of set.updateMany([[K1, true], [K3]])) {
+      for await (const error of set.updateMany([[K1, false], [K3, true]])) {
         expect(error).toBeUndefined();
       }
       expect(await set.has(K1)).toBe(false);
