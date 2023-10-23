@@ -15,7 +15,7 @@
 <li><a href="../index.html">mithic</a></li>
 <li><a href="../modules/_mithic_cqrs.html">@mithic/cqrs</a></li>
 <li><a href="_mithic_cqrs.CommandHandler.html">CommandHandler</a></li></ul>
-<h1>Interface CommandHandler&lt;Command, Event, State&gt;</h1></div>
+<h1>Interface CommandHandler&lt;State, Command, Event&gt;</h1></div>
 <section class="tsd-panel tsd-comment">
 <div class="tsd-comment tsd-typography"><p>Command handler function.</p>
 </div>
@@ -24,11 +24,11 @@
 <h4>Type Parameters</h4>
 <ul class="tsd-type-parameter-list">
 <li>
+<h4><span class="tsd-kind-type-parameter">State</span> = <span class="tsd-signature-type">undefined</span></h4></li>
+<li>
 <h4><span class="tsd-kind-type-parameter">Command</span> = <a href="../types/_mithic_cqrs.StandardCommand.html" class="tsd-signature-type tsd-kind-type-alias">StandardCommand</a></h4></li>
 <li>
-<h4><span class="tsd-kind-type-parameter">Event</span> = <a href="_mithic_cqrs.StandardEvent.html" class="tsd-signature-type tsd-kind-interface">StandardEvent</a></h4></li>
-<li>
-<h4><span class="tsd-kind-type-parameter">State</span> = <span class="tsd-signature-type">undefined</span></h4></li></ul></section> 
+<h4><span class="tsd-kind-type-parameter">Event</span> = <a href="_mithic_cqrs.StandardEvent.html" class="tsd-signature-type tsd-kind-interface">StandardEvent</a></h4></li></ul></section> 
 <section class="tsd-panel tsd-hierarchy">
 <h4>Hierarchy</h4>
 <ul class="tsd-hierarchy">
@@ -48,7 +48,7 @@
 <h5><code class="tsd-tag ts-flagOptional">Optional</code> <span class="tsd-kind-parameter">options</span>: <a href="_mithic_commons.AbortOptions.html" class="tsd-signature-type tsd-kind-interface">AbortOptions</a></h5></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/44489d4/packages/cqrs/src/preset/command.ts#L25">cqrs/src/preset/command.ts:25</a></li></ul></aside></li></ul></section></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5734154/packages/cqrs/src/preset/command.ts#L25">cqrs/src/preset/command.ts:25</a></li></ul></aside></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
