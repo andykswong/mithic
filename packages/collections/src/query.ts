@@ -15,20 +15,20 @@ export interface RangeQueryable<K, V> {
 /** Options for querying a {@link RangeQueryable}. */
 export interface RangeQueryOptions<K> extends AbortOptions {
   /** Requires results strictly greater than given key. */
-  gt?: K;
+  readonly gt?: K;
 
   /** Requires results greater than or equal to given key. */
-  gte?: K;
+  readonly gte?: K;
 
   /** Requires results strictly less than given key. */
-  lt?: K;
+  readonly lt?: K;
 
   /** Requires results less than or equal to given key. */
-  lte?: K;
+  readonly lte?: K;
 
   /** Maximum number of results to return. */
-  limit?: number;
+  readonly limit?: number;
 
   /** Iterates results in reverse order. */
-  reverse?: boolean;
+  readonly reverse?: boolean;
 }

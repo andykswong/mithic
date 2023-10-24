@@ -110,23 +110,23 @@ export class IndexedEventStore<
 /** Options for creating a {@link IndexedEventStore}. */
 export interface IndexedEventStoreOptions<K, V> {
   /** Backing data store map. */
-  data?: AppendOnlyAutoKeyMap<K, V> & Partial<AutoKeyMapBatch<K, V>>;
+  readonly data?: AppendOnlyAutoKeyMap<K, V> & Partial<AutoKeyMapBatch<K, V>>;
 
   /** Backing index store map. */
-  index?: MaybeAsyncMap<string, K> & Partial<MaybeAsyncMapBatch<string, K>> & RangeQueryable<string, K>;
+  readonly index?: MaybeAsyncMap<string, K> & Partial<MaybeAsyncMapBatch<string, K>> & RangeQueryable<string, K>;
 
   /** Encoder of event key to bytes. */
-  encodeKey?: (key: K) => string;
+  readonly encodeKey?: (key: K) => string;
 
   /** Function to atomically return a logical timestamp used as auto-incremented index of next event. */
-  tick?: (refTime?: number) => MaybePromise<number>;
+  readonly tick?: (refTime?: number) => MaybePromise<number>;
 
   /** Regex to split scoped event type. */
-  eventTypeSeparator?: RegExp;
+  readonly eventTypeSeparator?: RegExp;
 
   /** Function to get given event as {@link StandardEvent} format. */
-  toStandardEvent?: (event: V) => StandardEvent<string, unknown, K> | undefined,
+  readonly toStandardEvent?: (event: V) => StandardEvent<string, unknown, K> | undefined,
 
   /** Function to set event time and return updated event. */
-  setEventTime?: (event: V, time: number) => V,
+  readonly setEventTime?: (event: V, time: number) => V,
 }

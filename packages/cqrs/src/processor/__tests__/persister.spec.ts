@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { delay } from '@mithic/commons';
 import { SimpleMessageBus } from '@mithic/messaging';
-import { MessagePersister, ObjectWriter } from '../persister.js';
+import { MessagePersister } from '../persister.js';
+import { ObjectWriter } from '../../handler.js';
 
 const RAW_EVENT = { type: 'rawEvent' };
 const TRANSFORMED_EVENT = { type: 'transformedEvent' };
@@ -52,7 +53,7 @@ describe(MessagePersister.name, () => {
   });
 });
 
-class MockObjectWriter<Msg> implements ObjectWriter<Msg, number> {
+class MockObjectWriter<Msg> implements ObjectWriter<number, Msg> {
   public readonly messages: Msg[] = [];
 
   public async put(event: Msg): Promise<number> {

@@ -2,8 +2,8 @@ import { AbortOptions, CodedError, OperationError } from '@mithic/commons';
 import {
   MaybeAsyncAppendOnlySet, MaybeAsyncReadonlySet, MaybeAsyncReadonlySetBatch, MaybeAsyncSet, MaybeAsyncSetAddBatch,
   MaybeAsyncSetDeleteBatch, MaybeAsyncSetUpdateBatch
-} from './set.js';
-import { AppendOnlyAutoKeyMap, AutoKeyMapPutBatch, MaybeAsyncMap, MaybeAsyncMapSetBatch, MaybeAsyncMapUpdateBatch, MaybeAsyncReadonlyMap, MaybeAsyncReadonlyMapBatch } from './map.js';
+} from '../set.js';
+import { AppendOnlyAutoKeyMap, AutoKeyMapPutBatch, MaybeAsyncMap, MaybeAsyncMapSetBatch, MaybeAsyncMapUpdateBatch, MaybeAsyncReadonlyMap, MaybeAsyncReadonlyMapBatch } from '../map.js';
 
 /** Checks if given keys exist in a set/map. */
 export async function* hasMany<K>(

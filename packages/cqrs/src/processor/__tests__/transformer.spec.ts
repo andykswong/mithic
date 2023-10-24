@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
 import { delay } from '@mithic/commons';
 import { SimpleMessageBus } from '@mithic/messaging';
-import { MessageTranslator } from '../translator.js';
+import { MessageTransformer } from '../transformer.js';
 
 const IN_COMMAND = { type: 'rawEvent' };
 const OUT_EVENT = { type: 'transformedEvent' };
 
-describe(MessageTranslator.name, () => {
+describe(MessageTransformer.name, () => {
   let subscription: SimpleMessageBus<{ type: string }>;
   let dispatcher: SimpleMessageBus<{ type: string }>;
 
@@ -18,7 +18,7 @@ describe(MessageTranslator.name, () => {
   it('should transform incoming message', async () => {
     let inCommand, outEvent;
 
-    const translator = new MessageTranslator(
+    const translator = new MessageTransformer(
       subscription,
       dispatcher,
       (msg) => {
@@ -39,7 +39,7 @@ describe(MessageTranslator.name, () => {
   it('should not dispatch message if handler returns undefined', async () => {
     let inCommand, outEvent;
 
-    const translator = new MessageTranslator(
+    const translator = new MessageTransformer(
       subscription,
       dispatcher,
       (msg) => {

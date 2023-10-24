@@ -1,22 +1,25 @@
 import { AbortOptions, MaybePromise } from '@mithic/commons';
-import { MessageProcessor } from '../processor.js';
 import { MessageDispatcher, MessageSubscription } from '@mithic/messaging';
+import { MessageProcessor } from '../processor.js';
+import { MessageReduceHandler } from '../handler.js';
 
 /** {@link MessageProcessor} that derives aggregate state from messages. */
-export class MessageReducer<State = object, Msg = unknown> extends MessageProcessor<Msg> {
+export class MessageReducer<State = object, Msg = unknown, HandlerOpts = object>
+  extends MessageProcessor<Msg, HandlerOpts> {
+
   protected _state: State;
 
   public constructor(
     /** {@link MessageSubscription} to consume. */
-    subscription: MessageSubscription<Msg>,
+    subscription: MessageSubscription<Msg, HandlerOpts>,
     /** Output {@link MessageDispatcher} to use. */
     protected readonly dispatcher: MessageDispatcher<State>,
     /** Reducer function. */
-    reducer: MessageReducerFn<State, Msg>,
+    reducer: MessageReduceHandler<State, Msg, HandlerOpts>,
     /** Initial state. */
     initialState: State,
   ) {
-    const consumer = (event: Msg, options?: AbortOptions) =>
+    const consumer = (event: Msg, options?: AbortOptions & HandlerOpts) =>
       MaybePromise.map(reducer(this._state, event, options), this.setState);
     super(subscription, consumer);
     this._state = initialState;
@@ -32,9 +35,4 @@ export class MessageReducer<State = object, Msg = unknown> extends MessageProces
     this._state = state;
     this.dispatcher.dispatch(state);
   };
-}
-
-/** Reducer function of messages to state. */
-export interface MessageReducerFn<State = unknown, Msg = unknown> {
-  (state: State, message: Msg, options?: AbortOptions): MaybePromise<State>;
 }

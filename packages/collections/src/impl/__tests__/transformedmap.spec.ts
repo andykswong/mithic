@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { OperationError } from '@mithic/commons';
 import { MaybeAsyncMap } from '../../map.js';
-import { EncodedMap } from '../encodedmap.js';
+import { TransformedMap } from '../transformedmap.js';
+import { BTreeMap } from '../btreemap.js';
+import { RangeQueryable } from '../../query.js';
+
+type MapType = MaybeAsyncMap<string, string> & Iterable<[string, string]> & RangeQueryable<string, string>;
 
 class Key {
   public constructor(private readonly value: string) { }
@@ -16,13 +20,13 @@ const K2 = new Key('val2');
 const K3 = new Key('val3');
 
 describe.each([
-  () => new Map<string, string>(),
-  () => new EncodedMap<string, string, string, string, Map<string, string>>(new Map())
-])(EncodedMap.name, (backingMapFactory: () => MaybeAsyncMap<string, string> & Iterable<[string, string]>) => {
-  let map: EncodedMap<Key, number, string, string, MaybeAsyncMap<string, string> & Iterable<[string, string]>>;
+  () => new BTreeMap<string, string>(5),
+  () => new TransformedMap<string, string, string, string, BTreeMap<string, string>>(new BTreeMap(5))
+])(TransformedMap.name, (backingMapFactory: () => MapType) => {
+  let map: TransformedMap<Key, number, string, string, MapType>;
 
   beforeEach(async () => {
-    map = new EncodedMap(backingMapFactory(), {
+    map = new TransformedMap(backingMapFactory(), {
       encodeKey: (key) => key.toString(),
       decodeKey: (key) => new Key(key),
       encodeValue: (value) => `${value}`,
@@ -33,7 +37,7 @@ describe.each([
   });
 
   it('should have correct string tag', () => {
-    expect(map.toString()).toBe(`[object ${EncodedMap.name}]`);
+    expect(map.toString()).toBe(`[object ${TransformedMap.name}]`);
   });
 
   describe('has', () => {
@@ -173,6 +177,42 @@ describe.each([
         results.push(entry);
       }
       expect(results).toEqual([[K1, 1], [K2, 2]]);
+    });
+  });
+
+  describe('keys', () => {
+    it('should iterate over keys', async () => {
+      await map.set(K3, 3);
+
+      const keys = [];
+      for await (const key of map.keys({ gte: K1, lt: K3 })) {
+        keys.push(key);
+      }
+      expect(keys).toEqual([K1, K2]);
+    });
+  });
+
+  describe('values', () => {
+    it('should iterate over keys', async () => {
+      await map.set(K3, 3);
+
+      const values = [];
+      for await (const value of map.values({ gt: K1 })) {
+        values.push(value);
+      }
+      expect(values).toEqual([2, 3]);
+    });
+  });
+
+  describe('entries', () => {
+    it('should iterate over entries', async () => {
+      await map.set(K3, 3);
+
+      const entries = [];
+      for await (const entry of map.entries({ lte: K2 })) {
+        entries.push(entry);
+      }
+      expect(entries).toEqual([[K1, 1], [K2, 2]]);
     });
   });
 });

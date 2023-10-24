@@ -1,6 +1,6 @@
 import { AbortOptions, MaybePromise } from '@mithic/commons';
 import { MessageBus, MessageDispatcher, SimpleMessageBus } from '@mithic/messaging';
-import { MessageReducerFn } from '../processor/index.js';
+import { MessageReduceHandler } from '../handler.js';
 import { ReactiveStore, ReduceStore } from './store.js';
 
 /** {@link ReduceStore} with Redux-compatible interface. */
@@ -10,7 +10,7 @@ export class ReduxStore<State, Event, Action = Event>
 
   public constructor(
     /** Reducer function. */
-    reducer: MessageReducerFn<State, Event>,
+    reducer: MessageReduceHandler<State, Event>,
     /** Initial state. */
     initialState: State,
     /** {@link MessageBus} to use. */

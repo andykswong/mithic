@@ -188,25 +188,25 @@ export class BroadcastChannelMessageBus<Msg = Uint8Array, PeerId extends StringE
 /** Options for initializing a {@link BroadcastChannelMessageBus} */
 export interface BroadcastChannelPubSubOptions<PeerId> {
   /** Peer ID of this instance. */
-  peerId: PeerId;
+  readonly peerId: PeerId;
 
   /** Keepalive message interval in milliseconds. Defaults to {@link DEFAULT_BROADCAST_CHANNEL_MESSAGE_BUS_KEEPALIVE_MS}. */
-  keepaliveMs?: number;
+  readonly keepaliveMs?: number;
 
   /**
    * Specifies the interval in milliseconds to monitor peers' subscriptions and emit join / leave events.
    * If set to false or <= 0, peers will not be monitored. Defaults to 1000 (1 second).
    */
-  monitorPeers?: number | false;
+  readonly monitorPeers?: number | false;
 
   /** Function to get the current epoch timestamp. Defaults to `Date.now`. */
-  now?: () => number;
+  readonly now?: () => number;
 
   /** BroadcastChannel to use. */
-  channel?: BroadcastChannel;
+  readonly channel?: BroadcastChannel;
 
   /** Default topic name. Defaults to `message`. */
-  defaultTopic?: string;
+  readonly defaultTopic?: string;
 }
 
 /** Internal message format for {@link BroadcastChannelMessageBus}. */

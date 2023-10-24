@@ -8,7 +8,9 @@ export class TaskQueue extends AsyncDisposableCloseable implements Startable, As
   private queued = 0;
 
   constructor(
+    /** Lock to control task execution concurrency. */
     private readonly lock: Lock = new SharedCountingSemaphore(),
+    /** Underlying task queue. */
     private readonly queue: Queue<RunnableTask> = [],
     autoStart = true,
   ) {
@@ -52,7 +54,7 @@ export class TaskQueue extends AsyncDisposableCloseable implements Startable, As
   }
 
   /** Adds a task to this {@link TaskQueue}. */
-  public async push<T>(task: (options?: AbortOptions) => MaybePromise<T>, options?: TaskOptions): Promise<T> {
+  public async push<T>(task: Task<T>, options?: TaskOptions): Promise<T> {
     const abortOptions = { signal: options?.signal };
 
     let resolve: (value: T) => void;
@@ -134,6 +136,11 @@ export class TaskQueue extends AsyncDisposableCloseable implements Startable, As
   }
 }
 
+/** A maybe async task function. */
+export interface Task<T = unknown> {
+  (options?: AbortOptions): MaybePromise<T>;
+}
+
 /** A runnable task with priority in a {@link TaskQueue}. */
 export class RunnableTask {
   public constructor(
@@ -153,5 +160,5 @@ export class RunnableTask {
 /** Options for a task in a {@link TaskQueue}. */
 export interface TaskOptions extends AbortOptions {
   /** Priority of operation. Operations with greater priority will be scheduled first. Defaults to 0. */
-  priority?: number;
+  readonly priority?: number;
 }

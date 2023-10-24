@@ -1,5 +1,5 @@
 import { MaybeAsyncAppendOnlySet } from '../set.js';
-import { fnv1aHash, kHash } from './utils.js';
+import { fnv1aHash, kHash } from '../utils/index.js';
 
 /** A simple bloom filter implementation. */
 export class BloomFilter<T> implements MaybeAsyncAppendOnlySet<T> {
@@ -101,17 +101,17 @@ export interface BloomFilterJSON {
 /** Options for creating a {@link BloomFilter}. */
 export interface BloomFilterOptions<T> {
   /** The bit size of the bloom filter. */
-  m: number;
+  readonly m: number;
 
   /** The number of hash functions to use. */
-  k: number;
+  readonly k: number;
 
   /** The k hash functions */
-  hash?: (value: T, seed: number) => number;
+  readonly hash?: (value: T, seed: number) => number;
 
   /** The initial bit value of the bloom filter. */
-  value?: bigint | number | string;
+  readonly value?: bigint | number | string;
 
   /** The initial number of elements in the bloom filter. */
-  n?: number;
+  readonly n?: number;
 }

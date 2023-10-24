@@ -1,6 +1,6 @@
 import {
-  AppendOnlyAutoKeyMap, AutoKeyMapBatch, Batch, BinaryHeap, ContentAddressedMapStore, EncodedMap, EncodedSet, MaybeAsyncMap,
-  MaybeAsyncReadonlySet, MaybeAsyncSet, MaybeAsyncSetBatch
+  AppendOnlyAutoKeyMap, AutoKeyMapBatch, Batch, BinaryHeap, ContentAddressedMapStore, TransformedMap, TransformedSet,
+  MaybeAsyncMap, MaybeAsyncReadonlySet, MaybeAsyncSet, MaybeAsyncSetBatch
 } from '@mithic/collections';
 import {
   AbortOptions, ContentId, InvalidStateError, OperationError, StringEquatable, SyncOrAsyncIterable, equalsOrSameString
@@ -35,7 +35,7 @@ export class DagEventStore<
     data = new ContentAddressedMapStore<K, V>(),
     encodeKey = (key) => `${key}`,
     decodeKey = decodeCID,
-    head = new EncodedSet<K, string, Set<string>>(new Set(), encodeKey, decodeKey),
+    head = new TransformedSet<K, string, Set<string>>(new Set(), encodeKey, decodeKey),
     toStandardEvent,
   }: DagEventStoreOptions<K, V> = {}) {
     super(data, toStandardEvent);
@@ -58,7 +58,7 @@ export class DagEventStore<
 
     // TODO: any way to optimize this?
     // build map of visited keys to their levels
-    const visited = new EncodedMap<K, number, string, number, Map<string, number>>(
+    const visited = new TransformedMap<K, number, string, number, Map<string, number>>(
       new Map(), { encodeKey: this.encodeKey, decodeKey: this.decodeKey }
     );
     if (options?.since?.length) {
@@ -84,7 +84,7 @@ export class DagEventStore<
         this.encodeKey(entries[i][0]).localeCompare(this.encodeKey(entries[j][0])),
       true
     );
-    const heads = new EncodedMap<K, V, string, V, Map<string, V>>(
+    const heads = new TransformedMap<K, V, string, V, Map<string, V>>(
       new Map(), { encodeKey: this.encodeKey, decodeKey: this.decodeKey }
     );
     for (let count = 0, i = queue.shift(); i !== void 0 && count < limit; i = queue.shift()) {
@@ -191,19 +191,19 @@ export class DagEventStore<
 /** Options for creating a {@link DagEventStore}. */
 export interface DagEventStoreOptions<K, V> {
   /** Backing data store map. */
-  data?: AppendOnlyAutoKeyMap<K, V> & Partial<AutoKeyMapBatch<K, V>>;
+  readonly data?: AppendOnlyAutoKeyMap<K, V> & Partial<AutoKeyMapBatch<K, V>>;
 
   /** Head event set. */
-  head?: MaybeAsyncSet<K> & Partial<MaybeAsyncSetBatch<K>> & SyncOrAsyncIterable<K>;
+  readonly head?: MaybeAsyncSet<K> & Partial<MaybeAsyncSetBatch<K>> & SyncOrAsyncIterable<K>;
 
   /** Function to encode event key as string. */
-  encodeKey?: (key: K) => string;
+  readonly encodeKey?: (key: K) => string;
 
   /** Function to decode event key string. */
-  decodeKey?: (key: string) => K;
+  readonly decodeKey?: (key: string) => K;
 
   /** Function to get given event as {@link StandardEvent} format. */
-  toStandardEvent?: (event: V) => StandardEvent<string, unknown, K> | undefined,
+  readonly toStandardEvent?: (event: V) => StandardEvent<string, unknown, K> | undefined,
 }
 
 function* range(length: number): IterableIterator<number> {

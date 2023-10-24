@@ -25,17 +25,17 @@ export class CodedError<T = unknown, E = unknown> extends Error {
 /** Options for initializing a {@link CodedError}. */
 export interface CodedErrorOptions<T> extends ErrorCodeDetailOptions<T> {
   /** Error name. */
-  name?: string;
+  readonly name?: string;
 }
 
 /** Options for initializing an error with code and detail. */
 export interface ErrorCodeDetailOptions<T> extends ErrorDetailOptions<T> {
   /** Error code. */
-  code?: string;
+  readonly code?: string;
 }
 
 /** Options for initializing an error with detail. */
 export interface ErrorDetailOptions<T> extends ErrorOptions {
   /** Error details. */
-  detail?: T;
+  readonly detail?: T;
 }

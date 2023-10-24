@@ -37,22 +37,22 @@ export interface EventStoreQuery<K = ContentId, V = unknown, QueryExt extends ob
 /** Standard options for a {@link EventStoreQuery} query. */
 export interface EventStoreQueryOptions<K> extends AbortOptions {
   /** Events after which result shall be returned. */
-  since?: K[];
+  readonly since?: K[];
 
   /** True to return only head events. */
-  head?: boolean;
+  readonly head?: boolean;
 
   /** Maximum number of events to return. */
-  limit?: number;
+  readonly limit?: number;
 }
 
 /** Extended options for filtering {@link EventStoreQuery} query results by metadata. */
 export interface EventStoreMetaQueryOptions<K> {
   /** Event type prefixes to query. */
-  type?: string;
+  readonly type?: string;
 
   /** Aggregate root to query. */
-  root?: K;
+  readonly root?: K;
 }
 
 /** Options for putting event into {@link EventStore} */

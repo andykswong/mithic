@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { OperationError } from '@mithic/commons';
 import { MaybeAsyncSet } from '../../set.js';
-import { EncodedSet } from '../encodedset.js';
+import { TransformedSet } from '../transformedset.js';
+import { RangeQueryable } from '../../query.js';
+
+type SetType = MaybeAsyncSet<string> & Iterable<string> & RangeQueryable<string, string>;
 
 class Key {
   public constructor(private readonly value: string) { }
@@ -17,18 +20,18 @@ const K3 = new Key('val3');
 
 describe.each([
   () => new Set<string>(),
-  () => new EncodedSet<string, string, Set<string>>(new Set())
-])(EncodedSet.name, (backingSetFactory: () => MaybeAsyncSet<string> & Iterable<string>) => {
-  let set: EncodedSet<Key, string, MaybeAsyncSet<string> & Iterable<string>>;
+  () => new TransformedSet<string, string, Set<string>>(new Set())
+])(TransformedSet.name, (backingSetFactory: () => SetType) => {
+  let set: TransformedSet<Key, string, SetType>;
 
   beforeEach(() => {
-    set = new EncodedSet(backingSetFactory(), (k) => k.toString(), (k) => new Key(k));
+    set = new TransformedSet(backingSetFactory(), (k) => k.toString(), (k) => new Key(k));
     set.add(K1);
     set.add(K2);
   });
 
   it('should have correct string tag', () => {
-    expect(set.toString()).toBe(`[object ${EncodedSet.name}]`);
+    expect(set.toString()).toBe(`[object ${TransformedSet.name}]`);
   });
 
   describe('has', () => {
@@ -159,6 +162,36 @@ describe.each([
         results.push(key);
       }
       expect(results).toEqual([K1, K2]);
+    });
+  });
+
+  describe('keys', () => {
+    it('should iterate over keys', async () => {
+      const keys = [];
+      for await (const key of set.keys()) {
+        keys.push(key);
+      }
+      expect(keys).toEqual([K1, K2]);
+    });
+  });
+
+  describe('values', () => {
+    it('should iterate over keys', async () => {
+      const keys = [];
+      for await (const key of set.values()) {
+        keys.push(key);
+      }
+      expect(keys).toEqual([K1, K2]);
+    });
+  });
+
+  describe('entries', () => {
+    it('should iterate over entries', async () => {
+      const entries = [];
+      for await (const entry of set.entries()) {
+        entries.push(entry);
+      }
+      expect(entries).toEqual([[K1, K1], [K2, K2]]);
     });
   });
 });

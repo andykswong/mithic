@@ -92,11 +92,11 @@ export class WebLock implements Lock {
 /** Options for creating a {@link WebLock}. */
 export interface WebLockOptions {
   /** Unique name of the lock. Defaults to `lock`. */
-  name?: string;
+  readonly name?: string;
 
   /** Whether the lock is shared. Defaults to `false`. */
-  shared?: boolean;
+  readonly shared?: boolean;
 
   /** Instance of LockManager. */
-  locks?: LockManager;
+  readonly locks?: LockManager;
 }

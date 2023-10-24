@@ -97,11 +97,11 @@ export class AsyncSubscriber<Message> implements AsyncIterableIterator<Message>,
 /** Options for creating an {@link AsyncSubscriber}. */
 export interface AsyncSubscriberOptions extends AbortOptions {
   /** Event buffer size. Events may be dropped if buffer size is reached. Defaults to Infinity. */
-  bufferSize?: number;
+  readonly bufferSize?: number;
 
   /**
    * If true, set to first-come-first-serve mode, which ignores new events if buffer size is reached.
    * Defaults to false, which drops earlier events if buffer size is reached.
    */
-  fcfs?: boolean;
+  readonly fcfs?: boolean;
 }

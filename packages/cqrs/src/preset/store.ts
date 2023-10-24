@@ -3,29 +3,32 @@ import {
   MessageBus, MessageHandler, MessageSubscription, SimpleMessageBus, StateProvider, Unsubscribe
 } from '@mithic/messaging';
 import { AsyncSubscriber, AsyncSubscriberOptions } from '../iterator.js';
-import { MessageReducer, MessageReducerFn } from '../processor/index.js';
+import { MessageReducer } from '../processor/index.js';
+import { MessageReduceHandler } from '../handler.js';
 
 /** Interface for a store that can be subscribed for changes. */
-export interface ReactiveStore<State = unknown> extends StateProvider<State>, MessageSubscription<State>, Startable {
+export interface ReactiveStore<State = unknown>
+  extends StateProvider<State>, MessageSubscription<State>, Startable {
+
   /** Returns an async iterator that yields the latest state on change. */
   iterator(options?: AsyncSubscriberOptions): AsyncIterableIterator<State>;
 }
 
 /** A {@link ReactiveStore} that is updated by a reducer function. */
-export class ReduceStore<State, Event>
+export class ReduceStore<State, Event, HandlerOpts = object>
   extends AsyncDisposableCloseable
   implements ReactiveStore<State>, AsyncDisposable, AsyncIterable<State> {
 
   /** Reducer to use. */
-  protected readonly reducer: MessageReducer<State, Event>;
+  protected readonly reducer: MessageReducer<State, Event, HandlerOpts>;
 
   public constructor(
     /** Reducer function. */
-    reducer: MessageReducerFn<State, Event>,
+    reducer: MessageReduceHandler<State, Event, HandlerOpts>,
     /** Initial state. */
     initialState: State,
     /** Event subscription to use. */
-    subscription: MessageSubscription<Event>,
+    subscription: MessageSubscription<Event, HandlerOpts>,
     /** Output event bus. */
     protected readonly eventBus: MessageBus<State> = new SimpleMessageBus(),
   ) {

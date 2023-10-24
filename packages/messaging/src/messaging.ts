@@ -45,5 +45,5 @@ export type MessageValidator<Msg, Opts = object> =
 /** Messaging context options. */
 export interface MessageOptions extends AbortOptions {
   /** The message's topic. */
-  topic?: string;
+  readonly topic?: string;
 }

@@ -4,8 +4,8 @@ import {
 import { CID } from 'multiformats';
 import * as raw from 'multiformats/codecs/raw';
 import { AutoKeyMap, AutoKeyMapBatch, MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
-import { EncodedMap } from './encodedmap.js';
-import { deleteMany, getMany, hasMany, setMany } from '../batch.js';
+import { deleteMany, getMany, hasMany, setMany } from '../utils/batch.js';
+import { TransformedMap } from './transformedmap.js';
 
 /** A content-addressable map store that persists values in a backing {@link MaybeAsyncMap}. */
 export class ContentAddressedMapStore<
@@ -21,7 +21,7 @@ export class ContentAddressedMapStore<
   public constructor(
     /** The underlying map. */
     public readonly map: M =
-      new EncodedMap<Id, T, string, T, Map<string, T>>(new Map(), {
+      new TransformedMap<Id, T, string, T, Map<string, T>>(new Map(), {
         encodeKey: (key) => `${key}`,
         decodeKey: (key) => CID.parse(key) as Id
       }) as unknown as M,

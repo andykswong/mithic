@@ -1,4 +1,5 @@
 export * from './event.js';
+export * from './handler.js';
 export * from './iterator.js';
 export * from './processor.js';
 

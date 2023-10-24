@@ -37,7 +37,7 @@ export type PeerAwareSubscribeOptions<Msg, Peer> = SubscribeOptions<Msg, PeerAwa
 /** Peer-aware messaging context options. */
 export interface PeerAwareMessageOptions<Peer = unknown> extends MessageOptions {
   /** The message's from peer ID. */
-  from?: Peer;
+  readonly from?: Peer;
 }
 
 /** Peer event types of a message bus. */

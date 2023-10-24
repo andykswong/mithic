@@ -1,5 +1,5 @@
 import { MaybePromise, SyncOrAsyncIterable } from '@mithic/commons';
-import { MaybeAsyncReadonlyMap } from './map.js';
+import { MaybeAsyncReadonlyMap } from '../map.js';
 
 /** The RHS values of a map join. */
 export type MapJoinRHS<K, T extends MaybeAsyncReadonlyMap<K, unknown>[]> = { [K in keyof T]: ReturnType<T[K]['get']> };

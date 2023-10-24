@@ -113,14 +113,14 @@ export class SharedCountingSemaphore implements Lock, SharedCountingSemaphoreOpt
 /** Options for creating a {@link SharedCountingSemaphore}. */
 export interface SharedCountingSemaphoreOptions {
   /** Max number of permits. Defaults to 1. */
-  permits?: number;
+  readonly permits?: number;
 
   /** Shared array buffer for permit synchronization. */
-  buffer?: Int32Array;
+  readonly buffer?: Int32Array;
 
   /** The buffer index to use for permit synchronization. Defaults to 0. */
-  index?: number;
+  readonly index?: number;
 
   /** The interval in milliseconds to wait for a permit. Defaults to 200. */
-  waitInterval?: number;
+  readonly waitInterval?: number;
 }

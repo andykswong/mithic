@@ -1,29 +1,24 @@
 import { AbortOptions, MaybePromise } from '@mithic/commons';
-import { MessageProcessor } from '../processor.js';
 import { MessageSubscription } from '@mithic/messaging';
+import { MessageProcessor } from '../processor.js';
+import { ObjectWriter } from '../handler.js';
 
 /** {@link MessageProcessor} that persists message using an {@link ObjectWriter}. */
-export class MessagePersister<Msg, SrcMsg = Msg> extends MessageProcessor<SrcMsg> {
+export class MessagePersister<Msg, SrcMsg = Msg, HandlerOpts = object> extends MessageProcessor<SrcMsg, HandlerOpts> {
   public constructor(
     /** {@link MessageSubscription} to consume. */
-    subscription: MessageSubscription<SrcMsg>,
+    subscription: MessageSubscription<SrcMsg, HandlerOpts>,
     /** Event store writer to use. */
-    writer: ObjectWriter<Msg>,
+    writer: ObjectWriter<unknown, Msg, HandlerOpts>,
     /** Function to translate incoming events for storage. */
-    translate: (src: SrcMsg, options?: AbortOptions) => MaybePromise<Msg | undefined> = identity,
+    translate: (src: SrcMsg, options?: AbortOptions & HandlerOpts) => MaybePromise<Msg | undefined> = identity,
   ) {
-    const consumer = async (msg: SrcMsg, options?: AbortOptions) => {
+    const consumer = async (msg: SrcMsg, options?: AbortOptions & HandlerOpts) => {
       const targetEvent = await translate(msg, options);
       targetEvent && await writer.put(targetEvent, options);
     };
     super(subscription, consumer);
   }
-}
-
-/** An interface for writing objects to storage. */
-export interface ObjectWriter<V = unknown, K = unknown> {
-  /** Puts given value and returns its key. */
-  put(value: V, options?: AbortOptions): MaybePromise<K>;
 }
 
 function identity<T, U>(value: T): U {

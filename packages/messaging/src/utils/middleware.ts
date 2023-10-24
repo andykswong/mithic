@@ -1,5 +1,7 @@
 import { MaybePromise } from '@mithic/commons';
-import { MessageDispatcher, MessageHandler, MessageOptions, MessageSubscription, SubscribeOptions, Unsubscribe } from '../messaging.js';
+import {
+  MessageDispatcher, MessageHandler, MessageOptions, MessageSubscription, SubscribeOptions, Unsubscribe
+} from '../messaging.js';
 
 /** Apply middlewares to a {@link MessageDispatcher}. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -9,10 +11,10 @@ export function applyDispatchMiddleware<State, Msg, T extends DispatcherFactory<
   /** State provider to use. */
   provider: StateProvider<State>,
   /** Middlewares to use. */
-  ...middlewares: DispatchMiddleware<State, Msg>[]
+  ...middlewares: DispatchMiddleware<State, InstanceType<T>>[]
 ) {
   return class extends Dispatcher {
-    _dispatch?: MessageDispatcher<Msg>['dispatch'];
+    _dispatch?: InstanceType<T>['dispatch'];
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     public constructor(...args: any[]) {
@@ -34,20 +36,23 @@ export function applyDispatchMiddleware<State, Msg, T extends DispatcherFactory<
 }
 
 /** Apply middlewares to a {@link MessageSubscription}. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function applySubscribeMiddleware<State, Msg, T extends SubscriptionFactory<Msg, any[]>>(
+export function applySubscribeMiddleware<
+  State, Msg, HandlerOpts extends object,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  T extends SubscriptionFactory<Msg, any[], HandlerOpts>
+>(
   /** {@link MessageSubscription} to decorate. */
   Subscription: T,
   /** State provider to use. */
   provider: StateProvider<State>,
   /** Middlewares to use. */
-  ...middlewares: SubscribeMiddleware<State, Msg>[]
+  ...middlewares: SubscribeMiddleware<State, InstanceType<T>>[]
 ) {
   return class extends Subscription {
-    _subscribe?: MessageSubscription<Msg>['subscribe'];
+    _subscribe?: InstanceType<T>['subscribe'];
 
     public override subscribe(
-      handler: MessageHandler<Msg>, options?: SubscribeOptions<Msg>
+      handler: MessageHandler<Msg, HandlerOpts>, options?: SubscribeOptions<Msg, HandlerOpts>
     ): MaybePromise<Unsubscribe> {
       if (!this._subscribe) {
         let subscribe = super.subscribe.bind(this);
@@ -72,12 +77,14 @@ export interface StateProvider<State = unknown> {
 export type DispatcherFactory<Msg, Args extends unknown[]> = new (...args: Args) => MessageDispatcher<Msg>;
 
 /** Factory to create a {@link MessageSubscription}. */
-export type SubscriptionFactory<Msg, Args extends unknown[]> = new (...args: Args) => MessageSubscription<Msg>;
+export type SubscriptionFactory<Msg, Args extends unknown[], HandlerOpts = object> =
+  new (...args: Args) => MessageSubscription<Msg, HandlerOpts>;
 
 /** Middleware to apply to a {@link MessageDispatcher}. */
-export type DispatchMiddleware<State, Msg> = (provider: StateProvider<State>) =>
-  (dispatch: MessageDispatcher<Msg>['dispatch']) => MessageDispatcher<Msg>['dispatch'];
+export type DispatchMiddleware<State, Dispatcher extends MessageDispatcher<unknown>> =
+  (provider: StateProvider<State>) =>
+    (dispatch: Dispatcher['dispatch']) => Dispatcher['dispatch'];
 
 /** Middleware to apply to a {@link MessageSubscription}. */
-export type SubscribeMiddleware<State, Msg> = (provider: StateProvider<State>) =>
-  (subscribe: MessageSubscription<Msg>['subscribe']) => MessageSubscription<Msg>['subscribe'];
+export type SubscribeMiddleware<State, Subscription extends MessageSubscription<unknown>> =
+  (provider: StateProvider<State>) => (subscribe: Subscription['subscribe']) => Subscription['subscribe'];
