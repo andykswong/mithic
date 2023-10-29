@@ -15,7 +15,7 @@
 <li><a href="../index.html">mithic</a></li>
 <li><a href="../modules/_mithic_cqrs.html">@mithic/cqrs</a></li>
 <li><a href="_mithic_cqrs.MessageReducer.html">MessageReducer</a></li></ul>
-<h1>Class MessageReducer&lt;State, Msg&gt;</h1></div>
+<h1>Class MessageReducer&lt;State, Msg, HandlerOpts&gt;</h1></div>
 <section class="tsd-panel tsd-comment">
 <div class="tsd-comment tsd-typography"><p><a href="_mithic_cqrs.MessageProcessor.html" class="tsd-kind-class">MessageProcessor</a> that derives aggregate state from messages.</p>
 </div>
@@ -26,15 +26,17 @@
 <li>
 <h4><span class="tsd-kind-type-parameter">State</span> = <span class="tsd-signature-type">object</span></h4></li>
 <li>
-<h4><span class="tsd-kind-type-parameter">Msg</span> = <span class="tsd-signature-type">unknown</span></h4></li></ul></section> 
+<h4><span class="tsd-kind-type-parameter">Msg</span> = <span class="tsd-signature-type">unknown</span></h4></li>
+<li>
+<h4><span class="tsd-kind-type-parameter">HandlerOpts</span> = <span class="tsd-signature-type">object</span></h4></li></ul></section> 
 <section class="tsd-panel tsd-hierarchy">
 <h4>Hierarchy</h4>
 <ul class="tsd-hierarchy">
-<li><a href="_mithic_cqrs.MessageProcessor.html" class="tsd-signature-type tsd-kind-class">MessageProcessor</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">&gt;</span>
+<li><a href="_mithic_cqrs.MessageProcessor.html" class="tsd-signature-type tsd-kind-class">MessageProcessor</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">HandlerOpts</span><span class="tsd-signature-symbol">&gt;</span>
 <ul class="tsd-hierarchy">
 <li><span class="target">MessageReducer</span></li></ul></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5734154/packages/cqrs/src/processor/reducer.ts#L6">cqrs/src/processor/reducer.ts:6</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/138420c/packages/cqrs/src/processor/reducer.ts#L7">cqrs/src/processor/reducer.ts:7</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-index-accordion" open><summary class="tsd-accordion-summary tsd-index-summary">
@@ -68,7 +70,7 @@
 <section class="tsd-panel tsd-member"><a id="constructor" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>constructor</span><a href="#constructor" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
-<li class="tsd-signature tsd-anchor-link" id="constructor.new_MessageReducer"><span class="tsd-kind-constructor-signature">new <wbr/>Message<wbr/>Reducer</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">subscription</span>, <span class="tsd-kind-parameter">dispatcher</span>, <span class="tsd-kind-parameter">reducer</span>, <span class="tsd-kind-parameter">initialState</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="_mithic_cqrs.MessageReducer.html" class="tsd-signature-type tsd-kind-class">MessageReducer</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">&gt;</span><a href="#constructor.new_MessageReducer" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
+<li class="tsd-signature tsd-anchor-link" id="constructor.new_MessageReducer"><span class="tsd-kind-constructor-signature">new <wbr/>Message<wbr/>Reducer</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">HandlerOpts</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">subscription</span>, <span class="tsd-kind-parameter">dispatcher</span>, <span class="tsd-kind-parameter">reducer</span>, <span class="tsd-kind-parameter">initialState</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="_mithic_cqrs.MessageReducer.html" class="tsd-signature-type tsd-kind-class">MessageReducer</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">HandlerOpts</span><span class="tsd-signature-symbol">&gt;</span><a href="#constructor.new_MessageReducer" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
 <li class="tsd-description">
 <section class="tsd-panel">
 <h4>Type Parameters</h4>
@@ -76,12 +78,14 @@
 <li>
 <h4><span class="tsd-kind-type-parameter">State</span> = <span class="tsd-signature-type">object</span></h4></li>
 <li>
-<h4><span class="tsd-kind-type-parameter">Msg</span> = <span class="tsd-signature-type">unknown</span></h4></li></ul></section>
+<h4><span class="tsd-kind-type-parameter">Msg</span> = <span class="tsd-signature-type">unknown</span></h4></li>
+<li>
+<h4><span class="tsd-kind-type-parameter">HandlerOpts</span> = <span class="tsd-signature-type">object</span></h4></li></ul></section>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
 <li>
-<h5><span class="tsd-kind-parameter">subscription</span>: <a href="../interfaces/_mithic_messaging.MessageSubscription.html" class="tsd-signature-type tsd-kind-interface">MessageSubscription</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">object</span><span class="tsd-signature-symbol">&gt;</span></h5>
+<h5><span class="tsd-kind-parameter">subscription</span>: <a href="../interfaces/_mithic_messaging.MessageSubscription.html" class="tsd-signature-type tsd-kind-interface">MessageSubscription</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">HandlerOpts</span><span class="tsd-signature-symbol">&gt;</span></h5>
 <div class="tsd-comment tsd-typography"><p><a href="../interfaces/_mithic_messaging.MessageSubscription.html" class="tsd-kind-interface">MessageSubscription</a> to consume.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div></li>
@@ -91,7 +95,7 @@
 </div>
 <div class="tsd-comment tsd-typography"></div></li>
 <li>
-<h5><span class="tsd-kind-parameter">reducer</span>: <a href="../interfaces/_mithic_cqrs.MessageReducerFn.html" class="tsd-signature-type tsd-kind-interface">MessageReducerFn</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">&gt;</span></h5>
+<h5><span class="tsd-kind-parameter">reducer</span>: <a href="../interfaces/_mithic_cqrs.MessageReduceHandler.html" class="tsd-signature-type tsd-kind-interface">MessageReduceHandler</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">HandlerOpts</span><span class="tsd-signature-symbol">&gt;</span></h5>
 <div class="tsd-comment tsd-typography"><p>Reducer function.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div></li>
@@ -100,17 +104,17 @@
 <div class="tsd-comment tsd-typography"><p>Initial state.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div></li></ul></div>
-<h4 class="tsd-returns-title">Returns <a href="_mithic_cqrs.MessageReducer.html" class="tsd-signature-type tsd-kind-class">MessageReducer</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
+<h4 class="tsd-returns-title">Returns <a href="_mithic_cqrs.MessageReducer.html" class="tsd-signature-type tsd-kind-class">MessageReducer</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">HandlerOpts</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <p>Overrides <a href="_mithic_cqrs.MessageProcessor.html">MessageProcessor</a>.<a href="_mithic_cqrs.MessageProcessor.html#constructor">constructor</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5734154/packages/cqrs/src/processor/reducer.ts#L9">cqrs/src/processor/reducer.ts:9</a></li></ul></aside></li></ul></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/138420c/packages/cqrs/src/processor/reducer.ts#L12">cqrs/src/processor/reducer.ts:12</a></li></ul></aside></li></ul></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Properties</h2>
 <section class="tsd-panel tsd-member tsd-is-protected"><a id="_state" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <span>_state</span><a href="#_state" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">_state</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type tsd-kind-type-parameter">State</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5734154/packages/cqrs/src/processor/reducer.ts#L7">cqrs/src/processor/reducer.ts:7</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/138420c/packages/cqrs/src/processor/reducer.ts#L10">cqrs/src/processor/reducer.ts:10</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="close" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>close</span><a href="#close" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">close</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">...</span><span class="tsd-kind-parameter">args</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> = ...</span></div>
@@ -137,16 +141,16 @@ where <code>yield maybePromise</code> will return awaited / resolved value.</p>
 </div></li></ul></li></ul></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_cqrs.MessageProcessor.html">MessageProcessor</a>.<a href="_mithic_cqrs.MessageProcessor.html#close">close</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5734154/packages/cqrs/src/processor.ts#L26">cqrs/src/processor.ts:26</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/138420c/packages/cqrs/src/processor.ts#L28">cqrs/src/processor.ts:28</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-protected tsd-is-inherited"><a id="consumer" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>consumer</span><a href="#consumer" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">consumer</span><span class="tsd-signature-symbol">:</span> <a href="../types/_mithic_messaging.MessageHandler.html" class="tsd-signature-type tsd-kind-type-alias">MessageHandler</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">&gt;</span></div>
+<div class="tsd-signature"><span class="tsd-kind-property">consumer</span><span class="tsd-signature-symbol">:</span> <a href="../types/_mithic_messaging.MessageHandler.html" class="tsd-signature-type tsd-kind-type-alias">MessageHandler</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">HandlerOpts</span><span class="tsd-signature-symbol">&gt;</span></div>
 <div class="tsd-comment tsd-typography"><p>Consumer of messages.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_cqrs.MessageProcessor.html">MessageProcessor</a>.<a href="_mithic_cqrs.MessageProcessor.html#consumer">consumer</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5734154/packages/cqrs/src/processor.ts#L13">cqrs/src/processor.ts:13</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/138420c/packages/cqrs/src/processor.ts#L15">cqrs/src/processor.ts:15</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-protected"><a id="dispatcher" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>dispatcher</span><a href="#dispatcher" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">dispatcher</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/_mithic_messaging.MessageDispatcher.html" class="tsd-signature-type tsd-kind-interface">MessageDispatcher</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">&gt;</span></div>
@@ -154,7 +158,7 @@ where <code>yield maybePromise</code> will return awaited / resolved value.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5734154/packages/cqrs/src/processor/reducer.ts#L13">cqrs/src/processor/reducer.ts:13</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/138420c/packages/cqrs/src/processor/reducer.ts#L16">cqrs/src/processor/reducer.ts:16</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="start" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>start</span><a href="#start" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">start</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">...</span><span class="tsd-kind-parameter">args</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> = ...</span></div>
@@ -181,16 +185,16 @@ where <code>yield maybePromise</code> will return awaited / resolved value.</p>
 </div></li></ul></li></ul></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_cqrs.MessageProcessor.html">MessageProcessor</a>.<a href="_mithic_cqrs.MessageProcessor.html#start">start</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5734154/packages/cqrs/src/processor.ts#L22">cqrs/src/processor.ts:22</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/138420c/packages/cqrs/src/processor.ts#L24">cqrs/src/processor.ts:24</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-protected tsd-is-inherited"><a id="subscription" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>subscription</span><a href="#subscription" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">subscription</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/_mithic_messaging.MessageSubscription.html" class="tsd-signature-type tsd-kind-interface">MessageSubscription</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">object</span><span class="tsd-signature-symbol">&gt;</span></div>
+<div class="tsd-signature"><span class="tsd-kind-property">subscription</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/_mithic_messaging.MessageSubscription.html" class="tsd-signature-type tsd-kind-interface">MessageSubscription</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Msg</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">HandlerOpts</span><span class="tsd-signature-symbol">&gt;</span></div>
 <div class="tsd-comment tsd-typography"><p><a href="../interfaces/_mithic_messaging.MessageSubscription.html" class="tsd-kind-interface">MessageSubscription</a> to consume.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_cqrs.MessageProcessor.html">MessageProcessor</a>.<a href="_mithic_cqrs.MessageProcessor.html#subscription">subscription</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5734154/packages/cqrs/src/processor.ts#L11">cqrs/src/processor.ts:11</a></li></ul></aside></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/138420c/packages/cqrs/src/processor.ts#L13">cqrs/src/processor.ts:13</a></li></ul></aside></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Accessors</h2>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="started" class="tsd-anchor"></a>
@@ -204,7 +208,7 @@ where <code>yield maybePromise</code> will return awaited / resolved value.</p>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from MessageProcessor.started</p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5734154/packages/cqrs/src/processor.ts#L18">cqrs/src/processor.ts:18</a></li></ul></aside></li></ul></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/138420c/packages/cqrs/src/processor.ts#L20">cqrs/src/processor.ts:20</a></li></ul></aside></li></ul></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Methods</h2>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="_asyncDispose_" class="tsd-anchor"></a>
@@ -226,7 +230,7 @@ where <code>yield maybePromise</code> will return awaited / resolved value.</p>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type tsd-kind-type-parameter">State</span></h4>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5734154/packages/cqrs/src/processor/reducer.ts#L27">cqrs/src/processor/reducer.ts:27</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/138420c/packages/cqrs/src/processor/reducer.ts#L30">cqrs/src/processor/reducer.ts:30</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-private"><a id="setState" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagPrivate">Private</code> <span>set<wbr/>State</span><a href="#setState" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-private">
@@ -239,7 +243,7 @@ where <code>yield maybePromise</code> will return awaited / resolved value.</p>
 <h5><span class="tsd-kind-parameter">state</span>: <span class="tsd-signature-type tsd-kind-type-parameter">State</span></h5></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5734154/packages/cqrs/src/processor/reducer.ts#L31">cqrs/src/processor/reducer.ts:31</a></li></ul></aside></li></ul></section></section></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/138420c/packages/cqrs/src/processor/reducer.ts#L34">cqrs/src/processor/reducer.ts:34</a></li></ul></aside></li></ul></section></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

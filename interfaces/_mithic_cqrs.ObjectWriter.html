@@ -15,7 +15,7 @@
 <li><a href="../index.html">mithic</a></li>
 <li><a href="../modules/_mithic_cqrs.html">@mithic/cqrs</a></li>
 <li><a href="_mithic_cqrs.ObjectWriter.html">ObjectWriter</a></li></ul>
-<h1>Interface ObjectWriter&lt;V, K&gt;</h1></div>
+<h1>Interface ObjectWriter&lt;K, V, Opts&gt;</h1></div>
 <section class="tsd-panel tsd-comment">
 <div class="tsd-comment tsd-typography"><p>An interface for writing objects to storage.</p>
 </div>
@@ -24,15 +24,17 @@
 <h4>Type Parameters</h4>
 <ul class="tsd-type-parameter-list">
 <li>
+<h4><span class="tsd-kind-type-parameter">K</span> = <span class="tsd-signature-type">unknown</span></h4></li>
+<li>
 <h4><span class="tsd-kind-type-parameter">V</span> = <span class="tsd-signature-type">unknown</span></h4></li>
 <li>
-<h4><span class="tsd-kind-type-parameter">K</span> = <span class="tsd-signature-type">unknown</span></h4></li></ul></section> 
+<h4><span class="tsd-kind-type-parameter">Opts</span> = <span class="tsd-signature-type">object</span></h4></li></ul></section> 
 <section class="tsd-panel tsd-hierarchy">
 <h4>Hierarchy</h4>
 <ul class="tsd-hierarchy">
 <li><span class="target">ObjectWriter</span></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5734154/packages/cqrs/src/processor/persister.ts#L24">cqrs/src/processor/persister.ts:24</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/138420c/packages/cqrs/src/handler.ts#L25">cqrs/src/handler.ts:25</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-index-accordion" open><summary class="tsd-accordion-summary tsd-index-summary">
@@ -57,11 +59,11 @@
 <li>
 <h5><span class="tsd-kind-parameter">value</span>: <span class="tsd-signature-type tsd-kind-type-parameter">V</span></h5></li>
 <li>
-<h5><code class="tsd-tag ts-flagOptional">Optional</code> <span class="tsd-kind-parameter">options</span>: <a href="_mithic_commons.AbortOptions.html" class="tsd-signature-type tsd-kind-interface">AbortOptions</a></h5></li></ul></div>
+<h5><code class="tsd-tag ts-flagOptional">Optional</code> <span class="tsd-kind-parameter">options</span>: <a href="_mithic_commons.AbortOptions.html" class="tsd-signature-type tsd-kind-interface">AbortOptions</a><span class="tsd-signature-symbol"> &amp; </span><span class="tsd-signature-type tsd-kind-type-parameter">Opts</span></h5></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../variables/_mithic_commons.MaybePromise-1.html" class="tsd-signature-type tsd-kind-variable">MaybePromise</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span></h4>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/5734154/packages/cqrs/src/processor/persister.ts#L26">cqrs/src/processor/persister.ts:26</a></li></ul></aside></li></ul></section></section></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/138420c/packages/cqrs/src/handler.ts#L27">cqrs/src/handler.ts:27</a></li></ul></aside></li></ul></section></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
