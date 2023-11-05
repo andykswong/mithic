@@ -1,8 +1,7 @@
 import { AbortOptions, MaybeAsyncIterableIterator, MaybePromise } from '@mithic/commons';
-import { StandardCommand, StandardEvent } from './event.js';
 
 /** Command handler function. */
-export interface CommandHandler<State = undefined, Command = StandardCommand, Event = StandardEvent, Opts = object> {
+export interface CommandHandler<State, Command, Event, Opts = object> {
   (state: State, command: Command, options?: AbortOptions & Opts): MaybePromise<Event | undefined>;
 }
 

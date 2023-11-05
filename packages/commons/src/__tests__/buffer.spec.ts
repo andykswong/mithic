@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import { CID } from 'multiformats';
-import { sha256 } from '../hash.js';
+import { sha256 } from 'multiformats/hashes/sha2';
 import { compareContentIds, compareBuffers, concatBuffers } from '../buffer.js';
 
 describe('compareBuffers', () => {
@@ -70,15 +70,15 @@ describe('concatBuffers', () => {
 });
 
 describe('compareContentIds', () => {
-  it('should return 0 when two CIDs are the same', () => {
-    const cid1 = CID.createV1(0, sha256.digest(new Uint8Array([1, 2, 3])));
-    const cid2 = CID.createV1(0, sha256.digest(new Uint8Array([1, 2, 3])));
+  it('should return 0 when two CIDs are the same', async () => {
+    const cid1 = CID.createV1(0, await sha256.digest(new Uint8Array([1, 2, 3])));
+    const cid2 = CID.createV1(0, await sha256.digest(new Uint8Array([1, 2, 3])));
     expect(compareContentIds(cid1, cid2)).toBe(0);
   });
 
-  it('should return -1 when first CID is less than second', () => {
-    const cid1 = CID.createV1(0, sha256.digest(new Uint8Array([1, 2, 3])));
-    const cid2 = CID.createV1(0, sha256.digest(new Uint8Array([1, 2, 4])));
+  it('should return -1 when first CID is less than second', async () => {
+    const cid1 = CID.createV1(0, await sha256.digest(new Uint8Array([1, 2, 3])));
+    const cid2 = CID.createV1(0, await sha256.digest(new Uint8Array([1, 2, 4])));
     expect(compareContentIds(cid1, cid2)).toBe(-1);
   });
 });

@@ -1,13 +1,10 @@
 import { AbortOptions, Startable } from '@mithic/commons';
 import { MessageDispatcher, MessageSubscription, StateProvider } from '@mithic/messaging';
 import { MessageTransformer } from '../processor/index.js';
-import { StandardCommand, StandardEvent } from '../event.js';
 import { CommandHandler } from '../handler.js';
 
 /** Binds a command handler to command and event bus and returns a disposable {@link Startable}. */
-export function bindCommandHandler<
-  State = undefined, Command = StandardCommand, Event = StandardEvent, HandlerOpts = object
->(
+export function bindCommandHandler<Command, Event, State = undefined, HandlerOpts = object>(
   /** Source command {@link MessageSubscription} to consume. */
   commandBus: MessageSubscription<Command, HandlerOpts>,
   /** Output event {@link MessageDispatcher} to use. */

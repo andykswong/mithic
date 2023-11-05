@@ -1,11 +1,32 @@
 import {
-  AbortOptions, CodedError, ContentId, MaybePromise, OperationError, maybeAsync, sha256
+  AbortOptions, CodedError, ContentId, InvalidStateError, MaybePromise, OperationError, maybeAsync
 } from '@mithic/commons';
-import { CID } from 'multiformats';
-import * as raw from 'multiformats/codecs/raw';
 import { AutoKeyMap, AutoKeyMapBatch, MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
 import { deleteMany, getMany, hasMany, setMany } from '../utils/batch.js';
 import { TransformedMap } from './transformedmap.js';
+
+/** Default CID-based key generation implementation that uses multiformats as optional dependency. */
+const [cidHash, decodeCID] = await (async () => {
+  try {
+    const { CID } = await import('multiformats');
+    const { sha256 } = await import('multiformats/hashes/sha2');
+    const raw = await import('multiformats/codecs/raw');
+
+    return [
+      async function cidHash<Id, T>(value: T): Promise<Id> {
+        const bytes = raw.encode(value as unknown as Uint8Array);
+        const hash = await sha256.digest(bytes);
+        return CID.create(1, raw.code, hash) as unknown as Id;
+      },
+      function decodeCID<K>(key: string) {
+        return CID.parse(key) as unknown as K;
+      }
+    ];
+  } catch (_) {
+    const invalid = () => { throw new InvalidStateError('multiformats not available'); };
+    return [invalid, invalid];
+  }
+})();
 
 /** A content-addressable map store that persists values in a backing {@link MaybeAsyncMap}. */
 export class ContentAddressedMapStore<
@@ -23,10 +44,10 @@ export class ContentAddressedMapStore<
     public readonly map: M =
       new TransformedMap<Id, T, string, T, Map<string, T>>(new Map(), {
         encodeKey: (key) => `${key}`,
-        decodeKey: (key) => CID.parse(key) as Id
+        decodeKey: decodeCID,
       }) as unknown as M,
     /** Hash function to use for generating keys for values. */
-    protected readonly hash: (value: T) => Id = defaultHasher as unknown as (value: T) => Id
+    protected readonly hash: (value: T) => MaybePromise<Id> = cidHash
   ) {
     this[Symbol.iterator] = (Symbol.iterator in map && (() => (map as Iterable<[Id, T]>)[Symbol.iterator]())) as
       M extends Iterable<[Id, T]> ? () => IterableIterator<[Id, T]> : undefined;
@@ -37,7 +58,7 @@ export class ContentAddressedMapStore<
   }
 
   public put = maybeAsync(function* (this: ContentAddressedMapStore<Id, T>, value: T, options?: AbortOptions) {
-    const cid = this.getKey(value);
+    const cid = yield this.getKey(value);
     yield this.map.set(cid, value, options);
     return cid;
   }, this);
@@ -50,7 +71,7 @@ export class ContentAddressedMapStore<
     return this.map.get(key, options);
   }
 
-  public getKey(value: T): Id {
+  public getKey(value: T): MaybePromise<Id> {
     return this.hash(value);
   }
 
@@ -65,7 +86,7 @@ export class ContentAddressedMapStore<
   public async * putMany(
     values: Iterable<T>, options?: AbortOptions
   ): AsyncIterableIterator<[key: Id, error?: CodedError]> {
-    const entries = this.entriesOf(values);
+    const entries = await this.entriesOf(values);
     let i = 0;
     for await (const error of setMany(this.map, entries, options)) {
       const key = entries[i++][0];
@@ -92,17 +113,11 @@ export class ContentAddressedMapStore<
     return ContentAddressedMapStore.name;
   }
 
-  protected entriesOf(values: Iterable<T>): [Id, T][] {
+  protected async entriesOf(values: Iterable<T>): Promise<[Id, T][]> {
     const entries: [Id, T][] = [];
     for (const value of values) {
-      entries.push([this.getKey(value), value]);
+      entries.push([await this.getKey(value), value]);
     }
     return entries;
   }
-}
-
-function defaultHasher(value: Uint8Array): CID {
-  const bytes = raw.encode(value);
-  const hash = sha256.digest(bytes);
-  return CID.create(1, raw.code, hash);
 }

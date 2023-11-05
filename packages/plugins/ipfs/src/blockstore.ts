@@ -1,7 +1,8 @@
 import { AutoKeyMap, AutoKeyMapBatch } from '@mithic/collections';
-import { AbortOptions, CodedError, MaybePromise, OperationError, sha256 } from '@mithic/commons';
+import { AbortOptions, CodedError, MaybePromise, OperationError } from '@mithic/commons';
 import { Blockstore } from 'interface-blockstore';
-import { BlockCodec, CID, SyncMultihashHasher } from 'multiformats';
+import { BlockCodec, CID, MultihashHasher } from 'multiformats';
+import { sha256 } from 'multiformats/hashes/sha2';
 
 /** A distributed {@link AutoKeyMap} based on {@link Blockstore}. */
 export class BlockstoreMap<T = Uint8Array>
@@ -13,12 +14,15 @@ export class BlockstoreMap<T = Uint8Array>
     /** Codec to encode data for storage. */
     protected readonly codec: BlockCodec<number, T>,
     /** Hash function to use for generating ContentIds for block data. */
-    protected readonly hasher: SyncMultihashHasher<number> = sha256
+    protected readonly hasher: MultihashHasher<number> = sha256
   ) {
   }
 
-  public getKey(value: T): CID {
-    return CID.create(1, this.codec.code, this.hasher.digest(this.codec.encode(value)));
+  public getKey(value: T): MaybePromise<CID> {
+    return MaybePromise.map(
+      this.hasher.digest(this.codec.encode(value)),
+      (hash) => CID.create(1, this.codec.code, hash)
+    );
   }
 
   public get(key: CID, options?: AbortOptions): MaybePromise<T | undefined> {
@@ -35,9 +39,10 @@ export class BlockstoreMap<T = Uint8Array>
 
   public put(value: T, options?: AbortOptions): MaybePromise<CID> {
     const data = this.codec.encode(value);
-    const hash = this.hasher.digest(data);
-    const key = CID.createV1(this.codec.code, hash);
-    return this.store.put(key, data, options);
+    return MaybePromise.map(
+      this.hasher.digest(data),
+      (hash) => this.store.put(CID.create(1, this.codec.code, hash), data, options)
+    );
   }
 
   public delete(cid: CID, options?: AbortOptions): MaybePromise<void> {
@@ -69,7 +74,7 @@ export class BlockstoreMap<T = Uint8Array>
       try {
         yield [await this.put(value, options)];
       } catch (cause) {
-        const key = this.getKey(value);
+        const key = await this.getKey(value);
         yield [
           key,
           new OperationError('failed to put', { cause, code: (cause as CodedError)?.code, detail: key })

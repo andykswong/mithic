@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
-import { ContentId, sha256 } from '@mithic/commons';
+import { ContentId } from '@mithic/commons';
 import { CID } from 'multiformats';
 import * as Block from 'multiformats/block';
 import * as raw from 'multiformats/codecs/raw';
+import { sha256 } from 'multiformats/hashes/sha2';
 import { MaybeAsyncMap } from '../../map.js';
 import { ContentAddressedMapStore } from '../camap.js';
 
@@ -10,7 +11,7 @@ const BLOCK = new Uint8Array([0x68, 0x65, 0x6C, 0x6C, 0x6F]);
 const BLOCK2 = new Uint8Array([0x65, 0x66, 0x67]);
 const BLOCK_ENCODED = await Block.encode({ value: BLOCK, codec: raw, hasher: sha256 });
 const BLOCK2_ENCODED = await Block.encode({ value: BLOCK2, codec: raw, hasher: sha256 });
-const RANDOM_CID = CID.createV1(0, sha256.digest(new Uint8Array([1])));
+const RANDOM_CID = CID.createV1(0, await sha256.digest(new Uint8Array([1])));
 
 type IterableBackingMap = MaybeAsyncMap<ContentId, Uint8Array> & Iterable<[ContentId, Uint8Array]>;
 
@@ -59,8 +60,8 @@ describe(ContentAddressedMapStore.name, () => {
   });
 
   describe('getKey', () => {
-    it('should return the correct CID', () => {
-      expect(store.getKey(BLOCK)).toEqual(BLOCK_ENCODED.cid);
+    it('should return the correct CID', async () => {
+      expect(await store.getKey(BLOCK)).toEqual(BLOCK_ENCODED.cid);
     });
   });
 
