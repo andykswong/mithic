@@ -15,9 +15,9 @@
 <li><a href="../index.html">mithic</a></li>
 <li><a href="../modules/_mithic_crdt.html">@mithic/crdt</a></li>
 <li><a href="_mithic_crdt.StandardCommand.html">StandardCommand</a></li></ul>
-<h1>Type alias StandardCommand&lt;A, T, Ref, Meta&gt;</h1></div>
-<div class="tsd-signature"><span class="tsd-kind-type-alias">Standard<wbr/>Command</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">A</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Ref</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Meta</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/_mithic_crdt.StandardEvent.html" class="tsd-signature-type tsd-kind-interface">StandardEvent</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">A</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Ref</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Meta</span><span class="tsd-signature-symbol">&gt;</span></div>
-<div class="tsd-comment tsd-typography"><p>Standard aggregate command interface in Flux standard action format.</p>
+<h1>Type alias StandardCommand&lt;A, T, K&gt;</h1></div>
+<div class="tsd-signature"><span class="tsd-kind-type-alias">Standard<wbr/>Command</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">A</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/_mithic_crdt.StandardAction.html" class="tsd-signature-type tsd-kind-interface">StandardAction</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">A</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span></div>
+<div class="tsd-comment tsd-typography"><p>Standard aggregate command.</p>
 </div>
 <section class="tsd-panel">
 <h4>Type Parameters</h4>
@@ -27,12 +27,10 @@
 <li>
 <h4><span class="tsd-kind-type-parameter">T</span> = <span class="tsd-signature-type">unknown</span></h4></li>
 <li>
-<h4><span class="tsd-kind-type-parameter">Ref</span> = <span class="tsd-signature-type">unknown</span></h4></li>
-<li>
-<h4><span class="tsd-kind-type-parameter">Meta</span> = <a href="../interfaces/_mithic_crdt.StanardCommandMeta.html" class="tsd-signature-type tsd-kind-interface">StanardCommandMeta</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Ref</span><span class="tsd-signature-symbol">&gt;</span></h4></li></ul></section>
+<h4><span class="tsd-kind-type-parameter">K</span> = <span class="tsd-signature-type">unknown</span></h4></li></ul></section>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/1c45a19/packages/crdt/src/event.ts#L14">crdt/src/event.ts:14</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b78cbb4/packages/crdt/src/event.ts#L20">event.ts:20</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
