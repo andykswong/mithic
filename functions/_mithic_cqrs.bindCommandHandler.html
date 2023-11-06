@@ -18,7 +18,7 @@
 <h1>Function bindCommandHandler</h1></div>
 <section class="tsd-panel">
 <ul class="tsd-signatures">
-<li class="tsd-signature tsd-anchor-link" id="bindCommandHandler"><span class="tsd-kind-call-signature">bind<wbr/>Command<wbr/>Handler</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Command</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">HandlerOpts</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">commandBus</span>, <span class="tsd-kind-parameter">eventBus</span>, <span class="tsd-kind-parameter">handler</span>, <span class="tsd-kind-parameter">store</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../interfaces/_mithic_commons.Startable.html" class="tsd-signature-type tsd-kind-interface">Startable</a><span class="tsd-signature-symbol"> &amp; </span><span class="tsd-signature-type ">AsyncDisposable</span><a href="#bindCommandHandler" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
+<li class="tsd-signature tsd-anchor-link" id="bindCommandHandler"><span class="tsd-kind-call-signature">bind<wbr/>Command<wbr/>Handler</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Command</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Event</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">State</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">HandlerOpts</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">commandBus</span>, <span class="tsd-kind-parameter">eventBus</span>, <span class="tsd-kind-parameter">handler</span>, <span class="tsd-kind-parameter">store</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../interfaces/_mithic_commons.Startable.html" class="tsd-signature-type tsd-kind-interface">Startable</a><span class="tsd-signature-symbol"> &amp; </span><span class="tsd-signature-type ">AsyncDisposable</span><a href="#bindCommandHandler" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
 <li class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Binds a command handler to command and event bus and returns a disposable <a href="../interfaces/_mithic_commons.Startable.html" class="tsd-kind-interface">Startable</a>.</p>
 </div>
@@ -26,11 +26,11 @@
 <h4>Type Parameters</h4>
 <ul class="tsd-type-parameter-list">
 <li>
+<h4><span class="tsd-kind-type-parameter">Command</span></h4></li>
+<li>
+<h4><span class="tsd-kind-type-parameter">Event</span></h4></li>
+<li>
 <h4><span class="tsd-kind-type-parameter">State</span> = <span class="tsd-signature-type">undefined</span></h4></li>
-<li>
-<h4><span class="tsd-kind-type-parameter">Command</span> = <a href="../types/_mithic_cqrs.StandardCommand.html" class="tsd-signature-type tsd-kind-type-alias">StandardCommand</a></h4></li>
-<li>
-<h4><span class="tsd-kind-type-parameter">Event</span> = <a href="../interfaces/_mithic_cqrs.StandardEvent.html" class="tsd-signature-type tsd-kind-interface">StandardEvent</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">, </span><a href="../interfaces/_mithic_cqrs.StandardEventMeta.html" class="tsd-signature-type tsd-kind-interface">StandardEventMeta</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span></h4></li>
 <li>
 <h4><span class="tsd-kind-type-parameter">HandlerOpts</span> = <span class="tsd-signature-type">object</span></h4></li></ul></section>
 <div class="tsd-parameters">
@@ -59,7 +59,7 @@
 <h4 class="tsd-returns-title">Returns <a href="../interfaces/_mithic_commons.Startable.html" class="tsd-signature-type tsd-kind-interface">Startable</a><span class="tsd-signature-symbol"> &amp; </span><span class="tsd-signature-type ">AsyncDisposable</span></h4>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/138420c/packages/cqrs/src/preset/command.ts#L8">cqrs/src/preset/command.ts:8</a></li></ul></aside></li></ul></section></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/1c45a19/packages/cqrs/src/preset/command.ts#L7">cqrs/src/preset/command.ts:7</a></li></ul></aside></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
