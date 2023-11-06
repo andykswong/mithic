@@ -11,11 +11,11 @@ const VALUE0 = 'v0';
 const VALUE1 = 'v1';
 const VALUE2 = 123;
 const VALUE3 = true;
-const CMD_EMPTY = { type: SetCommandType.Update, payload: {}, meta: { time: 1 } } satisfies SetCommand<MockId, V>;
-const CMD_NEW = { type: SetCommandType.Update, payload: { add: [VALUE0] }, meta: { id: '123', time: 1 } } satisfies SetCommand<MockId, V>;
-const CMD_ADD = { type: SetCommandType.Update, payload: { add: [VALUE1, VALUE2] }, meta: { root: ROOT, time: 2 } } satisfies SetCommand<MockId, V>;
-const CMD_ADD_CONCURRENT = { type: SetCommandType.Update, payload: { add: [VALUE2, VALUE3] }, meta: { root: ROOT, time: 3 } } satisfies SetCommand<MockId, V>;
-const CMD_DEL = { type: SetCommandType.Update, payload: { add: [VALUE1], del: [VALUE2] }, meta: { root: ROOT, time: 4 } } satisfies SetCommand<MockId, V>;
+const CMD_EMPTY = { type: SetCommandType.Update, payload: {}, time: 1 } satisfies SetCommand<MockId, V>;
+const CMD_NEW = { type: SetCommandType.Update, payload: { add: [VALUE0] }, nonce: '123', time: 1 } satisfies SetCommand<MockId, V>;
+const CMD_ADD = { type: SetCommandType.Update, payload: { add: [VALUE1, VALUE2] }, root: ROOT, time: 2 } satisfies SetCommand<MockId, V>;
+const CMD_ADD_CONCURRENT = { type: SetCommandType.Update, payload: { add: [VALUE2, VALUE3] }, root: ROOT, time: 3 } satisfies SetCommand<MockId, V>;
+const CMD_DEL = { type: SetCommandType.Update, payload: { add: [VALUE1], del: [VALUE2] }, root: ROOT, time: 4 } satisfies SetCommand<MockId, V>;
 
 describe(ORSet.name, () => {
   let set: ORSet<MockId, V>;
@@ -23,7 +23,7 @@ describe(ORSet.name, () => {
 
   beforeEach(() => {
     const map = new ORMap<MockId, V>({
-      eventRef: (event) => new MockId(new Uint8Array(event.meta?.time || 0)),
+      eventKey: (event) => new MockId(new Uint8Array(event.time || 0)),
     })
     set = new ORSet({
       map,
@@ -85,7 +85,7 @@ describe(ORSet.name, () => {
       expect(event).toEqual({
         type: SetEventType.New,
         payload: { ops: [] },
-        meta: { prev: [], time: 1 },
+        link: [], time: 1,
       } satisfies SetEvent<MockId, V>);
     });
 
@@ -96,7 +96,7 @@ describe(ORSet.name, () => {
         payload: {
           ops: [[VALUE0]],
         },
-        meta: { prev: [], id: '123', time: 1 },
+        link: [], nonce: '123', time: 1,
       } satisfies SetEvent<MockId, V>);
     });
 
@@ -107,7 +107,7 @@ describe(ORSet.name, () => {
         payload: {
           ops: [[VALUE2], [VALUE1]]
         },
-        meta: { prev: [], root: ROOT, time: 2 },
+        link: [], root: ROOT, time: 2,
       } satisfies SetEvent<MockId, V>);
     });
 
@@ -121,10 +121,8 @@ describe(ORSet.name, () => {
         payload: {
           ops: [[VALUE2, 0, 1]]
         },
-        meta: {
-          prev: [new MockId(new Uint8Array(2)), new MockId(new Uint8Array(3))],
-          root: ROOT, time: 4
-        },
+        link: [new MockId(new Uint8Array(2)), new MockId(new Uint8Array(3))],
+        root: ROOT, time: 4
       } satisfies SetEvent<MockId, V>);
     });
 
@@ -136,15 +134,13 @@ describe(ORSet.name, () => {
         payload: {
           ops: [[VALUE1]]
         },
-        meta: {
-          prev: [],
-          root: ROOT, time: 4
-        },
+        link: [],
+        root: ROOT, time: 4
       } satisfies SetEvent<MockId, V>);
     });
 
     it('should throw for empty update command', async () => {
-      await expect(() => set.command({ type: SetCommandType.Update, payload: {}, meta: { root: ROOT, time: 2 } }))
+      await expect(() => set.command({ type: SetCommandType.Update, payload: {}, root: ROOT, time: 2 }))
         .rejects.toEqual(new TypeError('empty operation'));
     });
   });
@@ -159,19 +155,19 @@ describe(ORSet.name, () => {
     it('should return error for malformed events', async () => {
       expect(await set.validate({
         type: SetEventType.Update, payload: { ops: [] },
-        meta: { prev: [], root: ROOT, time: 2 },
+        link: [], root: ROOT, time: 2,
       })).toEqual(new TypeError('empty operation'));
 
       expect(await set.validate({
         type: SetEventType.Update,
         payload: { ops: [['value']] },
-        meta: { prev: [], time: 2 },
+        link: [], time: 2,
       })).toEqual(new TypeError('missing root'));
 
       expect(await set.validate({
         type: SetEventType.Update,
         payload: { ops: [['value', 0]] },
-        meta: { prev: [], root: ROOT, time: 2 },
+        link: [], root: ROOT, time: 2,
       })).toEqual(new TypeError(`invalid operation: "value"`));
     });
   });
@@ -196,8 +192,8 @@ describe(ORSet.name, () => {
       const cmd2 = await set.command(CMD_ADD_CONCURRENT);
       await set.reduce(cmd1);
       await set.reduce(cmd2);
-      const eventRef1 = new MockId(new Uint8Array(CMD_ADD.meta.time));
-      const eventRef2 = new MockId(new Uint8Array(CMD_ADD_CONCURRENT.meta.time));
+      const eventRef1 = new MockId(new Uint8Array(CMD_ADD.time));
+      const eventRef2 = new MockId(new Uint8Array(CMD_ADD_CONCURRENT.time));
 
       expect(store.get(getHeadIndexKey(`${ROOT}`, `${VALUE2}`, eventRef1.toString()))).toEqual(eventRef1);
       expect(store.get(getHeadIndexKey(`${ROOT}`, `${VALUE2}`, eventRef2.toString()))).toEqual(eventRef2);
@@ -206,8 +202,8 @@ describe(ORSet.name, () => {
     });
 
     it('should remove all concurrent values on delete', async () => {
-      const eventRef1 = new MockId(new Uint8Array(CMD_ADD.meta.time));
-      const eventRef2 = new MockId(new Uint8Array(CMD_ADD_CONCURRENT.meta.time));
+      const eventRef1 = new MockId(new Uint8Array(CMD_ADD.time));
+      const eventRef2 = new MockId(new Uint8Array(CMD_ADD_CONCURRENT.time));
 
       await applyCommand(CMD_NEW);
       const cmd1 = await set.command(CMD_ADD);
@@ -227,7 +223,7 @@ describe(ORSet.name, () => {
     it('should throw error for malformed events when validate = true', async () => {
       await expect(() => set.reduce({
         type: SetEventType.Update,
-        payload: { ops: [] }, meta: { prev: [], time: 1 },
+        payload: { ops: [] }, link: [], time: 1,
       })).rejects.toEqual(new TypeError('empty operation'));
     });
   });

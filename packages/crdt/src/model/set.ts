@@ -1,7 +1,7 @@
 import {
   AbortOptions, ContentId, MaybePromise, StringEquatable, SyncOrAsyncIterable
 } from '@mithic/commons';
-import { AggregateReduceOptions, Aggregate, AggregateQuery } from '../aggregate.js';
+import { Aggregate, AggregateQuery } from '../aggregate.js';
 import { StandardCommand, StandardEvent } from '../event.js';
 import { ORMap, MapCommand, MapEvent, MapAggregate, MapEventType, MapCommandType } from './map.js';
 
@@ -46,14 +46,14 @@ export class ORSet<
   }
 
   public async command(command: SetCommand<Ref, V>, options?: AbortOptions): Promise<SetEvent<Ref, V>> {
-    const type = command.meta?.root === void 0 ? SetEventType.New : SetEventType.Update;
+    const type = command.root === void 0 ? SetEventType.New : SetEventType.Update;
     const values: Record<string, V> = {};
     const set: Record<string, V> = {};
     const del: string[] = [];
     const mapCmd: MapCommand<Ref, V> = {
+      ...command,
       type: MapCommandType.Update,
       payload: { set, del },
-      meta: command.meta,
     };
 
     for (const value of command.payload.del || []) {
@@ -78,13 +78,13 @@ export class ORSet<
     }
 
     return {
+      ...mapEvent,
       type,
       payload: { ops },
-      meta: mapEvent.meta,
     };
   }
 
-  public async reduce(event: SetEvent<Ref, V>, options?: AggregateReduceOptions): Promise<Ref> {
+  public async reduce(event: SetEvent<Ref, V>, options?: AbortOptions): Promise<Ref> {
     const mapEvent = await this.toORMapEvent(event, options);
     return this.map.reduce(mapEvent, options);
   }
@@ -102,9 +102,9 @@ export class ORSet<
     }
 
     return {
+      ...event,
       type: event.type === SetEventType.New ? MapEventType.New : MapEventType.Update,
       payload: { ops },
-      meta: event.meta,
     };
   }
 }

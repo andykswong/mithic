@@ -16,11 +16,11 @@ const INDEX1 = 'kkkkkkkkUU';
 const INDEX2 = 'KUUUUUUUU';
 const INDEX3 = 'PkkkkkkkkU';
 const INDEX4 = 'ckkkkkkkUU';
-const CMD_EMPTY = { type: LSeqCommandType.Update, payload: {}, meta: { time: 1 } } satisfies LSeqCommand<MockId, V>;
-const CMD_ADD = { type: LSeqCommandType.Update, payload: { add: [VALUE0, VALUE1] }, meta: { root: ROOT, time: 2 } } satisfies LSeqCommand<MockId, V>;
-const CMD_ADD2 = { type: LSeqCommandType.Update, payload: { index: 'A', add: [VALUE1, VALUE2] }, meta: { root: ROOT, time: 3 } } satisfies LSeqCommand<MockId, V>;
-const CMD_DEL = { type: LSeqCommandType.Update, payload: {index: 'UUUUUUUU', add: [VALUE1, VALUE3], del: 1 }, meta: { root: ROOT, time: 4 } } satisfies LSeqCommand<MockId, V>;
-const CMD_ADD_CONCURRENT = { type: LSeqCommandType.Update, payload: { add: [VALUE2, VALUE3] }, meta: { root: ROOT, time: 5 } } satisfies LSeqCommand<MockId, V>;
+const CMD_EMPTY = { type: LSeqCommandType.Update, payload: {}, time: 1 } satisfies LSeqCommand<MockId, V>;
+const CMD_ADD = { type: LSeqCommandType.Update, payload: { add: [VALUE0, VALUE1] }, root: ROOT, time: 2 } satisfies LSeqCommand<MockId, V>;
+const CMD_ADD2 = { type: LSeqCommandType.Update, payload: { index: 'A', add: [VALUE1, VALUE2] }, root: ROOT, time: 3 } satisfies LSeqCommand<MockId, V>;
+const CMD_DEL = { type: LSeqCommandType.Update, payload: { index: 'UUUUUUUU', add: [VALUE1, VALUE3], del: 1 }, root: ROOT, time: 4 } satisfies LSeqCommand<MockId, V>;
+const CMD_ADD_CONCURRENT = { type: LSeqCommandType.Update, payload: { add: [VALUE2, VALUE3] }, root: ROOT, time: 5 } satisfies LSeqCommand<MockId, V>;
 
 describe(LSeqAggregate.name, () => {
   let lseq: LSeqAggregate<MockId, V>;
@@ -28,7 +28,7 @@ describe(LSeqAggregate.name, () => {
 
   beforeEach(() => {
     const map = new ORMap<MockId, V>({
-      eventRef: (event) => new MockId(new Uint8Array(event.meta?.time || 0)),
+      eventKey: (event) => new MockId(new Uint8Array(event.time || 0)),
     });
     lseq = new LSeqAggregate({
       map,
@@ -47,18 +47,18 @@ describe(LSeqAggregate.name, () => {
       expect(event).toEqual({
         type: LSeqEventType.New,
         payload: { ops: [] },
-        meta: { prev: [], time: 1 },
+        link: [], time: 1,
       } satisfies LSeqEvent<MockId, V>);
     });
 
     it('should return valid event for new set command', async () => {
-      const event = await lseq.command({ type: LSeqCommandType.Update, payload: { add: [VALUE0, VALUE1] }, meta: { id: '123', time: 1 } });
+      const event = await lseq.command({ type: LSeqCommandType.Update, payload: { add: [VALUE0, VALUE1] }, nonce: '123', time: 1 });
       expect(event).toEqual({
         type: LSeqEventType.New,
         payload: {
           ops: [[INDEX0, VALUE0, false], [INDEX1, VALUE1, false]],
         },
-        meta: { prev: [], id: '123', time: 1 },
+        link: [], nonce: '123', time: 1,
       } satisfies LSeqEvent<MockId, V>);
     });
 
@@ -69,7 +69,7 @@ describe(LSeqAggregate.name, () => {
         payload: {
           ops: [[INDEX0, VALUE0, false], [INDEX1, VALUE1, false]]
         },
-        meta: { prev: [], root: ROOT, time: 2 },
+        link: [], root: ROOT, time: 2,
       } satisfies LSeqEvent<MockId, V>);
     });
 
@@ -83,10 +83,8 @@ describe(LSeqAggregate.name, () => {
         payload: {
           ops: [[INDEX0, VALUE1, false, 0, 1], [INDEX4, VALUE3, false]]
         },
-        meta: {
-          prev: [new MockId(new Uint8Array(2)), new MockId(new Uint8Array(5))],
-          root: ROOT, time: 4
-        },
+        link: [new MockId(new Uint8Array(2)), new MockId(new Uint8Array(5))],
+        root: ROOT, time: 4
       } satisfies LSeqEvent<MockId, V>);
     });
 
@@ -97,15 +95,13 @@ describe(LSeqAggregate.name, () => {
         payload: {
           ops: [[INDEX1, VALUE1, false], ['sssssssskkU', VALUE3, false]]
         },
-        meta: {
-          prev: [],
-          root: ROOT, time: 4
-        },
+        link: [],
+        root: ROOT, time: 4
       } satisfies LSeqEvent<MockId, V>);
     });
 
     it('should throw for empty update command', async () => {
-      await expect(() => lseq.command({ type: LSeqCommandType.Update, payload: {}, meta: { root: ROOT, time: 2 } }))
+      await expect(() => lseq.command({ type: LSeqCommandType.Update, payload: {}, root: ROOT, time: 2 }))
         .rejects.toEqual(new TypeError('empty operation'));
     });
   });
@@ -164,7 +160,7 @@ describe(LSeqAggregate.name, () => {
     it('should return error for malformed events', async () => {
       expect(await lseq.validate({
         type: LSeqEventType.Update, payload: { ops: [] },
-        meta: { prev: [], root: ROOT, time: 2 },
+        link: [], root: ROOT, time: 2,
       })).toEqual(new TypeError('empty operation'));
     });
   });
@@ -184,8 +180,8 @@ describe(LSeqAggregate.name, () => {
     });
 
     it('should remove all concurrent values on delete', async () => {
-      const eventRef1 = new MockId(new Uint8Array(CMD_ADD.meta.time));
-      const eventRef2 = new MockId(new Uint8Array(CMD_ADD_CONCURRENT.meta.time));
+      const eventRef1 = new MockId(new Uint8Array(CMD_ADD.time));
+      const eventRef2 = new MockId(new Uint8Array(CMD_ADD_CONCURRENT.time));
 
       await applyCommand();
       const concurrentEvent = await lseq.command(CMD_ADD_CONCURRENT);
@@ -202,7 +198,7 @@ describe(LSeqAggregate.name, () => {
     it('should throw error for malformed events when validate = true', async () => {
       await expect(() => lseq.reduce({
         type: LSeqEventType.Update,
-        payload: { ops: [] }, meta: { prev: [], time: 1 },
+        payload: { ops: [] }, link: [], time: 1,
       })).rejects.toEqual(new TypeError('empty operation'));
     });
   });

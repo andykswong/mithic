@@ -34,7 +34,7 @@ export class IndexedEventStore<
     eventTypeSeparator = DEFAULT_EVENT_TYPE_SEPARATOR,
     getEventMeta,
     setEventTime = (event: V, time: number) => ({
-      ...(event as EventMeta),
+      ...(event as EventMeta<K>),
       time,
     } as V),
   }: IndexedEventStoreOptions<K, V> = {}) {

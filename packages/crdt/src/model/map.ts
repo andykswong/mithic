@@ -2,43 +2,42 @@ import {
   AbortOptions, ContentId, MaybePromise, OperationError, StringEquatable, SyncOrAsyncIterable,
 } from '@mithic/commons';
 import { BTreeMap, MaybeAsyncMapBatch, RangeQueryable } from '@mithic/collections';
-import { AggregateReduceOptions, Aggregate, AggregateQuery } from '../aggregate.js';
+import { Aggregate, AggregateQuery } from '../aggregate.js';
 import { StandardCommand, StandardEvent } from '../event.js';
 import { getEventIndexKey, getFieldNameFromKey, getFieldValueKey, getHeadIndexKey, getPrefixEndKey } from './keys.js';
-import { defaultEventRef } from './defaults.js';
+import { defaultEventKey } from './defaults.js';
 
 /** Abstract map aggregate type. */
-export type MapAggregate<Ref, V> =
-  Aggregate<MapCommand<Ref, V>, MapEvent<Ref, V>, MapQuery<Ref, V>>;
+export type MapAggregate<K, V> = Aggregate<MapCommand<K, V>, MapEvent<K, V>, MapQuery<K, V>, K>;
 
 /** Observed-remove multivalued map. */
 export class ORMap<
-  Ref extends StringEquatable<Ref> = ContentId,
-  V = string | number | boolean | null | Ref
-> implements MapAggregate<Ref, V> {
-  protected readonly eventRef: (event: MapEvent<Ref, V>, options?: AbortOptions) => MaybePromise<Ref>;
-  protected readonly store: MaybeAsyncMapBatch<string, Ref | V | number> & RangeQueryable<string, Ref | V | number>;
+  K extends StringEquatable<K> = ContentId,
+  V = string | number | boolean | null | K
+> implements MapAggregate<K, V> {
+  protected readonly eventRef: (event: MapEvent<K, V>, options?: AbortOptions) => MaybePromise<K>;
+  protected readonly store: MaybeAsyncMapBatch<string, K | V | number> & RangeQueryable<string, K | V | number>;
   protected readonly trackEventTime: boolean;
 
   public constructor({
-    eventRef = defaultEventRef,
+    eventKey: eventRef = defaultEventKey,
     store = new BTreeMap<string, V>(5),
     trackEventTime = false,
-  }: ORMapOptions<Ref, V> = {}) {
+  }: ORMapOptions<K, V> = {}) {
     this.eventRef = eventRef;
     this.store = store;
     this.trackEventTime = trackEventTime;
   }
 
-  public async command(command: MapCommand<Ref, V>, options?: AbortOptions): Promise<MapEvent<Ref, V>> {
-    const rootRef = command.meta?.root;
+  public async command(command: MapCommand<K, V>, options?: AbortOptions): Promise<MapEvent<K, V>> {
+    const rootRef = command.root;
     const rootRefStr = `${rootRef}`;
     const type = rootRef === void 0 ? MapEventType.New : MapEventType.Update;
     const ops: [string, V | null, boolean, ...number[]][] = [];
 
     const entries = command.payload.set || {};
     const fields = [...(command.payload.del || []), ...Object.keys(entries)];
-    const parents: Ref[] = [];
+    const parents: K[] = [];
     const parentsMap: Record<string, number> = {};
 
     let i = 0;
@@ -53,7 +52,7 @@ export class ORMap<
           signal: options?.signal,
         })) {
           const parentRefStr = `${parentRef}`;
-          thisParents.push(parentsMap[parentRefStr] ?? (parents.push(parentRef as Ref) - 1));
+          thisParents.push(parentsMap[parentRefStr] ?? (parents.push(parentRef as K) - 1));
           parentsMap[parentRefStr] = thisParents[thisParents.length - 1];
         }
       }
@@ -73,19 +72,20 @@ export class ORMap<
     return {
       type,
       payload: { ops },
-      meta: { prev: parents, root: rootRef, id: command.meta?.id, time: command.meta?.time }
+      link: parents,
+      root: rootRef,
+      nonce: command?.nonce,
+      time: command?.time
     };
   }
 
-  public async reduce(event: MapEvent<Ref, V>, options?: AggregateReduceOptions): Promise<Ref> {
-    if (options?.validate ?? true) {
-      const error = await this.validate(event, options);
-      if (error) { throw error; }
-    }
+  public async reduce(event: MapEvent<K, V>, options?: AbortOptions): Promise<K> {
+    const error = await this.validate(event, options);
+    if (error) { throw error; }
 
     const eventRef = await this.eventRef(event, options);
     const eventRefStr = `${eventRef}`;
-    const root = event.type === MapEventType.Update ? event.meta?.root as Ref : eventRef;
+    const root = event.type === MapEventType.Update ? event.root as K : eventRef;
     const rootRefStr = `${root}`;
 
     // return early if event found in store
@@ -94,8 +94,8 @@ export class ORMap<
     }
 
     // save event timestamp if enabled
-    const entries: [string, (Ref | V | number)?][] = this.trackEventTime ? [
-      [getEventIndexKey(eventRefStr), event.meta?.time || 0],
+    const entries: [string, (K | V | number)?][] = this.trackEventTime ? [
+      [getEventIndexKey(eventRefStr), event.time || 0],
     ] : [];
 
     // update field values
@@ -107,7 +107,7 @@ export class ORMap<
         );
       }
       for (const parentIndex of parents) {
-        const parentRef = `${event.meta?.prev?.[parentIndex]}`;
+        const parentRef = `${event?.link?.[parentIndex]}`;
         entries.push(
           [getHeadIndexKey(rootRefStr, field, parentRef), void 0],
           [getFieldValueKey(rootRefStr, field, parentRef), void 0]
@@ -122,12 +122,12 @@ export class ORMap<
     return eventRef;
   }
 
-  public async validate(event: MapEvent<Ref, V>, options?: AbortOptions): Promise<Error | undefined> {
+  public async validate(event: MapEvent<K, V>, options?: AbortOptions): Promise<Error | undefined> {
     if (event.type === MapEventType.Update) {
       if (!event.payload.ops.length) {
         return new TypeError('empty operation');
       }
-      if (event.meta?.root === void 0) {
+      if (event?.root === void 0) {
         return new TypeError('missing root');
       }
     }
@@ -136,7 +136,7 @@ export class ORMap<
     for (const [field, _, isDelete, ...parents] of event.payload.ops) {
       let isValid = !!field && (!!parents.length || !isDelete);
       for (const parent of parents) {
-        if (event.meta?.prev?.[parent] === void 0) {
+        if (event.link?.[parent] === void 0) {
           isValid = false;
           break;
         }
@@ -149,15 +149,15 @@ export class ORMap<
     // verify that event parents have been processed
     // this is possible only if we are tracking the event keys along with their timestamps
     if (this.trackEventTime) {
-      const parentKeys = event.meta?.prev?.map((parent) => getEventIndexKey(`${parent}`)) || [];
-      if (event.meta?.root !== void 0) {
-        parentKeys.push(getEventIndexKey(`${event.meta.root}`));
+      const parentKeys = event.link?.map((parent) => getEventIndexKey(`${parent}`)) || [];
+      if (event.root !== void 0) {
+        parentKeys.push(getEventIndexKey(`${event.root}`));
       }
       const missing = [];
       let i = 0;
       for await (const value of this.store.getMany(parentKeys, options)) {
         if (value === void 0) {
-          missing.push(event.meta?.prev?.[i] ?? event.meta?.root);
+          missing.push(event.link?.[i] ?? event.root);
         }
         ++i;
       }
@@ -167,7 +167,7 @@ export class ORMap<
     }
   }
 
-  public async * query(query: MapQuery<Ref, V>, options?: AbortOptions): AsyncIterable<[field: string, value: V]> {
+  public async * query(query: MapQuery<K, V>, options?: AbortOptions): AsyncIterable<[field: string, value: V]> {
     if (query.lww) {
       yield* this.queryLWW(query, options);
     } else {
@@ -176,7 +176,7 @@ export class ORMap<
   }
 
   /** Query map entries and return all concurrent field values. */
-  protected async * queryMV(query: MapQuery<Ref, V>, options?: AbortOptions): AsyncIterable<[string, V]> {
+  protected async * queryMV(query: MapQuery<K, V>, options?: AbortOptions): AsyncIterable<[string, V]> {
     const map = `${query.root}`;
     const limit = query.limit ?? Infinity;
     let currentField: string | undefined;
@@ -202,7 +202,7 @@ export class ORMap<
   }
 
   /** Queries entries by last-write-wins. */
-  protected async * queryLWW(query: MapQuery<Ref, V>, options?: AbortOptions): AsyncIterable<[string, V]> {
+  protected async * queryLWW(query: MapQuery<K, V>, options?: AbortOptions): AsyncIterable<[string, V]> {
     const map = `${query.root}`;
     const limit = query.limit ?? Infinity;
 
@@ -313,7 +313,7 @@ export interface MapQuery<Ref, V> extends AggregateQuery<SyncOrAsyncIterable<[st
 }
 
 /** Command for {@link MapAggregate}. */
-export type MapCommand<Ref, V> = StandardCommand<MapCommandType, MapCommandPayload<V>, Ref>;
+export type MapCommand<K, V> = StandardCommand<MapCommandType, MapCommandPayload<V>, K>;
 
 /** Command payload for {@link MapAggregate}. */
 export interface MapCommandPayload<V> {
@@ -325,7 +325,7 @@ export interface MapCommandPayload<V> {
 }
 
 /** Event for {@link MapAggregate}. */
-export type MapEvent<Ref, V> = StandardEvent<MapEventType, MapEventPayload<V>, Ref>;
+export type MapEvent<K, V> = StandardEvent<MapEventType, MapEventPayload<V>, K>;
 
 /** Event payload for {@link MapAggregate}. */
 export interface MapEventPayload<V> {
@@ -334,12 +334,12 @@ export interface MapEventPayload<V> {
 }
 
 /** Options for creating an {@link ORMap}. */
-export interface ORMapOptions<Ref, V> {
-  /** Gets the reference to event from given event. */
-  readonly eventRef?: (event: MapEvent<Ref, V>, options?: AbortOptions) => MaybePromise<Ref>;
+export interface ORMapOptions<K, V> {
+  /** Gets the key from given event. */
+  readonly eventKey?: (event: MapEvent<K, V>, options?: AbortOptions) => MaybePromise<K>;
 
   /** Backing data store. */
-  readonly store?: MaybeAsyncMapBatch<string, Ref | V | number> & RangeQueryable<string, Ref | V | number>;
+  readonly store?: MaybeAsyncMapBatch<string, K | V | number> & RangeQueryable<string, K | V | number>;
 
   /** Whether to track event createdAt time, which is required for LWW queries. Defaults to `false`. */
   readonly trackEventTime?: boolean;

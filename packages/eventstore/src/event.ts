@@ -1,7 +1,5 @@
-import { ContentId } from '@mithic/commons';
-
 /** Metadata of an event. */
-export interface EventMeta<K = ContentId> {
+export interface EventMeta<K = unknown> {
   /** Event type. */
   readonly type: string;
 

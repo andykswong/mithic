@@ -1,5 +1,5 @@
 import { AbortOptions, ContentId, StringEquatable, SyncOrAsyncIterable } from '@mithic/commons';
-import { AggregateReduceOptions, Aggregate } from '../aggregate.js';
+import { Aggregate } from '../aggregate.js';
 import { StandardCommand, StandardEvent } from '../event.js';
 import { ORMap, MapCommand, MapEvent, MapEventPayload, MapQuery, MapAggregate, MapEventType, MapCommandType } from './map.js';
 import { getFractionalIndices } from './keys.js';
@@ -29,25 +29,25 @@ export class LSeqAggregate<
   }
 
   public async command(command: LSeqCommand<Ref, V>, options?: AbortOptions): Promise<LSeqEvent<Ref, V>> {
-    const type = command.meta?.root === void 0 ? LSeqEventType.New : LSeqEventType.Update;
+    const type = command.root === void 0 ? LSeqEventType.New : LSeqEventType.Update;
     const toDeleteCount = type === LSeqEventType.New ? 0 : command.payload.del || 0;
     const set: Record<string, V> = {};
     const del: string[] = [];
     const mapCmd: MapCommand<Ref, V> = {
+      ...command,
       type: MapCommandType.Update,
       payload: { set, del },
-      meta: command.meta,
     };
 
     const deletedIndices: string[] = [];
     let startIndex = command.payload.index;
     let endIndex;
 
-    if (command.meta?.root) {
+    if (command.root) {
       let currentIndex: string | undefined;
       let indexCount = 0;
       for await (const [index] of this.map.query({
-        root: command.meta.root,
+        root: command.root,
         gte: startIndex,
         limit: toDeleteCount + 1,
       }, options)) {
@@ -83,7 +83,7 @@ export class LSeqAggregate<
     return { ...mapEvent, type };
   }
 
-  public async reduce(event: LSeqEvent<Ref, V>, options?: AggregateReduceOptions): Promise<Ref> {
+  public async reduce(event: LSeqEvent<Ref, V>, options?: AbortOptions): Promise<Ref> {
     const mapEvent = this.toORMapEvent(event);
     return this.map.reduce(mapEvent, options);
   }
