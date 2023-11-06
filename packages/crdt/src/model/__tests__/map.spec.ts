@@ -1,8 +1,8 @@
 import { BTreeMap } from '@mithic/collections';
 import { ERR_DEPENDENCY_MISSING, OperationError } from '@mithic/commons';
 import { ORMap, MapCommand, MapEventType, MapQuery, MapCommandType, MapEvent } from '../map.js';
-import { MockId } from '../../__tests__/mocks.js';
 import { getEventIndexKey, getFieldValueKey, getHeadIndexKey } from '../keys.js';
+import { MockId } from '../../__tests__/mocks.js';
 
 type V = string | number | boolean | null;
 

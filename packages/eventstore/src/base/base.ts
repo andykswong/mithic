@@ -19,8 +19,7 @@ export abstract class BaseMapEventStore<
   }
 
   /** Hook to do extra processing before putting an event value to store. */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  protected prePut(value: V, options?: AbortOptions): MaybePromise<V> {
+  protected prePut(value: V, _options?: AbortOptions): MaybePromise<V> {
     return value;
   }
 

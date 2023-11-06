@@ -1,7 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
-import { ContentId } from '@mithic/commons';
-import { StandardEvent } from '@mithic/cqrs/event';
 import { getEventIndexKey, getEventIndexKeys, getEventIndexRangeQueryOptions, getEventTypePrefixes } from '../indices.js';
+import { EventMeta } from '../../event.js';
 import { MockId } from '../../__tests__/mocks.js';
 
 const ENCODER = new TextEncoder();
@@ -13,15 +12,12 @@ describe(getEventIndexKeys.name, () => {
     const type = 'test';
     const createdAt = 12345;
     const createdAtStr = createdAt.toString(16).padStart(16, '0');
-    const event: StandardEvent<string, unknown, ContentId> = {
+    const event = {
       type,
-      payload: undefined,
-      meta: {
-        prev: [],
-        root,
-        time: createdAt,
-      }
-    };
+      link: [],
+      root,
+      time: createdAt,
+    } satisfies EventMeta<MockId>;
     const expectedKeys = [
       `HT::${createdAtStr}::${key}`,
       `HR::${root}::${createdAtStr}::${key}`,
@@ -42,15 +38,12 @@ describe(getEventIndexKeys.name, () => {
     const type = 'test';
     const createdAt = 12345;
     const createdAtStr = createdAt.toString(16).padStart(16, '0');
-    const event: StandardEvent<string, unknown, ContentId> = {
+    const event = {
       type,
-      payload: undefined,
-      meta: {
-        prev: [],
-        root,
-        time: createdAt
-      }
-    };
+      link: [],
+      root,
+      time: createdAt
+    } satisfies EventMeta<MockId>;
     const expectedKeys = [
       `HT::${createdAtStr}::${key}`,
       `HR::${root}::${createdAtStr}::${key}`,

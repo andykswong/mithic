@@ -2,8 +2,8 @@ import {
   AbortOptions, ContentId, MaybePromise, StringEquatable, SyncOrAsyncIterable
 } from '@mithic/commons';
 import { AggregateReduceOptions, Aggregate, AggregateQuery } from '../aggregate.js';
+import { StandardCommand, StandardEvent } from '../event.js';
 import { ORMap, MapCommand, MapEvent, MapAggregate, MapEventType, MapCommandType } from './map.js';
-import { StandardCommand, StandardEvent } from '@mithic/cqrs';
 
 /** Abstract set aggregate type. */
 export type SetAggregate<Ref, V> =

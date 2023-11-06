@@ -1,8 +1,8 @@
 import { AbortOptions, ContentId, StringEquatable, SyncOrAsyncIterable } from '@mithic/commons';
 import { AggregateReduceOptions, Aggregate } from '../aggregate.js';
+import { StandardCommand, StandardEvent } from '../event.js';
 import { ORMap, MapCommand, MapEvent, MapEventPayload, MapQuery, MapAggregate, MapEventType, MapCommandType } from './map.js';
 import { getFractionalIndices } from './keys.js';
-import { StandardCommand, StandardEvent } from '@mithic/cqrs';
 
 /** Linear sequence of values based on {@link ORMap} of base64 fractional index to values. */
 export class LSeqAggregate<

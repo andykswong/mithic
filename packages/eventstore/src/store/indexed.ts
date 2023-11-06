@@ -3,9 +3,9 @@ import {
   RangeQueryable
 } from '@mithic/collections';
 import { AbortOptions, ContentId, MaybePromise, OperationError, StringEquatable } from '@mithic/commons';
-import { StandardEvent } from '@mithic/cqrs/event';
 import { BaseDagEventStore } from '../base/index.js';
 import { DEFAULT_EVENT_TYPE_SEPARATOR, DEFAULT_KEY_ENCODER, atomicHybridTime } from '../defaults.js';
+import { EventMeta } from '../event.js';
 import { EventStore, EventStoreQueryOptions, EventStoreMetaQueryOptions } from '../store.js';
 import { getEventIndexKeys, getEventIndexRangeQueryOptions } from './indices.js';
 
@@ -32,13 +32,13 @@ export class IndexedEventStore<
     encodeKey = DEFAULT_KEY_ENCODER,
     tick = atomicHybridTime(),
     eventTypeSeparator = DEFAULT_EVENT_TYPE_SEPARATOR,
-    toStandardEvent,
+    getEventMeta,
     setEventTime = (event: V, time: number) => ({
-      ...(event as StandardEvent),
-      meta: { ...(event as StandardEvent).meta, time },
+      ...(event as EventMeta),
+      time,
     } as V),
   }: IndexedEventStoreOptions<K, V> = {}) {
-    super(data, toStandardEvent);
+    super(data, getEventMeta);
     this.index = index;
     this.encodeKey = encodeKey;
     this.setEventTime = setEventTime;
@@ -49,28 +49,33 @@ export class IndexedEventStore<
   protected override async prePut(value: V, options?: AbortOptions): Promise<V> {
     const key = await this.getKey(value);
     const parents = this.currentEventDeps;
-    let latestTime = 0;
 
-    // assign timestamp
-    for (const [, parent] of parents) {
-      const parentEvent = this.toStandardEvent(parent);
-      latestTime = Math.max(latestTime, parentEvent?.meta?.time || 0);
-    }
-    const newValue = this.setEventTime(value, await this.tick(latestTime));
-
-    const event = this.toStandardEvent(newValue);
-    if (!event) {
+    let meta = this.getEventMeta(value);
+    if (!meta) {
       throw new TypeError('invalid event');
     }
 
+    // assign timestamp
+    let newValue = value;
+    let latestTime = 0;
+    for (const [, parent] of parents) {
+      const parentEventMeta = this.getEventMeta(parent);
+      latestTime = Math.max(latestTime, parentEventMeta?.time || 0);
+    }
+    if ((meta.time || 0) < latestTime) {
+      const time = await this.tick(latestTime);
+      newValue = this.setEventTime(value, time);
+      meta = { ...meta, time };
+    }
+
     // update indices
-    const entries = getEventIndexKeys(key, event, false, this.encodeKey, this.eventTypeSeparator)
+    const entries = getEventIndexKeys(key, meta, false, this.encodeKey, this.eventTypeSeparator)
       .map(indexKey => [indexKey, key] as [string, K?]);
 
     if (parents.length) { // remove parents from head indices
       entries.push(...parents
         .flatMap(([key, value]) => {
-          const event = this.toStandardEvent(value);
+          const event = this.getEventMeta(value);
           return event ? getEventIndexKeys(key, event, true, this.encodeKey, this.eventTypeSeparator) : [];
         })
         .map(index => [index, void 0] as [string, K?])
@@ -86,12 +91,14 @@ export class IndexedEventStore<
     return newValue;
   }
 
-  public override async * keys(options?: EventStoreQueryOptions<K> & EventStoreMetaQueryOptions<K>): AsyncGenerator<K, K[]> {
+  public override async * keys(
+    options?: EventStoreQueryOptions<K> & EventStoreMetaQueryOptions<K>
+  ): AsyncGenerator<K, K[]> {
     let sinceTime = 0;
     if (options?.since) {
       for await (const value of this.getMany(options.since, options)) {
-        const event = value && this.toStandardEvent(value);
-        sinceTime = Math.max(sinceTime, event?.meta?.time || 0);
+        const eventMeta = value && this.getEventMeta(value);
+        sinceTime = Math.max(sinceTime, eventMeta?.time || 0);
       }
     }
 
@@ -124,8 +131,8 @@ export interface IndexedEventStoreOptions<K, V> {
   /** Regex to split scoped event type. */
   readonly eventTypeSeparator?: RegExp;
 
-  /** Function to get given event as {@link StandardEvent} format. */
-  readonly toStandardEvent?: (event: V) => StandardEvent<string, unknown, K> | undefined,
+  /** Function to get given event metadata. */
+  readonly getEventMeta?: (event: V) => EventMeta<K> | undefined,
 
   /** Function to set event time and return updated event. */
   readonly setEventTime?: (event: V, time: number) => V,

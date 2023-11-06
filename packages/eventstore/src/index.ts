@@ -1,3 +1,4 @@
+export * from './event.js';
 export * from './replicate.js';
 export * from './store.js';
 

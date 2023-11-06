@@ -1,7 +1,7 @@
 import { ContentId } from '@mithic/commons';
-import { StandardEvent } from '@mithic/cqrs/event';
 import { MultihashDigest, MultibaseEncoder } from 'multiformats';
 import { base64 } from 'multiformats/bases/base64';
+import { EventMeta } from '../event.js';
 
 export class MockId implements ContentId {
   code = 123;
@@ -31,4 +31,8 @@ export class MockId implements ContentId {
   }
 }
 
-export type MockEventType = StandardEvent<string, [i: number, id: MockId], MockId>;
+export interface MockEvent<T = number> extends EventMeta<MockId> {
+  readonly payload: T;
+
+  readonly id: MockId;
+}

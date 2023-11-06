@@ -8,7 +8,6 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js",
-    "./event": "./dist/event.js",
     "./preset": "./dist/preset/index.js"
   },
   "files": [

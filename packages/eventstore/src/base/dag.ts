@@ -2,9 +2,9 @@ import { AppendOnlyAutoKeyMap, AutoKeyMapBatch } from '@mithic/collections';
 import {
   AbortOptions, ContentId, ERR_DEPENDENCY_MISSING, OperationError, StringEquatable, equalsOrSameString
 } from '@mithic/commons';
-import { StandardEvent } from '@mithic/cqrs/event';
-import { EventStore, EventStorePutOptions } from '../store.js';
 import { DEFAULT_BATCH_SIZE } from '../defaults.js';
+import { EventMeta } from '../event.js';
+import { EventStore, EventStorePutOptions } from '../store.js';
 import { BaseMapEventStore } from './base.js';
 
 /**
@@ -23,9 +23,9 @@ export abstract class BaseDagEventStore<
 
   public constructor(
     data: AppendOnlyAutoKeyMap<K, V> & Partial<AutoKeyMapBatch<K, V>>,
-    /** Returns given event as {@link StandardEvent} format. */
-    protected readonly toStandardEvent: (event: V) => StandardEvent<string, unknown, K> | undefined
-      = (event) => event as unknown as StandardEvent<string, unknown, K>,
+    /** Returns given event metadata. */
+    protected readonly getEventMeta: (event: V) => EventMeta<K> | undefined
+      = (event) => event as unknown as EventMeta<K>,
     queryPageSize = DEFAULT_BATCH_SIZE,
   ) {
     super(data, queryPageSize);
@@ -37,17 +37,17 @@ export abstract class BaseDagEventStore<
       return error;
     }
 
-    const event = this.toStandardEvent(value);
-    if (!event) {
+    const meta = this.getEventMeta(value);
+    if (!meta) {
       return new TypeError('invalid event value');
     }
 
     const parents = this.useCache ? this.currentEventDeps : [];
     parents.length = 0;
 
-    const deps = [...event.meta?.prev || [], ...event.meta?.refs || []];
-    const rootId = event.meta?.root;
-    if (!deps.length) {
+    const links = meta.link;
+    const rootId = meta?.root;
+    if (!links?.length) {
       if (rootId !== void 0) { // if specified, root Id must be a dependency
         return new TypeError('missing dependency to root Id');
       }
@@ -60,14 +60,14 @@ export abstract class BaseDagEventStore<
     const missing: K[] = [];
     let hasSameRoot = false;
     let i = 0;
-    for await (const parent of this.getMany(deps, options)) {
-      const key = deps[i++];
+    for await (const parent of this.getMany(links, options)) {
+      const key = links[i++];
       if (!parent) {
         missing.push(key);
         continue;
       }
       parents.push([key, parent]);
-      const parentRootId = this.toStandardEvent(parent)?.meta?.root || key;
+      const parentRootId = this.getEventMeta(parent)?.root || key;
       hasSameRoot = hasSameRoot || (parentRootId !== void 0 && equalsOrSameString(rootId, parentRootId));
     }
 

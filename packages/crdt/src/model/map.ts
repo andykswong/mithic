@@ -3,9 +3,9 @@ import {
 } from '@mithic/commons';
 import { BTreeMap, MaybeAsyncMapBatch, RangeQueryable } from '@mithic/collections';
 import { AggregateReduceOptions, Aggregate, AggregateQuery } from '../aggregate.js';
+import { StandardCommand, StandardEvent } from '../event.js';
 import { getEventIndexKey, getFieldNameFromKey, getFieldValueKey, getHeadIndexKey, getPrefixEndKey } from './keys.js';
 import { defaultEventRef } from './defaults.js';
-import { StandardCommand, StandardEvent } from '../../../cqrs/dist/event.js';
 
 /** Abstract map aggregate type. */
 export type MapAggregate<Ref, V> =

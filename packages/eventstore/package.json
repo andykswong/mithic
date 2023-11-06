@@ -46,8 +46,7 @@
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
     "@mithic/collections": "^0.3",
-    "@mithic/commons": "^0.3",
-    "@mithic/cqrs": "^0.3"
+    "@mithic/commons": "^0.3"
   },
   "optionalDependencies": {
     "multiformats": "^12.0"

@@ -1,5 +1,5 @@
 import { AbortOptions, MaybePromise } from '@mithic/commons';
-import { StandardEvent } from '@mithic/cqrs';
+import { StandardEvent } from './event.js';
 
 /** Aggregate processor type. */
 export interface Aggregate<Command, Event, Query> {

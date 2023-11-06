@@ -12,7 +12,7 @@ export const DEFAULT_BROADCAST_CHANNEL_MESSAGE_BUS_KEEPALIVE_MS = 1000;
 const NUM_KEEPALIVES_TO_WAIT = 3;
 const DEFAULT_TOPIC = 'message';
 
-/** {@link PubSub} implementation using browser BroadcastChannel. */
+/** {@link PeerAwareMessageBus} implementation using browser BroadcastChannel. */
 export class BroadcastChannelMessageBus<Msg = Uint8Array, PeerId extends StringEquatable = string>
   extends TypedEventTarget<PeerEvents<PeerId>>
   implements PeerAwareMessageBus<Msg, PeerId>, Disposable {

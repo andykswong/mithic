@@ -1,8 +1,8 @@
 import { BTreeMap } from '@mithic/collections';
 import { ORSet, SetCommand, SetCommandType, SetEvent, SetEventType, SetQuery } from '../set.js';
-import { MockId } from '../../__tests__/mocks.js';
 import { getFieldValueKey, getHeadIndexKey } from '../keys.js';
 import { ORMap } from '../map.js';
+import { MockId } from '../../__tests__/mocks.js';
 
 type V = string | number | boolean;
 

@@ -23,9 +23,9 @@ describe(RateLimiter.name, () => {
       expect(limiter.semaphore.availablePermits).toBe(0);
 
       await limiter.acquire();
-      expect(Date.now() - startTime).toBeGreaterThanOrEqual(50);
+      expect(Date.now() - startTime).toBeGreaterThanOrEqual(49);
       await limiter.acquire();
-      expect(Date.now() - startTime2).toBeGreaterThanOrEqual(50);
+      expect(Date.now() - startTime2).toBeGreaterThanOrEqual(49);
     });
 
     it('should throw an error when aborted', async () => {

@@ -5,10 +5,10 @@ import {
 import {
   AbortOptions, ContentId, InvalidStateError, OperationError, StringEquatable, SyncOrAsyncIterable, equalsOrSameString
 } from '@mithic/commons';
-import { StandardEvent } from '@mithic/cqrs/event';
 import { BaseDagEventStore } from '../base/index.js';
 import { DEFAULT_BATCH_SIZE } from '../defaults.js';
 import { EventStore, EventStoreQueryOptions, EventStoreMetaQueryOptions } from '../store.js';
+import { EventMeta } from '../event.js';
 
 /** Default decodeKey implementation that uses multiformats as optional dependency. */
 const decodeCID = await (async () => {
@@ -36,9 +36,9 @@ export class DagEventStore<
     encodeKey = (key) => `${key}`,
     decodeKey = decodeCID,
     head = new TransformedSet<K, string, Set<string>>(new Set(), encodeKey, decodeKey),
-    toStandardEvent,
+    getEventMeta,
   }: DagEventStoreOptions<K, V> = {}) {
-    super(data, toStandardEvent);
+    super(data, getEventMeta);
     this.encodeKey = encodeKey;
     this.decodeKey = decodeKey;
     this.headSet = head;
@@ -98,9 +98,9 @@ export class DagEventStore<
 
       // update head set
       heads.set(key, value);
-      const parents = this.toStandardEvent(value)?.meta?.prev;
-      if (parents?.length) {
-        for await (const error of heads.deleteMany(parents, options)) {
+      const links = this.getEventMeta(value)?.link;
+      if (links?.length) {
+        for await (const error of heads.deleteMany(links, options)) {
           if (error) {
             throw new OperationError('failed to update head', { cause: error });
           }
@@ -128,15 +128,14 @@ export class DagEventStore<
 
   protected override async prePut(value: V, options?: AbortOptions): Promise<V> {
     const key = await this.getKey(value);
-    const event = this.toStandardEvent(value);
+    const event = this.getEventMeta(value);
 
     // update head
-    const parents = event?.meta?.prev || [];
-    for await (const error of Batch.updateSetMany(
-      this.headSet,
-      [[key, true], ...parents.map((key) => [key, false] as [K, boolean])],
-      options
-    )) {
+    const changeSet: [K, boolean][] = [
+      [key, true],
+      ...(event?.link?.map((key) => [key, false] as [K, boolean]) || [])
+    ];
+    for await (const error of Batch.updateSetMany(this.headSet, changeSet, options)) {
       if (error) {
         throw new OperationError('failed to update head', { cause: error });
       }
@@ -158,8 +157,8 @@ export class DagEventStore<
         if (value === void 0) {
           continue;
         }
-        const event = this.toStandardEvent(value);
-        if (event === void 0) {
+        const meta = this.getEventMeta(value);
+        if (meta === void 0) {
           continue;
         }
 
@@ -169,19 +168,21 @@ export class DagEventStore<
         if (keyVisited) {
           continue;
         }
-        const parents = event.meta?.prev;
-        if (!options?.head && parents?.length) {
-          for await (const entry of this.predecessors(parents, visited, options)) {
+
+        if (!options?.head && meta?.link?.length) {
+          for await (const entry of this.predecessors(meta.link, visited, options)) {
             yield entry;
             level = Math.max(level, entry[2] + 1);
           }
         }
+
         if (
-          (options?.root === void 0 || equalsOrSameString(options.root, event.meta?.root ?? keyBatch[j])) &&
-          event.type.startsWith(options?.type || '')
+          (options?.root === void 0 || equalsOrSameString(options.root, meta?.root ?? keyBatch[j])) &&
+          meta.type.startsWith(options?.type || '')
         ) {
           yield [keyBatch[j], value, level];
         }
+
         visited.set(keyBatch[j], level, options);
       }
     }
@@ -202,8 +203,8 @@ export interface DagEventStoreOptions<K, V> {
   /** Function to decode event key string. */
   readonly decodeKey?: (key: string) => K;
 
-  /** Function to get given event as {@link StandardEvent} format. */
-  readonly toStandardEvent?: (event: V) => StandardEvent<string, unknown, K> | undefined,
+  /** Function to get given event metadata. */
+  readonly getEventMeta?: (event: V) => EventMeta<K> | undefined,
 }
 
 function* range(length: number): IterableIterator<number> {
