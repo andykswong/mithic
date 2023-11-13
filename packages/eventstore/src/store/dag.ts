@@ -3,7 +3,7 @@ import {
   MaybeAsyncMap, MaybeAsyncReadonlySet, MaybeAsyncSet, MaybeAsyncSetBatch
 } from '@mithic/collections';
 import {
-  AbortOptions, ContentId, InvalidStateError, OperationError, StringEquatable, SyncOrAsyncIterable, equalsOrSameString
+  AbortOptions, Codec, ContentId, InvalidStateError, OperationError, StringEquatable, SyncOrAsyncIterable, equalsOrSameString
 } from '@mithic/commons';
 import { BaseDagEventStore } from '../base/index.js';
 import { DEFAULT_BATCH_SIZE } from '../defaults.js';
@@ -27,20 +27,17 @@ export class DagEventStore<
 > extends BaseDagEventStore<K, V, EventStoreMetaQueryOptions<K>>
   implements EventStore<K, V, EventStoreMetaQueryOptions<K>>, AsyncIterable<[K, V]>
 {
-  protected readonly encodeKey: (key: K) => string;
-  protected readonly decodeKey: (key: string) => K;
+  protected readonly keyCodec: Codec<K, string>;
   protected readonly headSet: MaybeAsyncSet<K> & Partial<MaybeAsyncSetBatch<K>> & SyncOrAsyncIterable<K>;
 
   public constructor({
     data = new ContentAddressedMapStore<K, V>(),
-    encodeKey = (key) => `${key}`,
-    decodeKey = decodeCID,
-    head = new TransformedSet<K, string, Set<string>>(new Set(), encodeKey, decodeKey),
+    keyCodec = { encode: (key) => `${key}`, decode: decodeCID },
+    head = new TransformedSet<K, string, Set<string>>(new Set(), keyCodec),
     getEventMeta,
   }: DagEventStoreOptions<K, V> = {}) {
     super(data, getEventMeta);
-    this.encodeKey = encodeKey;
-    this.decodeKey = decodeKey;
+    this.keyCodec = keyCodec;
     this.headSet = head;
   }
 
@@ -58,9 +55,7 @@ export class DagEventStore<
 
     // TODO: any way to optimize this?
     // build map of visited keys to their levels
-    const visited = new TransformedMap<K, number, string, number, Map<string, number>>(
-      new Map(), { encodeKey: this.encodeKey, decodeKey: this.decodeKey }
-    );
+    const visited = new TransformedMap<K, number, string, number, Map<string, number>>(new Map(), this.keyCodec);
     if (options?.since?.length) {
       for await (const _ of this.predecessors(options.since, visited, options));
     }
@@ -81,12 +76,10 @@ export class DagEventStore<
     const queue = new BinaryHeap<number>(
       range(entries.length),
       (i, j) => (entries[i][2] - entries[j][2]) ||
-        this.encodeKey(entries[i][0]).localeCompare(this.encodeKey(entries[j][0])),
+        this.keyCodec.encode(entries[i][0]).localeCompare(this.keyCodec.encode(entries[j][0])),
       true
     );
-    const heads = new TransformedMap<K, V, string, V, Map<string, V>>(
-      new Map(), { encodeKey: this.encodeKey, decodeKey: this.decodeKey }
-    );
+    const heads = new TransformedMap<K, V, string, V, Map<string, V>>(new Map(), this.keyCodec);
     for (let count = 0, i = queue.shift(); i !== void 0 && count < limit; i = queue.shift()) {
       const [key, value] = entries[i];
 
@@ -197,11 +190,8 @@ export interface DagEventStoreOptions<K, V> {
   /** Head event set. */
   readonly head?: MaybeAsyncSet<K> & Partial<MaybeAsyncSetBatch<K>> & SyncOrAsyncIterable<K>;
 
-  /** Function to encode event key as string. */
-  readonly encodeKey?: (key: K) => string;
-
-  /** Function to decode event key string. */
-  readonly decodeKey?: (key: string) => K;
+  /** Event key to string codec. */
+  readonly keyCodec?: Codec<K, string>;
 
   /** Function to get given event metadata. */
   readonly getEventMeta?: (event: V) => EventMeta<K> | undefined,

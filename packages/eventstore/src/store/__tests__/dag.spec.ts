@@ -19,7 +19,7 @@ describe(DagEventStore.name, () => {
   beforeEach(async () => {
     store = new DagEventStore({
       data: new ContentAddressedMapStore(void 0, (event) => event.id),
-      decodeKey: MockId.parse,
+      keyCodec: { encode: (key) => `${key}`, decode: MockId.parse },
     });
     data = store['data'] as ContentAddressedMapStore<MockId, MockEvent>;
 

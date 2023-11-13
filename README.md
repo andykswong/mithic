@@ -9,12 +9,12 @@
 
 <br/>
 
-> Modular library for real-time, offline-first isomorphic JavaScript applications
+> Modular library for offline-first isomorphic JavaScript applications
 
 <br />
 
 ## Overview
-`mithic` provides the building blocks for creating real-time, offline-first client-server or decentralized applications, using [CQRS](https://en.wikipedia.org/wiki/Command%E2%80%93query_separation) architecture with [CRDT](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type) [eventsourcing](https://en.wikipedia.org/wiki/Event_store) for storage and data replication. Targeted use cases include business web apps, collaborative editing, multiplayer gaming, etc.
+`mithic` provides the building blocks for creating offline-first client-server or decentralized applications, using [CQRS](https://en.wikipedia.org/wiki/Command%E2%80%93query_separation) architecture with [CRDT](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type) [eventsourcing](https://en.wikipedia.org/wiki/Event_store) for storage and data replication. Targeted use cases include business web apps, collaborative editing, multiplayer gaming, etc.
 
 ## Documentation
 See generated TypeDoc: https://andykswong.github.io/mithic/

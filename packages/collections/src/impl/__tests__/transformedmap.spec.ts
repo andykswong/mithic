@@ -4,34 +4,27 @@ import { MaybeAsyncMap } from '../../map.js';
 import { TransformedMap } from '../transformedmap.js';
 import { BTreeMap } from '../btreemap.js';
 import { RangeQueryable } from '../../query.js';
+import { MockKey, MockKeyStringCodec } from '../../__tests__/mocks.js';
 
 type MapType = MaybeAsyncMap<string, string> & Iterable<[string, string]> & RangeQueryable<string, string>;
 
-class Key {
-  public constructor(private readonly value: string) { }
+const FloatStringCodec = {
+  encode: (value: number) => `${value}`,
+  decode: (value: string) => parseFloat(value),
+};
 
-  public toString(): string {
-    return this.value;
-  }
-}
-
-const K1 = new Key('val1')
-const K2 = new Key('val2');
-const K3 = new Key('val3');
+const K1 = new MockKey('val1')
+const K2 = new MockKey('val2');
+const K3 = new MockKey('val3');
 
 describe.each([
   () => new BTreeMap<string, string>(5),
   () => new TransformedMap<string, string, string, string, BTreeMap<string, string>>(new BTreeMap(5))
 ])(TransformedMap.name, (backingMapFactory: () => MapType) => {
-  let map: TransformedMap<Key, number, string, string, MapType>;
+  let map: TransformedMap<MockKey, number, string, string, MapType>;
 
   beforeEach(async () => {
-    map = new TransformedMap(backingMapFactory(), {
-      encodeKey: (key) => key.toString(),
-      decodeKey: (key) => new Key(key),
-      encodeValue: (value) => `${value}`,
-      decodeValue: (value) => parseFloat(value),
-    });
+    map = new TransformedMap(backingMapFactory(), MockKeyStringCodec, FloatStringCodec);
     await map.set(K1, 1);
     await map.set(K2, 2);
   });
@@ -85,7 +78,7 @@ describe.each([
         expect(error).toBeUndefined();
       }
       const results = [];
-      for await (const result of map.getMany([K1, K2, K3, new Key('val4')])) {
+      for await (const result of map.getMany([K1, K2, K3, new MockKey('val4')])) {
         results.push(result);
       }
       expect(results).toEqual([value1, 2, value3, undefined]);
@@ -103,7 +96,7 @@ describe.each([
       }
       expect(results).toEqual([
         new OperationError(`failed to set key`, { detail: K1, cause }),
-        new OperationError(`failed to set key`,  { detail: K3, cause }),
+        new OperationError(`failed to set key`, { detail: K3, cause }),
       ])
     });
   });
@@ -129,7 +122,7 @@ describe.each([
       }
       expect(results).toEqual([
         new OperationError(`failed to delete key`, { detail: K1, cause }),
-        new OperationError(`failed to delete key`,  { detail: K2, cause }),
+        new OperationError(`failed to delete key`, { detail: K2, cause }),
       ])
     });
   });
@@ -159,7 +152,7 @@ describe.each([
       }
       expect(results).toEqual([
         new OperationError(`failed to update key`, { detail: K1, cause }),
-        new OperationError(`failed to update key`,  { detail: K2, cause }),
+        new OperationError(`failed to update key`, { detail: K2, cause }),
       ])
     });
   });

@@ -5,7 +5,7 @@ import { AutoKeyMap, AutoKeyMapBatch, MaybeAsyncMap, MaybeAsyncMapBatch } from '
 import { deleteMany, getMany, hasMany, setMany } from '../utils/batch.js';
 import { TransformedMap } from './transformedmap.js';
 
-/** Default CID-based key generation implementation that uses multiformats as optional dependency. */
+/** Default CID-based key implementation that uses multiformats as optional dependency. */
 const [cidHash, decodeCID] = await (async () => {
   try {
     const { CID } = await import('multiformats');
@@ -42,12 +42,12 @@ export class ContentAddressedMapStore<
   public constructor(
     /** The underlying map. */
     public readonly map: M =
-      new TransformedMap<Id, T, string, T, Map<string, T>>(new Map(), {
-        encodeKey: (key) => `${key}`,
-        decodeKey: decodeCID,
-      }) as unknown as M,
+      new TransformedMap<Id, T, string, T, Map<string, T>>(
+        new Map(),
+        { encode: (key) => `${key}`, decode: decodeCID }
+      ) as unknown as M,
     /** Hash function to use for generating keys for values. */
-    protected readonly hash: (value: T) => MaybePromise<Id> = cidHash
+    public readonly getKey: (value: T) => MaybePromise<Id> = cidHash
   ) {
     this[Symbol.iterator] = (Symbol.iterator in map && (() => (map as Iterable<[Id, T]>)[Symbol.iterator]())) as
       M extends Iterable<[Id, T]> ? () => IterableIterator<[Id, T]> : undefined;
@@ -69,10 +69,6 @@ export class ContentAddressedMapStore<
 
   public get(key: Id, options?: AbortOptions): MaybePromise<T | undefined> {
     return this.map.get(key, options);
-  }
-
-  public getKey(value: T): MaybePromise<Id> {
-    return this.hash(value);
   }
 
   public has(key: Id, options?: AbortOptions): MaybePromise<boolean> {

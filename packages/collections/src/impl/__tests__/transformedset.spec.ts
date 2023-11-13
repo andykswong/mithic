@@ -3,29 +3,22 @@ import { OperationError } from '@mithic/commons';
 import { MaybeAsyncSet } from '../../set.js';
 import { TransformedSet } from '../transformedset.js';
 import { RangeQueryable } from '../../query.js';
+import { MockKey, MockKeyStringCodec } from '../../__tests__/mocks.js';
 
 type SetType = MaybeAsyncSet<string> & Iterable<string> & RangeQueryable<string, string>;
 
-class Key {
-  public constructor(private readonly value: string) { }
-
-  public toString(): string {
-    return this.value;
-  }
-}
-
-const K1 = new Key('val1')
-const K2 = new Key('val2');
-const K3 = new Key('val3');
+const K1 = new MockKey('val1')
+const K2 = new MockKey('val2');
+const K3 = new MockKey('val3');
 
 describe.each([
   () => new Set<string>(),
   () => new TransformedSet<string, string, Set<string>>(new Set())
 ])(TransformedSet.name, (backingSetFactory: () => SetType) => {
-  let set: TransformedSet<Key, string, SetType>;
+  let set: TransformedSet<MockKey, string, SetType>;
 
   beforeEach(() => {
-    set = new TransformedSet(backingSetFactory(), (k) => k.toString(), (k) => new Key(k));
+    set = new TransformedSet(backingSetFactory(), MockKeyStringCodec);
     set.add(K1);
     set.add(K2);
   });
@@ -91,7 +84,7 @@ describe.each([
       }
       expect(results).toEqual([
         new OperationError(`failed to add key`, { detail: K1, cause }),
-        new OperationError(`failed to add key`,  { detail: K2, cause }),
+        new OperationError(`failed to add key`, { detail: K2, cause }),
       ])
     });
   });
@@ -117,7 +110,7 @@ describe.each([
       }
       expect(results).toEqual([
         new OperationError(`failed to delete key`, { detail: K1, cause }),
-        new OperationError(`failed to delete key`,  { detail: K2, cause }),
+        new OperationError(`failed to delete key`, { detail: K2, cause }),
       ])
     });
   });
@@ -144,7 +137,7 @@ describe.each([
       }
       expect(results).toEqual([
         new OperationError(`failed to update key`, { detail: K1, cause }),
-        new OperationError(`failed to update key`,  { detail: K3, cause }),
+        new OperationError(`failed to update key`, { detail: K3, cause }),
       ])
     });
   });

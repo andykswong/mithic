@@ -1,12 +1,12 @@
 import { AutoKeyMap, AutoKeyMapBatch } from '@mithic/collections';
-import { AbortOptions, CodedError, MaybePromise, OperationError } from '@mithic/commons';
+import { AbortOptions, CodedError, ContentId, MaybePromise, OperationError } from '@mithic/commons';
 import { Blockstore } from 'interface-blockstore';
 import { BlockCodec, CID, MultihashHasher } from 'multiformats';
 import { sha256 } from 'multiformats/hashes/sha2';
 
 /** A distributed {@link AutoKeyMap} based on {@link Blockstore}. */
 export class BlockstoreMap<T = Uint8Array>
-  implements AutoKeyMap<CID, T>, AutoKeyMapBatch<CID, T>
+  implements AutoKeyMap<ContentId, T>, AutoKeyMapBatch<ContentId, T>
 {
   public constructor(
     /** {@link Blockstore} instance. */
@@ -25,16 +25,16 @@ export class BlockstoreMap<T = Uint8Array>
     );
   }
 
-  public get(key: CID, options?: AbortOptions): MaybePromise<T | undefined> {
+  public get(key: ContentId, options?: AbortOptions): MaybePromise<T | undefined> {
     try {
-      return MaybePromise.map(this.store.get(key, options), this.codec.decode);
+      return MaybePromise.map(this.store.get(this.asCID(key), options), this.codec.decode);
     } catch (err) {
       mapGetError(err);
     }
   }
 
-  public has(key: CID, options?: AbortOptions): MaybePromise<boolean> {
-    return MaybePromise.map(this.get(key, options), isDefined);
+  public has(key: ContentId, options?: AbortOptions): MaybePromise<boolean> {
+    return MaybePromise.map(this.get(this.asCID(key), options), isDefined);
   }
 
   public put(value: T, options?: AbortOptions): MaybePromise<CID> {
@@ -45,24 +45,24 @@ export class BlockstoreMap<T = Uint8Array>
     );
   }
 
-  public delete(cid: CID, options?: AbortOptions): MaybePromise<void> {
-    return this.store.delete(cid, options);
+  public delete(key: ContentId, options?: AbortOptions): MaybePromise<void> {
+    return this.store.delete(this.asCID(key), options);
   }
 
-  public async * getMany(keys: Iterable<CID>, options?: AbortOptions): AsyncIterableIterator<T | undefined> {
+  public async * getMany(keys: Iterable<ContentId>, options?: AbortOptions): AsyncIterableIterator<T | undefined> {
     for (const key of keys) {
       yield this.get(key, options);
     }
   }
 
-  public async * hasMany(keys: Iterable<CID>, options?: AbortOptions): AsyncIterableIterator<boolean> {
+  public async * hasMany(keys: Iterable<ContentId>, options?: AbortOptions): AsyncIterableIterator<boolean> {
     for await (const value of this.getMany(keys, options)) {
       yield value !== void 0;
     }
   }
 
-  public async * deleteMany(keys: Iterable<CID>, options?: AbortOptions): AsyncIterableIterator<Error | undefined> {
-    for await (const _ of this.store.deleteMany(keys, options)) {
+  public async * deleteMany(keys: Iterable<ContentId>, options?: AbortOptions): AsyncIterableIterator<Error | undefined> {
+    for await (const _ of this.store.deleteMany([...keys].map(this.asCID), options)) {
       yield;
     }
   }
@@ -86,6 +86,10 @@ export class BlockstoreMap<T = Uint8Array>
   public get [Symbol.toStringTag](): string {
     return BlockstoreMap.name;
   }
+
+  protected asCID = (key: ContentId): CID => {
+    return CID.create(1, key.code, { ...key.multihash, size: key.multihash.digest.byteLength });
+  };
 }
 
 function mapGetError(err: unknown): void {

@@ -1,3 +1,4 @@
+import { Encoder } from './codec.js';
 import { Equal, ToString } from './equal.js';
 
 /** A content hash ID. */
@@ -36,10 +37,10 @@ export interface MultihashDigest<Code extends number = number> {
 }
 
 /** Encodes bytes into multibase of a specific encoding. */
-export interface MultibaseEncoder<Prefix extends string> {
+export interface MultibaseEncoder<Prefix extends string> extends Encoder<Uint8Array, string> {
   /** Prefix character for that base encoding. */
   prefix: Prefix;
 
   /** Encodes binary data into **multibase** string (which will have a prefix added). */
-  encode: (bytes: Uint8Array) => string;
+  encode(bytes: Uint8Array): string;
 }

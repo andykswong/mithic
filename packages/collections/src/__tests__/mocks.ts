@@ -1,3 +1,5 @@
+import { Codec } from '@mithic/commons';
+
 export class MockStorage implements Storage {
   data = new Map<string, string>();
 
@@ -31,3 +33,20 @@ export class MockStorage implements Storage {
     this.data.set(key, value);
   }
 }
+
+export class MockKey {
+  public constructor(private readonly value: string) { }
+
+  public toString(): string {
+    return this.value;
+  }
+}
+
+export const MockKeyStringCodec: Codec<MockKey, string> = {
+  encode(key: MockKey): string {
+    return key.toString();
+  },
+  decode(value: string): MockKey {
+    return new MockKey(value);
+  }
+};
