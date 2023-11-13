@@ -32,7 +32,7 @@
 <ul class="tsd-hierarchy">
 <li><span class="target">DagEventStoreOptions</span></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b78cbb4/packages/eventstore/src/store/dag.ts#L193">eventstore/src/store/dag.ts:193</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/eventstore/src/store/dag.ts#L186">eventstore/src/store/dag.ts:186</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-index-accordion" open><summary class="tsd-accordion-summary tsd-index-summary">
@@ -41,10 +41,9 @@
 <section class="tsd-index-section">
 <h3 class="tsd-index-heading">Properties</h3>
 <div class="tsd-index-list"><a href="_mithic_eventstore.DagEventStoreOptions.html#data" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>data?</span></a>
-<a href="_mithic_eventstore.DagEventStoreOptions.html#decodeKey" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>decode<wbr/>Key?</span></a>
-<a href="_mithic_eventstore.DagEventStoreOptions.html#encodeKey" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>encode<wbr/>Key?</span></a>
 <a href="_mithic_eventstore.DagEventStoreOptions.html#getEventMeta" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>get<wbr/>Event<wbr/>Meta?</span></a>
 <a href="_mithic_eventstore.DagEventStoreOptions.html#head" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>head?</span></a>
+<a href="_mithic_eventstore.DagEventStoreOptions.html#keyCodec" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>key<wbr/>Codec?</span></a>
 </div></section></div></details></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Properties</h2>
@@ -55,49 +54,7 @@
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b78cbb4/packages/eventstore/src/store/dag.ts#L195">eventstore/src/store/dag.ts:195</a></li></ul></aside></section>
-<section class="tsd-panel tsd-member"><a id="decodeKey" class="tsd-anchor"></a>
-<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>decode<wbr/>Key</span><a href="#decodeKey" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">decode<wbr/>Key</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">key</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">)</span></div>
-<div class="tsd-type-declaration">
-<h4>Type declaration</h4>
-<ul class="tsd-parameters">
-<li class="tsd-parameter-signature">
-<ul class="tsd-signatures">
-<li class="tsd-signature" id="decodeKey.__type.__type-1"><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">key</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type tsd-kind-type-parameter">K</span></li>
-<li class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>Function to decode event key string.</p>
-</div>
-<div class="tsd-parameters">
-<h4 class="tsd-parameters-title">Parameters</h4>
-<ul class="tsd-parameter-list">
-<li>
-<h5><span class="tsd-kind-parameter">key</span>: <span class="tsd-signature-type">string</span></h5></li></ul></div>
-<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type tsd-kind-type-parameter">K</span></h4>
-<div class="tsd-comment tsd-typography"></div></li></ul></li></ul></div><aside class="tsd-sources">
-<ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b78cbb4/packages/eventstore/src/store/dag.ts#L204">eventstore/src/store/dag.ts:204</a></li></ul></aside></section>
-<section class="tsd-panel tsd-member"><a id="encodeKey" class="tsd-anchor"></a>
-<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>encode<wbr/>Key</span><a href="#encodeKey" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">encode<wbr/>Key</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">key</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span></div>
-<div class="tsd-type-declaration">
-<h4>Type declaration</h4>
-<ul class="tsd-parameters">
-<li class="tsd-parameter-signature">
-<ul class="tsd-signatures">
-<li class="tsd-signature" id="encodeKey.__type-2.__type-3"><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">key</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">string</span></li>
-<li class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>Function to encode event key as string.</p>
-</div>
-<div class="tsd-parameters">
-<h4 class="tsd-parameters-title">Parameters</h4>
-<ul class="tsd-parameter-list">
-<li>
-<h5><span class="tsd-kind-parameter">key</span>: <span class="tsd-signature-type tsd-kind-type-parameter">K</span></h5></li></ul></div>
-<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span></h4>
-<div class="tsd-comment tsd-typography"></div></li></ul></li></ul></div><aside class="tsd-sources">
-<ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b78cbb4/packages/eventstore/src/store/dag.ts#L201">eventstore/src/store/dag.ts:201</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/eventstore/src/store/dag.ts#L188">eventstore/src/store/dag.ts:188</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="getEventMeta" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>get<wbr/>Event<wbr/>Meta</span><a href="#getEventMeta" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">get<wbr/>Event<wbr/>Meta</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">event</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><a href="_mithic_eventstore.EventMeta.html" class="tsd-signature-type tsd-kind-interface">EventMeta</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">)</span></div>
@@ -106,7 +63,7 @@
 <ul class="tsd-parameters">
 <li class="tsd-parameter-signature">
 <ul class="tsd-signatures">
-<li class="tsd-signature" id="getEventMeta.__type-4.__type-5"><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">event</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><a href="_mithic_eventstore.EventMeta.html" class="tsd-signature-type tsd-kind-interface">EventMeta</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span></li>
+<li class="tsd-signature" id="getEventMeta.__type.__type-1"><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">event</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><a href="_mithic_eventstore.EventMeta.html" class="tsd-signature-type tsd-kind-interface">EventMeta</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span></li>
 <li class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Function to get given event metadata.</p>
 </div>
@@ -118,7 +75,7 @@
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><a href="_mithic_eventstore.EventMeta.html" class="tsd-signature-type tsd-kind-interface">EventMeta</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span></h4>
 <div class="tsd-comment tsd-typography"></div></li></ul></li></ul></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b78cbb4/packages/eventstore/src/store/dag.ts#L207">eventstore/src/store/dag.ts:207</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/eventstore/src/store/dag.ts#L197">eventstore/src/store/dag.ts:197</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="head" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>head</span><a href="#head" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">head</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">Object</span></div>
@@ -126,7 +83,15 @@
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/b78cbb4/packages/eventstore/src/store/dag.ts#L198">eventstore/src/store/dag.ts:198</a></li></ul></aside></section></section></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/eventstore/src/store/dag.ts#L191">eventstore/src/store/dag.ts:191</a></li></ul></aside></section>
+<section class="tsd-panel tsd-member"><a id="keyCodec" class="tsd-anchor"></a>
+<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>key<wbr/>Codec</span><a href="#keyCodec" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">key<wbr/>Codec</span><span class="tsd-signature-symbol">?:</span> <a href="_mithic_commons.Codec.html" class="tsd-signature-type tsd-kind-interface">Codec</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span></div>
+<div class="tsd-comment tsd-typography"><p>Event key to string codec.</p>
+</div>
+<div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/eventstore/src/store/dag.ts#L194">eventstore/src/store/dag.ts:194</a></li></ul></aside></section></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
@@ -147,10 +112,9 @@
 <div class="tsd-accordion-details">
 <ul>
 <li><a href="#data" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>data</span></a></li>
-<li><a href="#decodeKey" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>decode<wbr/>Key</span></a></li>
-<li><a href="#encodeKey" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>encode<wbr/>Key</span></a></li>
 <li><a href="#getEventMeta" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>get<wbr/>Event<wbr/>Meta</span></a></li>
-<li><a href="#head" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>head</span></a></li></ul></div></details></div>
+<li><a href="#head" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>head</span></a></li>
+<li><a href="#keyCodec" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>key<wbr/>Codec</span></a></li></ul></div></details></div>
 <div class="site-menu">
 <nav class="tsd-navigation"><a href="../index.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1"></use></svg><span>mithic - v0.3.0</span></a>
 <ul class="tsd-small-nested-navigation" id="tsd-nav-container" data-base="..">
