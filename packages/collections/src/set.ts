@@ -43,6 +43,8 @@ export interface MaybeAsyncSetUpdateBatch<T> {
 }
 
 /** Batch APIs for a {@link MaybeAsyncSet}. */
-export interface MaybeAsyncSetBatch<T> extends MaybeAsyncReadonlySetBatch<T>, MaybeAsyncSetAddBatch<T>,
-  MaybeAsyncSetDeleteBatch<T>, MaybeAsyncSetUpdateBatch<T> {
-}
+export interface MaybeAsyncSetBatch<T> extends MaybeAsyncAppendOnlySetBatch<T>,
+  MaybeAsyncSetDeleteBatch<T>, MaybeAsyncSetUpdateBatch<T> { }
+
+/** Append-only Batch APIs for a {@link MaybeAsyncSet}. */
+export interface MaybeAsyncAppendOnlySetBatch<T> extends MaybeAsyncSetAddBatch<T>, MaybeAsyncReadonlySetBatch<T> { }

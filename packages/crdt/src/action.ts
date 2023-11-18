@@ -11,9 +11,6 @@ export interface StandardAction<A extends string = string, T = unknown, K = unkn
 
   /** Unique value associated with this action. */
   readonly nonce?: string;
-
-  /** Issue time of the event. */
-  readonly time?: number;
 }
 
 /** Standard aggregate command. */

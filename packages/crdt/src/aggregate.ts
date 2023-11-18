@@ -1,18 +1,24 @@
 import { AbortOptions, MaybePromise } from '@mithic/commons';
 
-/** Aggregate processor type. */
-export interface Aggregate<Command, Event, Query, K = unknown> {
-  /** Queries the state of this {@link Aggregate}. */
-  query(query: Query, options?: AbortOptions): AggregateQueryResult<Query>;
-
+/** Aggregate command haler. */
+export interface AggregateCommandHandler<Store, Command, Event> {
   /** Handles a command and produces an event. */
-  command(command: Command, options?: AbortOptions): MaybePromise<Event>;
+  handle(store: Store, command: Command, options?: AbortOptions): MaybePromise<Event | undefined>;
+}
 
-  /** Applies given event. */
-  reduce(event: Event, options?: AbortOptions): MaybePromise<K>;
+/** Aggregate state projection. */
+export interface AggregateProjection<Store, Event> {
+  /** Applies an event to state. */
+  reduce(store: Store, event: Event, options?: AbortOptions): MaybePromise<Store>;
 
-  /** Validates given event and returns any error. */
-  validate(event: Event, options?: AbortOptions): MaybePromise<Error | undefined>;
+  /** Validates an event and returns any error. */
+  validate(store: Store, event: Event, options?: AbortOptions): MaybePromise<Error | undefined>;
+}
+
+/** Aggregate state query resolver. */
+export interface AggregateQueryResolver<Store, Query> {
+  /** Resolves query to current state. */
+  resolve(store: Store, query: Query, options?: AbortOptions): AggregateQueryResult<Query>;
 }
 
 declare const ResultMarker: unique symbol;
@@ -24,5 +30,4 @@ export interface AggregateQuery<Result = unknown> {
 }
 
 /** Aggregate query result type. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type AggregateQueryResult<Query> = Query extends AggregateQuery<infer Result> ? Result : any;
+export type AggregateQueryResult<Query> = Query extends AggregateQuery<infer Result> ? Result : unknown;
