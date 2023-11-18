@@ -36,7 +36,7 @@
 <ul class="tsd-hierarchy">
 <li><span class="target">StandardEvent</span></li></ul></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/crdt/src/event.ts#L24">event.ts:24</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/crdt/src/action.ts#L21">crdt/src/action.ts:21</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-index-accordion" open><summary class="tsd-accordion-summary tsd-index-summary">
@@ -48,7 +48,6 @@
 <a href="_mithic_crdt.StandardEvent.html#nonce" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>nonce?</span></a>
 <a href="_mithic_crdt.StandardEvent.html#payload" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>payload</span></a>
 <a href="_mithic_crdt.StandardEvent.html#root" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>root?</span></a>
-<a href="_mithic_crdt.StandardEvent.html#time" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>time?</span></a>
 <a href="_mithic_crdt.StandardEvent.html#type" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>type</span></a>
 </div></section></div></details></section></section>
 <section class="tsd-panel-group tsd-member-group">
@@ -60,7 +59,7 @@
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/crdt/src/event.ts#L26">event.ts:26</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/crdt/src/action.ts#L23">crdt/src/action.ts:23</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="nonce" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>nonce</span><a href="#nonce" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">nonce</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
@@ -69,7 +68,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_crdt.StandardAction.html">StandardAction</a>.<a href="_mithic_crdt.StandardAction.html#nonce">nonce</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/crdt/src/event.ts#L13">event.ts:13</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/crdt/src/action.ts#L13">crdt/src/action.ts:13</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="payload" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagReadonly">Readonly</code> <span>payload</span><a href="#payload" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">payload</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type tsd-kind-type-parameter">T</span></div>
@@ -78,7 +77,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_crdt.StandardAction.html">StandardAction</a>.<a href="_mithic_crdt.StandardAction.html#payload">payload</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/crdt/src/event.ts#L7">event.ts:7</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/crdt/src/action.ts#L7">crdt/src/action.ts:7</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="root" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>root</span><a href="#root" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">root</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type tsd-kind-type-parameter">K</span></div>
@@ -87,16 +86,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_crdt.StandardAction.html">StandardAction</a>.<a href="_mithic_crdt.StandardAction.html#root">root</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/crdt/src/event.ts#L10">event.ts:10</a></li></ul></aside></section>
-<section class="tsd-panel tsd-member tsd-is-inherited"><a id="time" class="tsd-anchor"></a>
-<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>time</span><a href="#time" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">time</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
-<div class="tsd-comment tsd-typography"><p>Issue time of the event.</p>
-</div>
-<div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Inherited from <a href="_mithic_crdt.StandardAction.html">StandardAction</a>.<a href="_mithic_crdt.StandardAction.html#time">time</a></p>
-<ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/crdt/src/event.ts#L16">event.ts:16</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/crdt/src/action.ts#L10">crdt/src/action.ts:10</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="type" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagReadonly">Readonly</code> <span>type</span><a href="#type" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">type</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type tsd-kind-type-parameter">A</span></div>
@@ -105,7 +95,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_crdt.StandardAction.html">StandardAction</a>.<a href="_mithic_crdt.StandardAction.html#type">type</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/crdt/src/event.ts#L4">event.ts:4</a></li></ul></aside></section></section></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/crdt/src/action.ts#L4">crdt/src/action.ts:4</a></li></ul></aside></section></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
@@ -129,7 +119,6 @@
 <li><a href="#nonce" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>nonce</span></a></li>
 <li><a href="#payload" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>payload</span></a></li>
 <li><a href="#root" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>root</span></a></li>
-<li><a href="#time" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>time</span></a></li>
 <li><a href="#type" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>type</span></a></li></ul></div></details></div>
 <div class="site-menu">
 <nav class="tsd-navigation"><a href="../index.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1"></use></svg><span>mithic - v0.3.0</span></a>

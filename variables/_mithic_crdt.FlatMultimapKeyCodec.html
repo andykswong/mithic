@@ -1,4 +1,4 @@
-<!DOCTYPE html><html class="default" lang="en"><head><meta charSet="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>LSeqEvent | mithic - v0.3.0</title><meta name="description" content="Documentation for mithic"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os"</script><header class="tsd-page-toolbar">
+<!DOCTYPE html><html class="default" lang="en"><head><meta charSet="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>FlatMultimapKeyCodec | mithic - v0.3.0</title><meta name="description" content="Documentation for mithic"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os"</script><header class="tsd-page-toolbar">
 <div class="tsd-toolbar-contents container">
 <div class="table-cell" id="tsd-search" data-base="..">
 <div class="field"><label for="tsd-search-field" class="tsd-widget tsd-toolbar-icon search no-caption"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><use href="#icon-search"></use></svg></label><input type="text" id="tsd-search-field" aria-label="Search"/></div>
@@ -14,21 +14,66 @@
 <ul class="tsd-breadcrumb">
 <li><a href="../index.html">mithic</a></li>
 <li><a href="../modules/_mithic_crdt.html">@mithic/crdt</a></li>
-<li><a href="_mithic_crdt.LSeqEvent.html">LSeqEvent</a></li></ul>
-<h1>Type alias LSeqEvent&lt;Ref, V&gt;</h1></div>
-<div class="tsd-signature"><span class="tsd-kind-type-alias">LSeq<wbr/>Event</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">Ref</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">V</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/_mithic_crdt.StandardEvent.html" class="tsd-signature-type tsd-kind-interface">StandardEvent</a><span class="tsd-signature-symbol">&lt;</span><a href="../enums/_mithic_crdt.LSeqEventType.html" class="tsd-signature-type tsd-kind-enum">LSeqEventType</a><span class="tsd-signature-symbol">, </span><a href="../interfaces/_mithic_crdt.MapEventPayload.html" class="tsd-signature-type tsd-kind-interface">MapEventPayload</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">V</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">Ref</span><span class="tsd-signature-symbol">&gt;</span></div>
-<div class="tsd-comment tsd-typography"><p>Event for <a href="../classes/_mithic_crdt.LSeqAggregate.html" class="tsd-kind-class">LSeqAggregate</a>.</p>
+<li><a href="_mithic_crdt.FlatMultimapKeyCodec.html">FlatMultimapKeyCodec</a></li></ul>
+<h1>Variable FlatMultimapKeyCodec<code class="tsd-tag ts-flagConst">Const</code> </h1></div>
+<div class="tsd-signature"><span class="tsd-kind-variable">Flat<wbr/>Multimap<wbr/>Key<wbr/>Codec</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">{ </span><br/><span>    </span><span class="tsd-kind-property">separator</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">&quot;􏿿&quot;</span><span class="tsd-signature-symbol">; </span><br/><span>    </span><span class="tsd-kind-property">terminal</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">&quot;􏿿&quot;</span><span class="tsd-signature-symbol">; </span><br/><span>    </span><span class="tsd-kind-call-signature">decode</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">key</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><a href="../types/_mithic_crdt.MultimapKey.html" class="tsd-signature-type tsd-kind-type-alias">MultimapKey</a><span class="tsd-signature-symbol">&lt;</span><a href="../interfaces/_mithic_commons.ContentId.html" class="tsd-signature-type tsd-kind-interface">ContentId</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">; </span><br/><span>    </span><span class="tsd-kind-call-signature">encode</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">key</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">; </span><br/><span>    </span><span class="tsd-kind-call-signature">encodeRange</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><a href="../interfaces/_mithic_collections.KeyRange.html" class="tsd-signature-type tsd-kind-interface">KeyRange</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">; </span><br/><span class="tsd-signature-symbol">}</span><span class="tsd-signature-symbol"> = ...</span></div>
+<div class="tsd-comment tsd-typography"><p>Flat multimap CID-based key codec.</p>
 </div>
-<section class="tsd-panel">
-<h4>Type Parameters</h4>
-<ul class="tsd-type-parameter-list">
+<div class="tsd-type-declaration">
+<h4>Type declaration</h4>
+<ul class="tsd-parameters">
+<li class="tsd-parameter">
+<h5><span class="tsd-kind-property">separator</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">&quot;􏿿&quot;</span></h5>
+<div class="tsd-comment tsd-typography"><p>Key component separator pattern.</p>
+</div>
+<div class="tsd-comment tsd-typography"></div></li>
+<li class="tsd-parameter">
+<h5><span class="tsd-kind-property">terminal</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">&quot;􏿿&quot;</span></h5>
+<div class="tsd-comment tsd-typography"><p>Max character.</p>
+</div>
+<div class="tsd-comment tsd-typography"></div></li>
+<li class="tsd-parameter">
+<h5><span class="tsd-kind-method">decode</span><span class="tsd-signature-symbol">:</span>function</h5>
+<ul class="tsd-signatures">
+<li class="tsd-signature tsd-anchor-link" id="__type.decode.decode-1"><span class="tsd-kind-call-signature">decode</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">key</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../types/_mithic_crdt.MultimapKey.html" class="tsd-signature-type tsd-kind-type-alias">MultimapKey</a><span class="tsd-signature-symbol">&lt;</span><a href="../interfaces/_mithic_commons.ContentId.html" class="tsd-signature-type tsd-kind-interface">ContentId</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span><a href="#__type.decode.decode-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
+<li class="tsd-description">
+<div class="tsd-parameters">
+<h4 class="tsd-parameters-title">Parameters</h4>
+<ul class="tsd-parameter-list">
 <li>
-<h4><span class="tsd-kind-type-parameter">Ref</span></h4></li>
+<h5><span class="tsd-kind-parameter">key</span>: <span class="tsd-signature-type">string</span></h5></li></ul></div>
+<h4 class="tsd-returns-title">Returns <a href="../types/_mithic_crdt.MultimapKey.html" class="tsd-signature-type tsd-kind-type-alias">MultimapKey</a><span class="tsd-signature-symbol">&lt;</span><a href="../interfaces/_mithic_commons.ContentId.html" class="tsd-signature-type tsd-kind-interface">ContentId</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/crdt/src/map/store.ts#L56">crdt/src/map/store.ts:56</a></li></ul></aside></li></ul></li>
+<li class="tsd-parameter">
+<h5><span class="tsd-kind-method">encode</span><span class="tsd-signature-symbol">:</span>function</h5>
+<ul class="tsd-signatures">
+<li class="tsd-signature tsd-anchor-link" id="__type.encode.encode-1"><span class="tsd-kind-call-signature">encode</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">key</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">string</span><a href="#__type.encode.encode-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
+<li class="tsd-description">
+<div class="tsd-parameters">
+<h4 class="tsd-parameters-title">Parameters</h4>
+<ul class="tsd-parameter-list">
 <li>
-<h4><span class="tsd-kind-type-parameter">V</span></h4></li></ul></section>
+<h5><span class="tsd-kind-parameter">key</span>: <a href="../types/_mithic_crdt.MultimapKey.html" class="tsd-signature-type tsd-kind-type-alias">MultimapKey</a><span class="tsd-signature-symbol">&lt;</span><a href="../interfaces/_mithic_commons.ToString.html" class="tsd-signature-type tsd-kind-interface">ToString</a><span class="tsd-signature-symbol">&gt;</span></h5></li></ul></div>
+<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span></h4><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/crdt/src/map/store.ts#L49">crdt/src/map/store.ts:49</a></li></ul></aside></li></ul></li>
+<li class="tsd-parameter">
+<h5><span class="tsd-kind-method">encode<wbr/>Range</span><span class="tsd-signature-symbol">:</span>function</h5>
+<ul class="tsd-signatures">
+<li class="tsd-signature tsd-anchor-link" id="__type.encodeRange.encodeRange-1"><span class="tsd-kind-call-signature">encode<wbr/>Range</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="../interfaces/_mithic_collections.KeyRange.html" class="tsd-signature-type tsd-kind-interface">KeyRange</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span><a href="#__type.encodeRange.encodeRange-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></li>
+<li class="tsd-description">
+<div class="tsd-parameters">
+<h4 class="tsd-parameters-title">Parameters</h4>
+<ul class="tsd-parameter-list">
+<li>
+<h5><span class="tsd-kind-parameter">options</span>: <a href="../interfaces/_mithic_collections.KeyRange.html" class="tsd-signature-type tsd-kind-interface">KeyRange</a><span class="tsd-signature-symbol">&lt;</span><a href="../types/_mithic_crdt.MultimapKey.html" class="tsd-signature-type tsd-kind-type-alias">MultimapKey</a><span class="tsd-signature-symbol">&lt;</span><a href="../interfaces/_mithic_commons.ToString.html" class="tsd-signature-type tsd-kind-interface">ToString</a><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span></h5></li></ul></div>
+<h4 class="tsd-returns-title">Returns <a href="../interfaces/_mithic_collections.KeyRange.html" class="tsd-signature-type tsd-kind-interface">KeyRange</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/crdt/src/map/store.ts#L64">crdt/src/map/store.ts:64</a></li></ul></aside></li></ul></li></ul></div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/crdt/src/model/lseq.ts#L132">model/lseq.ts:132</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/crdt/src/map/store.ts#L44">crdt/src/map/store.ts:44</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

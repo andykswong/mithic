@@ -1,4 +1,4 @@
-<!DOCTYPE html><html class="default" lang="en"><head><meta charSet="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>MapQuery | mithic - v0.3.0</title><meta name="description" content="Documentation for mithic"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os"</script><header class="tsd-page-toolbar">
+<!DOCTYPE html><html class="default" lang="en"><head><meta charSet="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>MapRangeQueryOptions | mithic - v0.3.0</title><meta name="description" content="Documentation for mithic"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os"</script><header class="tsd-page-toolbar">
 <div class="tsd-toolbar-contents container">
 <div class="table-cell" id="tsd-search" data-base="..">
 <div class="field"><label for="tsd-search-field" class="tsd-widget tsd-toolbar-icon search no-caption"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><use href="#icon-search"></use></svg></label><input type="text" id="tsd-search-field" aria-label="Search"/></div>
@@ -14,27 +14,29 @@
 <ul class="tsd-breadcrumb">
 <li><a href="../index.html">mithic</a></li>
 <li><a href="../modules/_mithic_crdt.html">@mithic/crdt</a></li>
-<li><a href="_mithic_crdt.MapQuery.html">MapQuery</a></li></ul>
-<h1>Interface MapQuery&lt;Ref, V&gt;</h1></div>
+<li><a href="_mithic_crdt.MapRangeQueryOptions.html">MapRangeQueryOptions</a></li></ul>
+<h1>Interface MapRangeQueryOptions&lt;K, F&gt;</h1></div>
 <section class="tsd-panel tsd-comment">
-<div class="tsd-comment tsd-typography"><p>Query options for <a href="../types/_mithic_crdt.MapAggregate.html" class="tsd-kind-type-alias">MapAggregate</a>.</p>
+<div class="tsd-comment tsd-typography"><p>Range query options for a CRDT multimap.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div></section> 
 <section class="tsd-panel">
 <h4>Type Parameters</h4>
 <ul class="tsd-type-parameter-list">
 <li>
-<h4><span class="tsd-kind-type-parameter">Ref</span></h4></li>
+<h4><span class="tsd-kind-type-parameter">K</span></h4></li>
 <li>
-<h4><span class="tsd-kind-type-parameter">V</span></h4></li></ul></section> 
+<h4><span class="tsd-kind-type-parameter">F</span> = <span class="tsd-signature-type">string</span></h4></li></ul></section> 
 <section class="tsd-panel tsd-hierarchy">
 <h4>Hierarchy</h4>
 <ul class="tsd-hierarchy">
-<li><a href="_mithic_crdt.AggregateQuery.html" class="tsd-signature-type tsd-kind-interface">AggregateQuery</a><span class="tsd-signature-symbol">&lt;</span><a href="../types/_mithic_commons.SyncOrAsyncIterable.html" class="tsd-signature-type tsd-kind-type-alias">SyncOrAsyncIterable</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">V</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span>
+<li><span class="target">MapRangeQueryOptions</span>
 <ul class="tsd-hierarchy">
-<li><span class="target">MapQuery</span></li></ul></li></ul></section><aside class="tsd-sources">
+<li><a href="_mithic_crdt.ListRangeQuery.html" class="tsd-signature-type tsd-kind-interface">ListRangeQuery</a></li>
+<li><a href="_mithic_crdt.MapRangeQuery.html" class="tsd-signature-type tsd-kind-interface">MapRangeQuery</a></li>
+<li><a href="_mithic_crdt.SetRangeQuery.html" class="tsd-signature-type tsd-kind-interface">SetRangeQuery</a></li></ul></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/crdt/src/model/map.ts#L292">model/map.ts:292</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/crdt/src/map/map.ts#L62">crdt/src/map/map.ts:62</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-index-accordion" open><summary class="tsd-accordion-summary tsd-index-summary">
@@ -42,33 +44,22 @@
 <div class="tsd-accordion-details">
 <section class="tsd-index-section">
 <h3 class="tsd-index-heading">Properties</h3>
-<div class="tsd-index-list"><a href="_mithic_crdt.MapQuery.html#_ResultMarker_" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>[<wbr/>Result<wbr/>Marker]?</span></a>
-<a href="_mithic_crdt.MapQuery.html#gte" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>gte?</span></a>
-<a href="_mithic_crdt.MapQuery.html#limit" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>limit?</span></a>
-<a href="_mithic_crdt.MapQuery.html#lte" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>lte?</span></a>
-<a href="_mithic_crdt.MapQuery.html#lww" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>lww?</span></a>
-<a href="_mithic_crdt.MapQuery.html#reverse" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>reverse?</span></a>
-<a href="_mithic_crdt.MapQuery.html#root" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>root</span></a>
+<div class="tsd-index-list"><a href="_mithic_crdt.MapRangeQueryOptions.html#gte" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>gte?</span></a>
+<a href="_mithic_crdt.MapRangeQueryOptions.html#limit" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>limit?</span></a>
+<a href="_mithic_crdt.MapRangeQueryOptions.html#lte" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>lte?</span></a>
+<a href="_mithic_crdt.MapRangeQueryOptions.html#reverse" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>reverse?</span></a>
+<a href="_mithic_crdt.MapRangeQueryOptions.html#root" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>root</span></a>
 </div></section></div></details></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Properties</h2>
-<section class="tsd-panel tsd-member tsd-is-inherited"><a id="_ResultMarker_" class="tsd-anchor"></a>
-<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <span>[<wbr/>Result<wbr/>Marker]</span><a href="#_ResultMarker_" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">[<wbr/>Result<wbr/>Marker]</span><span class="tsd-signature-symbol">?:</span> <a href="../types/_mithic_commons.SyncOrAsyncIterable.html" class="tsd-signature-type tsd-kind-type-alias">SyncOrAsyncIterable</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">V</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span></div>
-<div class="tsd-comment tsd-typography"><p>Result type marker</p>
-</div>
-<div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<p>Inherited from <a href="_mithic_crdt.AggregateQuery.html">AggregateQuery</a>.<a href="_mithic_crdt.AggregateQuery.html#_ResultMarker_">[ResultMarker]</a></p>
-<ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/crdt/src/aggregate.ts#L23">aggregate.ts:23</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="gte" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>gte</span><a href="#gte" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">gte</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
+<div class="tsd-signature"><span class="tsd-kind-property">gte</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type tsd-kind-type-parameter">F</span></div>
 <div class="tsd-comment tsd-typography"><p>Returns only entries with field names greater than or equal to given name.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/crdt/src/model/map.ts#L303">model/map.ts:303</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/crdt/src/map/map.ts#L67">crdt/src/map/map.ts:67</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="limit" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>limit</span><a href="#limit" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">limit</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
@@ -76,24 +67,15 @@
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/crdt/src/model/map.ts#L312">model/map.ts:312</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/crdt/src/map/map.ts#L76">crdt/src/map/map.ts:76</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="lte" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>lte</span><a href="#lte" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">lte</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
+<div class="tsd-signature"><span class="tsd-kind-property">lte</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type tsd-kind-type-parameter">F</span></div>
 <div class="tsd-comment tsd-typography"><p>Returns only entries with field names less than or equal to given name.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/crdt/src/model/map.ts#L306">model/map.ts:306</a></li></ul></aside></section>
-<section class="tsd-panel tsd-member"><a id="lww" class="tsd-anchor"></a>
-<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>lww</span><a href="#lww" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">lww</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
-<div class="tsd-comment tsd-typography"><p>Whether to resolve concurrent values by last-write-wins by comparing createdAt time followed by event refs.
-Supported only when map has <code>trackEventTime</code> enabled. Defaults to <code>false</code>.</p>
-</div>
-<div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
-<ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/crdt/src/model/map.ts#L300">model/map.ts:300</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/crdt/src/map/map.ts#L70">crdt/src/map/map.ts:70</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="reverse" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>reverse</span><a href="#reverse" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">reverse</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
@@ -101,15 +83,15 @@ Supported only when map has <code>trackEventTime</code> enabled. Defaults to <co
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/crdt/src/model/map.ts#L309">model/map.ts:309</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/crdt/src/map/map.ts#L73">crdt/src/map/map.ts:73</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="root" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagReadonly">Readonly</code> <span>root</span><a href="#root" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">root</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type tsd-kind-type-parameter">Ref</span></div>
-<div class="tsd-comment tsd-typography"><p>Reference to (root event of) the map.</p>
+<div class="tsd-signature"><span class="tsd-kind-property">root</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type tsd-kind-type-parameter">K</span></div>
+<div class="tsd-comment tsd-typography"><p>Key to target aggregate root.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/94fcfcb/packages/crdt/src/model/map.ts#L294">model/map.ts:294</a></li></ul></aside></section></section></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/crdt/src/map/map.ts#L64">crdt/src/map/map.ts:64</a></li></ul></aside></section></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
@@ -129,11 +111,9 @@ Supported only when map has <code>trackEventTime</code> enabled. Defaults to <co
 <h3><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><use href="#icon-chevronDown"></use></svg>On This Page</h3></summary>
 <div class="tsd-accordion-details">
 <ul>
-<li><a href="#_ResultMarker_" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>[<wbr/>Result<wbr/>Marker]</span></a></li>
 <li><a href="#gte" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>gte</span></a></li>
 <li><a href="#limit" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>limit</span></a></li>
 <li><a href="#lte" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>lte</span></a></li>
-<li><a href="#lww" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>lww</span></a></li>
 <li><a href="#reverse" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>reverse</span></a></li>
 <li><a href="#root" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>root</span></a></li></ul></div></details></div>
 <div class="site-menu">
