@@ -3,7 +3,7 @@ import { OperationError } from '@mithic/commons';
 import { RedisClientType, commandOptions } from '@redis/client';
 import { createMockRedisClient, createMockRedisClientMultiCommand } from '../__tests__/mocks.js';
 import { RedisMap } from '../map.js';
-import { RangeQueryOptions } from '@mithic/collections';
+import { RangeQueryOptions, rangeQueryable } from '@mithic/collections';
 
 const HASH_KEY = 'hash-key';
 const RANGE_KEY = 'range-key';
@@ -35,6 +35,10 @@ describe(RedisMap.name, () => {
     expect(`${map}`).toBe(`[object ${RedisMap.name}]`);
   });
 
+  it('should have correct rangeQueryable tag', () => {
+    expect(map[rangeQueryable]).toBe(true);
+  });
+
   describe('close', () => {
     it('should set started to false', async () => {
       await map.close();
@@ -63,7 +67,7 @@ describe(RedisMap.name, () => {
       expect(mockRedis.hGet).toHaveBeenCalledWith(commandOptions(OPTIONS), HASH_KEY, KEY1);
     });
   });
-  
+
   describe('set', () => {
     it('set a key via Redis client', async () => {
       const multiMock = createMockRedisClientMultiCommand();
@@ -173,7 +177,7 @@ describe(RedisMap.name, () => {
         results.push(error);
       }
       expect(results).toEqual([
-        new OperationError('failed to delete', { detail: KEY1, cause: 'error' }), 
+        new OperationError('failed to delete', { detail: KEY1, cause: 'error' }),
         new OperationError('failed to delete', { detail: KEY2, cause: 'error' })
       ]);
     });
@@ -212,12 +216,14 @@ describe(RedisMap.name, () => {
   });
 
   describe('keys', () => {
-    it.each([
-      [OPTIONS as RangeQueryOptions<string>, ['-', '+', void 0, void 0] as [string, string, boolean | undefined, { offset: number, count: number } | undefined]],
-      [{ ...OPTIONS, gte: 'a', lt: 'b' }, ['[a', '(b', void 0, void 0]],
-      [{ ...OPTIONS, gt: 'a', lte: 'b' }, ['(a', '[b', void 0, void 0]],
-      [{ ...OPTIONS, gt: 'a', lt: 'b', reverse: true, limit: 100 }, ['(b', '(a', true, { offset: 0, count: 100 }]],
-    ])('returns zRange result from Redis client', async (options, [start, end, REV, LIMIT]) => {
+    it.each(
+      [
+        [OPTIONS, ['-', '+', void 0, void 0]],
+        [{ ...OPTIONS, lower: 'a', upper: 'b' }, ['[a', '(b', void 0, void 0]],
+        [{ ...OPTIONS, lower: 'a', lowerOpen: true, upper: 'b', upperOpen: false }, ['(a', '[b', void 0, void 0]],
+        [{ ...OPTIONS, lower: 'a', lowerOpen: true, upper: 'b', reverse: true, limit: 100 }, ['(b', '(a', true, { offset: 0, count: 100 }]],
+      ] satisfies [RangeQueryOptions<string>, [string, string, boolean | undefined, { offset: number, count: number } | undefined]][]
+    )('returns zRange result from Redis client', async (options, [start, end, REV, LIMIT]) => {
       jest.mocked(mockRedis.zRange).mockReturnValueOnce(Promise.resolve([KEY1, KEY2]));
       const results = [];
       for await (const value of map.keys(options)) {
@@ -233,11 +239,11 @@ describe(RedisMap.name, () => {
       jest.mocked(mockRedis.zRange).mockReturnValueOnce(Promise.resolve([KEY1, KEY2]));
       jest.mocked(mockRedis.hmGet).mockReturnValueOnce(Promise.resolve([VALUE1, VALUE2]));
       const results = [];
-      for await (const entry of map.values({ ...OPTIONS, gt: 'a', lt: 'b', reverse: true, limit: 100 })) {
+      for await (const entry of map.values({ ...OPTIONS, lower: 'a', upper: 'b', reverse: true, limit: 100 })) {
         results.push(entry);
       }
       expect(results).toEqual([VALUE1, VALUE2]);
-      expect(mockRedis.zRange).toHaveBeenCalledWith(commandOptions(OPTIONS), RANGE_KEY, '(b', '(a', { BY: 'LEX', REV: true, LIMIT: { offset: 0, count: 100 } });
+      expect(mockRedis.zRange).toHaveBeenCalledWith(commandOptions(OPTIONS), RANGE_KEY, '(b', '[a', { BY: 'LEX', REV: true, LIMIT: { offset: 0, count: 100 } });
       expect(mockRedis.hmGet).toHaveBeenCalledWith(commandOptions({ ...OPTIONS, returnBuffers: false }), HASH_KEY, [KEY1, KEY2]);
     });
   });
@@ -247,7 +253,7 @@ describe(RedisMap.name, () => {
       jest.mocked(mockRedis.zRange).mockReturnValueOnce(Promise.resolve([KEY1, KEY2]));
       jest.mocked(mockRedis.hmGet).mockReturnValueOnce(Promise.resolve([VALUE1, VALUE2]));
       const results = [];
-      for await (const entry of map.entries({ ...OPTIONS, gt: 'a', lt: 'b', reverse: true, limit: 100 })) {
+      for await (const entry of map.entries({ ...OPTIONS, lower: 'a', lowerOpen: true, upper: 'b', reverse: true, limit: 100 })) {
         results.push(entry);
       }
       expect(results).toEqual([[KEY1, VALUE1], [KEY2, VALUE2]]);

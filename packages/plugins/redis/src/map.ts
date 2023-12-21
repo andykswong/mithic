@@ -1,4 +1,4 @@
-import { MaybeAsyncMap, MaybeAsyncMapBatch, RangeQueryOptions, RangeQueryable } from '@mithic/collections';
+import { MaybeAsyncMap, MaybeAsyncMapBatch, RangeQueryOptions, RangeQueryable, rangeQueryable } from '@mithic/collections';
 import { AbortOptions, AsyncDisposableCloseable, CodedError, OperationError, Startable } from '@mithic/commons';
 import { commandOptions, RedisClientType } from '@redis/client';
 import { RedisValueType } from './type.js';
@@ -61,7 +61,9 @@ export class RedisMap<UseBuffer extends boolean = false, R extends RedisClientTy
     return !!deleted;
   }
 
-  public async * getMany(keys: Iterable<string>, options?: AbortOptions): AsyncIterableIterator<RedisValueType<UseBuffer> | undefined> {
+  public async * getMany(
+    keys: Iterable<string>, options?: AbortOptions
+  ): AsyncIterableIterator<RedisValueType<UseBuffer> | undefined> {
     yield* await this.client.hmGet(
       commandOptions({ returnBuffers: this.useBuffer, ...options }),
       this.hashKey, [...keys]
@@ -74,7 +76,9 @@ export class RedisMap<UseBuffer extends boolean = false, R extends RedisClientTy
     }
   }
 
-  public async * setMany(entries: Iterable<[string, RedisValueType<UseBuffer>]>): AsyncIterableIterator<CodedError<string> | undefined> {
+  public async * setMany(
+    entries: Iterable<[string, RedisValueType<UseBuffer>]>
+  ): AsyncIterableIterator<CodedError<string> | undefined> {
     let error: unknown | undefined;
     try {
       const entryArray = [...entries];
@@ -177,9 +181,15 @@ export class RedisMap<UseBuffer extends boolean = false, R extends RedisClientTy
     return RedisMap.name;
   }
 
+  public get [rangeQueryable](): true {
+    return true;
+  }
+
   protected query(options?: RangeQueryOptions<string>): Promise<string[]> {
-    let start = options?.gte ? '[' + options.gte : options?.gt ? '(' + options.gt : '-';
-    let end = options?.lte ? '[' + options.lte : options?.lt ? '(' + options.lt : '+';
+    let start = options?.lower === void 0 ? '-' :
+      (options?.lowerOpen ?? false ? '(' : '[') + options.lower;
+    let end = options?.upper === void 0 ? '+' :
+      (options?.upperOpen ?? true ? '(' : '[') + options.upper;
     if (options?.reverse) {
       [start, end] = [end, start];
     }

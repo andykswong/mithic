@@ -1,7 +1,8 @@
 import { SyncOrAsyncIterable } from '@mithic/commons';
 import { StandardCommand, StandardEvent } from '../action.js';
 import { AggregateCommandHandler, AggregateProjection, AggregateQuery, AggregateQueryResolver } from '../aggregate.js';
-import { MapStore, ReadonlyMapStore } from './store.js';
+import { MapStore, ReadonlyMapStore } from '../store.js';
+import { LimitOptions, RangeAndOrder } from '@mithic/collections';
 
 /** {@link AggregateCommandHandler} for a CRDT multimap. */
 export type MapCommandHandler<K, V> =
@@ -59,19 +60,7 @@ export interface MapRangeQuery<K, V>
   extends AggregateQuery<SyncOrAsyncIterable<[field: string, value: V]>>, MapRangeQueryOptions<K, string> { }
 
 /** Range query options for a CRDT multimap.  */
-export interface MapRangeQueryOptions<K, F = string> {
+export interface MapRangeQueryOptions<K, F = string> extends RangeAndOrder<F>, LimitOptions {
   /** Key to target aggregate root. */
   readonly root: K;
-
-  /** Returns only entries with field names greater than or equal to given name. */
-  readonly gte?: F;
-
-  /** Returns only entries with field names less than or equal to given name. */
-  readonly lte?: F;
-
-  /** Returns entries in reverse order. */
-  readonly reverse?: boolean;
-
-  /** Maximum number of results to return. Defaults to `Infinity`. */
-  readonly limit?: number;
 }

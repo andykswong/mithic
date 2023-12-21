@@ -1,8 +1,9 @@
-import { BTreeMap } from '@mithic/collections';
-import { MapStore, ORMapCommandHandler, ORMapProjection, ORMapRangeQueryResolver } from '../../map/index.js';
-import { SetCommand, SetCommandHandler, SetCommandType, SetEvent, SetEventType, SetProjection, SetRangeQuery, SetRangeQueryResolver } from '../set.js';
-import { MockId, MockIdStringCodec, MockMultimapKeyCodec, createMockMapStore, getMockEventKey } from '../../__tests__/mocks.js';
+import { BTreeMap, BTreeSet } from '@mithic/collections';
+import { ORMapCommandHandler, ORMapProjection, ORMapRangeQueryResolver } from '../../map/index.js';
+import { MapStore, MultimapKey, createDefaultMapStore } from '../../store.js';
 import { ORSetCommandHandler, ORSetProjection, ORSetRangeQueryResolver } from '../orset.js';
+import { SetCommand, SetCommandHandler, SetCommandType, SetEvent, SetEventType, SetProjection, SetRangeQuery, SetRangeQueryResolver } from '../set.js';
+import { MockId, getMockEventKey } from '../../__tests__/mocks.js';
 
 type V = string | number | boolean;
 
@@ -20,14 +21,16 @@ const CMD_DEL = { type: SetCommandType.Update, payload: { add: [VALUE1], del: [V
 const hash = (value: V) => `${value}`;
 
 describe('ORSet', () => {
-  let keySet: Set<string>;
-  let dataMap: BTreeMap<string, V>;
+  let keySet: BTreeSet<MockId>;
+  let dataMap: BTreeMap<MultimapKey<MockId>, V>;
   let store: MapStore<MockId, V>;
   let command: SetCommandHandler<MockId, V>;
   let projection: SetProjection<MockId, V>;
 
   beforeEach(() => {
-    ({ store, set: keySet, map: dataMap } = createMockMapStore<V>());
+    store = createDefaultMapStore();
+    keySet = store.tombstone as BTreeSet<MockId>;
+    dataMap = store.data as BTreeMap<MultimapKey<MockId>, V>;
     command = new ORSetCommandHandler(new ORMapCommandHandler(), hash);
     projection = new ORSetProjection(new ORMapProjection(getMockEventKey), hash);
   });
@@ -143,8 +146,8 @@ describe('ORSet', () => {
         await applyCommand(CMD_ADD);
         const eventKey = getMockEventKey(CMD_ADD);
         expect(dataMap.size).toEqual(2);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, `${VALUE1}`, eventKey]))).toEqual(VALUE1);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, `${VALUE2}`, eventKey]))).toEqual(VALUE2);
+        expect(dataMap.get([ROOT, `${VALUE1}`, eventKey])).toEqual(VALUE1);
+        expect(dataMap.get([ROOT, `${VALUE2}`, eventKey])).toEqual(VALUE2);
       });
 
       it('should keep concurrent updates', async () => {
@@ -159,11 +162,11 @@ describe('ORSet', () => {
         const event2Key = getMockEventKey(CMD_ADD_CONCURRENT);
 
         expect(dataMap.size).toEqual(5);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, `${VALUE0}`, event0Key]))).toEqual(VALUE0);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, `${VALUE1}`, event1Key]))).toEqual(VALUE1);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, `${VALUE2}`, event1Key]))).toEqual(VALUE2);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, `${VALUE2}`, event2Key]))).toEqual(VALUE2);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, `${VALUE3}`, event2Key]))).toEqual(VALUE3);
+        expect(dataMap.get([ROOT, `${VALUE0}`, event0Key])).toEqual(VALUE0);
+        expect(dataMap.get([ROOT, `${VALUE1}`, event1Key])).toEqual(VALUE1);
+        expect(dataMap.get([ROOT, `${VALUE2}`, event1Key])).toEqual(VALUE2);
+        expect(dataMap.get([ROOT, `${VALUE2}`, event2Key])).toEqual(VALUE2);
+        expect(dataMap.get([ROOT, `${VALUE3}`, event2Key])).toEqual(VALUE3);
       });
 
       it('should remove all concurrent values on delete', async () => {
@@ -178,13 +181,13 @@ describe('ORSet', () => {
         const event3Key = getMockEventKey(CMD_DEL);
 
         expect(keySet.size).toEqual(3);
-        expect(keySet.has(MockIdStringCodec.encode(getMockEventKey(CMD_EMPTY)))).toBe(true);
-        expect(keySet.has(MockIdStringCodec.encode(event1Key))).toBe(true);
-        expect(keySet.has(MockIdStringCodec.encode(event2Key))).toBe(true);
+        expect(keySet.has(getMockEventKey(CMD_EMPTY))).toBe(true);
+        expect(keySet.has(event1Key)).toBe(true);
+        expect(keySet.has(event2Key)).toBe(true);
 
         expect(dataMap.size).toEqual(2);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, `${VALUE1}`, event3Key]))).toEqual(VALUE1);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, `${VALUE3}`, event2Key]))).toEqual(VALUE3);
+        expect(dataMap.get([ROOT, `${VALUE1}`, event3Key])).toEqual(VALUE1);
+        expect(dataMap.get([ROOT, `${VALUE3}`, event2Key])).toEqual(VALUE3);
       });
 
       it('should throw error for malformed events when validate = true', async () => {
@@ -210,26 +213,25 @@ describe('ORSet', () => {
       }
     });
 
-    it.each([
-      [[CMD_ADD], { root: ROOT }, [VALUE2, VALUE1] as const],
-      [[CMD_ADD, CMD_ADD_CONCURRENT], { root: ROOT }, [VALUE2, VALUE3, VALUE1] as const],
-      [[CMD_ADD, CMD_ADD_CONCURRENT], { root: ROOT, limit: 2 }, [VALUE2, VALUE3] as const],
-      [[CMD_ADD, CMD_ADD_CONCURRENT], { root: ROOT, limit: 2, reverse: true }, [VALUE1, VALUE3] as const],
-      [[CMD_ADD, CMD_ADD_CONCURRENT, CMD_DEL], { root: ROOT, gte: VALUE2, lte: VALUE1 }, [VALUE3, VALUE1] as const],
-    ])(
-      'should return correct results for non-empty sets',
-      async (cmds: SetCommand<MockId, V>[], query: SetRangeQuery<MockId, V>, expected: readonly V[]) => {
-        await applyCommand();
-        for (const cmd of cmds) {
-          await applyCommand(cmd);
-        }
-        const results = [];
-        for await (const entry of resolver.resolve(store, query)) {
-          results.push(entry);
-        }
-        expect(results).toEqual(expected);
+    it.each(
+      [
+        [[CMD_ADD], { root: ROOT }, [VALUE2, VALUE1]],
+        [[CMD_ADD, CMD_ADD_CONCURRENT], { root: ROOT }, [VALUE2, VALUE3, VALUE1]],
+        [[CMD_ADD, CMD_ADD_CONCURRENT], { root: ROOT, limit: 2 }, [VALUE2, VALUE3]],
+        [[CMD_ADD, CMD_ADD_CONCURRENT], { root: ROOT, limit: 2, reverse: true }, [VALUE1, VALUE3]],
+        [[CMD_ADD, CMD_ADD_CONCURRENT, CMD_DEL], { root: ROOT, lower: VALUE2, upper: VALUE1, upperOpen: false }, [VALUE3, VALUE1]],
+      ] satisfies [SetCommand<MockId, V>[], SetRangeQuery<MockId, V>, V[]][]
+    )('should return correct results for non-empty sets', async (cmds, query, expected) => {
+      await applyCommand();
+      for (const cmd of cmds) {
+        await applyCommand(cmd);
       }
-    );
+      const results = [];
+      for await (const entry of resolver.resolve(store, query)) {
+        results.push(entry);
+      }
+      expect(results).toEqual(expected);
+    });
 
     it('should return concurrent values on concurrent updates', async () => {
       await applyCommand();

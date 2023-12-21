@@ -1,9 +1,12 @@
-import { AbortOptions, IdentityCodec, MaybePromise } from '@mithic/commons';
+import { AbortOptions, Codec, IdentityCodec, MaybePromise } from '@mithic/commons';
 import { MaybeAsyncSet, MaybeAsyncSetBatch } from '../set.js';
 import { addMany, deleteMany, hasMany, updateSetMany } from '../utils/batch.js';
-import { KeyRange, RangeKeyCodec, RangeQueryOptions, RangeQueryable } from '../query.js';
+import { KeyValueIterable, RangeQueryOptions, RangeQueryable, rangeQueryable } from '../range.js';
 
-/** A set adapter that transforms keys. */
+/**
+ * A set adapter that serializes values with a codec.
+ * Codec needs to be monotonic to preserve iteration order.
+ */
 export class TransformedSet<
   T, U = T,
   S extends MaybeAsyncSet<U> & Partial<MaybeAsyncSetBatch<U> & Iterable<U> & AsyncIterable<U> & RangeQueryable<U, U>>
@@ -12,45 +15,44 @@ export class TransformedSet<
   public [Symbol.iterator]!: S extends Iterable<U> ? () => IterableIterator<T> : undefined;
   public [Symbol.asyncIterator]!:
     S extends (Iterable<U> | AsyncIterable<U>) ? () => AsyncIterableIterator<T> : undefined;
-  public entries: S extends RangeQueryable<U, U> ?
-    (options?: RangeQueryOptions<T>) => AsyncIterableIterator<[T, T]> : undefined;
-  public keys: S extends RangeQueryable<U, U> ?
-    (options?: RangeQueryOptions<T>) => AsyncIterableIterator<T> : undefined;
-  public values: S extends RangeQueryable<U, U> ?
-    (options?: RangeQueryOptions<T>) => AsyncIterableIterator<T> : undefined;
+
+  public readonly [rangeQueryable]: S extends RangeQueryable<U, U> ? true : undefined;
+  public entries: TransformedSetQuery<T, U, S, [T, T]>;
+  public keys: TransformedSetQuery<T, U, S, T>;
+  public values: TransformedSetQuery<T, U, S, T>;
 
   public constructor(
     /** Underlying set. */
     public readonly set: S,
     /** Key codec. */
-    protected readonly codec: RangeKeyCodec<T, U> = IdentityCodec as RangeKeyCodec<T, U>,
+    protected readonly codec: Codec<T, U> = IdentityCodec as Codec<T, U>,
   ) {
+    type This = TransformedSet<T, U, S>;
+
     this[Symbol.iterator] = (Symbol.iterator in set ? function* () {
       for (const key of set as Iterable<U>) {
         yield codec.decode(key);
       }
-    } : void 0) as S extends Iterable<U> ? () => IterableIterator<T> : undefined;
+    } : void 0) as This[typeof Symbol.iterator];
 
     this[Symbol.asyncIterator] = ((Symbol.iterator in set || Symbol.asyncIterator in set) ? async function* () {
       for await (const key of set as AsyncIterable<U>) {
         yield codec.decode(key);
       }
-    } : void 0) as S extends (Iterable<U> | AsyncIterable<U>) ? () => AsyncIterableIterator<T> : undefined;
+    } : void 0) as This[typeof Symbol.asyncIterator];
 
-    const encodeRangeQuery = (options?: RangeQueryOptions<T>): RangeQueryOptions<U> => {
-      return {
-        ...options,
-        gt: void 0, gte: void 0, lt: void 0, lte: void 0, reverse: false,
-        ...(options ? codec.encodeRange ? codec.encodeRange(options) : defaultEncodeRange(this.encode, options) : void 0),
-      };
-    };
+    this[rangeQueryable] = set[rangeQueryable] as This[typeof rangeQueryable];
 
     this.keys = ('keys' in set ? async function* (options?: RangeQueryOptions<T>) {
-      for await (const key of (set as RangeQueryable<U, U>).keys(encodeRangeQuery(options))) {
+      const iter = (set as RangeQueryable<U, U>).keys({
+        ...options,
+        lower: options?.lower === void 0 ? void 0 : codec.encode(options.lower),
+        upper: options?.upper === void 0 ? void 0 : codec.encode(options.upper),
+      });
+      for await (const key of iter) {
         yield codec.decode(key);
       }
-    } : void 0) as
-      S extends RangeQueryable<U, U> ? (options?: RangeQueryOptions<T>) => AsyncIterableIterator<T> : undefined;
+    } : void 0) as This['keys'];
 
     this.values = this.keys;
 
@@ -58,8 +60,7 @@ export class TransformedSet<
       for await (const key of this.keys(options)) {
         yield [key, key];
       }
-    } : void 0) as
-      S extends RangeQueryable<U, U> ? (options?: RangeQueryOptions<T>) => AsyncIterableIterator<[T, T]> : undefined;
+    } : void 0) as This['entries'];
   }
 
   public add(value: T, options?: AbortOptions): MaybePromise<unknown> {
@@ -99,12 +100,7 @@ export class TransformedSet<
   protected encode = (key: T) => this.codec.encode(key);
 }
 
-function defaultEncodeRange<T, U>(encode: (key: T) => U, range?: KeyRange<T>): KeyRange<U> {
-  return {
-    ...range,
-    gt: range?.gt === void 0 ? void 0 : encode(range.gt),
-    gte: range?.gte === void 0 ? void 0 : encode(range.gte),
-    lt: range?.lt === void 0 ? void 0 : encode(range.lt),
-    lte: range?.lte === void 0 ? void 0 : encode(range.lte),
-  };
-}
+/** Query function type for a {@link TransformedSet}. */
+export type TransformedSetQuery<T, U, S, E> =
+  S extends RangeQueryable<U, U> ? (options?: RangeQueryOptions<T>) => AsyncIterableIterator<E> :
+  S extends KeyValueIterable<U, U> ? (options?: AbortOptions) => AsyncIterableIterator<E> : undefined;

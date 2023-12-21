@@ -3,7 +3,7 @@ import { OperationError } from '@mithic/commons';
 import { MaybeAsyncMap } from '../../map.js';
 import { TransformedMap } from '../transformedmap.js';
 import { BTreeMap } from '../btreemap.js';
-import { RangeQueryable } from '../../query.js';
+import { RangeQueryable } from '../../range.js';
 import { MockKey, MockKeyStringCodec } from '../../__tests__/mocks.js';
 
 type MapType = MaybeAsyncMap<string, string> & Iterable<[string, string]> & RangeQueryable<string, string>;
@@ -178,7 +178,7 @@ describe.each([
       await map.set(K3, 3);
 
       const keys = [];
-      for await (const key of map.keys({ gte: K1, lt: K3 })) {
+      for await (const key of map.keys({ lower: K1, upper: K3 })) {
         keys.push(key);
       }
       expect(keys).toEqual([K1, K2]);
@@ -190,7 +190,7 @@ describe.each([
       await map.set(K3, 3);
 
       const values = [];
-      for await (const value of map.values({ gt: K1 })) {
+      for await (const value of map.values({ lower: K1, lowerOpen: true })) {
         values.push(value);
       }
       expect(values).toEqual([2, 3]);
@@ -202,7 +202,7 @@ describe.each([
       await map.set(K3, 3);
 
       const entries = [];
-      for await (const entry of map.entries({ lte: K2 })) {
+      for await (const entry of map.entries({ upper: K2, upperOpen: false })) {
         entries.push(entry);
       }
       expect(entries).toEqual([[K1, 1], [K2, 2]]);

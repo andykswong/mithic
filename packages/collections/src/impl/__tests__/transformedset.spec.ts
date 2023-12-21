@@ -2,10 +2,10 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { OperationError } from '@mithic/commons';
 import { MaybeAsyncSet } from '../../set.js';
 import { TransformedSet } from '../transformedset.js';
-import { RangeQueryable } from '../../query.js';
+import { KeyValueIterable } from '../../range.js';
 import { MockKey, MockKeyStringCodec } from '../../__tests__/mocks.js';
 
-type SetType = MaybeAsyncSet<string> & Iterable<string> & RangeQueryable<string, string>;
+type SetType = MaybeAsyncSet<string> & Iterable<string> & KeyValueIterable<string, string>;
 
 const K1 = new MockKey('val1')
 const K2 = new MockKey('val2');
@@ -75,7 +75,7 @@ describe.each([
     it('should return errors from underlying set', async () => {
       if ('addMany' in set.set) return; // skip test
 
-      const cause = new Error('error')
+      const cause = new Error('error');
       jest.spyOn(set.set, 'add').mockImplementation(() => { throw cause; });
 
       const results = [];
@@ -101,7 +101,7 @@ describe.each([
     it('should return errors from underlying set', async () => {
       if ('deleteMany' in set.set) return; // skip test
 
-      const cause = new Error('error')
+      const cause = new Error('error');
       jest.spyOn(set.set, 'delete').mockImplementation(() => { throw cause; });
 
       const results = [];
@@ -127,7 +127,7 @@ describe.each([
     it('should return errors from underlying set', async () => {
       if ('addMany' in set.set) return; // skip test
 
-      const cause = new Error('error')
+      const cause = new Error('error');
       jest.spyOn(set.set, 'add').mockImplementation(() => { throw cause; });
       jest.spyOn(set.set, 'delete').mockImplementation(() => { throw cause; });
 

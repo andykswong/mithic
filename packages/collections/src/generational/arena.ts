@@ -3,11 +3,12 @@ import { MaybeAsyncMapBatch } from '../map.js';
 import { SyncMapBatchAdapter } from '../impl/batchmap.js';
 import { indexOf } from './id.js';
 import { IdGenerator } from './generator.js';
+import { KeyValueIterable } from '../range.js';
 
 /** A {@link SyncArena} that uses generational index as key. */
 export class GenerationalArena<T, I extends number = number>
   extends SyncMapBatchAdapter<I, T>
-  implements SyncArena<I, T>, MaybeAsyncMapBatch<I, T>, Map<I, T>, Iterable<[I, T]>
+  implements SyncArena<I, T>, MaybeAsyncMapBatch<I, T>, Map<I, T>, Iterable<[I, T]>, KeyValueIterable<I, T>
 {
   private ids: IdGenerator<I> = new IdGenerator();
   private readonly data: T[] = [];

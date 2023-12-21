@@ -1,12 +1,13 @@
 import { AbortOptions, ContentId, MaybePromise, ToString } from '@mithic/commons';
 import {
-  MapCommand, MapCommandHandler, MapCommandType, MapEvent, MapEventOp, MapEventType, MapProjection, MapRangeQueryResolver, MapStore,
-  ORMapCommandHandler, ORMapProjection, ORMapRangeQueryResolver, ReadonlyMapStore
+  MapCommand, MapCommandHandler, MapCommandType, MapEvent, MapEventOp, MapEventType, MapProjection, MapRangeQueryResolver,
+  ORMapCommandHandler, ORMapProjection, ORMapRangeQueryResolver
 } from '../map/index.js';
 import {
   SetCommand, SetCommandHandler, SetEvent, SetEventOp, SetEventType, SetProjection, SetRangeQuery, SetRangeQueryResolver
 } from './set.js';
 import { defaultHash } from '../defaults.js';
+import { MapStore, ReadonlyMapStore } from '../store.js';
 
 /** Observed-removed multiset command handler. */
 export class ORSetCommandHandler<K extends ToString = ContentId, V = unknown> implements SetCommandHandler<K, V> {
@@ -96,11 +97,12 @@ export class ORSetRangeQueryResolver<K extends ToString = ContentId, V = unknown
   public async * resolve(
     store: ReadonlyMapStore<K, V>, query: SetRangeQuery<K, V>, options?: AbortOptions
   ): AsyncIterable<V> {
-    const gte = query.gte && await this.hash(query.gte, options);
-    const lte = query.lte && await this.hash(query.lte, options);
+    const lower = query.lower && await this.hash(query.lower, options);
+    const upper = query.upper && await this.hash(query.upper, options);
 
     for await (const [_hash, value] of this.mapQueryResolver.resolve(store, {
-      gte, lte, root: query.root, reverse: query.reverse, limit: query.limit,
+      lower, upper, lowerOpen: query.lowerOpen, upperOpen: query.upperOpen,
+      root: query.root, reverse: query.reverse, limit: query.limit,
     }, options)) {
       yield value as V;
     }

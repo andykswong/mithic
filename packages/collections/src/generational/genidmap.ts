@@ -1,11 +1,12 @@
 import { SyncMapBatchAdapter } from '../impl/batchmap.js';
 import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
+import { KeyValueIterable } from '../range.js';
 import { indexOf } from './id.js';
 
 /** Generational index map backend by a Map. */
 export class GenerationalIdMap<V, I extends number = number>
   extends SyncMapBatchAdapter<I, V>
-  implements MaybeAsyncMap<I, V>, MaybeAsyncMapBatch<I, V>, Map<I, V>, Iterable<[I, V]>
+  implements MaybeAsyncMap<I, V>, MaybeAsyncMapBatch<I, V>, Map<I, V>, Iterable<[I, V]>, KeyValueIterable<I, V>
 {
   private readonly map: Map<number, [I, V]> = new Map();
 

@@ -1,11 +1,14 @@
 import { PeekableDeque, SyncDeque } from '../deque.js';
 import { MaybeAsyncReadonlyMap } from '../map.js';
+import { KeyValueIterable } from '../range.js';
 
 const DEFAULT_DEQUE_CAPACITY = 16;
 const DEFAULT_DEQUE_RESIZE_FACTOR = 2;
 
 /** A double-ended queue using a circular buffer. */
-export class ArrayDeque<T> implements MaybeAsyncReadonlyMap<number, T>, PeekableDeque<T>, SyncDeque<T>, Iterable<T> {
+export class ArrayDeque<T>
+  implements MaybeAsyncReadonlyMap<number, T>, PeekableDeque<T>, SyncDeque<T>, Iterable<T>, KeyValueIterable<number, T>
+{
   private buffer: T[];
   private frontIdx = -1;
   private backIdx = -1;

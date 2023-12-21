@@ -1,9 +1,9 @@
-import { BTreeMap } from '@mithic/collections';
+import { BTreeMap, BTreeSet } from '@mithic/collections';
 import { ERR_DEPENDENCY_MISSING, OperationError } from '@mithic/commons';
 import { MapCommand, MapEventType, MapRangeQuery, MapCommandType, MapEvent, MapCommandHandler, MapProjection, MapRangeQueryResolver } from '../map.js';
 import { ORMapCommandHandler, ORMapProjection, ORMapRangeQueryResolver } from '../ormap.js';
-import { MapStore } from '../store.js';
-import { MockId, MockIdStringCodec, MockMultimapKeyCodec, createMockMapStore, getMockEventKey } from '../../__tests__/mocks.js';
+import { MapStore, MultimapKey, createDefaultMapStore } from '../../store.js';
+import { MockId, getMockEventKey } from '../../__tests__/mocks.js';
 
 type V = string | number | boolean;
 
@@ -27,14 +27,16 @@ const CMD_WITH_UPDEL = { type: MapCommandType.Update, payload: { put: { [FIELD2]
 const CMD_WITH_FIELDS_CONCURRENT = { type: MapCommandType.Update, payload: { put: { [FIELD1]: VALUE12 }, del: [FIELD1] }, root: ROOT, nonce: '6' } satisfies MapCommand<MockId, V>;
 
 describe('ORMap', () => {
-  let keySet: Set<string>;
-  let dataMap: BTreeMap<string, V>;
+  let keySet: BTreeSet<MockId>;
+  let dataMap: BTreeMap<MultimapKey<MockId>, V>;
   let store: MapStore<MockId, V>;
   let command: MapCommandHandler<MockId, V>;
   let projection: MapProjection<MockId, V>;
 
   beforeEach(() => {
-    ({ store, set: keySet, map: dataMap } = createMockMapStore<V>());
+    store = createDefaultMapStore();
+    keySet = store.tombstone as BTreeSet<MockId>;
+    dataMap = store.data as BTreeMap<MultimapKey<MockId>, V>;
     command = new ORMapCommandHandler();
     projection = new ORMapProjection(getMockEventKey);
   });
@@ -181,8 +183,8 @@ describe('ORMap', () => {
         await applyCommand(CMD_WITH_FIELDS);
         const eventKey = getMockEventKey(CMD_WITH_FIELDS);
         expect(dataMap.size).toEqual(2);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, FIELD1, eventKey]))).toEqual(VALUE1);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, FIELD2, eventKey]))).toEqual(VALUE2);
+        expect(dataMap.get([ROOT, FIELD1, eventKey])).toEqual(VALUE1);
+        expect(dataMap.get([ROOT, FIELD2, eventKey])).toEqual(VALUE2);
       });
 
       it('should keep concurrent updates', async () => {
@@ -197,10 +199,10 @@ describe('ORMap', () => {
         await projection.reduce(store, event2!);
 
         expect(dataMap.size).toEqual(4);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, FIELD0, event0Key]))).toEqual(VALUE0);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, FIELD1, event1Key]))).toEqual(VALUE1);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, FIELD1, event2Key]))).toEqual(VALUE12);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, FIELD2, event1Key]))).toEqual(VALUE2);
+        expect(dataMap.get([ROOT, FIELD0, event0Key])).toEqual(VALUE0);
+        expect(dataMap.get([ROOT, FIELD1, event1Key])).toEqual(VALUE1);
+        expect(dataMap.get([ROOT, FIELD1, event2Key])).toEqual(VALUE12);
+        expect(dataMap.get([ROOT, FIELD2, event1Key])).toEqual(VALUE2);
       });
 
       it('should delete all concurrent values on update', async () => {
@@ -215,13 +217,13 @@ describe('ORMap', () => {
         await applyCommand(CMD_WITH_UPDEL);
 
         expect(keySet.size).toEqual(3);
-        expect(keySet.has(MockIdStringCodec.encode(getMockEventKey(CMD_EMPTY)))).toBe(true);
-        expect(keySet.has(MockIdStringCodec.encode(event1Key))).toBe(true);
-        expect(keySet.has(MockIdStringCodec.encode(event2Key))).toBe(true);
+        expect(keySet.has(getMockEventKey(CMD_EMPTY))).toBe(true);
+        expect(keySet.has(event1Key)).toBe(true);
+        expect(keySet.has(event2Key)).toBe(true);
 
         expect(dataMap.size).toEqual(2);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, FIELD2, event3Key]))).toEqual(VALUE22);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, FIELD3, event3Key]))).toEqual(VALUE32);
+        expect(dataMap.get([ROOT, FIELD2, event3Key])).toEqual(VALUE22);
+        expect(dataMap.get([ROOT, FIELD3, event3Key])).toEqual(VALUE32);
       });
 
       it('should throw error for malformed events', async () => {
@@ -247,26 +249,25 @@ describe('ORMap', () => {
       }
     });
 
-    it.each([
-      [[CMD_WITH_FIELDS], { root: ROOT }, [[FIELD1, VALUE1], [FIELD2, VALUE2]] as const],
-      [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { root: ROOT }, [[FIELD1, VALUE1], [FIELD2, VALUE2], [FIELD3, VALUE3]] as const],
-      [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { root: ROOT, limit: 2 }, [[FIELD1, VALUE1], [FIELD2, VALUE2]] as const],
-      [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { root: ROOT, limit: 2, reverse: true }, [[FIELD3, VALUE3], [FIELD2, VALUE2]] as const],
-      [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { root: ROOT, gte: FIELD2, lte: FIELD2 }, [[FIELD2, VALUE2]] as const],
-    ])(
-      'should return correct results for non-empty maps %#',
-      async (cmds: MapCommand<MockId, V>[], query: MapRangeQuery<MockId, V>, expected: readonly (readonly [string, V])[]) => {
-        await applyCommand();
-        for (const cmd of cmds) {
-          await applyCommand(cmd);
-        }
-        const results = [];
-        for await (const entry of resolver.resolve(store, query)) {
-          results.push(entry);
-        }
-        expect(results).toEqual(expected);
+    it.each(
+      [
+        [[CMD_WITH_FIELDS], { root: ROOT }, [[FIELD1, VALUE1], [FIELD2, VALUE2]]],
+        [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { root: ROOT }, [[FIELD1, VALUE1], [FIELD2, VALUE2], [FIELD3, VALUE3]]],
+        [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { root: ROOT, limit: 2 }, [[FIELD1, VALUE1], [FIELD2, VALUE2]]],
+        [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { root: ROOT, limit: 2, reverse: true }, [[FIELD3, VALUE3], [FIELD2, VALUE2]]],
+        [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { root: ROOT, lower: FIELD2, upper: FIELD2, upperOpen: false }, [[FIELD2, VALUE2]]],
+      ] satisfies [MapCommand<MockId, V>[], MapRangeQuery<MockId, V>, [string, V][]][]
+    )('should return correct results for non-empty maps %#', async (cmds, query, expected) => {
+      await applyCommand();
+      for (const cmd of cmds) {
+        await applyCommand(cmd);
       }
-    );
+      const results = [];
+      for await (const entry of resolver.resolve(store, query)) {
+        results.push(entry);
+      }
+      expect(results).toEqual(expected);
+    });
 
     it('should return concurrent values', async () => {
       await applyCommand(CMD_NEW);
@@ -280,7 +281,7 @@ describe('ORMap', () => {
         results.push(entry);
       }
       expect(results).toEqual([
-        [FIELD0, VALUE0],[FIELD1, VALUE1], [FIELD2, VALUE2], [FIELD2, VALUE22], [FIELD3, VALUE32]
+        [FIELD0, VALUE0], [FIELD1, VALUE1], [FIELD2, VALUE2], [FIELD2, VALUE22], [FIELD3, VALUE32]
       ]);
     });
   });

@@ -4,7 +4,7 @@ import {
   MapCommand, MapCommandHandler, MapEvent, MapEventOp, MapEventType, MapProjection, MapRangeQuery,
   MapRangeQueryResolver,
 } from './map.js';
-import { MapStore, MultimapKey, ReadonlyMapStore } from './store.js';
+import { MapStore, MultimapKey, ReadonlyMapStore } from '../store.js';
 
 /** Observed-removed multimap command handler. */
 export class ORMapCommandHandler<K extends ToString = ContentId, V = unknown> implements MapCommandHandler<K, V> {
@@ -39,8 +39,8 @@ export class ORMapCommandHandler<K extends ToString = ContentId, V = unknown> im
       const keysToDelete: number[] = [];
       if (type === MapEventType.Update && root && isDelete) { // for update event, find existing keys to delete
         for await (const [, , parentKey] of store.data.keys({
-          gte: [root, field],
-          lte: [root, field],
+          lower: [root, field],
+          upper: [root, field + '\x00'],
           signal: options?.signal,
         })) {
           const parentKeyStr = `${parentKey}`;
@@ -233,11 +233,13 @@ export class ORMapRangeQueryResolver<K extends ToString = ContentId, V = unknown
   public async * resolve(
     store: ReadonlyMapStore<K, V>, query: MapRangeQuery<K, V>, options?: AbortOptions
   ): AsyncIterable<[field: string, value: V]> {
+    const terminal = '\udbff\udfff';
+    const upper = query.upper === void 0 ? terminal :
+      query.upperOpen ?? true ? query.upper : query.upper + terminal;
     for await (const [[, field], value] of store.data.entries({
-      gte: [query.root, query.gte ?? ''],
-      lte: [query.root, query.lte ?? '\udbff\udfff'],
-      reverse: query.reverse,
-      limit: query.limit,
+      ...query,
+      lower: [query.root, query.lower ?? ''],
+      upper: [query.root, upper],
       signal: options?.signal,
     })) {
       if (field !== void 0 && value !== void 0) {

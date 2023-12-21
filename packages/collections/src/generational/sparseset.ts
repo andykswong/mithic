@@ -1,11 +1,12 @@
 import { SyncMapBatchAdapter } from '../impl/batchmap.js';
 import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
+import { KeyValueIterable } from '../range.js';
 import { indexOf } from './id.js';
 
 /** Sparse set based map with generational index as key. */
 export class SparseSetMap<V, I extends number = number>
   extends SyncMapBatchAdapter<I, V>
-  implements MaybeAsyncMap<I, V>, MaybeAsyncMapBatch<I, V>, Map<I, V>, Iterable<[I, V]>
+  implements MaybeAsyncMap<I, V>, MaybeAsyncMapBatch<I, V>, Map<I, V>, Iterable<[I, V]>, KeyValueIterable<I, V>
 {
   private readonly sparse: number[] = [];
   private readonly ids: I[] = [];

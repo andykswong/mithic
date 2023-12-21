@@ -15,11 +15,11 @@ module.exports = api => {
       './',
       'packages/**/',
     ],
-    comments: false,
+    comments: isTest,
     ignore: [
       'node_modules'
     ],
-    minified: true,
+    minified: !isTest,
     plugins: [
       '@babel/plugin-proposal-explicit-resource-management'
     ],
@@ -29,7 +29,7 @@ module.exports = api => {
         {
           modules: false,
           targets: {
-            node: true
+            node: 'current'
           }
         }
       ],

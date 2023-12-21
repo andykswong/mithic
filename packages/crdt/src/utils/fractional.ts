@@ -57,7 +57,10 @@ export class FractionalIndexGenerator implements IndexGenerator<string> {
   }
 }
 
-/** Converts a fractional index array to string. */
+/**
+ * Converts a fractional index array to string.
+ * @internal
+ */
 export function fractionalIndexToString(index: number[]): string {
   return index.map(byte => ASCII64_DIGIT[byte] || ASCII64_DIGIT[0]).join('');
 }

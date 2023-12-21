@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { IndexedDBMap } from '../indexeddbmap.js';
+import { RangeQueryOptions, rangeQueryable } from '../../range.js';
 
 describe(IndexedDBMap.name, () => {
   const dbName = 'test-db';
@@ -24,6 +25,10 @@ describe(IndexedDBMap.name, () => {
 
   it('should have correct string tag', () => {
     expect(dbMap.toString()).toBe(`[object ${IndexedDBMap.name}]`);
+  });
+
+  it('should have correct rangeQueryable tag', () => {
+    expect(dbMap[rangeQueryable]).toBe(true);
   });
 
   describe('close', () => {
@@ -214,16 +219,18 @@ describe(IndexedDBMap.name, () => {
       expect(entries).toEqual(ENTRIES);
     });
 
-    it.each([
-      [{}, [ENTRIES[0][1], ENTRIES[1][1], ENTRIES[2][1], ENTRIES[3][1]]],
-      [{ reverse: true }, [ENTRIES[3][1], ENTRIES[2][1], ENTRIES[1][1], ENTRIES[0][1]]],
-      [{ limit: 2 }, [ENTRIES[0][1], ENTRIES[1][1]]],
-      [{ reverse: true, gt: 'a', limit: 2 }, [ENTRIES[3][1], ENTRIES[2][1]]],
-      [{ gte: 'a', limit: 2 }, [ENTRIES[0][1], ENTRIES[1][1]]],
-      [{ lt: 'c' }, [ENTRIES[0][1], ENTRIES[1][1]]],
-      [{ lte: 'c' }, [ENTRIES[0][1], ENTRIES[1][1], ENTRIES[2][1]]],
-      [{ gt: 'a', lte: 'c' }, [ENTRIES[1][1], ENTRIES[2][1]]],
-    ])('should be iterable by values query: %j', async (query, expectedValues) => {
+    it.each(
+      [
+        [{}, [ENTRIES[0][1], ENTRIES[1][1], ENTRIES[2][1], ENTRIES[3][1]]],
+        [{ reverse: true }, [ENTRIES[3][1], ENTRIES[2][1], ENTRIES[1][1], ENTRIES[0][1]]],
+        [{ limit: 2 }, [ENTRIES[0][1], ENTRIES[1][1]]],
+        [{ reverse: true, lowerOpen: true, lower: 'a', limit: 2 }, [ENTRIES[3][1], ENTRIES[2][1]]],
+        [{ lower: 'a', limit: 2 }, [ENTRIES[0][1], ENTRIES[1][1]]],
+        [{ upper: 'c' }, [ENTRIES[0][1], ENTRIES[1][1]]],
+        [{ upperOpen: false, upper: 'c' }, [ENTRIES[0][1], ENTRIES[1][1], ENTRIES[2][1]]],
+        [{ lowerOpen: true, lower: 'a', upperOpen: false, upper: 'c' }, [ENTRIES[1][1], ENTRIES[2][1]]],
+      ] satisfies [RangeQueryOptions<string>, string[]][]
+    )('should be iterable by values query: %j', async (query, expectedValues) => {
       const values = [];
       for await (const value of dbMap.values(query)) {
         values.push(value);
@@ -231,16 +238,18 @@ describe(IndexedDBMap.name, () => {
       expect(values).toEqual(expectedValues);
     });
 
-    it.each([
-      [{}, [ENTRIES[0][0], ENTRIES[1][0], ENTRIES[2][0], ENTRIES[3][0]]],
-      [{ reverse: true }, [ENTRIES[3][0], ENTRIES[2][0], ENTRIES[1][0], ENTRIES[0][0]]],
-      [{ limit: 2 }, [ENTRIES[0][0], ENTRIES[1][0]]],
-      [{ reverse: true, gt: 'a', limit: 2 }, [ENTRIES[3][0], ENTRIES[2][0]]],
-      [{ gte: 'a', limit: 2 }, [ENTRIES[0][0], ENTRIES[1][0]]],
-      [{ lt: 'c' }, [ENTRIES[0][0], ENTRIES[1][0]]],
-      [{ lte: 'c' }, [ENTRIES[0][0], ENTRIES[1][0], ENTRIES[2][0]]],
-      [{ gt: 'a', lte: 'c' }, [ENTRIES[1][0], ENTRIES[2][0]]],
-    ])('should be iterable by keys query: %j', async (query, expectedKeys) => {
+    it.each(
+      [
+        [{}, [ENTRIES[0][0], ENTRIES[1][0], ENTRIES[2][0], ENTRIES[3][0]]],
+        [{ reverse: true }, [ENTRIES[3][0], ENTRIES[2][0], ENTRIES[1][0], ENTRIES[0][0]]],
+        [{ limit: 2 }, [ENTRIES[0][0], ENTRIES[1][0]]],
+        [{ reverse: true, lowerOpen: true, lower: 'a', limit: 2 }, [ENTRIES[3][0], ENTRIES[2][0]]],
+        [{ lower: 'a', limit: 2 }, [ENTRIES[0][0], ENTRIES[1][0]]],
+        [{ upper: 'c' }, [ENTRIES[0][0], ENTRIES[1][0]]],
+        [{ upperOpen: false, upper: 'c' }, [ENTRIES[0][0], ENTRIES[1][0], ENTRIES[2][0]]],
+        [{ lowerOpen: true, lower: 'a', upperOpen: false, upper: 'c' }, [ENTRIES[1][0], ENTRIES[2][0]]],
+      ] satisfies [RangeQueryOptions<string>, string[]][]
+    )('should be iterable by keys query: %j', async (query, expectedKeys) => {
       const keys = [];
       for await (const key of dbMap.keys(query)) {
         keys.push(key);

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { AbstractLevel } from 'abstract-level';
 import { MemoryLevel } from 'memory-level';
 import { LevelMap } from '../map.js';
+import { rangeQueryable } from '@mithic/collections';
 
 describe(LevelMap.name, () => {
   let backingMap: AbstractLevel<Buffer | Uint8Array | string>;
@@ -23,6 +24,10 @@ describe(LevelMap.name, () => {
 
   it('should have the correct string tag', () => {
     expect(`${map}`).toBe(`[object ${LevelMap.name}]`);
+  });
+
+  it('should have correct rangeQueryable tag', () => {
+    expect(map[rangeQueryable]).toBe(true);
   });
 
   describe('close', () => {
@@ -171,7 +176,7 @@ describe(LevelMap.name, () => {
         expect(error).toBeUndefined();
       }
       const results = [];
-      for await (const key of map.keys({ gte: 'key1', lte: 'key3', reverse: true, limit: 2 })) {
+      for await (const key of map.keys({ lower: 'key1', upper: 'key3', upperOpen: false, reverse: true, limit: 2 })) {
         results.push(key);
       }
       expect(results).toEqual(['key3', 'key2']);
@@ -184,7 +189,7 @@ describe(LevelMap.name, () => {
         expect(error).toBeUndefined();
       }
       const results = [];
-      for await (const key of map.keys({ gt: 'key4' })) {
+      for await (const key of map.keys({ lower: 'key3', lowerOpen: true })) {
         results.push(key);
       }
       expect(results).toEqual([]);
@@ -199,7 +204,7 @@ describe(LevelMap.name, () => {
         expect(error).toBeUndefined();
       }
       const results = [];
-      for await (const value of map.values({ gte: 'key1', lte: 'key3', reverse: true, limit: 2 })) {
+      for await (const value of map.values({ lower: 'key1', upper: 'key3', upperOpen: false, reverse: true, limit: 2 })) {
         results.push(value);
       }
       expect(results).toEqual(['value3', 'value2']);
@@ -214,10 +219,10 @@ describe(LevelMap.name, () => {
         expect(error).toBeUndefined();
       }
       const results = [];
-      for await (const entry of map.entries({ gte: 'key1', lte: 'key3', reverse: true, limit: 2 })) {
+      for await (const entry of map.entries({ lower: 'key1', upper: 'key3', lowerOpen: true, reverse: true, limit: 2 })) {
         results.push(entry);
       }
-      expect(results).toEqual([['key3', 'value3'], ['key2', 'value2']]);
+      expect(results).toEqual([['key2', 'value2']]);
     });
   });
 

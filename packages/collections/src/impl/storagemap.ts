@@ -1,4 +1,5 @@
 import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
+import { KeyValueIterable } from '../range.js';
 import { SyncMapBatchAdapter } from './batchmap.js';
 
 /**
@@ -7,7 +8,7 @@ import { SyncMapBatchAdapter } from './batchmap.js';
  */
 export class LocalStorageMap<K extends string, V extends string>
   extends SyncMapBatchAdapter<K, V>
-  implements MaybeAsyncMap<K, V>, MaybeAsyncMapBatch<K, V>, Map<K, V>, Iterable<[K, V]>
+  implements MaybeAsyncMap<K, V>, MaybeAsyncMapBatch<K, V>, Map<K, V>, Iterable<[K, V]>, KeyValueIterable<K, V>
 {
   public constructor(
     /** Unique prefix for keys. */
@@ -76,19 +77,17 @@ export class LocalStorageMap<K extends string, V extends string>
   }
 
   public * values(): IterableIterator<V> {
-    for (const [, value] of this.entries()) {
-      yield value;
+    for (const key of this.keys()) {
+      const value = this.get(key);
+      if (value !== void 0) {
+        yield value;
+      }
     }
   }
 
   public * entries(): IterableIterator<[K, V]> {
-    for (let i = this.storage.length - 1; i >= 0; --i) {
-      const keyString = this.storage.key(i);
-      const key = this.decodeKey(keyString);
-      if (key === void 0) {
-        continue;
-      }
-      const value = this.getValue(keyString);
+    for (const key of this.keys()) {
+      const value = this.get(key);
       if (value !== void 0) {
         yield [key, value];
       }

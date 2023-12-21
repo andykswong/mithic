@@ -61,8 +61,9 @@ describe(getEventIndexRangeQueryOptions.name, () => {
     const type = 'test';
     const sinceTime = 12345;
     const expectedOptions = {
-      gt: `RE::${root}::${type}::${(sinceTime + 1).toString(16).padStart(16, '0')}::`,
-      lt: `RE::${root}::${type}::\udbff\udfff`,
+      lower: `RE::${root}::${type}::${(sinceTime + 1).toString(16).padStart(16, '0')}::`,
+      upper: `RE::${root}::${type}::\udbff\udfff`,
+      lowerOpen: true,
     };
     expect(getEventIndexRangeQueryOptions(sinceTime, type, root)).toEqual(expectedOptions);
   });
@@ -72,8 +73,9 @@ describe(getEventIndexRangeQueryOptions.name, () => {
     const type = 'test';
     const sinceTime = 12345;
     const expectedOptions = {
-      gt: `HRE::${root}::${type}::${(sinceTime + 1).toString(16).padStart(16, '0')}::`,
-      lt: `HRE::${root}::${type}::\udbff\udfff`,
+      lower: `HRE::${root}::${type}::${(sinceTime + 1).toString(16).padStart(16, '0')}::`,
+      upper: `HRE::${root}::${type}::\udbff\udfff`,
+      lowerOpen: true,
     };
     expect(getEventIndexRangeQueryOptions(sinceTime, type, root, true)).toEqual(expectedOptions);
   });

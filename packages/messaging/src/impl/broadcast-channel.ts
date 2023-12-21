@@ -219,6 +219,6 @@ export interface BroadcastChannelMessage<Msg, PeerId> {
 
 /** Internal message types for {@link BroadcastChannelMessageBus}. */
 export enum BroadcastChannelMessageType {
-  Keepalive = 'Keepalive',
-  Message = 'Message'
+  Keepalive = 'keepalive',
+  Message = 'message'
 }

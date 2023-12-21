@@ -1,13 +1,13 @@
 import { AbortOptions, ContentId, MaybePromise, SyncOrAsyncIterable, ToString } from '@mithic/commons';
 import {
-  MapCommand, MapCommandHandler, MapCommandType, MapEvent, MapEventType, MapProjection, MapRangeQueryResolver, MapStore,
-  ORMapCommandHandler, ORMapProjection, ORMapRangeQueryResolver, ReadonlyMapStore
+  MapCommand, MapCommandHandler, MapCommandType, MapEvent, MapEventType, MapProjection, MapRangeQueryResolver,
+  ORMapCommandHandler, ORMapProjection, ORMapRangeQueryResolver
 } from '../map/index.js';
-import { FractionalIndexGenerator } from './fractional.js';
-import { IndexGenerator } from './generator.js';
+import { FractionalIndexGenerator, IndexGenerator } from '../utils/index.js';
 import {
   ListCommand, ListCommandHandler, ListEvent, ListEventType, ListProjection, ListRangeQuery, ListRangeQueryResolver
 } from './list.js';
+import { MapStore, ReadonlyMapStore } from '../store.js';
 
 /** LSeq command handler. */
 export class LSeqCommandHandler<K extends ToString = ContentId, V = unknown> implements ListCommandHandler<K, V> {
@@ -39,7 +39,7 @@ export class LSeqCommandHandler<K extends ToString = ContentId, V = unknown> imp
 
       if (command.root) { // try to find an index before given index to insert in between
         for await (const [, index] of store.data.keys({
-          lt: endIndex === void 0 ? void 0 : [command.root, endIndex],
+          upper: endIndex === void 0 ? void 0 : [command.root, endIndex],
           limit: 1,
           reverse: true,
           signal: options?.signal,
@@ -59,7 +59,7 @@ export class LSeqCommandHandler<K extends ToString = ContentId, V = unknown> imp
     if (command.root && deleteCount) {
       const deletedIndices = new Set<string>();
       for await (const [, index] of store.data.keys({
-        gte: [command.root, command.payload.index ?? ''],
+        lower: [command.root, command.payload.index ?? ''],
         limit: deleteCount,
         signal: options?.signal,
       })) {

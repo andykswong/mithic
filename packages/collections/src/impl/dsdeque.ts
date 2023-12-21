@@ -1,9 +1,10 @@
 import { PeekableDeque, SyncDeque } from '../deque.js';
 import { MaybeAsyncReadonlyMap } from '../map.js';
+import { KeyValueIterable } from '../range.js';
 
 /** A dual stack based double-ended queue. */
 export class DualStackDeque<T>
-  implements MaybeAsyncReadonlyMap<number, T>, PeekableDeque<T>, SyncDeque<T>, Iterable<T>
+  implements MaybeAsyncReadonlyMap<number, T>, PeekableDeque<T>, SyncDeque<T>, Iterable<T>, KeyValueIterable<number, T>
 {
   private readonly minLoadFactor: number;
   private readonly frontStack: (T | undefined)[] = [];

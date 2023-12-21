@@ -1,7 +1,8 @@
 import { SyncOrAsyncIterable } from '@mithic/commons';
 import { AggregateCommandHandler, AggregateProjection, AggregateQuery, AggregateQueryResolver } from '../aggregate.js';
 import { StandardCommand, StandardEvent } from '../action.js';
-import { MapRangeQueryOptions, MapStore, ReadonlyMapStore } from '../map/index.js';
+import { MapRangeQueryOptions } from '../map/index.js';
+import { MapStore, ReadonlyMapStore } from '../store.js';
 
 /** {@link AggregateCommandHandler} for a CRDT multiset. */
 export type SetCommandHandler<K, V> =

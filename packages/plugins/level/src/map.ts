@@ -1,4 +1,6 @@
-import { MaybeAsyncMap, MaybeAsyncMapBatch, RangeQueryOptions, RangeQueryable } from '@mithic/collections';
+import {
+  MaybeAsyncMap, MaybeAsyncMapBatch, RangeQueryOptions, RangeQueryable, rangeQueryable
+} from '@mithic/collections';
 import { AbortOptions, AsyncDisposableCloseable, CodedError, OperationError, Startable } from '@mithic/commons';
 import { AbstractLevel, AbstractOpenOptions } from 'abstract-level';
 
@@ -63,7 +65,7 @@ export class LevelMap<K, V, T = any>
     return (await this.get(key) !== void 0);
   }
 
-  public async * getMany(keys: Iterable<K>): AsyncIterableIterator<V> {
+  public async * getMany(keys: Iterable<K>): AsyncIterableIterator<V | undefined> {
     yield* await this.level.getMany([...keys]);
   }
 
@@ -144,15 +146,15 @@ export class LevelMap<K, V, T = any>
   }
 
   public async * keys(options: RangeQueryOptions<K> = {}): AsyncIterableIterator<K> {
-    yield* this.level.keys(options);
+    yield* this.level.keys(toLevelDBRangeOptions(options));
   }
 
   public async * values(options: RangeQueryOptions<K> = {}): AsyncIterableIterator<V> {
-    yield* this.level.values(options);
+    yield* this.level.values(toLevelDBRangeOptions(options));
   }
 
   public async * entries(options: RangeQueryOptions<K> = {}): AsyncIterableIterator<[K, V]> {
-    yield* this.level.iterator(options);
+    yield* this.level.iterator(toLevelDBRangeOptions(options));
   }
 
   public [Symbol.asyncIterator](): AsyncIterableIterator<[K, V]> {
@@ -162,4 +164,28 @@ export class LevelMap<K, V, T = any>
   public get [Symbol.toStringTag](): string {
     return LevelMap.name;
   }
+
+  public get [rangeQueryable](): true {
+    return true;
+  }
+}
+
+function toLevelDBRangeOptions<K>(options: RangeQueryOptions<K>) {
+  const { lower, upper, lowerOpen = false, upperOpen = true, reverse = false, limit } = options;
+  const result: Record<string, unknown> = { reverse, limit };
+  if (lower !== void 0) {
+    if (lowerOpen) {
+      result.gt = lower;
+    } else {
+      result.gte = lower;
+    }
+  }
+  if (upper !== void 0) {
+    if (upperOpen) {
+      result.lt = upper;
+    } else {
+      result.lte = upper;
+    }
+  }
+  return result;
 }

@@ -75,6 +75,7 @@
     "./packages/cqrs",
     "./packages/eventstore",
     "./packages/crdt",
+    "./packages/plugins/denokv",
     "./packages/plugins/ipfs",
     "./packages/plugins/level",
     "./packages/plugins/redis",

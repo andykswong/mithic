@@ -46,14 +46,14 @@ export interface MaybeAsyncReadonlyMapBatch<K, V> extends MaybeAsyncReadonlySetB
 /** Batch set API for a {@link MaybeAsyncMap}. */
 export interface MaybeAsyncMapSetBatch<K, V> {
   /** Sets given list of entries. */
-  setMany(entries: Iterable<[K, V]>, options?: AbortOptions): MaybeAsyncIterableIterator<Error | undefined>;
+  setMany(entries: Iterable<readonly [K, V]>, options?: AbortOptions): MaybeAsyncIterableIterator<Error | undefined>;
 }
 
 /** Batch update API for a {@link MaybeAsyncMap}. */
 export interface MaybeAsyncMapUpdateBatch<K, V> {
   /** Sets or deletes given list of entries. */
   updateMany(
-    entries: Iterable<[key: K, value?: V]>, options?: AbortOptions
+    entries: Iterable<readonly [key: K, value?: V]>, options?: AbortOptions
   ): MaybeAsyncIterableIterator<Error | undefined>;
 }
 

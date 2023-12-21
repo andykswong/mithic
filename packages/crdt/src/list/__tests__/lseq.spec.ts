@@ -1,9 +1,10 @@
-import { BTreeMap } from '@mithic/collections';
-import { MapStore, ORMapCommandHandler, ORMapProjection } from '../../map/index.js';
+import { BTreeMap, BTreeSet } from '@mithic/collections';
+import { ORMapCommandHandler, ORMapProjection } from '../../map/index.js';
+import { MapStore, MultimapKey, createDefaultMapStore } from '../../store.js';
+import { FractionalIndexGenerator } from '../../utils/index.js';
 import { ListCommand, ListCommandHandler, ListCommandType, ListEvent, ListEventType, ListProjection, ListRangeQuery, ListRangeQueryResolver } from '../list.js';
 import { LSeqCommandHandler, LSeqProjection, LSeqRangeQueryResolver } from '../lseq.js';
-import { MockId, MockIdStringCodec, MockMultimapKeyCodec, createMockMapStore, getMockEventKey } from '../../__tests__/mocks.js';
-import { FractionalIndexGenerator } from '../fractional.js';
+import { MockId, getMockEventKey } from '../../__tests__/mocks.js';
 
 type V = string;
 
@@ -27,14 +28,16 @@ const CMD_DEL = { type: ListCommandType.Update, payload: { index: INDEX0, add: [
 const CMD_ADD_CONCURRENT = { type: ListCommandType.Update, payload: { add: [VALUE2, VALUE3] }, root: ROOT, nonce: '5' } satisfies ListCommand<MockId, V>;
 
 describe('LSeq', () => {
-  let keySet: Set<string>;
-  let dataMap: BTreeMap<string, V>;
+  let keySet: BTreeSet<MockId>;
+  let dataMap: BTreeMap<MultimapKey<MockId>, V>;
   let store: MapStore<MockId, V>;
   let command: ListCommandHandler<MockId, V>;
   let projection: ListProjection<MockId, V>;
 
   beforeEach(() => {
-    ({ store, set: keySet, map: dataMap } = createMockMapStore<V>());
+    store = createDefaultMapStore();
+    keySet = store.tombstone as BTreeSet<MockId>;
+    dataMap = store.data as BTreeMap<MultimapKey<MockId>, V>;
     command = new LSeqCommandHandler(new ORMapCommandHandler(), GENERATOR);
     projection = new LSeqProjection(new ORMapProjection(getMockEventKey));
   });
@@ -151,8 +154,8 @@ describe('LSeq', () => {
         await applyCommand(CMD_ADD);
 
         expect(dataMap.size).toEqual(2);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, INDEX0, eventKey]))).toEqual(VALUE0);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, INDEX1, eventKey]))).toEqual(VALUE1);
+        expect(dataMap.get([ROOT, INDEX0, eventKey])).toEqual(VALUE0);
+        expect(dataMap.get([ROOT, INDEX1, eventKey])).toEqual(VALUE1);
       });
 
       it('should remove all concurrent values on delete', async () => {
@@ -167,15 +170,15 @@ describe('LSeq', () => {
         await applyCommand(CMD_DEL);
 
         expect(keySet.size).toEqual(3);
-        expect(keySet.has(MockIdStringCodec.encode(getMockEventKey(CMD_EMPTY)))).toBe(true);
-        expect(keySet.has(MockIdStringCodec.encode(event1Key))).toBe(true);
-        expect(keySet.has(MockIdStringCodec.encode(event2Key))).toBe(true);
+        expect(keySet.has(getMockEventKey(CMD_EMPTY))).toBe(true);
+        expect(keySet.has(event1Key)).toBe(true);
+        expect(keySet.has(event2Key)).toBe(true);
 
         expect(dataMap.size).toEqual(4);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, INDEXSD1, event3Key]))).toEqual(VALUE1);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, INDEXSD2, event3Key]))).toEqual(VALUE3);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, INDEX1, event1Key]))).toEqual(VALUE1);
-        expect(dataMap.get(MockMultimapKeyCodec.encode([ROOT, INDEX1, event2Key]))).toEqual(VALUE3);
+        expect(dataMap.get([ROOT, INDEXSD1, event3Key])).toEqual(VALUE1);
+        expect(dataMap.get([ROOT, INDEXSD2, event3Key])).toEqual(VALUE3);
+        expect(dataMap.get([ROOT, INDEX1, event1Key])).toEqual(VALUE1);
+        expect(dataMap.get([ROOT, INDEX1, event2Key])).toEqual(VALUE3);
       });
 
       it('should throw error for malformed events when validate = true', async () => {
@@ -201,26 +204,25 @@ describe('LSeq', () => {
       }
     });
 
-    it.each([
-      [[CMD_ADD], { root: ROOT }, [[INDEX0, VALUE0], [INDEX1, VALUE1]] as const],
-      [[CMD_ADD, CMD_ADD_AT], { root: ROOT }, [[INDEXA1, VALUE1], [INDEXA2, VALUE2], [INDEX0, VALUE0], [INDEX1, VALUE1]] as const],
-      [[CMD_ADD, CMD_ADD_AT], { root: ROOT, limit: 2 }, [[INDEXA1, VALUE1], [INDEXA2, VALUE2]] as const],
-      [[CMD_ADD, CMD_ADD_AT], { root: ROOT, limit: 2, reverse: true }, [[INDEX1, VALUE1], [INDEX0, VALUE0]] as const],
-      [[CMD_ADD, CMD_ADD_AT, CMD_DEL], { root: ROOT }, [[INDEXA1, VALUE1], [INDEXA2, VALUE2], [INDEXAD1, VALUE1], [INDEXAD2, VALUE3], [INDEX1, VALUE1]] as const],
-    ])(
-      'should return correct results for non-empty LSeq %#',
-      async (cmds: ListCommand<MockId, V>[], query: ListRangeQuery<MockId, V>, expected: readonly (readonly [string, V])[]) => {
-        await applyCommand();
-        for (const cmd of cmds) {
-          await applyCommand(cmd);
-        }
-        const results: [string, V][] = [];
-        for await (const entry of resolver.resolve(store, query)) {
-          results.push(entry);
-        }
-        expect(results).toEqual(expected);
+    it.each(
+      [
+        [[CMD_ADD], { root: ROOT }, [[INDEX0, VALUE0], [INDEX1, VALUE1]]],
+        [[CMD_ADD, CMD_ADD_AT], { root: ROOT }, [[INDEXA1, VALUE1], [INDEXA2, VALUE2], [INDEX0, VALUE0], [INDEX1, VALUE1]]],
+        [[CMD_ADD, CMD_ADD_AT], { root: ROOT, limit: 2 }, [[INDEXA1, VALUE1], [INDEXA2, VALUE2]]],
+        [[CMD_ADD, CMD_ADD_AT], { root: ROOT, limit: 2, reverse: true }, [[INDEX1, VALUE1], [INDEX0, VALUE0]]],
+        [[CMD_ADD, CMD_ADD_AT, CMD_DEL], { root: ROOT }, [[INDEXA1, VALUE1], [INDEXA2, VALUE2], [INDEXAD1, VALUE1], [INDEXAD2, VALUE3], [INDEX1, VALUE1]]],
+      ] satisfies [ListCommand<MockId, V>[], ListRangeQuery<MockId, V>, [string, V][]][]
+    )('should return correct results for non-empty LSeq %#', async (cmds, query, expected) => {
+      await applyCommand();
+      for (const cmd of cmds) {
+        await applyCommand(cmd);
       }
-    );
+      const results: [string, V][] = [];
+      for await (const entry of resolver.resolve(store, query)) {
+        results.push(entry);
+      }
+      expect(results).toEqual(expected);
+    });
 
     it('should return all values on concurrent updates', async () => {
       await applyCommand();

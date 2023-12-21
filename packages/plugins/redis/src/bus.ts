@@ -1,5 +1,7 @@
 import { AbortOptions, AsyncDisposableCloseable, Startable, maybeAsync } from '@mithic/commons';
-import { MessageBus, MessageHandler, MessageOptions, SubscribeOptions, Unsubscribe } from '@mithic/messaging';
+import {
+  MessageBus, MessageHandler, MessageOptions, MessageSubscriptionTopics, SubscribeOptions, Unsubscribe
+} from '@mithic/messaging';
 import { RedisClientType, commandOptions } from '@redis/client';
 import { RedisValueType } from './type.js';
 
@@ -8,7 +10,7 @@ const DEFAULT_TOPIC = 'message';
 /** Redis implementation of {@link MessageBus}. */
 export class RedisMessageBus<UseBuffer extends boolean = false, R extends RedisClientType = RedisClientType>
   extends AsyncDisposableCloseable
-  implements MessageBus<RedisValueType<UseBuffer>>, Startable, AsyncDisposable {
+  implements MessageBus<RedisValueType<UseBuffer>>, MessageSubscriptionTopics, Startable, AsyncDisposable {
 
   public constructor(
     /** Redis client to use. */

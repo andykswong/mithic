@@ -1,9 +1,12 @@
 import { AbortOptions, Codec, IdentityCodec, MaybePromise } from '@mithic/commons';
 import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
 import { deleteMany, getMany, hasMany, setMany, updateMapMany } from '../utils/batch.js';
-import { KeyRange, RangeKeyCodec, RangeQueryOptions, RangeQueryable } from '../query.js';
+import { KeyValueIterable, RangeQueryOptions, RangeQueryable, rangeQueryable } from '../range.js';
 
-/** A map adapter that transforms keys and/or values. */
+/**
+ * A map adapter that serializes keys and/or values with codec.
+ * Key codec needs to be monotonic to preserve iteration order.
+ */
 export class TransformedMap<
   K, V, TK = K, TV = V,
   M extends MaybeAsyncMap<TK, TV> &
@@ -16,39 +19,41 @@ export class TransformedMap<
   public [Symbol.iterator]!: M extends Iterable<[TK, TV]> ? () => IterableIterator<[K, V]> : undefined;
   public [Symbol.asyncIterator]!:
     M extends (Iterable<[TK, TV]> | AsyncIterable<[TK, TV]>) ? () => AsyncIterableIterator<[K, V]> : undefined;
-  public entries: M extends RangeQueryable<TK, TV> ?
-    (options?: RangeQueryOptions<K>) => AsyncIterableIterator<[K, V]> : undefined;
-  public keys: M extends RangeQueryable<TK, TV> ?
-    (options?: RangeQueryOptions<K>) => AsyncIterableIterator<K> : undefined;
-  public values: M extends RangeQueryable<TK, TV> ?
-    (options?: RangeQueryOptions<K>) => AsyncIterableIterator<V> : undefined;
+
+  public readonly [rangeQueryable]: M extends RangeQueryable<TK, TV> ? true : undefined;
+  public entries: TransformedMapQuery<K, TK, TV, M, [K, V]>;
+  public keys: TransformedMapQuery<K, TK, TV, M, K>;
+  public values: TransformedMapQuery<K, TK, TV, M, V>;
 
   public constructor(
     /** Underlying map. */
     public readonly map: M,
     /** Key codec. */
-    protected readonly keyCodec: RangeKeyCodec<K, TK> = IdentityCodec as RangeKeyCodec<K, TK>,
+    protected readonly keyCodec: Codec<K, TK> = IdentityCodec as Codec<K, TK>,
     /** Value codec. */
     protected readonly valueCodec: Codec<V, TV> = IdentityCodec as Codec<V, TV>,
   ) {
+    type This = TransformedMap<K, V, TK, TV, M>;
+
     this[Symbol.iterator] = (Symbol.iterator in map ? function* () {
       for (const [key, value] of map as Iterable<[TK, TV]>) {
         yield [keyCodec.decode(key), valueCodec.decode(value)];
       }
-    } : void 0) as M extends Iterable<[TK, TV]> ? () => IterableIterator<[K, V]> : undefined;
+    } : void 0) as This[typeof Symbol.iterator];
 
     this[Symbol.asyncIterator] = ((Symbol.iterator in map || Symbol.asyncIterator in map) ? async function* () {
       for await (const [key, value] of map as AsyncIterable<[TK, TV]>) {
         yield [keyCodec.decode(key), valueCodec.decode(value)];
       }
-    } : void 0) as
-      M extends (Iterable<[TK, TV]> | AsyncIterable<[TK, TV]>) ? () => AsyncIterableIterator<[K, V]> : undefined;
+    } : void 0) as This[typeof Symbol.asyncIterator];
+
+    this[rangeQueryable] = map[rangeQueryable] as This[typeof rangeQueryable];
 
     const encodeRangeQuery = (options?: RangeQueryOptions<K>): RangeQueryOptions<TK> => {
       return {
         ...options,
-        gt: void 0, gte: void 0, lt: void 0, lte: void 0, reverse: false,
-        ...(options ? keyCodec.encodeRange ? keyCodec.encodeRange(options) : defaultEncodeRange(this.encodeKey, options) : void 0),
+        lower: options?.lower === void 0 ? void 0 : keyCodec.encode(options.lower),
+        upper: options?.upper === void 0 ? void 0 : keyCodec.encode(options.upper),
       };
     };
 
@@ -56,15 +61,13 @@ export class TransformedMap<
       for await (const key of (map as RangeQueryable<TK, TV>).keys(encodeRangeQuery(options))) {
         yield keyCodec.decode(key);
       }
-    } : void 0) as
-      M extends RangeQueryable<TK, TV> ? (options?: RangeQueryOptions<K>) => AsyncIterableIterator<K> : undefined;
+    } : void 0) as This['keys'];
 
     this.values = ('values' in map ? async function* (options?: RangeQueryOptions<K>) {
       for await (const value of (map as RangeQueryable<TK, TV>).values(encodeRangeQuery(options))) {
         yield valueCodec.decode(value);
       }
-    } : void 0) as
-      M extends RangeQueryable<TK, TV> ? (options?: RangeQueryOptions<K>) => AsyncIterableIterator<V> : undefined;
+    } : void 0) as This['values'];
 
     this.entries = ('entries' in map ? async function* (options?: RangeQueryOptions<K>) {
       for await (
@@ -72,8 +75,7 @@ export class TransformedMap<
       ) {
         yield [keyCodec.decode(key), valueCodec.decode(value)];
       }
-    } : void 0) as
-      M extends RangeQueryable<TK, TV> ? (options?: RangeQueryOptions<K>) => AsyncIterableIterator<[K, V]> : undefined;
+    } : void 0) as This['entries'];
   }
 
   public get(key: K, options?: AbortOptions): MaybePromise<V | undefined> {
@@ -136,12 +138,7 @@ export class TransformedMap<
   };
 }
 
-function defaultEncodeRange<K, TK>(encode: (key: K) => TK, range?: KeyRange<K>): KeyRange<TK> {
-  return {
-    ...range,
-    gt: range?.gt === void 0 ? void 0 : encode(range.gt),
-    gte: range?.gte === void 0 ? void 0 : encode(range.gte),
-    lt: range?.lt === void 0 ? void 0 : encode(range.lt),
-    lte: range?.lte === void 0 ? void 0 : encode(range.lte),
-  };
-}
+/** Query function type for a {@link TransformedMap}. */
+export type TransformedMapQuery<K, TK, TV, M, E> =
+  M extends RangeQueryable<TK, TV> ? (options?: RangeQueryOptions<K>) => AsyncIterableIterator<E> :
+  M extends KeyValueIterable<TK, TV> ? (options?: AbortOptions) => AsyncIterableIterator<E> : undefined;

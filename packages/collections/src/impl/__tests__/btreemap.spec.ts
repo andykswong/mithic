@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
-import { RangeQueryOptions } from '../../query.js';
+import { RangeQueryOptions, rangeQueryable } from '../../range.js';
 import { BTreeMap } from '../btreemap.js';
 
 const ITEMS: [number, string][] = [
@@ -24,9 +24,13 @@ describe(BTreeMap.name, () => {
   });
 
   it('should have the correct string tag', () => {
-    const bTree = new BTreeMap<number, string>(3);
-
+    const bTree = new BTreeMap<number, string>();
     expect(`${bTree}`).toBe(`[object ${BTreeMap.name}]`);
+  });
+
+  it('should have correct rangeQueryable tag', () => {
+    const bTree = new BTreeMap<number, string>();
+    expect(bTree[rangeQueryable]).toBe(true);
   });
 
   describe('size', () => {
@@ -190,30 +194,30 @@ describe(BTreeMap.name, () => {
   describe('entries', () => {
     const forwardTestCases: [[number, string][], RangeQueryOptions<number>][] = [
       [ITEMS, {} as RangeQueryOptions<number>],
-      [[], { gt: 8, lt: 5 }],
-      [[], { gt: 2, lt: 2 }],
-      [[], { gte: 2, lt: 2 }],
-      [[], { gt: 2, lte: 2 }],
-      [[], { gte: 8, lt: 22, limit: 0 }],
-      [ITEMS.slice(0, 4), { lt: 8 }],
-      [ITEMS.slice(0, 5), { lte: 8 }],
-      [ITEMS.slice(0, 3), { lte: 4 }],
-      [ITEMS.slice(5), { gt: 8 }],
-      [ITEMS.slice(4), { gte: 8 }],
-      [ITEMS.slice(5), { gte: 10 }],
-      [ITEMS.slice(4, 7), { gt: 6, lt: 22 }],
-      [ITEMS.slice(4, 7), { gte: 8, lt: 22 }],
-      [ITEMS.slice(4, 7), { gt: 7, lte: 21 }],
-      [ITEMS.slice(4, 7), { gte: 8, lte: 21 }],
-      [ITEMS.slice(1, 2), { gte: 2, lte: 2 }]
+      [[], { lower: 8, lowerOpen: true, upper: 5 }],
+      [[], { lower: 2, lowerOpen: true, upper: 2 }],
+      [[], { lower: 2, upper: 2 }],
+      [[], { lower: 2, lowerOpen: true, upper: 2, upperOpen: false }],
+      [[], { lower: 8, upper: 22, limit: 0 }],
+      [ITEMS.slice(0, 4), { upper: 8 }],
+      [ITEMS.slice(0, 5), { upper: 8, upperOpen: false }],
+      [ITEMS.slice(0, 3), { upper: 4, upperOpen: false }],
+      [ITEMS.slice(5), { lower: 8, lowerOpen: true }],
+      [ITEMS.slice(4), { lower: 8 }],
+      [ITEMS.slice(5), { lower: 10 }],
+      [ITEMS.slice(4, 7), { lower: 6, lowerOpen: true, upper: 22 }],
+      [ITEMS.slice(4, 7), { lower: 8, upper: 22 }],
+      [ITEMS.slice(4, 7), { lower: 7, lowerOpen: true, upper: 21, upperOpen: false }],
+      [ITEMS.slice(4, 7), { lower: 8, upper: 21, upperOpen: false }],
+      [ITEMS.slice(1, 2), { lower: 2, upper: 2, upperOpen: false }]
     ];
     const limitTestCases: [[number, string][], RangeQueryOptions<number>][] = [
-      [ITEMS.slice(4, 6), { gt: 7, lte: 21, limit: 2 }],
-      [ITEMS.slice(4, 7), { gte: 8, lte: 21, limit: 10 }],
-      [[ITEMS[4]], { gte: 8, lte: 21, limit: 1 }],
-      [ITEMS.slice(5, 7).reverse(), { gt: 7, lte: 21, limit: 2, reverse: true }],
-      [ITEMS.slice(4, 7).reverse(), { gte: 8, lte: 21, limit: 10, reverse: true }],
-      [[ITEMS[6]], { gte: 8, lte: 21, limit: 1, reverse: true }],
+      [ITEMS.slice(4, 6), { lowerOpen: true, lower: 7, upperOpen: false, upper: 21, limit: 2 }],
+      [ITEMS.slice(4, 7), { lower: 8, upperOpen: false, upper: 21, limit: 10 }],
+      [[ITEMS[4]], { lower: 8, upperOpen: false, upper: 21, limit: 1 }],
+      [ITEMS.slice(5, 7).reverse(), { lowerOpen: true, lower: 7, upperOpen: false, upper: 21, limit: 2, reverse: true }],
+      [ITEMS.slice(4, 7).reverse(), { lower: 8, upperOpen: false, upper: 21, limit: 10, reverse: true }],
+      [[ITEMS[6]], { lower: 8, upperOpen: false, upper: 21, limit: 1, reverse: true }],
     ]
     const reverseTestCases: [[number, string][], RangeQueryOptions<number>][] =
       forwardTestCases.map(([items, options]) => (

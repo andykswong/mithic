@@ -1,8 +1,11 @@
 import { SyncGenerator } from '../generational.js';
+import { KeyValueIterable } from '../range.js';
 import { create as id, generationOf, indexOf, MAX_SAFE_GENERATION } from './id.js';
 
 /** {@link SyncGenerator} of generational index IDs. */
-export class IdGenerator<T extends number = number> implements SyncGenerator<T>, ReadonlySet<T>, Iterable<T> {
+export class IdGenerator<T extends number = number>
+  implements SyncGenerator<T>, ReadonlySet<T>, Iterable<T>, KeyValueIterable<T, T>
+{
   private readonly generations: number[] = [];
   private readonly freeList: number[] = [];
 

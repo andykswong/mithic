@@ -1,11 +1,11 @@
 import { AbortOptions, CodedError, DisposableCloseable, OperationError, Startable } from '@mithic/commons';
 import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
-import { RangeQueryOptions, RangeQueryable } from '../query.js';
+import { RangeQueryOptions, RangeQueryable, rangeQueryable } from '../range.js';
 
 /** A map that stores data in IndexedDB. */
-export class IndexedDBMap<K extends IDBValidKey, V>
-  extends DisposableCloseable
-  implements MaybeAsyncMap<K, V>, MaybeAsyncMapBatch<K, V>, AsyncIterable<[K, V]>, RangeQueryable<K, V>, Startable, Disposable {
+export class IndexedDBMap<K extends IDBValidKey, V> extends DisposableCloseable implements
+  MaybeAsyncMap<K, V>, MaybeAsyncMapBatch<K, V>, AsyncIterable<[K, V]>, RangeQueryable<K, V>, Startable, Disposable {
+
   private db?: IDBDatabase;
 
   public constructor(
@@ -165,6 +165,10 @@ export class IndexedDBMap<K extends IDBValidKey, V>
     return IndexedDBMap.name;
   }
 
+  public get [rangeQueryable](): true {
+    return true;
+  }
+
   private async openObjectStore(readwrite = false): Promise<IDBObjectStore> {
     return (await this.openDB())
       .transaction(this.storeName, readwrite ? 'readwrite' : 'readonly')
@@ -203,11 +207,7 @@ async function* cursorAsIterable<T extends IDBCursor>(
 }
 
 function toCursorOptions<K>(options: RangeQueryOptions<K> = {}): [IDBKeyRange | null, IDBCursorDirection] {
-  const lower = options.gte ?? options.gt;
-  const lowerOpen = options.gte === void 0;
-  const upper = options.lte ?? options.lt;
-  const upperOpen = options.lte === void 0;
-
+  const { lower, lowerOpen = false, upper, upperOpen = true } = options;
   const bound = lower !== void 0 ? upper !== void 0 ?
     IDBKeyRange.bound(lower, upper, lowerOpen, upperOpen) :
     IDBKeyRange.lowerBound(lower, lowerOpen) :

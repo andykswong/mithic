@@ -1,5 +1,5 @@
 import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
-import { RangeQueryOptions, RangeQueryable } from '../query.js';
+import { RangeQueryOptions, RangeQueryable, rangeQueryable } from '../range.js';
 import { SyncMapBatchAdapter } from './batchmap.js';
 
 /** An in-memory B-tree structure that implements the Map interface. */
@@ -13,7 +13,7 @@ export class BTreeMap<K, V>
 
   public constructor(
     /** Order of the tree, which is the maximum branching factor / number of children of a node. Must be >= 2. */
-    public readonly order: number,
+    public readonly order = 5,
     /** Function that defines the sort order of keys. */
     protected readonly compare: (a: K, b: K) => number = (a, b) => (a < b ? -1 : b < a ? 1 : 0),
   ) {
@@ -236,6 +236,10 @@ export class BTreeMap<K, V>
     return BTreeMap.name;
   }
 
+  public get [rangeQueryable](): true {
+    return true;
+  }
+
   /**
    * Returns the number of elements in the current node.
    */
@@ -400,26 +404,10 @@ function getBounds<K>(
   compare: (a: K, b: K) => number,
   options?: RangeQueryOptions<K>
 ): [lower: K | undefined, upper: K | undefined, lowerInclusive: boolean, upperInclusive: boolean] | undefined {
-  let lower = options?.gt;
-  let upper = options?.lt;
-  let lowerInclusive = false;
-  let upperInclusive = false;
-
-  if (options?.gte !== void 0 && (
-    lower === void 0 ||
-    (lower !== void 0 && compare(lower, options.gte) < 0)
-  )) {
-    lower = options.gte;
-    lowerInclusive = true;
-  }
-
-  if (options?.lte !== void 0 && (
-    upper === void 0 ||
-    (upper !== void 0 && compare(upper, options.lte) > 0)
-  )) {
-    upper = options.lte;
-    upperInclusive = true;
-  }
+  const lower = options?.lower;
+  const upper = options?.upper;
+  const lowerInclusive = !(options?.lowerOpen);
+  const upperInclusive = !(options?.upperOpen ?? true);
 
   if (lower !== void 0 && upper !== void 0) {
     const cmp = compare(lower, upper);

@@ -43,8 +43,9 @@ export function getEventIndexRangeQueryOptions<K>(
 ): RangeQueryOptions<string> {
   const rootEncoded = root !== void 0 ? encodeKey(root) : void 0;
   return {
-    gt: getEventIndexKey(headOnly, void 0, type, rootEncoded, sinceTime + 1) + KEY_SEPARATOR,
-    lt: `${getEventIndexKey(headOnly, void 0, type, rootEncoded)}${KEY_SEPARATOR}${KEY_TERMINAL}`,
+    lower: getEventIndexKey(headOnly, void 0, type, rootEncoded, sinceTime + 1) + KEY_SEPARATOR,
+    lowerOpen: true,
+    upper: `${getEventIndexKey(headOnly, void 0, type, rootEncoded)}${KEY_SEPARATOR}${KEY_TERMINAL}`,
   };
 }
 
