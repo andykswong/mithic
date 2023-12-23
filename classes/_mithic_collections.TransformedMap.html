@@ -45,7 +45,7 @@ Key codec needs to be monotonic to preserve iteration order.</p>
 <li><a href="../interfaces/_mithic_collections.MaybeAsyncMapBatch.html" class="tsd-signature-type tsd-kind-interface">MaybeAsyncMapBatch</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">V</span><span class="tsd-signature-symbol">&gt;</span></li>
 <li><span class="tsd-signature-type ">Partial</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type ">Iterable</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">V</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> &amp; </span><span class="tsd-signature-type ">AsyncIterable</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">V</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> &amp; </span><a href="../interfaces/_mithic_collections.RangeQueryable.html" class="tsd-signature-type tsd-kind-interface">RangeQueryable</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">V</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L10">collections/src/impl/transformedmap.ts:10</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L10">collections/src/impl/transformedmap.ts:10</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-index-accordion" open><summary class="tsd-accordion-summary tsd-index-summary">
@@ -125,7 +125,7 @@ Key codec needs to be monotonic to preserve iteration order.</p>
 <div class="tsd-comment tsd-typography"></div></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="_mithic_collections.TransformedMap.html" class="tsd-signature-type tsd-kind-class">TransformedMap</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">V</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">TK</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">TV</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">M</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L28">collections/src/impl/transformedmap.ts:28</a></li></ul></aside></li></ul></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L28">collections/src/impl/transformedmap.ts:28</a></li></ul></aside></li></ul></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Properties</h2>
 <section class="tsd-panel tsd-member"><a id="_asyncIterator_" class="tsd-anchor"></a>
@@ -133,25 +133,25 @@ Key codec needs to be monotonic to preserve iteration order.</p>
 <div class="tsd-signature"><span class="tsd-kind-property">[async<wbr/>Iterator]</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type tsd-kind-type-parameter">M</span><span class="tsd-signature-symbol"> extends </span><span class="tsd-signature-type ">Iterable</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type tsd-kind-type-parameter">TK</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">TV</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type ">AsyncIterable</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type tsd-kind-type-parameter">TK</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">TV</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span><br/><span>    </span><span class="tsd-signature-symbol">? </span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">V</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">)</span><br/><span>    </span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">undefined</span></div><aside class="tsd-sources">
 <p>Implementation of Partial.[asyncIterator]</p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L20">collections/src/impl/transformedmap.ts:20</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L20">collections/src/impl/transformedmap.ts:20</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="_iterator_" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>[iterator]</span><a href="#_iterator_" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">[iterator]</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type tsd-kind-type-parameter">M</span><span class="tsd-signature-symbol"> extends </span><span class="tsd-signature-type ">Iterable</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type tsd-kind-type-parameter">TK</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">TV</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span><br/><span>    </span><span class="tsd-signature-symbol">? </span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type ">IterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">V</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">)</span><br/><span>    </span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">undefined</span></div><aside class="tsd-sources">
 <p>Implementation of Partial.[iterator]</p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L19">collections/src/impl/transformedmap.ts:19</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L19">collections/src/impl/transformedmap.ts:19</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="_rangeQueryable_" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagReadonly">Readonly</code> <span>[range<wbr/>Queryable]</span><a href="#_rangeQueryable_" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">[range<wbr/>Queryable]</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type tsd-kind-type-parameter">M</span><span class="tsd-signature-symbol"> extends </span><a href="../interfaces/_mithic_collections.RangeQueryable.html" class="tsd-signature-type tsd-kind-interface">RangeQueryable</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">TK</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">TV</span><span class="tsd-signature-symbol">&gt;</span><br/><span>    </span><span class="tsd-signature-symbol">? </span><span class="tsd-signature-type">true</span><br/><span>    </span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">undefined</span></div><aside class="tsd-sources">
 <p>Implementation of Partial.[rangeQueryable]</p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L23">collections/src/impl/transformedmap.ts:23</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L23">collections/src/impl/transformedmap.ts:23</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="entries" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>entries</span><a href="#entries" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">entries</span><span class="tsd-signature-symbol">:</span> <a href="../types/_mithic_collections.TransformedMapQuery.html" class="tsd-signature-type tsd-kind-type-alias">TransformedMapQuery</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">TK</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">TV</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">M</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">V</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span></div><aside class="tsd-sources">
 <p>Implementation of Partial.entries</p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L24">collections/src/impl/transformedmap.ts:24</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L24">collections/src/impl/transformedmap.ts:24</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-protected"><a id="keyCodec" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>key<wbr/>Codec</span><a href="#keyCodec" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">key<wbr/>Codec</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/_mithic_commons.Codec.html" class="tsd-signature-type tsd-kind-interface">Codec</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">TK</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> = ...</span></div>
@@ -159,13 +159,13 @@ Key codec needs to be monotonic to preserve iteration order.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L32">collections/src/impl/transformedmap.ts:32</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L32">collections/src/impl/transformedmap.ts:32</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="keys" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>keys</span><a href="#keys" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">keys</span><span class="tsd-signature-symbol">:</span> <a href="../types/_mithic_collections.TransformedMapQuery.html" class="tsd-signature-type tsd-kind-type-alias">TransformedMapQuery</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">TK</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">TV</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">M</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span></div><aside class="tsd-sources">
 <p>Implementation of Partial.keys</p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L25">collections/src/impl/transformedmap.ts:25</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L25">collections/src/impl/transformedmap.ts:25</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="map" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagReadonly">Readonly</code> <span>map</span><a href="#map" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">map</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type tsd-kind-type-parameter">M</span></div>
@@ -173,7 +173,7 @@ Key codec needs to be monotonic to preserve iteration order.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L30">collections/src/impl/transformedmap.ts:30</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L30">collections/src/impl/transformedmap.ts:30</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-protected"><a id="valueCodec" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>value<wbr/>Codec</span><a href="#valueCodec" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">value<wbr/>Codec</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/_mithic_commons.Codec.html" class="tsd-signature-type tsd-kind-interface">Codec</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">V</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">TV</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> = ...</span></div>
@@ -181,13 +181,13 @@ Key codec needs to be monotonic to preserve iteration order.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L34">collections/src/impl/transformedmap.ts:34</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L34">collections/src/impl/transformedmap.ts:34</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="values" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>values</span><a href="#values" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">values</span><span class="tsd-signature-symbol">:</span> <a href="../types/_mithic_collections.TransformedMapQuery.html" class="tsd-signature-type tsd-kind-type-alias">TransformedMapQuery</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">TK</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">TV</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">M</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">V</span><span class="tsd-signature-symbol">&gt;</span></div><aside class="tsd-sources">
 <p>Implementation of Partial.values</p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L26">collections/src/impl/transformedmap.ts:26</a></li></ul></aside></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L26">collections/src/impl/transformedmap.ts:26</a></li></ul></aside></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Accessors</h2>
 <section class="tsd-panel tsd-member"><a id="_toStringTag_" class="tsd-anchor"></a>
@@ -197,7 +197,7 @@ Key codec needs to be monotonic to preserve iteration order.</p>
 <li class="tsd-description">
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L130">collections/src/impl/transformedmap.ts:130</a></li></ul></aside></li></ul></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L130">collections/src/impl/transformedmap.ts:130</a></li></ul></aside></li></ul></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Methods</h2>
 <section class="tsd-panel tsd-member tsd-is-protected"><a id="decodeOptionalValue" class="tsd-anchor"></a>
@@ -212,7 +212,7 @@ Key codec needs to be monotonic to preserve iteration order.</p>
 <h5><code class="tsd-tag ts-flagOptional">Optional</code> <span class="tsd-kind-parameter">value</span>: <span class="tsd-signature-type tsd-kind-type-parameter">TV</span></h5></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type tsd-kind-type-parameter">V</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L136">collections/src/impl/transformedmap.ts:136</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L136">collections/src/impl/transformedmap.ts:136</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="delete" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>delete</span><a href="#delete" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -231,7 +231,7 @@ Key codec needs to be monotonic to preserve iteration order.</p>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.MaybeAsyncMap.html">MaybeAsyncMap</a>.<a href="../interfaces/_mithic_collections.MaybeAsyncMap.html#delete">delete</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L89">collections/src/impl/transformedmap.ts:89</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L89">collections/src/impl/transformedmap.ts:89</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="deleteMany" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>delete<wbr/>Many</span><a href="#deleteMany" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -250,7 +250,7 @@ Key codec needs to be monotonic to preserve iteration order.</p>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.MaybeAsyncMapBatch.html">MaybeAsyncMapBatch</a>.<a href="../interfaces/_mithic_collections.MaybeAsyncMapBatch.html#deleteMany">deleteMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L114">collections/src/impl/transformedmap.ts:114</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L114">collections/src/impl/transformedmap.ts:114</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-protected"><a id="encodeKey" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <span>encode<wbr/>Key</span><a href="#encodeKey" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-protected">
@@ -263,7 +263,7 @@ Key codec needs to be monotonic to preserve iteration order.</p>
 <h5><span class="tsd-kind-parameter">key</span>: <span class="tsd-signature-type tsd-kind-type-parameter">K</span></h5></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type tsd-kind-type-parameter">TK</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L134">collections/src/impl/transformedmap.ts:134</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L134">collections/src/impl/transformedmap.ts:134</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="get" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>get</span><a href="#get" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -282,7 +282,7 @@ Key codec needs to be monotonic to preserve iteration order.</p>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.MaybeAsyncMap.html">MaybeAsyncMap</a>.<a href="../interfaces/_mithic_collections.MaybeAsyncMap.html#get">get</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L81">collections/src/impl/transformedmap.ts:81</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L81">collections/src/impl/transformedmap.ts:81</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="getMany" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>get<wbr/>Many</span><a href="#getMany" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -301,7 +301,7 @@ Key codec needs to be monotonic to preserve iteration order.</p>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.MaybeAsyncMapBatch.html">MaybeAsyncMapBatch</a>.<a href="../interfaces/_mithic_collections.MaybeAsyncMapBatch.html#getMany">getMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L97">collections/src/impl/transformedmap.ts:97</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L97">collections/src/impl/transformedmap.ts:97</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="has" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>has</span><a href="#has" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -320,7 +320,7 @@ Key codec needs to be monotonic to preserve iteration order.</p>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.MaybeAsyncMap.html">MaybeAsyncMap</a>.<a href="../interfaces/_mithic_collections.MaybeAsyncMap.html#has">has</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L93">collections/src/impl/transformedmap.ts:93</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L93">collections/src/impl/transformedmap.ts:93</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="hasMany" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>has<wbr/>Many</span><a href="#hasMany" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -339,7 +339,7 @@ Key codec needs to be monotonic to preserve iteration order.</p>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.MaybeAsyncMapBatch.html">MaybeAsyncMapBatch</a>.<a href="../interfaces/_mithic_collections.MaybeAsyncMapBatch.html#hasMany">hasMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L104">collections/src/impl/transformedmap.ts:104</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L104">collections/src/impl/transformedmap.ts:104</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="set" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>set</span><a href="#set" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -360,7 +360,7 @@ Key codec needs to be monotonic to preserve iteration order.</p>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.MaybeAsyncMap.html">MaybeAsyncMap</a>.<a href="../interfaces/_mithic_collections.MaybeAsyncMap.html#set">set</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L85">collections/src/impl/transformedmap.ts:85</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L85">collections/src/impl/transformedmap.ts:85</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="setMany" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>set<wbr/>Many</span><a href="#setMany" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -379,7 +379,7 @@ Key codec needs to be monotonic to preserve iteration order.</p>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.MaybeAsyncMapBatch.html">MaybeAsyncMapBatch</a>.<a href="../interfaces/_mithic_collections.MaybeAsyncMapBatch.html#setMany">setMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L108">collections/src/impl/transformedmap.ts:108</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L108">collections/src/impl/transformedmap.ts:108</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="updateMany" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>update<wbr/>Many</span><a href="#updateMany" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -398,7 +398,7 @@ Key codec needs to be monotonic to preserve iteration order.</p>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.MaybeAsyncMapBatch.html">MaybeAsyncMapBatch</a>.<a href="../interfaces/_mithic_collections.MaybeAsyncMapBatch.html#updateMany">updateMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedmap.ts#L118">collections/src/impl/transformedmap.ts:118</a></li></ul></aside></li></ul></section></section></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/c0b0a9c/packages/collections/src/impl/transformedmap.ts#L118">collections/src/impl/transformedmap.ts:118</a></li></ul></aside></li></ul></section></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
