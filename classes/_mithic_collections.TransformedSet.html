@@ -17,7 +17,8 @@
 <li><a href="_mithic_collections.TransformedSet.html">TransformedSet</a></li></ul>
 <h1>Class TransformedSet&lt;T, U, S&gt;</h1></div>
 <section class="tsd-panel tsd-comment">
-<div class="tsd-comment tsd-typography"><p>A set adapter that transforms keys.</p>
+<div class="tsd-comment tsd-typography"><p>A set adapter that serializes values with a codec.
+Codec needs to be monotonic to preserve iteration order.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div></section> 
 <section class="tsd-panel">
@@ -40,7 +41,7 @@
 <li><a href="../interfaces/_mithic_collections.MaybeAsyncSetBatch.html" class="tsd-signature-type tsd-kind-interface">MaybeAsyncSetBatch</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span></li>
 <li><span class="tsd-signature-type ">Partial</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type ">Iterable</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> &amp; </span><span class="tsd-signature-type ">AsyncIterable</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> &amp; </span><a href="../interfaces/_mithic_collections.RangeQueryable.html" class="tsd-signature-type tsd-kind-interface">RangeQueryable</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/collections/src/impl/transformedset.ts#L7">collections/src/impl/transformedset.ts:7</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L10">collections/src/impl/transformedset.ts:10</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-index-accordion" open><summary class="tsd-accordion-summary tsd-index-summary">
@@ -54,6 +55,7 @@
 <h3 class="tsd-index-heading">Properties</h3>
 <div class="tsd-index-list"><a href="_mithic_collections.TransformedSet.html#_asyncIterator_" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>[async<wbr/>Iterator]</span></a>
 <a href="_mithic_collections.TransformedSet.html#_iterator_" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>[iterator]</span></a>
+<a href="_mithic_collections.TransformedSet.html#_rangeQueryable_" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>[range<wbr/>Queryable]</span></a>
 <a href="_mithic_collections.TransformedSet.html#codec" class="tsd-index-link tsd-is-protected"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>codec</span></a>
 <a href="_mithic_collections.TransformedSet.html#entries" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>entries</span></a>
 <a href="_mithic_collections.TransformedSet.html#keys" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>keys</span></a>
@@ -100,13 +102,13 @@
 </div>
 <div class="tsd-comment tsd-typography"></div></li>
 <li>
-<h5><span class="tsd-kind-parameter">codec</span>: <a href="../interfaces/_mithic_collections.RangeKeyCodec.html" class="tsd-signature-type tsd-kind-interface">RangeKeyCodec</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> = ...</span></h5>
+<h5><span class="tsd-kind-parameter">codec</span>: <a href="../interfaces/_mithic_commons.Codec.html" class="tsd-signature-type tsd-kind-interface">Codec</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> = ...</span></h5>
 <div class="tsd-comment tsd-typography"><p>Key codec.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="_mithic_collections.TransformedSet.html" class="tsd-signature-type tsd-kind-class">TransformedSet</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">S</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/collections/src/impl/transformedset.ts#L22">collections/src/impl/transformedset.ts:22</a></li></ul></aside></li></ul></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L24">collections/src/impl/transformedset.ts:24</a></li></ul></aside></li></ul></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Properties</h2>
 <section class="tsd-panel tsd-member"><a id="_asyncIterator_" class="tsd-anchor"></a>
@@ -114,33 +116,39 @@
 <div class="tsd-signature"><span class="tsd-kind-property">[async<wbr/>Iterator]</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type tsd-kind-type-parameter">S</span><span class="tsd-signature-symbol"> extends </span><span class="tsd-signature-type ">Iterable</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type ">AsyncIterable</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">&gt;</span><br/><span>    </span><span class="tsd-signature-symbol">? </span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">)</span><br/><span>    </span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">undefined</span></div><aside class="tsd-sources">
 <p>Implementation of Partial.[asyncIterator]</p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/collections/src/impl/transformedset.ts#L13">collections/src/impl/transformedset.ts:13</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L16">collections/src/impl/transformedset.ts:16</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="_iterator_" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>[iterator]</span><a href="#_iterator_" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">[iterator]</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type tsd-kind-type-parameter">S</span><span class="tsd-signature-symbol"> extends </span><span class="tsd-signature-type ">Iterable</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">&gt;</span><br/><span>    </span><span class="tsd-signature-symbol">? </span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type ">IterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">)</span><br/><span>    </span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">undefined</span></div><aside class="tsd-sources">
 <p>Implementation of Partial.[iterator]</p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/collections/src/impl/transformedset.ts#L12">collections/src/impl/transformedset.ts:12</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L15">collections/src/impl/transformedset.ts:15</a></li></ul></aside></section>
+<section class="tsd-panel tsd-member"><a id="_rangeQueryable_" class="tsd-anchor"></a>
+<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagReadonly">Readonly</code> <span>[range<wbr/>Queryable]</span><a href="#_rangeQueryable_" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">[range<wbr/>Queryable]</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type tsd-kind-type-parameter">S</span><span class="tsd-signature-symbol"> extends </span><a href="../interfaces/_mithic_collections.RangeQueryable.html" class="tsd-signature-type tsd-kind-interface">RangeQueryable</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">&gt;</span><br/><span>    </span><span class="tsd-signature-symbol">? </span><span class="tsd-signature-type">true</span><br/><span>    </span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">undefined</span></div><aside class="tsd-sources">
+<p>Implementation of Partial.[rangeQueryable]</p>
+<ul>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L19">collections/src/impl/transformedset.ts:19</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-protected"><a id="codec" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>codec</span><a href="#codec" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">codec</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/_mithic_collections.RangeKeyCodec.html" class="tsd-signature-type tsd-kind-interface">RangeKeyCodec</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> = ...</span></div>
+<div class="tsd-signature"><span class="tsd-kind-property">codec</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/_mithic_commons.Codec.html" class="tsd-signature-type tsd-kind-interface">Codec</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> = ...</span></div>
 <div class="tsd-comment tsd-typography"><p>Key codec.</p>
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/collections/src/impl/transformedset.ts#L26">collections/src/impl/transformedset.ts:26</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L28">collections/src/impl/transformedset.ts:28</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="entries" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>entries</span><a href="#entries" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">entries</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type tsd-kind-type-parameter">S</span><span class="tsd-signature-symbol"> extends </span><a href="../interfaces/_mithic_collections.RangeQueryable.html" class="tsd-signature-type tsd-kind-interface">RangeQueryable</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">&gt;</span><br/><span>    </span><span class="tsd-signature-symbol">? </span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">)</span><br/><span>    </span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">undefined</span></div><aside class="tsd-sources">
+<div class="tsd-signature"><span class="tsd-kind-property">entries</span><span class="tsd-signature-symbol">:</span> <a href="../types/_mithic_collections.TransformedSetQuery.html" class="tsd-signature-type tsd-kind-type-alias">TransformedSetQuery</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">S</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span></div><aside class="tsd-sources">
 <p>Implementation of Partial.entries</p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/collections/src/impl/transformedset.ts#L15">collections/src/impl/transformedset.ts:15</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L20">collections/src/impl/transformedset.ts:20</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="keys" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>keys</span><a href="#keys" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">keys</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type tsd-kind-type-parameter">S</span><span class="tsd-signature-symbol"> extends </span><a href="../interfaces/_mithic_collections.RangeQueryable.html" class="tsd-signature-type tsd-kind-interface">RangeQueryable</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">&gt;</span><br/><span>    </span><span class="tsd-signature-symbol">? </span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">)</span><br/><span>    </span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">undefined</span></div><aside class="tsd-sources">
+<div class="tsd-signature"><span class="tsd-kind-property">keys</span><span class="tsd-signature-symbol">:</span> <a href="../types/_mithic_collections.TransformedSetQuery.html" class="tsd-signature-type tsd-kind-type-alias">TransformedSetQuery</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">S</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span></div><aside class="tsd-sources">
 <p>Implementation of Partial.keys</p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/collections/src/impl/transformedset.ts#L17">collections/src/impl/transformedset.ts:17</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L21">collections/src/impl/transformedset.ts:21</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="set" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagReadonly">Readonly</code> <span>set</span><a href="#set" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">set</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type tsd-kind-type-parameter">S</span></div>
@@ -148,13 +156,13 @@
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/collections/src/impl/transformedset.ts#L24">collections/src/impl/transformedset.ts:24</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L26">collections/src/impl/transformedset.ts:26</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="values" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>values</span><a href="#values" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">values</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type tsd-kind-type-parameter">S</span><span class="tsd-signature-symbol"> extends </span><a href="../interfaces/_mithic_collections.RangeQueryable.html" class="tsd-signature-type tsd-kind-interface">RangeQueryable</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">&gt;</span><br/><span>    </span><span class="tsd-signature-symbol">? </span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">)</span><br/><span>    </span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">undefined</span></div><aside class="tsd-sources">
+<div class="tsd-signature"><span class="tsd-kind-property">values</span><span class="tsd-signature-symbol">:</span> <a href="../types/_mithic_collections.TransformedSetQuery.html" class="tsd-signature-type tsd-kind-type-alias">TransformedSetQuery</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">U</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">S</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">T</span><span class="tsd-signature-symbol">&gt;</span></div><aside class="tsd-sources">
 <p>Implementation of Partial.values</p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/collections/src/impl/transformedset.ts#L19">collections/src/impl/transformedset.ts:19</a></li></ul></aside></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L22">collections/src/impl/transformedset.ts:22</a></li></ul></aside></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Accessors</h2>
 <section class="tsd-panel tsd-member"><a id="_toStringTag_" class="tsd-anchor"></a>
@@ -164,7 +172,7 @@
 <li class="tsd-description">
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/collections/src/impl/transformedset.ts#L95">collections/src/impl/transformedset.ts:95</a></li></ul></aside></li></ul></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L96">collections/src/impl/transformedset.ts:96</a></li></ul></aside></li></ul></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Methods</h2>
 <section class="tsd-panel tsd-member"><a id="add" class="tsd-anchor"></a>
@@ -185,7 +193,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.MaybeAsyncSet.html">MaybeAsyncSet</a>.<a href="../interfaces/_mithic_collections.MaybeAsyncSet.html#add">add</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/collections/src/impl/transformedset.ts#L65">collections/src/impl/transformedset.ts:65</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L66">collections/src/impl/transformedset.ts:66</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="addMany" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>add<wbr/>Many</span><a href="#addMany" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -204,7 +212,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.MaybeAsyncSetBatch.html">MaybeAsyncSetBatch</a>.<a href="../interfaces/_mithic_collections.MaybeAsyncSetBatch.html#addMany">addMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/collections/src/impl/transformedset.ts#L77">collections/src/impl/transformedset.ts:77</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L78">collections/src/impl/transformedset.ts:78</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="delete" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>delete</span><a href="#delete" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -223,7 +231,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.MaybeAsyncSet.html">MaybeAsyncSet</a>.<a href="../interfaces/_mithic_collections.MaybeAsyncSet.html#delete">delete</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/collections/src/impl/transformedset.ts#L69">collections/src/impl/transformedset.ts:69</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L70">collections/src/impl/transformedset.ts:70</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="deleteMany" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>delete<wbr/>Many</span><a href="#deleteMany" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -242,7 +250,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.MaybeAsyncSetBatch.html">MaybeAsyncSetBatch</a>.<a href="../interfaces/_mithic_collections.MaybeAsyncSetBatch.html#deleteMany">deleteMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/collections/src/impl/transformedset.ts#L81">collections/src/impl/transformedset.ts:81</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L82">collections/src/impl/transformedset.ts:82</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-protected"><a id="encode" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <span>encode</span><a href="#encode" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-protected">
@@ -255,7 +263,7 @@
 <h5><span class="tsd-kind-parameter">key</span>: <span class="tsd-signature-type tsd-kind-type-parameter">T</span></h5></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type tsd-kind-type-parameter">U</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/collections/src/impl/transformedset.ts#L99">collections/src/impl/transformedset.ts:99</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L100">collections/src/impl/transformedset.ts:100</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="has" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>has</span><a href="#has" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -274,7 +282,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.MaybeAsyncSet.html">MaybeAsyncSet</a>.<a href="../interfaces/_mithic_collections.MaybeAsyncSet.html#has">has</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/collections/src/impl/transformedset.ts#L73">collections/src/impl/transformedset.ts:73</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L74">collections/src/impl/transformedset.ts:74</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="hasMany" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>has<wbr/>Many</span><a href="#hasMany" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -293,7 +301,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.MaybeAsyncSetBatch.html">MaybeAsyncSetBatch</a>.<a href="../interfaces/_mithic_collections.MaybeAsyncSetBatch.html#hasMany">hasMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/collections/src/impl/transformedset.ts#L85">collections/src/impl/transformedset.ts:85</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L86">collections/src/impl/transformedset.ts:86</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="updateMany" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>update<wbr/>Many</span><a href="#updateMany" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -312,7 +320,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/_mithic_collections.MaybeAsyncSetBatch.html">MaybeAsyncSetBatch</a>.<a href="../interfaces/_mithic_collections.MaybeAsyncSetBatch.html#updateMany">updateMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/49a5516/packages/collections/src/impl/transformedset.ts#L89">collections/src/impl/transformedset.ts:89</a></li></ul></aside></li></ul></section></section></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/ed2cf86/packages/collections/src/impl/transformedset.ts#L90">collections/src/impl/transformedset.ts:90</a></li></ul></aside></li></ul></section></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
@@ -335,6 +343,7 @@
 <li><a href="#constructor" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-512"></use></svg><span>constructor</span></a></li>
 <li><a href="#_asyncIterator_" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>[async<wbr/>Iterator]</span></a></li>
 <li><a href="#_iterator_" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>[iterator]</span></a></li>
+<li><a href="#_rangeQueryable_" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>[range<wbr/>Queryable]</span></a></li>
 <li><a href="#codec" class="tsd-is-protected"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>codec</span></a></li>
 <li><a href="#entries" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>entries</span></a></li>
 <li><a href="#keys" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>keys</span></a></li>
@@ -358,6 +367,7 @@
 <li><a href="../modules/_mithic_crdt.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2"></use></svg>@mithic/crdt - v0.3.0</a></li>
 <li><a href="../modules/_mithic_eventstore.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2"></use></svg>@mithic/eventstore - v0.3.0</a></li>
 <li><a href="../modules/_mithic_messaging.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2"></use></svg>@mithic/messaging - v0.3.0</a></li>
+<li><a href="../modules/_mithic_denokv.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2"></use></svg>@mithic/denokv - v0.3.0</a></li>
 <li><a href="../modules/_mithic_ipfs.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2"></use></svg>@mithic/ipfs - v0.3.0</a></li>
 <li><a href="../modules/_mithic_level.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2"></use></svg>@mithic/level - v0.3.0</a></li>
 <li><a href="../modules/_mithic_redis.html"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-2"></use></svg>@mithic/redis - v0.3.0</a></li></ul></nav></div></div></div>
