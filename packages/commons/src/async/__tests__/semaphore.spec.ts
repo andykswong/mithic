@@ -30,7 +30,8 @@ describe(CountingSemaphore.name, () => {
       const abortController = new AbortController();
       const promise = semaphore.acquire({ signal: abortController.signal });
       abortController.abort();
-      expect(promise).rejects.toThrow();
+      semaphore.release();
+      await expect(promise).rejects.toThrow();
     });
   });
 
@@ -111,7 +112,7 @@ describe(SharedCountingSemaphore.name, () => {
       const abortController = new AbortController();
       const promise = semaphore2.acquire({ signal: abortController.signal });
       abortController.abort();
-      expect(promise).rejects.toThrow();
+      await expect(promise).rejects.toThrow();
     });
   });
 

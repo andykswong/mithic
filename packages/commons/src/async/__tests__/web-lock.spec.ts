@@ -40,7 +40,7 @@ describe(WebLock.name, () => {
       const abortController = new AbortController();
       abortController.abort();
       const promise = lock.acquire({ signal: abortController.signal });
-      expect(promise).rejects.toThrow();
+      await expect(promise).rejects.toThrow();
     });
   });
 
