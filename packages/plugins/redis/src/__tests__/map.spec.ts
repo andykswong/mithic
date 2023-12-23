@@ -48,7 +48,7 @@ describe(RedisMap.name, () => {
 
   describe('get', () => {
     it('gets a value via Redis client', async () => {
-      jest.mocked(mockRedis.hGet).mockReturnValueOnce(Promise.resolve(VALUE1));
+      (mockRedis.hGet as jest.Mocked<typeof mockRedis['hGet']>).mockReturnValueOnce(Promise.resolve(VALUE1));
       expect(await map.get(KEY1, OPTIONS)).toEqual(VALUE1);
       expect(mockRedis.hGet).toHaveBeenCalledWith(commandOptions({ ...OPTIONS, returnBuffers: false }), HASH_KEY, KEY1);
     });
@@ -56,13 +56,13 @@ describe(RedisMap.name, () => {
 
   describe('has', () => {
     it('returns true if value exists', async () => {
-      jest.mocked(mockRedis.hGet).mockReturnValueOnce(Promise.resolve(VALUE1));
+      (mockRedis.hGet as jest.Mocked<typeof mockRedis['hGet']>).mockReturnValueOnce(Promise.resolve(VALUE1));
       expect(await map.has(KEY1, OPTIONS)).toBe(true);
       expect(mockRedis.hGet).toHaveBeenCalledWith(commandOptions(OPTIONS), HASH_KEY, KEY1);
     });
 
     it('returns false if value not exist', async () => {
-      jest.mocked(mockRedis.hGet).mockReturnValueOnce(Promise.resolve(void 0));
+      (mockRedis.hGet as jest.Mocked<typeof mockRedis['hGet']>).mockReturnValueOnce(Promise.resolve(void 0));
       expect(await map.has(KEY1, OPTIONS)).toBe(false);
       expect(mockRedis.hGet).toHaveBeenCalledWith(commandOptions(OPTIONS), HASH_KEY, KEY1);
     });
@@ -71,7 +71,7 @@ describe(RedisMap.name, () => {
   describe('set', () => {
     it('set a key via Redis client', async () => {
       const multiMock = createMockRedisClientMultiCommand();
-      jest.mocked(mockRedis.multi).mockReturnValueOnce(multiMock);
+      (mockRedis.multi as jest.Mocked<typeof mockRedis['multi']>).mockReturnValueOnce(multiMock);
 
       await map.set(KEY1, VALUE1);
       expect(multiMock.hSet).toHaveBeenCalledWith(HASH_KEY, KEY1, VALUE1);
@@ -83,8 +83,8 @@ describe(RedisMap.name, () => {
   describe('delete', () => {
     it('deletes an existing key via Redis client', async () => {
       const multiMock = createMockRedisClientMultiCommand();
-      jest.mocked(mockRedis.multi).mockReturnValueOnce(multiMock);
-      jest.mocked(multiMock.exec).mockResolvedValueOnce([1]);
+      (mockRedis.multi as jest.Mocked<typeof mockRedis['multi']>).mockReturnValueOnce(multiMock);
+      (multiMock.exec as jest.Mocked<typeof multiMock['exec']>).mockResolvedValueOnce([1]);
 
       expect(await map.delete(KEY1)).toBe(true);
       expect(multiMock.hDel).toHaveBeenCalledWith(HASH_KEY, KEY1);
@@ -93,15 +93,15 @@ describe(RedisMap.name, () => {
 
     it('returns false if a key does not exist', async () => {
       const multiMock = createMockRedisClientMultiCommand();
-      jest.mocked(mockRedis.multi).mockReturnValueOnce(multiMock);
-      jest.mocked(multiMock.exec).mockResolvedValueOnce([0]);
+      (mockRedis.multi as jest.Mocked<typeof mockRedis['multi']>).mockReturnValueOnce(multiMock);
+      (multiMock.exec as jest.Mocked<typeof multiMock['exec']>).mockResolvedValueOnce([0]);
       expect(await map.delete(KEY1)).toBe(false);
     });
   });
 
   describe('getMany', () => {
     it('gets values via Redis client', async () => {
-      jest.mocked(mockRedis.hmGet).mockReturnValueOnce(Promise.resolve([VALUE1, VALUE2]));
+      (mockRedis.hmGet as jest.Mocked<typeof mockRedis['hmGet']>).mockReturnValueOnce(Promise.resolve([VALUE1, VALUE2]));
       const results = [];
       for await (const value of map.getMany([KEY1, KEY2], OPTIONS)) {
         results.push(value);
@@ -113,7 +113,7 @@ describe(RedisMap.name, () => {
 
   describe('hasMany', () => {
     it('returns true if value exists and false otherwise', async () => {
-      jest.mocked(mockRedis.hmGet).mockReturnValueOnce(Promise.resolve([VALUE1, void 0] as string[]));
+      (mockRedis.hmGet as jest.Mocked<typeof mockRedis['hmGet']>).mockReturnValueOnce(Promise.resolve([VALUE1, void 0] as string[]));
       const results = [];
       for await (const value of map.hasMany([KEY1, KEY2], OPTIONS)) {
         results.push(value);
@@ -126,7 +126,7 @@ describe(RedisMap.name, () => {
   describe('setMany', () => {
     it('sets values via Redis client', async () => {
       const multiMock = createMockRedisClientMultiCommand();
-      jest.mocked(mockRedis.multi).mockReturnValueOnce(multiMock);
+      (mockRedis.multi as jest.Mocked<typeof mockRedis['multi']>).mockReturnValueOnce(multiMock);
 
       const entries: [string, string][] = [[KEY1, VALUE1], [KEY2, VALUE2]];
       for await (const error of map.setMany(entries)) {
@@ -139,8 +139,8 @@ describe(RedisMap.name, () => {
 
     it('returns errors from Redis call', async () => {
       const multiMock = createMockRedisClientMultiCommand();
-      jest.mocked(mockRedis.multi).mockReturnValueOnce(multiMock);
-      jest.mocked(multiMock.exec).mockRejectedValueOnce('error');
+      (mockRedis.multi as jest.Mocked<typeof mockRedis['multi']>).mockReturnValueOnce(multiMock);
+      (multiMock.exec as jest.Mocked<typeof multiMock['exec']>).mockRejectedValueOnce('error');
 
       const results = [];
       for await (const error of map.setMany([[KEY1, VALUE1], [KEY2, VALUE2]])) {
@@ -156,7 +156,7 @@ describe(RedisMap.name, () => {
   describe('deleteMany', () => {
     it('deletes values via Redis client', async () => {
       const multiMock = createMockRedisClientMultiCommand();
-      jest.mocked(mockRedis.multi).mockReturnValueOnce(multiMock);
+      (mockRedis.multi as jest.Mocked<typeof mockRedis['multi']>).mockReturnValueOnce(multiMock);
 
       const keys = [KEY1, KEY2];
       for await (const error of map.deleteMany(keys)) {
@@ -169,8 +169,8 @@ describe(RedisMap.name, () => {
 
     it('returns errors from Redis call', async () => {
       const multiMock = createMockRedisClientMultiCommand();
-      jest.mocked(mockRedis.multi).mockReturnValueOnce(multiMock);
-      jest.mocked(multiMock.exec).mockRejectedValueOnce('error');
+      (mockRedis.multi as jest.Mocked<typeof mockRedis['multi']>).mockReturnValueOnce(multiMock);
+      (multiMock.exec as jest.Mocked<typeof multiMock['exec']>).mockRejectedValueOnce('error');
 
       const results = [];
       for await (const error of map.deleteMany([KEY1, KEY2])) {
@@ -186,7 +186,7 @@ describe(RedisMap.name, () => {
   describe('updateMany', () => {
     it('sets or deletes values via Redis client', async () => {
       const multiMock = createMockRedisClientMultiCommand();
-      jest.mocked(mockRedis.multi).mockReturnValueOnce(multiMock);
+      (mockRedis.multi as jest.Mocked<typeof mockRedis['multi']>).mockReturnValueOnce(multiMock);
 
       const entries: [string, string | undefined][] = [[KEY1, VALUE1], [KEY2, void 0]];
       for await (const error of map.updateMany(entries)) {
@@ -201,8 +201,8 @@ describe(RedisMap.name, () => {
 
     it('returns errors from Redis call', async () => {
       const multiMock = createMockRedisClientMultiCommand();
-      jest.mocked(mockRedis.multi).mockReturnValueOnce(multiMock);
-      jest.mocked(multiMock.exec).mockRejectedValueOnce('error');
+      (mockRedis.multi as jest.Mocked<typeof mockRedis['multi']>).mockReturnValueOnce(multiMock);
+      (multiMock.exec as jest.Mocked<typeof multiMock['exec']>).mockRejectedValueOnce('error');
 
       const results = [];
       for await (const error of map.updateMany([[KEY1, VALUE1], [KEY2, void 0]])) {
@@ -224,7 +224,7 @@ describe(RedisMap.name, () => {
         [{ ...OPTIONS, lower: 'a', lowerOpen: true, upper: 'b', reverse: true, limit: 100 }, ['(b', '(a', true, { offset: 0, count: 100 }]],
       ] satisfies [RangeQueryOptions<string>, [string, string, boolean | undefined, { offset: number, count: number } | undefined]][]
     )('returns zRange result from Redis client', async (options, [start, end, REV, LIMIT]) => {
-      jest.mocked(mockRedis.zRange).mockReturnValueOnce(Promise.resolve([KEY1, KEY2]));
+      (mockRedis.zRange as jest.Mocked<typeof mockRedis['zRange']>).mockReturnValueOnce(Promise.resolve([KEY1, KEY2]));
       const results = [];
       for await (const value of map.keys(options)) {
         results.push(value);
@@ -236,8 +236,8 @@ describe(RedisMap.name, () => {
 
   describe('values', () => {
     it('returns zRange result from Redis client', async () => {
-      jest.mocked(mockRedis.zRange).mockReturnValueOnce(Promise.resolve([KEY1, KEY2]));
-      jest.mocked(mockRedis.hmGet).mockReturnValueOnce(Promise.resolve([VALUE1, VALUE2]));
+      (mockRedis.zRange as jest.Mocked<typeof mockRedis['zRange']>).mockReturnValueOnce(Promise.resolve([KEY1, KEY2]));
+      (mockRedis.hmGet as jest.Mocked<typeof mockRedis['hmGet']>).mockReturnValueOnce(Promise.resolve([VALUE1, VALUE2]));
       const results = [];
       for await (const entry of map.values({ ...OPTIONS, lower: 'a', upper: 'b', reverse: true, limit: 100 })) {
         results.push(entry);
@@ -250,8 +250,8 @@ describe(RedisMap.name, () => {
 
   describe('entries', () => {
     it('returns zRange result from Redis client', async () => {
-      jest.mocked(mockRedis.zRange).mockReturnValueOnce(Promise.resolve([KEY1, KEY2]));
-      jest.mocked(mockRedis.hmGet).mockReturnValueOnce(Promise.resolve([VALUE1, VALUE2]));
+      (mockRedis.zRange as jest.Mocked<typeof mockRedis['zRange']>).mockReturnValueOnce(Promise.resolve([KEY1, KEY2]));
+      (mockRedis.hmGet as jest.Mocked<typeof mockRedis['hmGet']>).mockReturnValueOnce(Promise.resolve([VALUE1, VALUE2]));
       const results = [];
       for await (const entry of map.entries({ ...OPTIONS, lower: 'a', lowerOpen: true, upper: 'b', reverse: true, limit: 100 })) {
         results.push(entry);
@@ -264,8 +264,8 @@ describe(RedisMap.name, () => {
 
   describe('asyncIterator', () => {
     it('returns zRange result from Redis client', async () => {
-      jest.mocked(mockRedis.zRange).mockReturnValueOnce(Promise.resolve([KEY1, KEY2]));
-      jest.mocked(mockRedis.hmGet).mockReturnValueOnce(Promise.resolve([VALUE1, VALUE2]));
+      (mockRedis.zRange as jest.Mocked<typeof mockRedis['zRange']>).mockReturnValueOnce(Promise.resolve([KEY1, KEY2]));
+      (mockRedis.hmGet as jest.Mocked<typeof mockRedis['hmGet']>).mockReturnValueOnce(Promise.resolve([VALUE1, VALUE2]));
       const results = [];
       for await (const entry of map) {
         results.push(entry);

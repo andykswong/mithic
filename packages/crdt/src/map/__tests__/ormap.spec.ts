@@ -227,7 +227,7 @@ describe('ORMap', () => {
       });
 
       it('should throw error for malformed events', async () => {
-        await expect(() => projection.reduce(store, {
+        await expect(projection.reduce(store, {
           type: MapEventType.Update,
           payload: { set: [] }, link: [],
         })).rejects.toEqual(new TypeError('missing root'));

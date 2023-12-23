@@ -34,6 +34,7 @@ describe(waitForPeer.name, () => {
   });
 
   afterAll(() => {
+    jest.clearAllTimers();
     jest.useRealTimers();
   });
 

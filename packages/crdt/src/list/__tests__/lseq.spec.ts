@@ -182,7 +182,7 @@ describe('LSeq', () => {
       });
 
       it('should throw error for malformed events when validate = true', async () => {
-        await expect(() => projection.reduce(store, {
+        await expect(projection.reduce(store, {
           type: ListEventType.Update,
           payload: { set: [] }, link: [], nonce: '1',
         })).rejects.toEqual(new TypeError('missing root'));

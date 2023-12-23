@@ -57,8 +57,8 @@ describe(TaskQueue.name, () => {
 
       // first tryAcquire went through, but second one blocked
       expect(tryAcquireSpy).toBeCalledTimes(2);
-      expect(tryAcquireSpy).nthReturnedWith(1, true);
-      expect(tryAcquireSpy).nthReturnedWith(2, false);
+      expect(tryAcquireSpy.mock.results[0].value).toBe(true);
+      expect(tryAcquireSpy.mock.results[1].value).toBe(false);
 
       const actual1 = await promise1;
       await Promise.resolve(); // wait for semaphore to be released
@@ -131,7 +131,7 @@ describe(TaskQueue.name, () => {
 
       const acquireSpy = jest.spyOn(taskQueue['lock'], 'tryAcquire');
       expect(await taskQueue.tryPoll()).toBeUndefined();
-      expect(acquireSpy).nthReturnedWith(1, false);
+      expect(acquireSpy.mock.results[0].value).toBe(false);
     });
 
     it('should do nothing if queue is empty', async () => {

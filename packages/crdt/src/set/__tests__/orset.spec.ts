@@ -191,7 +191,7 @@ describe('ORSet', () => {
       });
 
       it('should throw error for malformed events when validate = true', async () => {
-        await expect(() => projection.reduce(store, {
+        await expect(projection.reduce(store, {
           type: SetEventType.Update,
           payload: { set: [] }, link: [], nonce: '1',
         })).rejects.toEqual(new TypeError('missing root'));

@@ -55,7 +55,7 @@ describe(RedisMessageBus.name, () => {
       await bus.subscribe(handler, { topic: TOPIC, validator });
       expect(mockRedis.subscribe).toHaveBeenCalledWith(TOPIC, expect.any(Function), void 0);
 
-      const listener = jest.mocked(mockRedis.subscribe).mock.calls[0][1];
+      const listener = (mockRedis.subscribe as jest.Mocked<typeof mockRedis['subscribe']>).mock.calls[0][1];
       validator
         .mockReturnValueOnce(undefined)
         .mockReturnValueOnce(new MessageValidationError());
@@ -71,7 +71,7 @@ describe(RedisMessageBus.name, () => {
 
     it('should return a function to unsubscribe from underlying pubsub', async () => {
       const unsubscribe = await bus.subscribe(jest.fn(() => undefined), { topic: TOPIC });
-      const listener = jest.mocked(mockRedis.subscribe).mock.calls[0][1];
+      const listener = (mockRedis.subscribe as jest.Mocked<typeof mockRedis['subscribe']>).mock.calls[0][1];
       await unsubscribe();
       expect(mockRedis.unsubscribe).toHaveBeenCalledWith(TOPIC, listener, undefined);
     });
@@ -80,7 +80,8 @@ describe(RedisMessageBus.name, () => {
   describe('topics', () => {
     it('should return available topics from underlying pubsub', async () => {
       const topics = [TOPIC, TOPIC2];
-      jest.mocked(mockRedis.pubSubChannels).mockReturnValue(Promise.resolve(topics));
+      (mockRedis.pubSubChannels as jest.Mocked<typeof mockRedis['pubSubChannels']>)
+        .mockReturnValue(Promise.resolve(topics));
 
       await expect(bus.topics(OPTIONS)).resolves.toEqual(topics);
       expect(mockRedis.pubSubChannels).toHaveBeenCalledWith(OPTIONS);

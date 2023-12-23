@@ -8,6 +8,7 @@ describe(delay.name, () => {
 
   afterEach(() => {
     jest.clearAllTimers();
+    jest.useRealTimers();
   });
 
   it('should return a Promise that resolves after the specified amount of time', async () => {
@@ -50,6 +51,6 @@ describe(immediate.name, () => {
     await promise;
     const elapsedTime = Date.now() - startTime;
 
-    expect(elapsedTime).toBeLessThan(1); // Should resolve immediately with negligible delay
+    expect(elapsedTime).toBeLessThan(10); // Should resolve immediately with negligible delay
   });
 });

@@ -268,28 +268,34 @@ describe(BTreeMap.name, () => {
       expect(entries).toEqual(items);
     });
 
-    test('forEach should iterate over key-value pairs in ascending order', () => {
-      const entries: [number, string][] = [];
-      bTree.forEach((value, key) => {
-        entries.push([key, value]);
+    describe('forEach', () => {
+      it('should iterate over key-value pairs in ascending order', () => {
+        const entries: [number, string][] = [];
+        bTree.forEach((value, key) => {
+          entries.push([key, value]);
+        });
+        expect(entries).toEqual(items);
       });
-      expect(entries).toEqual(items);
     });
 
-    test('keys should iterate over keys in ascending order', () => {
-      const keys: number[] = [];
-      for (const key of bTree.keys()) {
-        keys.push(key);
-      }
-      expect(keys).toEqual(items.map(([key]) => key));
+    describe('keys', () => {
+      it('should iterate over keys in ascending order', () => {
+        const keys: number[] = [];
+        for (const key of bTree.keys()) {
+          keys.push(key);
+        }
+        expect(keys).toEqual(items.map(([key]) => key));
+      });
     });
 
-    test('values should iterate over values in ascending order', () => {
-      const values: string[] = [];
-      for (const value of bTree.values()) {
-        values.push(value);
-      }
-      expect(values).toEqual(items.map(([, value]) => value));
+    describe('values', () => {
+      it('should iterate over values in ascending order', () => {
+        const values: string[] = [];
+        for (const value of bTree.values()) {
+          values.push(value);
+        }
+        expect(values).toEqual(items.map(([, value]) => value));
+      });
     });
   });
 

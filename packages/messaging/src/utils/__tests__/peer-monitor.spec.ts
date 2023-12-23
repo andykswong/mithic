@@ -18,6 +18,7 @@ describe(PeerSubscriptionMonitor.name, () => {
   });
 
   afterAll(() => {
+    jest.clearAllTimers();
     jest.useRealTimers();
   });
 
