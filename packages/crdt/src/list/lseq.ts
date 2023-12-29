@@ -3,11 +3,11 @@ import {
   MapCommand, MapCommandHandler, MapCommandType, MapEvent, MapEventType, MapProjection, MapRangeQueryResolver,
   ORMapCommandHandler, ORMapProjection, ORMapRangeQueryResolver
 } from '../map/index.js';
+import { EntityStore, ReadonlyEntityStore } from '../store/index.js';
 import { FractionalIndexGenerator, IndexGenerator } from '../utils/index.js';
 import {
   ListCommand, ListCommandHandler, ListEvent, ListEventType, ListProjection, ListRangeQuery, ListRangeQueryResolver
 } from './list.js';
-import { MapStore, ReadonlyMapStore } from '../store.js';
 
 /** LSeq command handler. */
 export class LSeqCommandHandler<K extends ToString = ContentId, V = unknown> implements ListCommandHandler<K, V> {
@@ -20,7 +20,7 @@ export class LSeqCommandHandler<K extends ToString = ContentId, V = unknown> imp
   }
 
   public async handle(
-    store: ReadonlyMapStore<K, V>, command: ListCommand<K, V>, options?: AbortOptions
+    store: ReadonlyEntityStore<K, V>, command: ListCommand<K, V>, options?: AbortOptions
   ): Promise<ListEvent<K, V> | undefined> {
     const type = command.root === void 0 ? ListEventType.New : ListEventType.Update;
     const deleteCount = type === ListEventType.New ? 0 : command.payload.del || 0;
@@ -38,7 +38,7 @@ export class LSeqCommandHandler<K extends ToString = ContentId, V = unknown> imp
       const endIndex = command.payload.index;
 
       if (command.root) { // try to find an index before given index to insert in between
-        for await (const [, index] of store.data.keys({
+        for await (const [, index] of store.keys({
           upper: endIndex === void 0 ? void 0 : [command.root, endIndex],
           limit: 1,
           reverse: true,
@@ -58,7 +58,7 @@ export class LSeqCommandHandler<K extends ToString = ContentId, V = unknown> imp
     // delete after given index
     if (command.root && deleteCount) {
       const deletedIndices = new Set<string>();
-      for await (const [, index] of store.data.keys({
+      for await (const [, index] of store.keys({
         lower: [command.root, command.payload.index ?? ''],
         limit: deleteCount,
         signal: options?.signal,
@@ -86,12 +86,14 @@ export class LSeqProjection<K = ContentId, V = unknown> implements ListProjectio
   ) {
   }
 
-  public reduce(store: MapStore<K, V>, event: ListEvent<K, V>, options?: AbortOptions): MaybePromise<MapStore<K, V>> {
+  public reduce(
+    store: EntityStore<K, V>, event: ListEvent<K, V>, options?: AbortOptions
+  ): MaybePromise<EntityStore<K, V>> {
     return this.mapProjection.reduce(store, toMapEvent(event), options);
   }
 
   public async validate(
-    store: MapStore<K, V>, event: ListEvent<K, V>, options?: AbortOptions
+    store: EntityStore<K, V>, event: ListEvent<K, V>, options?: AbortOptions
   ): Promise<Error | undefined> {
     const error = await this.mapProjection.validate(store, toMapEvent(event), options);
     if (error) {
@@ -113,8 +115,8 @@ export class LSeqRangeQueryResolver<K extends ToString = ContentId, V = unknown>
   ) { }
 
   public resolve(
-    store: ReadonlyMapStore<K, V>, query: ListRangeQuery<K, V>, options?: AbortOptions
-  ): SyncOrAsyncIterable<[field: string, value: V]> {
+    store: ReadonlyEntityStore<K, V>, query: ListRangeQuery<K, V>, options?: AbortOptions
+  ): SyncOrAsyncIterable<[index: string, value: V]> {
     return this.mapQueryResolver.resolve(store, query, options);
   }
 }

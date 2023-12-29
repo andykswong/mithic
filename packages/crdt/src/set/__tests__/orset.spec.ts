@@ -1,6 +1,6 @@
-import { BTreeMap, BTreeSet } from '@mithic/collections';
+import { BTreeMap } from '@mithic/collections';
 import { ORMapCommandHandler, ORMapProjection, ORMapRangeQueryResolver } from '../../map/index.js';
-import { MapStore, MultimapKey, createDefaultMapStore } from '../../store.js';
+import { EntityFieldKey, EntityStore, MapEntityStore } from '../../store/index.js';
 import { ORSetCommandHandler, ORSetProjection, ORSetRangeQueryResolver } from '../orset.js';
 import { SetCommand, SetCommandHandler, SetCommandType, SetEvent, SetEventType, SetProjection, SetRangeQuery, SetRangeQueryResolver } from '../set.js';
 import { MockId, getMockEventKey } from '../../__tests__/mocks.js';
@@ -21,16 +21,14 @@ const CMD_DEL = { type: SetCommandType.Update, payload: { add: [VALUE1], del: [V
 const hash = (value: V) => `${value}`;
 
 describe('ORSet', () => {
-  let keySet: BTreeSet<MockId>;
-  let dataMap: BTreeMap<MultimapKey<MockId>, V>;
-  let store: MapStore<MockId, V>;
+  let dataMap: BTreeMap<EntityFieldKey<MockId>, V>;
+  let store: EntityStore<MockId, V>;
   let command: SetCommandHandler<MockId, V>;
   let projection: SetProjection<MockId, V>;
 
   beforeEach(() => {
-    store = createDefaultMapStore();
-    keySet = store.tombstone as BTreeSet<MockId>;
-    dataMap = store.data as BTreeMap<MultimapKey<MockId>, V>;
+    const mapStore = store = new MapEntityStore();
+    dataMap = mapStore['data'] as BTreeMap<EntityFieldKey<MockId>, V>;
     command = new ORSetCommandHandler(new ORMapCommandHandler(), hash);
     projection = new ORSetProjection(new ORMapProjection(getMockEventKey), hash);
   });
@@ -176,14 +174,8 @@ describe('ORSet', () => {
         await projection.reduce(store, cmd2!);
         await applyCommand(CMD_DEL);
 
-        const event1Key = getMockEventKey(CMD_ADD);
         const event2Key = getMockEventKey(CMD_ADD_CONCURRENT);
         const event3Key = getMockEventKey(CMD_DEL);
-
-        expect(keySet.size).toEqual(3);
-        expect(keySet.has(getMockEventKey(CMD_EMPTY))).toBe(true);
-        expect(keySet.has(event1Key)).toBe(true);
-        expect(keySet.has(event2Key)).toBe(true);
 
         expect(dataMap.size).toEqual(2);
         expect(dataMap.get([ROOT, `${VALUE1}`, event3Key])).toEqual(VALUE1);

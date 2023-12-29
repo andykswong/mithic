@@ -1,8 +1,8 @@
-import { BTreeMap, BTreeSet } from '@mithic/collections';
+import { BTreeMap } from '@mithic/collections';
 import { ERR_DEPENDENCY_MISSING, OperationError } from '@mithic/commons';
+import { EntityFieldKey, EntityStore, MapEntityStore } from '../../store/index.js';
 import { MapCommand, MapEventType, MapRangeQuery, MapCommandType, MapEvent, MapCommandHandler, MapProjection, MapRangeQueryResolver } from '../map.js';
 import { ORMapCommandHandler, ORMapProjection, ORMapRangeQueryResolver } from '../ormap.js';
-import { MapStore, MultimapKey, createDefaultMapStore } from '../../store.js';
 import { MockId, getMockEventKey } from '../../__tests__/mocks.js';
 
 type V = string | number | boolean;
@@ -27,16 +27,14 @@ const CMD_WITH_UPDEL = { type: MapCommandType.Update, payload: { put: { [FIELD2]
 const CMD_WITH_FIELDS_CONCURRENT = { type: MapCommandType.Update, payload: { put: { [FIELD1]: VALUE12 }, del: [FIELD1] }, root: ROOT, nonce: '6' } satisfies MapCommand<MockId, V>;
 
 describe('ORMap', () => {
-  let keySet: BTreeSet<MockId>;
-  let dataMap: BTreeMap<MultimapKey<MockId>, V>;
-  let store: MapStore<MockId, V>;
+  let dataMap: BTreeMap<EntityFieldKey<MockId>, V>;
+  let store: EntityStore<MockId, V>;
   let command: MapCommandHandler<MockId, V>;
   let projection: MapProjection<MockId, V>;
 
   beforeEach(() => {
-    store = createDefaultMapStore();
-    keySet = store.tombstone as BTreeSet<MockId>;
-    dataMap = store.data as BTreeMap<MultimapKey<MockId>, V>;
+    const mapStore = store = new MapEntityStore();
+    dataMap = mapStore['data'] as BTreeMap<EntityFieldKey<MockId>, V>;
     command = new ORMapCommandHandler();
     projection = new ORMapProjection(getMockEventKey);
   });
@@ -86,7 +84,7 @@ describe('ORMap', () => {
     });
 
     it('should return valid event for update map command with dependency', async () => {
-      for await (const error of store.data.setMany([
+      for await (const error of store.setMany([
         [[ROOT, FIELD1, getMockEventKey(CMD_WITH_FIELDS)], VALUE1],
         [[ROOT, FIELD2, getMockEventKey(CMD_WITH_FIELDS)], VALUE2],
         [[ROOT, FIELD3, getMockEventKey(CMD_WITH_FIELDS2)], VALUE3],
@@ -208,18 +206,11 @@ describe('ORMap', () => {
       it('should delete all concurrent values on update', async () => {
         const event1 = await command.handle(store, CMD_WITH_FIELDS);
         const event2 = await command.handle(store, CMD_WITH_FIELDS_CONCURRENT);
-        const event1Key = getMockEventKey(CMD_WITH_FIELDS);
-        const event2Key = getMockEventKey(CMD_WITH_FIELDS_CONCURRENT);
         const event3Key = getMockEventKey(CMD_WITH_UPDEL);
 
         await projection.reduce(store, event1!);
         await projection.reduce(store, event2!);
         await applyCommand(CMD_WITH_UPDEL);
-
-        expect(keySet.size).toEqual(3);
-        expect(keySet.has(getMockEventKey(CMD_EMPTY))).toBe(true);
-        expect(keySet.has(event1Key)).toBe(true);
-        expect(keySet.has(event2Key)).toBe(true);
 
         expect(dataMap.size).toEqual(2);
         expect(dataMap.get([ROOT, FIELD2, event3Key])).toEqual(VALUE22);

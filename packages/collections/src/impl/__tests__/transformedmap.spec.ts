@@ -3,7 +3,7 @@ import { OperationError } from '@mithic/commons';
 import { MaybeAsyncMap } from '../../map.js';
 import { TransformedMap } from '../transformedmap.js';
 import { BTreeMap } from '../btreemap.js';
-import { RangeQueryable } from '../../range.js';
+import { RangeQueryable, rangeQueryable } from '../../range.js';
 import { MockKey, MockKeyStringCodec } from '../../__tests__/mocks.js';
 
 type MapType = MaybeAsyncMap<string, string> & Iterable<[string, string]> & RangeQueryable<string, string>;
@@ -31,6 +31,10 @@ describe.each([
 
   it('should have correct string tag', () => {
     expect(map.toString()).toBe(`[object ${TransformedMap.name}]`);
+  });
+
+  it('should have correct rangeQueryable tag', () => {
+    expect(map[rangeQueryable]).toBe(true);
   });
 
   describe('has', () => {
@@ -186,7 +190,7 @@ describe.each([
   });
 
   describe('values', () => {
-    it('should iterate over keys', async () => {
+    it('should iterate over values', async () => {
       await map.set(K3, 3);
 
       const values = [];

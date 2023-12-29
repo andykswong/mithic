@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { OperationError } from '@mithic/commons';
 import { MaybeAsyncSet } from '../../set.js';
 import { TransformedSet } from '../transformedset.js';
-import { KeyValueIterable } from '../../range.js';
+import { KeyValueIterable, rangeQueryable } from '../../range.js';
 import { MockKey, MockKeyStringCodec } from '../../__tests__/mocks.js';
 
 type SetType = MaybeAsyncSet<string> & Iterable<string> & KeyValueIterable<string, string>;
@@ -25,6 +25,10 @@ describe.each([
 
   it('should have correct string tag', () => {
     expect(set.toString()).toBe(`[object ${TransformedSet.name}]`);
+  });
+
+  it('should have correct rangeQueryable tag', () => {
+    expect(set[rangeQueryable]).toBe(undefined);
   });
 
   describe('has', () => {
@@ -169,12 +173,12 @@ describe.each([
   });
 
   describe('values', () => {
-    it('should iterate over keys', async () => {
-      const keys = [];
-      for await (const key of set.values()) {
-        keys.push(key);
+    it('should iterate over values', async () => {
+      const values = [];
+      for await (const value of set.values()) {
+        values.push(value);
       }
-      expect(keys).toEqual([K1, K2]);
+      expect(values).toEqual([K1, K2]);
     });
   });
 

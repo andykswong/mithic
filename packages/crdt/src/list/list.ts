@@ -2,19 +2,19 @@ import { SyncOrAsyncIterable } from '@mithic/commons';
 import { AggregateCommandHandler, AggregateProjection, AggregateQuery, AggregateQueryResolver } from '../aggregate.js';
 import { StandardCommand, StandardEvent } from '../action.js';
 import { MapEventPayload, MapRangeQueryOptions } from '../map/index.js';
-import { MapStore, ReadonlyMapStore } from '../store.js';
+import { EntityStore, ReadonlyEntityStore } from '../store/index.js';
 
 /** {@link AggregateCommandHandler} for List CRDT. */
 export type ListCommandHandler<K, V> =
-  AggregateCommandHandler<ReadonlyMapStore<K, V>, ListCommand<K, V>, ListEvent<K, V>>;
+  AggregateCommandHandler<ReadonlyEntityStore<K, V>, ListCommand<K, V>, ListEvent<K, V>>;
 
 /** {@link AggregateProjection} for List CRDT. */
 export type ListProjection<K, V> =
-  AggregateProjection<MapStore<K, V>, ListEvent<K, V>>;
+  AggregateProjection<EntityStore<K, V>, ListEvent<K, V>>;
 
 /** {@link AggregateQueryResolver} for List CRDT. */
 export type ListRangeQueryResolver<K, V> =
-  AggregateQueryResolver<ReadonlyMapStore<K, V>, ListRangeQuery<K, V>>;
+  AggregateQueryResolver<ReadonlyEntityStore<K, V>, ListRangeQuery<K, V>>;
 
 /** Command type for List CRDT. */
 export enum ListCommandType {

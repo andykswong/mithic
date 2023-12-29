@@ -37,20 +37,31 @@ describe(delay.name, () => {
     await promise;
     const elapsedTime = Date.now() - startTime;
 
-    expect(elapsedTime).toBeLessThan(1); // Should resolve immediately with negligible delay
+    expect(elapsedTime).toBe(0); // Should resolve immediately with negligible delay
   });
 });
 
 describe(immediate.name, () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
   it('should return a Promise that resolves immediately in next tick', async () => {
     const startTime = Date.now();
 
     const promise = immediate();
     expect(promise).toBeInstanceOf(Promise);
 
+    jest.runAllTimers();
+
     await promise;
     const elapsedTime = Date.now() - startTime;
 
-    expect(elapsedTime).toBeLessThan(10); // Should resolve immediately with negligible delay
+    expect(elapsedTime).toBe(0); // Should resolve immediately with negligible delay
   });
 });

@@ -1,10 +1,11 @@
-import { compareBuffers } from '@mithic/commons';
+import { ContentId, compareBuffers } from '@mithic/commons';
 
 /** A multi-parts key. */
-export type MultiKey<K = string | number | BufferSource> = readonly K[];
+export type MultiKey<K = string | number | Uint8Array> = readonly K[];
 
 /**
- * Multi-key comparator function, similar to IndexedDB key comparison (without support for Date).
+ * Multi-key comparator function, similar to IndexedDB key comparison
+ * (with ContentID support but without support for Date).
  * See: {@link https://www.w3.org/TR/IndexedDB/#compare-two-keys}
  */
 export function compareMultiKeys<K>(a: K, b: K): number {
@@ -15,13 +16,20 @@ export function compareMultiKeys<K>(a: K, b: K): number {
   const isViewA = ArrayBuffer.isView(a);
   const isViewB = ArrayBuffer.isView(b);
 
+  if (ArrayBuffer.isView((a as ContentId)?.['/'])) {
+    return compareMultiKeys<Uint8Array | K>((a as ContentId)['/'], b);
+  }
+  if (ArrayBuffer.isView((b as ContentId)?.['/'])) {
+    return compareMultiKeys<Uint8Array | K>(a, (b as ContentId)['/']);
+  }
+
   if (typeA !== typeB || (isArrayA && !isArrayB) || (isViewA && !isViewB)) {
     if (isArrayA) { return 1; }
     if (isArrayB) { return -1; }
     if (isViewA) { return 1; }
     if (isViewB) { return -1; }
     if (typeA === 'string') { return 1; }
-    if (typeB === 'string') { return -1; }
+    // if (typeB === 'string') { return -1; }
     return -1;
   }
 

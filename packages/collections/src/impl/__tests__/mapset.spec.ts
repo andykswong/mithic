@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { OperationError } from '@mithic/commons';
 import { MockKey } from '../../__tests__/mocks.js';
+import { rangeQueryable } from '../../range.js';
 import { BTreeSet, MapSet } from '../mapset.js';
 import { BTreeMap } from '../btreemap.js';
 
@@ -13,7 +14,7 @@ const K3 = new MockKey('val3');
 describe.each([
   [MapSet.name, () => {
     const backingMap = new BTreeMap<MockKey, MockKey>(3, compareKeys);
-    const set = new MapSet<MockKey, MockKey, BTreeMap<MockKey, MockKey>>(backingMap);
+    const set = new MapSet<MockKey, MockKey, MockKey, BTreeMap<MockKey, MockKey>>(backingMap);
     return [set, backingMap] as const;
   }],
   [BTreeSet.name, () => {
@@ -22,10 +23,10 @@ describe.each([
     return [set, backingMap] as const;
   }],
 ])('%s', (name, setFactory: () => readonly [
-  set: MapSet<MockKey, MockKey, BTreeMap<MockKey, MockKey>>,
+  set: MapSet<MockKey, MockKey, MockKey, BTreeMap<MockKey, MockKey>>,
   backingMap: BTreeMap<MockKey, MockKey>,
 ]) => {
-  let set: MapSet<MockKey, MockKey, BTreeMap<MockKey, MockKey>>;
+  let set: MapSet<MockKey, MockKey, MockKey, BTreeMap<MockKey, MockKey>>;
   let backingMap: BTreeMap<MockKey, MockKey>;
 
   beforeEach(() => {
@@ -36,6 +37,10 @@ describe.each([
 
   it('should have correct string tag', () => {
     expect(set.toString()).toBe(`[object ${name}]`);
+  });
+
+  it('should have correct rangeQueryable tag', () => {
+    expect(set[rangeQueryable]).toBe(true);
   });
 
   describe('has', () => {
@@ -174,12 +179,12 @@ describe.each([
   });
 
   describe('values', () => {
-    it('should iterate over keys', async () => {
-      const keys = [];
-      for await (const key of set.values()) {
-        keys.push(key);
+    it('should iterate over values', async () => {
+      const values = [];
+      for await (const value of set.values()) {
+        values.push(value);
       }
-      expect(keys).toEqual([K1, K2]);
+      expect(values).toEqual([K1, K2]);
     });
   });
 

@@ -1,6 +1,6 @@
-import { BTreeMap, BTreeSet } from '@mithic/collections';
+import { BTreeMap } from '@mithic/collections';
 import { ORMapCommandHandler, ORMapProjection } from '../../map/index.js';
-import { MapStore, MultimapKey, createDefaultMapStore } from '../../store.js';
+import { EntityFieldKey, EntityStore, MapEntityStore } from '../../store/index.js';
 import { FractionalIndexGenerator } from '../../utils/index.js';
 import { ListCommand, ListCommandHandler, ListCommandType, ListEvent, ListEventType, ListProjection, ListRangeQuery, ListRangeQueryResolver } from '../list.js';
 import { LSeqCommandHandler, LSeqProjection, LSeqRangeQueryResolver } from '../lseq.js';
@@ -28,16 +28,14 @@ const CMD_DEL = { type: ListCommandType.Update, payload: { index: INDEX0, add: [
 const CMD_ADD_CONCURRENT = { type: ListCommandType.Update, payload: { add: [VALUE2, VALUE3] }, root: ROOT, nonce: '5' } satisfies ListCommand<MockId, V>;
 
 describe('LSeq', () => {
-  let keySet: BTreeSet<MockId>;
-  let dataMap: BTreeMap<MultimapKey<MockId>, V>;
-  let store: MapStore<MockId, V>;
+  let dataMap: BTreeMap<EntityFieldKey<MockId>, V>;
+  let store: EntityStore<MockId, V>;
   let command: ListCommandHandler<MockId, V>;
   let projection: ListProjection<MockId, V>;
 
   beforeEach(() => {
-    store = createDefaultMapStore();
-    keySet = store.tombstone as BTreeSet<MockId>;
-    dataMap = store.data as BTreeMap<MultimapKey<MockId>, V>;
+    const mapStore = store = new MapEntityStore();
+    dataMap = mapStore['data'] as BTreeMap<EntityFieldKey<MockId>, V>;
     command = new LSeqCommandHandler(new ORMapCommandHandler(), GENERATOR);
     projection = new LSeqProjection(new ORMapProjection(getMockEventKey));
   });
@@ -168,11 +166,6 @@ describe('LSeq', () => {
         await applyCommand(CMD_ADD);
         await projection.reduce(store, concurrentEvent!);
         await applyCommand(CMD_DEL);
-
-        expect(keySet.size).toEqual(3);
-        expect(keySet.has(getMockEventKey(CMD_EMPTY))).toBe(true);
-        expect(keySet.has(event1Key)).toBe(true);
-        expect(keySet.has(event2Key)).toBe(true);
 
         expect(dataMap.size).toEqual(4);
         expect(dataMap.get([ROOT, INDEXSD1, event3Key])).toEqual(VALUE1);

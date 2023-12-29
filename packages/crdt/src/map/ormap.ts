@@ -1,15 +1,17 @@
-import { AbortOptions, ContentId, ERR_DEPENDENCY_MISSING, LockGuard, MaybePromise, NoOpLock, OperationError, ToString } from '@mithic/commons';
+import {
+  AbortOptions, ContentId, ERR_DEPENDENCY_MISSING, LockGuard, MaybePromise, NoOpLock, OperationError, ToString
+} from '@mithic/commons';
 import { getCID } from '../defaults.js';
+import { EntityFieldKey, EntityStore, ReadonlyEntityStore } from '../store/index.js';
 import {
   MapCommand, MapCommandHandler, MapEvent, MapEventOp, MapEventType, MapProjection, MapRangeQuery,
   MapRangeQueryResolver,
 } from './map.js';
-import { MapStore, MultimapKey, ReadonlyMapStore } from '../store.js';
 
 /** Observed-removed multimap command handler. */
 export class ORMapCommandHandler<K extends ToString = ContentId, V = unknown> implements MapCommandHandler<K, V> {
   public async handle(
-    store: ReadonlyMapStore<K, V>, command: MapCommand<K, V>, options?: AbortOptions
+    store: ReadonlyEntityStore<K, V>, command: MapCommand<K, V>, options?: AbortOptions
   ): Promise<MapEvent<K, V> | undefined> {
     const root = command.root;
     const type = root === void 0 ? MapEventType.New : MapEventType.Update;
@@ -38,9 +40,9 @@ export class ORMapCommandHandler<K extends ToString = ContentId, V = unknown> im
 
       const keysToDelete: number[] = [];
       if (type === MapEventType.Update && root && isDelete) { // for update event, find existing keys to delete
-        for await (const [, , parentKey] of store.data.keys({
+        for await (const [, , parentKey] of store.keys({
           lower: [root, field],
-          upper: [root, field + '\x00'],
+          upper: [root, `${field}\x00`],
           signal: options?.signal,
         })) {
           const parentKeyStr = `${parentKey}`;
@@ -84,19 +86,14 @@ export class ORMapProjection<K = ContentId, V = unknown> implements MapProjectio
   ) {
   }
 
-  public async reduce(store: MapStore<K, V>, event: MapEvent<K, V>, options?: AbortOptions): Promise<MapStore<K, V>> {
-    const error = await this.validate(store, event, options);
-    if (error) {
-      throw error;
-    }
-
+  public async reduce(store: EntityStore<K, V>, event: MapEvent<K, V>, options?: AbortOptions): Promise<EntityStore<K, V>> {
     const eventKey = await this.getEventKey(event, options);
     const root = event.type === MapEventType.Update ? event.root as K : eventKey;
     const parentKeys = event.link || [];
 
     // build the entries to update to the store
-    const entries: [key: MultimapKey<K>, value?: V][] = [];
-    const newKeys: MultimapKey<K>[] = [];
+    const entries: [key: EntityFieldKey<K>, value?: V][] = [];
+    const newKeys: EntityFieldKey<K>[] = [];
     const deletedParents = new Set<number>();
     for (const [field, value, ...parents] of event.payload.set) {
       for (const parent of parents) {
@@ -114,40 +111,19 @@ export class ORMapProjection<K = ContentId, V = unknown> implements MapProjectio
       }
     }
 
-    // update store if event not exist. lock is required to avoid race conditions (ABA)
+    // update store if event is valid and not exist. lock is required to avoid race conditions (ABA)
     const lock = await this.acquireLock(eventKey, options);
     try {
+      const error = await this.validate(store, event, options);
+      if (error) { throw error; }
+  
       // do not reprocess if event key already exist in store (event already processed)
-      for await (const exist of store.data.hasMany(newKeys, options)) {
-        if (exist) {
-          return store;
-        }
-      }
-      if (store.tombstone) {
-        for await (const exist of store.tombstone.hasMany([eventKey], options)) {
-          if (exist) {
-            return store;
-          }
-        }
+      for await (const exist of store.hasMany(newKeys, options)) {
+        if (exist) { return store; }
       }
 
-      for await (const error of store.data.updateMany(entries, options)) {
-        if (error) {
-          throw new OperationError('failed to save event', { cause: error });
-        }
-      }
-
-      if (store.tombstone && deletedParents.size) {
-        const tombstones: K[] = [root]; // add root to tombstone as well in case the whole map at root is deleted
-        for (const index of deletedParents) {
-          tombstones.push(parentKeys[index]);
-        }
-
-        for await (const error of store.tombstone.addMany(tombstones, options)) {
-          if (error) {
-            throw new OperationError('failed to save event key', { cause: error });
-          }
-        }
+      for await (const error of store.updateMany(entries, options)) {
+        if (error) { throw new OperationError('failed to save event', { cause: error }); }
       }
     } finally {
       await lock.close();
@@ -157,7 +133,7 @@ export class ORMapProjection<K = ContentId, V = unknown> implements MapProjectio
   }
 
   public async validate(
-    store: ReadonlyMapStore<K, V>, event: MapEvent<K, V>, options?: AbortOptions
+    store: ReadonlyEntityStore<K, V>, event: MapEvent<K, V>, options?: AbortOptions
   ): Promise<Error | undefined> {
     const eventKey = await this.getEventKey(event, options);
     const root = event.type === MapEventType.Update ? event.root as K : eventKey;
@@ -197,7 +173,7 @@ export class ORMapProjection<K = ContentId, V = unknown> implements MapProjectio
     {
       const seenIndices = new Set<number>();
       let i = 0;
-      for await (const exist of store.data.hasMany(dependentKeys, options)) {
+      for await (const exist of store.hasMany(dependentKeys, options)) {
         const index = dependentKeyEventIndices[i];
         const missingKey = event.link?.[index];
         if (!exist && !seenIndices.has(index) && missingKey !== void 0) {
@@ -208,10 +184,10 @@ export class ORMapProjection<K = ContentId, V = unknown> implements MapProjectio
       }
     }
 
-    if (missingKeys.length && store.tombstone) { // check tombstones as well if exist
+    if (missingKeys.length) { // check tombstones as well if exist
       const stillMissingKeys: K[] = [];
       let i = 0;
-      for await (const exist of store.tombstone.hasMany(missingKeys, options)) {
+      for await (const exist of store.hasEntries(missingKeys, options)) {
         if (!exist) {
           stillMissingKeys.push(missingKeys[i]);
         }
@@ -231,12 +207,12 @@ export class ORMapRangeQueryResolver<K extends ToString = ContentId, V = unknown
   implements MapRangeQueryResolver<K, V>
 {
   public async * resolve(
-    store: ReadonlyMapStore<K, V>, query: MapRangeQuery<K, V>, options?: AbortOptions
+    store: ReadonlyEntityStore<K, V>, query: MapRangeQuery<K, V>, options?: AbortOptions
   ): AsyncIterable<[field: string, value: V]> {
     const terminal = '\udbff\udfff';
     const upper = query.upper === void 0 ? terminal :
       query.upperOpen ?? true ? query.upper : query.upper + terminal;
-    for await (const [[, field], value] of store.data.entries({
+    for await (const [[, field], value] of store.entries({
       ...query,
       lower: [query.root, query.lower ?? ''],
       upper: [query.root, upper],

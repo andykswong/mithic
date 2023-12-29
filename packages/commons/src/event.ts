@@ -24,10 +24,6 @@ export interface TypedEventHandlerObject<E extends TypedEvent, R = unknown> {
 /** The union of all possible event types from a TypedEvent tuple. */
 export type EventTypes<Events> = Events extends TypedEvent<infer T>[] ? T : string;
 
-//{
-//  [K in keyof Events]: Events[K] extends TypedEvent<infer T> ? T : never;
-//}[keyof Events];
-
 /** Picks event of given type from a TypedEvent tuple. */
 export type EventsOfType<Events, T extends string> = Extract<Events[keyof Events], TypedEvent<T>>;
 

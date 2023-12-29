@@ -1,4 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
+import { CID } from 'multiformats';
+import { identity } from 'multiformats/hashes/identity';
 import { BTreeMap } from '../../impl/index.js';
 import { MaybeAsyncMap } from '../../map.js';
 import { MultiKey, compareMultiKeys } from '../multikey.js';
@@ -22,6 +24,7 @@ describe(compareMultiKeys.name, () => {
     [0, 13, 13],
     [0, 'abc', 'abc'],
     [0, new Uint8Array([3, 5]), new Uint8Array([3, 5])],
+    [0, CID.create(1, 0x55, identity.digest(new Uint8Array([1, 2]))), CID.create(1, 0x55, identity.digest(new Uint8Array([1, 2])))],
     [0, [], []],
     [0, [1], [1]],
     [0, [1, '2', new Uint8Array([3, 5])], [1, '2', new Uint8Array([3, 5])]],
@@ -30,6 +33,7 @@ describe(compareMultiKeys.name, () => {
     [1, [1], 1],
     [1, [1], '1'],
     [1, new Uint8Array([1]), '1'],
+    [1, CID.create(1, 0x55, identity.digest(new Uint8Array([1, 2]))), '3'],
     [1, '1', 1],
     [1, 17, 13],
     [1, 'abcd', 'abc'],

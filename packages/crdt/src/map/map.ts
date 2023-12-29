@@ -1,20 +1,20 @@
+import { LimitOptions, RangeAndOrder } from '@mithic/collections';
 import { SyncOrAsyncIterable } from '@mithic/commons';
 import { StandardCommand, StandardEvent } from '../action.js';
 import { AggregateCommandHandler, AggregateProjection, AggregateQuery, AggregateQueryResolver } from '../aggregate.js';
-import { MapStore, ReadonlyMapStore } from '../store.js';
-import { LimitOptions, RangeAndOrder } from '@mithic/collections';
+import { EntityStore, ReadonlyEntityStore } from '../store/index.js';
 
 /** {@link AggregateCommandHandler} for a CRDT multimap. */
 export type MapCommandHandler<K, V> =
-  AggregateCommandHandler<ReadonlyMapStore<K, V>, MapCommand<K, V>, MapEvent<K, V>>;
+  AggregateCommandHandler<ReadonlyEntityStore<K, V>, MapCommand<K, V>, MapEvent<K, V>>;
 
 /** {@link AggregateProjection} for a CRDT multimap. */
 export type MapProjection<K, V> =
-  AggregateProjection<MapStore<K, V>, MapEvent<K, V>>;
+  AggregateProjection<EntityStore<K, V>, MapEvent<K, V>>;
 
 /** {@link AggregateQueryResolver} for a CRDT multimap range query. */
 export type MapRangeQueryResolver<K, V> =
-  AggregateQueryResolver<ReadonlyMapStore<K, V>, MapRangeQuery<K, V>>;
+  AggregateQueryResolver<ReadonlyEntityStore<K, V>, MapRangeQuery<K, V>>;
 
 /** Command type for a CRDT multimap. */
 export enum MapCommandType {

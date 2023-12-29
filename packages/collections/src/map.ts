@@ -38,7 +38,11 @@ export interface AppendOnlyAutoKeyMap<K = ContentId, V = Uint8Array> extends Rea
 }
 
 /** Batch APIs for a {@link MaybeAsyncReadonlyMap}. */
-export interface MaybeAsyncReadonlyMapBatch<K, V> extends MaybeAsyncReadonlySetBatch<K> {
+export interface MaybeAsyncReadonlyMapBatch<K, V> extends MaybeAsyncReadonlySetBatch<K>, MaybeAsyncMapGetBatch<K, V> {
+}
+
+/** Batch get API for a {@link MaybeAsyncReadonlyMap}. */
+export interface MaybeAsyncMapGetBatch<K, V> {
   /** Gets the list of data identified by given keys. */
   getMany(keys: Iterable<K>, options?: AbortOptions): MaybeAsyncIterableIterator<V | undefined>;
 }

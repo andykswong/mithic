@@ -1,5 +1,4 @@
-import { compareMultiKeys } from '@mithic/collections';
-import { ContentId, InvalidStateError } from '@mithic/commons';
+import { InvalidStateError } from '@mithic/commons';
 
 /** Default getEventKey implementation that uses multiformats and @ipld/dag-cbor as optional dependency. */
 export const getCID = await (async () => {
@@ -29,18 +28,3 @@ export const decodeCID = await (async () => {
 
 /** Default value hash function using JSON stringify. */
 export const defaultHash = <V>(value: V) => JSON.stringify(value);
-
-/** Compare 2 multi-keys that may contain CIDs. */
-export function compareCIDMultiKeys<K>(a: K, b: K): number {
-  return compareMultiKeys(convertCIDKey(a), convertCIDKey(b));
-}
-
-function convertCIDKey<K>(key: K): K {
-  if (Array.isArray(key)) {
-    return key.map(convertCIDKey) as K;
-  }
-  if ((key as ContentId)?.['/'] instanceof Uint8Array) {
-    return (key as ContentId)['/'] as K;
-  }
-  return key;
-}

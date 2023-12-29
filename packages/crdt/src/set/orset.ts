@@ -3,11 +3,11 @@ import {
   MapCommand, MapCommandHandler, MapCommandType, MapEvent, MapEventOp, MapEventType, MapProjection, MapRangeQueryResolver,
   ORMapCommandHandler, ORMapProjection, ORMapRangeQueryResolver
 } from '../map/index.js';
+import { EntityStore, ReadonlyEntityStore } from '../store/index.js';
 import {
   SetCommand, SetCommandHandler, SetEvent, SetEventOp, SetEventType, SetProjection, SetRangeQuery, SetRangeQueryResolver
 } from './set.js';
 import { defaultHash } from '../defaults.js';
-import { MapStore, ReadonlyMapStore } from '../store.js';
 
 /** Observed-removed multiset command handler. */
 export class ORSetCommandHandler<K extends ToString = ContentId, V = unknown> implements SetCommandHandler<K, V> {
@@ -20,7 +20,7 @@ export class ORSetCommandHandler<K extends ToString = ContentId, V = unknown> im
   }
 
   public async handle(
-    store: ReadonlyMapStore<K, V>, command: SetCommand<K, V>, options?: AbortOptions
+    store: ReadonlyEntityStore<K, V>, command: SetCommand<K, V>, options?: AbortOptions
   ): Promise<SetEvent<K, V> | undefined> {
     const type = command.root === void 0 ? SetEventType.New : SetEventType.Update;
     const values: Record<string, V> = {};
@@ -71,13 +71,15 @@ export class ORSetProjection<K = ContentId, V = unknown> implements SetProjectio
   ) {
   }
 
-  public async reduce(store: MapStore<K, V>, event: SetEvent<K, V>, options?: AbortOptions): Promise<MapStore<K, V>> {
+  public async reduce(
+    store: EntityStore<K, V>, event: SetEvent<K, V>, options?: AbortOptions
+  ): Promise<EntityStore<K, V>> {
     await this.mapProjection.reduce(store, await toMapEvent(event, this.hash, options), options);
     return store;
   }
 
   public async validate(
-    store: MapStore<K, V>, event: SetEvent<K, V>, options?: AbortOptions
+    store: EntityStore<K, V>, event: SetEvent<K, V>, options?: AbortOptions
   ): Promise<Error | undefined> {
     return this.mapProjection.validate(store, await toMapEvent(event, this.hash, options), options);
   }
@@ -95,7 +97,7 @@ export class ORSetRangeQueryResolver<K extends ToString = ContentId, V = unknown
   ) { }
 
   public async * resolve(
-    store: ReadonlyMapStore<K, V>, query: SetRangeQuery<K, V>, options?: AbortOptions
+    store: ReadonlyEntityStore<K, V>, query: SetRangeQuery<K, V>, options?: AbortOptions
   ): AsyncIterable<V> {
     const lower = query.lower && await this.hash(query.lower, options);
     const upper = query.upper && await this.hash(query.upper, options);
