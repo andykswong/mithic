@@ -50,7 +50,7 @@
     "@mithic/commons": "^0.3",
     "@mithic/messaging": "^0.3",
     "interface-blockstore": "^5.2",
-    "multiformats": "^12.0"
+    "multiformats": "^13.0"
   },
   "devDependencies": {
     "@libp2p/interfaces": "^3.3",

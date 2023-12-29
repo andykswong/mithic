@@ -146,15 +146,21 @@ export class LevelMap<K, V, T = any>
   }
 
   public async * keys(options: RangeQueryOptions<K> = {}): AsyncIterableIterator<K> {
-    yield* this.level.keys(toLevelDBRangeOptions(options));
+    for await (const key of this.level.keys(toLevelDBRangeOptions(options))) {
+      yield key;
+    }
   }
 
   public async * values(options: RangeQueryOptions<K> = {}): AsyncIterableIterator<V> {
-    yield* this.level.values(toLevelDBRangeOptions(options));
+    for await (const value of this.level.values(toLevelDBRangeOptions(options))) {
+      yield value;
+    }
   }
 
   public async * entries(options: RangeQueryOptions<K> = {}): AsyncIterableIterator<[K, V]> {
-    yield* this.level.iterator(toLevelDBRangeOptions(options));
+    for await (const entry of this.level.iterator(toLevelDBRangeOptions(options))) {
+      yield entry
+    }
   }
 
   public [Symbol.asyncIterator](): AsyncIterableIterator<[K, V]> {
