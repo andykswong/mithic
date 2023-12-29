@@ -28,11 +28,11 @@
 <section class="tsd-panel tsd-hierarchy">
 <h4>Hierarchy</h4>
 <ul class="tsd-hierarchy">
-<li><a href="_mithic_collections.MapSet.html" class="tsd-signature-type tsd-kind-class">MapSet</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><a href="_mithic_collections.BTreeMap.html" class="tsd-signature-type tsd-kind-class">BTreeMap</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span>
+<li><a href="_mithic_collections.MapSet.html" class="tsd-signature-type tsd-kind-class">MapSet</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><a href="_mithic_collections.BTreeMap.html" class="tsd-signature-type tsd-kind-class">BTreeMap</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span>
 <ul class="tsd-hierarchy">
 <li><span class="target">BTreeSet</span></li></ul></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L97">collections/src/impl/mapset.ts:97</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L110">collections/src/impl/mapset.ts:110</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-index-accordion" open><summary class="tsd-accordion-summary tsd-index-summary">
@@ -47,12 +47,12 @@
 <div class="tsd-index-list"><a href="_mithic_collections.BTreeSet.html#_asyncIterator_" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>[async<wbr/>Iterator]</span></a>
 <a href="_mithic_collections.BTreeSet.html#_iterator_" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>[iterator]</span></a>
 <a href="_mithic_collections.BTreeSet.html#_rangeQueryable_" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>[range<wbr/>Queryable]</span></a>
+<a href="_mithic_collections.BTreeSet.html#codec" class="tsd-index-link tsd-is-protected tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>codec</span></a>
 <a href="_mithic_collections.BTreeSet.html#compare" class="tsd-index-link tsd-is-protected"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>compare?</span></a>
 <a href="_mithic_collections.BTreeSet.html#entries" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>entries</span></a>
 <a href="_mithic_collections.BTreeSet.html#keys" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>keys</span></a>
 <a href="_mithic_collections.BTreeSet.html#map" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>map</span></a>
 <a href="_mithic_collections.BTreeSet.html#order" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>order?</span></a>
-<a href="_mithic_collections.BTreeSet.html#value" class="tsd-index-link tsd-is-protected tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>value</span></a>
 <a href="_mithic_collections.BTreeSet.html#values" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>values</span></a>
 </div></section>
 <section class="tsd-index-section">
@@ -114,7 +114,7 @@
 <h4 class="tsd-returns-title">Returns <a href="_mithic_collections.BTreeSet.html" class="tsd-signature-type tsd-kind-class">BTreeSet</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <p>Overrides <a href="_mithic_collections.MapSet.html">MapSet</a>.<a href="_mithic_collections.MapSet.html#constructor">constructor</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L98">collections/src/impl/mapset.ts:98</a></li></ul></aside></li></ul></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L111">collections/src/impl/mapset.ts:111</a></li></ul></aside></li></ul></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Properties</h2>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="_asyncIterator_" class="tsd-anchor"></a>
@@ -130,7 +130,7 @@
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span></h4></li></ul></li></ul></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_collections.MapSet.html">MapSet</a>.<a href="_mithic_collections.MapSet.html#_asyncIterator_">[asyncIterator]</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L15">collections/src/impl/mapset.ts:15</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L13">collections/src/impl/mapset.ts:13</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="_iterator_" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>[iterator]</span><a href="#_iterator_" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">[iterator]</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type ">IterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">)</span></div>
@@ -144,13 +144,22 @@
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type ">IterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span></h4></li></ul></li></ul></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_collections.MapSet.html">MapSet</a>.<a href="_mithic_collections.MapSet.html#_iterator_">[iterator]</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L14">collections/src/impl/mapset.ts:14</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L12">collections/src/impl/mapset.ts:12</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="_rangeQueryable_" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagReadonly">Readonly</code> <span>[range<wbr/>Queryable]</span><a href="#_rangeQueryable_" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">[range<wbr/>Queryable]</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">true</span></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_collections.MapSet.html">MapSet</a>.<a href="_mithic_collections.MapSet.html#_rangeQueryable_">[rangeQueryable]</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L18">collections/src/impl/mapset.ts:18</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L16">collections/src/impl/mapset.ts:16</a></li></ul></aside></section>
+<section class="tsd-panel tsd-member tsd-is-protected tsd-is-inherited"><a id="codec" class="tsd-anchor"></a>
+<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>codec</span><a href="#codec" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">codec</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/_mithic_commons.Codec.html" class="tsd-signature-type tsd-kind-interface">Codec</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> = ...</span></div>
+<div class="tsd-comment tsd-typography"><p>The codec to convert keys to map entries.</p>
+</div>
+<div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
+<p>Inherited from <a href="_mithic_collections.MapSet.html">MapSet</a>.<a href="_mithic_collections.MapSet.html#codec">codec</a></p>
+<ul>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L25">collections/src/impl/mapset.ts:25</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-protected"><a id="compare" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <code class="tsd-tag ts-flagOptional">Optional</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>compare</span><a href="#compare" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">compare</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">a</span>, <span class="tsd-kind-parameter">b</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">)</span></div>
@@ -173,7 +182,7 @@
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">number</span></h4>
 <div class="tsd-comment tsd-typography"></div></li></ul></li></ul></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L102">collections/src/impl/mapset.ts:102</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L115">collections/src/impl/mapset.ts:115</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="entries" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>entries</span><a href="#entries" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">entries</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">)</span></div>
@@ -192,7 +201,7 @@
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span></h4></li></ul></li></ul></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_collections.MapSet.html">MapSet</a>.<a href="_mithic_collections.MapSet.html#entries">entries</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L19">collections/src/impl/mapset.ts:19</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L17">collections/src/impl/mapset.ts:17</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="keys" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>keys</span><a href="#keys" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">keys</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">)</span></div>
@@ -211,7 +220,7 @@
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span></h4></li></ul></li></ul></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_collections.MapSet.html">MapSet</a>.<a href="_mithic_collections.MapSet.html#keys">keys</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L20">collections/src/impl/mapset.ts:20</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L18">collections/src/impl/mapset.ts:18</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="map" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagReadonly">Readonly</code> <span>map</span><a href="#map" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">map</span><span class="tsd-signature-symbol">:</span> <a href="_mithic_collections.BTreeMap.html" class="tsd-signature-type tsd-kind-class">BTreeMap</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">, </span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span></div>
@@ -220,7 +229,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_collections.MapSet.html">MapSet</a>.<a href="_mithic_collections.MapSet.html#map">map</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L25">collections/src/impl/mapset.ts:25</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L23">collections/src/impl/mapset.ts:23</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member"><a id="order" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagOptional">Optional</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>order</span><a href="#order" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">order</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
@@ -228,29 +237,7 @@
 </div>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L100">collections/src/impl/mapset.ts:100</a></li></ul></aside></section>
-<section class="tsd-panel tsd-member tsd-is-protected tsd-is-inherited"><a id="value" class="tsd-anchor"></a>
-<h3 class="tsd-anchor-link"><code class="tsd-tag ts-flagProtected">Protected</code> <code class="tsd-tag ts-flagReadonly">Readonly</code> <span>value</span><a href="#value" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">value</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">key</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> = ...</span></div>
-<div class="tsd-type-declaration">
-<h4>Type declaration</h4>
-<ul class="tsd-parameters">
-<li class="tsd-parameter-signature">
-<ul class="tsd-signatures">
-<li class="tsd-signature" id="value.__type-10.__type-11"><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">key</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type tsd-kind-type-parameter">K</span></li>
-<li class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>The value to use for map entries.</p>
-</div>
-<div class="tsd-parameters">
-<h4 class="tsd-parameters-title">Parameters</h4>
-<ul class="tsd-parameter-list">
-<li>
-<h5><span class="tsd-kind-parameter">key</span>: <span class="tsd-signature-type tsd-kind-type-parameter">K</span></h5></li></ul></div>
-<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type tsd-kind-type-parameter">K</span></h4>
-<div class="tsd-comment tsd-typography"></div></li></ul></li></ul></div><aside class="tsd-sources">
-<p>Inherited from <a href="_mithic_collections.MapSet.html">MapSet</a>.<a href="_mithic_collections.MapSet.html#value">value</a></p>
-<ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L27">collections/src/impl/mapset.ts:27</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L113">collections/src/impl/mapset.ts:113</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="values" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>values</span><a href="#values" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">values</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol"> =&gt; </span><span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">)</span></div>
@@ -259,7 +246,7 @@
 <ul class="tsd-parameters">
 <li class="tsd-parameter-signature">
 <ul class="tsd-signatures">
-<li class="tsd-signature" id="values.__type-12.__type-13"><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span></li>
+<li class="tsd-signature" id="values.__type-10.__type-11"><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span></li>
 <li class="tsd-description">
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -269,7 +256,7 @@
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type ">AsyncIterableIterator</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type tsd-kind-type-parameter">K</span><span class="tsd-signature-symbol">&gt;</span></h4></li></ul></li></ul></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_collections.MapSet.html">MapSet</a>.<a href="_mithic_collections.MapSet.html#values">values</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L21">collections/src/impl/mapset.ts:21</a></li></ul></aside></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L19">collections/src/impl/mapset.ts:19</a></li></ul></aside></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Accessors</h2>
 <section class="tsd-panel tsd-member"><a id="_toStringTag_" class="tsd-anchor"></a>
@@ -280,7 +267,7 @@
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span></h4><aside class="tsd-sources">
 <p>Overrides MapSet.[toStringTag]</p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L112">collections/src/impl/mapset.ts:112</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L125">collections/src/impl/mapset.ts:125</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member"><a id="size" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>size</span><a href="#size" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -291,7 +278,7 @@
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">number</span></h4>
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L108">collections/src/impl/mapset.ts:108</a></li></ul></aside></li></ul></section></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L121">collections/src/impl/mapset.ts:121</a></li></ul></aside></li></ul></section></section>
 <section class="tsd-panel-group tsd-member-group">
 <h2>Methods</h2>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="add" class="tsd-anchor"></a>
@@ -312,7 +299,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_collections.MapSet.html">MapSet</a>.<a href="_mithic_collections.MapSet.html#add">add</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L56">collections/src/impl/mapset.ts:56</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L61">collections/src/impl/mapset.ts:61</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="addMany" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>add<wbr/>Many</span><a href="#addMany" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
@@ -331,7 +318,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_collections.MapSet.html">MapSet</a>.<a href="_mithic_collections.MapSet.html#addMany">addMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L68">collections/src/impl/mapset.ts:68</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L74">collections/src/impl/mapset.ts:74</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="delete" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>delete</span><a href="#delete" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
@@ -350,7 +337,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_collections.MapSet.html">MapSet</a>.<a href="_mithic_collections.MapSet.html#delete">delete</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L60">collections/src/impl/mapset.ts:60</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L66">collections/src/impl/mapset.ts:66</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="deleteMany" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>delete<wbr/>Many</span><a href="#deleteMany" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
@@ -369,7 +356,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_collections.MapSet.html">MapSet</a>.<a href="_mithic_collections.MapSet.html#deleteMany">deleteMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L72">collections/src/impl/mapset.ts:72</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L78">collections/src/impl/mapset.ts:78</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="has" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>has</span><a href="#has" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
@@ -388,7 +375,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_collections.MapSet.html">MapSet</a>.<a href="_mithic_collections.MapSet.html#has">has</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L64">collections/src/impl/mapset.ts:64</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L70">collections/src/impl/mapset.ts:70</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="hasMany" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>has<wbr/>Many</span><a href="#hasMany" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
@@ -407,7 +394,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_collections.MapSet.html">MapSet</a>.<a href="_mithic_collections.MapSet.html#hasMany">hasMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L76">collections/src/impl/mapset.ts:76</a></li></ul></aside></li></ul></section>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L82">collections/src/impl/mapset.ts:82</a></li></ul></aside></li></ul></section>
 <section class="tsd-panel tsd-member tsd-is-inherited"><a id="updateMany" class="tsd-anchor"></a>
 <h3 class="tsd-anchor-link"><span>update<wbr/>Many</span><a href="#updateMany" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24"><use href="#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures tsd-is-inherited">
@@ -426,7 +413,7 @@
 <div class="tsd-comment tsd-typography"></div><aside class="tsd-sources">
 <p>Inherited from <a href="_mithic_collections.MapSet.html">MapSet</a>.<a href="_mithic_collections.MapSet.html#updateMany">updateMany</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/andykswong/mithic/blob/60923fd/packages/collections/src/impl/mapset.ts#L80">collections/src/impl/mapset.ts:80</a></li></ul></aside></li></ul></section></section></div>
+<li>Defined in <a href="https://github.com/andykswong/mithic/blob/4664cdc/packages/collections/src/impl/mapset.ts#L86">collections/src/impl/mapset.ts:86</a></li></ul></aside></li></ul></section></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
@@ -450,12 +437,12 @@
 <li><a href="#_asyncIterator_" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>[async<wbr/>Iterator]</span></a></li>
 <li><a href="#_iterator_" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>[iterator]</span></a></li>
 <li><a href="#_rangeQueryable_" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>[range<wbr/>Queryable]</span></a></li>
+<li><a href="#codec" class="tsd-is-protected tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>codec</span></a></li>
 <li><a href="#compare" class="tsd-is-protected"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>compare</span></a></li>
 <li><a href="#entries" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>entries</span></a></li>
 <li><a href="#keys" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>keys</span></a></li>
 <li><a href="#map" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>map</span></a></li>
 <li><a href="#order" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>order</span></a></li>
-<li><a href="#value" class="tsd-is-protected tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>value</span></a></li>
 <li><a href="#values" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-1024"></use></svg><span>values</span></a></li>
 <li><a href="#_toStringTag_" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-262144"></use></svg><span>[to<wbr/>String<wbr/>Tag]</span></a></li>
 <li><a href="#size" class=""><svg class="tsd-kind-icon" viewBox="0 0 24 24"><use href="#icon-262144"></use></svg><span>size</span></a></li>
