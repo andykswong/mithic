@@ -1,6 +1,6 @@
 import { BTreeMap } from '@mithic/collections';
 import { ERR_DEPENDENCY_MISSING, OperationError } from '@mithic/commons';
-import { EntityFieldKey, EntityStore, MapEntityStore } from '../../store/index.js';
+import { EntityAttrKey, EntityStore, MapEntityStore } from '../../store/index.js';
 import { MapCommand, MapEventType, MapRangeQuery, MapCommandType, MapEvent, MapCommandHandler, MapProjection, MapRangeQueryResolver } from '../map.js';
 import { ORMapCommandHandler, ORMapProjection, ORMapRangeQueryResolver } from '../ormap.js';
 import { MockId, getMockEventKey } from '../../__tests__/mocks.js';
@@ -27,14 +27,14 @@ const CMD_WITH_UPDEL = { type: MapCommandType.Update, payload: { put: { [FIELD2]
 const CMD_WITH_FIELDS_CONCURRENT = { type: MapCommandType.Update, payload: { put: { [FIELD1]: VALUE12 }, del: [FIELD1] }, root: ROOT, nonce: '6' } satisfies MapCommand<MockId, V>;
 
 describe('ORMap', () => {
-  let dataMap: BTreeMap<EntityFieldKey<MockId>, V>;
+  let dataMap: BTreeMap<EntityAttrKey<MockId>, V>;
   let store: EntityStore<MockId, V>;
   let command: MapCommandHandler<MockId, V>;
   let projection: MapProjection<MockId, V>;
 
   beforeEach(() => {
     const mapStore = store = new MapEntityStore();
-    dataMap = mapStore['data'] as BTreeMap<EntityFieldKey<MockId>, V>;
+    dataMap = mapStore['data'] as BTreeMap<EntityAttrKey<MockId>, V>;
     command = new ORMapCommandHandler();
     projection = new ORMapProjection(getMockEventKey);
   });

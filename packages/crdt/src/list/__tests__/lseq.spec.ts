@@ -1,6 +1,6 @@
 import { BTreeMap } from '@mithic/collections';
 import { ORMapCommandHandler, ORMapProjection } from '../../map/index.js';
-import { EntityFieldKey, EntityStore, MapEntityStore } from '../../store/index.js';
+import { EntityAttrKey, EntityStore, MapEntityStore } from '../../store/index.js';
 import { FractionalIndexGenerator } from '../../utils/index.js';
 import { ListCommand, ListCommandHandler, ListCommandType, ListEvent, ListEventType, ListProjection, ListRangeQuery, ListRangeQueryResolver } from '../list.js';
 import { LSeqCommandHandler, LSeqProjection, LSeqRangeQueryResolver } from '../lseq.js';
@@ -28,14 +28,14 @@ const CMD_DEL = { type: ListCommandType.Update, payload: { index: INDEX0, add: [
 const CMD_ADD_CONCURRENT = { type: ListCommandType.Update, payload: { add: [VALUE2, VALUE3] }, root: ROOT, nonce: '5' } satisfies ListCommand<MockId, V>;
 
 describe('LSeq', () => {
-  let dataMap: BTreeMap<EntityFieldKey<MockId>, V>;
+  let dataMap: BTreeMap<EntityAttrKey<MockId>, V>;
   let store: EntityStore<MockId, V>;
   let command: ListCommandHandler<MockId, V>;
   let projection: ListProjection<MockId, V>;
 
   beforeEach(() => {
     const mapStore = store = new MapEntityStore();
-    dataMap = mapStore['data'] as BTreeMap<EntityFieldKey<MockId>, V>;
+    dataMap = mapStore['data'] as BTreeMap<EntityAttrKey<MockId>, V>;
     command = new LSeqCommandHandler(new ORMapCommandHandler(), GENERATOR);
     projection = new LSeqProjection(new ORMapProjection(getMockEventKey));
   });

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from '@jest/globals';
 import { MapEntityStore } from '../mapstore.js';
 import { MockId } from '../../__tests__/mocks.js';
 import { rangeQueryable } from '@mithic/collections';
-import { EntityFieldKey } from '../store.js';
+import { EntityAttrKey } from '../store.js';
 
 const ROOT = new MockId(new Uint8Array(1));
 const ROOT2 = new MockId(new Uint8Array(11));
@@ -57,7 +57,7 @@ describe(MapEntityStore.name, () => {
   describe('hasEntries', () => {
     it('should return true for existing entry IDs and false for non-existing IDs', async () => {
       const results = [];
-      for await (const result of store.hasEntries([ID0, ID1, ROOT, ID2])) {
+      for await (const result of store.isKnown([ID0, ID1, ROOT, ID2])) {
         results.push(result);
       }
       expect(results).toEqual([true, true, false, false]);
@@ -104,17 +104,31 @@ describe(MapEntityStore.name, () => {
     });
   });
 
-  describe('entities', () => {
+  describe('entriesByAttr', () => {
     beforeEach(async () => {
       await updateEntries([[[ROOT2, FIELD1, ID2], VALUE2]]);
     });
 
-    it('should iterate over entity IDs', async () => {
+    it('should iterate over entries', async () => {
       const ids = [];
-      for await (const id of store.entities({ lower: [FIELD1] })) {
+      for await (const id of store.entriesByAttr({ lower: [FIELD1] })) {
         ids.push(id);
       }
-      expect(ids).toEqual([ROOT, ROOT2]);
+      expect(ids).toEqual([[[ROOT, FIELD1, ID1], VALUE1], [[ROOT2, FIELD1, ID2], VALUE2]]);
+    });
+  });
+
+  describe('keysByAttr', () => {
+    beforeEach(async () => {
+      await updateEntries([[[ROOT2, FIELD2, ID2], VALUE2]]);
+    });
+
+    it('should iterate over keys', async () => {
+      const keys = [];
+      for await (const key of store.keysByAttr({ lower: [FIELD1] })) {
+        keys.push(key);
+      }
+      expect(keys).toEqual([[ROOT, FIELD1, ID1], [ROOT2, FIELD2, ID2]]);
     });
   });
 
@@ -166,13 +180,13 @@ describe(MapEntityStore.name, () => {
     });
   });
 
-  async function updateEntries(entries: Iterable<readonly [key: EntityFieldKey<MockId>, value?: string]>) {
+  async function updateEntries(entries: Iterable<readonly [key: EntityAttrKey<MockId>, value?: string]>) {
     for await (const error of store.updateMany(entries)) {
       if (error) { throw error; }
     }
   }
 
-  async function expectEntries(entries: Iterable<readonly [key: EntityFieldKey<MockId>, value?: string]>) {
+  async function expectEntries(entries: Iterable<readonly [key: EntityAttrKey<MockId>, value?: string]>) {
     const results = [];
     for await (const result of store.getMany([...entries].map(([key]) => key))) {
       results.push(result);

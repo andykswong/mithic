@@ -2,7 +2,7 @@ import {
   AbortOptions, ContentId, ERR_DEPENDENCY_MISSING, LockGuard, MaybePromise, NoOpLock, OperationError, ToString
 } from '@mithic/commons';
 import { getCID } from '../defaults.js';
-import { EntityFieldKey, EntityStore, ReadonlyEntityStore } from '../store/index.js';
+import { EntityAttrKey, EntityStore, ReadonlyEntityStore } from '../store/index.js';
 import {
   MapCommand, MapCommandHandler, MapEvent, MapEventOp, MapEventType, MapProjection, MapRangeQuery,
   MapRangeQueryResolver,
@@ -92,8 +92,8 @@ export class ORMapProjection<K = ContentId, V = unknown> implements MapProjectio
     const parentKeys = event.link || [];
 
     // build the entries to update to the store
-    const entries: [key: EntityFieldKey<K>, value?: V][] = [];
-    const newKeys: EntityFieldKey<K>[] = [];
+    const entries: [key: EntityAttrKey<K>, value?: V][] = [];
+    const newKeys: EntityAttrKey<K>[] = [];
     const deletedParents = new Set<number>();
     for (const [field, value, ...parents] of event.payload.set) {
       for (const parent of parents) {
@@ -187,7 +187,7 @@ export class ORMapProjection<K = ContentId, V = unknown> implements MapProjectio
     if (missingKeys.length) { // check tombstones as well if exist
       const stillMissingKeys: K[] = [];
       let i = 0;
-      for await (const exist of store.hasEntries(missingKeys, options)) {
+      for await (const exist of store.isKnown(missingKeys, options)) {
         if (!exist) {
           stillMissingKeys.push(missingKeys[i]);
         }

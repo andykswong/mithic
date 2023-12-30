@@ -3,16 +3,16 @@ import {
 } from '@mithic/collections';
 import { AbortOptions, CodedError, MaybeAsyncIterableIterator, OperationError } from '@mithic/commons';
 import { BaseEntityStore } from './base.js';
-import { EntityFieldKey, EntityStore, FieldValueKey } from './store.js';
+import { EntityAttrKey, EntityStore, AttrValueKey } from './store.js';
 
 /** Map-based {@link EntityStore}. */
 export class MapEntityStore<K, V> extends BaseEntityStore<K, V> implements EntityStore<K, V> {
   public constructor(
     /** Map of data entries. */
-    protected readonly data: MaybeAsyncMapBatch<EntityFieldKey<K>, V> & RangeQueryable<EntityFieldKey<K>, V>
+    protected readonly data: MaybeAsyncMapBatch<EntityAttrKey<K>, V> & RangeQueryable<EntityAttrKey<K>, V>
       = new BTreeMap(5, compareMultiKeys),
     /** Map of field value index. */
-    protected readonly index: MaybeAsyncMapBatch<FieldValueKey<K, V>, K> & RangeQueryable<FieldValueKey<K, V>, K>
+    protected readonly index: MaybeAsyncMapBatch<AttrValueKey<K, V>, K> & RangeQueryable<AttrValueKey<K, V>, K>
       = new BTreeMap(5, compareMultiKeys),
     /** Set of known entries. */
     protected readonly known: MaybeAsyncAppendOnlySetBatch<K> = new BTreeSet(5, compareMultiKeys),
@@ -20,23 +20,23 @@ export class MapEntityStore<K, V> extends BaseEntityStore<K, V> implements Entit
     super();
   }
 
-  public getMany(keys: Iterable<EntityFieldKey<K>>, options?: AbortOptions): MaybeAsyncIterableIterator<V | undefined> {
+  public getMany(keys: Iterable<EntityAttrKey<K>>, options?: AbortOptions): MaybeAsyncIterableIterator<V | undefined> {
     return this.data.getMany(keys, options);
   }
 
   public override hasMany(
-    keys: Iterable<EntityFieldKey<K>>, options?: AbortOptions
+    keys: Iterable<EntityAttrKey<K>>, options?: AbortOptions
   ): MaybeAsyncIterableIterator<boolean> {
     return this.data.hasMany(keys, options);
   }
 
-  public hasEntries(ids: Iterable<K>, options?: AbortOptions): MaybeAsyncIterableIterator<boolean> {
+  public isKnown(ids: Iterable<K>, options?: AbortOptions): MaybeAsyncIterableIterator<boolean> {
     return this.known.hasMany(ids, options);
   }
 
   public async * updateMany(
-    entries: Iterable<readonly [key: EntityFieldKey<K>, value?: V]>, options?: AbortOptions
-  ): AsyncIterableIterator<CodedError<EntityFieldKey<K>> | undefined> {
+    entries: Iterable<readonly [key: EntityAttrKey<K>, value?: V]>, options?: AbortOptions
+  ): AsyncIterableIterator<CodedError<EntityAttrKey<K>> | undefined> {
     const entryArray = [...entries];
     const errors = new Array<Error | undefined>(entryArray.length);
 
@@ -44,7 +44,7 @@ export class MapEntityStore<K, V> extends BaseEntityStore<K, V> implements Entit
 
     // update indices
     {
-      const indexArray = [] as [FieldValueKey<K, V>, K | undefined][];
+      const indexArray = [] as [AttrValueKey<K, V>, K | undefined][];
       for (let i = 0; i < entryArray.length; ++i) {
         const [[entityId, field, entryId], value] = entryArray[i];
         if (value !== void 0) {
@@ -93,17 +93,17 @@ export class MapEntityStore<K, V> extends BaseEntityStore<K, V> implements Entit
 
     // update known set
     {
-      const entryIds = [] as (K | undefined)[];
+      const txIds = [] as (K | undefined)[];
       for (let i = 0; i < entryArray.length; ++i) {
         const [[, , entryId], value] = entryArray[i];
         const isAdd = !errors[i] && entryId !== void 0 && value !== void 0;
-        entryIds.push(isAdd ? entryId : void 0);
+        txIds.push(isAdd ? entryId : void 0);
       }
-      const addedEntries = entryIds.filter((id) => id !== void 0) as K[];
-      if (addedEntries.length) {
+      const addedIds = txIds.filter((id) => id !== void 0) as K[];
+      if (addedIds.length) {
         let i = 0;
-        for await (const error of this.known.addMany(addedEntries, options)) {
-          for (; i < entryIds.length && entryIds[i] === void 0; ++i);
+        for await (const error of this.known.addMany(addedIds, options)) {
+          for (; i < txIds.length && txIds[i] === void 0; ++i);
           if (error) { errors[i] = error; }
           ++i;
         }
@@ -119,19 +119,23 @@ export class MapEntityStore<K, V> extends BaseEntityStore<K, V> implements Entit
     }
   }
 
-  public entities(options?: RangeQueryOptions<FieldValueKey<K, V>>): MaybeAsyncIterableIterator<K> {
-    return this.index.values(options);
+  public async * entriesByAttr(
+    options?: RangeQueryOptions<AttrValueKey<K, V>>
+  ): AsyncIterableIterator<[EntityAttrKey<K>, V]> {
+    for await (const [[attr, value, txId], entityId] of this.index.entries(options)) {
+      yield [[entityId, attr, txId], value as V];
+    }
   }
 
-  public entries(options?: RangeQueryOptions<EntityFieldKey<K>>): MaybeAsyncIterableIterator<[EntityFieldKey<K>, V]> {
+  public entries(options?: RangeQueryOptions<EntityAttrKey<K>>): MaybeAsyncIterableIterator<[EntityAttrKey<K>, V]> {
     return this.data.entries(options);
   }
 
-  public override keys(options?: RangeQueryOptions<EntityFieldKey<K>>): MaybeAsyncIterableIterator<EntityFieldKey<K>> {
+  public override keys(options?: RangeQueryOptions<EntityAttrKey<K>>): MaybeAsyncIterableIterator<EntityAttrKey<K>> {
     return this.data.keys(options);
   }
 
-  public override values(options?: RangeQueryOptions<EntityFieldKey<K>>): MaybeAsyncIterableIterator<V> {
+  public override values(options?: RangeQueryOptions<EntityAttrKey<K>>): MaybeAsyncIterableIterator<V> {
     return this.data.values(options);
   }
 

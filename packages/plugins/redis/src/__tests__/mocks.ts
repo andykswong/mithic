@@ -9,9 +9,9 @@ export class MockRedisClient implements RedisClientType {
 
   public isReady = false;
 
-  public connect(): Promise<void> {
+  public connect(): Promise<RedisClientType> {
     this.isReady = true;
-    return Promise.resolve();
+    return Promise.resolve(this as unknown as RedisClientType);
   }
 
   public quit(): Promise<string> {

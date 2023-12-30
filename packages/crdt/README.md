@@ -8,7 +8,7 @@
 
 <br/>
 
-> Library of common eventsourced CRDTs for mithic
+> Library for eventsourced CRDTs on triplestore
 
 <br/>
 

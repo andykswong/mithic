@@ -1,6 +1,6 @@
 import { BTreeMap } from '@mithic/collections';
 import { ORMapCommandHandler, ORMapProjection, ORMapRangeQueryResolver } from '../../map/index.js';
-import { EntityFieldKey, EntityStore, MapEntityStore } from '../../store/index.js';
+import { EntityAttrKey, EntityStore, MapEntityStore } from '../../store/index.js';
 import { ORSetCommandHandler, ORSetProjection, ORSetRangeQueryResolver } from '../orset.js';
 import { SetCommand, SetCommandHandler, SetCommandType, SetEvent, SetEventType, SetProjection, SetRangeQuery, SetRangeQueryResolver } from '../set.js';
 import { MockId, getMockEventKey } from '../../__tests__/mocks.js';
@@ -21,14 +21,14 @@ const CMD_DEL = { type: SetCommandType.Update, payload: { add: [VALUE1], del: [V
 const hash = (value: V) => `${value}`;
 
 describe('ORSet', () => {
-  let dataMap: BTreeMap<EntityFieldKey<MockId>, V>;
+  let dataMap: BTreeMap<EntityAttrKey<MockId>, V>;
   let store: EntityStore<MockId, V>;
   let command: SetCommandHandler<MockId, V>;
   let projection: SetProjection<MockId, V>;
 
   beforeEach(() => {
     const mapStore = store = new MapEntityStore();
-    dataMap = mapStore['data'] as BTreeMap<EntityFieldKey<MockId>, V>;
+    dataMap = mapStore['data'] as BTreeMap<EntityAttrKey<MockId>, V>;
     command = new ORSetCommandHandler(new ORMapCommandHandler(), hash);
     projection = new ORSetProjection(new ORMapProjection(getMockEventKey), hash);
   });
