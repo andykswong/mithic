@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
 import { MapEntityStore } from '../mapstore.js';
 import { MockId } from '../../__tests__/mocks.js';
-import { rangeQueryable } from '@mithic/collections';
 import { EntityAttrKey } from '../store.js';
+import { collect } from '../../__tests__/utils.js';
 
 const ROOT = new MockId(new Uint8Array(1));
 const ROOT2 = new MockId(new Uint8Array(11));
@@ -13,7 +13,6 @@ const FIELD0 = 'field0';
 const FIELD1 = 'field1';
 const FIELD2 = 'field2';
 const VALUE0 = 'v0';
-const VALUE02 = 'v02';
 const VALUE1 = 'v1';
 const VALUE2 = 'v2';
 
@@ -29,8 +28,85 @@ describe(MapEntityStore.name, () => {
     expect(store.toString()).toBe(`[object ${MapEntityStore.name}]`);
   });
 
-  it('should have correct rangeQueryable tag', () => {
-    expect(store[rangeQueryable]).toBe(true);
+  describe('asyncIterator', () => {
+    it('should be async iterable', async () => {
+      const results = [];
+      for await (const entry of store) {
+        results.push(entry);
+      }
+      expect(results).toEqual([[[ROOT, FIELD0, ID0], VALUE0], [[ROOT, FIELD1, ID1], VALUE1]]);
+    });
+  });
+
+  describe('queries', () => {
+    beforeEach(async () => {
+      await updateEntries([[[ROOT, FIELD2, ID2], VALUE2], [[ROOT2, FIELD2, ID2], VALUE2]]);
+    });
+
+    describe('entries', () => {
+      it('should iterate over entries', async () => {
+        const entries = await collect(store.entries({ upper: [ROOT2, FIELD2], upperOpen: false, limit: 3, reverse: true }));
+        expect(entries).toEqual([
+          [[ROOT2, FIELD2, ID2], VALUE2],
+          [[ROOT, FIELD2, ID2], VALUE2],
+          [[ROOT, FIELD1, ID1], VALUE1]
+        ]);
+      });
+    });
+
+    describe('entriesByAttr', () => {
+      it('should iterate over entries', async () => {
+        const ids = [];
+        for await (const id of store.entriesByAttr({ lower: [FIELD1] })) {
+          ids.push(id);
+        }
+        expect(ids).toEqual([[[ROOT, FIELD1, ID1], VALUE1], [[ROOT2, FIELD2, ID2], VALUE2]]);
+      });
+    });
+
+    describe('findMany', () => {
+      it('should return matching entries', async () => {
+        const results = [];
+        for await (const entries of store.findMany([[ROOT], [ROOT, FIELD1], [ROOT2, FIELD2], [ROOT2, FIELD1]])) {
+          const result = [];
+          for await (const entry of entries) {
+            result.push(entry);
+          }
+          results.push(result);
+        }
+        expect(results).toEqual([
+          [[[ROOT, FIELD0, ID0], VALUE0], [[ROOT, FIELD1, ID1], VALUE1], [[ROOT, FIELD2, ID2], VALUE2]],
+          [[[ROOT, FIELD1, ID1], VALUE1]],
+          [[[ROOT2, FIELD2, ID2], VALUE2]],
+          []
+        ]);
+      });
+    });
+
+    describe('findManyByAttr', () => {
+      beforeEach(async () => {
+        await updateEntries([[[ROOT, FIELD2, ID2], VALUE0]]);
+      });
+
+      it('should return matching entries', async () => {
+        const results = [];
+        for await (const entries of store.findManyByAttr([
+          [FIELD2], [FIELD2, VALUE2], [FIELD1], [FIELD1, VALUE2]
+        ])) {
+          const result = [];
+          for await (const entry of entries) {
+            result.push(entry);
+          }
+          results.push(result);
+        }
+        expect(results).toEqual([
+          [[[ROOT, FIELD2, ID2], VALUE0], [[ROOT2, FIELD2, ID2], VALUE2]],
+          [[[ROOT2, FIELD2, ID2], VALUE2]],
+          [[[ROOT, FIELD1, ID1], VALUE1]],
+          []
+        ]);
+      });
+    });
   });
 
   describe('getMany', () => {
@@ -42,141 +118,21 @@ describe(MapEntityStore.name, () => {
     });
   });
 
-  describe('hasMany', () => {
-    it('should return true for existing keys and false for non-existing keys', async () => {
-      const results = [];
-      for await (const result of store.hasMany([
-        [ROOT, FIELD0, ID0], [ROOT, FIELD1, ID1], [ROOT, FIELD2, ID1], [ROOT, FIELD1, ID0],
-      ])) {
-        results.push(result);
-      }
-      expect(results).toEqual([true, true, false, false]);
-    });
-  });
-
-  describe('hasEntries', () => {
+  describe('hasTx', () => {
     it('should return true for existing entry IDs and false for non-existing IDs', async () => {
-      const results = [];
-      for await (const result of store.isKnown([ID0, ID1, ROOT, ID2])) {
-        results.push(result);
-      }
-      expect(results).toEqual([true, true, false, false]);
+      expect(await collect(store.hasTx([ID0, ID1, ROOT, ID2]))).toEqual([true, true, false, false]);
     });
   });
 
   describe('updateMany', () => {
     it('should add or delete entries', async () => {
-      for await (const error of store.updateMany([
+      expect(await collect(store.updateMany([
         [[ROOT, FIELD0, ID0]], [[ROOT, FIELD2, ID2], VALUE2]
-      ])) {
-        expect(error).toBeUndefined();
-      }
+      ]))).toEqual([undefined, undefined])
 
       expectEntries([
         [[ROOT, FIELD0, ID0], undefined], [[ROOT, FIELD1, ID1], VALUE1], [[ROOT, FIELD2, ID2], VALUE2],
       ]);
-    });
-  });
-
-  describe('setMany', () => {
-    it('should set values', async () => {
-      for await (const error of store.setMany([
-        [[ROOT, FIELD0, ID0], VALUE02], [[ROOT, FIELD2, ID2], VALUE2]
-      ])) {
-        expect(error).toBeUndefined();
-      }
-
-      expectEntries([
-        [[ROOT, FIELD0, ID0], VALUE02], [[ROOT, FIELD1, ID1], VALUE1], [[ROOT, FIELD2, ID2], VALUE2],
-      ]);
-    });
-  });
-
-  describe('deleteMany', () => {
-    it('should delete existing keys and do nothing for non-existing keys', async () => {
-      for await (const error of store.deleteMany([[ROOT, FIELD1, ID1], [ROOT, FIELD2, ID2]])) {
-        expect(error).toBeUndefined();
-      }
-
-      expectEntries([
-        [[ROOT, FIELD0, ID0], VALUE0], [[ROOT, FIELD1, ID1], undefined], [[ROOT, FIELD2, ID2], undefined],
-      ]);
-    });
-  });
-
-  describe('entriesByAttr', () => {
-    beforeEach(async () => {
-      await updateEntries([[[ROOT2, FIELD1, ID2], VALUE2]]);
-    });
-
-    it('should iterate over entries', async () => {
-      const ids = [];
-      for await (const id of store.entriesByAttr({ lower: [FIELD1] })) {
-        ids.push(id);
-      }
-      expect(ids).toEqual([[[ROOT, FIELD1, ID1], VALUE1], [[ROOT2, FIELD1, ID2], VALUE2]]);
-    });
-  });
-
-  describe('keysByAttr', () => {
-    beforeEach(async () => {
-      await updateEntries([[[ROOT2, FIELD2, ID2], VALUE2]]);
-    });
-
-    it('should iterate over keys', async () => {
-      const keys = [];
-      for await (const key of store.keysByAttr({ lower: [FIELD1] })) {
-        keys.push(key);
-      }
-      expect(keys).toEqual([[ROOT, FIELD1, ID1], [ROOT2, FIELD2, ID2]]);
-    });
-  });
-
-  describe('keys', () => {
-    beforeEach(async () => {
-      await updateEntries([[[ROOT, FIELD2, ID2], VALUE2]]);
-    });
-
-    it('should iterate over keys', async () => {
-      const keys = [];
-      for await (const key of store.keys({ lower: [ROOT, FIELD1] })) {
-        keys.push(key);
-      }
-      expect(keys).toEqual([[ROOT, FIELD1, ID1], [ROOT, FIELD2, ID2]]);
-    });
-  });
-
-  describe('values', () => {
-    it('should iterate over values', async () => {
-      const values = [];
-      for await (const value of store.values({ upper: [ROOT, FIELD1] })) {
-        values.push(value);
-      }
-      expect(values).toEqual([VALUE0]);
-    });
-  });
-
-  describe('entries', () => {
-    beforeEach(async () => {
-      await updateEntries([[[ROOT, FIELD2, ID2], VALUE2]]);
-    });
-
-    it('should iterate over entries', async () => {
-      const entries = [];
-      for await (const entry of store.entries({ limit: 2, reverse: true })) {
-        entries.push(entry);
-      }
-      expect(entries).toEqual([[[ROOT, FIELD2, ID2], VALUE2], [[ROOT, FIELD1, ID1], VALUE1]]);
-    });
-  });
-
-  describe('asyncIterator', () => {
-    it('should async iterate over keys', async () => {
-      const results = [];
-      for await (const entry of store) {
-        results.push(entry);
-      }
-      expect(results).toEqual([[[ROOT, FIELD0, ID0], VALUE0], [[ROOT, FIELD1, ID1], VALUE1]]);
     });
   });
 

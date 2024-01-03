@@ -1,20 +1,15 @@
-import { SyncOrAsyncIterable } from '@mithic/commons';
-import { AggregateCommandHandler, AggregateProjection, AggregateQuery, AggregateQueryResolver } from '../aggregate.js';
+import { AggregateCommandHandler, AggregateProjection } from '../aggregate.js';
 import { StandardCommand, StandardEvent } from '../action.js';
-import { MapEventPayload, MapRangeQueryOptions } from '../map/index.js';
-import { EntityStore, ReadonlyEntityStore } from '../store/index.js';
+import { MapEventPayload } from '../map/index.js';
+import { EntityStoreProvider, ReadonlyEntityStoreProvider } from '../store/index.js';
 
 /** {@link AggregateCommandHandler} for List CRDT. */
 export type ListCommandHandler<K, V> =
-  AggregateCommandHandler<ReadonlyEntityStore<K, V>, ListCommand<K, V>, ListEvent<K, V>>;
+  AggregateCommandHandler<ReadonlyEntityStoreProvider<K, V>, ListCommand<K, V>, ListEvent<K, V>>;
 
 /** {@link AggregateProjection} for List CRDT. */
 export type ListProjection<K, V> =
-  AggregateProjection<EntityStore<K, V>, ListEvent<K, V>>;
-
-/** {@link AggregateQueryResolver} for List CRDT. */
-export type ListRangeQueryResolver<K, V> =
-  AggregateQueryResolver<ReadonlyEntityStore<K, V>, ListRangeQuery<K, V>>;
+  AggregateProjection<EntityStoreProvider<K, V>, ListEvent<K, V>>;
 
 /** Command type for List CRDT. */
 export enum ListCommandType {
@@ -35,10 +30,16 @@ export interface ListCommandPayload<V> {
 
   /** Deletes given number of indices at or after specified index. */
   readonly del?: number;
+
+  /** Type of the list. */
+  readonly type?: string;
+
+  /** Namespace of list indices. Defaults to `$idx`. */
+  readonly ns?: string;
 }
 
 /** Event for List CRDT. */
-export type ListEvent<K, V> = StandardEvent<ListEventType, MapEventPayload<V>, K>;
+export type ListEvent<K, V> = StandardEvent<ListEventType, ListEventPayload<V>, K>;
 
 /** Event type for List CRDT. */
 export enum ListEventType {
@@ -49,6 +50,8 @@ export enum ListEventType {
   Update = 'LIST_OPS',
 }
 
-/** Query payload for List CRDT.  */
-export interface ListRangeQuery<K, V>
-  extends AggregateQuery<SyncOrAsyncIterable<[index: string, value: V]>>, MapRangeQueryOptions<K> { }
+/** Event payload for List CRDT. */
+export interface ListEventPayload<V> extends MapEventPayload<V> {
+  /** Namespace of list indices. Defaults to no namespace. */
+  readonly ns?: string;
+}

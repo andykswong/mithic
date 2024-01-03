@@ -1,21 +1,23 @@
 import {
+  MaybeAsyncReadonlyMap, MaybeAsyncReadonlyMapBatch, RangeQueryOptions, RangeQueryable, rangeQueryable
+} from '@mithic/collections';
+import {
   AbortOptions, ContentId, ERR_DEPENDENCY_MISSING, LockGuard, MaybePromise, NoOpLock, OperationError, ToString
 } from '@mithic/commons';
 import { getCID } from '../defaults.js';
-import { EntityAttrKey, EntityStore, ReadonlyEntityStore } from '../store/index.js';
 import {
-  MapCommand, MapCommandHandler, MapEvent, MapEventOp, MapEventType, MapProjection, MapRangeQuery,
-  MapRangeQueryResolver,
-} from './map.js';
+  EntityAttrKey, EntityStoreProvider, ReadonlyEntityStore, ReadonlyEntityStoreProvider
+} from '../store/index.js';
+import { MapCommand, MapCommandHandler, MapEvent, MapEventOp, MapEventType, MapProjection } from './map.js';
 
-/** Observed-removed multimap command handler. */
-export class ORMapCommandHandler<K extends ToString = ContentId, V = unknown> implements MapCommandHandler<K, V> {
+/** Observed-removed map command handler. */
+export class ORMapCommandHandler<Id extends ToString = ContentId, V = unknown> implements MapCommandHandler<Id, V> {
   public async handle(
-    store: ReadonlyEntityStore<K, V>, command: MapCommand<K, V>, options?: AbortOptions
-  ): Promise<MapEvent<K, V> | undefined> {
+    storeProvider: ReadonlyEntityStoreProvider<Id, V>, command: MapCommand<Id, V>, options?: AbortOptions
+  ): Promise<MapEvent<Id, V> | undefined> {
     const root = command.root;
     const type = root === void 0 ? MapEventType.New : MapEventType.Update;
-    const link: K[] = [];
+    const link: Id[] = [];
     const ops: [...MapEventOp<V>][] = [];
 
     const values = command.payload.put || {};
@@ -29,6 +31,7 @@ export class ORMapCommandHandler<K extends ToString = ContentId, V = unknown> im
       return;
     }
 
+    const store = await storeProvider(command.payload.type);
     for (const field of fields) {
       const value = values[field] ?? null;
       const isDelete = i++ < (command.payload.del?.length || 0);
@@ -40,14 +43,13 @@ export class ORMapCommandHandler<K extends ToString = ContentId, V = unknown> im
 
       const keysToDelete: number[] = [];
       if (type === MapEventType.Update && root && isDelete) { // for update event, find existing keys to delete
-        for await (const [, , parentKey] of store.keys({
-          lower: [root, field],
-          upper: [root, `${field}\x00`],
-          signal: options?.signal,
-        })) {
-          const parentKeyStr = `${parentKey}`;
-          keysToDelete.push(linkMap[parentKeyStr] ?? (link.push(parentKey!) - 1));
-          linkMap[parentKeyStr] = keysToDelete[keysToDelete.length - 1];
+        // TODO: call findMany in batch
+        for await (const iter of store.findMany([[root, field]], options)) {
+          for await (const [[, , parentTxId]] of iter) {
+            const parentTxIdStr = `${parentTxId}`;
+            keysToDelete.push(linkMap[parentTxIdStr] ?? (link.push(parentTxId!) - 1));
+            linkMap[parentTxIdStr] = keysToDelete[keysToDelete.length - 1];
+          }
         }
         keysToDelete.sort();
       }
@@ -64,10 +66,8 @@ export class ORMapCommandHandler<K extends ToString = ContentId, V = unknown> im
     ops.sort(this.sortOps);
 
     return {
-      type,
-      payload: { set: ops },
-      root,
-      link,
+      type, link, root,
+      payload: { set: ops, type: command.payload.type },
       nonce: command.nonce,
     };
   }
@@ -75,25 +75,27 @@ export class ORMapCommandHandler<K extends ToString = ContentId, V = unknown> im
   protected sortOps = (op1: MapEventOp<V>, op2: MapEventOp<V>) => op1[0] < op2[0] ? -1 : op1[0] > op2[0] ? 1 : 0;
 }
 
-/** Observed-removed multimap projection. */
-export class ORMapProjection<K = ContentId, V = unknown> implements MapProjection<K, V> {
+/** Observed-removed map event projection. */
+export class ORMapProjection<Id = ContentId, V = unknown> implements MapProjection<Id, V> {
   public constructor(
     /** Function to get key of event. */
-    protected readonly getEventKey: (event: MapEvent<K, V>, options?: AbortOptions) => MaybePromise<K> = getCID,
+    protected readonly getEventKey: (event: MapEvent<Id, V>, options?: AbortOptions) => MaybePromise<Id> = getCID,
     /** Function to acquire a lock on an event key. */
-    protected readonly acquireLock: (key: K, options?: AbortOptions) => MaybePromise<LockGuard> =
+    protected readonly acquireLock: (key: Id, options?: AbortOptions) => MaybePromise<LockGuard> =
       () => LockGuard.acquire(new NoOpLock()),
   ) {
   }
 
-  public async reduce(store: EntityStore<K, V>, event: MapEvent<K, V>, options?: AbortOptions): Promise<EntityStore<K, V>> {
+  public async reduce(
+    storeProvider: EntityStoreProvider<Id, V>, event: MapEvent<Id, V>, options?: AbortOptions
+  ): Promise<EntityStoreProvider<Id, V>> {
     const eventKey = await this.getEventKey(event, options);
-    const root = event.type === MapEventType.Update ? event.root as K : eventKey;
+    const root = event.type === MapEventType.Update ? event.root as Id : eventKey;
     const parentKeys = event.link || [];
 
     // build the entries to update to the store
-    const entries: [key: EntityAttrKey<K>, value?: V][] = [];
-    const newKeys: EntityAttrKey<K>[] = [];
+    const entries: [key: EntityAttrKey<Id>, value?: V][] = [];
+    const newKeys: EntityAttrKey<Id>[] = [];
     const deletedParents = new Set<number>();
     for (const [field, value, ...parents] of event.payload.set) {
       for (const parent of parents) {
@@ -112,14 +114,15 @@ export class ORMapProjection<K = ContentId, V = unknown> implements MapProjectio
     }
 
     // update store if event is valid and not exist. lock is required to avoid race conditions (ABA)
+    const store = await storeProvider(event.payload.type);
     const lock = await this.acquireLock(eventKey, options);
     try {
-      const error = await this.validate(store, event, options);
+      const error = await this.validate(storeProvider, event, options);
       if (error) { throw error; }
-  
+
       // do not reprocess if event key already exist in store (event already processed)
-      for await (const exist of store.hasMany(newKeys, options)) {
-        if (exist) { return store; }
+      for await (const value of store.getMany(newKeys, options)) {
+        if (value !== void 0) { return storeProvider; }
       }
 
       for await (const error of store.updateMany(entries, options)) {
@@ -129,14 +132,14 @@ export class ORMapProjection<K = ContentId, V = unknown> implements MapProjectio
       await lock.close();
     }
 
-    return store;
+    return storeProvider;
   }
 
   public async validate(
-    store: ReadonlyEntityStore<K, V>, event: MapEvent<K, V>, options?: AbortOptions
+    storeProvider: ReadonlyEntityStoreProvider<Id, V>, event: MapEvent<Id, V>, options?: AbortOptions
   ): Promise<Error | undefined> {
     const eventKey = await this.getEventKey(event, options);
-    const root = event.type === MapEventType.Update ? event.root as K : eventKey;
+    const root = event.type === MapEventType.Update ? event.root as Id : eventKey;
 
     if (root === void 0) {
       return new TypeError('missing root');
@@ -147,8 +150,7 @@ export class ORMapProjection<K = ContentId, V = unknown> implements MapProjectio
 
     // verify that set operations are well formed; fields and parent indices must be in asc order
     let lastField = '';
-    const dependentKeys: [root: K, field: string, itemKey: K][] = [];
-    const dependentKeyEventIndices: number[] = [];
+    const dependencyIndices = new Set<number>();
     for (const [field, value, ...parents] of event.payload.set) {
       let isValid = !!field && (!!parents.length || value !== null) && lastField < field;
       lastField = field;
@@ -159,8 +161,7 @@ export class ORMapProjection<K = ContentId, V = unknown> implements MapProjectio
           isValid = false;
           break;
         }
-        dependentKeys.push([root, field, event.link[parent]]);
-        dependentKeyEventIndices.push(parent);
+        dependencyIndices.add(parent);
         lastParent = parent;
       }
       if (!isValid) {
@@ -169,31 +170,15 @@ export class ORMapProjection<K = ContentId, V = unknown> implements MapProjectio
     }
 
     // check for missing dependencies
-    let missingKeys: K[] = [];
+    const store = await storeProvider(event.payload.type);
+    const missingKeys: Id[] = [];
     {
-      const seenIndices = new Set<number>();
+      const keys = [...dependencyIndices].map((index) => event.link?.[index] as Id);
       let i = 0;
-      for await (const exist of store.hasMany(dependentKeys, options)) {
-        const index = dependentKeyEventIndices[i];
-        const missingKey = event.link?.[index];
-        if (!exist && !seenIndices.has(index) && missingKey !== void 0) {
-          missingKeys.push(missingKey);
-          seenIndices.add(index);
-        }
+      for await (const exist of store.hasTx(keys, options)) {
+        if (!exist) { missingKeys.push(keys[i]); }
         ++i;
       }
-    }
-
-    if (missingKeys.length) { // check tombstones as well if exist
-      const stillMissingKeys: K[] = [];
-      let i = 0;
-      for await (const exist of store.isKnown(missingKeys, options)) {
-        if (!exist) {
-          stillMissingKeys.push(missingKeys[i]);
-        }
-        ++i;
-      }
-      missingKeys = stillMissingKeys;
     }
 
     if (missingKeys.length) {
@@ -202,25 +187,72 @@ export class ORMapProjection<K = ContentId, V = unknown> implements MapProjectio
   }
 }
 
-/** Observed-removed multimap range query resolver. */
-export class ORMapRangeQueryResolver<K extends ToString = ContentId, V = unknown>
-  implements MapRangeQueryResolver<K, V>
+/** Readonly observed-removed map. */
+export class ReadonlyORMap<V = unknown, Id = ContentId>
+  implements MaybeAsyncReadonlyMap<string, V>, MaybeAsyncReadonlyMapBatch<string, V>,
+  RangeQueryable<string, V>, AsyncIterable<[string, V]>
 {
-  public async * resolve(
-    store: ReadonlyEntityStore<K, V>, query: MapRangeQuery<K, V>, options?: AbortOptions
-  ): AsyncIterable<[field: string, value: V]> {
-    const terminal = '\udbff\udfff';
-    const upper = query.upper === void 0 ? terminal :
-      query.upperOpen ?? true ? query.upper : query.upper + terminal;
-    for await (const [[, field], value] of store.entries({
-      ...query,
-      lower: [query.root, query.lower ?? ''],
-      upper: [query.root, upper],
-      signal: options?.signal,
+  public constructor(
+    /** The underlying store. */
+    protected readonly store: ReadonlyEntityStore<Id, V>,
+    /** The map entity ID. */
+    public readonly entityId: Id,
+  ) { }
+
+  public async get(key: string, options?: AbortOptions): Promise<V | undefined> {
+    for await (const [, value] of this.store.entries({
+      ...options,
+      lower: [this.entityId, key],
+      upper: [this.entityId, key],
+      upperOpen: false,
+      limit: 1,
     })) {
-      if (field !== void 0 && value !== void 0) {
-        yield [field, value];
-      }
+      return value;
     }
+  }
+
+  public async has(key: string, options?: AbortOptions): Promise<boolean> {
+    return (await this.get(key, options)) !== void 0;
+  }
+
+  public async * getMany(keys: Iterable<string>, options?: AbortOptions): AsyncIterableIterator<V | undefined> {
+    for await (const iter of this.store.findMany([...keys].map((key) => [this.entityId, key]), options)) {
+      const result = await iter.next();
+      yield result.done ? void 0 : result.value[1];
+    }
+  }
+
+  public async * hasMany(keys: Iterable<string>, options?: AbortOptions): AsyncIterableIterator<boolean> {
+    for await (const value of this.getMany(keys, options)) { yield value !== void 0; }
+  }
+
+  public async * entries(options?: RangeQueryOptions<string>): AsyncIterableIterator<[string, V]> {
+    for await (const [[, field], value] of this.store.entries({
+      ...options,
+      lower: [this.entityId, options?.lower ?? ''],
+      upper: [this.entityId, options?.upper],
+    })) {
+      yield [field, value];
+    }
+  }
+
+  public async * keys(options?: RangeQueryOptions<string>): AsyncIterableIterator<string> {
+    for await (const [key] of this.entries(options)) { yield key; }
+  }
+
+  public async * values(options?: RangeQueryOptions<string>): AsyncIterableIterator<V> {
+    for await (const [, value] of this.entries(options)) { yield value; }
+  }
+
+  public [Symbol.asyncIterator](): AsyncIterator<[string, V]> {
+    return this.entries();
+  }
+
+  public get [rangeQueryable](): true {
+    return true;
+  }
+
+  public get [Symbol.toStringTag](): string {
+    return ReadonlyORMap.name;
   }
 }

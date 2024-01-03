@@ -1,12 +1,15 @@
-import { BTreeMap } from '@mithic/collections';
+import { beforeEach, describe, expect, it } from '@jest/globals';
+import { BTreeMap, RangeQueryOptions, rangeQueryable } from '@mithic/collections';
 import { ERR_DEPENDENCY_MISSING, OperationError } from '@mithic/commons';
-import { EntityAttrKey, EntityStore, MapEntityStore } from '../../store/index.js';
-import { MapCommand, MapEventType, MapRangeQuery, MapCommandType, MapEvent, MapCommandHandler, MapProjection, MapRangeQueryResolver } from '../map.js';
-import { ORMapCommandHandler, ORMapProjection, ORMapRangeQueryResolver } from '../ormap.js';
+import { EntityAttrKey, EntityStore, EntityStoreProvider, MapEntityStore } from '../../store/index.js';
+import { MapCommand, MapEventType, MapCommandType, MapEvent, MapCommandHandler, MapProjection } from '../map.js';
+import { ORMapCommandHandler, ORMapProjection, ReadonlyORMap } from '../ormap.js';
 import { MockId, getMockEventKey } from '../../__tests__/mocks.js';
+import { collect } from '../../__tests__/utils.js';
 
 type V = string | number | boolean;
 
+const TYPE = 'ormap';
 const ROOT = new MockId(new Uint8Array(1));
 const FIELD0 = 'field0';
 const FIELD1 = 'field1';
@@ -19,16 +22,20 @@ const VALUE2 = 123;
 const VALUE22 = 456;
 const VALUE3 = true;
 const VALUE32 = false;
-const CMD_EMPTY = { type: MapCommandType.Update, payload: { put: {} }, nonce: '1' } satisfies MapCommand<MockId, V>;
-const CMD_NEW = { type: MapCommandType.Update, payload: { put: { [FIELD0]: VALUE0 } }, nonce: '1' } satisfies MapCommand<MockId, V>;
-const CMD_WITH_FIELDS = { type: MapCommandType.Update, payload: { put: { [FIELD1]: VALUE1, [FIELD2]: VALUE2 } }, root: ROOT, nonce: '3' } satisfies MapCommand<MockId, V>;
-const CMD_WITH_FIELDS2 = { type: MapCommandType.Update, payload: { put: { [FIELD3]: VALUE3 } }, root: ROOT, nonce: '4' } satisfies MapCommand<MockId, V>;
-const CMD_WITH_UPDEL = { type: MapCommandType.Update, payload: { put: { [FIELD2]: VALUE22, [FIELD3]: VALUE32 }, del: [FIELD1, FIELD2, FIELD3] }, root: ROOT, nonce: '5' } satisfies MapCommand<MockId, V>;
-const CMD_WITH_FIELDS_CONCURRENT = { type: MapCommandType.Update, payload: { put: { [FIELD1]: VALUE12 }, del: [FIELD1] }, root: ROOT, nonce: '6' } satisfies MapCommand<MockId, V>;
+const CMD_EMPTY = { type: MapCommandType.Update, payload: { put: {}, type: TYPE }, nonce: '1' } satisfies MapCommand<MockId, V>;
+const CMD_NEW = { type: MapCommandType.Update, payload: { put: { [FIELD0]: VALUE0 }, type: TYPE }, nonce: '1' } satisfies MapCommand<MockId, V>;
+const CMD_WITH_FIELDS = { type: MapCommandType.Update, payload: { put: { [FIELD1]: VALUE1, [FIELD2]: VALUE2 }, type: TYPE }, root: ROOT, nonce: '3' } satisfies MapCommand<MockId, V>;
+const CMD_WITH_FIELDS2 = { type: MapCommandType.Update, payload: { put: { [FIELD3]: VALUE3 }, type: TYPE }, root: ROOT, nonce: '4' } satisfies MapCommand<MockId, V>;
+const CMD_WITH_UPDEL = { type: MapCommandType.Update, payload: { put: { [FIELD2]: VALUE22, [FIELD3]: VALUE32 }, del: [FIELD1, FIELD2, FIELD3], type: TYPE }, root: ROOT, nonce: '5' } satisfies MapCommand<MockId, V>;
+const CMD_WITH_FIELDS_CONCURRENT = { type: MapCommandType.Update, payload: { put: { [FIELD1]: VALUE12 }, del: [FIELD1], type: TYPE }, root: ROOT, nonce: '6' } satisfies MapCommand<MockId, V>;
 
 describe('ORMap', () => {
   let dataMap: BTreeMap<EntityAttrKey<MockId>, V>;
   let store: EntityStore<MockId, V>;
+  const storeProvider: EntityStoreProvider<MockId, V> = (type) => {
+    expect(type).toBe(TYPE);
+    return store;
+  };
   let command: MapCommandHandler<MockId, V>;
   let projection: MapProjection<MockId, V>;
 
@@ -41,26 +48,27 @@ describe('ORMap', () => {
 
   describe(ORMapCommandHandler.name, () => {
     it('should return valid event for new empty map command', async () => {
-      const event = await command.handle(store, CMD_EMPTY);
+      const event = await command.handle(storeProvider, CMD_EMPTY);
       expect(event).toEqual({
         type: MapEventType.New,
-        payload: { set: [] },
+        payload: { set: [], type: TYPE },
         link: [],
         nonce: CMD_EMPTY.nonce,
       } satisfies MapEvent<MockId, V>);
     });
 
     it('should return undefined for empty set command', async () => {
-      expect(await command.handle(store, { type: MapCommandType.Update, payload: { put: {} }, root: ROOT, nonce: '1' }))
+      expect(await command.handle(storeProvider, { type: MapCommandType.Update, payload: { put: {} }, root: ROOT, nonce: '1' }))
         .toBeUndefined();
     });
 
     it('should return valid event for new map command', async () => {
-      const event = await command.handle(store, CMD_NEW);
+      const event = await command.handle(storeProvider, CMD_NEW);
       expect(event).toEqual({
         type: MapEventType.New,
         payload: {
           set: [[FIELD0, VALUE0]],
+          type: TYPE,
         },
         link: [],
         nonce: CMD_NEW.nonce,
@@ -68,14 +76,15 @@ describe('ORMap', () => {
     });
 
     it('should return valid event for update map command', async () => {
-      const event = await command.handle(store, CMD_WITH_FIELDS);
+      const event = await command.handle(storeProvider, CMD_WITH_FIELDS);
       expect(event).toEqual({
         type: MapEventType.Update,
         payload: {
           set: [
             [FIELD1, VALUE1],
             [FIELD2, VALUE2]
-          ]
+          ],
+          type: TYPE,
         },
         link: [],
         root: ROOT,
@@ -84,7 +93,7 @@ describe('ORMap', () => {
     });
 
     it('should return valid event for update map command with dependency', async () => {
-      for await (const error of store.setMany([
+      for await (const error of store.updateMany([
         [[ROOT, FIELD1, getMockEventKey(CMD_WITH_FIELDS)], VALUE1],
         [[ROOT, FIELD2, getMockEventKey(CMD_WITH_FIELDS)], VALUE2],
         [[ROOT, FIELD3, getMockEventKey(CMD_WITH_FIELDS2)], VALUE3],
@@ -92,7 +101,7 @@ describe('ORMap', () => {
         expect(error).toBeUndefined();
       }
 
-      const event = await command.handle(store, CMD_WITH_UPDEL);
+      const event = await command.handle(storeProvider, CMD_WITH_UPDEL);
       expect(event).toEqual({
         type: MapEventType.Update,
         payload: {
@@ -100,7 +109,8 @@ describe('ORMap', () => {
             [FIELD1, null, 0],
             [FIELD2, VALUE22, 0],
             [FIELD3, VALUE32, 1],
-          ]
+          ],
+          type: TYPE,
         },
         link: [getMockEventKey(CMD_WITH_FIELDS), getMockEventKey(CMD_WITH_FIELDS2)],
         root: ROOT,
@@ -109,15 +119,16 @@ describe('ORMap', () => {
     });
 
     it('should ignore delete operation if field does not already exist', async () => {
-      await applyCommand(CMD_WITH_FIELDS2);
-      const event = await command.handle(store, CMD_WITH_UPDEL);
+      await applyCommands(CMD_WITH_FIELDS2);
+      const event = await command.handle(storeProvider, CMD_WITH_UPDEL);
       expect(event).toEqual({
         type: MapEventType.Update,
         payload: {
           set: [
             [FIELD2, VALUE22],
             [FIELD3, VALUE32, 0],
-          ]
+          ],
+          type: TYPE,
         },
         link: [getMockEventKey(CMD_WITH_FIELDS2)],
         root: ROOT,
@@ -129,30 +140,30 @@ describe('ORMap', () => {
   describe(ORMapProjection.name, () => {
     describe('validate', () => {
       it('should return no error for valid events', async () => {
-        expect(await projection.validate(store, (await command.handle(store, CMD_NEW))!)).toBeUndefined();
-        await applyCommand(CMD_NEW);
-        expect(await projection.validate(store, (await command.handle(store, CMD_WITH_FIELDS))!)).toBeUndefined();
+        expect(await projection.validate(storeProvider, (await command.handle(storeProvider, CMD_NEW))!)).toBeUndefined();
+        await applyCommands(CMD_NEW);
+        expect(await projection.validate(storeProvider, (await command.handle(storeProvider, CMD_WITH_FIELDS))!)).toBeUndefined();
       });
 
       it('should return error for malformed events', async () => {
-        expect(await projection.validate(store, {
+        expect(await projection.validate(storeProvider, {
           type: MapEventType.Update, payload: { set: [] },
           link: [], root: ROOT,
         })).toEqual(new TypeError('empty operation'));
 
-        expect(await projection.validate(store, {
+        expect(await projection.validate(storeProvider, {
           type: MapEventType.Update,
           payload: { set: [['field', true]] },
           link: [],
         })).toEqual(new TypeError('missing root'));
 
-        expect(await projection.validate(store, {
+        expect(await projection.validate(storeProvider, {
           type: MapEventType.Update,
           payload: { set: [['', true]] },
           link: [], root: ROOT,
         })).toEqual(new TypeError(`invalid operation: ""`));
 
-        expect(await projection.validate(store, {
+        expect(await projection.validate(storeProvider, {
           type: MapEventType.Update,
           payload: { set: [['field', true, 0]] },
           link: [], root: ROOT,
@@ -161,9 +172,9 @@ describe('ORMap', () => {
 
       it('should return error for missing dependent events', async () => {
         const missingLink = new MockId(new Uint8Array(2));
-        const error = await projection.validate(store, {
+        const error = await projection.validate(storeProvider, {
           type: MapEventType.Update,
-          payload: { set: [['field', true, 0]] },
+          payload: { set: [['field', true, 0]], type: TYPE },
           link: [missingLink], root: ROOT,
         });
 
@@ -175,10 +186,10 @@ describe('ORMap', () => {
 
     describe('reduce', () => {
       it('should save new map with fields correctly', async () => {
-        await applyCommand();
+        await applyCommands(CMD_EMPTY);
         expect(dataMap.size).toEqual(0);
 
-        await applyCommand(CMD_WITH_FIELDS);
+        await applyCommands(CMD_WITH_FIELDS);
         const eventKey = getMockEventKey(CMD_WITH_FIELDS);
         expect(dataMap.size).toEqual(2);
         expect(dataMap.get([ROOT, FIELD1, eventKey])).toEqual(VALUE1);
@@ -186,15 +197,15 @@ describe('ORMap', () => {
       });
 
       it('should keep concurrent updates', async () => {
-        const event1 = await command.handle(store, CMD_WITH_FIELDS);
-        const event2 = await command.handle(store, CMD_WITH_FIELDS_CONCURRENT);
+        const event1 = await command.handle(storeProvider, CMD_WITH_FIELDS);
+        const event2 = await command.handle(storeProvider, CMD_WITH_FIELDS_CONCURRENT);
         const event0Key = getMockEventKey(CMD_NEW);
         const event1Key = getMockEventKey(CMD_WITH_FIELDS);
         const event2Key = getMockEventKey(CMD_WITH_FIELDS_CONCURRENT);
 
-        await applyCommand(CMD_NEW);
-        await projection.reduce(store, event1!);
-        await projection.reduce(store, event2!);
+        await applyCommands(CMD_NEW);
+        await projection.reduce(storeProvider, event1!);
+        await projection.reduce(storeProvider, event2!);
 
         expect(dataMap.size).toEqual(4);
         expect(dataMap.get([ROOT, FIELD0, event0Key])).toEqual(VALUE0);
@@ -204,13 +215,13 @@ describe('ORMap', () => {
       });
 
       it('should delete all concurrent values on update', async () => {
-        const event1 = await command.handle(store, CMD_WITH_FIELDS);
-        const event2 = await command.handle(store, CMD_WITH_FIELDS_CONCURRENT);
+        const event1 = await command.handle(storeProvider, CMD_WITH_FIELDS);
+        const event2 = await command.handle(storeProvider, CMD_WITH_FIELDS_CONCURRENT);
         const event3Key = getMockEventKey(CMD_WITH_UPDEL);
 
-        await projection.reduce(store, event1!);
-        await projection.reduce(store, event2!);
-        await applyCommand(CMD_WITH_UPDEL);
+        await projection.reduce(storeProvider, event1!);
+        await projection.reduce(storeProvider, event2!);
+        await applyCommands(CMD_WITH_UPDEL);
 
         expect(dataMap.size).toEqual(2);
         expect(dataMap.get([ROOT, FIELD2, event3Key])).toEqual(VALUE22);
@@ -218,66 +229,142 @@ describe('ORMap', () => {
       });
 
       it('should throw error for malformed events', async () => {
-        await expect(projection.reduce(store, {
+        await expect(projection.reduce(storeProvider, {
           type: MapEventType.Update,
-          payload: { set: [] }, link: [],
+          payload: { set: [], type: TYPE }, link: [],
         })).rejects.toEqual(new TypeError('missing root'));
       });
     });
   });
 
-  describe(ORMapRangeQueryResolver.name, () => {
-    let resolver: MapRangeQueryResolver<MockId, V>;
+  describe(ReadonlyORMap.name, () => {
+    let map: ReadonlyORMap<V, MockId>;
 
-    beforeEach(() => {
-      resolver = new ORMapRangeQueryResolver();
+    beforeEach(async () => {
+      map = new ReadonlyORMap(store, ROOT);
     })
 
-    it('should return empty result for empty / undefined maps', async () => {
-      await applyCommand();
-      for await (const _ of resolver.resolve(store, { root: ROOT })) {
-        throw new Error('should not be called');
-      }
+    it('should have correct string tag', () => {
+      expect(map.toString()).toBe(`[object ${ReadonlyORMap.name}]`);
     });
 
-    it.each(
-      [
-        [[CMD_WITH_FIELDS], { root: ROOT }, [[FIELD1, VALUE1], [FIELD2, VALUE2]]],
-        [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { root: ROOT }, [[FIELD1, VALUE1], [FIELD2, VALUE2], [FIELD3, VALUE3]]],
-        [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { root: ROOT, limit: 2 }, [[FIELD1, VALUE1], [FIELD2, VALUE2]]],
-        [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { root: ROOT, limit: 2, reverse: true }, [[FIELD3, VALUE3], [FIELD2, VALUE2]]],
-        [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { root: ROOT, lower: FIELD2, upper: FIELD2, upperOpen: false }, [[FIELD2, VALUE2]]],
-      ] satisfies [MapCommand<MockId, V>[], MapRangeQuery<MockId, V>, [string, V][]][]
-    )('should return correct results for non-empty maps %#', async (cmds, query, expected) => {
-      await applyCommand();
-      for (const cmd of cmds) {
-        await applyCommand(cmd);
-      }
-      const results = [];
-      for await (const entry of resolver.resolve(store, query)) {
-        results.push(entry);
-      }
-      expect(results).toEqual(expected);
+    it('should have rangeQueryable tag', () => {
+      expect(map[rangeQueryable]).toBe(true);
     });
 
-    it('should return concurrent values', async () => {
-      await applyCommand(CMD_NEW);
-      const event1 = await command.handle(store, CMD_WITH_FIELDS);
-      const event2 = await command.handle(store, CMD_WITH_UPDEL);
-      await projection.reduce(store, event1!);
-      await projection.reduce(store, event2!);
+    describe('asyncIterator', () => {
+      it('should async iterate over default collection', async () => {
+        await applyCommands(CMD_WITH_FIELDS);
+        const results = await collect(map);
+        expect(results).toEqual([[FIELD1, VALUE1], [FIELD2, VALUE2]]);
+      });
 
-      const results = [];
-      for await (const entry of resolver.resolve(store, { root: ROOT })) {
-        results.push(entry);
-      }
-      expect(results).toEqual([
-        [FIELD0, VALUE0], [FIELD1, VALUE1], [FIELD2, VALUE2], [FIELD2, VALUE22], [FIELD3, VALUE32]
-      ]);
+      it('should return empty result for empty / undefined maps', async () => {
+        await applyCommands(CMD_EMPTY);
+        const results = await collect(map);
+        expect(results).toEqual([]);
+      });
+    });
+
+    describe('get', () => {
+      it('should return matching field value', async () => {
+        await applyCommands(CMD_WITH_FIELDS);
+        expect(await map.get(FIELD1)).toEqual(VALUE1);
+      });
+
+      it('should return undefined for non-existent field', async () => {
+        await applyCommands(CMD_WITH_FIELDS);
+        expect(await map.get(FIELD3)).toBeUndefined();
+      });
+    });
+
+    describe('has', () => {
+      it('should return true for existing field', async () => {
+        await applyCommands(CMD_WITH_FIELDS);
+        expect(await map.has(FIELD1)).toBe(true);
+      });
+
+      it('should return false for non-existent field', async () => {
+        await applyCommands(CMD_WITH_FIELDS);
+        expect(await map.has(FIELD3)).toBe(false);
+      });
+    });
+
+    describe('getMany', () => {
+      it('should return matching field value', async () => {
+        await applyCommands(CMD_WITH_FIELDS);
+        expect(await collect(map.getMany([FIELD1, FIELD3]))).toEqual([VALUE1, undefined]);
+      });
+    });
+
+    describe('hasMany', () => {
+      it('should return true for existing field and false otherwise', async () => {
+        await applyCommands(CMD_WITH_FIELDS);
+        expect(await collect(map.hasMany([FIELD1, FIELD3]))).toEqual([true, false]);
+      });
+    });
+
+    describe('entries', () => {
+      it.each(
+        [
+          [[CMD_WITH_FIELDS], {}, [[FIELD1, VALUE1], [FIELD2, VALUE2]]],
+          [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], {}, [[FIELD1, VALUE1], [FIELD2, VALUE2], [FIELD3, VALUE3]]],
+          [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { limit: 2 }, [[FIELD1, VALUE1], [FIELD2, VALUE2]]],
+          [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { limit: 2, reverse: true }, [[FIELD3, VALUE3], [FIELD2, VALUE2]]],
+          [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { lower: FIELD2, upper: FIELD2, upperOpen: false }, [[FIELD2, VALUE2]]],
+        ] satisfies [MapCommand<MockId, V>[], RangeQueryOptions<string>, [string, V][]][]
+      )('should return correct results for non-empty maps %#', async (cmds, query, expected) => {
+        await applyCommands(...cmds);
+        const results = await collect(map.entries(query));
+        expect(results).toEqual(expected);
+      });
+
+      it('should return concurrent values', async () => {
+        await applyCommands(CMD_NEW);
+        const event1 = await command.handle(storeProvider, CMD_WITH_FIELDS);
+        const event2 = await command.handle(storeProvider, CMD_WITH_UPDEL);
+        await projection.reduce(storeProvider, event1!);
+        await projection.reduce(storeProvider, event2!);
+
+        const results = await collect(map.entries());
+        expect(results).toEqual([
+          [FIELD0, VALUE0], [FIELD1, VALUE1], [FIELD2, VALUE2], [FIELD2, VALUE22], [FIELD3, VALUE32]
+        ]);
+      });
+    });
+
+    describe('keys', () => {
+      it.each(
+        [
+          [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], {}, [FIELD1, FIELD2, FIELD3]],
+          [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { limit: 2, reverse: true }, [FIELD3, FIELD2]],
+          [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { lower: FIELD2, upper: FIELD2, upperOpen: false }, [FIELD2]],
+        ] satisfies [MapCommand<MockId, V>[], RangeQueryOptions<string>, string[]][]
+      )('should return correct results for non-empty maps %#', async (cmds, query, expected) => {
+        await applyCommands(...cmds);
+        const results = await collect(map.keys(query));
+        expect(results).toEqual(expected);
+      });
+    });
+
+    describe('values', () => {
+      it.each(
+        [
+          [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], {}, [VALUE1, VALUE2, VALUE3]],
+          [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { limit: 2, reverse: true }, [VALUE3, VALUE2]],
+          [[CMD_WITH_FIELDS, CMD_WITH_FIELDS2], { lower: FIELD2, upper: FIELD2, upperOpen: false }, [VALUE2]],
+        ] satisfies [MapCommand<MockId, V>[], RangeQueryOptions<string>, V[]][]
+      )('should return correct results for non-empty maps %#', async (cmds, query, expected) => {
+        await applyCommands(...cmds);
+        const results = await collect(map.values(query));
+        expect(results).toEqual(expected);
+      });
     });
   });
 
-  async function applyCommand(cmd: MapCommand<MockId, V> = CMD_EMPTY) {
-    return await projection.reduce(store, (await command.handle(store, cmd))!);
+  async function applyCommands(...cmds: MapCommand<MockId, V>[]) {
+    for (const cmd of cmds) {
+      await projection.reduce(storeProvider, (await command.handle(storeProvider, cmd))!);
+    }
   }
 });
