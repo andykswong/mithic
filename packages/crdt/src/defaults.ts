@@ -1,4 +1,4 @@
-import { InvalidStateError } from '@mithic/commons';
+import { ContentId, InvalidStateError } from '@mithic/commons';
 
 /** Default getEventKey implementation that uses multiformats and @ipld/dag-cbor as optional dependency. */
 export const getCID = await (async () => {
@@ -13,25 +13,19 @@ export const getCID = await (async () => {
   }
 })();
 
-/** Default CID-based key implementation that uses multiformats as optional dependency. */
-export const decodeCID = await (async () => {
-  try {
-    const { CID } = await import('multiformats');
-
-    return function decodeCID<K>(key: string) {
-      return CID.parse(key) as unknown as K;
-    };
-  } catch {
-    return () => { throw new InvalidStateError('multiformats not available'); };
-  }
-})();
-
-/** Default value hash function. */
-export const defaultHash = await (async () => {
+/** Default value stringify function. */
+export const defaultStringify = await (async () => {
   try {
     const { base32hex } = await import('multiformats/bases/base32');
-    const dagCbor = await import('@ipld/dag-cbor');
-    return async <V>(value: V) => base32hex.baseEncode(dagCbor.encode(value));
+    return async <V>(value: V) => {
+      if (ArrayBuffer.isView((value as ContentId)?.['/'])) {
+        return `${value}`;
+      }
+      if (ArrayBuffer.isView(value)) {
+        return base32hex.baseEncode(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+      }
+      return JSON.stringify(value);
+    }
   } catch {
     return <V>(value: V) => JSON.stringify(value);
   }

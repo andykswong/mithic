@@ -1,24 +1,24 @@
 /** Standard aggregate action interface. */
-export interface StandardAction<A extends string = string, T = unknown, K = unknown> {
+export interface StandardAction<A extends string = string, T = unknown, Id = unknown> {
   /** Action type. */
   readonly type: A;
 
   /** Action payload. */
   readonly payload: T;
 
-  /** Aggregate root link. */
-  readonly root?: K;
+  /** Aggregate root ID. */
+  readonly root?: Id;
 
   /** Unique value associated with this action. */
   readonly nonce?: string;
 }
 
 /** Standard aggregate command. */
-export type StandardCommand<A extends string = string, T = unknown, K = unknown>
-  = StandardAction<A, T, K>;
+export type StandardCommand<A extends string = string, T = unknown, Id = unknown>
+  = StandardAction<A, T, Id>;
 
 /** Standard aggregate event. */
-export interface StandardEvent<A extends string = string, T = unknown, K = unknown> extends StandardAction<A, T, K> {
+export interface StandardEvent<A extends string = string, T = unknown, Id = unknown> extends StandardAction<A, T, Id> {
   /** Dependent event links. */
-  readonly link?: readonly K[];
+  readonly link?: readonly Id[];
 }

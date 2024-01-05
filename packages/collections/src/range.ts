@@ -8,13 +8,13 @@ export const rangeQueryable = Symbol.for('@mithic/rangeQueryable');
 
 /** A collection that can be queried by range. */
 export interface RangeQueryable<K, V> extends KeyValueIterable<K, V> {
-  /** Queries event key-value pairs by given criteria. */
+  /** Queries key-value pairs by given criteria. */
   entries(options?: RangeQueryOptions<K>): MaybeAsyncIterableIterator<[K, V]>;
 
-  /** Queries event keys by given criteria. */
+  /** Queries keys by given criteria. */
   keys(options?: RangeQueryOptions<K>): MaybeAsyncIterableIterator<K>;
 
-  /** Queries events by given criteria. */
+  /** Queries values by given criteria. */
   values(options?: RangeQueryOptions<K>): MaybeAsyncIterableIterator<V>;
 
   /** Marker to indicate that this object is a {@link RangeQueryable}. */
@@ -23,13 +23,13 @@ export interface RangeQueryable<K, V> extends KeyValueIterable<K, V> {
 
 /** A collection that can be iterated by keys and/or values. */
 export interface KeyValueIterable<K, V> {
-  /** Queries event key-value pairs by given criteria. */
+  /** Queries key-value pairs by given criteria. */
   entries(options?: AbortOptions): MaybeAsyncIterableIterator<[K, V]>;
 
-  /** Queries event keys by given criteria. */
+  /** Queries keys by given criteria. */
   keys(options?: AbortOptions): MaybeAsyncIterableIterator<K>;
 
-  /** Queries events by given criteria. */
+  /** Queries values by given criteria. */
   values(options?: AbortOptions): MaybeAsyncIterableIterator<V>;
 }
 

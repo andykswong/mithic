@@ -49,7 +49,8 @@
     "@mithic/cqrs": "^0.3",
     "@mithic/crdt": "^0.3",
     "@mithic/eventstore": "^0.3",
-    "@mithic/messaging": "^0.3"
+    "@mithic/messaging": "^0.3",
+    "@mithic/triplestore": "^0.3"
   },
   "devDependencies": {
     "@babel/cli": "^7.20",
@@ -71,10 +72,11 @@
   "workspaces": [
     "./packages/commons",
     "./packages/collections",
+    "./packages/eventstore",
     "./packages/messaging",
+    "./packages/triplestore",
     "./packages/cqrs",
     "./packages/crdt",
-    "./packages/eventstore",
     "./packages/plugins/denokv",
     "./packages/plugins/ipfs",
     "./packages/plugins/level",

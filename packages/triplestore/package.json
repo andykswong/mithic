@@ -1,7 +1,7 @@
 {
-  "name": "@mithic/crdt",
+  "name": "@mithic/triplestore",
   "version": "0.3.0",
-  "description": "Standard eventsourced CRDT library for mithic",
+  "description": "Triplestore library for mithic",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.js",
@@ -31,9 +31,9 @@
     "collaboration",
     "crdt",
     "decentralized",
-    "eventsourcing",
     "mithic",
     "offline-first",
+    "triplestore",
     "typescript"
   ],
   "author": "Andy K.S. Wong <andykswong@outlook.com>",
@@ -44,12 +44,9 @@
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
     "@mithic/collections": "^0.3",
-    "@mithic/commons": "^0.3",
-    "@mithic/messaging": "^0.3",
-    "@mithic/triplestore": "^0.3"
+    "@mithic/commons": "^0.3"
   },
   "optionalDependencies": {
-    "@ipld/dag-cbor": "^9.0",
     "multiformats": "^13.0"
   },
   "devDependencies": {
