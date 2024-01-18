@@ -46,6 +46,7 @@ Core:
 |[`@mithic/crdt`](./packages/crdt)|[![npm](https://img.shields.io/npm/v/@mithic/crdt?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/crdt)|eventsourced CRDT library|
 |[`@mithic/eventstore`](./packages/eventstore)|[![npm](https://img.shields.io/npm/v/@mithic/eventstore?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/eventstore)|eventstore library|
 |[`@mithic/messaging`](./packages/messaging)|[![npm](https://img.shields.io/npm/v/@mithic/messaging?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/messaging)|messaging interface|
+|[`@mithic/triplestore`](./packages/triplestore)|[![npm](https://img.shields.io/npm/v/@mithic/triplestore?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/triplestore)|triplestore library|
 
 Plugins:
 

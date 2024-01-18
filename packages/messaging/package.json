@@ -47,8 +47,5 @@
     "@mithic/commons": "^0.3"
   },
   "devDependencies": {
-    "@types/jest": "^29.5",
-    "@types/node": "^20.0",
-    "multiformats": "^13.0"
   }
 }

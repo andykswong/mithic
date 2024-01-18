@@ -25,7 +25,7 @@
   "dependencies": {
     "@mithic/cqrs": "^0.3",
     "@mithic/crdt": "^0.3",
-    "graphql": "^16.6",
+    "graphql": "^16.8",
     "multiformats": "^13.0"
   },
   "devDependencies": {
