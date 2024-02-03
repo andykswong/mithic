@@ -1,4 +1,4 @@
-import { AbortOptions, MaybePromise } from '../async/index.js';
+import { AbortOptions, MaybePromise } from '../async/index.ts';
 
 /** A resource-holding object that can be closed to release resources. */
 export interface Closeable {

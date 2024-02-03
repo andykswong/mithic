@@ -4,8 +4,8 @@ import { CID } from 'multiformats';
 import * as Block from 'multiformats/block';
 import * as raw from 'multiformats/codecs/raw';
 import { sha256 } from 'multiformats/hashes/sha2';
-import { MaybeAsyncMap } from '../../map.js';
-import { ContentAddressedMapStore } from '../camap.js';
+import { MaybeAsyncMap } from '../../map.ts';
+import { ContentAddressedMapStore } from '../camap.ts';
 
 const BLOCK = new Uint8Array([0x68, 0x65, 0x6C, 0x6C, 0x6F]);
 const BLOCK2 = new Uint8Array([0x65, 0x66, 0x67]);

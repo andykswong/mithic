@@ -1,7 +1,7 @@
-export * from './action.js';
-export * from './aggregate.js';
-export * from './store.js';
+export * from './action.ts';
+export * from './aggregate.ts';
+export * from './store.ts';
 
-export * from './mutation/index.js';
-export * from './view/index.js';
-export * from './utils/index.js';
+export * from './mutation/index.ts';
+export * from './view/index.ts';
+export * from './utils/index.ts';

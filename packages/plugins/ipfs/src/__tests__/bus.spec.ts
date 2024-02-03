@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { PeerId } from '@libp2p/interface-peer-id';
 import { SignedMessage, StrictNoSign, UnsignedMessage } from '@libp2p/interface-pubsub';
 import { PeerEvent, PeerSubscriptionMonitor } from '@mithic/messaging';
-import { MockPeer, MockLibp2pPubSub, MockEvent } from '../__tests__/mocks.js';
-import { Libp2pMessageBus } from '../bus.js';
+import { MockPeer, MockLibp2pPubSub, MockEvent } from '../__tests__/mocks.ts';
+import { Libp2pMessageBus } from '../bus.ts';
 
 const PEER_ID = new MockPeer(new Uint8Array([6, 6, 6]));
 const DATA = new Uint8Array([1, 2, 3]);

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { ReduxStore } from '../redux.js';
+import { ReduxStore } from '../redux.ts';
 import { SimpleMessageBus } from '@mithic/messaging';
 
 type State = { count: number; };

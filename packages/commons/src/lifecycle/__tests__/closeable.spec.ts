@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { delay } from '../../async/index.js';
-import { AsyncDisposableCloseable, DisposableCloseable } from '../closeable.js';
+import { delay } from '../../async/index.ts';
+import { AsyncDisposableCloseable, DisposableCloseable } from '../closeable.ts';
 
 describe(AsyncDisposableCloseable.name, () => {
   it('should await close() on dispose', async () => {

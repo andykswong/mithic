@@ -1,4 +1,4 @@
-import { MaybePromise } from './promise.js';
+import { MaybePromise } from './promise.ts';
 
 /** An Iterator that may be async. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

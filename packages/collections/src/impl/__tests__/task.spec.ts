@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { SharedCountingSemaphore, delay } from '@mithic/commons';
-import { RunnableTask, TaskQueue } from '../task.js';
+import { RunnableTask, TaskQueue } from '../task.ts';
 
 describe(TaskQueue.name, () => {
   let taskQueue: TaskQueue;

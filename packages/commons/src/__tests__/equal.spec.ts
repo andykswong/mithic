@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { StringEquatable, equalsOrSameString } from '../equal.js';
+import { StringEquatable, equalsOrSameString } from '../equal.ts';
 
 class WithEqual implements StringEquatable<WithEqual> {
   constructor(public value: string) {}

@@ -1,4 +1,4 @@
-import { PeekableQueue, SyncQueue } from '../queue.js';
+import { PeekableQueue, SyncQueue } from '../queue.ts';
 
 /** A binary heap. */
 export class BinaryHeap<T> implements PeekableQueue<T>, SyncQueue<T> {

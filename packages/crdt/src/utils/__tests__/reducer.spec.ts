@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
-import { EntityAttrReducer } from '../../view/index.js';
-import { asArray, asEntries, first, last } from '../reducer.js';
+import { EntityAttrReducer } from '../../view/index.ts';
+import { asArray, asEntries, first, last } from '../reducer.ts';
 
 const ATTR = 'attr';
 const KEY1 = 'k1';

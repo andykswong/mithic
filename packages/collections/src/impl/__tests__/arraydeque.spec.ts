@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, test } from '@jest/globals';
-import { ArrayDeque } from '../arraydeque.js';
+import { ArrayDeque } from '../arraydeque.ts';
 
 describe(ArrayDeque.name, () => {
   let deque: ArrayDeque<number>;

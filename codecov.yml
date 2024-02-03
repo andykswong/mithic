@@ -14,15 +14,9 @@ component_management:
     - component_id: "@mithic/crdt"
       paths:
         - "packages/crdt"
-    - component_id: "@mithic/eventstore"
-      paths:
-        - "packages/eventstore"
     - component_id: "@mithic/messaging"
       paths:
         - "packages/messaging"
-    - component_id: "@mithic/triplestore"
-      paths:
-        - "packages/triplestore"
     - component_id: "@mithic/denokv"
       paths:
         - "packages/plugins/denokv"

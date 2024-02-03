@@ -14,13 +14,13 @@
     "/dist"
   ],
   "scripts": {
-    "prepublishOnly": "npm run clean && npm run build && npm test",
+    "prepublishOnly": "npm run clean && npm run build && npm test && npm run doc",
     "clean": "rimraf coverage docs dist",
     "prebuild": "npm run lint",
     "build": "npm run tsc && npm run babel",
     "lint": "eslint src --ext .ts",
     "babel": "babel src -d dist -x '.ts' --out-file-extension .js --root-mode upward",
-    "tsc": "tsc --project tsconfig.build.json --emitDeclarationOnly",
+    "tsc": "tsc --project tsconfig.build.json",
     "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
     "test:update": "npm run test -- -u",
     "doc": "typedoc"

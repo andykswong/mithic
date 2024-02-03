@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import { CID } from 'multiformats';
 import { sha256 } from 'multiformats/hashes/sha2';
-import { compareContentIds, compareBuffers, concatBuffers } from '../buffer.js';
+import { compareContentIds, compareBuffers, concatBuffers } from '../buffer.ts';
 
 describe('compareBuffers', () => {
   it('should return 0 when two buffers have same data and length', () => {

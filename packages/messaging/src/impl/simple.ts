@@ -1,5 +1,5 @@
 import { maybeAsync } from '@mithic/commons';
-import { MessageBus, MessageHandler, MessageOptions, SubscribeOptions, Unsubscribe } from '../messaging.js';
+import { MessageBus, MessageHandler, MessageOptions, SubscribeOptions, Unsubscribe } from '../messaging.ts';
 
 /** Simple in-memory implementation of {@link MessageBus}. */
 export class SimpleMessageBus<Message> implements MessageBus<Message> {

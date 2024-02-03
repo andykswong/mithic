@@ -1,4 +1,4 @@
-import { ERR } from './code.js';
+import { ERR } from './code.ts';
 
 /** Error with error code. */
 export class CodedError<T = unknown, E = unknown> extends Error {

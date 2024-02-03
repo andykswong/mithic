@@ -1,6 +1,6 @@
-import { PeekableDeque, SyncDeque } from '../deque.js';
-import { MaybeAsyncReadonlyMap } from '../map.js';
-import { KeyValueIterable } from '../range.js';
+import { PeekableDeque, SyncDeque } from '../deque.ts';
+import { MaybeAsyncReadonlyMap } from '../map.ts';
+import { KeyValueIterable } from '../range.ts';
 
 const DEFAULT_DEQUE_CAPACITY = 16;
 const DEFAULT_DEQUE_RESIZE_FACTOR = 2;

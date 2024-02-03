@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { SimpleMessageBus } from '../simple.js';
-import { MessageValidationError } from '../../error.js';
+import { SimpleMessageBus } from '../simple.ts';
+import { MessageValidationError } from '../../error.ts';
 
 const TOPIC = 'testTopic';
 const MSG = 'testEvent';

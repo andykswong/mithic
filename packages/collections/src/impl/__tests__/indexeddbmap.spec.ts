@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
-import { IndexedDBMap } from '../indexeddbmap.js';
-import { RangeQueryOptions, rangeQueryable } from '../../range.js';
+import { IndexedDBMap } from '../indexeddbmap.ts';
+import { RangeQueryOptions, rangeQueryable } from '../../range.ts';
 
 describe(IndexedDBMap.name, () => {
   const dbName = 'test-db';

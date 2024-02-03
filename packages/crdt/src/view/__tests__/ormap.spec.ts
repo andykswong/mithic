@@ -1,11 +1,10 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
-import { RangeQueryOptions, rangeQueryable } from '@mithic/collections';
-import { EntityCommand, EntityCommandHandler, EntityCommandType, EntityProjection, OREntityCommandHandler, OREntityProjection } from '../../mutation/index.js';
-import { ReadonlyORMap } from '../ormap.js';
-import { MockId, getMockEventKey } from '../../__tests__/mocks.js';
-import { collect } from '../../__tests__/utils.js';
-import { MapTripleStore } from '@mithic/triplestore';
-import { DefaultEntityStore, EntityStore } from '../../store.js';
+import { MapTripleStore, RangeQueryOptions, rangeQueryable } from '@mithic/collections';
+import { EntityCommand, EntityCommandHandler, EntityCommandType, EntityProjection, OREntityCommandHandler, OREntityProjection } from '../../mutation/index.ts';
+import { ReadonlyORMap } from '../ormap.ts';
+import { MockId, getMockEventKey } from '../../__tests__/mocks.ts';
+import { collect } from '../../__tests__/utils.ts';
+import { DefaultEntityStore, EntityStore } from '../../store.ts';
 
 type V = string | number | boolean;
 

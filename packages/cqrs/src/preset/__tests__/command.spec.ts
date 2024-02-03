@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { Startable, delay } from '@mithic/commons';
-import { bindCommandHandler } from '../command.js';
+import { bindCommandHandler } from '../command.ts';
 import { SimpleMessageBus } from '@mithic/messaging';
 
 const TOPIC = 'message';

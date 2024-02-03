@@ -1,4 +1,4 @@
-import { IndexGenerator } from './generator.js';
+import { IndexGenerator } from './generator.ts';
 
 const ASCII64_DIGIT = '+/0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz~';
 

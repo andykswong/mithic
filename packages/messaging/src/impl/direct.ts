@@ -1,9 +1,9 @@
 import { MaybePromise, StringEquatable, equalsOrSameString } from '@mithic/commons';
-import { MessageBus, MessageOptions, Unsubscribe } from '../messaging.js';
+import { MessageBus, MessageOptions, Unsubscribe } from '../messaging.ts';
 import {
   PeerAwareMessageHandler, PeerAwareMessageOptions, PeerAwareMessageValidator, PeerAwareSubscribeOptions
-} from '../peer-aware.js';
-import { MessageValidationError, MessageValidationErrorCode } from '../error.js';
+} from '../peer-aware.ts';
+import { MessageValidationError, MessageValidationErrorCode } from '../error.ts';
 
 /** Protocol name of pubsub-based direct channel. */
 export const PUBSUB_DIRECT_CHANNEL_PROTOCOL_NAME = 'pubsub-direct';

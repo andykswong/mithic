@@ -1,5 +1,5 @@
 import { AbortOptions, EventSource, MaybePromise, TypedCustomEvent } from '@mithic/commons';
-import { MessageBus, MessageHandler, MessageOptions, MessageValidator, SubscribeOptions } from './messaging.js';
+import { MessageBus, MessageHandler, MessageOptions, MessageValidator, SubscribeOptions } from './messaging.ts';
 
 /** A peer-aware {@link MessageBus}. */
 export interface PeerAwareMessageBus<OutMsg, Peer = unknown, InMsg = OutMsg>

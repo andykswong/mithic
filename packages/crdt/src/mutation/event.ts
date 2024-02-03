@@ -1,10 +1,10 @@
+import { EntityAttrKey } from '@mithic/collections';
 import {
   AbortOptions, ContentId, ERR_DEPENDENCY_MISSING, LockGuard, MaybePromise, NoOpLock, OperationError, ToString
 } from '@mithic/commons';
-import { EntityAttrKey } from '@mithic/triplestore';
-import { getCID } from '../defaults.js';
-import { EntityStore, ReadonlyEntityStore } from '../store.js';
-import { EntityEvent, EntityEventType, EntityProjection } from './interface.js';
+import { getCID } from '../defaults.ts';
+import { EntityStore, ReadonlyEntityStore } from '../store.ts';
+import { EntityEvent, EntityEventType, EntityProjection } from './interface.ts';
 
 /** Observed-removed entity event projection. */
 export class OREntityProjection<Id extends ToString = ContentId, V = unknown> implements EntityProjection<Id, V> {

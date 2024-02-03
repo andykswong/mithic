@@ -4,7 +4,7 @@ import { MemoryBlockstore } from 'blockstore-core';
 import { Blockstore } from 'interface-blockstore';
 import { BlockCodec, CID } from 'multiformats';
 import { identity } from 'multiformats/hashes/identity';
-import { BlockstoreMap } from '../blockstore.js';
+import { BlockstoreMap } from '../blockstore.ts';
 
 const DATA = new Uint8Array([1, 2, 3]);
 const DATA_CID = CID.createV1(0x999, identity.digest(DATA));

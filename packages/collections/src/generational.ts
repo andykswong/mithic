@@ -1,6 +1,6 @@
 import { MaybePromise } from '@mithic/commons';
-import { MaybeAsyncMap } from './map.js';
-import { MaybeAsyncReadonlySet } from './set.js';
+import { MaybeAsyncMap } from './map.ts';
+import { MaybeAsyncReadonlySet } from './set.ts';
 
 /** An arena automatically assigns unique key to stored value. */
 export interface Arena<K, V> extends MaybeAsyncMap<K, V> {

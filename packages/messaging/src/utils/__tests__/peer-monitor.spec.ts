@@ -1,8 +1,8 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { DEFAULT_PEER_MONITOR_REFRESH_MS, PeerSubscriptionMonitor } from '../peer-monitor.js';
-import { MockPeer, MockMessageBus } from '../../__tests__/mocks.js';
-import { flushPromises } from '../../__tests__/utils.js';
-import { PeerEvent } from '../../peer-aware.js';
+import { DEFAULT_PEER_MONITOR_REFRESH_MS, PeerSubscriptionMonitor } from '../peer-monitor.ts';
+import { MockPeer, MockMessageBus } from '../../__tests__/mocks.ts';
+import { flushPromises } from '../../__tests__/utils.ts';
+import { PeerEvent } from '../../peer-aware.ts';
 
 const PEER_ID = new MockPeer(new Uint8Array([6, 6, 6]));
 const PEER_ID2 = new MockPeer(new Uint8Array([7, 7, 7]));

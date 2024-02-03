@@ -1,13 +1,12 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
-import { MapTripleStore } from '@mithic/triplestore';
-import { EntityCommand, EntityCommandHandler, EntityCommandType, EntityProjection, OREntityCommandHandler, OREntityProjection } from '../../mutation/index.js';
-import { MockId, getMockEventKey } from '../../__tests__/mocks.js';
-import { collect } from '../../__tests__/utils.js';
-import { DefaultEntityStore, EntityStore } from '../../store.js';
-import { EntityAttrRangeQueryOptions, EntityRangeQueryOptions } from '../entity.js';
-import { ReadonlyOREntityCollection } from '../orentity.js';
-import { rangeQueryable } from '@mithic/collections';
-import { EntityAttrReducers } from '../../index.js';
+import { MapTripleStore, rangeQueryable } from '@mithic/collections';
+import { EntityCommand, EntityCommandHandler, EntityCommandType, EntityProjection, OREntityCommandHandler, OREntityProjection } from '../../mutation/index.ts';
+import { MockId, getMockEventKey } from '../../__tests__/mocks.ts';
+import { collect } from '../../__tests__/utils.ts';
+import { DefaultEntityStore, EntityStore } from '../../store.ts';
+import { EntityAttrRangeQueryOptions, EntityRangeQueryOptions } from '../entity.ts';
+import { ReadonlyOREntityCollection } from '../orentity.ts';
+import { EntityAttrReducers } from '../../index.ts';
 
 type V = string | number | boolean | MockId;
 

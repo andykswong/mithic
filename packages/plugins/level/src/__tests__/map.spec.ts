@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { AbstractLevel } from 'abstract-level';
 import { MemoryLevel } from 'memory-level';
-import { LevelMap } from '../map.js';
+import { LevelMap } from '../map.ts';
 import { rangeQueryable } from '@mithic/collections';
 
 describe(LevelMap.name, () => {

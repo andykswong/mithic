@@ -1,5 +1,5 @@
 import { AbortOptions, AsyncDisposableCloseable, Lock, MaybePromise, SharedCountingSemaphore, Startable } from '@mithic/commons';
-import { Queue } from '../queue.js';
+import { Queue } from '../queue.ts';
 
 /** A queue of async tasks. */
 export class TaskQueue extends AsyncDisposableCloseable implements Startable, AsyncDisposable {

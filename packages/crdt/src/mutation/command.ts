@@ -1,11 +1,11 @@
+import { EntityAttrSearchKey, ReadonlyTripleStore } from '@mithic/collections';
 import { AbortOptions, ContentId, MaybePromise, ToString } from '@mithic/commons';
-import { defaultStringify } from '../defaults.js';
-import { ReadonlyEntityStore } from '../store.js';
-import { FractionalIndexGenerator, IndexGenerator } from '../utils/index.js';
+import { defaultStringify } from '../defaults.ts';
+import { ReadonlyEntityStore } from '../store.ts';
+import { FractionalIndexGenerator, IndexGenerator } from '../utils/index.ts';
 import {
   EntityAttrCommand, EntityCommand, EntityCommandHandler, EntityEvent, EntityEventOp, EntityEventType
-} from './interface.js';
-import { EntityAttrSearchKey, ReadonlyTripleStore } from '@mithic/triplestore';
+} from './interface.ts';
 
 /** Observed-removed entity command handler. */
 export class OREntityCommandHandler<Id extends ToString = ContentId, V = unknown>

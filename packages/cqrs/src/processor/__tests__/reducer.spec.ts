@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { delay } from '@mithic/commons';
 import { SimpleMessageBus } from '@mithic/messaging';
-import { MessageReducer } from '../reducer.js';
+import { MessageReducer } from '../reducer.ts';
 
 const TOPIC = 'message';
 

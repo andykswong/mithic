@@ -1,12 +1,11 @@
-import { rangeQueryable } from '@mithic/collections';
+import { EntityAttrKey, rangeQueryable } from '@mithic/collections';
 import { AbortOptions, ContentId, MaybeAsyncIterableIterator, MaybePromise, ToString } from '@mithic/commons';
-import { EntityAttrKey } from '@mithic/triplestore';
 import {
   ReadonlyEntityCollection, EntityView, EntityAttrLookup, EntityTypeOptions, EntityViewOptions,
   EntityRangeQueryOptions, EntityAttrRangeQueryOptions, EntityAttrReducer
-} from './entity.js';
-import { defaultStringify } from '../defaults.js';
-import { ReadonlyEntityStore } from '../store.js';
+} from './entity.ts';
+import { defaultStringify } from '../defaults.ts';
+import { ReadonlyEntityStore } from '../store.ts';
 
 const ID_FIELD = '$id';
 const TERMINAL = '\udbff\udfff';

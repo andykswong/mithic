@@ -1,11 +1,10 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
-import { BTreeMap } from '@mithic/collections';
+import { BTreeMap, EntityAttrKey, MapTripleStore } from '@mithic/collections';
 import { ERR_DEPENDENCY_MISSING, OperationError } from '@mithic/commons';
-import { EntityAttrKey, MapTripleStore } from '@mithic/triplestore';
-import { DefaultEntityStore, EntityStore } from '../../store.js';
-import { EntityEventType, EntityProjection, EntityEvent } from '../interface.js';
-import { OREntityProjection } from '../event.js';
-import { MockId, getMockEventKey } from '../../__tests__/mocks.js';
+import { DefaultEntityStore, EntityStore } from '../../store.ts';
+import { EntityEventType, EntityProjection, EntityEvent } from '../interface.ts';
+import { OREntityProjection } from '../event.ts';
+import { MockId, getMockEventKey } from '../../__tests__/mocks.ts';
 
 type V = string | number | boolean;
 

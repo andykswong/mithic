@@ -2,9 +2,9 @@ import { AbortOptions, AsyncDisposableCloseable, MaybePromise, Startable } from 
 import {
   MessageBus, MessageHandler, MessageSubscription, SimpleMessageBus, StateProvider, Unsubscribe
 } from '@mithic/messaging';
-import { AsyncSubscriber, AsyncSubscriberOptions } from '../iterator.js';
-import { MessageReducer } from '../processor/index.js';
-import { MessageReduceHandler } from '../handler.js';
+import { AsyncSubscriber, AsyncSubscriberOptions } from '../iterator.ts';
+import { MessageReducer } from '../processor/index.ts';
+import { MessageReduceHandler } from '../handler.ts';
 
 /** Interface for a store that can be subscribed for changes. */
 export interface ReactiveStore<State = unknown>

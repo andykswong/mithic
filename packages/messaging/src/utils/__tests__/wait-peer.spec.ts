@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { CONNECTION_CHECK_INTERVAL_MS, isPeerConnected, waitForPeer } from '../wait-peer.js';
-import { MockPeer, MockMessageBus } from '../../__tests__/mocks.js';
-import { flushPromises } from '../../__tests__/utils.js';
+import { CONNECTION_CHECK_INTERVAL_MS, isPeerConnected, waitForPeer } from '../wait-peer.ts';
+import { MockPeer, MockMessageBus } from '../../__tests__/mocks.ts';
+import { flushPromises } from '../../__tests__/utils.ts';
 
 const PEER_ID = new MockPeer(new Uint8Array([6, 6, 6]));
 const PEER_ID2 = new MockPeer(new Uint8Array([7, 7, 7]));

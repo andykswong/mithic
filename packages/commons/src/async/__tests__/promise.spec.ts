@@ -1,30 +1,30 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { isPromiseLike, mapAsync, maybeAsync, MaybePromise, reduceAsync } from '../promise.js';
+import { isThenable, mapAsync, maybeAsync, MaybePromise, reduceAsync } from '../promise.ts';
 
-describe('isPromiseLike', () => {
+describe('isThenable', () => {
   it('should return true when given a promise', () => {
     const promise = Promise.resolve();
-    expect(isPromiseLike(promise)).toBe(true);
+    expect(isThenable(promise)).toBe(true);
   });
 
   it('should return true when given a thenable', async () => {
     const thenable = { then() { return; } };
-    expect(isPromiseLike(thenable)).toBe(true);
+    expect(isThenable(thenable)).toBe(true);
   });
 
   it('should return false when given null', () => {
-    expect(isPromiseLike(null)).toBe(false);
+    expect(isThenable(null)).toBe(false);
   });
 
   it('should return false when given an object without a then method', () => {
     const obj = {};
-    expect(isPromiseLike(obj)).toBe(false);
+    expect(isThenable(obj)).toBe(false);
   });
 
   it('should return false when given a non-object', () => {
-    expect(isPromiseLike(123)).toBe(false);
-    expect(isPromiseLike('hello')).toBe(false);
-    expect(isPromiseLike(true)).toBe(false);
+    expect(isThenable(123)).toBe(false);
+    expect(isThenable('hello')).toBe(false);
+    expect(isThenable(true)).toBe(false);
   });
 });
 
@@ -40,13 +40,13 @@ describe('maybeAsync', () => {
 
   it('should resolve with the value when the generator function yields a promise', async () => {
     const value = 123;
-    const maybeAsyncFn = maybeAsync(function* () {
-      const ten = 1 + (yield Promise.resolve(9));
+    const maybeAsyncFn = maybeAsync(function* (one: number) {
+      const ten = one + (yield Promise.resolve(9));
       expect(ten).toEqual(10);
       return value;
     });
 
-    await expect(maybeAsyncFn()).resolves.toEqual(value);
+    await expect(maybeAsyncFn(1)).resolves.toEqual(value);
   });
 
   it('should bind `this` to the generator function', () => {
@@ -60,22 +60,31 @@ describe('maybeAsync', () => {
 
   it('should throw an error when the generator function throws', () => {
     const reason = 'test';
-    const maybeAsyncFn = maybeAsync(function* () {
+    expect(maybeAsync(function* () {
       yield 123;
       throw new Error(reason);
-    });
-
-    expect(maybeAsyncFn).toThrowError(reason);
+    })).toThrowError(reason);
   });
 
   it('should return rejected promise when the generator function throws after async operation', async () => {
     const reason = 'test';
-    const maybeAsyncFn = maybeAsync(function* () {
+    await expect(maybeAsync(function* () {
       yield Promise.resolve(123);
       throw new Error(reason);
-    });
+    })).rejects.toThrowError(reason);
+  });
 
-    await expect(maybeAsyncFn()).rejects.toThrowError(reason);
+  it('should throw rejected promise error into generator function', async () => {
+    const reason = 'test';
+    await expect(maybeAsync(function* () {
+      try {
+        yield Promise.reject(reason);
+        return false;
+      } catch (e) {
+        expect(e).toEqual(reason);
+        return yield true;
+      }
+    })()).resolves.toBe(true);
   });
 });
 

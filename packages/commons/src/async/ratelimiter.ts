@@ -1,6 +1,6 @@
-import { AbortOptions } from './options.js';
-import { Lock } from './lock.js';
-import { SharedCountingSemaphore } from './semaphore.js';
+import { AbortOptions } from './options.ts';
+import { Lock } from './lock.ts';
+import { SharedCountingSemaphore } from './semaphore.ts';
 
 /** A {@link Lock} that issues permits at a fixed rate. */
 export class RateLimiter implements Lock {

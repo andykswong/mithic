@@ -1,7 +1,7 @@
 import { AbortOptions, maybeAsync } from '@mithic/commons';
-import { MessageProcessor } from '../processor.js';
+import { MessageProcessor } from '../processor.ts';
 import { MessageDispatcher, MessageSubscription } from '@mithic/messaging';
-import { MessageSagaHandler } from '../handler.js';
+import { MessageSagaHandler } from '../handler.ts';
 
 /** {@link MessageProcessor} that handles messages and dispatches more messages. */
 export class SagaProcessor<SrcMsg, OutMsg = SrcMsg, HandlerOpts = object>

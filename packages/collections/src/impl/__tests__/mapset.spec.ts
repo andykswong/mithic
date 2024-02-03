@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { OperationError } from '@mithic/commons';
-import { MockKey } from '../../__tests__/mocks.js';
-import { rangeQueryable } from '../../range.js';
-import { BTreeSet, MapSet } from '../mapset.js';
-import { BTreeMap } from '../btreemap.js';
+import { MockKey } from '../../__tests__/mocks.ts';
+import { rangeQueryable } from '../../range.ts';
+import { BTreeSet, MapSet } from '../mapset.ts';
+import { BTreeMap } from '../btreemap.ts';
 
 const compareKeys = (a: MockKey, b: MockKey) => a.toString().localeCompare(b.toString());
 

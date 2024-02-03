@@ -1,3 +1,3 @@
-export * from './closeable.js';
-export * from './startable.js';
+export * from './closeable.ts';
+export * from './startable.ts';
 

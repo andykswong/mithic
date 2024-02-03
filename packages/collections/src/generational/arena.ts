@@ -1,9 +1,9 @@
-import { SyncArena } from '../generational.js';
-import { MaybeAsyncMapBatch } from '../map.js';
-import { SyncMapBatchAdapter } from '../impl/batchmap.js';
-import { indexOf } from './id.js';
-import { IdGenerator } from './generator.js';
-import { KeyValueIterable } from '../range.js';
+import { SyncArena } from '../generational.ts';
+import { MaybeAsyncMapBatch } from '../map.ts';
+import { SyncMapBatchAdapter } from '../impl/batchmap.ts';
+import { indexOf } from './id.ts';
+import { IdGenerator } from './generator.ts';
+import { KeyValueIterable } from '../range.ts';
 
 /** A {@link SyncArena} that uses generational index as key. */
 export class GenerationalArena<T, I extends number = number>

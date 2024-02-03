@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
-import { MockStorage } from '../../__tests__/mocks.js';
-import { LocalStorageMap } from '../storagemap.js';
+import { MockStorage } from '../../__tests__/mocks.ts';
+import { LocalStorageMap } from '../storagemap.ts';
 
 describe(LocalStorageMap.name, () => {
   let localStorage: Storage;

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { locks } from 'web-locks';
-import { WebLock } from '../web-lock.js';
-import { flushPromises } from '../../__tests__/utils.js';
+import { WebLock } from '../web-lock.ts';
+import { flushPromises } from '../../__tests__/utils.ts';
 
 describe(WebLock.name, () => {
   let lock: WebLock;

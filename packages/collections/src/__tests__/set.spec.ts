@@ -1,5 +1,5 @@
 import { describe, it } from '@jest/globals';
-import { MaybeAsyncSet } from '../set.js';
+import { MaybeAsyncSet } from '../set.ts';
 
 describe('MaybeAsyncSet', () => {
   it('should be compatible with ES Set', () => {

@@ -1,5 +1,5 @@
 import { AbortOptions, CodedError, OperationError } from '@mithic/commons';
-import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
+import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.ts';
 
 /** Abstract base class to provide default synchronous batch API implementations for a {@link MaybeAsyncMap}. */
 export abstract class SyncMapBatchAdapter<K, V> implements MaybeAsyncMap<K, V>, MaybeAsyncMapBatch<K, V> {

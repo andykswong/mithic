@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { delay } from '@mithic/commons';
 import { SimpleMessageBus } from '@mithic/messaging';
-import { MessagePersister } from '../persister.js';
-import { ObjectWriter } from '../../handler.js';
+import { MessagePersister } from '../persister.ts';
+import { ObjectWriter } from '../../handler.ts';
 
 const RAW_EVENT = { type: 'rawEvent' };
 const TRANSFORMED_EVENT = { type: 'transformedEvent' };

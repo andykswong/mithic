@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { IdentityCodec } from '../codec.js';
+import { IdentityCodec } from '../codec.ts';
 
 describe('IdentityCodec', () => {
   describe('encode', () => {

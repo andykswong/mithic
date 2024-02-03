@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
-import { RangeQueryOptions, rangeQueryable } from '../../range.js';
-import { BTreeMap } from '../btreemap.js';
+import { RangeQueryOptions, rangeQueryable } from '../../range.ts';
+import { BTreeMap } from '../btreemap.ts';
 
 const ITEMS: [number, string][] = [
   [1, 'foo'],

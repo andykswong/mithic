@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
-import { MaybeAsyncMap } from '../../map.js';
-import { mapJoin, mapJoinAsync } from '../join.js';
+import { MaybeAsyncMap } from '../../map.ts';
+import { mapJoin, mapJoinAsync } from '../join.ts';
 
 describe(mapJoin.name, () => {
   it('should perform left join by key', () => {

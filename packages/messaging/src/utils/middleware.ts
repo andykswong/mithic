@@ -1,7 +1,7 @@
 import { MaybePromise } from '@mithic/commons';
 import {
   MessageDispatcher, MessageHandler, MessageOptions, MessageSubscription, SubscribeOptions, Unsubscribe
-} from '../messaging.js';
+} from '../messaging.ts';
 
 /** Apply middlewares to a {@link MessageDispatcher}. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

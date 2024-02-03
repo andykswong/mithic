@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { SyncMapBatchAdapter } from '../batchmap.js';
+import { SyncMapBatchAdapter } from '../batchmap.ts';
 import { OperationError } from '@mithic/commons';
 
 const DATA = [[1, 'value1'], [2, 'value2'], [3, 'value3']] as const;

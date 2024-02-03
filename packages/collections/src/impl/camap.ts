@@ -1,9 +1,9 @@
 import {
   AbortOptions, CodedError, ContentId, InvalidStateError, MaybePromise, OperationError, maybeAsync
 } from '@mithic/commons';
-import { AutoKeyMap, AutoKeyMapBatch, MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
-import { deleteMany, getMany, hasMany, setMany } from '../utils/batch.js';
-import { TransformedMap } from './transformedmap.js';
+import { AutoKeyMap, AutoKeyMapBatch, MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.ts';
+import { deleteMany, getMany, hasMany, setMany } from '../utils/batch.ts';
+import { TransformedMap } from './transformedmap.ts';
 
 /** Default CID-based key implementation that uses multiformats as optional dependency. */
 const [cidHash, decodeCID] = await (async () => {

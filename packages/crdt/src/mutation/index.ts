@@ -1,3 +1,3 @@
-export * from './interface.js';
-export * from './command.js';
-export * from './event.js';
+export * from './interface.ts';
+export * from './command.ts';
+export * from './event.ts';

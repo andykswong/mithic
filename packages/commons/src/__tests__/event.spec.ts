@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { delay } from '../async/index.js';
-import { EventDispatcher, TypedCustomEvent, TypedEvent, TypedEventTarget, consumer, createEvent } from '../event.js';
+import { delay } from '../async/index.ts';
+import { EventDispatcher, TypedCustomEvent, TypedEvent, TypedEventTarget, consumer, createEvent } from '../event.ts';
 
 enum Events {
   Test = 'test',

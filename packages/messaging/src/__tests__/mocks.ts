@@ -1,8 +1,8 @@
 import { Equal, TypedEventTarget } from '@mithic/commons';
 import { CID, MultihashDigest } from 'multiformats';
 import { identity } from 'multiformats/hashes/identity';
-import { PeerAwareMessageBus, PeerAwareMessageHandler, PeerAwareMessageValidator, PeerAwareSubscribeOptions, PeerEvents } from '../peer-aware.js';
-import { MessageOptions, Unsubscribe } from '../messaging.js';
+import { PeerAwareMessageBus, PeerAwareMessageHandler, PeerAwareMessageValidator, PeerAwareSubscribeOptions, PeerEvents } from '../peer-aware.ts';
+import { MessageOptions, Unsubscribe } from '../messaging.ts';
 
 export const LIBP2P_KEY_CODE = 0x72;
 

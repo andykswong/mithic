@@ -1,6 +1,6 @@
 import { AbortOptions, MaybePromise } from '@mithic/commons';
-import { Queue } from './queue.js';
-import { Stack } from './stack.js';
+import { Queue } from './queue.ts';
+import { Stack } from './stack.ts';
 
 /** A double-ended queue. */
 export interface Deque<T> extends Queue<T>, Stack<T> {

@@ -1,7 +1,7 @@
-import { SyncMapBatchAdapter } from '../impl/batchmap.js';
-import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
-import { KeyValueIterable } from '../range.js';
-import { indexOf } from './id.js';
+import { SyncMapBatchAdapter } from '../impl/batchmap.ts';
+import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.ts';
+import { KeyValueIterable } from '../range.ts';
+import { indexOf } from './id.ts';
 
 /** Generational index map backend by a Map. */
 export class GenerationalIdMap<V, I extends number = number>

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
-import { CountingSemaphore, SharedCountingSemaphore } from '../semaphore.js';
+import { CountingSemaphore, SharedCountingSemaphore } from '../semaphore.ts';
 
 describe(CountingSemaphore.name, () => {
   let semaphore: CountingSemaphore;

@@ -1,8 +1,8 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { delay } from '@mithic/commons';
-import { MessageBus, MessageHandler } from '../../messaging.js';
-import { SimpleMessageBus } from '../../impl/simple.js';
-import { applyDispatchMiddleware, applySubscribeMiddleware } from '../middleware.js';
+import { MessageBus, MessageHandler } from '../../messaging.ts';
+import { SimpleMessageBus } from '../../impl/simple.ts';
+import { applyDispatchMiddleware, applySubscribeMiddleware } from '../middleware.ts';
 
 const TOPIC = 'test';
 const COMMAND = { type: 'cmd', value: 0 };

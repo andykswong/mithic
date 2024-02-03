@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from '@jest/globals';
-import { DualStackDeque } from '../dsdeque.js';
+import { DualStackDeque } from '../dsdeque.ts';
 
 describe(DualStackDeque.name, () => {
   it('should have correct string tag', () => {

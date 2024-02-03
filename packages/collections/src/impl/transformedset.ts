@@ -1,7 +1,7 @@
 import { AbortOptions, Codec, IdentityCodec, MaybePromise } from '@mithic/commons';
-import { MaybeAsyncSet, MaybeAsyncSetBatch } from '../set.js';
-import { addMany, deleteMany, hasMany, updateSetMany } from '../utils/batch.js';
-import { KeyValueIterable, RangeQueryOptions, RangeQueryable, rangeQueryable } from '../range.js';
+import { MaybeAsyncSet, MaybeAsyncSetBatch } from '../set.ts';
+import { addMany, deleteMany, hasMany, updateSetMany } from '../utils/batch.ts';
+import { KeyValueIterable, RangeQueryOptions, RangeQueryable, rangeQueryable } from '../range.ts';
 
 /**
  * A set adapter that serializes values with a codec.

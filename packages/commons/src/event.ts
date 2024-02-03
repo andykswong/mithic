@@ -1,4 +1,4 @@
-import { MaybePromise, MaybePromiseFn, SyncOrAsyncGenerator } from './async/index.js';
+import { MaybePromise, MaybePromiseFn, SyncOrAsyncGenerator } from './async/index.ts';
 
 /** Typed Event. */
 export interface TypedEvent<T extends string = string> extends Event {

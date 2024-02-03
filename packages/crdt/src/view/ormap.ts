@@ -1,11 +1,10 @@
 import {
-  MaybeAsyncReadonlyMap, MaybeAsyncReadonlyMapBatch, RangeQueryOptions, RangeQueryable, rangeQueryable
+  MaybeAsyncReadonlyMap, MaybeAsyncReadonlyMapBatch, RangeQueryOptions, RangeQueryable, ReadonlyTripleStore, rangeQueryable
 } from '@mithic/collections';
 import { AbortOptions, ContentId, MaybePromise } from '@mithic/commons';
-import { ReadonlyTripleStore } from '@mithic/triplestore';
-import { ReadonlyLSeq } from './lseq.js';
-import { ReadonlyORSet } from './orset.js';
-import { defaultStringify } from '../defaults.js';
+import { ReadonlyLSeq } from './lseq.ts';
+import { ReadonlyORSet } from './orset.ts';
+import { defaultStringify } from '../defaults.ts';
 
 /** Readonly observed-removed map. */
 export class ReadonlyORMap<V = unknown, Id = ContentId>

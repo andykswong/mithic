@@ -1,3 +1,3 @@
-export * from './code.js';
-export * from './error.js';
-export * from './errors.js';
+export * from './code.ts';
+export * from './error.ts';
+export * from './errors.ts';

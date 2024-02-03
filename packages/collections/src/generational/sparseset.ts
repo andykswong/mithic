@@ -1,7 +1,7 @@
-import { SyncMapBatchAdapter } from '../impl/batchmap.js';
-import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
-import { KeyValueIterable } from '../range.js';
-import { indexOf } from './id.js';
+import { SyncMapBatchAdapter } from '../impl/batchmap.ts';
+import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.ts';
+import { KeyValueIterable } from '../range.ts';
+import { indexOf } from './id.ts';
 
 /** Sparse set based map with generational index as key. */
 export class SparseSetMap<V, I extends number = number>

@@ -1,5 +1,5 @@
 import { createEvent, equalsOrSameString, Startable, StringEquatable, TypedEventTarget } from '@mithic/commons';
-import { MessageSubscriptionState, PeerEvent, PeerEvents } from '../peer-aware.js';
+import { MessageSubscriptionState, PeerEvent, PeerEvents } from '../peer-aware.ts';
 
 /** Default peer refresh interval in milliseconds */
 export const DEFAULT_PEER_MONITOR_REFRESH_MS = 1000;

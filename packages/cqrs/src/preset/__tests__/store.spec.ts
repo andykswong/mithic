@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { SimpleMessageBus } from '@mithic/messaging';
-import { ReduceStore } from '../store.js';
+import { ReduceStore } from '../store.ts';
 
 type State = { count: number; };
 type Event = { type: string };

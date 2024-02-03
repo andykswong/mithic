@@ -1,7 +1,7 @@
 import { AbortOptions } from '@mithic/commons';
 import { MessageDispatcher, MessageSubscription } from '@mithic/messaging';
-import { MessageProcessor } from '../processor.js';
-import { MessageTransformHandler } from '../handler.js';
+import { MessageProcessor } from '../processor.ts';
+import { MessageTransformHandler } from '../handler.ts';
 
 /** {@link MessageProcessor} that handles input message and transforms it to output message. */
 export class MessageTransformer<SrcMsg, OutMsg = SrcMsg, HandlerOpts = object>

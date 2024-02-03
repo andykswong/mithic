@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
-import { RateLimiter } from '../ratelimiter.js';
+import { RateLimiter } from '../ratelimiter.ts';
 
 describe(RateLimiter.name, () => {
   let limiter: RateLimiter;

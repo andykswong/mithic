@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
-import { FractionalIndexGenerator, fractionalIndexToString } from '../fractional.js';
+import { FractionalIndexGenerator, fractionalIndexToString } from '../fractional.ts';
 
 describe(FractionalIndexGenerator.name, () => {
   let generator: FractionalIndexGenerator;

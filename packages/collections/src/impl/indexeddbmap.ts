@@ -1,6 +1,6 @@
 import { AbortOptions, CodedError, DisposableCloseable, OperationError, Startable } from '@mithic/commons';
-import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
-import { RangeQueryOptions, RangeQueryable, rangeQueryable } from '../range.js';
+import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.ts';
+import { RangeQueryOptions, RangeQueryable, rangeQueryable } from '../range.ts';
 
 /** A map that stores data in IndexedDB. */
 export class IndexedDBMap<K extends IDBValidKey, V> extends DisposableCloseable implements

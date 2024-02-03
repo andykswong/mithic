@@ -1,9 +1,9 @@
 import {
-  MaybeAsyncReadonlySet, MaybeAsyncReadonlySetBatch, RangeQueryOptions, RangeQueryable, rangeQueryable
+  EntityAttrSearchKey, MaybeAsyncReadonlySet, MaybeAsyncReadonlySetBatch, RangeQueryOptions, RangeQueryable,
+  ReadonlyTripleStore, rangeQueryable
 } from '@mithic/collections';
 import { AbortOptions, ContentId, MaybePromise } from '@mithic/commons';
-import { EntityAttrSearchKey, ReadonlyTripleStore } from '@mithic/triplestore';
-import { defaultStringify } from '../defaults.js';
+import { defaultStringify } from '../defaults.ts';
 
 /** Readonly observed-removed map. */
 export class ReadonlyORSet<V = unknown, Id = ContentId>

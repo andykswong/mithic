@@ -1,9 +1,9 @@
-export * from './async/index.js';
-export * from './error/index.js';
-export * from './lifecycle/index.js';
+export * from './async/index.ts';
+export * from './error/index.ts';
+export * from './lifecycle/index.ts';
 
-export * from './buffer.js';
-export * from './codec.js';
-export * from './equal.js';
-export * from './event.js';
-export * from './hash.js';
+export * from './buffer.ts';
+export * from './codec.ts';
+export * from './equal.ts';
+export * from './event.ts';
+export * from './hash.ts';

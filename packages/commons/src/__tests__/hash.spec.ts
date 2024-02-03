@@ -1,7 +1,7 @@
 import { describe, it } from '@jest/globals';
 import { CID } from 'multiformats';
 import { identity } from 'multiformats/hashes/identity';
-import { ContentId } from '../hash.js';
+import { ContentId } from '../hash.ts';
 
 describe('ContentId', () => {
   it('should be compatible with CID', () => {

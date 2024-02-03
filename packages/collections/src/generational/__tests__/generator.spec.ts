@@ -1,6 +1,6 @@
 import { describe, expect, it, test } from '@jest/globals';
-import * as GenId from '../id.js';
-import { IdGenerator } from '../generator.js';
+import * as GenId from '../id.ts';
+import { IdGenerator } from '../generator.ts';
 
 describe(IdGenerator.name, () => {
   it('has the correct string tag', () => {

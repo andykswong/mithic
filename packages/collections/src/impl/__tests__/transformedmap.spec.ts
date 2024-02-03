@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { OperationError } from '@mithic/commons';
-import { MaybeAsyncMap } from '../../map.js';
-import { TransformedMap } from '../transformedmap.js';
-import { BTreeMap } from '../btreemap.js';
-import { RangeQueryable, rangeQueryable } from '../../range.js';
-import { MockKey, MockKeyStringCodec } from '../../__tests__/mocks.js';
+import { MaybeAsyncMap } from '../../map.ts';
+import { TransformedMap } from '../transformedmap.ts';
+import { BTreeMap } from '../btreemap.ts';
+import { RangeQueryable, rangeQueryable } from '../../range.ts';
+import { MockKey, MockKeyStringCodec } from '../../__tests__/mocks.ts';
 
 type MapType = MaybeAsyncMap<string, string> & Iterable<[string, string]> & RangeQueryable<string, string>;
 

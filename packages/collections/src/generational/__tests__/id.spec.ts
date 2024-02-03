@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { GenerationalId } from '../index.js';
+import { GenerationalId } from '../index.ts';
 
 describe('GenerationalId', () => {
   it('should create correct id from index and generation values', () => {

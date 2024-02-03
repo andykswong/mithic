@@ -1,5 +1,5 @@
 import { AbortOptions, ContentId, MaybeAsyncIterableIterator, MaybePromise } from '@mithic/commons';
-import { MaybeAsyncReadonlySet, MaybeAsyncReadonlySetBatch, MaybeAsyncSetDeleteBatch } from './set.js';
+import { MaybeAsyncReadonlySet, MaybeAsyncReadonlySetBatch, MaybeAsyncSetDeleteBatch } from './set.ts';
 
 /** A readonly Map that may have async operations. */
 export interface MaybeAsyncReadonlyMap<K, V> extends MaybeAsyncReadonlySet<K> {

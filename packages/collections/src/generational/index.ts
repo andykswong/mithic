@@ -1,6 +1,6 @@
-export * from './arena.js';
-export * from './generator.js';
-export * from './genidmap.js';
-export * from './sparseset.js';
+export * from './arena.ts';
+export * from './generator.ts';
+export * from './genidmap.ts';
+export * from './sparseset.ts';
 
-export * as GenerationalId from './id.js';
+export * as GenerationalId from './id.ts';

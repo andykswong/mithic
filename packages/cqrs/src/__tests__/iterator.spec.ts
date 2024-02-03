@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { immediate } from '@mithic/commons';
-import { AsyncSubscriber } from '../iterator.js';
+import { AsyncSubscriber } from '../iterator.ts';
 import { SimpleMessageBus } from '@mithic/messaging';
 
 describe(AsyncSubscriber.name, () => {

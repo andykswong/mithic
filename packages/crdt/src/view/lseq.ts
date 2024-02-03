@@ -1,8 +1,8 @@
 import {
-  MaybeAsyncReadonlyMap, MaybeAsyncReadonlyMapBatch, RangeQueryOptions, RangeQueryable, rangeQueryable
+  EntityAttrSearchKey, MaybeAsyncReadonlyMap, MaybeAsyncReadonlyMapBatch, RangeQueryOptions, RangeQueryable,
+  ReadonlyTripleStore, rangeQueryable
 } from '@mithic/collections';
 import { AbortOptions, ContentId } from '@mithic/commons';
-import { EntityAttrSearchKey, ReadonlyTripleStore } from '@mithic/triplestore';
 
 /** Readonly observed-removed list. */
 export class ReadonlyLSeq<V = unknown, Id = ContentId>

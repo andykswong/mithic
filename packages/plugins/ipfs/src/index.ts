@@ -1,2 +1,2 @@
-export * from './blockstore.js';
-export * from './bus.js';
+export * from './blockstore.ts';
+export * from './bus.ts';

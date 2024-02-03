@@ -1,7 +1,7 @@
 import { AbortOptions, MaybePromise } from '@mithic/commons';
 import { MessageSubscription } from '@mithic/messaging';
-import { MessageProcessor } from '../processor.js';
-import { ObjectWriter } from '../handler.js';
+import { MessageProcessor } from '../processor.ts';
+import { ObjectWriter } from '../handler.ts';
 
 /** {@link MessageProcessor} that persists message using an {@link ObjectWriter}. */
 export class MessagePersister<Msg, SrcMsg = Msg, HandlerOpts = object> extends MessageProcessor<SrcMsg, HandlerOpts> {

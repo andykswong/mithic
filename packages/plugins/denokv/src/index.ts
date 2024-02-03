@@ -1,2 +1,2 @@
-export * from './bus.js';
-export * from './map.js';
+export * from './bus.ts';
+export * from './map.ts';

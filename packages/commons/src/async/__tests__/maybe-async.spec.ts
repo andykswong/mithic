@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
-import { delay } from '../delay.js';
-import { reduce, resolve } from '../maybe-async.js';
-import { maybeAsync } from '../promise.js';
+import { delay } from '../delay.ts';
+import { reduce, resolve } from '../maybe-async.ts';
+import { maybeAsync } from '../promise.ts';
 
 describe('resolve', () => {
   it('should work with synchronous values', () => {

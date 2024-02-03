@@ -1,6 +1,6 @@
-import { PeekableDeque, SyncDeque } from '../deque.js';
-import { MaybeAsyncReadonlyMap } from '../map.js';
-import { KeyValueIterable } from '../range.js';
+import { PeekableDeque, SyncDeque } from '../deque.ts';
+import { MaybeAsyncReadonlyMap } from '../map.ts';
+import { KeyValueIterable } from '../range.ts';
 
 /** A dual stack based double-ended queue. */
 export class DualStackDeque<T>

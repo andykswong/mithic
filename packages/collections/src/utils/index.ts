@@ -1,5 +1,5 @@
-export * from './hash.js';
-export * from './join.js';
-export * from './multikey.js';
+export * from './hash.ts';
+export * from './join.ts';
+export * from './multikey.ts';
 
-export * as Batch from './batch.js';
+export * as Batch from './batch.ts';

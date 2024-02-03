@@ -1,3 +1,3 @@
-export * from './command.js';
-export * from './redux.js';
-export * from './store.js';
+export * from './command.ts';
+export * from './redux.ts';
+export * from './store.ts';

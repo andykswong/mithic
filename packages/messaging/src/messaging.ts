@@ -1,5 +1,5 @@
 import { AbortOptions, MaybePromise } from '@mithic/commons';
-import { MessageValidationError } from './error.js';
+import { MessageValidationError } from './error.ts';
 
 /**
  * A generalized message bus service interface,

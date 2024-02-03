@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
-import { MapTripleStore } from '@mithic/triplestore';
-import { DefaultEntityStore, EntityStore } from '../../store.js';
-import { FractionalIndexGenerator } from '../../utils/index.js';
-import { OREntityCommandHandler } from '../command.js';
-import { OREntityProjection } from '../event.js';
-import { EntityCommand, EntityCommandHandler, EntityCommandType, EntityEvent, EntityEventType, EntityProjection } from '../interface.js';
-import { MockId, getMockEventKey } from '../../__tests__/mocks.js';
-import { defaultStringify } from '../../defaults.js';
+import { MapTripleStore } from '@mithic/collections';
+import { DefaultEntityStore, EntityStore } from '../../store.ts';
+import { FractionalIndexGenerator } from '../../utils/index.ts';
+import { OREntityCommandHandler } from '../command.ts';
+import { OREntityProjection } from '../event.ts';
+import { EntityCommand, EntityCommandHandler, EntityCommandType, EntityEvent, EntityEventType, EntityProjection } from '../interface.ts';
+import { MockId, getMockEventKey } from '../../__tests__/mocks.ts';
+import { defaultStringify } from '../../defaults.ts';
 
 type V = string | number | boolean;
 

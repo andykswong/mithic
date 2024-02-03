@@ -1,7 +1,7 @@
 import { AbortOptions, Codec, IdentityCodec, MaybePromise } from '@mithic/commons';
-import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
-import { deleteMany, getMany, hasMany, setMany, updateMapMany } from '../utils/batch.js';
-import { KeyValueIterable, RangeQueryOptions, RangeQueryable, rangeQueryable } from '../range.js';
+import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.ts';
+import { deleteMany, getMany, hasMany, setMany, updateMapMany } from '../utils/batch.ts';
+import { KeyValueIterable, RangeQueryOptions, RangeQueryable, rangeQueryable } from '../range.ts';
 
 /**
  * A map adapter that serializes keys and/or values with codec.

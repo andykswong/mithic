@@ -1,4 +1,4 @@
-import { reduce } from './maybe-async.js';
+import { reduce } from './maybe-async.ts';
 
 /** A value that may be wrapped with a PromiseLike. */
 export type MaybePromise<T> = T | PromiseLike<T>;
@@ -10,12 +10,12 @@ export const MaybePromise = {
   /** Transforms a value or promise with a maybe-async value mapper (and optionally error mapper). */
   map: mapAsync,
 
-  /** Returns if a value is like a promise (thenable). */
-  isPromiseLike
+  /** Returns if a value is a thenable */
+  isThenable
 };
 
-/** Returns if a value is like a promise (thenable). */
-export function isPromiseLike<T>(value: MaybePromise<T>): value is PromiseLike<T> {
+/** Returns if a value is like a thenable. */
+export function isThenable<T>(value: MaybePromise<T>): value is PromiseLike<T> {
   return typeof (value as PromiseLike<T>)?.then === 'function';
 }
 
@@ -25,7 +25,7 @@ export function mapAsync<T, R = T, R2 = never>(
   mapValue: (value: T) => MaybePromise<R>,
   mapError?: (err: unknown) => MaybePromise<R2>,
 ): MaybePromise<R | R2> {
-  if (!isPromiseLike(value)) {
+  if (!isThenable(value)) {
     return mapValue(value);
   }
   return value.then(mapValue, mapError);
@@ -63,20 +63,37 @@ export const reduceAsync = maybeAsync(reduce) as ReduceAsync;
  * const result = await add(1, 2); // result === 3
  * ```
  */
-export function maybeAsync<T = unknown, Args extends unknown[] = unknown[]>(
+export function maybeAsync<R = unknown, Args extends unknown[] = unknown[]>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  coroutine: (...args: Args) => Generator<unknown, MaybePromise<T>, any>,
+  coroutine: (...args: Args) => Generator<unknown, MaybePromise<R>, any>,
   thisArg?: unknown,
-): (...args: Args) => MaybePromise<T> {
+): (...args: Args) => MaybePromise<R> {
   return (...args) => {
-    const iter = coroutine.call(thisArg, ...args);
-
-    return (function run(resolved?: unknown): MaybePromise<T> {
-      const result = resolved === void 0 ? iter.next() : iter.next(resolved);
-      if (result.done) {
-        return result.value;
-      }
-      return mapAsync(result.value, run);
-    })();
+    return new MaybeAsyncCorountine(coroutine.call(thisArg, ...args)).run();
   };
+}
+
+class MaybeAsyncCorountine<V, R> {
+  public constructor(
+    private readonly iter: Generator<MaybePromise<V>, MaybePromise<R>, V>,
+  ) {
+    this.run = this.run.bind(this);
+    this.resume = this.resume.bind(this);
+  }
+
+  public run(resolved?: V): MaybePromise<R> {
+    let result;
+    while (!(result = resolved === void 0 ? this.iter.next() : this.iter.next(resolved)).done) {
+      const value = result.value;
+      if (isThenable(value)) { return value.then(this.run, this.resume); }
+      resolved = value;
+    }
+    return result.value;
+  }
+
+  public resume(e: unknown): MaybePromise<R> {
+    const { done, value } = this.iter.throw(e);
+    if (done) { return value; }
+    return isThenable(value) ? value.then(this.run, this.resume) : this.run(value);
+  }
 }

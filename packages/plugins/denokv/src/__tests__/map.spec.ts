@@ -1,7 +1,7 @@
 import { Kv, KvKey, openKv } from '@deno/kv';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { rangeQueryable } from '@mithic/collections';
-import { DenoKVMap, DenoKVMapRangeQueryOptions } from '../map.js';
+import { DenoKVMap, DenoKVMapRangeQueryOptions } from '../map.ts';
 
 const KEY1 = ['a', 1];
 const KEY2 = ['b'];

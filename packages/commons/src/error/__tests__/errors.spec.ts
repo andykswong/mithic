@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { AbortError, InvalidStateError, NotFoundError, NotSupportedError, OperationError, TimeoutError } from '../errors.js';
+import { AbortError, InvalidStateError, NotFoundError, NotSupportedError, OperationError, TimeoutError } from '../errors.ts';
 
 describe(AbortError.name, () => {
   it('should initialize with given reason', () => {

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { OperationError } from '@mithic/commons';
 import { RedisClientType, commandOptions } from '@redis/client';
-import { createMockRedisClient, createMockRedisClientMultiCommand } from '../__tests__/mocks.js';
-import { RedisMap } from '../map.js';
+import { createMockRedisClient, createMockRedisClientMultiCommand } from '../__tests__/mocks.ts';
+import { RedisMap } from '../map.ts';
 import { RangeQueryOptions, rangeQueryable } from '@mithic/collections';
 
 const HASH_KEY = 'hash-key';

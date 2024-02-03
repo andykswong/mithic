@@ -3,7 +3,7 @@
  * @packageDocumentation
  */
 
-import type { MaybePromise } from './promise.js';
+import type { MaybePromise } from './promise.ts';
 
 /**
  * `yield*` instruction for `maybeAsync` to resolve a {@link MaybePromise} in a type-safe way.

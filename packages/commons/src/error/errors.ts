@@ -1,7 +1,7 @@
 import {
   ABORT_ERR, ERR_OPERATION_FAILED, INVALID_STATE_ERR, NOT_FOUND_ERR, NOT_SUPPORTED_ERR, TIMEOUT_ERR
-} from './code.js';
-import { CodedError, ErrorCodeDetailOptions, ErrorDetailOptions } from './error.js';
+} from './code.ts';
+import { CodedError, ErrorCodeDetailOptions, ErrorDetailOptions } from './error.ts';
 
 /** An AbortError. */
 export class AbortError<T = unknown, E = unknown> extends CodedError<T, E> {

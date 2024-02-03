@@ -1,5 +1,5 @@
 import { EventDispatcher, TypedCustomEvent, TypedEventTarget, createEvent, maybeAsync } from '@mithic/commons';
-import { MessageBus, MessageHandler, MessageOptions, SubscribeOptions, Unsubscribe } from '../messaging.js';
+import { MessageBus, MessageHandler, MessageOptions, SubscribeOptions, Unsubscribe } from '../messaging.ts';
 
 /** Implementation of {@link MessageBus} that wraps an EventTarget. */
 export class EventTargetMessageBus<Msg> implements MessageBus<Msg> {

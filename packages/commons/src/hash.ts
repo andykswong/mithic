@@ -1,5 +1,5 @@
-import { Encoder } from './codec.js';
-import { Equal, ToString } from './equal.js';
+import { Encoder } from './codec.ts';
+import { Equal, ToString } from './equal.ts';
 
 /** A content hash ID. */
 export interface ContentId<

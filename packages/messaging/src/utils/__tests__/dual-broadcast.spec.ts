@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { delay } from '@mithic/commons';
-import { DualBroadcastChannel } from '../dual-broadcast.js';
+import { DualBroadcastChannel } from '../dual-broadcast.ts';
 
 describe('DualBroadcastChannel', () => {
   let channel: DualBroadcastChannel;

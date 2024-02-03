@@ -1,5 +1,5 @@
-import { AbortOptions } from './options.js';
-import { MaybePromise } from './promise.js';
+import { AbortOptions } from './options.ts';
+import { MaybePromise } from './promise.ts';
 
 /** A lock for controlling concurrent access to shared resource. */
 export interface Lock {

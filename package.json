@@ -14,6 +14,7 @@
     "./index.d.ts"
   ],
   "scripts": {
+    "prepublishOnly": "npm run clean && npm run build && npm test && npm run doc",
     "build": "npm run build -ws",
     "clean": "npm run clean -ws && rimraf docs",
     "doc": "typedoc",
@@ -34,6 +35,7 @@
     "p2p",
     "offline-first",
     "state-channel",
+    "triplestore",
     "typescript",
     "web3"
   ],
@@ -48,9 +50,7 @@
     "@mithic/commons": "^0.3",
     "@mithic/cqrs": "^0.3",
     "@mithic/crdt": "^0.3",
-    "@mithic/eventstore": "^0.3",
-    "@mithic/messaging": "^0.3",
-    "@mithic/triplestore": "^0.3"
+    "@mithic/messaging": "^0.3"
   },
   "devDependencies": {
     "@babel/cli": "^7.20",
@@ -75,9 +75,7 @@
   "workspaces": [
     "./packages/commons",
     "./packages/collections",
-    "./packages/eventstore",
     "./packages/messaging",
-    "./packages/triplestore",
     "./packages/cqrs",
     "./packages/crdt",
     "./packages/plugins/denokv",

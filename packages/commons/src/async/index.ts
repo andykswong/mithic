@@ -1,11 +1,11 @@
-export * from './delay.js';
-export * from './iterator.js';
-export * from './lock.js';
-export * from './lockguard.js';
-export * from './options.js';
-export * from './promise.js';
-export * from './ratelimiter.js';
-export * from './semaphore.js';
-export * from './web-lock.js';
+export * from './delay.ts';
+export * from './iterator.ts';
+export * from './lock.ts';
+export * from './lockguard.ts';
+export * from './options.ts';
+export * from './promise.ts';
+export * from './ratelimiter.ts';
+export * from './semaphore.ts';
+export * from './web-lock.ts';
 
-export * as MaybeAsync from './maybe-async.js';
+export * as MaybeAsync from './maybe-async.ts';

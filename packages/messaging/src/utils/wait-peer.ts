@@ -1,5 +1,5 @@
 import { AbortError, AbortOptions, equalsOrSameString, StringEquatable } from '@mithic/commons';
-import { MessageSubscriptionPeers, MessageSubscriptionState } from '../peer-aware.js';
+import { MessageSubscriptionPeers, MessageSubscriptionState } from '../peer-aware.ts';
 
 /** Interval in milliseconds to wait for next connection check. */
 export const CONNECTION_CHECK_INTERVAL_MS = 200;

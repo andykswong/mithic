@@ -1,9 +1,9 @@
 import { StringEquatable, TypedCustomEvent, TypedEventTarget, createEvent, maybeAsync } from '@mithic/commons';
 import {
   PeerAwareMessageBus, PeerAwareMessageHandler, PeerAwareSubscribeOptions, PeerChangeData, PeerEvent, PeerEvents
-} from '../peer-aware.js';
-import { DEFAULT_PEER_MONITOR_REFRESH_MS, PeerSubscriptionMonitor } from '../utils/index.js';
-import { MessageOptions, Unsubscribe } from '../messaging.js';
+} from '../peer-aware.ts';
+import { DEFAULT_PEER_MONITOR_REFRESH_MS, PeerSubscriptionMonitor } from '../utils/index.ts';
+import { MessageOptions, Unsubscribe } from '../messaging.ts';
 
 /** Default keepalive ping interval for {@link BroadcastChannelMessageBus} in milliseconds. */
 export const DEFAULT_BROADCAST_CHANNEL_MESSAGE_BUS_KEEPALIVE_MS = 1000;

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { MessageValidationError } from '@mithic/messaging';
 import { RedisClientType, commandOptions } from '@redis/client';
-import { createMockRedisClient } from './mocks.js';
-import { RedisMessageBus } from '../bus.js';
+import { createMockRedisClient } from './mocks.ts';
+import { RedisMessageBus } from '../bus.ts';
 
 const TOPIC = 'testTopic';
 const TOPIC2 = 'testTopic2';

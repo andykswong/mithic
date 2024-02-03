@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
-import { BloomFilter } from '../bloomfilter.js';
+import { BloomFilter } from '../bloomfilter.ts';
 
 describe(BloomFilter.name, () => {
   let filter: BloomFilter<string>;

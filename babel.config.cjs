@@ -1,6 +1,7 @@
 /** @type {import('@babel/core').ConfigFunction} */
 module.exports = api => {
   const isTest = api.env('test');
+  const isBundler = api.caller((caller) => caller?.name === 'babel-loader');
 
   /** @type {import('@babel/core').TransformOptions} */
   const config = {
@@ -33,7 +34,7 @@ module.exports = api => {
           }
         }
       ],
-      ['@babel/preset-typescript']
+      ['@babel/preset-typescript', { rewriteImportExtensions: !isBundler }],
     ],
     sourceMaps: 'inline'
   };

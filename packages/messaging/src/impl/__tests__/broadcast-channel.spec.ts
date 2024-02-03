@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { createEvent, delay } from '@mithic/commons';
-import { BroadcastChannelMessageBus, BroadcastChannelMessage, BroadcastChannelMessageType } from '../broadcast-channel.js';
-import { PeerAwareMessageOptions, PeerChangeData, PeerEvent } from '../../peer-aware.js';
-import { MessageValidationError } from '../../error.js';
+import { BroadcastChannelMessageBus, BroadcastChannelMessage, BroadcastChannelMessageType } from '../broadcast-channel.ts';
+import { PeerAwareMessageOptions, PeerChangeData, PeerEvent } from '../../peer-aware.ts';
+import { MessageValidationError } from '../../error.ts';
 
 const CHANNEL = 'test-channel';
 const PEER_ID = 'mockPeerId';

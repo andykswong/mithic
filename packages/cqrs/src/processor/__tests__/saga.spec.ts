@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
 import { delay } from '@mithic/commons';
 import { SimpleMessageBus } from '@mithic/messaging';
-import { SagaProcessor } from '../saga.js';
+import { SagaProcessor } from '../saga.ts';
 
 const IN_COMMAND = { type: 'rawEvent' };
 const OUT_EVENT1 = { type: 'transformedEvent', value: 1 };

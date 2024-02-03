@@ -1,6 +1,6 @@
-import { StandardCommand, StandardEvent } from '../action.js';
-import { AggregateCommandHandler, AggregateProjection } from '../aggregate.js';
-import { EntityStore, ReadonlyEntityStore } from '../store.js';
+import { StandardCommand, StandardEvent } from '../action.ts';
+import { AggregateCommandHandler, AggregateProjection } from '../aggregate.ts';
+import { EntityStore, ReadonlyEntityStore } from '../store.ts';
 
 /** {@link AggregateCommandHandler} for a CRDT entity. */
 export type EntityCommandHandler<Id, V> =

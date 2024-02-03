@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { OperationError } from '@mithic/commons';
-import { MaybeAsyncSet } from '../../set.js';
-import { TransformedSet } from '../transformedset.js';
-import { KeyValueIterable, rangeQueryable } from '../../range.js';
-import { MockKey, MockKeyStringCodec } from '../../__tests__/mocks.js';
+import { MaybeAsyncSet } from '../../set.ts';
+import { TransformedSet } from '../transformedset.ts';
+import { KeyValueIterable, rangeQueryable } from '../../range.ts';
+import { MockKey, MockKeyStringCodec } from '../../__tests__/mocks.ts';
 
 type SetType = MaybeAsyncSet<string> & Iterable<string> & KeyValueIterable<string, string>;
 

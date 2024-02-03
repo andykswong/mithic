@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { DirectMessageBus, PUBSUB_DIRECT_CHANNEL_PROTOCOL_NAME, PUBSUB_DIRECT_CHANNEL_PROTOCOL_SEMVER } from '../direct.js';
-import { MockPeer, MockMessageBus } from '../../__tests__/mocks.js';
-import { MessageValidationError, MessageValidationErrorCode } from '../../error.js';
+import { DirectMessageBus, PUBSUB_DIRECT_CHANNEL_PROTOCOL_NAME, PUBSUB_DIRECT_CHANNEL_PROTOCOL_SEMVER } from '../direct.ts';
+import { MockPeer, MockMessageBus } from '../../__tests__/mocks.ts';
+import { MessageValidationError, MessageValidationErrorCode } from '../../error.ts';
 
 const PEER_ID = new MockPeer(new Uint8Array([6, 6, 6]));
 const OTHER_PEER_ID = new MockPeer(new Uint8Array([7, 7, 7]));

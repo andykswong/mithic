@@ -1,9 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
 import { CID } from 'multiformats';
 import { identity } from 'multiformats/hashes/identity';
-import { BTreeMap } from '../../impl/index.js';
-import { MaybeAsyncMap } from '../../map.js';
-import { MultiKey, compareMultiKeys } from '../multikey.js';
+import { BTreeMap } from '../../impl/index.ts';
+import { MaybeAsyncMap } from '../../map.ts';
+import { MultiKey, compareMultiKeys } from '../multikey.ts';
 
 describe('MultiKey', () => {
   it('should be useable as BTreeMap key with correct compare function', () => {

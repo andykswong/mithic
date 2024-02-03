@@ -1,9 +1,9 @@
 import { AbortOptions, Codec, MaybePromise } from '@mithic/commons';
-import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
-import { KeyValueIterable, RangeQueryOptions, RangeQueryable, rangeQueryable } from '../range.js';
-import { MaybeAsyncSet, MaybeAsyncSetBatch } from '../set.js';
-import { deleteMany, hasMany, setMany, updateMapMany } from '../utils/batch.js';
-import { BTreeMap } from './btreemap.js';
+import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.ts';
+import { KeyValueIterable, RangeQueryOptions, RangeQueryable, rangeQueryable } from '../range.ts';
+import { MaybeAsyncSet, MaybeAsyncSetBatch } from '../set.ts';
+import { deleteMany, hasMany, setMany, updateMapMany } from '../utils/batch.ts';
+import { BTreeMap } from './btreemap.ts';
 
 /** A set that stores data in a {@link MaybeAsyncMap}. */
 export class MapSet<K, MK = K, MV = K, M extends MapSetBackingMap<MK, MV> = MapSetBackingMap<MK, MV>>

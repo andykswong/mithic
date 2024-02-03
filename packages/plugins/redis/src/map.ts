@@ -1,7 +1,7 @@
 import { MaybeAsyncMap, MaybeAsyncMapBatch, RangeQueryOptions, RangeQueryable, rangeQueryable } from '@mithic/collections';
 import { AbortOptions, AsyncDisposableCloseable, CodedError, OperationError, Startable } from '@mithic/commons';
 import { commandOptions, RedisClientType } from '@redis/client';
-import { RedisValueType } from './type.js';
+import { RedisValueType } from './type.ts';
 
 /** Redis implementation of an async queryable map. */
 export class RedisMap<UseBuffer extends boolean = false, R extends RedisClientType = RedisClientType>

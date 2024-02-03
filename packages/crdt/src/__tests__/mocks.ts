@@ -1,7 +1,7 @@
 import { ContentId } from '@mithic/commons';
 import { MultihashDigest, MultibaseEncoder } from 'multiformats';
 import { base64 } from 'multiformats/bases/base64';
-import { StandardAction } from '../action.js';
+import { StandardAction } from '../action.ts';
 
 export class MockId implements ContentId {
   code = 123;

@@ -1,4 +1,4 @@
-export * from './fractional.js';
-export * from './generator.js';
+export * from './fractional.ts';
+export * from './generator.ts';
 
-export * as EntityAttrReducers from './reducer.js';
+export * as EntityAttrReducers from './reducer.ts';

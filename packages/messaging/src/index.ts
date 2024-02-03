@@ -1,6 +1,6 @@
-export * from './error.js';
-export * from './messaging.js';
-export * from './peer-aware.js';
+export * from './error.ts';
+export * from './messaging.ts';
+export * from './peer-aware.ts';
 
-export * from './impl/index.js';
-export * from './utils/index.js';
+export * from './impl/index.ts';
+export * from './utils/index.ts';

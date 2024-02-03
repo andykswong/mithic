@@ -3,7 +3,7 @@ import {
   MessageBus, MessageHandler, MessageOptions, MessageSubscriptionTopics, SubscribeOptions, Unsubscribe
 } from '@mithic/messaging';
 import { RedisClientType, commandOptions } from '@redis/client';
-import { RedisValueType } from './type.js';
+import { RedisValueType } from './type.ts';
 
 const DEFAULT_TOPIC = 'message';
 

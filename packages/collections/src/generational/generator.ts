@@ -1,6 +1,6 @@
-import { SyncGenerator } from '../generational.js';
-import { KeyValueIterable } from '../range.js';
-import { create as id, generationOf, indexOf, MAX_SAFE_GENERATION } from './id.js';
+import { SyncGenerator } from '../generational.ts';
+import { KeyValueIterable } from '../range.ts';
+import { create as id, generationOf, indexOf, MAX_SAFE_GENERATION } from './id.ts';
 
 /** {@link SyncGenerator} of generational index IDs. */
 export class IdGenerator<T extends number = number>

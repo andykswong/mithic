@@ -14,7 +14,7 @@
 <br />
 
 ## Overview
-`mithic` provides the building blocks for creating offline-first client-server or decentralized applications, using [CQRS](https://en.wikipedia.org/wiki/Command%E2%80%93query_separation) architecture with [CRDT](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type) [eventsourcing](https://en.wikipedia.org/wiki/Event_store) for storage and data replication. Targeted use cases include business web apps, collaborative editing, multiplayer gaming, etc.
+`mithic` provides the building blocks for creating offline-first applications, using [CQRS](https://en.wikipedia.org/wiki/Command%E2%80%93query_separation) architecture with [eventsourced](https://en.wikipedia.org/wiki/Event_store) [CRDT](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type)s for storage and data replication. `mithic` is network agnostic and can be used in traditional client-server, decentralized, or local-only apps. Target use cases include business web apps, collaborative editing, multiplayer gaming, etc.
 
 ## Documentation
 See generated TypeDoc: https://andykswong.github.io/mithic/
@@ -27,7 +27,7 @@ npm install --save mithic
 ```
 Or select individual [modular packages](#packages) to use:
 ```shell
-npm install --save @mithic/cqrs @mithic/crdt @mithic/eventstore
+npm install --save @mithic/collections @mithic/cqrs @mithic/crdt
 ```
 
 For detailed usages, see the following examples:
@@ -40,13 +40,11 @@ Core:
 
 |Package|NPM|Description|
 |-------|---|-----------|
-|[`@mithic/collections`](./packages/collections)|[![npm](https://img.shields.io/npm/v/@mithic/collections?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/collections)|collection library|
-|[`@mithic/commons`](./packages/commons)|[![npm](https://img.shields.io/npm/v/@mithic/commons?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/commons)|common utility components|
-|[`@mithic/cqrs`](./packages/cqrs)|[![npm](https://img.shields.io/npm/v/@mithic/cqrs?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/cqrs)|CQRS library|
-|[`@mithic/crdt`](./packages/crdt)|[![npm](https://img.shields.io/npm/v/@mithic/crdt?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/crdt)|eventsourced CRDT library|
-|[`@mithic/eventstore`](./packages/eventstore)|[![npm](https://img.shields.io/npm/v/@mithic/eventstore?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/eventstore)|eventstore library|
-|[`@mithic/messaging`](./packages/messaging)|[![npm](https://img.shields.io/npm/v/@mithic/messaging?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/messaging)|messaging interface|
-|[`@mithic/triplestore`](./packages/triplestore)|[![npm](https://img.shields.io/npm/v/@mithic/triplestore?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/triplestore)|triplestore library|
+|[`@mithic/collections`](./packages/collections)|[![npm](https://img.shields.io/npm/v/@mithic/collections?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/collections)|Core collection interfaces and implementations|
+|[`@mithic/commons`](./packages/commons)|[![npm](https://img.shields.io/npm/v/@mithic/commons?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/commons)|Common utilities|
+|[`@mithic/cqrs`](./packages/cqrs)|[![npm](https://img.shields.io/npm/v/@mithic/cqrs?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/cqrs)|CQRS interface|
+|[`@mithic/crdt`](./packages/crdt)|[![npm](https://img.shields.io/npm/v/@mithic/crdt?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/crdt)|Eventsourced CRDT library|
+|[`@mithic/messaging`](./packages/messaging)|[![npm](https://img.shields.io/npm/v/@mithic/messaging?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/messaging)|Messaging interface|
 
 Plugins:
 

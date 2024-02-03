@@ -1,6 +1,6 @@
-import { AsyncDisposableCloseable, Closeable } from '../lifecycle/index.js';
-import { Lock } from './lock.js';
-import { MaybePromise, maybeAsync } from './promise.js';
+import { AsyncDisposableCloseable, Closeable } from '../lifecycle/index.ts';
+import { Lock } from './lock.ts';
+import { MaybePromise, maybeAsync } from './promise.ts';
 
 /** A disposable {@link Lock} wrapper for RAII-style lock. */
 export class LockGuard extends AsyncDisposableCloseable implements Closeable, AsyncDisposable {

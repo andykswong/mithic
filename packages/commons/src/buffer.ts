@@ -1,4 +1,4 @@
-import { ContentId } from './hash.js';
+import { ContentId } from './hash.ts';
 
 /** Lexicographically compares 2 Uint8Arrays in constant time. */
 export function compareBuffers(a: Uint8Array, b: Uint8Array): number {

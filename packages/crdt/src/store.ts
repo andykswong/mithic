@@ -1,7 +1,7 @@
 import {
-  BTreeSet, MaybeAsyncAppendOnlySetBatch, MaybeAsyncReadonlySetBatch, compareMultiKeys
+  BTreeSet, MapTripleStore, MaybeAsyncAppendOnlySetBatch, MaybeAsyncReadonlySetBatch, ReadonlyTripleStore, TripleStore,
+  compareMultiKeys
 } from '@mithic/collections';
-import { MapTripleStore, ReadonlyTripleStore, TripleStore } from '@mithic/triplestore';
 
 /** Store of tagged entity triples and processed transaction Ids. */
 export interface EntityStore<Id, V> extends ReadonlyEntityStore<Id, V> {

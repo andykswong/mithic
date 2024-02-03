@@ -1,6 +1,6 @@
-import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
-import { RangeQueryOptions, RangeQueryable, rangeQueryable } from '../range.js';
-import { SyncMapBatchAdapter } from './batchmap.js';
+import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.ts';
+import { RangeQueryOptions, RangeQueryable, rangeQueryable } from '../range.ts';
+import { SyncMapBatchAdapter } from './batchmap.ts';
 
 /** An in-memory B-tree structure that implements the Map interface. */
 export class BTreeMap<K, V>

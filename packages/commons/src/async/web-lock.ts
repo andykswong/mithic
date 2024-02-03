@@ -1,6 +1,6 @@
-import { Lock } from './lock.js';
-import { AbortOptions } from './options.js';
-import { MaybePromise } from './promise.js';
+import { Lock } from './lock.ts';
+import { AbortOptions } from './options.ts';
+import { MaybePromise } from './promise.ts';
 
 /** A {@link Lock} implement using Web Lock API. */
 export class WebLock implements Lock {

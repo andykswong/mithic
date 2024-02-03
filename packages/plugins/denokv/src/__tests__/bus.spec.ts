@@ -2,7 +2,7 @@ import { Kv, openKv } from '@deno/kv';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { delay } from '@mithic/commons';
 import { MessageValidationError } from '@mithic/messaging';
-import { DenoKVMessage, DenoKVMessageBus } from '../bus.js';
+import { DenoKVMessage, DenoKVMessageBus } from '../bus.ts';
 
 const TOPIC = 'testTopic';
 const TOPIC2 = 'testTopic2';

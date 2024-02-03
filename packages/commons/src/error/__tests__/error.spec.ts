@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { CodedError } from '../error.js';
+import { CodedError } from '../error.ts';
 
 describe(CodedError.name, () => {
   it('should initialize with given options', () => {

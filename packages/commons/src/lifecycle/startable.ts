@@ -1,5 +1,5 @@
-import { AbortOptions, MaybePromise } from '../async/index.js';
-import { Closeable } from './closeable.js';
+import { AbortOptions, MaybePromise } from '../async/index.ts';
+import { Closeable } from './closeable.ts';
 
 /** A component that can be started and closed later. */
 export interface Startable extends Closeable {

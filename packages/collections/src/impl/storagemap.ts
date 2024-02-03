@@ -1,6 +1,6 @@
-import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.js';
-import { KeyValueIterable } from '../range.js';
-import { SyncMapBatchAdapter } from './batchmap.js';
+import { MaybeAsyncMap, MaybeAsyncMapBatch } from '../map.ts';
+import { KeyValueIterable } from '../range.ts';
+import { SyncMapBatchAdapter } from './batchmap.ts';
 
 /**
  * A map that stores data in local storage with prefixed keys.
