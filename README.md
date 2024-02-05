@@ -44,6 +44,7 @@ Core:
 |[`@mithic/commons`](./packages/commons)|[![npm](https://img.shields.io/npm/v/@mithic/commons?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/commons)|Common utilities|
 |[`@mithic/cqrs`](./packages/cqrs)|[![npm](https://img.shields.io/npm/v/@mithic/cqrs?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/cqrs)|CQRS interface|
 |[`@mithic/crdt`](./packages/crdt)|[![npm](https://img.shields.io/npm/v/@mithic/crdt?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/crdt)|Eventsourced CRDT library|
+|[`@mithic/jsonr`](./packages/jsonr)|[![npm](https://img.shields.io/npm/v/@mithic/jsonr?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/jsonr)|JSON intermediate representation for sandboxed scripting|
 |[`@mithic/messaging`](./packages/messaging)|[![npm](https://img.shields.io/npm/v/@mithic/messaging?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/messaging)|Messaging interface|
 
 Plugins:

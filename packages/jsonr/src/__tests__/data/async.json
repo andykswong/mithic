@@ -1,0 +1,7 @@
+[
+  ";",
+  ["async", "echo", ["prompt"], ["try", ["await", ["readline", "prompt", 2000]], ["catch", "e", "'<nope, too slow>"]]],
+  ["let", "input", ["await", ["echo", "'your input: "]]],
+  ["println", "'you said:", "input"],
+  null
+]

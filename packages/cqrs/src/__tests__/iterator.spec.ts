@@ -59,7 +59,9 @@ describe(AsyncSubscriber.name, () => {
     const controller = new AbortController();
     const subscriber = new AsyncSubscriber(eventBus, controller);
     const events = [1, 2, 3];
-    events.forEach((event) => eventBus.dispatch(event));
+    for (const event of events) {
+      await eventBus.dispatch(event);
+    }
     const result = [];
 
     let actualError;
@@ -125,7 +127,9 @@ describe(AsyncSubscriber.name, () => {
   it('should ignore new values on fcfs mode if buffer is full', async () => {
     const subscriber = new AsyncSubscriber(eventBus, { bufferSize: 1, fcfs: true });
     const events = [1, 2, 3];
-    events.forEach((event) => eventBus.dispatch(event));
+    for (const event of events) {
+      await eventBus.dispatch(event);
+    }
 
     for await (const event of subscriber) {
       expect(event).toEqual(events[0]); // later events dropped

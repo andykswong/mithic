@@ -19,7 +19,7 @@
     "prebuild": "npm run lint",
     "build": "npm run tsc && npm run babel",
     "lint": "eslint src --ext .ts",
-    "babel": "babel src -d dist -x '.ts' --out-file-extension .js --root-mode upward",
+    "babel": "babel src -d dist -x '.ts' --root-mode upward",
     "tsc": "tsc --project tsconfig.build.json",
     "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
     "doc": "typedoc"

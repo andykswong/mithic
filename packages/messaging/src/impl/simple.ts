@@ -11,13 +11,7 @@ export class SimpleMessageBus<Message> implements MessageBus<Message> {
   ) {
   }
 
-  public dispatch = maybeAsync(function* (this: SimpleMessageBus<Message>, message: Message, options?: MessageOptions) {
-    const topic = options?.topic ?? this.defaultTopic;
-    const handlers = this.handlers.get(topic) || [];
-    for (const handler of handlers) {
-      yield handler(message, { topic });
-    }
-  }, this);
+  public dispatch = maybeAsync(this.coDispatch, this);
 
   public subscribe(handler: MessageHandler<Message>, options?: SubscribeOptions<Message>): Unsubscribe {
     const topic = options?.topic ?? this.defaultTopic;
@@ -34,5 +28,13 @@ export class SimpleMessageBus<Message> implements MessageBus<Message> {
       const index = handlers?.indexOf(validatedHandler) ?? -1;
       index >= 0 && handlers?.splice(index, 1);
     };
+  }
+
+  private * coDispatch(this: SimpleMessageBus<Message>, message: Message, options?: MessageOptions) {
+    const topic = options?.topic ?? this.defaultTopic;
+    const handlers = this.handlers.get(topic) || [];
+    for (const handler of handlers) {
+      yield handler(message, { topic });
+    }
   }
 }

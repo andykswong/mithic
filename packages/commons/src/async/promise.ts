@@ -45,8 +45,38 @@ export type ReduceAsync = {
   ): MaybePromise<U>;
 };
 
-/** Reduces a {@link MaybePromise} of array using a maybe-async reducer function. */
-export const reduceAsync = maybeAsync(reduce) as ReduceAsync;
+function* emptyCoroutine() { }
+
+class MaybeAsyncCorountine<R, V> {
+  private coroutine: Generator<MaybePromise<V>, MaybePromise<R>, V> =
+    emptyCoroutine() as Generator<MaybePromise<V>, MaybePromise<R>, V>;
+
+  public constructor() {
+    this.run = this.run.bind(this);
+    this.resume = this.resume.bind(this);
+  }
+
+  public start(coroutine: Generator<MaybePromise<V>, MaybePromise<R>, V>): MaybePromise<R> {
+    this.coroutine = coroutine;
+    return this.run();
+  }
+
+  private run(resolved?: V): MaybePromise<R> {
+    let result;
+    while (!(result = resolved === void 0 ? this.coroutine.next() : this.coroutine.next(resolved)).done) {
+      const value = result.value;
+      if (isThenable(value)) { return value.then(this.run, this.resume); }
+      resolved = value;
+    }
+    return result.value;
+  }
+
+  private resume(e: unknown): MaybePromise<R> {
+    const { done, value } = this.coroutine.throw(e);
+    if (done) { return value; }
+    return isThenable(value) ? value.then(this.run, this.resume) : this.run(value);
+  }
+}
 
 /**
  * Wraps a {@link MaybePromise}-yielding coroutine (generator function) into a function that returns {@link MaybePromise}.
@@ -65,35 +95,13 @@ export const reduceAsync = maybeAsync(reduce) as ReduceAsync;
  */
 export function maybeAsync<R = unknown, Args extends unknown[] = unknown[]>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  coroutine: (...args: Args) => Generator<unknown, MaybePromise<R>, any>,
+  coroutineFn: (...args: Args) => Generator<unknown, MaybePromise<R>, any>,
   thisArg?: unknown,
 ): (...args: Args) => MaybePromise<R> {
-  return (...args) => {
-    return new MaybeAsyncCorountine(coroutine.call(thisArg, ...args)).run();
-  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const coroutine = new MaybeAsyncCorountine<R, any>();
+  return (...args) => coroutine.start(coroutineFn.call(thisArg, ...args));
 }
 
-class MaybeAsyncCorountine<V, R> {
-  public constructor(
-    private readonly iter: Generator<MaybePromise<V>, MaybePromise<R>, V>,
-  ) {
-    this.run = this.run.bind(this);
-    this.resume = this.resume.bind(this);
-  }
-
-  public run(resolved?: V): MaybePromise<R> {
-    let result;
-    while (!(result = resolved === void 0 ? this.iter.next() : this.iter.next(resolved)).done) {
-      const value = result.value;
-      if (isThenable(value)) { return value.then(this.run, this.resume); }
-      resolved = value;
-    }
-    return result.value;
-  }
-
-  public resume(e: unknown): MaybePromise<R> {
-    const { done, value } = this.iter.throw(e);
-    if (done) { return value; }
-    return isThenable(value) ? value.then(this.run, this.resume) : this.run(value);
-  }
-}
+/** Reduces a {@link MaybePromise} of array using a maybe-async reducer function. */
+export const reduceAsync = maybeAsync(reduce) as ReduceAsync;

@@ -1,14 +1,13 @@
 {
-  "name": "@mithic/commons",
+  "name": "@mithic/jsonr",
   "version": "0.3.0",
-  "description": "Common utility components for mithic",
+  "description": "JSON intermediate representation for sandboxed scripting",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js",
-    "./maybeAsync": "./dist/async/maybe-async.js"
+    ".": "./dist/index.js"
   },
   "files": [
     "/dist"
@@ -19,10 +18,11 @@
     "prebuild": "npm run lint",
     "build": "npm run tsc && npm run babel",
     "lint": "eslint src --ext .ts",
-    "babel": "babel src -d dist -x '.ts' --root-mode upward",
+    "babel": "babel src -d dist -x '.ts,.tsx' --root-mode upward",
     "tsc": "tsc --project tsconfig.build.json",
     "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
     "test:update": "npm run test -- -u",
+    "prestart": "npm run build",
     "doc": "typedoc"
   },
   "repository": {
@@ -40,8 +40,8 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
+    "@mithic/commons": "^0.3"
   },
   "devDependencies": {
-    "web-locks": "^0.0.8"
   }
 }

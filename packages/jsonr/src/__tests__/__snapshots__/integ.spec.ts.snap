@@ -1,0 +1,37 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`Integration tests async should catch rejected promise from readline 1`] = `
+[
+  [
+    "you said:",
+    "<nope, too slow>",
+  ],
+]
+`;
+
+exports[`Integration tests async should print the correct results 1`] = `
+[
+  [
+    "you said:",
+    "testing",
+  ],
+]
+`;
+
+exports[`Integration tests macro should print the correct results 1`] = `
+[
+  [
+    2,
+  ],
+  [
+    3,
+  ],
+  [
+    [
+      "+",
+      1,
+      2,
+    ],
+  ],
+]
+`;

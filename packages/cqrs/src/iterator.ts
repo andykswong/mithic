@@ -70,7 +70,7 @@ export class AsyncSubscriber<Message> implements AsyncIterableIterator<Message>,
     return this.close();
   }
 
-  private async push(value: Message) {
+  private push(value: Message) {
     const resolve = this.pullQueue.shift();
     if (resolve) {
       resolve(this.running ? { value, done: false } : { value: void 0, done: true });

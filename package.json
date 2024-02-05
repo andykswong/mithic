@@ -50,6 +50,7 @@
     "@mithic/commons": "^0.3",
     "@mithic/cqrs": "^0.3",
     "@mithic/crdt": "^0.3",
+    "@mithic/jsonr": "^0.3",
     "@mithic/messaging": "^0.3"
   },
   "devDependencies": {
@@ -75,6 +76,7 @@
   "workspaces": [
     "./packages/commons",
     "./packages/collections",
+    "./packages/jsonr",
     "./packages/messaging",
     "./packages/cqrs",
     "./packages/crdt",

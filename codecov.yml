@@ -14,6 +14,9 @@ component_management:
     - component_id: "@mithic/crdt"
       paths:
         - "packages/crdt"
+    - component_id: "@mithic/jsonr"
+      paths:
+        - "packages/jsonr"
     - component_id: "@mithic/messaging"
       paths:
         - "packages/messaging"
