@@ -1,0 +1,34 @@
+import { type MaybeDisposable, type SharedChannelBuffers } from '@mithic/commons';
+
+/** Provider of I/O stream operations. */
+export interface IoProvider extends MaybeDisposable {
+  /** The shared channel buffers of the provider. */
+  readonly channel: SharedChannelBuffers;
+
+  /** Returns the state of given stream. */
+  state(fd: number): number;
+
+  /** Performs a non-blocking read. */
+  read(fd: number, len: number): Uint8Array | undefined;
+
+  /** Returns the number of readable bytes in the buffer, or -1 if stream is closed. */
+  checkRead(fd: number): number;
+
+  /** Performs a non-blocking write. */
+  write(fd: number, data: Uint8Array): void;
+
+  /** Checks the maximum number of bytes to write. */
+  checkWrite(fd: number): number;
+
+  /**
+   * Blocking waits until at least 1 incoming I/O message is processed or timeout,
+   * and returns the number of messages being processed.
+   */
+  blockingProcess(timeoutMs?: number): number;
+
+  /** Processes received I/O messages and returns the number of messages being processed. */
+  process(): number;
+
+  /** Blocks until send queue is flushed or timeout, and returns if the operation is successful. */
+  flush(timeoutMs?: number): boolean;
+}

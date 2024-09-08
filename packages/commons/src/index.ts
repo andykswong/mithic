@@ -1,9 +1,9 @@
 export * from './async/index.ts';
-export * from './error/index.ts';
-export * from './lifecycle/index.ts';
-
+export * from './channel/index.ts';
+export * from './queue/index.ts';
+export * from './abi.ts';
 export * from './buffer.ts';
 export * from './codec.ts';
 export * from './equal.ts';
-export * from './event.ts';
-export * from './hash.ts';
+export * from './error.ts';
+export * from './lifecycle.ts';

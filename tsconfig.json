@@ -1,12 +1,13 @@
 {
   "compilerOptions": {
     "module": "nodenext",
-    "target": "es2022",
+    "target": "es2023",
     "moduleResolution": "nodenext",
     "esModuleInterop": true,
     "isolatedModules": true,
     "resolveJsonModule": true,
     "strict": true,
+    "allowJs": true,
     "allowImportingTsExtensions": true,
     "allowSyntheticDefaultImports": true,
     "emitDeclarationOnly": true,
@@ -17,6 +18,6 @@
     "declarationMap": true,
     "inlineSourceMap": true,
     "inlineSources": true,
-    "jsx": "react-jsx"
+    "verbatimModuleSyntax": true
   }
 }

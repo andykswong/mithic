@@ -1,0 +1,14 @@
+package mithic:messaging@0.2.0;
+
+/// Provides pubsub and request-reply messaging APIs.
+world imports {
+	import producer;
+	import consumer;
+	import request-reply;
+	import peer;
+}
+
+world messaging {
+	include imports;
+	export incoming-handler;
+}

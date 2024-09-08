@@ -1,0 +1,44 @@
+{
+  "name": "@mithic/example-rust-cli",
+  "version": "0.3.0",
+  "private": "true",
+  "description": "mithic example CLI component in Rust",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./component": "./dist/index.js"
+  },
+  "config": {
+    "crate": "mithic_example_cli",
+    "target": "wasm32-unknown-unknown"
+  },
+  "scripts": {
+    "preinstall": "rustup target add $npm_package_config_target",
+    "prebuild": "eslint && mkdir -p dist",
+    "build": "cargo build -p $npm_package_config_crate -r --target $npm_package_config_target",
+    "postbuild": "npm run componentize && npm run transpile",
+    "componentize": "../../../bin/wasm-tools component new -o ./dist/component.wasm ../../../target/${npm_package_config_target}/release/${npm_package_config_crate}.wasm",
+    "transpile": "node transpile.js",
+    "clean": "rm -rf dist",
+    "start": "node .",
+    "test": "echo 'test' | npm start"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andykswong/mithic.git"
+  },
+  "author": "Andy K.S. Wong <andykswong@outlook.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/andykswong/mithic/issues"
+  },
+  "homepage": "https://github.com/andykswong/mithic",
+  "dependencies": {
+    "@mithic/core": "^0.3"
+  },
+  "devDependencies": {
+    "@bytecodealliance/jco": "^1.6"
+  }
+}

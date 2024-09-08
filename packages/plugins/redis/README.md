@@ -8,7 +8,7 @@
 
 <br/>
 
-> Redis adapters for mithic
+> Redis keyvalue store and messaging adapters for mithic
 
 <br/>
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
-import { delay } from '@mithic/commons';
+import { delay, dispose } from '@mithic/commons';
 import { DualBroadcastChannel } from '../dual-broadcast.ts';
 
 describe('DualBroadcastChannel', () => {
@@ -10,7 +10,7 @@ describe('DualBroadcastChannel', () => {
   });
 
   afterEach(() => {
-    channel.close();
+    dispose(channel);
   });
 
   it('should receive messages sent by itself', async () => {

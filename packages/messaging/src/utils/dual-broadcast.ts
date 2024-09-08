@@ -2,7 +2,7 @@
  * An extended BroadcastChannel that uses a second BroadcastChannel to post messages,
  * such that this instance can receive messages sent by itself.
  */
-export class DualBroadcastChannel extends BroadcastChannel {
+export class DualBroadcastChannel extends BroadcastChannel implements Disposable {
   private readonly publisher: BroadcastChannel;
 
   public constructor(
@@ -20,5 +20,9 @@ export class DualBroadcastChannel extends BroadcastChannel {
   public override close(): void {
     super.close();
     this.publisher.close();
+  }
+
+  public [Symbol.dispose](): void {
+    this.close();
   }
 }

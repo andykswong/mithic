@@ -1,178 +1,62 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
-import { CountingSemaphore, SharedCountingSemaphore } from '../semaphore.ts';
+import { AtomicSemaphore } from '../semaphore.ts';
 
-describe(CountingSemaphore.name, () => {
-  let semaphore: CountingSemaphore;
-
-  beforeEach(() => {
-    semaphore = new CountingSemaphore(2);
-  });
-
-  describe('acquire', () => {
-    it('should block until permits are available', async () => {
-      await semaphore.acquire();
-      await semaphore.acquire();
-
-      expect(semaphore.availablePermits).toBe(0);
-
-      const p = semaphore.acquire();
-      semaphore.release();
-      semaphore.release();
-      await p;
-
-      expect(semaphore.availablePermits).toBe(1);
-    });
-
-    it('should throw an error if aborted', async () => {
-      await semaphore.acquire();
-      await semaphore.acquire();
-
-      const abortController = new AbortController();
-      const promise = semaphore.acquire({ signal: abortController.signal });
-      abortController.abort();
-      semaphore.release();
-      await expect(promise).rejects.toThrow();
-    });
-  });
-
-  describe('tryAcquire', () => {
-    it('should return true when permits are available', () => {
-      expect(semaphore.tryAcquire()).toBe(true);
-    });
-
-    it('should return true when there is 1 permit left', async () => {
-      await semaphore.acquire();
-      expect(semaphore.tryAcquire()).toBe(true);
-    });
-
-    it('should return false when no permit available', async () => {
-      await semaphore.acquire();
-      await semaphore.acquire();
-      expect(semaphore.tryAcquire()).toBe(false);
-    });
-  });
-
-  describe('release', () => {
-    it('should increase available permits', async () => {
-      await semaphore.acquire();
-      await semaphore.acquire();
-      expect(semaphore.tryAcquire()).toBe(false);
-      semaphore.release();
-      expect(semaphore.tryAcquire()).toBe(true);
-    });
-
-    it('should not increase available permits beyond total', () => {
-      semaphore.release();
-      expect(semaphore.tryAcquire()).toBe(true);
-      expect(semaphore.tryAcquire()).toBe(true);
-      expect(semaphore.tryAcquire()).toBe(false);
-    });
-  });
-});
-
-describe(SharedCountingSemaphore.name, () => {
-  let semaphore: SharedCountingSemaphore;
-  let semaphore2: SharedCountingSemaphore;
+describe(AtomicSemaphore.name, () => {
+  let semaphore: AtomicSemaphore;
+  let semaphore2: AtomicSemaphore;
 
   beforeEach(() => {
-    semaphore = new SharedCountingSemaphore({ permits: 2 });
-    semaphore2 = new SharedCountingSemaphore(semaphore);
+    semaphore = new AtomicSemaphore();
+    semaphore2 = new AtomicSemaphore(semaphore);
   });
 
-  describe('acquire', () => {
-    it('should block until permits are available', async () => {
-      await semaphore.acquire();
-      await semaphore.acquire();
-
-      expect(semaphore.availablePermits).toBe(0);
-
-      const p = semaphore2.acquire();
-      semaphore.release();
-      semaphore.release();
-      await p;
-
-      expect(semaphore.availablePermits).toBe(1);
+  describe('waitAsync', () => {
+    it('should wait until semaphore is available', async () => {
+      const p = semaphore2.waitAsync();
+      expect(p).toBeInstanceOf(Promise);
+      semaphore.notify(2);
+      expect(await p).toBe(true);
+      expect(semaphore.state).toBe(1);
     });
 
-    it('should acquire on the correct buffer index', async () => {
-      const semaphore = new SharedCountingSemaphore({
-        permits: 2,
-        buffer: new Int32Array(new SharedArrayBuffer(8)),
-        index: 1,
-      });
-      semaphore.buffer[1] = 2;
-      await semaphore.acquire();
-      expect(semaphore.buffer[1]).toBe(1);
-    });
-
-    it('should throw an error if aborted', async () => {
-      await semaphore.acquire();
-      await semaphore.acquire();
-
-      const abortController = new AbortController();
-      const promise = semaphore2.acquire({ signal: abortController.signal });
-      abortController.abort();
-      await expect(promise).rejects.toThrow();
+    it('should return immediately if available', () => {
+      semaphore.notify(3);
+      expect(semaphore2.waitAsync(2)).toBe(true);
+      expect(semaphore.state).toBe(1);
     });
   });
 
-  describe('tryAcquire', () => {
-    it('should return true when permits are available', () => {
-      expect(semaphore.tryAcquire()).toBe(true);
+  describe('wait', () => {
+    it('should return true immediately when available to be consumed', () => {
+      semaphore.notify(3);
+      expect(semaphore2.wait()).toBe(true);
+      expect(semaphore.state).toBe(2);
     });
 
-    it('should return true when there is 1 permit left', async () => {
-      await semaphore.acquire();
-      expect(semaphore2.tryAcquire()).toBe(true);
+    it('should consume given count', () => {
+      semaphore.notify(3);
+      expect(semaphore2.wait(2)).toBe(true);
+      expect(semaphore.state).toBe(1);
     });
 
-    it('should return false when no permit available', async () => {
-      await semaphore.acquire();
-      await semaphore.acquire();
-      expect(semaphore2.tryAcquire()).toBe(false);
-    });
-
-    it('should try acquire on the correct buffer index', () => {
-      const semaphore = new SharedCountingSemaphore({
-        permits: 2,
-        buffer: new Int32Array(new SharedArrayBuffer(8)),
-        index: 1,
-      });
-      semaphore.buffer[1] = 2;
-      expect(semaphore.tryAcquire()).toBe(true);
-      expect(semaphore.buffer[1]).toBe(1);
+    it('should return false immediately when no permit available and timeout = 0', () => {
+      expect(semaphore.wait(1, 0)).toBe(false);
     });
   });
 
-  describe('release', () => {
-    it('should increase available permits', async () => {
-      await semaphore.acquire();
-      await semaphore.acquire();
-      expect(semaphore2.tryAcquire()).toBe(false);
-      semaphore.release();
-      expect(semaphore2.tryAcquire()).toBe(true);
+  describe('notify', () => {
+    it('should increase the semaphore by 1 by default', () => {
+      expect(semaphore2.wait(1, 0)).toBe(false);
+      semaphore.notify();
+      expect(semaphore.state).toBe(1);
+      expect(semaphore2.wait(1, 0)).toBe(true);
     });
 
-    it('should not increase available permits beyond total', () => {
-      semaphore.release();
-      expect(semaphore.tryAcquire()).toBe(true);
-      expect(semaphore.tryAcquire()).toBe(true);
-      expect(semaphore.tryAcquire()).toBe(false);
-    });
-
-    it('should release on the correct buffer index', async () => {
-      const semaphore = new SharedCountingSemaphore({
-        permits: 2,
-        buffer: new Int32Array(new SharedArrayBuffer(8)),
-        index: 1,
-      });
-      semaphore.buffer[1] = 2;
-
-      await semaphore.acquire();
-      await semaphore.acquire();
-      expect(semaphore.tryAcquire()).toBe(false);
-      semaphore.release();
-      expect(semaphore.tryAcquire()).toBe(true);
+    it('should increase the semaphore by given count and notifies waiting agent', async () => {
+      const waiter = semaphore2.waitAsync(2);
+      semaphore.notify(2);
+      expect(semaphore.state).toBe(2);
+      expect(await waiter).toBe(true);
     });
   });
 });

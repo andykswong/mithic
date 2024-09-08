@@ -17,7 +17,7 @@
     "clean": "rimraf coverage docs dist",
     "prebuild": "npm run lint",
     "build": "npm run tsc && npm run babel",
-    "lint": "eslint src --ext .ts,.tsx",
+    "lint": "eslint",
     "babel": "babel src -d dist -x '.ts' --root-mode upward",
     "tsc": "tsc --project tsconfig.build.json",
     "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
@@ -39,10 +39,11 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/collections": "^0.3",
+    "cbor-x": "^1.6",
     "@mithic/commons": "^0.3",
+    "@mithic/keyvalue": "^0.3",
     "@mithic/messaging": "^0.3",
-    "@redis/client": "^1.5"
+    "@redis/client": "^1.6"
   },
   "devDependencies": {
   }

@@ -1,0 +1,29 @@
+/// A keyvalue interface that provides extended query operations.
+interface query {
+    use store.{bucket, error, key-response};
+
+    /// A key range selector for `list-keys` operation.
+    record key-selector {
+        /// The start of key range inclusive
+        start: option<string>,
+        /// The end of key range exclusive
+        end: option<string>,
+        /// The sort order of the keys
+        order: option<key-order>
+    }
+
+    /// The sort order of the keys for `list-keys` operation.
+    variant key-order {
+        /// Ascending order
+        asc,
+        /// Descending order
+        desc
+    }
+
+    /// An extended `list-keys` operation that, given a key range, returns matching keys in the store
+    /// that may be sorted in lexicographical order, with an optional cursor for pagination.
+    /// MAY show an out-of-date list of keys if there are concurrent writes to the store.
+    list-keys: func(
+        bucket: borrow<bucket>, selector: option<key-selector>, cursor: option<string>
+    ) -> result<key-response, error>;
+}

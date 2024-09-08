@@ -1,37 +1,33 @@
-import assert from 'assert';
-import { ReduxStore } from '@mithic/cqrs';
+import { isMainThread, workerData, Worker } from 'node:worker_threads';
+import { readFile } from 'node:fs/promises';
+import { imports, Io, IoReactor, RemoteIoProvider } from '@mithic/core';
 
-// Create a Redux-like store for a counter
-const store = new ReduxStore(
-  // Define a reducer that handles increment and decrement events
-  (state, event) => {
-    switch (event?.type) {
-      case 'INCREASED':
-        return { ...state, counter: state.counter + (event.payload ?? 1) };
-      case 'DECREASED':
-        return { ...state, counter: state.counter - (event.payload ?? 1) };
-    }
-    return state;
-  },
-  // Initialize count to 0
-  { counter: 0 },
-);
+let worker;
 
-// Start the store
-await store.start();
+if (isMainThread) {
+  // create an I/O reactor on main thread to process 
+  const reactor = new IoReactor();
+  // run component on a worker, passing the reactor channel as worker data
+  worker = new Worker(new URL(import.meta.url), {
+    workerData: reactor.addChannel(),
+  });
+} else {
+  await workerThread();
+}
 
-// Run some commands and queries
+async function workerThread(entry = process.argv[2] ?? './dist/component.js') {
+  // init I/O provider that connects to the reactor on main thread
+  Io.provider = new RemoteIoProvider(workerData);
 
-console.log('Initial state:', store.getState());
-assert.deepStrictEqual(store.getState(), { counter: 0 });
+  // load the WASM component and run it
+  const entryPoint = new URL(entry, import.meta.url).toString();
+  const { instantiate } = await import(entryPoint);
+  const { run } = await instantiate(
+    async (path) => WebAssembly.compile(await readFile(new URL(path, entryPoint))),
+    imports
+  );
 
-await store.dispatch({ type: 'INCREASED', payload: 3 });
-console.log('State after increment(3):', store.getState());
-assert.deepStrictEqual(store.getState(), { counter: 3 });
+  run.run();
+}
 
-await store.dispatch({ type: 'DECREASED', payload: 1 });
-console.log('State after increment(1):', store.getState());
-assert.deepStrictEqual(store.getState(), { counter: 2 });
-
-// Finally close the store
-await store.close();
+export { worker };

@@ -8,7 +8,7 @@
 
 <br/>
 
-> Common utility components for mithic
+> @mithic/commons provides common, reusable utilities for mithic. The goal of this is to facilitate mithic module implementation while keeping mithic's dependencies on external libraries minimal.
 
 <br/>
 

@@ -1,84 +1,116 @@
-import { describe, expect, it } from '@jest/globals';
-import { CID } from 'multiformats';
-import { sha256 } from 'multiformats/hashes/sha2';
-import { compareContentIds, compareBuffers, concatBuffers } from '../buffer.ts';
+import { Worker } from 'node:worker_threads';
+import { beforeEach, describe, expect, it } from '@jest/globals';
+import { AtomicRingBuffer } from '../buffer.ts';
 
-describe('compareBuffers', () => {
-  it('should return 0 when two buffers have same data and length', () => {
-    const buffer1 = new Uint8Array([1, 2, 3]);
-    const buffer2 = new Uint8Array([1, 2, 3]);
-    expect(compareBuffers(buffer1, buffer2)).toBe(0);
+describe(AtomicRingBuffer.name, () => {
+  let buffer: AtomicRingBuffer;
+  let state: Int32Array;
+  let data: Uint8Array;
+
+  beforeEach(() => {
+    const sab = new SharedArrayBuffer(22);
+    state = new Int32Array(sab, 0, 4);
+    data = new Uint8Array(sab, 16);
+    buffer = new AtomicRingBuffer(sab);
   });
 
-  it('should return -1 when both buffers have same length but first is lexicographically smaller', () => {
-    const buffer1 = Uint8Array.from([1, 2, 3]);
-    const buffer2 = Uint8Array.from([1, 2, 4]);
-    expect(compareBuffers(buffer1, buffer2)).toBe(-1);
+  describe('byteLength', () => {
+    it('should return 0 initially', () => {
+      expect(buffer.byteLength).toBe(0);
+      expect(buffer.length).toBe(0);
+    });
+
+    it('should return the size of the data', () => {
+      buffer.push(new Uint8Array(3));
+      expect(buffer.byteLength).toBe(3);
+      expect(buffer.length).toBe(3);
+    });
   });
 
-  it('should return -1 for a smaller buffer compared to a larger buffer', () => {
-    const buffer1 = Uint8Array.from([1, 2, 3]);
-    const buffer2 = Uint8Array.from([1, 2, 3, 4]);
-    expect(compareBuffers(buffer1, buffer2)).toBe(-1);
+  describe('maxByteLength', () => {
+    it('should return the size of underlying buffer', () => {
+      expect(buffer.maxByteLength).toBe(data.byteLength);
+    });
   });
 
-  it('should return -1 for a larger buffer that is lexicographically smaller compared to a smaller buffer', () => {
-    const buffer1 = new Uint8Array([1, 2, 3]);
-    const buffer2 = new Uint8Array([1, 3]);
-    expect(compareBuffers(buffer1, buffer2)).toBe(-1);
+  describe('push', () => {
+    it('should push data to the buffer', () => {
+      const input = new Uint8Array([1, 2, 3]);
+      expect(buffer.push(input)).toBe(input.byteLength);
+      expect(buffer.byteLength).toBe(3);
+      expect(Array.from(data)).toEqual([...input, 0, 0, 0]);
+      expect([...buffer]).toEqual([...input]);
+    });
+
+    it('should push data to the buffer with wrapping', () => {
+      buffer.push(new Uint8Array([0, 0, 0, 1, 2]));
+      buffer.shift(new Uint8Array(3));
+
+      const input = new Uint8Array([3, 4, 5]);
+      expect(buffer.push(input)).toBe(input.byteLength);
+      expect(buffer.byteLength).toBe(5);
+      expect(Array.from(data)).toEqual([4, 5, 0, 1, 2, 3]);
+      expect([...buffer]).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('should return 0 if buffer is full', () => {
+      const input = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+      expect(buffer.push(input)).toEqual(0);
+      expect(buffer.byteLength).toBe(0);
+    });
   });
 
-  it('should return 1 for a larger buffer compared to a smaller buffer', () => {
-    const buffer1 = Uint8Array.from([1, 2, 3, 4]);
-    const buffer2 = Uint8Array.from([1, 2, 3]);
-    expect(compareBuffers(buffer1, buffer2)).toBe(1);
+  describe('shift', () => {
+    it('should pop all data from the buffer by default', () => {
+      buffer.push(new Uint8Array([0, 1, 2, 3]));
+      buffer.shift(new Uint8Array(1));
+
+      expect(buffer.shift()).toEqual(new Uint8Array([1, 2, 3]));
+      expect(buffer.byteLength).toBe(0);
+    });
+
+    it('should pop given data length from the buffer with wrapping', () => {
+      const content = new Uint8Array([1, 2, 3, 4, 5]);
+      buffer.push(new Uint8Array(4));
+      buffer.shift();
+      buffer.push(content);
+
+      expect(buffer.shift(new Uint8Array(3))).toEqual(content.subarray(0, 3));
+      expect(buffer.byteLength).toBe(2);
+      expect([...buffer]).toEqual([4, 5]);
+    });
+
+    it('should return undefined for empty pops', () => {
+      expect(buffer.shift(new Uint8Array(1))).toBeUndefined();
+      expect(buffer.shift(new Uint8Array(0))).toBeUndefined();
+    })
   });
 
-  it('should return 1 for a smaller buffer that is lexicographically larger compared to a larger buffer', () => {
-    const buffer1 = new Uint8Array([1, 3, 7]);
-    const buffer2 = new Uint8Array([1, 2, 3, 4]);
-    expect(compareBuffers(buffer1, buffer2)).toBe(1);
+  describe('waitAsync', () => {
+    it('should wait for length to change', async () => {
+      const promise = buffer.waitAsync(3000);
+      setTimeout(() => buffer.push(new Uint8Array([1])), 200);
+      expect(buffer.byteLength).toBe(0);
+      expect(await promise).toBe(true);
+      expect(buffer.byteLength).toBe(1);
+    });
   });
 
-  it('should return 1 when both buffers have same length but first is lexicographically larger', () => {
-    const buffer1 = Uint8Array.from([1, 3, 7]);
-    const buffer2 = Uint8Array.from([1, 2, 4]);
-    expect(compareBuffers(buffer1, buffer2)).toBe(1);
-  });
-});
-
-describe('concatBuffers', () => {
-  it('should concatenate two Uint8Arrays', () => {
-    const arr1 = Uint8Array.from([1, 2, 3]);
-    const arr2 = Uint8Array.from([4, 5, 6]);
-    const result = concatBuffers(arr1, arr2);
-    expect(result).toEqual(Uint8Array.from([1, 2, 3, 4, 5, 6]));
-  });
-
-  it('should concatenate three Uint8Arrays', () => {
-    const arr1 = Uint8Array.from([1, 2]);
-    const arr2 = Uint8Array.from([3, 4, 5]);
-    const arr3 = Uint8Array.from([6]);
-    const result = concatBuffers(arr1, arr2, arr3);
-    expect(result).toEqual(Uint8Array.from([1, 2, 3, 4, 5, 6]));
-  });
-
-  it('should concatenate zero Uint8Arrays', () => {
-    const result = concatBuffers();
-    expect(result).toEqual(Uint8Array.from([]));
-  });
-});
-
-describe('compareContentIds', () => {
-  it('should return 0 when two CIDs are the same', async () => {
-    const cid1 = CID.createV1(0, await sha256.digest(new Uint8Array([1, 2, 3])));
-    const cid2 = CID.createV1(0, await sha256.digest(new Uint8Array([1, 2, 3])));
-    expect(compareContentIds(cid1, cid2)).toBe(0);
-  });
-
-  it('should return -1 when first CID is less than second', async () => {
-    const cid1 = CID.createV1(0, await sha256.digest(new Uint8Array([1, 2, 3])));
-    const cid2 = CID.createV1(0, await sha256.digest(new Uint8Array([1, 2, 4])));
-    expect(compareContentIds(cid1, cid2)).toBe(-1);
+  describe('wait', () => {
+    it('should wait for length to change', () => {
+      new Worker(`
+        const { workerData } = require('node:worker_threads');
+        setTimeout(() => {
+          Atomics.store(workerData.length, 0, 1);
+          Atomics.notify(workerData.length, 0);
+        }, 200);
+      `, {
+        eval: true,
+        workerData: { length: state }
+      });
+      expect(buffer.byteLength).toBe(0);
+      expect(buffer.wait(3000)).toBe(true);
+      expect(buffer.byteLength).toBe(1);
+    });
   });
 });

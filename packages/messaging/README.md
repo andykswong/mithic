@@ -8,7 +8,7 @@
 
 <br/>
 
-> Messaging interface for mithic
+> messaging API for mithic
 
 <br/>
 

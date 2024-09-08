@@ -1,16 +1,22 @@
 {
-  "name": "example-simple",
+  "name": "@mithic/example-simple",
   "version": "0.3.0",
   "private": "true",
-  "description": "simple mithic redux store example",
+  "description": "mithic simple component example",
   "type": "module",
   "sideEffects": false,
   "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./component": "./dist/index.js"
+  },
   "scripts": {
-    "build": "eslint .",
-    "clean": ":",
+    "prebuild": "eslint src",
+    "build": "node ./componentize.js",
+    "postbuild": "node ./transpile.js",
+    "clean": "echo 'ok'",
     "start": "node .",
-    "test": "NODE_OPTIONS=--experimental-vm-modules jest"
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest --detectOpenHandles"
   },
   "repository": {
     "type": "git",
@@ -23,8 +29,10 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/cqrs": "^0.3"
+    "@mithic/core": "^0.3"
   },
   "devDependencies": {
+    "@bytecodealliance/componentize-js": "^0.12",
+    "@bytecodealliance/jco": "^1.6"
   }
 }

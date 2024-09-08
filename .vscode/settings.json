@@ -7,7 +7,11 @@
     "jest.nodeEnv": {
         "NODE_OPTIONS": "--experimental-vm-modules"
     },
-    "jest.showCoverageOnLoad": true,
     "jest.coverageFormatter": "GutterFormatter",
-    "typescript.tsdk": "node_modules/typescript/lib"
+    "jest.runMode": "on-demand",
+	"typescript.tsdk": "node_modules/typescript/lib",
+	"rust-analyzer.cargo.target": "wasm32-unknown-unknown",
+	"rust-analyzer.cargo.features": [
+	],
+	"rust-analyzer.cargo.noDefaultFeatures": true,
 }

@@ -1,24 +1,52 @@
 import { describe, expect, it } from '@jest/globals';
-import { StringEquatable, equalsOrSameString } from '../equal.ts';
+import { arrayCompare } from '../equal.ts';
 
-class WithEqual implements StringEquatable<WithEqual> {
-  constructor(public value: string) {}
+describe('arrayCompare', () => {
+  it('should return 0 when two buffers have same data and length', () => {
+    const buffer1 = new Uint8Array([1, 2, 3]);
+    const buffer2 = new Uint8Array([1, 2, 3]);
+    expect(arrayCompare(buffer1, buffer2)).toBe(0);
+  });
 
-  equals(rhs: WithEqual) {
-    return this.value === rhs.value;
-  }
-}
+  it('should work for bigint array', () => {
+    const buffer1 = BigInt64Array.from([1n, 2n, 3n]);
+    const buffer2 = BigInt64Array.from([1n, 2n, 4n]);
+    expect(arrayCompare(buffer1, buffer2)).toBe(-1);
+  });
 
-const OBJ = { a: 1 };
+  it('should return -1 when both buffers have same length but first is lexicographically smaller', () => {
+    const buffer1 = Uint8Array.from([1, 2, 3]);
+    const buffer2 = Uint8Array.from([1, 2, 4]);
+    expect(arrayCompare(buffer1, buffer2)).toBe(-1);
+  });
 
-describe('equals', () => {
-  it.each([
-    [true, 'receiving same objects', OBJ, OBJ],
-    [true, 'receiving 2 equal strings', 'str', 'str'],
-    [false, 'receiving 2 different strings', 'str1', 'str2'],
-    [true, 'lhs.equals(rhs) is true', new WithEqual('abc'), new WithEqual('abc')],
-    [false, 'lhs.equals(rhs) is false', new WithEqual('abc'), new WithEqual('def')],
-  ])('should return %s when %s', (result, _, lhs: StringEquatable, rhs: StringEquatable) => {
-    expect(equalsOrSameString(lhs, rhs)).toBe(result);
+  it('should return -1 for a smaller buffer compared to a larger buffer', () => {
+    const buffer1 = Uint8Array.from([1, 2, 3]);
+    const buffer2 = Uint8Array.from([1, 2, 3, 4]);
+    expect(arrayCompare(buffer1, buffer2)).toBe(-1);
+  });
+
+  it('should return -1 for a larger buffer that is lexicographically smaller compared to a smaller buffer', () => {
+    const buffer1 = new Uint8Array([1, 2, 3]);
+    const buffer2 = new Uint8Array([1, 3]);
+    expect(arrayCompare(buffer1, buffer2)).toBe(-1);
+  });
+
+  it('should return 1 for a larger buffer compared to a smaller buffer', () => {
+    const buffer1 = Uint8Array.from([1, 2, 3, 4]);
+    const buffer2 = Uint8Array.from([1, 2, 3]);
+    expect(arrayCompare(buffer1, buffer2)).toBe(1);
+  });
+
+  it('should return 1 for a smaller buffer that is lexicographically larger compared to a larger buffer', () => {
+    const buffer1 = new Uint8Array([1, 3, 7]);
+    const buffer2 = new Uint8Array([1, 2, 3, 4]);
+    expect(arrayCompare(buffer1, buffer2)).toBe(1);
+  });
+
+  it('should return 1 when both buffers have same length but first is lexicographically larger', () => {
+    const buffer1 = Uint8Array.from([1, 3, 7]);
+    const buffer2 = Uint8Array.from([1, 2, 4]);
+    expect(arrayCompare(buffer1, buffer2)).toBe(1);
   });
 });

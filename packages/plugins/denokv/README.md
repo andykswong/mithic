@@ -8,7 +8,7 @@
 
 <br/>
 
-> Deno KV adapters for mithic
+> Deno KV keyvalue store and messaging adapters for mithic
 
 <br/>
 

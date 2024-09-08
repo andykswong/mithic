@@ -8,7 +8,7 @@
 
 <br/>
 
-> abstract-level adapters for mithic
+> abstract-level keyvalue store adapter for mithic
 
 <br/>
 

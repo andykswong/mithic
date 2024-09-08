@@ -1,185 +1,246 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { createEvent, delay } from '@mithic/commons';
-import { BroadcastChannelMessageBus, BroadcastChannelMessage, BroadcastChannelMessageType } from '../broadcast-channel.ts';
-import { PeerAwareMessageOptions, PeerChangeData, PeerEvent } from '../../peer-aware.ts';
-import { MessageValidationError } from '../../error.ts';
+import { delay, dispose } from '@mithic/commons';
+import { BroadcastChannelMessagingService } from '../broadcast-channel.ts';
+import { MessageMetadata, type Message, type PeerId } from '../../types.ts';
 
+const MESSAGE = 'message' as const;
+const KEEPALIVE = 'keepalive' as const;
 const CHANNEL = 'test-channel';
-const PEER_ID = 'mockPeerId';
-const OTHER_PEER_ID = 'mockOtherPeerId';
-const INACTIVE_PEER_ID = 'mockInactivePeerId';
+const PEER_ID = 'peer' as PeerId;
+const OTHER_PEER_ID = 'peer2' as PeerId;
+const INACTIVE_PEER_ID = 'peer3' as PeerId;
 const KEEPALIVE_MS = 50;
 const TOPIC = 'test-topic';
-const MESSAGE = 123;
+const TOPIC2 = 'topic2';
+const DATA = new Uint8Array([9, 8, 7, 6, 5]);
 
-describe(BroadcastChannelMessageBus.name, () => {
-  let bus: BroadcastChannelMessageBus<number>;
+describe(BroadcastChannelMessagingService.name, () => {
+  let service: BroadcastChannelMessagingService;
   let subscriber: BroadcastChannel;
   let now = 0;
 
   beforeEach(() => {
-    bus = new BroadcastChannelMessageBus({
+    now = 0;
+    service = new BroadcastChannelMessagingService({
       peerId: PEER_ID,
+      channel: CHANNEL,
       keepaliveMs: KEEPALIVE_MS,
       now: () => now,
-      channel: new BroadcastChannel(CHANNEL),
     });
     subscriber = new BroadcastChannel(CHANNEL);
   });
 
   afterEach(() => {
-    bus.close();
+    dispose(service);
     subscriber.close();
   });
 
   it('should emit keepalive messages', async () => {
-    const handler = jest.fn(() => undefined);
-    const receivedMessages: BroadcastChannelMessage<number, string>[] = [];
+    const receivedMessages: BroadcastChannelMessage[] = [];
 
     subscriber.addEventListener('message', (event) => {
       receivedMessages.push(event.data);
     });
 
-    bus.subscribe(handler, { topic: TOPIC });
+    service.subscribe([TOPIC]);
 
     await delay(100); // Wait for keepalive message to be delivered
 
     expect(receivedMessages).toContainEqual({
-      type: BroadcastChannelMessageType.Keepalive,
-      topic: TOPIC,
+      type: 'keepalive',
+      topics: [TOPIC],
       from: PEER_ID,
     });
   });
 
-  describe('close', () => {
-    it('should release resources', () => {
-      const handler = jest.fn(() => undefined);
-      bus.subscribe(handler, { topic: TOPIC });
-      bus['topicSubscribers'].set(TOPIC, new Map([
-        [OTHER_PEER_ID, [OTHER_PEER_ID, now]]
-      ]));
-
-      const channelCloseSpy = jest.spyOn(bus['channel'], 'close');
-      const [, peerMonRemoveListenerSpy] = spyOnPeerMonitor(bus);
-
-      bus.close();
-
-      expect(bus['keepAliveTimer']).toBe(0);
-      expect(Array.from(bus.topics())).toEqual([]);
-      expect(bus['topicHandlers'].size).toBe(0);
-      expect(bus['topicSubscribers'].size).toBe(0);
-
-      expect(channelCloseSpy).toHaveBeenCalledTimes(1);
-      expect(peerMonRemoveListenerSpy).toHaveBeenCalledWith(PeerEvent.Join, bus['onPeerJoin']);
-      expect(peerMonRemoveListenerSpy).toHaveBeenCalledWith(PeerEvent.Leave, bus['onPeerLeave']);
-    });
-  });
-
-  describe('subscribe', () => {
-    it('should subscribe to channel and return unsubscribe function', () => {
-      const handler = jest.fn(() => undefined);
-      const validator = jest.fn(() => undefined);
-
-      expect(bus.topics()).not.toContain(TOPIC);
-
-      const unsubscribe = bus.subscribe(handler, { topic: TOPIC, validator });
-      expect(bus.topics()).toContain(TOPIC);
-      expect(bus['keepAliveTimer']).not.toBe(0);
-      expect(bus['topicHandlers'].get(TOPIC)?.length).toBe(1);
-      bus['topicHandlers'].get(TOPIC)?.[0](MESSAGE, { topic: TOPIC, from: OTHER_PEER_ID });
-      expect(handler).toHaveBeenCalledWith(MESSAGE, { topic: TOPIC, from: OTHER_PEER_ID });
-      expect(validator).toHaveBeenCalledWith(MESSAGE, { topic: TOPIC, from: OTHER_PEER_ID });
-
-      unsubscribe();
-      expect(bus.topics()).not.toContain(TOPIC);
-      expect(bus['topicHandlers'].has(TOPIC)).toBe(false);
-    });
-  });
-
-  describe('dispatch', () => {
+  describe('send', () => {
     it('should dispatch to channel', async () => {
-      const handler = jest.fn(() => undefined);
-      const receivedMessages: BroadcastChannelMessage<number, string>[] = [];
+      const receivedMessages: BroadcastChannelMessage[] = [];
 
       subscriber.addEventListener('message', (event) => {
         receivedMessages.push(event.data);
       });
 
-      bus.subscribe(handler, { topic: TOPIC });
-      bus.dispatch(MESSAGE, { topic: TOPIC });
+      const message: Message = {
+        topic: TOPIC,
+        data: DATA,
+        metadata: [['key1', 'value1']]
+      };
+
+      service.subscribe([TOPIC]);
+      service.send(message);
 
       await delay(100); // Wait for the message to be delivered
 
       expect(receivedMessages).toContainEqual({
-        type: BroadcastChannelMessageType.Message,
-        topic: TOPIC,
+        type: MESSAGE,
         from: PEER_ID,
-        data: MESSAGE,
+        msg: message,
       });
     });
   });
 
-  describe('subscribers', () => {
-    it('should return topic subscribers', () => {
-      bus['topicSubscribers'].set(TOPIC, new Map([
-        [OTHER_PEER_ID, [OTHER_PEER_ID, now]]
-      ]));
+  describe('reply', () => {
+    it('should send reply message to channel', async () => {
+      const receivedMessages: BroadcastChannelMessage[] = [];
 
-      expect(Array.from(bus.subscribers({ topic: TOPIC }))).toEqual([OTHER_PEER_ID]);
-    });
-
-    it('should clean up inactive topic subscribers', () => {
-      const origTime = now;
-      now += KEEPALIVE_MS * 1000;
-      bus['topicSubscribers'].set(TOPIC, new Map([
-        [OTHER_PEER_ID, [OTHER_PEER_ID, now]],
-        [INACTIVE_PEER_ID, [INACTIVE_PEER_ID, origTime]]
-      ]));
-
-      expect(Array.from(bus.subscribers({ topic: TOPIC }))).toEqual([OTHER_PEER_ID]);
-      expect(bus['topicSubscribers'].get(TOPIC)?.has(INACTIVE_PEER_ID)).toBe(false);
-    });
-  });
-
-  describe('onMessage', () => {
-    it('should emit event for valid message', async () => {
-      const receivedMessages: [number, PeerAwareMessageOptions<string> | undefined][] = [];
-      const handler = jest.fn((msg: number, options?: PeerAwareMessageOptions<string>) => {
-        receivedMessages.push([msg, options]);
+      subscriber.addEventListener('message', (event) => {
+        receivedMessages.push(event.data);
       });
 
-      bus.subscribe(handler, { topic: TOPIC });
-      subscriber.postMessage({
-        type: BroadcastChannelMessageType.Message,
+      const cid = 'test_id123';
+      const message: Message = {
         topic: TOPIC,
+        data: DATA,
+        metadata: [[MessageMetadata.RequestId, cid], [MessageMetadata.ReplyTopic, TOPIC2], [MessageMetadata.From, OTHER_PEER_ID]]
+      };
+      const reply: Message = {
+        topic: TOPIC,
+        data: new Uint8Array([1, 2, 3, 5, 6]),
+        metadata: [[MessageMetadata.CorrelationId, cid], [MessageMetadata.From, PEER_ID]]
+      };
+
+      service.reply(message, reply);
+
+      await delay(100); // Wait for the message to be delivered
+
+      expect(receivedMessages).toContainEqual({
+        type: MESSAGE,
+        from: PEER_ID,
+        msg: { ...reply, topic: TOPIC2 },
+      });
+    });
+  });
+
+  describe('request', () => {
+    it('should send request and receive replies', async () => {
+      const receivedMessages: BroadcastChannelMessage[] = [];
+
+      subscriber.addEventListener('message', (event) => {
+        receivedMessages.push(event.data);
+      });
+
+      const cid = 'test_id123';
+      const message: Message = {
+        topic: TOPIC,
+        data: DATA,
+        metadata: [[MessageMetadata.RequestId, cid], [MessageMetadata.ReplyTopic, TOPIC2], [MessageMetadata.From, PEER_ID]]
+      };
+      const reply: Message = {
+        topic: TOPIC,
+        data: new Uint8Array([3, 5, 7]),
+        metadata: [[MessageMetadata.CorrelationId, cid], [MessageMetadata.From, PEER_ID]]
+      };
+
+      const promise = service.request(message, { timeoutMs: 200 });
+      await delay(100);
+      service.reply(message, reply);
+
+      await delay(100);
+      expect(await promise).toEqual([{ ...reply, topic: TOPIC2 }]);
+      expect(receivedMessages).toContainEqual({
+        type: MESSAGE,
+        from: PEER_ID,
+        msg: message,
+      });
+    });
+
+    it('should return empty list if no reply', async () => {
+      const cid = 'test_id123';
+      const message: Message = {
+        topic: TOPIC,
+        data: DATA,
+        metadata: [[MessageMetadata.CorrelationId, cid], [MessageMetadata.From, PEER_ID]]
+      };
+      expect(await service.request(message, { timeoutMs: 0 })).toEqual([]);
+    });
+  });
+
+  describe('subscribe', () => {
+    it('should start forwarding messages to handler', async () => {
+      const receivedMessages: Message[] = [];
+      const handler = jest.fn((msg: Message) => { receivedMessages.push(msg); });
+      const message: Message = {
+        topic: TOPIC,
+        data: DATA,
+        metadata: []
+      };
+
+      service.onmessage = handler;
+      service.subscribe([TOPIC]);
+
+      subscriber.postMessage({
+        type: MESSAGE,
         from: OTHER_PEER_ID,
-        data: MESSAGE,
+        msg: message,
       });
 
       await delay(100); // Wait for the message to be delivered
 
-      expect(receivedMessages).toContainEqual([MESSAGE, {
-        topic: TOPIC,
-        from: OTHER_PEER_ID,
-      }]);
+      expect(receivedMessages).toContainEqual({
+        ...message,
+        metadata: [[MessageMetadata.From, OTHER_PEER_ID]],
+      });
+    });
 
-      expect(bus['topicSubscribers'].get(TOPIC)?.get(OTHER_PEER_ID)).toEqual([OTHER_PEER_ID, now]);
+    it('should stop forwarding messages from unsubscribed topics', async () => {
+      const receivedMessages: Message[] = [];
+      const handler = jest.fn((msg: Message) => { receivedMessages.push(msg); });
+      const message: Message = {
+        topic: TOPIC,
+        data: DATA,
+        metadata: []
+      };
+
+      service.onmessage = handler;
+      service.subscribe([TOPIC, TOPIC2]);
+      service.subscribe([TOPIC2]);
+
+      subscriber.postMessage({
+        type: MESSAGE,
+        from: OTHER_PEER_ID,
+        msg: message,
+      });
+
+      await delay(100); // Wait for the message to be delivered
+
+      expect(receivedMessages).toEqual([]);
+    });
+
+    it('should ignore messages from unsubscribed topics', async () => {
+      const receivedMessages: Message[] = [];
+      const handler = jest.fn((msg: Message) => { receivedMessages.push(msg); });
+
+      service.onmessage = handler;
+      service.subscribe([TOPIC]);
+      subscriber.postMessage({
+        type: MESSAGE,
+        from: OTHER_PEER_ID,
+        data: {
+          topic: 'topic2',
+          data: DATA,
+          metadata: []
+        },
+      });
+
+      await delay(100); // Wait for the message to be delivered
+
+      expect(receivedMessages).toEqual([]);
     });
 
     it('should update peer lastSeen on keepalive message', async () => {
-      const handler = jest.fn(() => undefined);
-      bus.subscribe(handler, { topic: TOPIC });
+      service.subscribe([TOPIC]);
 
       for (let i = 0; i < 2; ++i, now += 1000) {
         subscriber.postMessage({
-          type: BroadcastChannelMessageType.Keepalive,
-          topic: TOPIC,
+          type: KEEPALIVE,
+          topics: [TOPIC],
           from: OTHER_PEER_ID,
         });
 
         await delay(100); // Wait for the message to be delivered
 
-        expect(bus['topicSubscribers'].get(TOPIC)?.get(OTHER_PEER_ID)).toEqual([OTHER_PEER_ID, now]);
+        expect(service['topicSubscribers'].get(TOPIC)?.get(`${OTHER_PEER_ID}`)).toEqual([OTHER_PEER_ID, now]);
       }
     });
 
@@ -189,70 +250,50 @@ describe(BroadcastChannelMessageBus.name, () => {
         receivedMessages.push(event);
       });
 
-      bus.subscribe(handler, { topic: TOPIC });
+      service.onmessage = handler;
+      service.subscribe([TOPIC]);
       subscriber.postMessage('rubbish');
 
       await delay(100); // Wait for the message to be delivered
 
       expect(receivedMessages.length).toBe(0);
     });
+  });
 
-    it('should drop invalid message', async () => {
-      const receivedMessages: unknown[] = [];
-      const deliveredMessages: unknown[] = [];
-      const handler = jest.fn((message, options) => { deliveredMessages.push([message, options]) });
+  describe('subscribers', () => {
+    it('should return topic subscribers', () => {
+      service['topicSubscribers'].set(TOPIC, new Map([
+        [`${OTHER_PEER_ID}`, [OTHER_PEER_ID, now]]
+      ]));
 
-      bus.subscribe(handler, {
-        topic: TOPIC,
-        validator: (message, options) => {
-          receivedMessages.push([message, options]);
-          return new MessageValidationError();
-        }
-      });
-      subscriber.postMessage({
-        type: BroadcastChannelMessageType.Message,
-        topic: TOPIC,
-        from: OTHER_PEER_ID,
-        data: MESSAGE,
-      });
+      expect([...service.subscribers(TOPIC)]).toEqual([PEER_ID, OTHER_PEER_ID]);
+    });
 
-      await delay(100); // Wait for the message to be delivered
+    it('should clean up inactive topic subscribers', () => {
+      const origTime = now;
+      now += KEEPALIVE_MS * 1000;
+      service['topicSubscribers'].set(TOPIC, new Map([
+        [`${OTHER_PEER_ID}`, [OTHER_PEER_ID, now]],
+        [`${INACTIVE_PEER_ID}`, [INACTIVE_PEER_ID, origTime]]
+      ]));
 
-      expect(receivedMessages).toContainEqual([MESSAGE, {
-        topic: TOPIC,
-        from: OTHER_PEER_ID,
-      }]);
-      expect(deliveredMessages.length).toBe(0);
+      expect([...service.subscribers(TOPIC)]).toEqual([PEER_ID, OTHER_PEER_ID]);
+      expect(service['topicSubscribers'].get(TOPIC)?.has(`${INACTIVE_PEER_ID}`)).toBe(false);
     });
   });
 
-  describe('onPeerEvent', () => {
-    it('should monitor and emit peer events', () => {
-      const handler = jest.fn(() => undefined);
-      const receivedMessages: unknown[] = [];
-
-      bus.addEventListener(PeerEvent.Join, (event) => {
-        receivedMessages.push(event.detail);
-      });
-      bus.addEventListener(PeerEvent.Leave, (event) => {
-        receivedMessages.push(event.detail);
-      });
-      bus.subscribe(handler, { topic: TOPIC });
-
-      const [peerMonitor,] = spyOnPeerMonitor(bus);
-      const event: PeerChangeData<string> = { topic: TOPIC, peers: [OTHER_PEER_ID] };
-
-      for (const eventType of [PeerEvent.Join, PeerEvent.Leave] as const) {
-        receivedMessages.length = 0;
-        peerMonitor.dispatchEvent(createEvent(eventType, event));
-        expect(receivedMessages).toEqual([event]);
-      }
+  describe('topics', () => {
+    it('should return subscribed topics', () => {
+      expect([...service.topics()]).toEqual([]);
+      service.subscribe([TOPIC]);
+      expect([...service.topics()]).toEqual([TOPIC]);
     });
   });
 });
 
-function spyOnPeerMonitor<T>(pubsub: BroadcastChannelMessageBus<T>) {
-  const peerMonitor = pubsub['peerMonitor'];
-  if (!peerMonitor) { throw new Error('peerMonitor is undefined'); }
-  return [peerMonitor, jest.spyOn(peerMonitor, 'removeEventListener')] as const;
-}
+type BroadcastChannelMessage = {
+  type: typeof MESSAGE | typeof KEEPALIVE,
+  from: PeerId,
+  topics?: string[],
+  msg?: Message,
+};

@@ -2,30 +2,21 @@ comment:
   layout: "header, diff, flags, components"
 component_management:
   individual_components:
-    - component_id: "@mithic/collections"
-      paths:
-        - "packages/collections"
     - component_id: "@mithic/commons"
       paths:
         - "packages/commons"
-    - component_id: "@mithic/cqrs"
+    - component_id: "@mithic/core"
       paths:
-        - "packages/cqrs"
-    - component_id: "@mithic/crdt"
+        - "packages/core"
+    - component_id: "@mithic/keyvalue"
       paths:
-        - "packages/crdt"
-    - component_id: "@mithic/jsonr"
-      paths:
-        - "packages/jsonr"
+        - "packages/keyvalue"
     - component_id: "@mithic/messaging"
       paths:
         - "packages/messaging"
     - component_id: "@mithic/denokv"
       paths:
         - "packages/plugins/denokv"
-    - component_id: "@mithic/ipfs"
-      paths:
-        - "packages/plugins/ipfs"
     - component_id: "@mithic/level"
       paths:
         - "packages/plugins/level"
@@ -43,4 +34,4 @@ coverage:
         target: 90%
         threshold: 2%
 ignore:
-  - "packages/examples"
+  - "packages/examples/*"

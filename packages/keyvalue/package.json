@@ -1,0 +1,58 @@
+{
+  "name": "@mithic/keyvalue",
+  "version": "0.3.0",
+  "description": "Key-value store API for mithic",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./atomics": "./dist/atomic.js",
+    "./batch": "./dist/batch.js",
+    "./query": "./dist/query.js",
+    "./store": "./dist/store.js"
+  },
+  "imports": {
+    "#tests/worker": "./dist/tests/worker.js"
+  },
+  "files": [
+    "/dist"
+  ],
+  "scripts": {
+    "prepublishOnly": "npm run clean && npm run build && npm test && npm run doc",
+    "clean": "rimraf coverage docs dist",
+    "prebuild": "npm run lint",
+    "build": "npm run babel",
+    "postbuild": "npm run tsc",
+    "lint": "eslint",
+    "babel": "babel src -d dist -x '.js,.ts' --root-mode upward",
+    "tsc": "tsc --project tsconfig.build.json",
+    "pretest": "npm run babel",
+    "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
+    "doc": "typedoc"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andykswong/mithic.git"
+  },
+  "keywords": [
+    "collection",
+    "keyvalue",
+    "mithic",
+    "typescript"
+  ],
+  "author": "Andy K.S. Wong <andykswong@outlook.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/andykswong/mithic/issues"
+  },
+  "homepage": "https://github.com/andykswong/mithic",
+  "dependencies": {
+    "@mithic/commons": "^0.3",
+    "cbor-x": "^1.6"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "^6.0"
+  }
+}

@@ -1,0 +1,16 @@
+/// A keyvalue interface that provides batch operations.
+/// A batch operation does not guarantee atomicity, meaning that if the batch operation fails,
+/// some of the keys may have been modified and some may not. 
+interface batch {
+    use store.{bucket, error};
+
+    /// Get the key-value pairs associated with the keys in the store.
+    get-many: func(bucket: borrow<bucket>, keys: list<string>) -> result<list<option<tuple<string, list<u8>>>>, error>;
+
+    /// Set the values associated with the keys in the store. If the key already exists in the
+    /// store, it overwrites the value. 
+    set-many: func(bucket: borrow<bucket>, key-values: list<tuple<string, list<u8>>>) -> result<_, error>;
+
+    /// Delete the key-value pairs associated with the keys in the store.
+    delete-many: func(bucket: borrow<bucket>, keys: list<string>) -> result<_, error>;
+}

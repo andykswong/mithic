@@ -1,0 +1,29 @@
+interface types {
+    /// Errors that can occur when using the messaging interface. 
+    variant error {
+        /// The operation is not authorized
+        unauthorized,
+        /// The operation is unsupported
+        unsupported,
+        /// The operation timed out
+        timeout,
+        /// An error occurred with the connection
+        connection(string),
+        /// Work on the message was abandoned for the given reason
+        abandoned(string),
+        /// A catch all for other types of errors
+        other(string),
+    }
+
+    /// A message with a binary payload and additional information
+    record message {
+        /// The topic/subject/channel this message was received or should be sent on
+        topic: string,
+        /// The content type describing the format of the data in the message.
+        content-type: option<string>,
+        /// An opaque blob of data
+        data: list<u8>,
+        /// Metadata (also called headers or attributes in some systems) attached to the message
+        metadata: list<tuple<string, string>>
+    }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "@mithic/example-browser",
+  "version": "0.3.0",
+  "private": "true",
+  "description": "mithic example CLI component running on browser",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./src/index.js",
+  "scripts": {
+    "prebuild": "eslint",
+    "build": "webpack",
+    "clean": "rm -rf dist",
+    "start": "webpack serve",
+    "test": "echo 'ok'"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andykswong/mithic.git"
+  },
+  "author": "Andy K.S. Wong <andykswong@outlook.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/andykswong/mithic/issues"
+  },
+  "homepage": "https://github.com/andykswong/mithic",
+  "dependencies": {
+    "@mithic/core": "^0.3",
+    "@mithic/example-rust-cli": "^0.3"
+  },
+  "devDependencies": {
+    "html-webpack-plugin": "^5.6"
+  }
+}

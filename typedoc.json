@@ -9,5 +9,8 @@
     "packages/plugins/*"
   ],
   "includeVersion": true,
+  "validation": {
+    "invalidLink": false
+  },
   "readme": "./README.md"
 }

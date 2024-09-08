@@ -1,0 +1,9 @@
+package mithic:keyvalue@0.2.0;
+
+/// Provides common APIs for interacting with key-value stores.
+world imports {
+    import store;
+    import atomics;
+    import batch;
+    import query;
+}

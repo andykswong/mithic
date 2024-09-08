@@ -1,0 +1,5 @@
+config = "https://github.com/WebAssembly/wasi-runtime-config/archive/c667fe67ffa158925511810775155af582d22928.tar.gz"
+cli = "https://github.com/WebAssembly/wasi-cli/archive/v0.2.0/main.tar.gz"
+clocks = "https://github.com/WebAssembly/wasi-clocks/archive/v0.2.0/main.tar.gz"
+io = "https://github.com/WebAssembly/wasi-io/archive/v0.2.0/main.tar.gz"
+logging = "https://github.com/WebAssembly/wasi-logging/archive/main.tar.gz"

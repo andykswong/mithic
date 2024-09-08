@@ -1,0 +1,78 @@
+{
+  "name": "@mithic/core",
+  "version": "0.3.0",
+  "description": "mithic core runtime API provider",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "imports": {
+    "#io/stdio": {
+      "node": "./dist/io/stdio/node.js",
+      "default": "./dist/io/stdio/index.js"
+    },
+    "#io/tests/worker": "./dist/tests/io.worker.js"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./cli/environment": "./dist/cli/environment.js",
+    "./cli/exit": "./dist/cli/exit.js",
+    "./cli/stderr": "./dist/cli/stderr.js",
+    "./cli/stdin": "./dist/cli/stdin.js",
+    "./cli/stdout": "./dist/cli/stdout.js",
+    "./cli/terminal-input": "./dist/cli/terminal-input.js",
+    "./cli/terminal-output": "./dist/cli/terminal-output.js",
+    "./cli/terminal-stderr": "./dist/cli/terminal-stderr.js",
+    "./cli/terminal-stdin": "./dist/cli/terminal-stdin.js",
+    "./cli/terminal-stdout": "./dist/cli/terminal-stdout.js",
+    "./clocks/monotonic-clock": "./dist/clocks/monotonic-clock.js",
+    "./clocks/wall-clock": "./dist/clocks/wall-clock.js",
+    "./config/runtime": "./dist/config/runtime.js",
+    "./filesystem/preopens": "./dist/filesystem/preopens.js",
+    "./filesystem/types": "./dist/filesystem/types.js",
+    "./io/error": "./dist/io/error.js",
+    "./io/poll": "./dist/io/poll.js",
+    "./io/streams": "./dist/io/streams.js",
+    "./logging/logging": "./dist/logging/logging.js",
+    "./random/insecure": "./dist/random/insecure.js",
+    "./random/insecure-seed": "./dist/random/insecure-seed.js",
+    "./random/random": "./dist/random/random.js"
+  },
+  "files": [
+    "/dist"
+  ],
+  "scripts": {
+    "prepublishOnly": "npm run clean && npm run build && npm test && npm run doc",
+    "clean": "rimraf coverage docs dist",
+    "prebuild": "npm run lint",
+    "build": "npm run babel",
+    "postbuild": "npm run tsc",
+    "lint": "eslint",
+    "babel": "babel src -d dist -x '.js,.ts' --root-mode upward",
+    "tsc": "tsc --project tsconfig.build.json",
+    "pretest": "npm run babel",
+    "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
+    "doc": "typedoc"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andykswong/mithic.git"
+  },
+  "keywords": [
+    "mithic",
+    "typescript",
+    "wasm",
+    "wasi"
+  ],
+  "author": "Andy K.S. Wong <andykswong@outlook.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/andykswong/mithic/issues"
+  },
+  "homepage": "https://github.com/andykswong/mithic",
+  "dependencies": {
+    "@mithic/commons": "^0.3"
+  },
+  "devDependencies": {
+  }
+}

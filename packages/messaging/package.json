@@ -1,13 +1,20 @@
 {
   "name": "@mithic/messaging",
   "version": "0.3.0",
-  "description": "Messaging interface for mithic",
+  "description": "Messaging API for mithic",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./consumer": "./dist/consumer.js",
+    "./producer": "./dist/producer.js",
+    "./request-reply": "./dist/request-reply.js",
+    "./peer": "./dist/peer.js"
+  },
+  "imports": {
+    "#tests/worker": "./dist/tests/worker.js"
   },
   "files": [
     "/dist"
@@ -16,10 +23,12 @@
     "prepublishOnly": "npm run clean && npm run build && npm test && npm run doc",
     "clean": "rimraf coverage docs dist",
     "prebuild": "npm run lint",
-    "build": "npm run tsc && npm run babel",
-    "lint": "eslint src --ext .ts",
-    "babel": "babel src -d dist -x '.ts' --root-mode upward",
+    "build": "npm run babel",
+    "postbuild": "npm run tsc",
+    "lint": "eslint",
+    "babel": "babel src -d dist -x '.js,.ts' --root-mode upward",
     "tsc": "tsc --project tsconfig.build.json",
+    "pretest": "npm run babel",
     "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
     "doc": "typedoc"
   },
@@ -44,7 +53,8 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/commons": "^0.3"
+    "@mithic/commons": "^0.3",
+    "cbor-x": "^1.6"
   },
   "devDependencies": {
   }
