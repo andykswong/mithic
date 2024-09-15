@@ -147,12 +147,19 @@ export interface Task<T = unknown> {
 
 /** A runnable task with priority in a {@link TaskQueue}. */
 export class RunnableTask {
+   /** The task's runnable function. */
+   public readonly run: () => Promise<void>;
+   /** Priority of this task. Operations with greater priority will be scheduled first. */
+   public readonly priority;
+
   public constructor(
     /** The task's runnable function. */
-    public readonly run: () => Promise<void>,
+    run: () => Promise<void>,
     /** Priority of this task. Operations with greater priority will be scheduled first. Defaults to 0. */
-    public readonly priority = 0,
+    priority = 0,
   ) {
+    this.run = run;
+    this.priority = priority;
   }
 
   /** Returns priority of this task. */

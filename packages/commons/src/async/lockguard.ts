@@ -3,9 +3,11 @@ import { type Semaphore } from './semaphore.ts';
 
 /** A RAII-style async lock guard that uses a {@link Semaphore}. */
 export class LockGuard implements AsyncDisposable {
+  private readonly semaphore: Semaphore;
   private count = 1;
 
-  private constructor(private readonly semaphore: Semaphore) {
+  private constructor(semaphore: Semaphore) {
+    this.semaphore = semaphore;
   }
 
   /**

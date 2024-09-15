@@ -11,14 +11,16 @@ import { BaseKeyValueStore } from './base.ts';
 export class InMemoryKeyValueStore extends BaseKeyValueStore implements KeyValueStore {
   private readonly buckets = new Map<string, Map<string, Uint8Array | bigint>>();
   private readonly bucketRefs = new Map<string, number>();
+  private readonly intEncoder: Encoder<bigint>;
 
   public constructor(
     /** Encoder for bigint type. */
-    private readonly intEncoder: Encoder<bigint> = {
+    intEncoder: Encoder<bigint> = {
       encode: (input) => encode(input),
     },
   ) {
     super();
+    this.intEncoder = intEncoder;
   }
 
   public get [Symbol.toStringTag](): string {

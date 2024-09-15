@@ -34,13 +34,19 @@ export default function config(api) {
           }
         }
       ],
-      ['@babel/preset-typescript', { rewriteImportExtensions: !isBundler && !isTest }],
+      [
+        '@babel/preset-typescript',
+        {
+          allowDeclareFields: true,
+          rewriteImportExtensions: !isBundler && !isTest
+        }
+      ],
     ],
     sourceMaps: 'inline'
   };
 
   if (!isTest) {
-    config.ignore.push('**/__tests__/**');
+    config.ignore.push('**/test/**', '**/*.test.js', '**/*.test.ts');
   }
 
   return config;

@@ -12,8 +12,7 @@ git clone https://github.com/andykswong/mithic.git
 npm install
 cd ./packages/examples/simple
 
-npm start  # run directly
-npm test   # run as a jest test
+npm start
 ```
 
 ## License

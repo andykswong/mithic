@@ -2,16 +2,18 @@ import { type Queue } from './queue.ts';
 
 /** A binary heap. */
 export class BinaryHeap<T> implements Queue<T> {
-  private heap: T[];
+  private readonly heap: T[];
+  private readonly compare: (lhs: T, rhs: T) => number;
 
   public constructor(
     /** Initial elements for this heap. */
     items?: Iterable<T>,
     /** The compare function to order elements. */
-    private readonly compare: (lhs: T, rhs: T) => number = defaultCompare,
+    compare: (lhs: T, rhs: T) => number = defaultCompare,
     /** Whether to heapify the initial elements. Set this to false if elements are already in heap order. */
     heapify = true
   ) {
+    this.compare = compare;
     this.heap = items ? Array.from(items) : [];
     if (items && heapify) {
       for (let i = this.parent(this.heap.length - 1); i >= 0; i--) {

@@ -1,9 +1,9 @@
 name: build
 on:
   push:
-    branches: [main]
+    branches: [main, wasm]
   pull_request:
-    branches: [main]
+    branches: [main, wasm]
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -11,7 +11,9 @@ jobs:
     - uses: actions/checkout@v4
     - uses: actions/setup-node@v4
       with:
-        node-version: '20'
+        node-version: '22'
     - run: npm ci
     - run: npm run prepublishOnly
     - uses: codecov/codecov-action@v4
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}

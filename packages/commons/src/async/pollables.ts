@@ -43,12 +43,15 @@ const IDX_OFFSET = 3;
 
 /** Pollable states backed by SharedArrayBuffer and Atomics. */
 export class AtomicPollables implements Pollables {
+  /** The backing data buffer. */
+  public readonly buffer: SharedArrayBuffer;
   private readonly _state: Int32Array;
 
   public constructor(
     /** The backing data buffer. byteLength must be in multiples of 4 and > 12. */
-    public readonly buffer: SharedArrayBuffer = new SharedArrayBuffer(1024, { maxByteLength: 1048576 }),
+    buffer: SharedArrayBuffer = new SharedArrayBuffer(1024, { maxByteLength: 1048576 }),
   ) {
+    this.buffer = buffer;
     this._state = new Int32Array(buffer);
   }
 

@@ -136,7 +136,7 @@ export interface BroadcastChannelMessagingOptions {
   /** Peer ID of this instance. */
   readonly peerId?: PeerId;
 
-  /** Keepalive message interval in milliseconds. Defaults to {@link DEFAULT_KEEPALIVE_MS}. */
+  /** Keepalive message interval in milliseconds. Defaults to 1000. */
   readonly keepaliveMs?: number;
 
   /** Function to get the current epoch timestamp. Defaults to `performance.now`. */

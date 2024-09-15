@@ -5,17 +5,21 @@ const DEFAULT_DEQUE_RESIZE_FACTOR = 2;
 
 /** A double-ended queue using a circular buffer. */
 export class ArrayDeque<T> implements Deque<T> {
+  private readonly resizeFactor: number;
+  private _capacity: number;
   private buffer: T[];
   private frontIdx = -1;
   private backIdx = -1;
 
   public constructor(
     /** The initial capacity. */
-    private _capacity = DEFAULT_DEQUE_CAPACITY,
+    capacity = DEFAULT_DEQUE_CAPACITY,
     /** The resize factor. When the buffer is full, it will resize to resizeFactor * capacity. */
-    private readonly resizeFactor = DEFAULT_DEQUE_RESIZE_FACTOR,
+    resizeFactor = DEFAULT_DEQUE_RESIZE_FACTOR,
   ) {
-    this.buffer = Array(_capacity);
+    this._capacity = capacity;
+    this.resizeFactor = resizeFactor;
+    this.buffer = Array(capacity);
   }
 
   public get [Symbol.toStringTag](): string {

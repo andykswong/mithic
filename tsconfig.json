@@ -19,5 +19,9 @@
     "inlineSourceMap": true,
     "inlineSources": true,
     "verbatimModuleSyntax": true
-  }
+  },
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
 }

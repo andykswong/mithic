@@ -16,7 +16,7 @@
     "postbuild": "node ./transpile.js",
     "clean": "echo 'ok'",
     "start": "node .",
-    "test": "NODE_OPTIONS=--experimental-vm-modules jest --detectOpenHandles"
+    "test": "npm start"
   },
   "repository": {
     "type": "git",

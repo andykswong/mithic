@@ -5,16 +5,30 @@ import { commandOptions, WatchError, type RedisClientType } from '@redis/client'
 /** Redis implementation of {@link KeyValueStore}. */
 export class RedisKeyValueStore<R extends RedisClientType = RedisClientType>
   implements KeyValueStore, Startable, AsyncDisposable {
+
+  /** Redis client to use. */
+  private readonly client: R;
+  /** Batch size for listKeys operation. */
+  private readonly batchSize;
+  /** Return the Redis key for storing key range for a bucket. */
+  private readonly rangeKey;
+  /** Return the Redis key used as a watch signal key for change detection. */
+  private readonly signalKey;
+
   public constructor(
     /** Redis client to use. */
-    private readonly client: R,
+    client: R,
     /** Batch size for listKeys operation. */
-    private readonly batchSize = 100,
+    batchSize = 100,
     /** Return the Redis key for storing key range for a bucket. */
-    private readonly rangeKey = (bucket: string) => `${bucket}:keys`,
+    rangeKey = (bucket: string) => `${bucket}:keys`,
     /** Return the Redis key used as a watch signal key for change detection. */
-    private readonly signalKey = (bucket: string, key: string) => `${bucket}:signal:${key}`,
+    signalKey = (bucket: string, key: string) => `${bucket}:signal:${key}`,
   ) {
+    this.client = client;
+    this.batchSize = batchSize;
+    this.rangeKey = rangeKey;
+    this.signalKey = signalKey;
   }
 
   public async [Symbol.asyncDispose](): Promise<void> {

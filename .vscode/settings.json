@@ -4,11 +4,13 @@
     "javascript.preferences.importModuleSpecifierEnding": "js",
     "typescript.preferences.quoteStyle": "single",
     "typescript.preferences.importModuleSpecifierEnding": "js",
-    "jest.nodeEnv": {
-        "NODE_OPTIONS": "--experimental-vm-modules"
-    },
-    "jest.coverageFormatter": "GutterFormatter",
-    "jest.runMode": "on-demand",
+    "jest.enable": false,
+    "nodejs-testing.extensions": [
+        {
+            "extensions": ["ts"],
+            "parameters": ["--experimental-strip-types"]
+        }
+    ],
 	"typescript.tsdk": "node_modules/typescript/lib",
 	"rust-analyzer.cargo.target": "wasm32-unknown-unknown",
 	"rust-analyzer.cargo.features": [

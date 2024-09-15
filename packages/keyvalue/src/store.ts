@@ -11,12 +11,20 @@ export function open(identifier: string): Bucket {
 
 /** A collection of key-value pairs. */
 export class Bucket implements Disposable {
+  /** The API provider. */
+  public readonly provider: KeyValueApiProvider;
+  /** The bucket identifier. */
+  public readonly identifier: string;
   public readonly bucket: string;
 
   public constructor(
-    public readonly provider: KeyValueApiProvider,
-    public readonly identifier: string,
+    /** The API provider. */
+    provider: KeyValueApiProvider,
+    /** The bucket identifier. */
+    identifier: string,
   ) {
+    this.provider = provider;
+    this.identifier = identifier;
     this.bucket = provider.open(identifier);
   }
 

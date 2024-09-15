@@ -30,6 +30,9 @@ const LEN_IDX = 0, RESERVED_IDX = 1, START_IDX = 2, END_IDX = 3;
  * Multiple producers / consumers use case will require locking to avoid partial read / interleaved write.
  */
 export class AtomicRingBuffer implements ByteQueue, Iterable<number> {
+  /** The backing data buffer. */
+  public readonly buffer: SharedArrayBuffer;
+
   /** The byte data view. */
   private readonly dataView: Uint8Array;
   /**
@@ -39,7 +42,7 @@ export class AtomicRingBuffer implements ByteQueue, Iterable<number> {
 
   public constructor(
     /** The backing data buffer. byteLength must be in multiples of 4 and >= 16. */
-    public readonly buffer: SharedArrayBuffer = new SharedArrayBuffer(STATE_SIZE + 4096),
+    buffer: SharedArrayBuffer = new SharedArrayBuffer(STATE_SIZE + 4096),
     /** Offset to the buffer to use. */
     offset = 0,
     /** Length of the buffer to use. */
@@ -49,6 +52,7 @@ export class AtomicRingBuffer implements ByteQueue, Iterable<number> {
     if (maxByteLength < STATE_SIZE) {
       throw new TypeError(`buffer must be at least ${STATE_SIZE} bytes`);
     }
+    this.buffer = buffer;
     this.state = new Int32Array(buffer, offset, STATE_SIZE / 4);
     this.dataView = new Uint8Array(buffer, offset + STATE_SIZE, maxByteLength - STATE_SIZE);
   }

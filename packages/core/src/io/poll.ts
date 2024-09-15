@@ -1,16 +1,16 @@
-import type { Pollables } from '@mithic/commons';
+import type { MaybePromise, Pollables } from '@mithic/commons';
 import { Io } from './types.ts';
 
 const DEFAULT_POLL_MS = 200;
 
 /** Represents a single I/O event which may be ready. */
-export class Pollable {
+export class Pollable implements PromiseLike<void> {
   /** Estimated time of completion in milliseconds. */
   public readonly eta: number;
 
   /** The underlying {@link Pollables} buffer. */
   private readonly pollables: Pollables;
-  private readonly pollReady?: (pollables: Pollables, id: number, estTime: number) => boolean;
+  private readonly pollReady?: (pollables: Pollables, id: number) => boolean;
   private readonly deleteOnDispose: boolean;
   private _id: number;
 
@@ -50,7 +50,7 @@ export class Pollable {
     if (this.pollables.ready(this._id)) {
       return true;
     }
-    if (this.pollReady?.(this.pollables, this._id, this.estTime)) {
+    if (this.pollReady?.(this.pollables, this._id)) {
       this.pollables.notify(this._id);
       return true;
     }
@@ -62,14 +62,18 @@ export class Pollable {
     while (!this.wait());
   }
 
-  /** Synchronously waits for the readiness of this pollable until ETA. */
-  public wait(): boolean {
-    return this.ready() || this.pollables.wait(this._id, this.estTime);
+  public then<Result>(onfulfilled?: ((value: void) => MaybePromise<Result>) | null): PromiseLike<Result> {
+    return (async () => { while (!(await this.waitAsync())); })().then(onfulfilled);
   }
 
-  /** Asynchronously waits for the readiness of this pollable until ETA. */
-  public async waitAsync(): Promise<boolean> {
-    return this.ready() || await this.pollables.waitAsync(this._id, this.estTime);
+  /** Synchronously waits for the readiness of this pollable or until timeout. */
+  public wait(timeoutMs = Math.max(this.estTime, DEFAULT_POLL_MS)): boolean {
+    return this.ready() || this.pollables.wait(this._id, timeoutMs);
+  }
+
+  /** Asynchronously waits for the readiness of this pollable or until timeout. */
+  public async waitAsync(timeoutMs = Math.max(this.estTime, DEFAULT_POLL_MS)): Promise<boolean> {
+    return this.ready() || await this.pollables.waitAsync(this._id, timeoutMs);
   }
 }
 
@@ -77,7 +81,7 @@ export class Pollable {
 export interface PollableOptions {
   pollables?: Pollables;
   id?: number;
-  pollReady?: (pollables: Pollables, id: number, estTime: number) => boolean;
+  pollReady?: (pollables: Pollables, id: number) => boolean;
   eta?: number;
   deleteOnDispose?: boolean;
 }
@@ -86,17 +90,21 @@ export interface PollableOptions {
 export function poll(pollables: Pollable[]): number[] {
   const ready = [];
   while (pollables.length && !ready.length) {
-    let fastestPollable = 0, eta = pollables[0].eta;
+    const now = performance.now();
+    let fastestI = 0, estTime = Math.max(pollables[0].eta - now, DEFAULT_POLL_MS);
     for (let i = 0; i < pollables.length; ++i) {
       if (pollables[i].ready()) {
         ready.push(i);
-      } else if (pollables[i].eta < eta) {
-        fastestPollable = i;
-        eta = pollables[i].eta;
+        continue;
+      }
+      const estTimeI = Math.max(pollables[i].eta - now, DEFAULT_POLL_MS);
+      if (estTimeI < estTime) {
+        fastestI = i;
+        estTime = estTimeI;
       }
     }
     if (!ready.length) {
-      pollables[fastestPollable].wait();
+      pollables[fastestI].wait();
     }
   }
   return ready;

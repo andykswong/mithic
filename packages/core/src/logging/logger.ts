@@ -37,12 +37,18 @@ const levelValue: Record<Level, number> = {
 
 /** Logger that logs to output streams. */
 export class StdLogger implements Logger {
+  private readonly debug: OutputStream;
+  private readonly error: OutputStream;
+
   public constructor(
     /** debug output stream. */
-    private readonly debug: OutputStream = getStdout(),
+    debug: OutputStream = getStdout(),
     /** error output stream. */
-    private readonly error: OutputStream = getStderr(),
-  ) { }
+    error: OutputStream = getStderr(),
+  ) {
+    this.debug = debug;
+    this.error = error;
+  }
 
   /** Formats message for output to console. */
   public format(level: Level, context: string, message: string): string {

@@ -1,4 +1,4 @@
-import { arrayCompare, AtomicSemaphore, LockGuard, type Startable } from '@mithic/commons';
+import { arrayCompare, AtomicSemaphore, dispose, LockGuard, type Startable } from '@mithic/commons';
 import {
   BaseKeyValueStore, KeyOrder, StoreError, StoreErrorType, type KeyResponse, type KeySelector, type KeyValueStore
 } from '@mithic/keyvalue';
@@ -95,40 +95,48 @@ export class LevelKeyValueStore extends BaseKeyValueStore implements KeyValueSto
   }
 
   public override async increment(bucket: string, key: string, delta: bigint): Promise<bigint> {
-    await using _ = await LockGuard.acquire(this.semaphore, this.timeoutMs);
     const sublevel = this.getSublevel(bucket);
-    // below uses getMany instead of get to avoid NotFound error in some implementations
-    const existingValue = (await sublevel.getMany([key]))[0];
-    const newValue = new Uint8Array(8);
-    if (existingValue) {
-      newValue.set(existingValue);
+    const lock = await LockGuard.acquire(this.semaphore, this.timeoutMs);
+    try {
+      // below uses getMany instead of get to avoid NotFound error in some implementations
+      const existingValue = (await sublevel.getMany([key]))[0];
+      const newValue = new Uint8Array(8);
+      if (existingValue) {
+        newValue.set(existingValue);
+      }
+      const view = new DataView(newValue.buffer, newValue.byteOffset, newValue.byteLength);
+      const result = view.getBigInt64(0, true) + delta;
+      view.setBigInt64(0, result, true);
+      await sublevel.put(key, newValue);
+      return result;
+    } finally {
+      dispose(lock);
     }
-    const view = new DataView(newValue.buffer, newValue.byteOffset, newValue.byteLength);
-    const result = view.getBigInt64(0, true) + delta;
-    view.setBigInt64(0, result, true);
-    await sublevel.put(key, newValue);
-    return result;
   }
 
   public override async compareAndSwap(
     bucket: string, key: string, oldValue?: Uint8Array, newValue?: Uint8Array
   ): Promise<boolean> {
-    await using _ = await LockGuard.acquire(this.semaphore, this.timeoutMs);
     const sublevel = this.getSublevel(bucket);
-    // below uses getMany instead of get to avoid NotFound error in some implementations
-    const existingValue = (await sublevel.getMany([key]))[0];
-    if ((!oldValue && existingValue) ||
-      (oldValue && (!(existingValue instanceof Uint8Array) || arrayCompare(oldValue, existingValue) !== 0))
-    ) {
-      return false;
-    }
+    const lock = await LockGuard.acquire(this.semaphore, this.timeoutMs);
+    try {
+      // below uses getMany instead of get to avoid NotFound error in some implementations
+      const existingValue = (await sublevel.getMany([key]))[0];
+      if ((!oldValue && existingValue) ||
+        (oldValue && (!(existingValue instanceof Uint8Array) || arrayCompare(oldValue, existingValue) !== 0))
+      ) {
+        return false;
+      }
 
-    if (!newValue) {
-      await sublevel.del(key);
-    } else {
-      await sublevel.put(key, newValue);
+      if (!newValue) {
+        await sublevel.del(key);
+      } else {
+        await sublevel.put(key, newValue);
+      }
+      return true;
+    } finally {
+      dispose(lock);
     }
-    return true;
   }
 
   private getSublevel(bucket: string): Sublevel {

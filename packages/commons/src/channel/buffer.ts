@@ -99,7 +99,7 @@ export class SharedArrayBufferChannel implements Channel<Uint8Array> {
 
   public flush(timeoutMs?: number): boolean {
     this.flushSendBuffer();
-    if (!this.sendBuffer?.byteLength) {
+    if (this.maxSendSize > 0) {
       return true;
     }
     this.writeQueue.wait(timeoutMs);

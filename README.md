@@ -11,8 +11,6 @@
 
 > Modular library for universal full-stack JavaScript and WebAssembly applications 
 
-<br />
-
 ## Overview
 `mithic` provides the building blocks for creating universal full-stack applications using JavaScript and/or WebAssembly. `mithic` is plaform and runtime agnostic, being usable for both frontend (web, desktop, mobile) and backend in traditional client-server or decentralized architecture through a set of standardized API abstractions based on ([WASI](https://wasi.dev/), [keyvalue store](./packages/keyvalue/), [messaging](./packages/messaging/)). Target use cases include business apps, collaborative editing, multiplayer gaming, etc.
 

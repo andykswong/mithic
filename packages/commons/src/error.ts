@@ -3,7 +3,7 @@ export class Error<T = unknown, E = unknown> extends globalThis.Error {
   /** The error code. */
   public readonly code?: string;
   /** The error cause. */
-  public override readonly cause?: E;
+  declare public readonly cause?: E;
   /** Returns any data passed when initializing the error. */
   public payload?: T;
 

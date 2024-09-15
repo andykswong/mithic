@@ -2,11 +2,11 @@ import { isMainThread, workerData, Worker } from 'node:worker_threads';
 import { readFile } from 'node:fs/promises';
 import { imports, Io, IoReactor, RemoteIoProvider } from '@mithic/core';
 
-let worker;
+let reactor, worker;
 
 if (isMainThread) {
   // create an I/O reactor on main thread to process 
-  const reactor = new IoReactor();
+  reactor = new IoReactor();
   // run component on a worker, passing the reactor channel as worker data
   worker = new Worker(new URL(import.meta.url), {
     workerData: reactor.addChannel(),
@@ -30,4 +30,4 @@ async function workerThread(entry = process.argv[2] ?? './dist/component.js') {
   run.run();
 }
 
-export { worker };
+export { reactor, worker };

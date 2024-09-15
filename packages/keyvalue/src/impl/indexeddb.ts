@@ -6,17 +6,26 @@ import { BaseKeyValueStore } from './base.ts';
 
 /** A keyvalue store that persists data in IndexedDB. */
 export class IDBKeyValueStore extends BaseKeyValueStore implements KeyValueStore, Disposable {
+  private readonly db: IDBDatabase;
+  private readonly batchSize: number;
+  private readonly durability?: IDBTransactionDurability;
+  private readonly encoder: Encoder<unknown>;
+
   public constructor(
     /** The IndexedDB database to use. */
-    private readonly db: IDBDatabase,
+    db: IDBDatabase,
     /** The batch size for listKeys operation. */
-    private readonly batchSize: number = 100,
+    batchSize: number = 100,
     /** Transaction durability mode. */
-    private readonly durability?: IDBTransactionDurability,
+    durability?: IDBTransactionDurability,
     /** Encoder for values. */
-    private readonly encoder: Encoder<unknown> = CborEncoder,
+    encoder: Encoder<unknown> = CborEncoder,
   ) {
     super();
+    this.db = db;
+    this.batchSize = batchSize;
+    this.durability = durability;
+    this.encoder = encoder;
   }
 
   public get [Symbol.toStringTag](): string {
@@ -38,7 +47,7 @@ export class IDBKeyValueStore extends BaseKeyValueStore implements KeyValueStore
 
   public override async listKeys(bucket: string, selector?: KeySelector, cursor?: string): Promise<KeyResponse> {
     const query = getIDBQuery(selector, cursor);
-    if (!query) { return { keys: [] }; }
+    if (!query) { return { keys: [], cursor: undefined }; }
 
     const tx = this.transaction(bucket, true);
     const request = tx.objectStore(bucket).openKeyCursor(...query);
