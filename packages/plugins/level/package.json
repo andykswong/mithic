@@ -43,7 +43,7 @@
   "dependencies": {
     "@mithic/commons": "^0.3",
     "@mithic/keyvalue": "^0.3",
-    "abstract-level": "^2.0"
+    "abstract-level": "^1.0"
   },
   "devDependencies": {
     "memory-level": "^1.0"
