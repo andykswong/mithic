@@ -8,5 +8,5 @@ interface peer {
     /// Get the list of known `peer-id` that subscribed to given topic.
     /// MAY be an empty list for messaging services without peer identification.
     /// MAY be a partial list of discovered `peer-id` in peer-to-peer messaging.
-    list-subscribers(topic: string): result<list<peer-id>, error>;
+    list-subscribers: func(topic: string) -> result<list<peer-id>, error>;
 }

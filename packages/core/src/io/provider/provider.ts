@@ -1,10 +1,7 @@
-import { type MaybeDisposable, type SharedChannelBuffers } from '@mithic/commons';
+import { type MaybeDisposable } from '@mithic/commons';
 
 /** Provider of I/O stream operations. */
 export interface IoProvider extends MaybeDisposable {
-  /** The shared channel buffers of the provider. */
-  readonly channel: SharedChannelBuffers;
-
   /** Returns the state of given stream. */
   state(fd: number): number;
 

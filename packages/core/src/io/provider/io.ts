@@ -1,6 +1,6 @@
 import { AtomicPollables } from '@mithic/commons';
 import { type IoProvider } from './provider.ts';
-import { RemoteIoProvider } from './client.ts';
+import { RemoteIoProvider } from './remote.ts';
 
 let provider: IoProvider;
 

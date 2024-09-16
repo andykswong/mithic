@@ -1,0 +1,44 @@
+{
+  "name": "@mithic/interface-keyvalue",
+  "version": "0.2.0",
+  "description": "mithic key-value store WIT spec",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/keyvalue.wasm",
+  "exports": {
+    ".": "./dist/keyvalue.wasm"
+  },
+  "files": [
+    "/dist",
+    "/wit"
+  ],
+  "scripts": {
+    "prepublishOnly": "npm run clean && npm run build",
+    "clean": "rimraf dist",
+    "prebuild": "mkdir -p dist",
+    "build": "../../bin/wasm-tools component wit -w -o dist/keyvalue.wasm wit",
+    "test": "echo \"ok\"",
+    "wit-deps": "../../bin/wit-deps"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andykswong/mithic.git"
+  },
+  "keywords": [
+    "collection",
+    "keyvalue",
+    "mithic",
+    "typescript",
+    "wit"
+  ],
+  "author": "Andy K.S. Wong <andykswong@outlook.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/andykswong/mithic/issues"
+  },
+  "homepage": "https://github.com/andykswong/mithic",
+  "dependencies": {
+  },
+  "devDependencies": {
+  }
+}

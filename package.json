@@ -78,6 +78,8 @@
     "webpack-dev-server": "^5.1"
   },
   "workspaces": [
+    "./wit/keyvalue",
+    "./wit/messaging",
     "./packages/commons",
     "./packages/core",
     "./packages/keyvalue",
