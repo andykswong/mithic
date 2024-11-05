@@ -47,18 +47,24 @@ describe('InputStream', () => {
 
   describe('subscribe', () => {
     it('should return pollable that indicates if stream is ready to be read', async () => {
+      const pollable = stream.subscribe();
+
+      // ready as there is existing data
+      await pollable.waitAsync();
+      assert.strictEqual(pollable.ready(), true);
+
+      // no longer ready after all existing data is consumed
       assert.deepStrictEqual(stream.blockingRead(5n), chunks[0]);
       assert.deepStrictEqual(stream.blockingRead(5n), chunks[1]);
-
-      const pollable = stream.subscribe();
       assert.strictEqual(pollable.ready(), false);
 
+      // ready again as there is new data
       const data = [8, 9];
       worker.stdin?.write(new Uint8Array(data));
-      await pollable;
-
+      await pollable.waitAsync();
       assert.strictEqual(pollable.ready(), true);
       assert.deepStrictEqual(stream.read(2n), new Uint8Array(data));
+
       dispose(pollable);
     });
   });
@@ -134,11 +140,18 @@ describe('OutputStream', () => {
 
   describe('subscribe', () => {
     it('should return pollable that indicates if stream is writable', async () => {
-      stream.write(new Uint8Array(Array(Number(stream.checkWrite())).fill(1)));
       const pollable = stream.subscribe();
-      pollable.block();
+      await pollable.waitAsync();
+      assert.strictEqual(pollable.ready(), true);
+
+      // fill the write buffer
+      stream.write(new Uint8Array(Array(Number(stream.checkWrite())).fill(1)));
+      assert.strictEqual(pollable.ready(), false);
+
+      await pollable.waitAsync();
       assert.strictEqual(pollable.ready(), true);
       assert(stream.checkWrite() > 0n);
+
       dispose(pollable);
     });
   });

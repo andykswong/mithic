@@ -69,8 +69,10 @@ describe('poll', () => {
     describe('then', () => {
       it('should async wait for itself to be ready', async () => {
         const pollable = new poll.Pollable({ pollables });
+        const promise = Promise.resolve(pollable);
         pollables.notify(pollable.id);
-        await pollable;
+        await promise;
+        assert.strictEqual(pollable.ready(), true);
       });
     });
 
@@ -80,6 +82,7 @@ describe('poll', () => {
         const promise = pollable.waitAsync();
         pollables.notify(pollable.id);
         await promise;
+        assert.strictEqual(pollable.ready(), true);
       });
     });
 

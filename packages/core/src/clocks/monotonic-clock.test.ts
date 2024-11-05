@@ -41,7 +41,7 @@ describe('monotonic-clock', () => {
       pollable = monotonicClock.subscribeInstant(NOW_NS);
       assert.strictEqual(pollable.ready(), false);
       now = NOW_MS;
-      await pollable;
+      await pollable.waitAsync();
       assert.strictEqual(pollable.ready(), true);
     });
 
@@ -59,7 +59,7 @@ describe('monotonic-clock', () => {
       pollable = monotonicClock.subscribeDuration(NOW_NS);
       assert.strictEqual(pollable.ready(), false);
       now += NOW_MS;
-      await pollable;
+      await pollable.waitAsync();
       assert.strictEqual(pollable.ready(), true);
     });
 
@@ -74,7 +74,7 @@ describe('monotonic-clock', () => {
 
     it('should return a Pollable that resolves for 0 duration', async () => {
       pollable = monotonicClock.subscribeDuration(0n);
-      await pollable;
+      await pollable.waitAsync();
       assert.strictEqual(pollable.ready(), true);
     });
 
