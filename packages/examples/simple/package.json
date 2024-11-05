@@ -32,7 +32,7 @@
     "@mithic/core": "^0.3"
   },
   "devDependencies": {
-    "@bytecodealliance/componentize-js": "^0.12",
-    "@bytecodealliance/jco": "^1.6"
+    "@bytecodealliance/componentize-js": "^0.14",
+    "@bytecodealliance/jco": "^1.7"
   }
 }

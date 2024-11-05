@@ -36,6 +36,16 @@ describe('poll', () => {
         pollables.notify(pollable.id);
         assert.strictEqual(pollable.ready(), true);
       });
+
+      it('should update ready state by polling pollReady function', () => {
+        let state = false;
+        const pollable = new poll.Pollable({ pollables, pollReady: () => state });
+        assert.strictEqual(pollable.ready(), false);
+        state = true;
+        assert.strictEqual(pollable.ready(), true);
+        state = false;
+        assert.strictEqual(pollable.ready(), false);
+      });
     });
 
     describe('block', () => {

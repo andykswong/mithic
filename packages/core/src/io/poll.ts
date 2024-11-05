@@ -47,14 +47,15 @@ export class Pollable implements PromiseLike<void> {
 
   /** Returns the readiness of this pollable. This function never blocks. */
   public ready(): boolean {
-    if (this.pollables.ready(this._id)) {
-      return true;
+    const readyState = this.pollables.ready(this._id);
+    if (this.pollReady) {
+      const isReady = this.pollReady(this.pollables, this._id);
+      if (readyState !== isReady) {
+        this.pollables.notify(this._id, isReady ? 1 : 0);
+        return isReady;
+      }
     }
-    if (this.pollReady?.(this.pollables, this._id)) {
-      this.pollables.notify(this._id);
-      return true;
-    }
-    return false;
+    return readyState;
   }
 
   /** Returns immediately if the pollable is ready, and otherwise blocks until ready. */

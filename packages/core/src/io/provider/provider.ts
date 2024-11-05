@@ -18,14 +18,14 @@ export interface IoProvider extends MaybeDisposable {
   checkWrite(fd: number): number;
 
   /**
-   * Blocking waits until at least 1 incoming I/O message is processed or timeout,
-   * and returns the number of messages being processed.
+   * Blocking waits until at least 1 incoming I/O event is processed or timeout,
+   * and returns the number of events being processed.
    */
   blockingProcess(timeoutMs?: number): number;
 
-  /** Processes received I/O messages and returns the number of messages being processed. */
+  /** Processes received I/O events and returns the number of events being processed. */
   process(): number;
 
-  /** Blocks until send queue is flushed or timeout, and returns if the operation is successful. */
+  /** Blocks until all data is flushed or timeout, and returns if the operation is successful. */
   flush(timeoutMs?: number): boolean;
 }

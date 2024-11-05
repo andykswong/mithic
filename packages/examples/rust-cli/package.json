@@ -39,6 +39,6 @@
     "@mithic/core": "^0.3"
   },
   "devDependencies": {
-    "@bytecodealliance/jco": "^1.6"
+    "@bytecodealliance/jco": "^1.7"
   }
 }

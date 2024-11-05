@@ -11,7 +11,7 @@ export const getRandomBytes: HostFunction<Uint8Array, [bigint]> = (len: bigint):
 
 getRandomBytes[symbolCabiLower] = ({ memory, realloc }) => {
   let buf32 = new Uint32Array(memory.buffer);
-  return function randomBytes(bigLen: bigint, retptr: number): void {
+  return function getRandomBytes(bigLen: bigint, retptr: number): void {
     const len = Number(bigLen);
     const ptr = realloc(0, 0, 1, len);
     const bytes = new Uint8Array(memory.buffer, ptr, len);
