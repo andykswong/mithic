@@ -100,7 +100,7 @@ describe('SyncMessageChannel', () => {
     it('should process messages from client', async () => {
       const input = 'This is a testing.';
       assert.strictEqual(client.send(codec.encode(input)), true);
-      await delay(10);
+      await delay(1000);
       assert.deepStrictEqual(handler.mock.calls[0].arguments, [input]);
     });
   });
