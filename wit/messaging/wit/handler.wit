@@ -1,9 +1,7 @@
 /// The inferface exposes a message handler for guests. 
 interface incoming-handler {
-    use types.{message, error};
+    use types.{error, message};
 
     /// Callback handler for incoming message from a subscribed topic.
-    /// An Ok result indicates that the message was handled successfully, else the message may be retried.
-    /// If explicitly abandoning the message, error::abandoned should be returned.
     handle: func(msg: message) -> result<_, error>;
 }

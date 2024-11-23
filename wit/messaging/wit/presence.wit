@@ -1,0 +1,11 @@
+/// Interface that provides access to messaging peer presence information.
+interface presence {
+    use types.{message, error};
+
+    /// Messaging peer identifier.
+    type peer-id = string;
+
+    /// Get the list of known `peer-id` that subscribed to given topic.
+    /// MAY be a partial list of discovered `peer-id` in some implementations, e.g. peer-to-peer messaging.
+    list-subscribers: func(topic: string) -> result<list<peer-id>, error>;
+}

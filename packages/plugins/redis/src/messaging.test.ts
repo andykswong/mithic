@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, type Mock } from 'node:test';
 import { dispose } from '@mithic/commons';
-import { MessageMetadata, type Message } from '@mithic/messaging';
+import { MessageMetadata, type Message, type MessageHandler } from '@mithic/messaging';
 import { type RedisClientType } from '@redis/client';
 import { encode } from 'cbor-x/encode';
 import { assertCalledWith, assertCalledWithArg, getCallArg } from './test/assert.ts';
@@ -53,7 +53,7 @@ describe('RedisPubSubMessagingService', () => {
   describe('request', () => {
     it('should publish reply message to redis', async () => {
       const replies = service.request(MSG);
-      service['requestReplyHelper'].accept(REPLY);
+      service['requestReply'].accept(REPLY);
       assert.deepStrictEqual(await replies, [REPLY]);
       assertCalledWith(mockRedis.publish, 0, TOPIC, encode(MSG));
     });
@@ -69,8 +69,8 @@ describe('RedisPubSubMessagingService', () => {
   describe('subscribe', () => {
     it('should start listening to Deno message queue', async () => {
       const messages: Message[] = [];
-      service.onmessage = (msg) => { messages.push(msg); };
-      await service.subscribe([TOPIC]);
+      const handler = { handle(msg) { messages.push(msg); } } satisfies MessageHandler;
+      await service.subscribe([TOPIC], handler);
 
       assertCalledWithArg(mockRedis.subscribe, 0, 0, TOPIC);
       assertCalledWithArg(mockRedis.subscribe, 0, 2, true);
@@ -79,8 +79,9 @@ describe('RedisPubSubMessagingService', () => {
     });
 
     it('should call unsubscribe to removed topics', async () => {
-      await service.subscribe([TOPIC, TOPIC2]);
-      await service.subscribe([TOPIC]);
+      const handler = { handle() { } };
+      await service.subscribe([TOPIC, TOPIC2], handler);
+      await service.subscribe([TOPIC], handler);
 
       assertCalledWithArg(mockRedis.unsubscribe, 0, 0, TOPIC2);
       assertCalledWithArg(mockRedis.unsubscribe, 0, 2, true);

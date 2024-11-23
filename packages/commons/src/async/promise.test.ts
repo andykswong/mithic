@@ -103,6 +103,28 @@ describe('MaybePromise', () => {
     });
   });
 
+  describe('all', () => {
+    it('should work with non-promise values', () => {
+      const input = ['hello', 123, true];
+      const result = MaybePromise.all(input);
+      assert.deepStrictEqual(result, input);
+    });
+
+    it('should work with promise values', async () => {
+      const input = ['hello', 123, true];
+      const result = MaybePromise.all(input.map((val) => Promise.resolve(val)));
+      assert.strictEqual(MaybePromise.isThenable(result), true);
+      assert.deepStrictEqual(await result, input);
+    });
+
+    it('should work with mixed promise and non-promise values', async () => {
+      const input: MaybePromise<string>[] = ['hello', Promise.resolve('world'), '!'];
+      const result = MaybePromise.all(input);
+      assert.strictEqual(MaybePromise.isThenable(result), true);
+      assert.deepStrictEqual(await result, await Promise.all(input));
+    });
+  });
+
   describe('coroutine', () => {
     it('should return the value when the generator function returns synchronously', () => {
       const value = 123;

@@ -1,13 +1,13 @@
 package mithic:messaging@0.2.0;
 
-/// Provides pubsub and request-reply messaging APIs.
+/// Provides message sending and request/reply APIs.
 world imports {
 	import producer;
-	import consumer;
 	import request-reply;
-	import peer;
+	import presence;
 }
 
+/// Enables component to handle incoming messages with messaging and request/reply capabilities.
 world messaging {
 	include imports;
 	export incoming-handler;

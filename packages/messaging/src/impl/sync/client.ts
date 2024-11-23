@@ -1,24 +1,25 @@
 import { dispose, SyncMessageChannel, type SharedChannelBuffers, type Startable } from '@mithic/commons';
-import type { MessagingService } from './adapter.ts';
-import { MessagingMessage, MessagingOp } from './codec.ts';
+import type { MessagingService } from '../../service.ts';
 import {
-  MessagingError, MessagingErrorType, type Message, type MessagingErrorPayload, type PeerId, type RequestOptions
-} from '../types.ts';
+  MessagingError, MessagingErrorType, type MessageHandler, type Message, type MessagingErrorPayload, type PeerId, type RequestOptions
+} from '../../types.ts';
+import { getErrorPayload } from '../../utils/index.ts';
+import { MessagingMessage, MessagingOp } from './codec.ts';
 
-const ABORT_ERROR_NAME = 'AbortError';
 const DEFAULT_TIMEOUT_MS = 4000;
 const TICK_MS = 1000;
 
-/** Provider of synchronous messaging API through a remote reactor. */
+/** Provider of synchronous {@link MessagingService} through remote call via message channel. */
 export class MessagingClient implements Startable, Disposable, MessagingService {
-  public onmessage: ((msg: Message, timeoutMs?: number) => void) | null = null;
-
-  private readonly messageChannel: SyncMessageChannel<MessagingMessage>;
+  private readonly handlers = new Map<number, WeakRef<MessageHandler>>();
+  private readonly handlerIds = new WeakMap<MessageHandler, number>();
   private readonly responses = new Map<number, (MessagingMessage & { op: typeof MessagingOp.Response }) | undefined>();
+  private readonly messageChannel: SyncMessageChannel<MessagingMessage>;
   private readonly now: () => number;
   private readonly timeoutMs: number;
   private readonly handlerTimeoutMs: number;
   private seq = 0;
+  private handlerSeq = 0;
 
   public constructor({
     send, recv,
@@ -96,20 +97,34 @@ export class MessagingClient implements Startable, Disposable, MessagingService 
     this.sendMessage(msg, undefined, replyTo);
   }
 
-  public subscribe(topics: string[]): void {
+  public subscribe(topics: Iterable<string>, handler: MessageHandler): void {
+    const handle = this.handlerIds.get(handler) || this.handlerSeq++;
+
+    const topicSet = new Set(topics);
+    if (!topicSet.size && !this.handlers.has(handle)) {
+      return;
+    }
+    this.handlerIds.set(handler, handle);
+    this.handlers.set(handle, new WeakRef(handler));
+
     const start = this.now(), seq = this.seq++;
-    this.sendRequest({ op: MessagingOp.Subscribe, seq, topics }, start);
+    this.sendRequest({ op: MessagingOp.Subscribe, seq, handle, topics: [...topicSet] }, start);
     this.waitForResponse(seq, start);
+
+    if (!topicSet.size) {
+      this.handlerIds.delete(handler);
+      this.handlers.delete(handle);
+    }
   }
 
-  public subscribers(topic: string): PeerId[] {
+  public listSubscribers(topic: string): PeerId[] {
     const start = this.now(), seq = this.seq++;
     this.sendRequest({ op: MessagingOp.Subscriber, seq, topic }, start);
     const result = this.waitForResponse(seq, start);
     return result.peers || [];
   }
 
-  public sendMessage(msg: Message, options?: RequestOptions, replyTo?: Message): Message[] | undefined {
+  private sendMessage(msg: Message, options?: RequestOptions, replyTo?: Message): Message[] | undefined {
     const start = this.now(), seq = this.seq++;
     this.sendRequest({ op: MessagingOp.Message, seq, msg, replyTo, ...options }, start);
     const response = this.waitForResponse(seq, start);
@@ -144,23 +159,38 @@ export class MessagingClient implements Startable, Disposable, MessagingService 
     return Math.min(TICK_MS, timeRemaining);
   }
 
-  private handle = (message: MessagingMessage) => {
+  private handle = async (message: MessagingMessage) => {
     if (message.op === MessagingOp.Response) {
       if (this.responses.has(message.seq)) {
         this.responses.set(message.seq, message);
       }
     } else if (message.op === MessagingOp.Message) {
-      const start = this.now(), timeoutMs = message.timeoutMs ?? this.handlerTimeoutMs;
-      const reply: MessagingMessage = { op: MessagingOp.Response, seq: message.seq };
-      try {
-        this.onmessage?.(message.msg, timeoutMs);
-      } catch (e) {
-        reply.error = ((e as Error)?.name === ABORT_ERROR_NAME) ? { tag: MessagingErrorType.Timeout } :
-          (e instanceof MessagingError && e.payload) || { tag: MessagingErrorType.Other, val: `internal error: ${e}` };
-      }
-      this.sendRequest(reply, start, timeoutMs);
+      return this.handleMessage(message);
     }
   };
+
+  private async handleMessage(message: MessagingMessage & { op: typeof MessagingOp.Message }) {
+    const start = this.now(), timeoutMs = message.timeoutMs ?? this.handlerTimeoutMs;
+    const handle = message.handle || 0;
+    const reply: MessagingMessage = { op: MessagingOp.Response, seq: message.seq };
+    const handler = this.handlers.get(handle)?.deref();
+
+    if (handler) {
+      try {
+        await handler.handle(message.msg);
+      } catch (e) {
+        reply.error = getErrorPayload(e);
+      }
+    }
+    this.sendRequest(reply, start, timeoutMs);
+
+    if (!handler) {
+      const start = this.now(), seq = this.seq++;
+      this.sendRequest({ op: MessagingOp.Subscribe, seq, handle, topics: [] }, start);
+      this.waitForResponse(seq, start);
+      this.handlers.delete(handle);
+    }
+  }
 }
 
 /** Options for creating {@link MessagingClient}. */

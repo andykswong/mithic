@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { delay, dispose } from '@mithic/commons';
 import { deepStrictContainEqual } from '../test/assert.ts';
-import { MessageMetadata, type Message, type PeerId } from '../types.ts';
+import { MessageMetadata, type Message, type MessageHandler, type PeerId } from '../types.ts';
 import { BroadcastChannelMessagingService } from './index.ts';
 
 const MESSAGE = 'message' as const;
@@ -37,24 +37,6 @@ describe('BroadcastChannelMessagingService', () => {
     subscriber.close();
   });
 
-  it('should emit keepalive messages', async () => {
-    const receivedMessages: BroadcastChannelMessage[] = [];
-
-    subscriber.addEventListener('message', (event) => {
-      receivedMessages.push(event.data);
-    });
-
-    service.subscribe([TOPIC]);
-
-    await delay(100); // Wait for keepalive message to be delivered
-
-    deepStrictContainEqual(receivedMessages, {
-      type: 'keepalive',
-      topics: [TOPIC],
-      from: PEER_ID,
-    });
-  });
-
   describe('send', () => {
     it('should dispatch to channel', async () => {
       const receivedMessages: BroadcastChannelMessage[] = [];
@@ -69,7 +51,6 @@ describe('BroadcastChannelMessagingService', () => {
         metadata: [['key1', 'value1']]
       };
 
-      service.subscribe([TOPIC]);
       service.send(message);
 
       await delay(100); // Wait for the message to be delivered
@@ -159,17 +140,34 @@ describe('BroadcastChannelMessagingService', () => {
   });
 
   describe('subscribe', () => {
+    it('should emit keepalive messages', async () => {
+      const receivedMessages: BroadcastChannelMessage[] = [];
+
+      subscriber.addEventListener('message', (event) => {
+        receivedMessages.push(event.data);
+      });
+
+      service.subscribe([TOPIC], { handle() { } });
+
+      await delay(100); // Wait for keepalive message to be delivered
+
+      deepStrictContainEqual(receivedMessages, {
+        type: 'keepalive',
+        topics: [TOPIC],
+        from: PEER_ID,
+      });
+    });
+
     it('should start forwarding messages to handler', async () => {
       const receivedMessages: Message[] = [];
-      const handler = mock.fn((msg: Message) => { receivedMessages.push(msg); });
+      const handle = mock.fn((msg: Message) => { receivedMessages.push(msg); });
       const message: Message = {
         topic: TOPIC,
         data: DATA,
         metadata: []
       };
 
-      service.onmessage = handler;
-      service.subscribe([TOPIC]);
+      service.subscribe([TOPIC], { handle });
 
       subscriber.postMessage({
         type: MESSAGE,
@@ -185,36 +183,11 @@ describe('BroadcastChannelMessagingService', () => {
       });
     });
 
-    it('should stop forwarding messages from unsubscribed topics', async () => {
+    it('should ignore messages from not subscribed topics', async () => {
       const receivedMessages: Message[] = [];
-      const handler = mock.fn((msg: Message) => { receivedMessages.push(msg); });
-      const message: Message = {
-        topic: TOPIC,
-        data: DATA,
-        metadata: []
-      };
+      const handle = mock.fn((msg: Message) => { receivedMessages.push(msg); });
 
-      service.onmessage = handler;
-      service.subscribe([TOPIC, TOPIC2]);
-      service.subscribe([TOPIC2]);
-
-      subscriber.postMessage({
-        type: MESSAGE,
-        from: OTHER_PEER_ID,
-        msg: message,
-      });
-
-      await delay(100); // Wait for the message to be delivered
-
-      assert.deepStrictEqual(receivedMessages, []);
-    });
-
-    it('should ignore messages from unsubscribed topics', async () => {
-      const receivedMessages: Message[] = [];
-      const handler = mock.fn((msg: Message) => { receivedMessages.push(msg); });
-
-      service.onmessage = handler;
-      service.subscribe([TOPIC]);
+      service.subscribe([TOPIC], { handle });
       subscriber.postMessage({
         type: MESSAGE,
         from: OTHER_PEER_ID,
@@ -231,7 +204,7 @@ describe('BroadcastChannelMessagingService', () => {
     });
 
     it('should update peer lastSeen on keepalive message', async () => {
-      service.subscribe([TOPIC]);
+      service.subscribe([TOPIC], { handle() { } });
 
       for (let i = 0; i < 2; ++i, now += 1000) {
         subscriber.postMessage({
@@ -248,27 +221,78 @@ describe('BroadcastChannelMessagingService', () => {
 
     it('should drop malformed message', async () => {
       const receivedMessages: unknown[] = [];
-      const handler = mock.fn((event) => {
+      const handle = mock.fn((event) => {
         receivedMessages.push(event);
       });
 
-      service.onmessage = handler;
-      service.subscribe([TOPIC]);
+      service.subscribe([TOPIC], { handle });
       subscriber.postMessage('rubbish');
 
       await delay(100); // Wait for the message to be delivered
 
       assert.strictEqual(receivedMessages.length, 0);
     });
+
+    it('should stop forwarding messages from unsubscribed topics', async () => {
+      const receivedMessages: Message[] = [];
+      const handler: MessageHandler = {
+        handle: mock.fn((msg: Message) => { receivedMessages.push(msg); })
+      };
+      const message: Message = {
+        topic: TOPIC,
+        data: DATA,
+        metadata: []
+      };
+
+      service.subscribe([TOPIC, TOPIC2], handler);
+      service.subscribe([TOPIC2], handler);
+
+      subscriber.postMessage({
+        type: MESSAGE,
+        from: OTHER_PEER_ID,
+        msg: message,
+      });
+
+      await delay(100); // Wait for the message to be delivered
+
+      assert.deepStrictEqual(receivedMessages, []);
+    });
   });
 
-  describe('subscribers', () => {
+  describe('unsubscribe', () => {
+    it('should stop forwarding messages from unsubscribed topics', async () => {
+      const receivedMessages: Message[] = [];
+      const handler: MessageHandler = {
+        handle: mock.fn((msg: Message) => { receivedMessages.push(msg); })
+      };
+      const message: Message = {
+        topic: TOPIC,
+        data: DATA,
+        metadata: []
+      };
+
+      service.subscribe([TOPIC, TOPIC2], handler);
+      service.unsubscribe(handler);
+
+      subscriber.postMessage({
+        type: MESSAGE,
+        from: OTHER_PEER_ID,
+        msg: message,
+      });
+
+      await delay(100); // Wait for the message to be delivered
+
+      assert.deepStrictEqual(receivedMessages, []);
+    });
+  });
+
+  describe('listSubscribers', () => {
     it('should return topic subscribers', () => {
       service['topicSubscribers'].set(TOPIC, new Map([
         [`${OTHER_PEER_ID}`, [OTHER_PEER_ID, now]]
       ]));
 
-      assert.deepStrictEqual([...service.subscribers(TOPIC)], [PEER_ID, OTHER_PEER_ID]);
+      assert.deepStrictEqual([...service.listSubscribers(TOPIC)], [PEER_ID, OTHER_PEER_ID]);
     });
 
     it('should clean up inactive topic subscribers', () => {
@@ -279,7 +303,7 @@ describe('BroadcastChannelMessagingService', () => {
         [`${INACTIVE_PEER_ID}`, [INACTIVE_PEER_ID, origTime]]
       ]));
 
-      assert.deepStrictEqual([...service.subscribers(TOPIC)], [PEER_ID, OTHER_PEER_ID]);
+      assert.deepStrictEqual([...service.listSubscribers(TOPIC)], [PEER_ID, OTHER_PEER_ID]);
       assert.strictEqual(service['topicSubscribers'].get(TOPIC)?.has(`${INACTIVE_PEER_ID}`), false);
     });
   });
@@ -287,7 +311,7 @@ describe('BroadcastChannelMessagingService', () => {
   describe('topics', () => {
     it('should return subscribed topics', () => {
       assert.deepStrictEqual([...service.topics()], []);
-      service.subscribe([TOPIC]);
+      service.subscribe([TOPIC], { handle() { } });
       assert.deepStrictEqual([...service.topics()], [TOPIC]);
     });
   });

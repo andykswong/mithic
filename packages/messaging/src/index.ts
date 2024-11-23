@@ -1,8 +1,7 @@
-export * as consumer from './consumer.ts';
 export * as producer from './producer.ts';
 export * as requestReply from './request-reply.ts';
-export * as peer from './peer.ts';
+export * as presence from './presence.ts';
 export * from './impl/index.ts';
-export * from './provider/index.ts';
-export * from './provider/adapter.ts';
+export * from './messaging.ts';
+export * from './service.ts';
 export * from './types.ts';

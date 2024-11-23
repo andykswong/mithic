@@ -1,4 +1,4 @@
-import { Error } from '@mithic/commons';
+import { Error, type MaybePromise } from '@mithic/commons';
 
 /** Error that can occur when using the messaging interface. */
 export class MessagingError extends Error<MessagingErrorPayload, MessagingErrorType> {
@@ -9,27 +9,25 @@ export class MessagingError extends Error<MessagingErrorPayload, MessagingErrorT
 
 /** Error which may be raised by functions in this package. */
 export type MessagingErrorPayload = {
-  tag: typeof MessagingErrorType.Unauthorized | typeof MessagingErrorType.Unsupported | typeof MessagingErrorType.Timeout,
+  tag: typeof MessagingErrorType.Timeout | typeof MessagingErrorType.Unsupported,
   val?: never,
 } | {
-  tag: typeof MessagingErrorType.Connection | typeof MessagingErrorType.Abandoned | typeof MessagingErrorType.Other,
+  tag: typeof MessagingErrorType.Connection | typeof MessagingErrorType.PermissionDenied | typeof MessagingErrorType.Other,
   val: string,
 };
 
 /** Error that can occur when using the messaging interface. */
 export const MessagingErrorType = {
-  /** The operation is not authorized. */
-  Unauthorized: 'unauthorized',
-  /** The operation is supported. */
-  Unsupported: 'unsupported',
   /** The operation timed out. */
   Timeout: 'timeout',
   /** An error occurred with the connection. */
   Connection: 'connection',
-  /** Work on the message was abandoned for the given reason. */
-  Abandoned: 'abandoned',
+  /** A permission error occurred. */
+  PermissionDenied: 'permission-denied',
   /** A catch all for other types of errors. */
   Other: 'other',
+  /** The operation is supported. */
+  Unsupported: 'unsupported',
 } as const;
 
 export type MessagingErrorType = typeof MessagingErrorType[keyof typeof MessagingErrorType];
@@ -47,7 +45,8 @@ export interface Message {
 }
 
 export {
-  isMessage, getMessageMetadata, setMessageMetadata, RequestReplyHelper, type RequestReplyHelperOptions
+  isMessage, getMessageMetadata, setMessageMetadata,
+  RequestReplyAdapter, type RequestReplyAdapterOptions, StringMatcher,
 } from './utils/index.ts';
 
 /** Common {@link Message} metadata field names. */
@@ -75,20 +74,20 @@ declare const __peerId: unique symbol;
 /** Peer ID type. */
 export type PeerId = string & { [__peerId]: never };
 
-/** Incoming message handler for guests. */
-export interface IncomingHandler {
+/** Message handler. */
+export interface MessageHandler {
   /**
    * Handles message in one of the subscribed channels.
    * @throws {@link MessagingError}
    */
-  handle(msg: Message): void;
+  handle(msg: Message): MaybePromise<void>;
 }
 
 /** Fully-qualified name for incoming handler. */
 export const IncomingHandlerFQN = 'mithic:messaging/incoming-handler@0.2.0';
 
-/** Messaging guest module. */
+/** Messaging guest component. */
 export interface MessagingGuest {
   /** Incoming message handler. */
-  [IncomingHandlerFQN]?: IncomingHandler;
+  [IncomingHandlerFQN]?: MessageHandler;
 }

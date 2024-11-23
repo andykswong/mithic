@@ -14,6 +14,20 @@ export const MaybePromise = {
     return value.then(mapValue, mapError);
   },
 
+  /** Returns a single {@link MaybePromise} that fulfills with an array of fulfillment values from input {@link MaybePromise}s. */
+  all<T>(values: Iterable<MaybePromise<T>>): MaybePromise<T[]> {
+    let isAsync = false;
+    const results: T[] = [];
+    for (const value of values) {
+      if (MaybePromise.isThenable(value)) {
+        isAsync = true;
+        break;
+      }
+      results.push(value);
+    }
+    return isAsync ? Promise.all(values) : results;
+  },
+
   /** Returns if a value is a thenable. */
   isThenable<T>(value: MaybePromise<T>): value is PromiseLike<T> {
     return typeof (value as PromiseLike<T>)?.then === 'function';

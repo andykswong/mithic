@@ -16,6 +16,6 @@ interface request-reply {
     /// This returns all replies received up until timeout or the configured set of expected replies.
     request: func(msg: message, options: option<request-options>) -> result<list<message>, error>;
 
-    /// Sends a reply message for given request.
-    reply: func(request: message, reply: message) -> result<_, error>;
+    /// Replies to the given message with the given response message.
+    reply: func(reply-to: message, msg: message) -> result<_, error>;
 }

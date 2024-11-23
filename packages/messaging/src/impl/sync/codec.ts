@@ -1,7 +1,7 @@
 import { type Codec } from '@mithic/commons';
 import { decode } from 'cbor-x/decode';
 import { encode } from 'cbor-x/encode';
-import { type Message, type MessagingErrorPayload, type PeerId, type RequestOptions } from '../types.ts';
+import { type Message, type MessagingErrorPayload, type PeerId, type RequestOptions } from '../../types.ts';
 
 /** Messaging service operation types. */
 export const MessagingOp = {
@@ -24,10 +24,12 @@ export type MessagingMessage = {
   error?: MessagingErrorPayload,
 } | ({
   op: typeof MessagingOp.Message,
+  handle?: number,
   msg: Message,
   replyTo?: Message,
 } & Partial<RequestOptions>) | {
   op: typeof MessagingOp.Subscribe,
+  handle?: number,
   topics: string[],
 } | {
   op: typeof MessagingOp.Subscriber,

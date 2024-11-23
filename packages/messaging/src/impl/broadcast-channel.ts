@@ -1,23 +1,23 @@
-import type { MessageHandler, MessagingService, PeerIdentification, RequestReply } from '../provider/index.ts';
-import { MessageMetadata, type Message, type PeerId, type RequestOptions } from '../types.ts';
-import { DualBroadcastChannel, isMessage, RequestReplyHelper, setMessageMetadata } from '../utils/index.ts';
+import type { MessagingService, PeerPresence, RequestReply } from '../service.ts';
+import { MessageMetadata, type MessageHandler, type Message, type PeerId, type RequestOptions } from '../types.ts';
+import { DualBroadcastChannel, isMessage, RequestReplyAdapter, setMessageMetadata } from '../utils/index.ts';
 
 const DEFAULT_KEEPALIVE_MS = 1000;
 const NUM_KEEPALIVES_TO_WAIT = 3;
 const DEFAULT_CHANNEL = 'mithic:messaging';
 
 /** {@link MessagingService} implementation using BroadcastChannel. */
-export class BroadcastChannelMessagingService implements MessagingService, RequestReply, PeerIdentification, Disposable {
+export class BroadcastChannelMessagingService implements MessagingService, RequestReply, PeerPresence, Disposable {
   /** This instance's peer ID. */
   public readonly peerId?: PeerId;
-  public onmessage: MessageHandler | null = null;
 
   private readonly channel: BroadcastChannel;
-  private readonly requestReplyHelper: RequestReplyHelper;
+  private readonly requestReplyHelper: RequestReplyAdapter;
   private readonly now: () => number;
   private readonly keepaliveMs: number;
   private keepAliveTimer = 0;
   private readonly topicSubscribers = new Map<string, Map<string, [peerId: PeerId, lastSeen: number]>>();
+  private readonly topicHandlers = new Map<string, WeakRef<MessageHandler>[]>();
 
   public constructor({
     peerId,
@@ -30,7 +30,7 @@ export class BroadcastChannelMessagingService implements MessagingService, Reque
     this.now = now;
     this.peerId = peerId;
     this.keepaliveMs = keepaliveMs;
-    this.requestReplyHelper = new RequestReplyHelper({
+    this.requestReplyHelper = new RequestReplyAdapter({
       service: this, now, randomId, replyTopic: peerId ? `reply#${peerId}` : undefined,
     });
     this.channel = loopback ? new DualBroadcastChannel(channel) : new BroadcastChannel(channel);
@@ -56,19 +56,19 @@ export class BroadcastChannelMessagingService implements MessagingService, Reque
     return this.requestReplyHelper.request(request, options);
   }
 
-  public reply(request: Message, reply: Message): Promise<void> {
-    return this.requestReplyHelper.reply(request, reply);
+  public reply(request: Message, reply: Message): void {
+    this.requestReplyHelper.reply(request, reply);
   }
 
-  public subscribe(topics: string[]): void {
+  public subscribe(topics: Iterable<string>, handler: MessageHandler): void {
+    this.unsubscribe(handler);
+
     const topicSet = new Set(topics);
-    for (const topic of this.topicSubscribers.keys()) {
-      if (!topicSet.has(topic)) {
-        this.topicSubscribers.delete(topic);
-      }
-    }
     for (const topic of topicSet) {
       this.topicSubscribers.set(topic, this.topicSubscribers.get(topic) || new Map());
+      const handlers = this.topicHandlers.get(topic) || [];
+      handlers.push(new WeakRef(handler));
+      this.topicHandlers.set(topic, handlers);
     }
 
     if (this.peerId && !this.keepAliveTimer) {
@@ -76,13 +76,31 @@ export class BroadcastChannelMessagingService implements MessagingService, Reque
     }
   }
 
+  /** Unsubscribes a handler from all topics. */
+  public unsubscribe(handler: MessageHandler): void {
+    for (const [topic, handlers] of this.topicHandlers.entries()) {
+      for (let i = 0; i < handlers.length; ++i) {
+        const storedHandler = handlers[i].deref();
+        if (!storedHandler || storedHandler === handler) {
+          handlers[i] = handlers[handlers.length - 1];
+          handlers.pop();
+          --i;
+        }
+      }
+      if (handlers.length === 0) {
+        this.topicHandlers.delete(topic);
+        this.topicSubscribers.delete(topic);
+      }
+    }
+  }
+
   /** Returns the subscribed topics. */
   public topics(): Iterable<string> {
-    return this.topicSubscribers.keys();
+    return this.topicHandlers.keys();
   }
 
   /** Returns the active subscribers of a topic. */
-  public subscribers(topic: string): PeerId[] {
+  public listSubscribers(topic: string): PeerId[] {
     const results = [];
     const subs = this.topicSubscribers.get(topic);
     if (subs) {
@@ -105,7 +123,7 @@ export class BroadcastChannelMessagingService implements MessagingService, Reque
     if (!this.peerId) { return; }
     const message: BroadcastChannelMessage = {
       type: BroadcastChannelMessageType.Keepalive,
-      topics: [...this.topicSubscribers.keys()],
+      topics: [...this.topics()],
       from: this.peerId,
     };
     this.channel.postMessage(message);
@@ -122,10 +140,21 @@ export class BroadcastChannelMessagingService implements MessagingService, Reque
         setMessageMetadata(message.msg, MessageMetadata.From, message.from, true);
       }
       this.requestReplyHelper.accept(message.msg);
-      if (this.topicSubscribers.has(message.msg.topic)) {
-        try {
-          return await this.onmessage?.(message.msg);
-        } catch { /** noop */ }
+
+      const handlers = this.topicHandlers.get(message.msg.topic);
+      if (handlers) {
+        for (let i = 0; i < handlers.length; ++i) {
+          const handler = handlers[i].deref();
+          if (!handler) {
+            handlers[i] = handlers[handlers.length - 1];
+            handlers.pop();
+            --i;
+            continue;
+          }
+          try {
+            await handler.handle(message.msg);
+          } catch { /** noop */ }
+        }
       }
     }
   };

@@ -1,4 +1,4 @@
-/// The producer interface is used to send messages to a channel/topic.
+/// Interface to send messages to a channel/topic.
 interface producer {
     use types.{message, error};
 

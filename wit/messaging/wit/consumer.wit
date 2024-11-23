@@ -1,7 +1,0 @@
-/// The consumer interface is used to subscribe to channels/topics.
-interface consumer {
-    use types.{error};
-
-    /// Subscribe to given topics.
-    subscribe: func(topics: list<string>) -> result<_, error>;
-}

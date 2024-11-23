@@ -1,4 +1,5 @@
-import { Messaging } from './provider/index.ts';
+import { type MaybePromise } from '@mithic/commons';
+import { Messaging } from './messaging.ts';
 import { type Message, type RequestOptions } from './types.ts';
 
 /**
@@ -6,14 +7,14 @@ import { type Message, type RequestOptions } from './types.ts';
  * This returns all replies received up until timeout or the configured set of expected replies.
  * @throws {@link MessagingError}
  */
-export function request(request: Message, options?: RequestOptions): Message[] {
-  return Messaging.provider.request(request, options);
+export function request(request: Message, options?: RequestOptions): MaybePromise<Message[]> {
+  return Messaging.service.request(request, options);
 }
 
 /**
  * Sends a reply message for given request.
  * @throws {@link MessagingError}
  */
-export function reply(request: Message, reply: Message): void {
-  Messaging.provider.reply(request, reply);
+export function reply(request: Message, reply: Message): MaybePromise<void> {
+  return Messaging.service.reply(request, reply);
 }

@@ -8,10 +8,9 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js",
-    "./consumer": "./dist/consumer.js",
     "./producer": "./dist/producer.js",
     "./request-reply": "./dist/request-reply.js",
-    "./peer": "./dist/peer.js"
+    "./presence": "./dist/presence.js"
   },
   "files": [
     "/dist"
@@ -25,7 +24,7 @@
     "lint": "eslint",
     "babel": "babel src -d dist -x '.js,.ts' --root-mode upward",
     "tsc": "tsc --project tsconfig.build.json",
-    "test": "node --experimental-strip-types --experimental-test-coverage --test-coverage-include=\"src/**/*.ts\" --test-coverage-exclude=\"**/*.test.ts\" --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage.lcov --test \"**/*.test.ts\"",
+    "test": "node --experimental-strip-types --experimental-test-coverage --test-coverage-include=\"src/**/*.ts\" --test-coverage-exclude=\"**/*.test.ts\" --test-coverage-exclude=\"src/test/**/*.ts\" --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage.lcov --test \"**/*.test.ts\"",
     "doc": "typedoc"
   },
   "repository": {

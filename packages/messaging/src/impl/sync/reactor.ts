@@ -1,45 +1,37 @@
 import {
   delay, dispose, type SharedChannelBuffers, type Startable, type SyncMessageChannel, SyncMessageChannelReactor
 } from '@mithic/commons';
+import type { MessagingService } from '../../service.ts';
+import { MessagingError, MessagingErrorType, type Message, type MessageHandler, type MessagingErrorPayload } from '../../types.ts';
+import { getErrorPayload } from '../../utils/index.ts';
 import { MessagingMessage, MessagingOp } from './codec.ts';
-import { MessagingError, MessagingErrorType, type Message, type MessagingErrorPayload } from '../types.ts';
-import type { MessagingService } from './adapter.ts';
-import { BroadcastChannelMessagingService } from '../impl/index.ts';
 
-const ABORT_ERROR_NAME = 'AbortError';
 const DEFAULT_TIMEOUT_MS = 5000;
 const TICK_MS = 200;
 
-/** 
- * Reactor to process messaging service operations.
- * TODO: currently if multiple clients subscribe to the same topic, only the last client will get incoming messages.
- * Use multiple reactors to support multiple clients per topic.
- */
+/** Reactor to process {@link MessagingService} operations from clients through message channel. */
 export class MessagingReactor implements Startable, Disposable {
   private readonly reactor: SyncMessageChannelReactor<MessagingMessage>;
   private readonly service: MessagingService;
-  private readonly subscriptions = new Map<SyncMessageChannel<MessagingMessage>, Set<string>>();
-  private readonly subscribers = new Map<string, SyncMessageChannel<MessagingMessage>>();
+  /** Channel to handle ID to handler map. */
+  private readonly subscriptions = new Map<SyncMessageChannel<MessagingMessage>, Map<number, MessageHandler>>();
+  /** Op seq ID to result (error) map. */
   private readonly results = new Map<number, MessagingErrorPayload | undefined>();
   private readonly now: () => number;
   private readonly handlerTimeoutMs: number;
   private seq = 0;
 
   public constructor({
+    service,
     now = () => performance.now(),
     handlerTimeoutMs = DEFAULT_TIMEOUT_MS,
-    service = new BroadcastChannelMessagingService(),
     start = true,
     send,
     recv,
-  }: MessagingProviderOptions = {}) {
+  }: MessagingProviderOptions) {
+    this.service = service;
     this.handlerTimeoutMs = handlerTimeoutMs;
     this.now = now;
-    this.service = service;
-    if (service) {
-      service.onmessage = this.onmessage;
-    }
-
     this.reactor = new SyncMessageChannelReactor({
       codec: MessagingMessage,
       onmessage: this.handle,
@@ -74,10 +66,11 @@ export class MessagingReactor implements Startable, Disposable {
   }
 
   private onremovechannel = (channel: SyncMessageChannel<MessagingMessage>) => {
-    for (const topic of this.subscriptions.get(channel) ?? []) {
-      this.subscribers.delete(topic);
-    }
+    const subscriptions = this.subscriptions.get(channel);
     this.subscriptions.delete(channel);
+    for (const handler of subscriptions?.values() || []) {
+      this.service.subscribe([], handler);
+    }
   }
 
   private handle = async (channel: SyncMessageChannel<MessagingMessage>, message: MessagingMessage) => {
@@ -97,14 +90,12 @@ export class MessagingReactor implements Startable, Disposable {
         case MessagingOp.Subscriber:
           await channel.sendAsync({
             op: MessagingOp.Response, seq: message.seq,
-            peers: (await this.service.subscribers?.(message.topic)) || []
+            peers: (await this.service.listSubscribers?.(message.topic)) || []
           });
           break;
       }
     } catch (e) {
-      const error = ((e as Error)?.name === ABORT_ERROR_NAME) ? { tag: MessagingErrorType.Timeout } :
-        (e instanceof MessagingError && e.payload) || { tag: MessagingErrorType.Other, val: `internal error: ${e}` };
-      await channel.sendAsync({ op: MessagingOp.Response, seq: message.seq, error });
+      await channel.sendAsync({ op: MessagingOp.Response, seq: message.seq, error: getErrorPayload(e) });
     }
   };
 
@@ -135,25 +126,45 @@ export class MessagingReactor implements Startable, Disposable {
     channel: SyncMessageChannel<MessagingMessage>,
     message: MessagingMessage & { op: typeof MessagingOp.Subscribe }
   ): Promise<void> {
+    const handleId = message.handle || 0;
     const topics = new Set(message.topics);
-    await this.service.subscribe([...topics]);
-    this.subscriptions.set(channel, topics);
-    for (const topic of topics) {
-      this.subscribers.set(topic, channel);
+
+    const handlerMap = this.subscriptions.get(channel) || new Map<number, MessageHandler>();
+    let handler = handlerMap.get(handleId);
+    if (!handler && topics.size) {
+      handler = this.createHandler(channel, handleId);
+      handlerMap.set(handleId, handler);
+      this.subscriptions.set(channel, handlerMap);
+    }
+    if (handler) {
+      await this.service.subscribe([...topics], handler);
+      if (!topics.size) {
+        handlerMap.delete(handleId);
+        if (!handlerMap.size) {
+          this.subscriptions.delete(channel);
+        }
+      }
     }
     await channel.sendAsync({ op: MessagingOp.Response, seq: message.seq });
   }
 
-  private onmessage = async (msg: Message, timeoutMs?: number) => {
-    const start = this.now(), seq = this.seq++;
-    const channel = this.subscribers.get(msg.topic);
-    if (!channel) { return; }
-
-    await channel.sendAsync({ op: MessagingOp.Message, seq, msg, timeoutMs }, timeoutMs ?? this.handlerTimeoutMs);
-
-    while (!this.checkResponse(seq)) {
-      await delay(this.nextTick(start, timeoutMs ?? this.handlerTimeoutMs));
-    }
+  private createHandler(channel: SyncMessageChannel<MessagingMessage>, handle = 0): MessageHandler {
+    return {
+      handle: async (msg: Message) => {
+        const start = this.now(), seq = this.seq++;
+        await channel.sendAsync(
+          { op: MessagingOp.Message, seq, handle, msg, timeoutMs: this.handlerTimeoutMs },
+          this.handlerTimeoutMs
+        );
+        try {
+          while (!this.checkResponse(seq)) {
+            await delay(this.nextTick(start, this.handlerTimeoutMs));
+          }
+        } finally {
+          this.results.delete(seq);
+        }
+      }
+    };
   };
 
   private checkResponse(seq: number): boolean {
@@ -161,7 +172,6 @@ export class MessagingReactor implements Startable, Disposable {
       return false;
     }
     const result = this.results.get(seq);
-    this.results.delete(seq);
     if (result) {
       throw new MessagingError(result);
     }
@@ -178,7 +188,7 @@ export class MessagingReactor implements Startable, Disposable {
 /** Options for creating {@link MessagingReactor}. */
 export interface MessagingProviderOptions extends Partial<SharedChannelBuffers> {
   /** The backing messaging service. */
-  readonly service?: MessagingService;
+  readonly service: MessagingService;
   /** Start on construct? */
   readonly start?: boolean;
   /** Message handler timeout limit in milliseconds. Defaults to 5s. */

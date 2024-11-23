@@ -1,18 +1,19 @@
-import { delay } from '@mithic/commons';
-import type { MessagingService, RequestReply } from '../provider/index.ts';
+import { delay, type MaybePromise } from '@mithic/commons';
+import type { MessagingService, RequestReply } from '../service.ts';
 import { MessageMetadata, MessagingError, MessagingErrorType, type Message, type RequestOptions } from '../types.ts';
 import { getMessageMetadata, setMessageMetadata } from './message.ts';
 
 const TICK_MS = 200;
 
 /**
- * Helper class that implements {@link RequestReply} in a generic way on any {@link MessagingService},
+ * This class implements {@link RequestReply} interface in a generic way for any {@link MessagingService},
  * using special metadata (header) fields and a reply topic.
  */
-export class RequestReplyHelper implements RequestReply {
+export class RequestReplyAdapter implements RequestReply {
+  public readonly replyTopic: string;
+
   private readonly replies = new Map<string, Message[]>();
   private readonly service: MessagingService;
-  private readonly replyTopic: string;
   private readonly now: () => number;
   private readonly randomId: () => string;
 
@@ -21,7 +22,7 @@ export class RequestReplyHelper implements RequestReply {
     now = () => performance.now(),
     randomId = () => crypto.randomUUID(),
     replyTopic = randomId(),
-  }: RequestReplyHelperOptions) {
+  }: RequestReplyAdapterOptions) {
     this.service = service;
     this.now = now;
     this.randomId = randomId;
@@ -51,14 +52,14 @@ export class RequestReplyHelper implements RequestReply {
     return replies;
   }
 
-  public async reply(request: Message, reply: Message): Promise<void> {
+  public reply(request: Message, reply: Message): MaybePromise<void> {
     const correlationId = getMessageMetadata(request, MessageMetadata.RequestId);
     const topic = getMessageMetadata(request, MessageMetadata.ReplyTopic);
     if (correlationId === undefined || topic === undefined) {
       throw new MessagingError({ tag: MessagingErrorType.Other, val: 'unable to reply to a non-request message' });
     }
     setMessageMetadata(reply, MessageMetadata.CorrelationId, correlationId, true);
-    await this.service.send({ ...reply, topic });
+    return this.service.send({ ...reply, topic });
   }
 
   /** Checks if incoming message is a reply to active request and saves it if so. */
@@ -72,8 +73,8 @@ export class RequestReplyHelper implements RequestReply {
   }
 }
 
-/** Options for initializing a {@link RequestReplyHelper} */
-export interface RequestReplyHelperOptions {
+/** Options for initializing a {@link RequestReplyAdapter}. */
+export interface RequestReplyAdapterOptions {
   /** Target messaging service. */
   readonly service: MessagingService;
 

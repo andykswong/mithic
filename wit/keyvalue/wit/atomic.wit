@@ -4,7 +4,7 @@ interface atomics {
 
     /// Atomically increment the value associated with the key in the store by given delta and return the new value.
     /// If the key does not exist in the store, it creates a new key-value pair with the value set to given delta.
-    increment: func(bucket: borrow<bucket>, key: string, delta: u64) -> result<u64, error>;
+    increment: func(bucket: borrow<bucket>, key: string, delta: s64) -> result<s64, error>;
 
     /// Atomically set the value associated with the key in the store to the given value. It returns
     /// `true` if the value was set properly, or `false` if the swap failed.

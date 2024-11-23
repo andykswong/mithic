@@ -1,20 +1,19 @@
 import { decode } from 'cbor-x/decode';
 import { encode } from 'cbor-x/encode';
-import { type Codec, type Startable } from '@mithic/commons';
+import type { MaybePromise, Codec, Startable } from '@mithic/commons';
 import {
-  isMessage, RequestReplyHelper, type Message, type MessageHandler, type MessagingService, type RequestOptions
+  isMessage, RequestReplyAdapter, type Message, type MessageHandler, type MessagingService, type RequestOptions
 } from '@mithic/messaging';
 import { type RedisClientType } from '@redis/client';
 
-/** Redis pub/sub implementation of {@link MessagingService}. */
+/** Redis pub/sub implementation of {@link MessagingService} with at-most-once delivery. */
 export class RedisPubSubMessagingService<R extends RedisClientType = RedisClientType>
   implements MessagingService, Startable, AsyncDisposable {
 
-  public onmessage: MessageHandler | null = null;
   private readonly client: R;
-  private readonly requestReplyHelper: RequestReplyHelper;
+  private readonly requestReply: RequestReplyAdapter;
   private readonly codec: Codec<Message>;
-  private _topics = new Set<string>();
+  private readonly topicHandlers = new Map<string, MessageHandler[]>();
 
   public constructor({
     client,
@@ -25,7 +24,7 @@ export class RedisPubSubMessagingService<R extends RedisClientType = RedisClient
   }: RedisPubSubMessagingServiceOptions<R>) {
     this.client = client;
     this.codec = codec;
-    this.requestReplyHelper = new RequestReplyHelper({
+    this.requestReply = new RequestReplyAdapter({
       service: this, now, randomId, replyTopic
     });
   }
@@ -47,23 +46,40 @@ export class RedisPubSubMessagingService<R extends RedisClientType = RedisClient
   }
 
   public request(request: Message, options?: RequestOptions): Promise<Message[]> {
-    return this.requestReplyHelper.request(request, options);
+    return this.requestReply.request(request, options);
   }
 
-  public reply(request: Message, reply: Message): Promise<void> {
-    return this.requestReplyHelper.reply(request, reply);
+  public reply(request: Message, reply: Message): MaybePromise<void> {
+    return this.requestReply.reply(request, reply);
   }
 
-  public async subscribe(topics: string[]): Promise<void> {
-    const newTopics = topics.filter(topic => !this._topics.has(topic));
-    const removedTopics = Array.from(this._topics).filter(topic => !topics.includes(topic));
-    for (const topic of newTopics) {
-      await this.client.subscribe(topic, this.handle, true);
+  public async subscribe(topics: Iterable<string>, handler: MessageHandler): Promise<void> {
+    const topicSet = new Set(topics);
+
+    for (const topic of topicSet) {
+      const handlers = this.topicHandlers.get(topic);
+      if (handlers) {
+        handlers.push(handler);
+      } else {
+        await this.client.subscribe(topic, this.handle, true);
+        this.topicHandlers.set(topic, [handler]);
+      }
     }
-    for (const topic of removedTopics) {
-      await this.client.unsubscribe(topic, this.handle, true);
+
+    for (const [topic, handlers] of this.topicHandlers) {
+      if (topicSet.has(topic)) {
+        continue;
+      }
+      const existing = handlers.indexOf(handler);
+      if (existing >= 0) {
+        handlers[existing] = handlers[handlers.length - 1];
+        handlers.pop();
+      }
+      if (handlers.length === 0) {
+        await this.client.unsubscribe(topic, this.handle, true);
+        this.topicHandlers.delete(topic);
+      }
     }
-    this._topics = new Set(topics);
   }
 
   /** Returns the subscribed topics. */
@@ -74,10 +90,17 @@ export class RedisPubSubMessagingService<R extends RedisClientType = RedisClient
   private handle = async (msg: Uint8Array) => {
     const message = this.codec.decode(msg);
     if (!isMessage(message)) { return; }
-    this.requestReplyHelper.accept(message);
-    if (this._topics.has(message.topic)) {
+    this.requestReply.accept(message);
+    const handlers = this.topicHandlers.get(message.topic);
+    if (handlers?.length) {
+      const results = [];
+      for (const handler of handlers) {
+        try {
+          results.push(handler.handle(message));
+        } catch { /** noop */ }
+      }
       try {
-        return await this.onmessage?.(message);
+        await Promise.allSettled(results);
       } catch { /** noop */ }
     }
   };
