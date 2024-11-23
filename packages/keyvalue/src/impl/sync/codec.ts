@@ -1,7 +1,7 @@
 import type { Codec } from '@mithic/commons';
 import { decode } from 'cbor-x/decode';
 import { encode } from 'cbor-x/encode';
-import { type KeySelector, type StoreErrorPayload } from '../types.ts';
+import { type KeySelector, type StoreErrorPayload } from '../../types.ts';
 
 /** Key-value store operation types. */
 export const KVStoreOp = {

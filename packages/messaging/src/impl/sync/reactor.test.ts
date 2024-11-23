@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { delay, dispose, SharedArrayBufferChannel } from '@mithic/commons';
 import { MessagingError, MessagingErrorType, type Message, type PeerId } from '../../types.ts';
-import { MessagingReactor } from './index.ts';
 import { MessagingMessage, MessagingOp } from './codec.ts';
+import { MessagingReactor } from './index.ts';
 import { createMockMessagingService, type MockMessagingService } from '../../test/mocks.ts';
 
 const TIMEOUT_MS = 299;

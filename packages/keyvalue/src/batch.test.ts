@@ -1,52 +1,48 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import type { Worker } from 'node:worker_threads';
 import { dispose } from '@mithic/commons';
-import { runWorker } from './test/worker.ts';
-import { KeyValue } from './index.ts';
+import { InMemoryKeyValueProvider, KeyValue } from './index.ts';
 import { deleteMany, getMany, setMany } from './batch.ts';
 import { type Bucket, open } from './store.ts';
 
+const BUCKET_ID = 'bucket';
+const KEY1 = '1', KEY2 = '2', KEY3 = '3';
+const VAL1 = new Uint8Array([1]), VAL2 = new Uint8Array([2]), VAL3 = new Uint8Array([3]);
+
 describe('batch', () => {
-  const bucketId = 'bucket';
-  const key1 = '1', key2 = '2', key3 = '3';
-  const value1 = new Uint8Array([1]), value2 = new Uint8Array([2]), value3 = new Uint8Array([3]);
-
   let bucket: Bucket;
-  let worker: Worker;
 
-  beforeEach(async () => {
-    [worker, KeyValue.provider] = runWorker();
-    bucket = open(bucketId);
-    bucket.set(key1, value1);
-    bucket.set(key2, value2);
-    bucket.set(key3, value3);
+  beforeEach(() => {
+    KeyValue.provider = new InMemoryKeyValueProvider();
+    bucket = open(BUCKET_ID) as Bucket;
+    bucket.set(KEY1, VAL1);
+    bucket.set(KEY2, VAL2);
+    bucket.set(KEY3, VAL3);
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     dispose(bucket);
-    await worker?.terminate();
   });
 
   describe('getMany', () => {
     it('should return values from bucket', () => {
       const key = 'keyyy';
-      assert.deepStrictEqual(getMany(bucket, [key, key2, key3]), [undefined, [key2, value2], [key3, value3]]);
+      assert.deepStrictEqual(getMany(bucket, [key, KEY2, KEY3]), [undefined, [KEY2, VAL2], [KEY3, VAL3]]);
     });
   });
 
   describe('setMany', () => {
     it('should set key values to bucket', () => {
       const key = '4', value = new Uint8Array([4]), newValue2 = new Uint8Array([22]);
-      setMany(bucket, [[key2, newValue2], [key, value]]);
-      assert.deepStrictEqual(getMany(bucket, [key, key1, key2, key3]), [[key, value], [key1, value1], [key2, newValue2], [key3, value3]]);
+      setMany(bucket, [[KEY2, newValue2], [key, value]]);
+      assert.deepStrictEqual(getMany(bucket, [key, KEY1, KEY2, KEY3]), [[key, value], [KEY1, VAL1], [KEY2, newValue2], [KEY3, VAL3]]);
     });
   });
 
   describe('deleteMany', () => {
     it('should delete keys from bucket', () => {
-      deleteMany(bucket, ['keyyy', key2, key1]);
-      assert.deepStrictEqual(getMany(bucket, [key1, key2, key3]), [undefined, undefined, [key3, value3]]);
+      deleteMany(bucket, ['keyyy', KEY2, KEY1]);
+      assert.deepStrictEqual(getMany(bucket, [KEY1, KEY2, KEY3]), [undefined, undefined, [KEY3, VAL3]]);
     });
   });
 });

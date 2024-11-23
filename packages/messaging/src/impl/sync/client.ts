@@ -1,5 +1,5 @@
 import { dispose, SyncMessageChannel, type SharedChannelBuffers, type Startable } from '@mithic/commons';
-import type { MessagingService } from '../../service.ts';
+import type { SyncMessagingService } from '../../service.ts';
 import {
   MessagingError, MessagingErrorType, type MessageHandler, type Message, type MessagingErrorPayload, type PeerId, type RequestOptions
 } from '../../types.ts';
@@ -9,8 +9,8 @@ import { MessagingMessage, MessagingOp } from './codec.ts';
 const DEFAULT_TIMEOUT_MS = 4000;
 const TICK_MS = 1000;
 
-/** Provider of synchronous {@link MessagingService} through remote call via message channel. */
-export class MessagingClient implements Startable, Disposable, MessagingService {
+/** Provider of {@link SyncMessagingService} through remote call via message channel. */
+export class MessagingClient implements Startable, Disposable, SyncMessagingService {
   private readonly handlers = new Map<number, WeakRef<MessageHandler>>();
   private readonly handlerIds = new WeakMap<MessageHandler, number>();
   private readonly responses = new Map<number, (MessagingMessage & { op: typeof MessagingOp.Response }) | undefined>();

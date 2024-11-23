@@ -1,17 +1,17 @@
-import { arrayCompare, AtomicSemaphore, dispose, LockGuard, type Startable } from '@mithic/commons';
+import { arrayCompare, AtomicSemaphore, dispose, type Error, LockGuard, type Startable } from '@mithic/commons';
 import {
-  BaseKeyValueStore, KeyOrder, StoreError, StoreErrorType, type KeyResponse, type KeySelector, type KeyValueStore
+  KeyOrder, type KeyResponse, type KeySelector, type KeyValueProvider, type KeyValueStore
 } from '@mithic/keyvalue';
 import { type AbstractSublevel, type AbstractLevel } from 'abstract-level';
 
 const DEFAULT_TIMEOUT_MS = 5000;
+const NOT_FOUND = 'LEVEL_NOT_FOUND';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Sublevel = AbstractSublevel<AbstractLevel<any, string, Uint8Array>, any, string, Uint8Array>;
 
-/** {@link AbstractLevel} implementation of an async queryable map. */
-export class LevelKeyValueStore extends BaseKeyValueStore implements KeyValueStore, AsyncDisposable, Startable {
-  private readonly sublevels = new Map<string, Sublevel>();
+/** {@link KeyValueProvider} backed by {@link AbstractLevel} sublevels. */
+export class LevelKeyValueProvider implements KeyValueProvider, AsyncDisposable, Startable {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private readonly level: AbstractLevel<any, string, Uint8Array>;
   private readonly batchSize: number;
@@ -27,16 +27,11 @@ export class LevelKeyValueStore extends BaseKeyValueStore implements KeyValueSto
       return semaphore;
     })(),
     timeoutMs = DEFAULT_TIMEOUT_MS,
-  }: LevelKeyValueStoreOptions) {
-    super();
+  }: LevelKeyValueProviderOptions) {
     this.level = level;
     this.batchSize = batchSize;
     this.semaphore = semaphore;
     this.timeoutMs = timeoutMs;
-  }
-
-  public get [Symbol.toStringTag](): string {
-    return LevelKeyValueStore.name;
   }
 
   public [Symbol.asyncDispose](): Promise<void> {
@@ -51,22 +46,35 @@ export class LevelKeyValueStore extends BaseKeyValueStore implements KeyValueSto
     await this.level.open();
   }
 
-  public override async open(identifier: string): Promise<string> {
+  public async open(identifier: string): Promise<LevelKeyValueStore> {
     if (!this.started) {
       await this.start();
     }
-    if (!this.sublevels.has(identifier)) {
-      this.sublevels.set(identifier, this.level.sublevel(identifier, { keyEncoding: 'utf8', valueEncoding: 'view' }));
-    }
-    return identifier;
+    const sublevel: Sublevel = this.level.sublevel(identifier, { keyEncoding: 'utf8', valueEncoding: 'view' });
+    return new LevelKeyValueStore(sublevel, this.batchSize, this.semaphore, this.timeoutMs);
+  }
+}
+
+/** {@link KeyValueStore} backed by {@link AbstractLevel} sublevels. */
+export class LevelKeyValueStore implements KeyValueStore {
+  private readonly level: Sublevel;
+  private readonly batchSize: number;
+  private readonly semaphore: AtomicSemaphore;
+  private readonly timeoutMs: number;
+
+  public constructor(level: Sublevel, batchSize: number, semaphore: AtomicSemaphore, timeoutMs: number) {
+    this.level = level;
+    this.batchSize = batchSize;
+    this.semaphore = semaphore;
+    this.timeoutMs = timeoutMs;
   }
 
-  public override close(bucket: string): void {
-    this.sublevels.delete(bucket);
+  public get [Symbol.toStringTag](): string {
+    return LevelKeyValueStore.name;
   }
 
-  public override async listKeys(bucket: string, selector?: KeySelector, cursor?: string): Promise<KeyResponse> {
-    const keys: string[] = await this.getSublevel(bucket).keys(this.getKeysOptions(selector, cursor)).all();
+  public async listKeys(selector?: KeySelector, cursor?: string): Promise<KeyResponse> {
+    const keys: string[] = await this.level.keys(getKeysOptions(this.batchSize + 1, selector, cursor)).all();
     let newCursor;
     if (keys.length > this.batchSize) {
       newCursor = keys[this.batchSize - 1];
@@ -75,14 +83,23 @@ export class LevelKeyValueStore extends BaseKeyValueStore implements KeyValueSto
     return { keys, cursor: newCursor };
   }
 
-  public override async getMany(bucket: string, keys: string[]): Promise<(Uint8Array | null)[]> {
-    return (await this.getSublevel(bucket).getMany(keys)).map(undefinedAsNull);
+  public async exists(key: string): Promise<boolean> {
+    try {
+      return (await this.level.get(key)) !== undefined;
+    } catch (e) {
+      if ((e as Error)?.code === NOT_FOUND) {
+        return false;
+      }
+      throw e;
+    }
   }
 
-  public override async updateMany(
-    bucket: string, keyValues: [key: string, value: Uint8Array | null][]
-  ): Promise<void> {
-    const sublevel = this.getSublevel(bucket);
+  public async getMany(keys: string[]): Promise<(Uint8Array | null)[]> {
+    return (await this.level.getMany(keys)).map(undefinedAsNull);
+  }
+
+  public async updateMany(keyValues: [key: string, value: Uint8Array | null][]): Promise<void> {
+    const sublevel = this.level;
     let batch = sublevel.batch();
     for (const [key, value] of keyValues) {
       if (value) {
@@ -94,8 +111,8 @@ export class LevelKeyValueStore extends BaseKeyValueStore implements KeyValueSto
     await batch.write();
   }
 
-  public override async increment(bucket: string, key: string, delta: bigint): Promise<bigint> {
-    const sublevel = this.getSublevel(bucket);
+  public async increment(key: string, delta: bigint): Promise<bigint> {
+    const sublevel = this.level;
     const lock = await LockGuard.acquire(this.semaphore, this.timeoutMs);
     try {
       // below uses getMany instead of get to avoid NotFound error in some implementations
@@ -114,10 +131,8 @@ export class LevelKeyValueStore extends BaseKeyValueStore implements KeyValueSto
     }
   }
 
-  public override async compareAndSwap(
-    bucket: string, key: string, oldValue?: Uint8Array, newValue?: Uint8Array
-  ): Promise<boolean> {
-    const sublevel = this.getSublevel(bucket);
+  public async compareAndSwap(key: string, oldValue?: Uint8Array, newValue?: Uint8Array): Promise<boolean> {
+    const sublevel = this.level;
     const lock = await LockGuard.acquire(this.semaphore, this.timeoutMs);
     try {
       // below uses getMany instead of get to avoid NotFound error in some implementations
@@ -138,49 +153,10 @@ export class LevelKeyValueStore extends BaseKeyValueStore implements KeyValueSto
       dispose(lock);
     }
   }
-
-  private getSublevel(bucket: string): Sublevel {
-    const sublevel = this.sublevels.get(bucket);
-    if (!sublevel) {
-      throw new StoreError({ tag: StoreErrorType.NoSuchStore });
-    }
-    return sublevel;
-  }
-
-  private getKeysOptions(selector?: KeySelector, cursor?: string) {
-    const reverse = selector?.order === KeyOrder.Desc;
-    let lower = selector?.start;
-    let upper = selector?.end;
-    let lowerOpen = false;
-
-    if (cursor !== undefined) {
-      if (reverse) {
-        upper = upper === undefined || cursor < upper ? cursor : upper;
-      } else {
-        lower = lower === undefined || cursor > lower ? cursor : lower;
-        if (lower === cursor) {
-          lowerOpen = true;
-        }
-      }
-    }
-
-    const result: Record<string, unknown> = { reverse, limit: this.batchSize + 1 };
-    if (lower !== undefined) {
-      if (lowerOpen) {
-        result.gt = lower;
-      } else {
-        result.gte = lower;
-      }
-    }
-    if (upper !== undefined) {
-      result.lt = upper;
-    }
-    return result;
-  }
 }
 
-/** Options for creating a {@link LevelKeyValueStore}. */
-export interface LevelKeyValueStoreOptions {
+/** Options for creating a {@link LevelKeyValueProvider}. */
+export interface LevelKeyValueProviderOptions {
   /** Backing {@link AbstractLevel} store. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly level: AbstractLevel<any, string, Uint8Array>,
@@ -194,4 +170,35 @@ export interface LevelKeyValueStoreOptions {
 
 function undefinedAsNull<T>(value: T | undefined): T | null {
   return value ?? null;
+}
+
+function getKeysOptions(limit: number, selector?: KeySelector, cursor?: string) {
+  const reverse = selector?.order === KeyOrder.Desc;
+  let lower = selector?.start;
+  let upper = selector?.end;
+  let lowerOpen = false;
+
+  if (cursor !== undefined) {
+    if (reverse) {
+      upper = upper === undefined || cursor < upper ? cursor : upper;
+    } else {
+      lower = lower === undefined || cursor > lower ? cursor : lower;
+      if (lower === cursor) {
+        lowerOpen = true;
+      }
+    }
+  }
+
+  const result: Record<string, unknown> = { reverse, limit };
+  if (lower !== undefined) {
+    if (lowerOpen) {
+      result.gt = lower;
+    } else {
+      result.gte = lower;
+    }
+  }
+  if (upper !== undefined) {
+    result.lt = upper;
+  }
+  return result;
 }

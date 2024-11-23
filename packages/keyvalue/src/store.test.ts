@@ -1,42 +1,35 @@
 import assert from 'node:assert/strict';
-import { afterEach, beforeEach, describe, it } from 'node:test';
-import type { Worker } from 'node:worker_threads';
+import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { dispose } from '@mithic/commons';
-import { runWorker } from './test/worker.ts';
-import { KeyValue, StoreError, StoreErrorType } from './index.ts';
+import { InMemoryKeyValueProvider, type InMemoryKeyValueStore, KeyValue } from './index.ts';
 import { type Bucket, open } from './store.ts';
 
+const BUCKET_ID = 'bucket';
+
 describe('store', () => {
-  const bucketId = 'bucket';
-
   let bucket: Bucket;
-  let worker: Worker;
 
-  beforeEach(async () => {
-    [worker, KeyValue.provider] = runWorker();
+  beforeEach(() => {
+    KeyValue.provider = new InMemoryKeyValueProvider();
+    bucket = open(BUCKET_ID) as Bucket;
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     dispose(bucket);
-    await worker?.terminate();
   });
 
   describe('open', () => {
-    it('should open bucket', async () => {
-      bucket = open(bucketId);
-      assert.strictEqual(bucket.bucket, bucketId);
+    it('should open correct bucket', () => {
+      assert.strictEqual((bucket.store as InMemoryKeyValueStore).name, BUCKET_ID);
     });
   });
 
   describe('Bucket', () => {
-    beforeEach(() => {
-      bucket = open(bucketId);
-    });
-
-    describe('close', () => {
-      it('should close bucket', () => {
+    describe('dispose', () => {
+      it('should dispose underlying store', () => {
+        const mockDispose = bucket.store[Symbol.dispose] = mock.fn<() => void>();
         dispose(bucket);
-        assert.throws(() => KeyValue.provider.exists(bucketId, 'key'), new StoreError({ tag: StoreErrorType.NoSuchStore }));
+        assert.strictEqual(mockDispose.mock.callCount(), 1);
       });
     });
 
@@ -73,7 +66,7 @@ describe('store', () => {
         const key2 = 'key2', value2 = new Uint8Array([4, 5]);
         bucket.set(key, value);
         bucket.set(key2, value2);
-        assert.deepStrictEqual(bucket.listKeys(), { cursor: undefined, keys: [key, key2] });
+        assert.deepStrictEqual(bucket.listKeys(), { keys: [key, key2] });
       });
     });
   });

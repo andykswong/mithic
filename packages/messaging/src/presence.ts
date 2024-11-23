@@ -7,5 +7,5 @@ import { type PeerId } from './types.ts';
  * @throws {@link MessagingError}
  */
 export function listSubscribers(topic: string): MaybePromise<PeerId[]> {
-  return Messaging.service.listSubscribers(topic);
+  return Messaging.imports['mithic:messaging/presence'].listSubscribers(topic);
 }

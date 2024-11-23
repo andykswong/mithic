@@ -1,11 +1,14 @@
 import { arrayCompare, type Encoder } from '@mithic/commons';
 import { encode } from 'cbor-x/encode';
-import { type KeyValueStore } from '../provider/index.ts';
+import type { KeyValueProvider, KeyValueStore } from '../service.ts';
 import { type KeySelector, type KeyResponse, StoreError, StoreErrorType, KeyOrder } from '../types.ts';
 import { BaseKeyValueStore } from './base.ts';
 
-/** A keyvalue store that persists data in IndexedDB. */
-export class IDBKeyValueStore extends BaseKeyValueStore implements KeyValueStore, Disposable {
+/**
+ * Provider of keyvalue store backed by IndexedDB.
+ * This provider does not manage new object store creation, but only opens existing stores.
+ */
+export class IDBKeyValueProvider implements KeyValueProvider {
   private readonly db: IDBDatabase;
   private readonly batchSize: number;
   private readonly durability?: IDBTransactionDurability;
@@ -21,8 +24,36 @@ export class IDBKeyValueStore extends BaseKeyValueStore implements KeyValueStore
     /** Encoder for values. */
     encoder: Encoder<unknown> = CborEncoder,
   ) {
+    this.db = db;
+    this.batchSize = batchSize;
+    this.durability = durability;
+    this.encoder = encoder;
+  }
+
+  public open(storeName: string): IDBKeyValueStore {
+    assertStoreExist(this.db, storeName);
+    return new IDBKeyValueStore(this.db, storeName, this.batchSize, this.encoder, this.durability);
+  }
+}
+
+/** A keyvalue store that persists data in IndexedDB. */
+export class IDBKeyValueStore extends BaseKeyValueStore implements KeyValueStore, Disposable {
+  private readonly db: IDBDatabase;
+  private readonly batchSize: number;
+  private readonly durability?: IDBTransactionDurability;
+  private readonly encoder: Encoder<unknown>;
+  public readonly name: string;
+
+  public constructor(
+    db: IDBDatabase,
+    name: string,
+    batchSize: number,
+    encoder: Encoder<unknown>,
+    durability?: IDBTransactionDurability,
+  ) {
     super();
     this.db = db;
+    this.name = name;
     this.batchSize = batchSize;
     this.durability = durability;
     this.encoder = encoder;
@@ -36,21 +67,12 @@ export class IDBKeyValueStore extends BaseKeyValueStore implements KeyValueStore
     this.db.close();
   }
 
-  public override open(storeName: string): string {
-    this.assertStoreExist(storeName);
-    return storeName;
-  }
-
-  public override close(_bucket: string): void {
-    // no-op
-  }
-
-  public override async listKeys(bucket: string, selector?: KeySelector, cursor?: string): Promise<KeyResponse> {
+  public override async listKeys(selector?: KeySelector, cursor?: string): Promise<KeyResponse> {
     const query = getIDBQuery(selector, cursor);
     if (!query) { return { keys: [], cursor: undefined }; }
 
-    const tx = this.transaction(bucket, true);
-    const request = tx.objectStore(bucket).openKeyCursor(...query);
+    const tx = this.transaction();
+    const request = tx.objectStore(this.name).openKeyCursor(...query);
     const keys: string[] = [];
     let i = 0, lastKey, newCursor;
 
@@ -65,9 +87,9 @@ export class IDBKeyValueStore extends BaseKeyValueStore implements KeyValueStore
     return { keys, cursor: newCursor };
   }
 
-  public override async getMany(bucket: string, keys: string[]): Promise<(Uint8Array | null)[]> {
-    const tx = this.transaction(bucket, true);
-    const store = tx.objectStore(bucket);
+  public override async getMany(keys: string[]): Promise<(Uint8Array | null)[]> {
+    const tx = this.transaction();
+    const store = tx.objectStore(this.name);
     const results: Promise<Uint8Array | undefined>[] = [];
     for (const key of keys) {
       results.push(requestPromise(store.get(key)));
@@ -75,11 +97,9 @@ export class IDBKeyValueStore extends BaseKeyValueStore implements KeyValueStore
     return (await Promise.all(results)).map((value) => (value ?? null) && this.encoder.encode(value));
   }
 
-  public override async updateMany(
-    bucket: string, keyValues: [key: string, value: Uint8Array | null][]
-  ): Promise<void> {
-    const tx = this.transaction(bucket, true);
-    const store = tx.objectStore(bucket);
+  public override async updateMany(keyValues: [key: string, value: Uint8Array | null][]): Promise<void> {
+    const tx = this.transaction(true);
+    const store = tx.objectStore(this.name);
     for (const [key, value] of keyValues) {
       if (value === null) {
         store.delete(key);
@@ -90,14 +110,14 @@ export class IDBKeyValueStore extends BaseKeyValueStore implements KeyValueStore
     await txPromise(tx);
   }
 
-  public override async increment(bucket: string, key: string, delta: bigint): Promise<bigint> {
-    const tx = this.transaction(bucket, true);
-    const store = tx.objectStore(bucket);
+  public override async increment(key: string, delta: bigint): Promise<bigint> {
+    const tx = this.transaction(true);
+    const store = tx.objectStore(this.name);
 
     const existingValue = await requestPromise(store.get(key));
     if (existingValue !== undefined && existingValue !== null && typeof existingValue !== 'bigint') {
       tx.commit();
-      throw new StoreError({ tag: StoreErrorType.Other, val: `expect bigint, bucket: ${bucket}, key: ${key}` });
+      throw new StoreError({ tag: StoreErrorType.Other, val: `expect bigint, bucket: ${this.name}, key: ${key}` });
     }
 
     const newValue = (existingValue ?? 0n) + delta;
@@ -106,11 +126,9 @@ export class IDBKeyValueStore extends BaseKeyValueStore implements KeyValueStore
     return newValue;
   }
 
-  public override async compareAndSwap(
-    bucket: string, key: string, oldValue?: Uint8Array, newValue?: Uint8Array
-  ): Promise<boolean> {
-    const tx = this.transaction(bucket, true);
-    const store = tx.objectStore(bucket);
+  public override async compareAndSwap(key: string, oldValue?: Uint8Array, newValue?: Uint8Array): Promise<boolean> {
+    const tx = this.transaction(true);
+    const store = tx.objectStore(this.name);
 
     const existingValue = await requestPromise(store.get(key));
     if ((!oldValue && existingValue) ||
@@ -130,16 +148,16 @@ export class IDBKeyValueStore extends BaseKeyValueStore implements KeyValueStore
     return true;
   }
 
-  private transaction(storeName: string, readwrite = false): IDBTransaction {
-    this.assertStoreExist(storeName);
+  private transaction(readwrite = false): IDBTransaction {
+    assertStoreExist(this.db, this.name);
     return this.db
-      .transaction(storeName, readwrite ? 'readwrite' : 'readonly', { durability: this.durability });
+      .transaction(this.name, readwrite ? 'readwrite' : 'readonly', { durability: this.durability });
   }
+}
 
-  private assertStoreExist(storeName: string): void {
-    if (!this.db.objectStoreNames.contains(storeName)) {
-      throw new StoreError({ tag: StoreErrorType.NoSuchStore });
-    }
+function assertStoreExist(db: IDBDatabase, storeName: string): void {
+  if (!db.objectStoreNames.contains(storeName)) {
+    throw new StoreError({ tag: StoreErrorType.NoSuchStore });
   }
 }
 

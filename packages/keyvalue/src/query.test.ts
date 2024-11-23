@@ -1,26 +1,22 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import type { Worker } from 'node:worker_threads';
 import { dispose } from '@mithic/commons';
-import { runWorker } from './test/worker.ts';
-import { KeyOrder, KeyValue } from './index.ts';
+import { InMemoryKeyValueProvider, KeyOrder, KeyValue } from './index.ts';
 import { listKeys } from './query.ts';
 import { type Bucket, open } from './store.ts';
 
+const BUCKET_ID = 'bucket';
+
 describe('query', () => {
-  const bucketId = 'bucket';
-
   let bucket: Bucket;
-  let worker: Worker;
 
-  beforeEach(async () => {
-    [worker, KeyValue.provider] = runWorker();
-    bucket = open(bucketId);
+  beforeEach(() => {
+    KeyValue.provider = new InMemoryKeyValueProvider();
+    bucket = open(BUCKET_ID) as Bucket;
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     dispose(bucket);
-    await worker?.terminate();
   });
 
   describe('listKeys', () => {
@@ -31,7 +27,7 @@ describe('query', () => {
       bucket.set(key2, value2);
       bucket.set(key3, value3);
 
-      assert.deepStrictEqual(listKeys(bucket, { end: key3, order: KeyOrder.Desc }, ), { cursor: undefined, keys: [key2, key1] });
+      assert.deepStrictEqual(listKeys(bucket, { end: key3, order: KeyOrder.Desc }, ), { keys: [key2, key1] });
     });
   });
 });

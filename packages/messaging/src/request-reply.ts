@@ -8,7 +8,7 @@ import { type Message, type RequestOptions } from './types.ts';
  * @throws {@link MessagingError}
  */
 export function request(request: Message, options?: RequestOptions): MaybePromise<Message[]> {
-  return Messaging.service.request(request, options);
+  return Messaging.imports['mithic:messaging/request-reply'].request(request, options);
 }
 
 /**
@@ -16,5 +16,5 @@ export function request(request: Message, options?: RequestOptions): MaybePromis
  * @throws {@link MessagingError}
  */
 export function reply(request: Message, reply: Message): MaybePromise<void> {
-  return Messaging.service.reply(request, reply);
+  return Messaging.imports['mithic:messaging/request-reply'].reply(request, reply);
 }

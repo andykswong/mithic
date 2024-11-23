@@ -2,30 +2,24 @@ import { encode } from 'cbor-x/encode';
 import type { Kv, KvConsistencyLevel, KvKey, KvListSelector } from '@deno/kv';
 import { arrayCompare, type Encoder } from '@mithic/commons';
 import {
-  KeyOrder, StoreError, StoreErrorType, type KeyResponse, type KeySelector, type KeyValueStore
+  KeyOrder, StoreError, StoreErrorType, type KeyResponse, type KeySelector, type KeyValueProvider, type KeyValueStore
 } from '@mithic/keyvalue';
 
-/** Deno {@link Kv} implementation of {@link KeyValueStore}. */
-export class DenoKeyValueStore implements KeyValueStore, Disposable {
+/** Deno {@link Kv} implementation of {@link KeyValueProvider}. */
+export class DenoKeyValueProvider implements KeyValueProvider {
   private readonly kv: Kv;
-  private readonly batchSize: number;
-  private readonly consistency: KvConsistencyLevel;
-  private readonly expireIn?: number;
-  private readonly encoder: Encoder<unknown>;
+  private readonly options: Required<DenoKeyValueProviderOptions>;
   private closed = false;
 
   public constructor({
     kv,
     batchSize = 100,
     consistency = 'strong',
-    expireIn,
+    expireIn = -1,
     encoder = CborEncoder,
-  }: DenoKeyValueStoreOptions) {
+  }: DenoKeyValueProviderOptions) {
     this.kv = kv;
-    this.batchSize = batchSize;
-    this.consistency = consistency;
-    this.expireIn = expireIn;
-    this.encoder = encoder;
+    this.options = { kv, batchSize, consistency, expireIn, encoder };
   }
 
   public get [Symbol.toStringTag](): string {
@@ -39,21 +33,47 @@ export class DenoKeyValueStore implements KeyValueStore, Disposable {
     }
   }
 
-  public open(identifier: string): string {
-    return identifier;
+  public open(identifier: string): DenoKeyValueStore {
+    if (this.closed) {
+      throw new StoreError({ tag: StoreErrorType.Other, val: 'Kv is closed' });
+    }
+    return new DenoKeyValueStore(identifier, this.options);
+  }
+}
+
+/** Deno {@link Kv} implementation of {@link KeyValueStore}. */
+export class DenoKeyValueStore implements KeyValueStore {
+  private readonly kv: Kv;
+  private readonly batchSize: number;
+  private readonly consistency: KvConsistencyLevel;
+  private readonly expireIn: number;
+  private readonly encoder: Encoder<unknown>;
+
+  public readonly name: string;
+
+  public constructor(
+    name: string,
+    { kv, batchSize, consistency, expireIn, encoder }: Required<DenoKeyValueProviderOptions>
+  ) {
+    this.name = name;
+    this.kv = kv;
+    this.batchSize = batchSize;
+    this.consistency = consistency;
+    this.expireIn = expireIn;
+    this.encoder = encoder;
   }
 
-  public close(_bucket: string): void {
-    // noop
+  public get [Symbol.toStringTag](): string {
+    return DenoKeyValueStore.name;
   }
 
-  public async exists(bucket: string, key: string): Promise<boolean> {
-    const result = await this.kv.get(getKvKey(bucket, key), { consistency: this.consistency });
+  public async exists(key: string): Promise<boolean> {
+    const result = await this.kv.get(getKvKey(this.name, key), { consistency: this.consistency });
     return result.value !== null;
   }
 
-  public async listKeys(bucket: string, selector?: KeySelector, cursor?: string): Promise<KeyResponse> {
-    const results = this.kv.list(toKvListSelector(bucket, selector), {
+  public async listKeys(selector?: KeySelector, cursor?: string): Promise<KeyResponse> {
+    const results = this.kv.list(toKvListSelector(this.name, selector), {
       batchSize: this.batchSize,
       consistency: this.consistency,
       cursor,
@@ -62,15 +82,16 @@ export class DenoKeyValueStore implements KeyValueStore, Disposable {
     });
     const keys: string[] = [];
     for await (const entry of results) {
-      if (entry.key.length > 1 && entry.key[0] === bucket) {
+      if (entry.key.length > 1 && entry.key[0] === this.name) {
         keys.push(`${entry.key[1]}`);
       }
     }
     return { keys, cursor: keys.length ? results.cursor : undefined };
   }
 
-  public async getMany(bucket: string, keys: string[]): Promise<(Uint8Array | null)[]> {
-    const response = await this.kv.getMany(keys.map(getKvKey.bind(null, bucket)), { consistency: this.consistency });
+  public async getMany(keys: string[]): Promise<(Uint8Array | null)[]> {
+    const response = await this.kv.getMany(
+      keys.map(getKvKey.bind(null, this.name)), { consistency: this.consistency });
     const results: (Uint8Array | null)[] = [];
     for (const result of response) {
       results.push(result.versionstamp !== null ? this.encoder.encode(result.value) : null);
@@ -78,13 +99,13 @@ export class DenoKeyValueStore implements KeyValueStore, Disposable {
     return results;
   }
 
-  public async updateMany(bucket: string, keyValues: [key: string, value: Uint8Array | null][]): Promise<void> {
+  public async updateMany(keyValues: [key: string, value: Uint8Array | null][]): Promise<void> {
     let tx = this.kv.atomic();
     for (const [key, value] of keyValues) {
       if (value) {
-        tx = tx.set(getKvKey(bucket, key), value, { expireIn: this.expireIn });
+        tx = tx.set(getKvKey(this.name, key), value, this.expireOption());
       } else {
-        tx = tx.delete(getKvKey(bucket, key));
+        tx = tx.delete(getKvKey(this.name, key));
       }
     }
     const result = await tx.commit();
@@ -93,14 +114,14 @@ export class DenoKeyValueStore implements KeyValueStore, Disposable {
     }
   }
 
-  public async increment(bucket: string, key: string, delta: bigint): Promise<bigint> {
-    const kvkey = getKvKey(bucket, key);
+  public async increment(key: string, delta: bigint): Promise<bigint> {
+    const kvkey = getKvKey(this.name, key);
     let result: bigint | undefined;
     for (let i = 0; i < 3; ++i) {
       const existing = await this.kv.get(kvkey, { consistency: 'strong' });
       const value = (existing.value as KvU64).value ?? existing.value ?? 0n;
       if (!['bigint', 'string', 'number'].includes(typeof value)) {
-        throw new StoreError({ tag: StoreErrorType.Other, val: `expect bigint, bucket: ${bucket}, key: ${key}` });
+        throw new StoreError({ tag: StoreErrorType.Other, val: `expect bigint, bucket: ${this.name}, key: ${key}` });
       }
 
       const commit = await this.kv.atomic()
@@ -117,10 +138,8 @@ export class DenoKeyValueStore implements KeyValueStore, Disposable {
     return result;
   }
 
-  public async compareAndSwap(
-    bucket: string, key: string, oldValue?: Uint8Array, newValue?: Uint8Array
-  ): Promise<boolean> {
-    const kvkey = getKvKey(bucket, key);
+  public async compareAndSwap(key: string, oldValue?: Uint8Array, newValue?: Uint8Array): Promise<boolean> {
+    const kvkey = getKvKey(this.name, key);
     const existing = await this.kv.get(kvkey, { consistency: 'strong' });
     const existingValue = existing.versionstamp !== null ? this.encoder.encode(existing.value) : null;
 
@@ -133,16 +152,20 @@ export class DenoKeyValueStore implements KeyValueStore, Disposable {
 
     let tx = this.kv.atomic().check(existing);
     if (newValue) {
-      tx = tx.set(kvkey, newValue, { expireIn: this.expireIn });
+      tx = tx.set(kvkey, newValue, this.expireOption());
     } else {
       tx = tx.delete(kvkey);
     }
     return (await tx.commit()).ok;
   }
+
+  private expireOption() {
+    return this.expireIn < 0 ? {} : { expireIn: this.expireIn };
+  }
 }
 
-/** Options for creating a {@link DenoKeyValueStore}. */
-export interface DenoKeyValueStoreOptions {
+/** Options for creating a {@link DenoKeyValueProvider}. */
+export interface DenoKeyValueProviderOptions {
   /** Backing Kv. */
   readonly kv: Kv,
   /** Batch size for listKeys operation. Defaults to 100. */

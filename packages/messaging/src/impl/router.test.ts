@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
-import { RoutingMessagingService } from './router.ts';
 import { MessagingError, MessagingErrorType, type MessageHandler, type PeerId } from '../types.ts';
 import { StringMatcher } from '../utils/matcher.ts';
 import { createMessage, createMockMessagingService } from '../test/mocks.ts';
+import { RoutingMessagingService } from './index.ts';
 
 const TOPIC = 'test';
 const UNSUPPORTED_ERR = new MessagingError({ tag: MessagingErrorType.Unsupported });

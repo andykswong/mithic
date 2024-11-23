@@ -1,25 +1,21 @@
 import { MaybePromise } from '@mithic/commons';
 import { type KeyResponse, type KeySelector } from '../types.ts';
-import type { KeyValueStore } from '../provider/index.ts';
+import type { KeyValueStore } from '../service.ts';
 
-/**
- * Abstract base class for {@link KeyValueStore}.
- */
+/** Abstract base class to simplify {@link KeyValueStore} implementation. */
 export abstract class BaseKeyValueStore implements KeyValueStore {
-  public abstract open(identifier: string): MaybePromise<string>;
-  public abstract close(bucket: string): MaybePromise<void>;
-  public abstract listKeys(bucket: string, selector?: KeySelector, cursor?: string): MaybePromise<KeyResponse>;
-  public abstract getMany(bucket: string, keys: string[]): MaybePromise<(Uint8Array | null)[]>;
-  public abstract updateMany(bucket: string, keyValues: [key: string, value: Uint8Array | null][]): MaybePromise<void>;
-  public abstract increment(bucket: string, key: string, delta: bigint): MaybePromise<bigint>;
-  public abstract compareAndSwap(bucket: string, key: string, oldValue?: Uint8Array, newValue?: Uint8Array): MaybePromise<boolean>;
+  public abstract listKeys( selector?: KeySelector, cursor?: string): MaybePromise<KeyResponse>;
+  public abstract getMany(keys: string[]): MaybePromise<(Uint8Array | null)[]>;
+  public abstract updateMany(keyValues: [key: string, value: Uint8Array | null][]): MaybePromise<void>;
+  public abstract increment(key: string, delta: bigint): MaybePromise<bigint>;
+  public abstract compareAndSwap(key: string, oldValue?: Uint8Array, newValue?: Uint8Array): MaybePromise<boolean>;
 
-  public exists(bucket: string, key: string): MaybePromise<boolean> {
-    return MaybePromise.map(this.getMany(bucket, [key]), exists);
+  public exists(key: string): MaybePromise<boolean> {
+    return MaybePromise.map(this.getMany([key]), exists);
   }
 
-  protected get(bucket: string, key: string): MaybePromise<Uint8Array | null> {
-    return MaybePromise.map(this.getMany(bucket, [key]), getFirst);
+  protected get(key: string): MaybePromise<Uint8Array | null> {
+    return MaybePromise.map(this.getMany([key]), getFirst);
   }
 
   protected keyInRange(key: string, selector?: KeySelector): boolean {

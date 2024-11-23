@@ -3,10 +3,10 @@ import { type MessageHandler, type Message, type PeerId, type RequestOptions } f
 
 /** A messaging service adapter. */
 export interface MessagingService
-  extends MessageDispatcher, MessageSubscription, Partial<RequestReply>, Partial<PeerPresence> { }
+  extends MessageProducer, MessageSubscription, Partial<RequestReply>, Partial<PeerPresence> { }
 
-/** A message dispatcher service. */
-export interface MessageDispatcher {
+/** A message sending service. */
+export interface MessageProducer {
   /** Sends a message. */
   send(message: Message): MaybePromise<void>;
 }
@@ -30,4 +30,13 @@ export interface RequestReply {
 export interface PeerPresence {
   /** Returns the active subscribers of a topic. */
   listSubscribers(topic: string): MaybePromise<PeerId[]>;
+}
+
+/** Synchronous messaging service adapter. */
+export interface SyncMessagingService extends MessagingService {
+  send(message: Message): void;
+  subscribe(topics: Iterable<string>, handler: MessageHandler): void;
+  request?(request: Message, options?: RequestOptions): Message[];
+  reply?(request: Message, reply: Message): void;
+  listSubscribers?(topic: string): PeerId[];
 }

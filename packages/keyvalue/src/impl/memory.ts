@@ -1,16 +1,15 @@
 import { encode } from 'cbor-x/encode';
 import { arrayCompare, type Encoder } from '@mithic/commons';
-import { type KeyValueStore } from '../provider/index.ts';
+import type { SyncKeyValueProvider, SyncKeyValueStore } from '../service.ts';
 import { KeyOrder, type KeyResponse, type KeySelector, StoreError, StoreErrorType } from '../types.ts';
 import { BaseKeyValueStore } from './base.ts';
 
 /**
- * Transient in-memory keyvalue store.
- * Buckets in this store will be automatically deleted when unused, via reference counting.
+ * Provider of transient in-memory keyvalue stores.
+ * This provider holds weak ref to stores which means they will be automatically deleted when unused.
  */
-export class InMemoryKeyValueStore extends BaseKeyValueStore implements KeyValueStore {
-  private readonly buckets = new Map<string, Map<string, Uint8Array | bigint>>();
-  private readonly bucketRefs = new Map<string, number>();
+export class InMemoryKeyValueProvider implements SyncKeyValueProvider {
+  private readonly buckets = new Map<string, WeakRef<InMemoryKeyValueStore>>();
   private readonly intEncoder: Encoder<bigint>;
 
   public constructor(
@@ -19,7 +18,35 @@ export class InMemoryKeyValueStore extends BaseKeyValueStore implements KeyValue
       encode: (input) => encode(input),
     },
   ) {
+    this.intEncoder = intEncoder;
+  }
+
+  public open(bucket: string): InMemoryKeyValueStore {
+    let store = this.buckets.get(bucket)?.deref();
+    if (!store) {
+      store = new InMemoryKeyValueStore(bucket, this.intEncoder);
+      this.buckets.set(bucket, new WeakRef(store));
+    }
+    return store;
+  }
+}
+
+/** Transient in-memory keyvalue store. */
+export class InMemoryKeyValueStore extends BaseKeyValueStore implements SyncKeyValueStore {
+  private readonly data = new Map<string, Uint8Array | bigint>;
+  private readonly intEncoder: Encoder<bigint>;
+  /** The bucket name */
+  public readonly name: string;
+
+  public constructor(
+    name: string,
+    /** Encoder for bigint type. */
+    intEncoder: Encoder<bigint> = {
+      encode: (input) => encode(input),
+    },
+  ) {
     super();
+    this.name = name;
     this.intEncoder = intEncoder;
   }
 
@@ -27,28 +54,13 @@ export class InMemoryKeyValueStore extends BaseKeyValueStore implements KeyValue
     return InMemoryKeyValueStore.name;
   }
 
-  public override open(bucket: string): string {
-    if (!this.buckets.has(bucket)) {
-      this.buckets.set(bucket, new Map());
-    }
-    this.bucketRefs.set(bucket, (this.bucketRefs.get(bucket) || 0) + 1);
-    return bucket;
+  public override exists(key: string): boolean {
+    return super.exists(key) as boolean;
   }
 
-  public override close(bucket: string): void {
-    const refCount = (this.bucketRefs.get(bucket) || 0) - 1;
-    if (refCount <= 0) {
-      this.buckets.delete(bucket);
-      this.bucketRefs.delete(bucket);
-    } else {
-      this.bucketRefs.set(bucket, refCount);
-    }
-  }
-
-  public override listKeys(bucket: string, selector?: KeySelector): KeyResponse {
-    const map = this.getBucket(bucket);
+  public override listKeys(selector?: KeySelector): KeyResponse {
     const keys = [];
-    for (const key of map.keys()) {
+    for (const key of this.data.keys()) {
       if (this.keyInRange(key, selector)) {
         keys.push(key);
       }
@@ -60,40 +72,36 @@ export class InMemoryKeyValueStore extends BaseKeyValueStore implements KeyValue
     return { keys };
   }
 
-  public override getMany(bucket: string, keys: string[]): (Uint8Array | null)[] {
-    const map = this.getBucket(bucket);
+  public override getMany(keys: string[]): (Uint8Array | null)[] {
     const results = [];
     for (const key of keys) {
-      results.push(this.getValue(map, key));
+      results.push(this.getValue(key));
     }
     return results;
   }
 
-  public override updateMany(bucket: string, keyValues: [key: string, value: Uint8Array | null][]): void {
-    const map = this.getBucket(bucket);
+  public override updateMany(keyValues: [key: string, value: Uint8Array | null][]): void {
     for (const [key, value] of keyValues) {
       if (value) {
-        map.set(key, new Uint8Array(value));
+        this.data.set(key, new Uint8Array(value));
       } else {
-        map.delete(key);
+        this.data.delete(key);
       }
     }
   }
 
-  public override increment(bucket: string, key: string, delta: bigint): bigint {
-    const map = this.getBucket(bucket);
-    const existingValue = map.get(key);
+  public override increment(key: string, delta: bigint): bigint {
+    const existingValue = this.data.get(key);
     if (existingValue !== undefined && typeof existingValue !== 'bigint') {
-      throw new StoreError({ tag: StoreErrorType.Other, val: `expect bigint, bucket: ${bucket}, key: ${key}` });
+      throw new StoreError({ tag: StoreErrorType.Other, val: `expect bigint, bucket: ${this.name}, key: ${key}` });
     }
     const newValue = (existingValue ?? 0n) + delta;
-    map.set(key, newValue);
+    this.data.set(key, newValue);
     return newValue;
   }
 
-  public override compareAndSwap(bucket: string, key: string, oldValue?: Uint8Array, newValue?: Uint8Array): boolean {
-    const map = this.getBucket(bucket);
-    const existingValue = this.getValue(map, key);
+  public override compareAndSwap(key: string, oldValue?: Uint8Array, newValue?: Uint8Array): boolean {
+    const existingValue = this.getValue(key);
 
     if ((!oldValue && existingValue) ||
       (oldValue && (!existingValue || arrayCompare(oldValue, existingValue) !== 0))
@@ -102,23 +110,15 @@ export class InMemoryKeyValueStore extends BaseKeyValueStore implements KeyValue
     }
 
     if (!newValue) {
-      map.delete(key);
+      this.data.delete(key);
     } else {
-      map.set(key, newValue)
+      this.data.set(key, newValue)
     }
     return true;
   }
 
-  private getBucket(bucket: string) {
-    const map = this.buckets.get(bucket);
-    if (!map) {
-      throw new StoreError({ tag: StoreErrorType.NoSuchStore });
-    }
-    return map;
-  }
-
-  private getValue(bucket: Map<string, bigint | Uint8Array>, key: string): Uint8Array | null {
-    const value = bucket.get(key) ?? null;
+  private getValue(key: string): Uint8Array | null {
+    const value = this.data.get(key) ?? null;
     return typeof value === 'bigint' ? this.intEncoder.encode(value) : value;
   }
 }

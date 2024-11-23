@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
-import { type Message, Messaging, RoutingMessagingService, StringMatcher } from './index.ts';
+import { type Message, Messaging } from './index.ts';
 import { send } from './producer.ts';
 import { type MockMessagingService, createMockMessagingService } from './test/mocks.ts';
 
@@ -11,8 +11,7 @@ describe('producer', () => {
   let service: MockMessagingService;
 
   beforeEach(() => {
-    service = createMockMessagingService();
-    Messaging.service = new RoutingMessagingService([[StringMatcher.matchAll(), service]]);
+    Messaging.service = service = createMockMessagingService();
   });
 
   describe('send', () => {

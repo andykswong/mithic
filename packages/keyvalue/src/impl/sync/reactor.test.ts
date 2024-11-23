@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { delay, dispose, SharedArrayBufferChannel } from '@mithic/commons';
-import { InMemoryKeyValueStore } from '../impl/index.ts';
-import { KeyOrder, StoreErrorType } from '../types.ts';
-import { type KeyValueStore, KeyValueStoreReactor } from './index.ts';
+import { InMemoryKeyValueProvider } from '../../impl/index.ts';
+import type { SyncKeyValueProvider, SyncKeyValueStore } from '../../service.ts';
+import { KeyOrder, StoreErrorType } from '../../types.ts';
+import { KeyValueStoreReactor } from './index.ts';
 import { KVStoreMessage, KVStoreOp } from './codec.ts';
 
 const BUCKET = 'test_bucket';
@@ -13,21 +14,23 @@ const VALUE1 = new Uint8Array([1, 2, 3]), VALUE2 = new Uint8Array([4, 5, 6]);
 describe('KeyValueStoreReactor', () => {
   let reactor: KeyValueStoreReactor;
   let client: SharedArrayBufferChannel;
-  let store: KeyValueStore;
+  let provider: SyncKeyValueProvider;
+  let store: SyncKeyValueStore;
   let seq = 0;
 
   beforeEach(async () => {
-    store = new InMemoryKeyValueStore();
-    store.open(BUCKET);
-    store.updateMany(BUCKET, [[KEY2, VALUE2], [KEY1, VALUE1]]);
+    provider = new InMemoryKeyValueProvider();
+    store = provider.open(BUCKET);
+    store.updateMany([[KEY2, VALUE2], [KEY1, VALUE1]]);
 
     client = new SharedArrayBufferChannel();
-    reactor = new KeyValueStoreReactor({ store, ...client.buffers });
+    reactor = new KeyValueStoreReactor({ provider, ...client.buffers });
+    reactor['stores'].set(BUCKET, store);
 
     await delay(100);
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     dispose(reactor);
   });
 
@@ -45,10 +48,11 @@ describe('KeyValueStoreReactor', () => {
 
   describe('close', () => {
     it('should handle open request', async () => {
-      const closeSpy = mock.method(store, 'close');
+      const disposeSpy = store[Symbol.dispose] = mock.fn<() => void>();
       assert.strictEqual(send({ op: KVStoreOp.Close, bucket: BUCKET, seq: ++seq }), true);
       await delay(100);
-      assert.deepStrictEqual(closeSpy.mock.calls[0].arguments, [BUCKET]);
+      assert.strictEqual(disposeSpy.mock.callCount(), 1);
+      assert.strictEqual(reactor['stores'].has(BUCKET), false);
     });
   });
 
@@ -109,7 +113,7 @@ describe('KeyValueStoreReactor', () => {
   describe('incr', () => {
     it('should handle incr request', async () => {
       const key = 'counter';
-      store.increment(BUCKET, key, 239n);
+      store.increment(key, 239n);
       assert.strictEqual(send({ op: KVStoreOp.Incr, bucket: BUCKET, seq: ++seq, key, delta: 123n }), true);
       await delay(100);
       assert.deepStrictEqual(receive(), { op: KVStoreOp.Response, seq, counter: 362n });

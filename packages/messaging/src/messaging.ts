@@ -1,20 +1,36 @@
 import { type MaybePromise } from '@mithic/commons';
+import type { MessageProducer, MessagingService, PeerPresence, RequestReply } from './service.ts';
 import { IncomingHandlerFQN, type MessagingGuest } from './types.ts';
-import { RoutingMessagingService } from './impl/index.ts';
+import { BroadcastChannelMessagingService } from './impl/index.ts';
+import { unsupported } from './utils/index.ts';
 
-let service: RoutingMessagingService;
+let service: MessagingService;
 
-/** The messaging module. */
+/** Messaging module. */
 export const Messaging = {
-  /** The messaging service. */
-  get service(): RoutingMessagingService {
+  /** The underlying messaging service. */
+  get service(): MessagingService {
     if (!service) {
-      service = new RoutingMessagingService();
+      service = new BroadcastChannelMessagingService();
     }
     return service;
   },
-  set service(value: RoutingMessagingService) {
+  set service(value: MessagingService) {
     service = value;
+  },
+
+  /** Messaging module imports. */
+  imports: {
+    'mithic:messaging/producer': {
+      send: (message) => service.send(message),
+    } satisfies MessageProducer,
+    'mithic:messaging/request-reply': {
+      request: (request, options) => service.request?.(request, options) ?? unsupported(),
+      reply: (request, reply) => service.reply ? service.reply(request, reply) : unsupported(),
+    } satisfies RequestReply,
+    'mithic:messaging/presence': {
+      listSubscribers: (topic) => service.listSubscribers?.(topic) ?? unsupported(),
+    } satisfies PeerPresence,
   },
 
   /** Subscribes a messaging guest component to provider. */
@@ -23,5 +39,5 @@ export const Messaging = {
     if (handler) {
       return this.service.subscribe(topics, handler);
     }
-  }
+  },
 };

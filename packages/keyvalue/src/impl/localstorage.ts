@@ -1,13 +1,13 @@
 import { TextCodec, type Codec } from '@mithic/commons';
-import { BaseKeyValueStore } from './base.ts';
-import { type KeyValueStore } from '../provider/index.ts';
+import type { SyncKeyValueProvider, SyncKeyValueStore } from '../service.ts';
 import { KeyOrder, type KeyResponse, type KeySelector, StoreError, StoreErrorType } from '../types.ts';
+import { BaseKeyValueStore } from './base.ts';
 
-/** A keyvalue store that stores data in local/session storage with prefixed keys. */
-export class LocalStorageKeyValueStore extends BaseKeyValueStore implements KeyValueStore {
+/** Provider of keyvalue stores backed by local/session storage. */
+export class LocalStorageKeyValueProvider implements SyncKeyValueProvider {
   private readonly storage: Storage;
-  private readonly namespace: string;
-  private readonly separator: string;
+  private readonly keyPrefix: string;
+  private readonly keySeparator: string;
   private readonly codec: Codec<string>;
 
   public constructor({
@@ -15,11 +15,36 @@ export class LocalStorageKeyValueStore extends BaseKeyValueStore implements KeyV
     keyPrefix = '',
     keySeparator = ':',
     codec = new TextCodec()
-  }: LocalStorageKeyValueStoreOptions = {}) {
-    super();
+  }: LocalStorageKeyValueOptions = {}) {
     this.storage = storage;
-    this.namespace = keyPrefix ? keyPrefix + keySeparator : keyPrefix;
-    this.separator = keySeparator;
+    this.keyPrefix = keyPrefix;
+    this.keySeparator = keySeparator;
+    this.codec = codec;
+  }
+
+  public open(identifier: string): LocalStorageKeyValueStore {
+    return new LocalStorageKeyValueStore({
+      name: identifier,
+      storage: this.storage,
+      keyPrefix: this.keyPrefix,
+      keySeparator: this.keySeparator,
+      codec: this.codec
+    });
+  }
+}
+
+/** A keyvalue store that stores data in local/session storage with prefixed keys. */
+export class LocalStorageKeyValueStore extends BaseKeyValueStore implements SyncKeyValueStore {
+  private readonly storage: Storage;
+  private readonly codec: Codec<string>;
+  private readonly namespace: string;
+  public readonly name: string;
+
+  public constructor({ name, storage, keyPrefix, keySeparator, codec }: LocalStorageKeyValueStoreOptions) {
+    super();
+    this.name = name;
+    this.storage = storage;
+    this.namespace = `${keyPrefix ? keyPrefix + keySeparator : keyPrefix}${name ? name + keySeparator : ''}`;
     this.codec = codec;
   }
 
@@ -27,16 +52,10 @@ export class LocalStorageKeyValueStore extends BaseKeyValueStore implements KeyV
     return LocalStorageKeyValueStore.name;
   }
 
-  public override open(identifier: string): string {
-    return identifier;
-  }
-
-  public override close(_bucket: string): void { }
-
-  public override listKeys(bucket: string, selector?: KeySelector): KeyResponse {
+  public override listKeys(selector?: KeySelector): KeyResponse {
     const keys: string[] = [];
     for (let i = 0; i < this.storage.length; ++i) {
-      const key = this.decodeKey(bucket, this.storage.key(i));
+      const key = this.decodeKey(this.storage.key(i));
       if (key !== null && this.keyInRange(key, selector)) {
         keys.push(key);
       }
@@ -48,22 +67,22 @@ export class LocalStorageKeyValueStore extends BaseKeyValueStore implements KeyV
     return { keys };
   }
 
-  public override getMany(bucket: string, keys: string[]): (Uint8Array | null)[] {
+  public override exists(key: string): boolean {
+    return this.storage.getItem(this.encodeKey(key)) !== null;
+  }
+
+  public override getMany(keys: string[]): (Uint8Array | null)[] {
     const results = [];
     for (const key of keys) {
-      const valueString = this.storage.getItem(this.encodeKey(bucket, key));
+      const valueString = this.storage.getItem(this.encodeKey(key));
       results.push(valueString !== null ? this.codec.encode(valueString) : null);
     }
     return results;
   }
 
-  public override exists(bucket: string, key: string): boolean {
-    return this.storage.getItem(this.encodeKey(bucket, key)) !== null;
-  }
-
-  public override updateMany(bucket: string, keyValues: [key: string, value: Uint8Array | null][]): void {
+  public override updateMany(keyValues: [key: string, value: Uint8Array | null][]): void {
     for (const [key, value] of keyValues) {
-      const fullKey = this.encodeKey(bucket, key);
+      const fullKey = this.encodeKey(key);
       if (value === null) {
         this.storage.removeItem(fullKey);
       } else {
@@ -71,7 +90,7 @@ export class LocalStorageKeyValueStore extends BaseKeyValueStore implements KeyV
         if (valueStr === null) {
           throw new StoreError({
             tag: StoreErrorType.Other,
-            val: `failed to set non-UTF8 value to storage for bucket: ${bucket}, key: ${key}`
+            val: `failed to set non-UTF8 value to storage for bucket: ${this.name}, key: ${key}`
           });
         }
         try {
@@ -79,15 +98,15 @@ export class LocalStorageKeyValueStore extends BaseKeyValueStore implements KeyV
         } catch (e) {
           throw new StoreError({
             tag: StoreErrorType.Other,
-            val: `failed to set value to storage for bucket: ${bucket}, key: ${key}, error: ${e}`
+            val: `failed to set value to storage for bucket: ${this.name}, key: ${key}, error: ${e}`
           });
         }
       }
     }
   }
 
-  public override increment(bucket: string, key: string, delta: bigint): bigint {
-    const fullKey = this.encodeKey(bucket, key);
+  public override increment(key: string, delta: bigint): bigint {
+    const fullKey = this.encodeKey(key);
     const valueStr = this.storage.getItem(fullKey);
     let value = 0n;
     if (valueStr) {
@@ -96,7 +115,7 @@ export class LocalStorageKeyValueStore extends BaseKeyValueStore implements KeyV
       } catch {
         throw new StoreError({
           tag: StoreErrorType.Other,
-          val: `Cannot convert value to bigint at bucket: ${bucket}, key: ${key}`
+          val: `Cannot convert value to bigint at bucket: ${this.name}, key: ${key}`
         });
       }
     }
@@ -106,8 +125,8 @@ export class LocalStorageKeyValueStore extends BaseKeyValueStore implements KeyV
     return newValue;
   }
 
-  public override compareAndSwap(bucket: string, key: string, oldValue?: Uint8Array, newValue?: Uint8Array): boolean {
-    const fullKey = this.encodeKey(bucket, key);
+  public override compareAndSwap(key: string, oldValue?: Uint8Array, newValue?: Uint8Array): boolean {
+    const fullKey = this.encodeKey(key);
     const existingValueStr = this.storage.getItem(fullKey);
     const oldValueStr = oldValue ? this.decodeValue(oldValue, 'invalid old value') : null;
 
@@ -124,20 +143,15 @@ export class LocalStorageKeyValueStore extends BaseKeyValueStore implements KeyV
     return true;
   }
 
-  private encodeKey(bucket: string, key: string): string {
-    return this.getKeyNS(bucket) + key;
+  private encodeKey(key: string): string {
+    return this.namespace + key;
   }
 
-  private decodeKey(bucket: string, key: string | null): string | null {
-    const namespace = this.getKeyNS(bucket);
-    if (!key?.startsWith(namespace)) {
+  private decodeKey(key: string | null): string | null {
+    if (!key?.startsWith(this.namespace)) {
       return null;
     }
-    return key.substring(namespace.length);
-  }
-
-  private getKeyNS(bucket: string) {
-    return `${this.namespace}${bucket ? bucket + this.separator : ''}`;
+    return key.substring(this.namespace.length);
   }
 
   private decodeValue(value: Uint8Array, throwMsg?: string): string | null {
@@ -152,8 +166,8 @@ export class LocalStorageKeyValueStore extends BaseKeyValueStore implements KeyV
   }
 }
 
-/** Options for creating a {@link LocalStorageKeyValueStore}. */
-export interface LocalStorageKeyValueStoreOptions {
+/** Options for creating a {@link LocalStorageKeyValueProvider}. */
+export interface LocalStorageKeyValueOptions {
   /** The underlying storage. */
   readonly storage?: Storage;
   /** Unique prefix for keys. */
@@ -162,4 +176,10 @@ export interface LocalStorageKeyValueStoreOptions {
   readonly keySeparator?: string;
   /** Value codec. */
   readonly codec?: Codec<string>;
+}
+
+/** Options for creating a {@link LocalStorageKeyValueStore}. */
+export interface LocalStorageKeyValueStoreOptions extends Required<LocalStorageKeyValueOptions> {
+  /** The bucket name. */
+  readonly name: string;
 }

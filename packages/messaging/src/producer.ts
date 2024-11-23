@@ -7,5 +7,5 @@ import { type Message } from './types.ts';
  * @throws {@link MessagingError}
  */
 export function send(msg: Message): MaybePromise<void> {
-  return Messaging.service.send(msg);
+  return Messaging.imports['mithic:messaging/producer'].send(msg);
 }

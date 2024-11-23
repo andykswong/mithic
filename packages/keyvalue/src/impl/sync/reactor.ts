@@ -1,9 +1,9 @@
 import {
   dispose, type SyncMessageChannel, SyncMessageChannelReactor, type SharedChannelBuffers, type Startable
 } from '@mithic/commons';
-import type { KeyValueStore } from './adapter.ts';
-import { InMemoryKeyValueStore } from '../impl/index.ts';
-import { StoreError, StoreErrorType } from '../types.ts';
+import type { KeyValueProvider, KeyValueStore } from '../../service.ts';
+import { StoreError, StoreErrorType } from '../../types.ts';
+import { InMemoryKeyValueProvider } from '../index.ts';
 import { KVStoreMessage, KVStoreOp } from './codec.ts';
 
 const ABORT_ERROR_NAME = 'AbortError';
@@ -11,14 +11,15 @@ const ABORT_ERROR_NAME = 'AbortError';
 /** Reactor for keyvalue store operations. */
 export class KeyValueStoreReactor implements Startable, Disposable {
   private readonly reactor: SyncMessageChannelReactor<KVStoreMessage>;
-  private readonly store: KeyValueStore;
+  private readonly provider: KeyValueProvider;
+  private readonly stores = new Map<string, KeyValueStore>();
 
   public constructor({
     start = true,
-    store = new InMemoryKeyValueStore(),
+    provider = new InMemoryKeyValueProvider(),
     send, recv
   }: KeyValueStoreReactorOptions) {
-    this.store = store;
+    this.provider = provider;
     this.reactor = new SyncMessageChannelReactor({
       codec: KVStoreMessage,
       onmessage: this.handle,
@@ -60,46 +61,53 @@ export class KeyValueStoreReactor implements Startable, Disposable {
     try {
       switch (message.op) {
         case KVStoreOp.Open:
+          await this.openStore(message.bucket);
           await channel.sendAsync({
             ...response,
-            bucket: await this.store.open(message.bucket),
+            bucket: message.bucket,
           });
           break;
-        case KVStoreOp.Close:
-          this.store.close(message.bucket);
+        case KVStoreOp.Close: {
+          const store = this.stores.get(message.bucket);
+          if (store) {
+            dispose(store);
+            this.stores.delete(message.bucket);
+          }
           break;
+        }
         case KVStoreOp.Exist:
           await channel.sendAsync({
             ...response,
-            success: await this.store.exists(message.bucket, message.key),
+            success: await this.getStore(message.bucket).exists(message.key),
           });
           break;
         case KVStoreOp.Get:
           await channel.sendAsync({
             ...response,
-            values: await this.store.getMany(message.bucket, message.keys),
+            values: await this.getStore(message.bucket).getMany(message.keys),
           });
           break;
         case KVStoreOp.Update:
-          await this.store.updateMany(message.bucket, message.keyValues);
+          await this.getStore(message.bucket).updateMany(message.keyValues);
           await channel.sendAsync(response);
           break;
         case KVStoreOp.Keys:
           await channel.sendAsync({
             ...response,
-            ...(await this.store.listKeys(message.bucket, message.selector, message.cursor)),
+            ...(await this.getStore(message.bucket).listKeys(message.selector, message.cursor)),
           });
           break;
         case KVStoreOp.CAS:
           await channel.sendAsync({
             ...response,
-            success: await this.store.compareAndSwap(message.bucket, message.key, message.oldValue, message.newValue),
+            success: await this.getStore(message.bucket)
+              .compareAndSwap(message.key, message.oldValue, message.newValue),
           });
           break;
         case KVStoreOp.Incr:
           await channel.sendAsync({
             ...response,
-            counter: await this.store.increment(message.bucket, message.key, message.delta),
+            counter: await this.getStore(message.bucket).increment(message.key, message.delta),
           });
           break;
       }
@@ -109,12 +117,29 @@ export class KeyValueStoreReactor implements Startable, Disposable {
       await channel.sendAsync({ ...response, error });
     }
   };
+
+  private async openStore(bucket: string): Promise<KeyValueStore> {
+    let store = this.stores.get(bucket);
+    if (!store) {
+      store = await this.provider.open(bucket);
+      this.stores.set(bucket, store);
+    }
+    return store;
+  }
+
+  private getStore(bucket: string): KeyValueStore {
+    const store = this.stores.get(bucket);
+    if (!store) {
+      throw new StoreError({ tag: StoreErrorType.NoSuchStore });
+    }
+    return store;
+  }
 }
 
 /** Options for creating {@link KeyValueStoreReactor}. */
 export interface KeyValueStoreReactorOptions extends Partial<SharedChannelBuffers> {
   /** Start on construct? */
   start?: boolean;
-  /** Backing key-value store. */
-  store?: KeyValueStore;
+  /** Backing key-value store provider. */
+  provider?: KeyValueProvider;
 }
