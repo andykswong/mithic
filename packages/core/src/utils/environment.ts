@@ -2,7 +2,7 @@
  * Helper function to set environment variables for web worker.
  * Defaults to use search params from location for process.env and process.argv.
  */
-export function setupEnv(useSearchParams = true) {
+export function setupEnvironment(useSearchParams = true) {
   const process = globalThis.process = globalThis.process ?? {};
   process.argv = process.argv ?? [];
   process.env = process.env ?? {};

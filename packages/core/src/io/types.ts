@@ -33,12 +33,17 @@ export const FD = {
   Stderr: 2,
 } as const;
 
-/** Special stream state values. */
+/** Stream state value. */
 export const StreamState = {
   Pending: 0,
   Ready: 1,
   Error: 0x7FFFFFFE,
   Closed: 0x7FFFFFFF,
 } as const;
+
+
+declare const __streamState: unique symbol;
+
+export type StreamState = typeof StreamState[keyof typeof StreamState] | number & { [__streamState]: never };;
 
 export * from './provider/index.ts';

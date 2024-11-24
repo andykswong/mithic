@@ -1,7 +1,7 @@
-import { Config, setupEnv, imports, Io, Logger, Level, RemoteIoProvider } from '@mithic/core';
+import { Config, setupEnvironment, imports, Io, Logger, Level, RemoteIoProvider } from '@mithic/core';
 
 // configure the core APIs
-setupEnv();
+setupEnvironment();
 const { data } = await new Promise(resolve => globalThis.addEventListener?.('message', resolve, { once: true }));
 Io.provider = new RemoteIoProvider(data);
 Logger.level = Level.Info;

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock, type Mock } from 'node:test';
+import { symbolCabiLower } from '@mithic/commons';
 import { random, insecure, insecureSeed } from './index.ts';
 
 const MAX_BYTES = 65536;
@@ -33,6 +34,22 @@ describe('random', () => {
       assert.deepStrictEqual(Array.from(result.subarray(0, BYTES.length)), BYTES);
       assert.deepStrictEqual(Array.from(result.subarray(MAX_BYTES, MAX_BYTES + BYTES2.length)), BYTES2);
     });
+
+    describe('cabiLower', () => {
+      it('should return byte sequence from crypto.getRandomValues', () => {
+        const ptr = 32;
+        const realloc = mock.fn(() => ptr);
+        const memory = new WebAssembly.Memory({ initial: 1 });
+        const view = new DataView(memory.buffer);
+        const getRandomBytes = random.getRandomBytes[symbolCabiLower]!({ memory, realloc, resourceTables: [] });
+
+        getRandomBytes(BigInt(BYTES.length), 8);
+
+        assert.strictEqual(view.getUint32(8, true), ptr);
+        assert.strictEqual(view.getUint32(12, true), BYTES.length);
+        assert.deepStrictEqual(Array.from(new Uint8Array(memory.buffer, ptr, BYTES.length)), BYTES);
+      });
+    });
   });
 
   describe('getRandomU64', () => {
@@ -56,6 +73,19 @@ describe('random', () => {
   describe('insecureSeed', () => {
     it('should return u64 pair from crypto.getRandomValues', () => {
       assert.deepStrictEqual(insecureSeed.insecureSeed(), [U64, U64_2]);
+    });
+
+    describe('cabiLower', () => {
+      it('should set u64 pair from crypto.getRandomValues to return pointer', () => {
+        const memory = new WebAssembly.Memory({ initial: 1 });
+        const view = new DataView(memory.buffer);
+        const insecureSeedFn = insecureSeed.insecureSeed[symbolCabiLower]!({ memory, realloc: () => 0, resourceTables: [] });
+
+        insecureSeedFn(8);
+
+        assert.strictEqual(view.getBigUint64(8, true), U64);
+        assert.strictEqual(view.getBigUint64(16, true), U64_2);
+      });
     });
   });
 });

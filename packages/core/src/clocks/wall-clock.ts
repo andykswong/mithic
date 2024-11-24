@@ -5,10 +5,10 @@ export const resolution: HostFunction<{ seconds: bigint, nanoseconds: number }, 
 };
 
 resolution[symbolCabiLower] = ({ memory }) => {
-  let buf32 = new Int32Array(memory.buffer);
+  let buf32 = new Uint32Array(memory.buffer);
   return function resolution(retptr) {
     if (memory.buffer !== buf32.buffer) {
-      buf32 = new Int32Array(memory.buffer);
+      buf32 = new Uint32Array(memory.buffer);
     }
     buf32[(retptr >> 2) + 0] = 0;
     buf32[(retptr >> 2) + 1] = 0;
@@ -24,12 +24,12 @@ export const now: HostFunction<{ seconds: bigint, nanoseconds: number }, []> = (
 };
 
 now[symbolCabiLower] = ({ memory }) => {
-  let buf32 = new Int32Array(memory.buffer);
-  let buf64 = new BigInt64Array(memory.buffer);
+  let buf32 = new Uint32Array(memory.buffer);
+  let buf64 = new BigUint64Array(memory.buffer);
   return function now(retptr) {
     if (memory.buffer !== buf32.buffer) {
-      buf32 = new Int32Array(memory.buffer);
-      buf64 = new BigInt64Array(memory.buffer);
+      buf32 = new Uint32Array(memory.buffer);
+      buf64 = new BigUint64Array(memory.buffer);
     }
     const now = Date.now();
     buf64[(retptr >> 3) + 0] = BigInt(Math.floor(now / 1e3));
