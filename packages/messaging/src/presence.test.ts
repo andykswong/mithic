@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
-import { Messaging, type PeerId, RoutingMessagingService, StringMatcher } from './index.ts';
+import { StringMatcher } from '@mithic/commons';
+import { Messaging, type PeerId, RoutingMessagingService } from './index.ts';
 import { listSubscribers } from './presence.ts';
 import { createMockMessagingService, type MockMessagingService } from './test/mocks.ts';
 

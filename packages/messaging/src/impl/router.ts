@@ -1,7 +1,7 @@
-import { MaybePromise } from '@mithic/commons';
+import { MaybePromise, type StringMatcher } from '@mithic/commons';
 import { type MessagingService, type PeerPresence, type RequestReply } from '../service.ts';
 import type { Message, MessageHandler, RequestOptions, PeerId } from '../types.ts';
-import { type StringMatcher, unsupported } from '../utils/index.ts';
+import { unsupported } from '../utils/index.ts';
 
 /** {@link MessagingService} that routes to different {@link MessagingService} by topic. */
 export class RoutingMessagingService implements MessagingService, RequestReply, PeerPresence {

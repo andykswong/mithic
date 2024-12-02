@@ -46,7 +46,7 @@ export interface Message {
 
 export {
   isMessage, getMessageMetadata, setMessageMetadata,
-  RequestReplyAdapter, type RequestReplyAdapterOptions, StringMatcher,
+  RequestReplyAdapter, type RequestReplyAdapterOptions,
 } from './utils/index.ts';
 
 /** Common {@link Message} metadata field names. */

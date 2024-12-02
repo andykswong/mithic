@@ -1,4 +1,3 @@
-
 /** A matcher of strings. */
 export interface StringMatcher {
   [Symbol.match](input: string): string[] | null;

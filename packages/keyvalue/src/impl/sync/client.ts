@@ -75,6 +75,7 @@ export class KeyValueStoreClient implements Startable, Disposable, SyncKeyValueP
     store = {
       [Symbol.dispose]: () => {
         this.request({ op: KVStoreOp.Close, seq: this.seq++, bucket });
+        this.stores.delete(bucket);
       },
       exists: (key) => {
         const response = this.requestResponse({ op: KVStoreOp.Exist, seq: this.seq++, bucket, key });
@@ -122,7 +123,7 @@ export class KeyValueStoreClient implements Startable, Disposable, SyncKeyValueP
 
   private request(msg: KVStoreMessage, start = this.now(), timeoutMs = this.timeoutMs) {
     while (!this.messageChannel.send(msg)) {
-      this.flush(this.nextTick(start, timeoutMs));
+      this.flush(nextTick(this.now(), start, timeoutMs));
     }
   }
 
@@ -131,19 +132,13 @@ export class KeyValueStoreClient implements Startable, Disposable, SyncKeyValueP
   ): KVStoreMessage & { op: typeof KVStoreOp.Response } {
     let response: KVStoreMessage & { op: typeof KVStoreOp.Response } | undefined;
     while (!(response = this.responses.get(seq))) {
-      this.blockingProcess(this.nextTick(start, timeoutMs));
+      this.blockingProcess(nextTick(this.now(), start, timeoutMs));
     }
     assert(response, { tag: StoreErrorType.Timeout });
     if (response.error) {
       throw new StoreError(response.error);
     }
     return response;
-  }
-
-  private nextTick(start: number, timeoutMs: number): number {
-    const timeRemaining = timeoutMs - (this.now() - start);
-    assert(timeRemaining > 0, { tag: StoreErrorType.Timeout });
-    return Math.min(TICK_MS, timeRemaining);
   }
 
   private handle = (message: KVStoreMessage) => {
@@ -166,4 +161,10 @@ export interface KeyValueStoreClientOptions extends Partial<SharedChannelBuffers
 
 function assert(cond: unknown, error: StoreErrorPayload): asserts cond {
   if (!cond) { throw new StoreError(error); }
+}
+
+function nextTick(now: number, start: number, timeoutMs: number): number {
+  const timeRemaining = timeoutMs - (now - start);
+  assert(timeRemaining > 0, { tag: StoreErrorType.Timeout });
+  return Math.min(TICK_MS, timeRemaining);
 }

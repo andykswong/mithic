@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { StringMatcher } from './matcher.ts';
+import { StringMatcher } from './index.ts';
 
 describe('StringMatcher', () => {
   describe('matchExact', () => {
