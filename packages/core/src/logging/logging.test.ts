@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
-import type { Worker } from 'node:worker_threads';
 import { delay } from '@mithic/commons';
-import { runWorker } from '../test/io.worker.ts';
-import { Io } from '../io/index.ts';
+import { WebWriteStream } from '../index.ts';
 import { StdLogger, Level, Logger } from './index.ts';
 import { log } from './logging.ts';
 
@@ -12,30 +10,30 @@ const CONTEXT = 'CXT';
 const MESSAGE = 'MESSAGE123';
 
 describe('log', () => {
-  let worker: Worker;
   let logger: StdLogger;
   let stdout: string[];
   let stderr: string[];
 
-  beforeEach(async () => {
+  beforeEach(() => {
     stdout = [];
-    [worker, Io.provider] = runWorker();
-    worker.stdout?.on('data', (chunk) => {
-      stdout.push(decoder.decode(chunk));
-    });
     stderr = [];
-    worker.stderr?.on('data', (chunk) => {
-      stderr.push(decoder.decode(chunk));
-    });
 
-    Logger.instance = logger = new StdLogger();
+    Logger.instance = logger = new StdLogger(
+      new WebWriteStream(new WritableStream({
+        write(chunk) {
+          stdout.push(decoder.decode(chunk));
+        }
+      })),
+      new WebWriteStream(new WritableStream({
+        write(chunk) {
+          stderr.push(decoder.decode(chunk));
+        }
+      })),
+    );
     Logger.level = Level.Trace;
-
-    await delay(100);
   });
 
-  afterEach(async () => {
-    await worker?.terminate();
+  afterEach(() => {
     mock.restoreAll();
   });
 

@@ -1,6 +1,6 @@
-import { getStderr } from '../cli/stderr.ts';
-import { getStdout } from '../cli/stdout.ts';
-import type { OutputStream } from '../io/streams.ts';
+import { MaybePromise } from '@mithic/commons';
+import { getStdout, getStderr } from '#io/stdio';
+import { WebWriteStream, type WriteStream } from '../io/index.ts';
 
 /** A log level, describing a kind of message. */
 export const Level = {
@@ -37,14 +37,14 @@ const levelValue: Record<Level, number> = {
 
 /** Logger that logs to output streams. */
 export class StdLogger implements Logger {
-  private readonly debug: OutputStream;
-  private readonly error: OutputStream;
+  private readonly debug: WriteStream;
+  private readonly error: WriteStream;
 
   public constructor(
     /** debug output stream. */
-    debug: OutputStream = getStdout(),
+    debug: WriteStream = new WebWriteStream(getStdout()),
     /** error output stream. */
-    error: OutputStream = getStderr(),
+    error: WriteStream = new WebWriteStream(getStderr()),
   ) {
     this.debug = debug;
     this.error = error;
@@ -55,7 +55,7 @@ export class StdLogger implements Logger {
     return `[${level}] (${context}) ${message}\n`;
   }
 
-  public log(level: Level, context: string, message: string): void {
+  public log(level: Level, context: string, message: string): MaybePromise<void> {
     if (levelValue[level] < levelValue[Logger.level]) {
       return;
     }
@@ -76,18 +76,30 @@ export class StdLogger implements Logger {
         break;
     }
 
-    for (let offset = 0; offset < output.byteLength;) {
-      const writeLen = Math.min(output.byteLength - offset, Number(stream.checkWrite()));
-      stream.write(output.subarray(offset, offset + writeLen));
+    let result: MaybePromise<unknown> = undefined;
+    let offset = 0;
+    let writeLen = 0;
+    const flush = () => stream.flush();
+    const write = () => stream.write(output.subarray(offset, offset + writeLen));
+    while (offset < output.byteLength) {
+      writeLen = Math.min(output.byteLength - offset, stream.checkWrite());
+      if (writeLen === 0) {
+        result = MaybePromise.map(result, flush);
+        continue;
+      }
+      result = MaybePromise.map(result, write);
       offset += writeLen;
     }
+    return MaybePromise.map(result, toVoid);
   }
 }
+
+function toVoid() { }
 
 /** The Logger. */
 export interface Logger {
   /** Logs a message. */
-  log(level: Level, context: string, message: string): void;
+  log(level: Level, context: string, message: string): MaybePromise<void>;
 }
 
 let logger: Logger;

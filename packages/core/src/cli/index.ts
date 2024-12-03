@@ -8,4 +8,4 @@ export * as terminalOutput from './terminal-output.ts';
 export * as terminalStdin from './terminal-stdin.ts';
 export * as terminalStdout from './terminal-stdout.ts';
 export * as terminalStderr from './terminal-stderr.ts';
-export * from './run.ts';
+export * from './types.ts';

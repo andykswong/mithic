@@ -1,12 +1,12 @@
 import { isMainThread, workerData, Worker } from 'node:worker_threads';
 import { readFile } from 'node:fs/promises';
-import { imports, Io, IoReactor, RemoteIoProvider } from '@mithic/core';
+import { imports, Cli, IoStreamReactor, SyncStdioProvider } from '@mithic/core';
 
 let reactor, worker;
 
 if (isMainThread) {
   // create an I/O reactor on main thread to process 
-  reactor = new IoReactor();
+  reactor = new IoStreamReactor();
   // run component on a worker, passing the reactor channel as worker data
   worker = new Worker(new URL(import.meta.url), {
     workerData: reactor.addChannel(),
@@ -16,8 +16,8 @@ if (isMainThread) {
 }
 
 async function workerThread(entry = process.argv[2] ?? './dist/component.js') {
-  // init I/O provider that connects to the reactor on main thread
-  Io.provider = new RemoteIoProvider(workerData);
+  // init stdio provider that connects to the reactor on main thread
+  Cli.stdio = new SyncStdioProvider(workerData);
 
   // load the WASM component and run it
   const entryPoint = new URL(entry, import.meta.url).toString();

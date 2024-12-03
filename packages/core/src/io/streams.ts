@@ -1,37 +1,23 @@
-import { Io, type IoProvider } from './types.ts';
+import { dispose, Error, MaybePromise } from '@mithic/commons';
 import { Pollable } from './poll.ts';
+import type { ReadStream, WriteStream } from './adapters.ts';
+import { StreamError, StreamErrorTag } from './types.ts';
 
 const CHUNK_SIZE = 4096;
 
 /** An input bytestream. */
 export class InputStream {
-  private readonly client: IoProvider;
-  private readonly closeOnDispose;
-  private _fd;
+  private readonly stream: ReadStream;
 
-  public constructor({
-    client = Io.provider,
-    fd = 0,
-    closeOnDispose = true,
-  }: {
-    client?: IoProvider,
-    fd?: number,
-    closeOnDispose?: boolean
+  public constructor({ stream }: {
+    /** The underlying stream. */
+    stream: ReadStream,
   }) {
-    this.client = client;
-    this.closeOnDispose = closeOnDispose;
-    this._fd = fd;
-  }
-
-  /** Returns the FD of this stream. */
-  public get fd(): number {
-    return this._fd;
+    this.stream = stream;
   }
 
   public [Symbol.dispose](): void {
-    if (this.closeOnDispose) {
-      // TODO: currently only support stdin which cannot be closed
-    }
+    dispose(this.stream);
   }
 
   /**
@@ -39,20 +25,25 @@ export class InputStream {
    * @throws {@link StreamError}
    */
   public read(len: bigint): Uint8Array {
-    return this.client.read(this._fd, Number(len)) ?? new Uint8Array();
+    return this.stream.read(Number(len)) ?? new Uint8Array();
   }
 
   /**
    * Read bytes from a stream, after blocking until at least one byte can be read.
    * @throws {@link StreamError}
    */
-  public blockingRead(len: bigint): Uint8Array {
-    let data;
-    while (!(data = this.client.read(this._fd, Number(len)))?.byteLength) {
-      this.client.blockingProcess();
+  public blockingRead(len: bigint): MaybePromise<Uint8Array> {
+    return this._blockingRead(len);
+  }
+
+  private _blockingRead = MaybePromise.coroutine(function* (this: InputStream, len: bigint) {
+    const numLen = Number(len);
+    let data: Uint8Array | undefined;
+    while (!(data = this.stream.read(numLen))?.byteLength) {
+      yield this.stream.poll();
     }
     return data;
-  }
+  }, this);
 
   /**
    * Skip bytes from a stream. Returns number of bytes skipped.
@@ -66,8 +57,8 @@ export class InputStream {
    * Skip bytes from a stream, after blocking until at least one byte can be skipped.
    * @throws {@link StreamError}
    */
-  public blockingSkip(len: bigint): bigint {
-    return BigInt(this.blockingRead(len).byteLength);
+  public blockingSkip(len: bigint): MaybePromise<bigint> {
+    return MaybePromise.map(this.blockingRead(len), byteLength);
   }
 
   /**
@@ -75,39 +66,31 @@ export class InputStream {
    * or the other end of the stream has been closed.
    */
   public subscribe(): Pollable {
-    return new Pollable({ pollReady: () => !!this.client.checkRead(this._fd) });
+    return new Pollable({
+      pollReady: () => {
+        try {
+          return !!this.stream.checkRead();
+        } catch {
+          return true;
+        }
+      }
+    });
   }
 }
 
 /** An output bytestream. */
 export class OutputStream {
-  private readonly client: IoProvider;
-  private readonly closeOnDispose;
-  private _fd;
+  private readonly stream: WriteStream;
 
-  public constructor({
-    client = Io.provider,
-    fd = 1,
-    closeOnDispose = true,
-  }: {
-    client?: IoProvider,
-    fd?: number,
-    closeOnDispose?: boolean
+  public constructor({ stream }: {
+    /** The underlying stream. */
+    stream: WriteStream,
   }) {
-    this.client = client;
-    this.closeOnDispose = closeOnDispose;
-    this._fd = fd;
-  }
-
-  /** Returns the FD of this stream. */
-  public get fd(): number {
-    return this._fd;
+    this.stream = stream;
   }
 
   public [Symbol.dispose](): void {
-    if (this.closeOnDispose) {
-      // TODO: currently only support stdout/err which cannot be closed
-    }
+    dispose(this.stream);
   }
 
   /**
@@ -115,7 +98,7 @@ export class OutputStream {
    * @throws {@link StreamError}
    */
   public checkWrite(): bigint {
-    return BigInt(this.client.checkWrite(this._fd));
+    return BigInt(this.stream.checkWrite());
   }
 
   /**
@@ -123,7 +106,7 @@ export class OutputStream {
    * @throws {@link StreamError}
    */
   public write(contents: Uint8Array): void {
-    this.client.write(this._fd, contents);
+    this.stream.write(contents);
   }
 
   /**
@@ -131,40 +114,51 @@ export class OutputStream {
    * Block until all of these operations are complete, or an error occurs.
    * @throws {@link StreamError}
    */
-  public blockingWriteAndFlush(content: Uint8Array): void {
+  public blockingWriteAndFlush(content: Uint8Array): MaybePromise<void> {
+    return this._blockingWriteAndFlush(content);
+  }
+
+  private _blockingWriteAndFlush = MaybePromise.coroutine(function* (this: OutputStream, content: Uint8Array) {
     for (let i = 0, chunkLen = 0; i < content.byteLength; i += chunkLen) {
       chunkLen = Math.min(Number(this.checkWrite()), content.byteLength - i, CHUNK_SIZE);
       if (chunkLen > 0) {
         this.write(content.subarray(i, i + chunkLen));
       } else {
-        this.blockingFlush();
+        yield this.blockingFlush();
       }
     }
-    this.blockingFlush();
-  }
+    yield this.blockingFlush();
+  }, this);
 
   /**
    * Request to flush buffered output. This function never blocks.
    * @throws {@link StreamError}
    */
   public flush(): void {
-    // noop. flush is automatic
+    this.stream.flush();
   }
 
   /**
    * Request to flush buffered output, and block until flush completes and stream is ready for writing again.
    * @throws {@link StreamError}
    */
-  public blockingFlush(): void {
-    // TODO: this does not actually wait for pending writes to complete
-    this.client.flush();
+  public blockingFlush(): MaybePromise<void> {
+    return MaybePromise.map(this.stream.flush(), isFlushed);
   }
 
   /**
    * Create a `pollable` which will resolve once the output-stream is ready for more writing, or an error has occurred.
    */
   public subscribe(): Pollable {
-    return new Pollable({ pollReady: () => this.checkWrite() > 0n });
+    return new Pollable({
+      pollReady: () => {
+        try {
+          return this.stream.checkWrite() > 0;
+        } catch {
+          return true;
+        }
+      }
+    });
   }
 
   /**
@@ -180,18 +174,22 @@ export class OutputStream {
    * Block until all of these operations are complete, or an error occurs.
    * @throws {@link StreamError}
    */
-  public blockingWriteZeroesAndFlush(len: bigint): void {
+  public blockingWriteZeroesAndFlush(len: bigint): MaybePromise<void> {
+    return this._blockingWriteZeroesAndFlush(len);
+  }
+
+  private _blockingWriteZeroesAndFlush = MaybePromise.coroutine(function* (this: OutputStream, len: bigint) {
     const length = Number(len);
     for (let i = 0, chunkLen = 0; i < length; i += chunkLen) {
       chunkLen = Math.min(Number(this.checkWrite()), length - i, CHUNK_SIZE);
       if (chunkLen > 0) {
         this.writeZeroes(BigInt(chunkLen));
       } else {
-        this.blockingFlush();
+        yield this.blockingFlush();
       }
     }
-    this.blockingFlush();
-  }
+    yield this.blockingFlush();
+  }, this);
 
   /**
    * Read from one stream and write to another.
@@ -212,15 +210,29 @@ export class OutputStream {
    * Read from one stream and write to another, with blocking.
    * @throws {@link StreamError}
    */
-  public blockingSplice(input: InputStream, len: bigint): bigint {
+  public blockingSplice(input: InputStream, len: bigint): MaybePromise<bigint> {
+    return this._blockingSplice(input, len);
+  }
+
+  private _blockingSplice = MaybePromise.coroutine(function* (this: OutputStream, input: InputStream, len: bigint) {
     if (len <= 0n) { return 0n; }
     let size;
     while ((size = this.checkWrite()) <= 0n) {
-      this.client.flush();
+      yield this.stream.flush();
     }
     size = size < len ? size : len;
-    const data = input.blockingRead(size);
-    this.blockingWriteAndFlush(data);
+    const data = yield input.blockingRead(size);
+    yield this.blockingWriteAndFlush(data);
     return BigInt(data.byteLength);
+  }, this);
+}
+
+function byteLength(data: Uint8Array): bigint {
+  return BigInt(data.byteLength);
+}
+
+function isFlushed(result: boolean): asserts result {
+  if (!result) {
+    throw new StreamError({ tag: StreamErrorTag.LastOperationFailed, val: new Error('failed to flush write stream') });
   }
 }

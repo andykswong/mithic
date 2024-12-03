@@ -12,7 +12,7 @@ describe('delay', () => {
   });
 
   it('should return a Promise that resolves after the specified amount of time', async () => {
-    const delayMs = 5000; // 5 seconds
+    const delayMs = 5000;
     const startTime = Date.now();
 
     const promise = delay(delayMs);
@@ -38,6 +38,21 @@ describe('delay', () => {
     const elapsedTime = Date.now() - startTime;
 
     assert.strictEqual(elapsedTime, 0); // Should resolve immediately with negligible delay
+  });
+
+  it('should return a Promise that can be rejected by AbortSignal', async () => {
+    mock.timers.reset();
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const delayMs = 1000;
+
+    const promise = delay(delayMs, { signal });
+    assert(promise instanceof Promise);
+
+    await assert.rejects(() => {
+      controller.abort();
+      return promise;
+    }, /AbortError/);
   });
 });
 

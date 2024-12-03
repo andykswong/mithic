@@ -1,5 +1,5 @@
 import type { MaybePromise, Pollables } from '@mithic/commons';
-import { Io } from './types.ts';
+import { Io } from './io.ts';
 
 const DEFAULT_POLL_MS = 200;
 
@@ -67,7 +67,7 @@ export class Pollable implements PromiseLike<void> {
     return (async () => { while (!(await this.waitAsync())); })().then(onfulfilled);
   }
 
-  /** Synchronously waits for the readiness of this pollable or until timeout. */
+  /** Waits for the readiness of this pollable or until timeout. */
   public wait(timeoutMs = Math.max(this.estTime, DEFAULT_POLL_MS)): boolean {
     return this.ready() || this.pollables.wait(this._id, timeoutMs);
   }

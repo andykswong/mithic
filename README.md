@@ -31,13 +31,13 @@ Below is an example script to run a wasm component in Node.js. As components may
 ```js
 import { isMainThread, workerData, Worker } from 'node:worker_threads';
 import { readFile } from 'node:fs/promises';
-import { Config, imports, Io, IoReactor, Logger, Level, RemoteIoProvider } from '@mithic/core';
+import { Cli, Config, imports, IoStreamReactor, Logger, Level, SyncStdioProvider } from '@mithic/core';
 
 if (isMainThread) {
-  const reactor = new IoReactor(); // required to use stdin/out/err from wasi-cli
+  const reactor = new IoStreamReactor(); // required to use stdin/out/err from wasi-cli
   new Worker(new URL(import.meta.url), { workerData: reactor.addChannel() });
 } else {
-  Io.provider = new RemoteIoProvider(workerData);
+  Cli.stdio = new SyncStdioProvider(workerData); // connects stdio to the reactor on main thread
   Logger.level = Level.Info; // set log level for wasi-logging
 
   // instantiate the component built with jco

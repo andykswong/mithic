@@ -1,9 +1,9 @@
-import { Config, setupEnvironment, imports, Io, Logger, Level, RemoteIoProvider } from '@mithic/core';
+import { Cli, Config, setupEnvironment, imports, Logger, Level, SyncStdioProvider } from '@mithic/core';
 
 // configure the core APIs
 setupEnvironment();
 const { data } = await new Promise(resolve => globalThis.addEventListener?.('message', resolve, { once: true }));
-Io.provider = new RemoteIoProvider(data);
+Cli.stdio = new SyncStdioProvider(data);
 Logger.level = Level.Info;
 Config.runtime.set('test', 'This is a testing');
 
