@@ -12,7 +12,7 @@
 > Modular library for universal full-stack JavaScript and WebAssembly applications 
 
 ## Overview
-`mithic` provides the building blocks for creating universal full-stack applications using JavaScript and/or WebAssembly. `mithic` is plaform and runtime agnostic, being usable for both frontend (web, desktop, mobile) and backend in traditional client-server or decentralized architecture through a set of standardized API abstractions based on ([WASI](https://wasi.dev/), [keyvalue store](./packages/keyvalue/), [messaging](./packages/messaging/)). Target use cases include business apps, collaborative editing, multiplayer gaming, etc.
+`mithic` provides the building blocks for creating universal full-stack applications using JavaScript and/or WebAssembly. `mithic` is platform and runtime agnostic, being usable for both frontend (web, desktop, mobile) and backend in traditional client-server or decentralized architecture, through a set of standardized API abstractions extending on [WASI](https://wasi.dev/), including [keyvalue store](./packages/keyvalue/), [messaging](./packages/messaging/), [virtual DOM](./packages/dom/), etc. Target use cases include business apps, collaborative editing, multiplayer gaming, etc.
 
 `mithic` supports [WebAssembly Component](https://github.com/WebAssembly/component-model). As Wasm components are not yet widely supported, they need to be transpiled, using [jco](https://github.com/bytecodealliance/jco). For detailed usages, see the following [examples](./packages/examples/):
 - [Simple](./packages/examples/simple) - JS WebAssembly component built with [ComponentizeJS](https://github.com/bytecodealliance/ComponentizeJS)
@@ -53,12 +53,24 @@ See generated TypeDoc: https://andykswong.github.io/mithic/
 
 ## Packages
 
+Core:
+
 |Package|NPM|Description|
 |-------|---|-----------|
 |[`@mithic/commons`](./packages/commons)|[![npm](https://img.shields.io/npm/v/@mithic/commons?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/commons)|Common utilities|
 |[`@mithic/core`](./packages/core)|[![npm](https://img.shields.io/npm/v/@mithic/core?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/core)|Core runtime APIs based on WASI|
+|[`@mithic/dom`](./packages/dom)|[![npm](https://img.shields.io/npm/v/@mithic/dom?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/dom)|Virtual DOM API|
 |[`@mithic/keyvalue`](./packages/keyvalue)|[![npm](https://img.shields.io/npm/v/@mithic/keyvalue?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/keyvalue)|Key-value store API|
 |[`@mithic/messaging`](./packages/messaging)|[![npm](https://img.shields.io/npm/v/@mithic/messaging?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/messaging)|Messaging API for pub/sub, message queue, etc.|
+
+Interfaces (WIT):
+
+|Package|NPM|Description|
+|-------|---|-----------|
+|[`@mithic/interface-dom`](./wit/dom)|[![npm](https://img.shields.io/npm/v/@mithic/interface-dom?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/interface-dom)|Virtual DOM interface|
+|[`@mithic/interface-keyvalue`](./wit/keyvalue)|[![npm](https://img.shields.io/npm/v/@mithic/keyvalue?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/interface-keyvalue)|Key-value store interface|
+|[`@mithic/interface-messaging`](./wit/messaging)|[![npm](https://img.shields.io/npm/v/@mithic/interface-messaging?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/interface-messaging)|Messaging interface for pub/sub, message queue, etc.|
+
 
 Plugins:
 
@@ -66,6 +78,7 @@ Plugins:
 |-------|---|-----------|
 |[`@mithic/denokv`](./packages/plugins/denokv)|[![npm](https://img.shields.io/npm/v/@mithic/denokv?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/denokv)|Deno KV adapters for keyvalue and messaging APIs|
 |[`@mithic/level`](./packages/plugins/level)|[![npm](https://img.shields.io/npm/v/@mithic/level?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/level)|abstract-level adapter for keyvalue API|
+|[`@mithic/react`](./packages/plugins/react)|[![npm](https://img.shields.io/npm/v/@mithic/react?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/react)|React adapter for DOM API|
 |[`@mithic/redis`](./packages/plugins/redis)|[![npm](https://img.shields.io/npm/v/@mithic/redis?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/redis)|Redis adapter for keyvalue and messaging APIs|
 
 ## License

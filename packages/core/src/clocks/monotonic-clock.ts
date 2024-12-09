@@ -15,7 +15,7 @@ export function now(): bigint {
 export function subscribeInstant(instant: bigint): Pollable {
   const instantMs = Number(instant / 1000n) / 1000;
   return new Pollable({
-    eta: instantMs,
+    eta: () => instantMs,
     pollReady: () => nowMs() >= instantMs,
   });
 }

@@ -8,9 +8,15 @@
     "nodejs-testing.extensions": [
         {
             "extensions": ["ts"],
-            "parameters": ["--experimental-strip-types"]
+            "parameters": [
+                "--experimental-strip-types",
+                "--experimental-test-snapshots"
+            ]
         }
     ],
+    "nodejs-testing.env": {
+        "COLORS": "false"
+    },
 	"typescript.tsdk": "node_modules/typescript/lib",
 	"rust-analyzer.cargo.target": "wasm32-unknown-unknown",
 	"rust-analyzer.cargo.features": [

@@ -1,0 +1,5 @@
+/// The inferface exposes event listeners for guests. 
+interface listener {
+    /// Callback for handling new DOM event(s). To get the actual event(s), use `read-events` method from `root`.
+    on-dom-event: func();
+}

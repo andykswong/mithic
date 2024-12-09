@@ -1,0 +1,52 @@
+exports[`ReactDomRootProvider > render > re-renders correctly 1`] = `
+<h1
+  class="title newClass"
+  data-id="1"
+  id="test"
+  style="display: inline-block; height: 50px;"
+>
+  New 
+  <span
+    data-id="2"
+    style="color: red;"
+  >
+    hello, 
+  </span>
+  world~
+</h1>
+`;
+
+exports[`ReactDomRootProvider > render > renders correctly 1`] = `
+<h1
+  class="title"
+  data-id="1"
+  id="test"
+  style="display: block;"
+>
+  <span
+    data-id="2"
+    style="color: red;"
+  >
+    hello, 
+  </span>
+  world!
+</h1>
+`;
+
+exports[`ReactDomRootProvider > update > updates correctly 1`] = `
+<h1
+  class="title newClass"
+  data-id="1"
+  id="test"
+  style="display: block;"
+>
+  New 
+  <span
+    data-id="2"
+    style="color: blue;"
+  >
+    hello, 
+  </span>
+  world~
+</h1>
+`;

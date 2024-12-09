@@ -24,9 +24,12 @@ export class Error<T = unknown, E = unknown> extends globalThis.Error {
 }
 
 /** Extended options for initializing an {@link Error}. */
-export interface ExtendedErrorOptions<T> extends ErrorOptions {
+export interface ExtendedErrorOptions<T> {
   /** Error name. */
   readonly name?: string;
+
+  /** Error cause. */
+  readonly cause?: unknown;
 
   /** Error code. */
   readonly code?: string;

@@ -1,12 +1,12 @@
 {
-  "name": "@mithic/interface-keyvalue",
+  "name": "@mithic/interface-dom",
   "version": "0.3.0",
-  "description": "mithic key-value store WIT spec",
+  "description": "virtual DOM WIT spec",
   "type": "module",
   "sideEffects": false,
-  "main": "./dist/keyvalue.wasm",
+  "main": "./dist/dom.wasm",
   "exports": {
-    ".": "./dist/keyvalue.wasm"
+    ".": "./dist/dom.wasm"
   },
   "files": [
     "/dist",
@@ -16,7 +16,7 @@
     "prepublishOnly": "npm run clean && npm run build",
     "clean": "rimraf dist",
     "prebuild": "mkdir -p dist",
-    "build": "../../bin/wasm-tools component wit -w -o dist/keyvalue.wasm wit",
+    "build": "../../bin/wasm-tools component wit -w -o dist/dom.wasm wit",
     "test": "echo \"ok\"",
     "wit-deps": "../../bin/wit-deps"
   },
@@ -25,10 +25,9 @@
     "url": "git+https://github.com/andykswong/mithic.git"
   },
   "keywords": [
-    "collection",
-    "keyvalue",
     "mithic",
     "typescript",
+    "virtual-dom",
     "wit"
   ],
   "author": "Andy K.S. Wong <andykswong@outlook.com>",

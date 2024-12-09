@@ -84,7 +84,7 @@ export interface MessageHandler {
 }
 
 /** Fully-qualified name for incoming handler. */
-export const IncomingHandlerFQN = 'mithic:messaging/incoming-handler@0.2.0';
+export const IncomingHandlerFQN = 'mithic:messaging/incoming-handler@0.3.0';
 
 /** Messaging guest component. */
 export interface MessagingGuest {

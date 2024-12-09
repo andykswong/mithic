@@ -1,0 +1,23 @@
+exports[`ElementRenderer > renders correctly 1`] = `
+<h1
+  class="title"
+>
+  <span
+    style="color: red;"
+  >
+    hello, 
+  </span>
+  world!
+</h1>
+`;
+
+exports[`ElementRenderer > supports fragment 1`] = `
+<div>
+  <span
+    style="color: red;"
+  >
+    hello, 
+  </span>
+  world!
+</div>
+`;

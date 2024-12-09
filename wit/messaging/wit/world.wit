@@ -1,4 +1,4 @@
-package mithic:messaging@0.2.0;
+package mithic:messaging@0.3.0;
 
 /// Provides message sending and request/reply APIs.
 world imports {

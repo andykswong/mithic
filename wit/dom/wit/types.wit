@@ -1,0 +1,67 @@
+interface types {
+    /// Property value.
+    variant value {
+        null,
+        int32(s32),
+        int64(s64),
+        uint32(u32),
+        uint64(u64),
+        float(f32),
+        double(f64),
+        %string(string),
+        boolean(bool),
+        binary(list<u8>)
+    }
+
+    /// Associative array of key-values.
+    type props = list<tuple<string, value>>;
+
+    /// Element ID type.
+    type element-id = u64;
+
+    /// Element child type.
+    variant element-child {
+        /// Pointer to child element.
+        element(element-id),
+        /// Text content
+        text(string)
+    }
+
+    /// A virtual DOM element.
+    record element {
+        /// The ID of element. This must be unique for proper element identification.
+        id: element-id,
+        /// The element tag.
+        tag: string,
+        /// The element properties.
+        props: props,
+        /// The element styles.
+        style: props,
+        /// The list of children.
+        children: list<element-child>
+    }
+
+    /// A patch to a virtual DOM element.
+    record element-patch {
+        /// The ID of element to patch.
+        id: element-id,
+        /// The new element tag, if changed.
+        tag: option<string>,
+        /// The new element properties, if changed.
+        props: option<props>,
+        /// The new element styles, if changed.
+        style: option<props>,
+        /// The list of children, if changed.
+        children: option<list<element-child>>
+    }
+
+    /// An event from element.
+    record event {
+        /// The event type tag.
+        tag: string,
+        /// The target element ID.
+        target: element-id,
+        /// The event data.
+        data: props
+    }
+}

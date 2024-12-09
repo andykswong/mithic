@@ -5,39 +5,45 @@ const DEFAULT_POLL_MS = 200;
 
 /** Represents a single I/O event which may be ready. */
 export class Pollable implements PromiseLike<void> {
-  /** Estimated time of completion in milliseconds. */
-  public readonly eta: number;
-
-  /** The underlying {@link Pollables} buffer. */
   private readonly pollables: Pollables;
+  private readonly _eta: (pollables: Pollables, id: number) => number;
   private readonly pollReady?: (pollables: Pollables, id: number) => boolean;
+  private readonly onDispose?: (pollables: Pollables, id: number) => void;
   private readonly deleteOnDispose: boolean;
   private _id: number;
 
   public constructor({
     pollables = Io.pollables,
     id = pollables.create(),
-    eta = performance.now() + DEFAULT_POLL_MS,
+    eta = ((start: number) => () => start + DEFAULT_POLL_MS)(performance.now()),
     pollReady,
+    onDispose,
     deleteOnDispose = true,
   }: PollableOptions = {}) {
     this.pollables = pollables;
     this._id = id;
-    this.eta = eta;
+    this._eta = eta;
     this.pollReady = pollReady;
+    this.onDispose = onDispose;
     this.deleteOnDispose = deleteOnDispose;
   }
 
   public [Symbol.dispose](): void {
+    this.onDispose?.(this.pollables, this._id);
     if (this.deleteOnDispose) {
       this.pollables.delete(this._id);
     }
     this._id = 0;
   }
 
-  /** Returns the ID of this pollable. */
+  /** ID of this pollable. */
   public get id(): number {
     return this._id;
+  }
+
+  /** Estimated time of completion in milliseconds. */
+  public get eta(): number {
+    return this._eta(this.pollables, this._id);
   }
 
   /** Estimated time to completion in milliseconds. */
@@ -82,8 +88,9 @@ export class Pollable implements PromiseLike<void> {
 export interface PollableOptions {
   pollables?: Pollables;
   id?: number;
+  eta?: (pollables: Pollables, id: number) => number;
   pollReady?: (pollables: Pollables, id: number) => boolean;
-  eta?: number;
+  onDispose?: (pollables: Pollables, id: number) => void;
   deleteOnDispose?: boolean;
 }
 
