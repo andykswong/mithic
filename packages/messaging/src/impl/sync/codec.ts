@@ -1,7 +1,7 @@
-import { type Codec } from '@mithic/commons';
+import type { Codec } from '@mithic/commons';
 import { decode } from 'cbor-x/decode';
 import { encode } from 'cbor-x/encode';
-import { type Message, type MessagingErrorPayload, type PeerId, type RequestOptions } from '../../types.ts';
+import type { Message, MessagingErrorPayload, PeerId, RequestOptions } from '../../types.ts';
 
 /** Messaging service operation types. */
 export const MessagingOp = {

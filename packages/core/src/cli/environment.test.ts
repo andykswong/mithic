@@ -22,7 +22,7 @@ describe('environment', () => {
   afterEach(() => {
     process.argv = processArgv;
     process.env = processEnv;
-  })
+  });
 
   describe('getEnvironment', () => {
     it('should return all env keys', () => {

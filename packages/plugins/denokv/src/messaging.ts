@@ -54,7 +54,7 @@ export class DenoKvMessagingService implements MessagingService, Disposable {
       throw new MessagingError({ tag: MessagingErrorType.Other, val: 'invalid message' });
     }
     return this.kv.get(message.topic)?.[1]?.handle(message);
-  }
+  };
 
   private async openKv(topic: string): Promise<Kv> {
     let kv = this.kv.get(topic)?.[0];

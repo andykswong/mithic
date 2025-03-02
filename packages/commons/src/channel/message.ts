@@ -1,4 +1,4 @@
-import { type MaybePromise } from '../async/index.ts';
+import type { MaybePromise } from '../async/index.ts';
 import type { Codec } from '../codec.ts';
 import type { Startable } from '../lifecycle.ts';
 import { SharedArrayBufferChannel, type SharedChannelBuffers } from './buffer.ts';

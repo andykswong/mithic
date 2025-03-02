@@ -45,7 +45,7 @@ describe('KeyValueStoreClient', () => {
       host.send({ op: KVStoreOp.Response, seq, bucket: BUCKET });
       assert.ok(client.open(BUCKET));
       await delay(100);
-      assert.deepStrictEqual(messages, [{ op: KVStoreOp.Open, seq, bucket: BUCKET }])
+      assert.deepStrictEqual(messages, [{ op: KVStoreOp.Open, seq, bucket: BUCKET }]);
     });
   });
 
@@ -65,7 +65,7 @@ describe('KeyValueStoreClient', () => {
         const seq = client['seq'];
         dispose(store);
         await delay(100);
-        assert.deepStrictEqual(messages, [{ op: KVStoreOp.Close, seq, bucket: BUCKET }])
+        assert.deepStrictEqual(messages, [{ op: KVStoreOp.Close, seq, bucket: BUCKET }]);
       });
     });
 
@@ -76,7 +76,7 @@ describe('KeyValueStoreClient', () => {
         host.send({ op: KVStoreOp.Response, seq, success: true });
         assert.strictEqual(store.exists(key), true);
         await delay(100);
-        assert.deepStrictEqual(messages, [{ op: KVStoreOp.Exist, seq, bucket: BUCKET, key }])
+        assert.deepStrictEqual(messages, [{ op: KVStoreOp.Exist, seq, bucket: BUCKET, key }]);
       });
 
       it('throws error from host', () => {
@@ -93,9 +93,9 @@ describe('KeyValueStoreClient', () => {
         const selector = { start: key };
         const cursor = 'cursor1', cursor2 = 'cursor2';
         host.send({ op: KVStoreOp.Response, seq, success: true, keys: [key], cursor });
-        assert.deepStrictEqual(store.listKeys(selector, cursor2), { keys: [key], cursor })
+        assert.deepStrictEqual(store.listKeys(selector, cursor2), { keys: [key], cursor });
         await delay(100);
-        assert.deepStrictEqual(messages, [{ op: KVStoreOp.Keys, seq, bucket: BUCKET, selector, cursor: cursor2 }])
+        assert.deepStrictEqual(messages, [{ op: KVStoreOp.Keys, seq, bucket: BUCKET, selector, cursor: cursor2 }]);
       });
     });
 
@@ -104,7 +104,7 @@ describe('KeyValueStoreClient', () => {
         const seq = client['seq'];
         const key = 'key1', key2 = 'key2', value = new Uint8Array([1, 2, 3]);
         host.send({ op: KVStoreOp.Response, seq, success: true, values: [null, value] });
-        assert.deepStrictEqual(store.getMany([key2, key]), [null, value])
+        assert.deepStrictEqual(store.getMany([key2, key]), [null, value]);
         await delay(100);
         assert.deepStrictEqual(messages, [{ op: KVStoreOp.Get, seq, bucket: BUCKET, keys: [key2, key] }]);
       });
@@ -129,7 +129,7 @@ describe('KeyValueStoreClient', () => {
         host.send({ op: KVStoreOp.Response, seq, counter: result });
         assert.deepStrictEqual(store.increment(key, delta), result);
         await delay(100);
-        assert.deepStrictEqual(messages, [{ op: KVStoreOp.Incr, seq, bucket: BUCKET, key, delta }])
+        assert.deepStrictEqual(messages, [{ op: KVStoreOp.Incr, seq, bucket: BUCKET, key, delta }]);
       });
     });
 
@@ -141,7 +141,7 @@ describe('KeyValueStoreClient', () => {
         host.send({ op: KVStoreOp.Response, seq, success: true });
         assert.strictEqual(store.compareAndSwap(key, oldValue, newValue), true);
         await delay(100);
-        assert.deepStrictEqual(messages, [{ op: KVStoreOp.CAS, seq, bucket: BUCKET, key, oldValue, newValue }])
+        assert.deepStrictEqual(messages, [{ op: KVStoreOp.CAS, seq, bucket: BUCKET, key, oldValue, newValue }]);
       });
     });
   });

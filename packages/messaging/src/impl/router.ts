@@ -1,5 +1,5 @@
 import { MaybePromise, type StringMatcher } from '@mithic/commons';
-import { type MessagingService, type PeerPresence, type RequestReply } from '../service.ts';
+import type { MessagingService, PeerPresence, RequestReply } from '../service.ts';
 import type { Message, MessageHandler, RequestOptions, PeerId } from '../types.ts';
 import { unsupported } from '../utils/index.ts';
 

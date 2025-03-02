@@ -1,5 +1,5 @@
 import { MaybePromise } from './promise.ts';
-import { type Semaphore } from './semaphore.ts';
+import type { Semaphore } from './semaphore.ts';
 
 /** A RAII-style async lock guard that uses a {@link Semaphore}. */
 export class LockGuard implements AsyncDisposable {

@@ -1,5 +1,5 @@
-import { type MaybePromise } from '@mithic/commons';
-import { type MessageHandler, type Message, type PeerId, type RequestOptions } from './types.ts';
+import type { MaybePromise } from '@mithic/commons';
+import type { MessageHandler, Message, PeerId, RequestOptions } from './types.ts';
 
 /** A messaging service adapter. */
 export interface MessagingService

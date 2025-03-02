@@ -4,11 +4,11 @@ import type { MaybePromise, Codec, Startable } from '@mithic/commons';
 import {
   isMessage, RequestReplyAdapter, type Message, type MessageHandler, type MessagingService, type RequestOptions
 } from '@mithic/messaging';
-import { type RedisClientType } from '@redis/client';
+import type { RedisClientType } from '@redis/client';
 
 /** Redis pub/sub implementation of {@link MessagingService} with at-most-once delivery. */
 export class RedisPubSubMessagingService<R extends RedisClientType = RedisClientType>
-  implements MessagingService, Startable, AsyncDisposable {
+implements MessagingService, Startable, AsyncDisposable {
 
   private readonly client: R;
   private readonly requestReply: RequestReplyAdapter;

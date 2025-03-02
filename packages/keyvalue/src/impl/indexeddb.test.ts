@@ -15,7 +15,7 @@ describe('IDBKeyValueProvider', () => {
   let provider: IDBKeyValueProvider;
 
   beforeEach(async () => {
-    db = await createIDB(DB_NAME, BUCKET)
+    db = await createIDB(DB_NAME, BUCKET);
     provider = new IDBKeyValueProvider(db, 3, 'strict');
   });
 
@@ -41,7 +41,7 @@ describe('IDBKeyValueStore', () => {
   let store: IDBKeyValueStore;
 
   beforeEach(async () => {
-    db = await createIDB(DB_NAME, BUCKET)
+    db = await createIDB(DB_NAME, BUCKET);
     provider = new IDBKeyValueProvider(db, 3);
     store = provider.open(BUCKET);
   });

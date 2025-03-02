@@ -1,4 +1,4 @@
-import { type Deque } from './queue.ts';
+import type { Deque } from './queue.ts';
 
 /** A dual stack based double-ended queue. */
 export class DualStackDeque<T> implements Deque<T> {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { dispose, Error, SyncMessageChannel } from '@mithic/commons';
-import { type SyncReadStream, type SyncWriteStream } from '../../index.ts';
+import type { SyncReadStream, SyncWriteStream } from '../../index.ts';
 import { StreamState } from '../utils.ts';
 import { IoMessage, IoOp } from './codec.ts';
 import { IoStreamClientProvider } from './index.ts';

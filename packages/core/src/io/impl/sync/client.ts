@@ -1,5 +1,5 @@
 import { dispose, Error, type SharedChannelBuffers, type Startable, SyncMessageChannel } from '@mithic/commons';
-import { type SyncReadStream, type SyncWriteStream } from '../../adapters.ts';
+import type { SyncReadStream, SyncWriteStream } from '../../adapters.ts';
 import { appendBuffer, BaseStream, consumeBuffer, StreamState } from '../utils.ts';
 import { StreamError, StreamErrorTag, type StreamErrorPayload } from '../../types.ts';
 import { IoMessage, IoOp } from './codec.ts';
@@ -126,7 +126,7 @@ export class IoStreamClientProvider implements Startable, Disposable {
       case IoOp.Data:
         return this.handleData(message.fd, message.content);
     }
-  }
+  };
 
   private handleOpen(id: string, fd: number, state: number) {
     if (state === StreamState.Closed || state === StreamState.Error) {
@@ -142,7 +142,7 @@ export class IoStreamClientProvider implements Startable, Disposable {
     if (state === StreamState.Closed) {
       stream.close();
     } else if (state === StreamState.Error) {
-      stream.setError(new Error(`stream i/o failed, fd=${fd}`))
+      stream.setError(new Error(`stream i/o failed, fd=${fd}`));
     }
   }
 

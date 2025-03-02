@@ -47,7 +47,7 @@ describe('MessagingClient', () => {
       host.send({ op: MessagingOp.Response, seq });
       client.send(msg);
       await delay(10);
-      assert.deepStrictEqual(messages, [{ op: MessagingOp.Message, seq, msg, replyTo: undefined }])
+      assert.deepStrictEqual(messages, [{ op: MessagingOp.Message, seq, msg, replyTo: undefined }]);
     });
 
     it('throws if receiving error from host side', () => {
@@ -63,7 +63,7 @@ describe('MessagingClient', () => {
         host.send({ op: MessagingOp.Response, seq, msgs: [reply] });
         assert.deepStrictEqual(client.request(msg), [reply]);
         await delay(10);
-        assert.deepStrictEqual(messages, [{ op: MessagingOp.Message, seq, msg, timeoutMs: TIMEOUT, expectedReplies: 1, replyTo: undefined }])
+        assert.deepStrictEqual(messages, [{ op: MessagingOp.Message, seq, msg, timeoutMs: TIMEOUT, expectedReplies: 1, replyTo: undefined }]);
       });
 
       it('should send message as request with options', async () => {
@@ -72,7 +72,7 @@ describe('MessagingClient', () => {
         host.send({ op: MessagingOp.Response, seq, msgs: [reply] });
         assert.deepStrictEqual(client.request(msg, { timeoutMs, expectedReplies }), [reply]);
         await delay(10);
-        assert.deepStrictEqual(messages, [{ op: MessagingOp.Message, seq, msg, timeoutMs, expectedReplies, replyTo: undefined }])
+        assert.deepStrictEqual(messages, [{ op: MessagingOp.Message, seq, msg, timeoutMs, expectedReplies, replyTo: undefined }]);
       });
     });
 
@@ -82,7 +82,7 @@ describe('MessagingClient', () => {
         host.send({ op: MessagingOp.Response, seq });
         client.reply(msg, reply);
         await delay(10);
-        assert.deepStrictEqual(messages, [{ op: MessagingOp.Message, seq, msg: reply, replyTo: msg }])
+        assert.deepStrictEqual(messages, [{ op: MessagingOp.Message, seq, msg: reply, replyTo: msg }]);
       });
     });
   });

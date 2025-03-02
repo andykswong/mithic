@@ -2,7 +2,7 @@ import { arrayCompare, AtomicSemaphore, dispose, type Error, LockGuard, type Sta
 import {
   KeyOrder, type KeyResponse, type KeySelector, type KeyValueProvider, type KeyValueStore
 } from '@mithic/keyvalue';
-import { type AbstractSublevel, type AbstractLevel } from 'abstract-level';
+import type { AbstractSublevel, AbstractLevel } from 'abstract-level';
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const NOT_FOUND = 'LEVEL_NOT_FOUND';

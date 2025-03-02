@@ -228,7 +228,7 @@ describe('OutputStream', () => {
     beforeEach(() => {
       readStream = createMockReadStream();
       inputStream = new streams.InputStream({ stream: readStream });
-    })
+    });
 
     describe('splice', () => {
       it('should write chunk from input stream', async () => {

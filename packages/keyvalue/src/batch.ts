@@ -11,7 +11,7 @@ export function getMany(bucket: Bucket, keys: string[]): MaybePromise<([key: str
   return MaybePromise.map(bucket.store.getMany(keys), (values) => zipKeyValues(keys, values));
 }
 
-/** 
+/**
  * Set the values associated with the keys in the store.
  * If the key already exists in the store, it overwrites the value.
  * @throws {@link StoreError}
@@ -21,7 +21,7 @@ export function setMany(bucket: Bucket, keyValues: [key: string, value: Uint8Arr
   return bucket.store.updateMany(keyValues);
 }
 
-/** 
+/**
  * Delete the key-value pairs associated with the keys in the store.
  * @throws {@link StoreError}
  */

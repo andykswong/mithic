@@ -43,7 +43,7 @@ export interface KeyValueStore extends Partial<Disposable> {
    */
   increment(key: string, delta: bigint): MaybePromise<bigint>;
 
-  /** 
+  /**
    * Atomically sets the value associated with the key in the store to the given value.
    * It returns `true` if the value was set properly, or `false` if the swap failed.
    * @throws {@link StoreError}

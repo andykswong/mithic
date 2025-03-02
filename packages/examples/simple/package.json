@@ -11,10 +11,10 @@
     "./component": "./dist/index.js"
   },
   "scripts": {
-    "prebuild": "eslint src",
+    "prebuild": "eslint",
     "build": "node ./componentize.js",
     "postbuild": "node ./transpile.js",
-    "clean": "echo 'ok'",
+    "clean": "rimraf dist",
     "start": "node .",
     "test": "npm start"
   },
@@ -32,7 +32,7 @@
     "@mithic/core": "^0.3"
   },
   "devDependencies": {
-    "@bytecodealliance/componentize-js": "^0.14",
-    "@bytecodealliance/jco": "^1.7"
+    "@bytecodealliance/componentize-js": "^0.17",
+    "@bytecodealliance/jco": "^1.10"
   }
 }

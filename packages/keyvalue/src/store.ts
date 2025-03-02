@@ -1,7 +1,7 @@
 import { dispose, MaybePromise } from '@mithic/commons';
 import { KeyValue } from './keyvalue.ts';
 import type { KeyValueStore } from './service.ts';
-import { type KeyResponse } from './types.ts';
+import type { KeyResponse } from './types.ts';
 
 /**
  * Get the bucket with the specified URI.

@@ -19,7 +19,7 @@ describe('TextCodec', () => {
 
   beforeEach(() => {
     codec = new TextCodec();
-  })
+  });
 
   describe('encode', () => {
     it('should return string encoded', () => {

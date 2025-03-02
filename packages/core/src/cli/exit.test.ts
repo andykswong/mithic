@@ -15,7 +15,7 @@ describe('exit', () => {
 
   afterEach(() => {
     mock.restoreAll();
-  })
+  });
 
   it('should call process.exit with correct status code', () => {
     const error = new Error('exit');

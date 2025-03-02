@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, type Mock } from 'node:test';
 import { dispose } from '@mithic/commons';
 import { MessageMetadata, type Message, type MessageHandler } from '@mithic/messaging';
-import { type RedisClientType } from '@redis/client';
+import type { RedisClientType } from '@redis/client';
 import { encode } from 'cbor-x/encode';
 import { assertCalledWith, assertCalledWithArg, getCallArg } from './test/assert.ts';
 import { createMockRedisClient } from './test/mocks.js';

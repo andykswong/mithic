@@ -1,4 +1,4 @@
-import { type Deque } from './queue.ts';
+import type { Deque } from './queue.ts';
 
 const DEFAULT_DEQUE_CAPACITY = 16;
 const DEFAULT_DEQUE_RESIZE_FACTOR = 2;

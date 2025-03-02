@@ -1,3 +1,4 @@
+#![allow(unsafe_op_in_unsafe_fn)]
 mod bindings {
     wit_bindgen::generate!({
         world: "rust-cli",

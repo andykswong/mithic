@@ -7,11 +7,12 @@
   "sideEffects": false,
   "main": "./src/index.js",
   "scripts": {
-    "prebuild": "eslint",
-    "build": "webpack",
-    "clean": "rm -rf dist",
-    "start": "webpack serve",
-    "test": "echo 'ok'"
+    "clean": "rimraf .next",
+    "prebuild": "npm run lint",
+    "build": "next build",
+    "lint": "next lint",
+    "test": "echo 'ok'",
+    "start": "next dev --turbopack --experimental-https"
   },
   "repository": {
     "type": "git",
@@ -25,9 +26,12 @@
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
     "@mithic/core": "^0.3",
-    "@mithic/example-rust-cli": "^0.3"
+    "@mithic/example-rust-cli": "^0.3",
+    "react": "^19.0",
+    "react-dom": "^19.0"
   },
   "devDependencies": {
-    "html-webpack-plugin": "^5.6"
+    "@types/react": "^19.0",
+    "@types/react-dom": "^19.0"
   }
 }

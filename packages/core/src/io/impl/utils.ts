@@ -37,7 +37,7 @@ export abstract class BaseStream implements Disposable {
     assert(state !== StreamState.Closed, { tag: StreamErrorTag.Closed });
     assert(state !== StreamState.Error, this.error ?? {
       tag: StreamErrorTag.LastOperationFailed,
-      val: new Error(`stream error`)
+      val: new Error('stream error')
     });
   }
 }

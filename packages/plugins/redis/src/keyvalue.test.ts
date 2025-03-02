@@ -138,7 +138,7 @@ describe('RedisKeyValueStore', () => {
       mocked(mockRedis.zRange).mock.mockImplementationOnce(() => Promise.resolve([KEY1, KEY2, key3, key4]));
       const results = await store.listKeys({ start: 'a', end: 'c' });
       assert.deepStrictEqual(results, { keys: [KEY1, KEY2, key3], cursor: key3 });
-    })
+    });
   });
 
   describe('increment', () => {
@@ -148,7 +148,7 @@ describe('RedisKeyValueStore', () => {
       const results = await store.increment(KEY1, delta);
       assert.deepStrictEqual(results, value);
       assertCalledWith(mockRedis.hIncrBy, 0, BUCKET, KEY1, Number(delta));
-    })
+    });
   });
 
   describe('compareAndSwap', () => {

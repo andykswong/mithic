@@ -5,8 +5,8 @@ import {
 import { commandOptions, WatchError, type RedisClientType } from '@redis/client';
 
 /** Redis implementation of {@link KeyValueProvider}. */
-export class RedisKeyValueProvider<R extends RedisClientType = RedisClientType>
-  implements KeyValueProvider, Startable, AsyncDisposable {
+export class RedisKeyValueProvider<R extends RedisClientType = RedisClientType> implements
+  KeyValueProvider, Startable, AsyncDisposable {
 
   private readonly client: R;
   private readonly batchSize: number;
@@ -54,8 +54,7 @@ export class RedisKeyValueProvider<R extends RedisClientType = RedisClientType>
 }
 
 /** Redis implementation of {@link KeyValueStore}. */
-export class RedisKeyValueStore<R extends RedisClientType = RedisClientType>
-  implements KeyValueStore {
+export class RedisKeyValueStore<R extends RedisClientType = RedisClientType> implements KeyValueStore {
 
   private readonly client: R;
   private readonly batchSize: number;

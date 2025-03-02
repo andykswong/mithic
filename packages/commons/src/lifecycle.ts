@@ -1,4 +1,4 @@
-import { type MaybePromise } from './async/index.ts';
+import type { MaybePromise } from './async/index.ts';
 
 /** A component that can be started and closed later. */
 export interface Startable {

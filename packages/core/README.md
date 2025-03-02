@@ -8,7 +8,7 @@
 
 <br/>
 
-> mithic core runtime APIs based on [WASI](https://wasi.dev/).
+> mithic WASM core runtime APIs based on [WASI](https://wasi.dev/).
 
 <br/>
 

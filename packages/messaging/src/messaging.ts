@@ -1,4 +1,4 @@
-import { type MaybePromise } from '@mithic/commons';
+import type { MaybePromise } from '@mithic/commons';
 import type { MessageProducer, MessagingService, PeerPresence, RequestReply } from './service.ts';
 import { IncomingHandlerFQN, type MessagingGuest } from './types.ts';
 import { BroadcastChannelMessagingService } from './impl/index.ts';

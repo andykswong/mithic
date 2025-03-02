@@ -1,4 +1,4 @@
-import { type Queue } from './queue.ts';
+import type { Queue } from './queue.ts';
 
 /** A binary heap. */
 export class BinaryHeap<T> implements Queue<T> {

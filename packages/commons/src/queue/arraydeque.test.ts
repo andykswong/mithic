@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { ArrayDeque } from './index.ts';
 
-describe("ArrayDeque", () => {
+describe('ArrayDeque', () => {
   let deque: ArrayDeque<number>;
 
   beforeEach(() => {
@@ -137,7 +137,7 @@ describe("ArrayDeque", () => {
       assert.strictEqual(deque.back(), 1);
     });
 
-   it('should add an element to the rear of a non-empty deque', () => {
+    it('should add an element to the rear of a non-empty deque', () => {
       deque.push(1);
       deque.push(2);
       deque.push(3);
@@ -197,7 +197,7 @@ describe("ArrayDeque", () => {
       assert.strictEqual(deque.length, 5);
       assert.strictEqual(deque.capacity, 6);
     });
-  
+
     it('should resize the deque to the specified capacity', () => {
       deque.push(1);
       deque.push(2);

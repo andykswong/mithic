@@ -71,7 +71,7 @@ export class MessagingReactor implements Startable, Disposable {
     for (const handler of subscriptions?.values() || []) {
       this.service.subscribe([], handler);
     }
-  }
+  };
 
   private handle = async (channel: SyncMessageChannel<MessagingMessage>, message: MessagingMessage) => {
     try {

@@ -1,6 +1,6 @@
-import { type MaybePromise } from '@mithic/commons';
+import type { MaybePromise } from '@mithic/commons';
 import { Messaging } from './messaging.ts';
-import { type Message } from './types.ts';
+import type { Message } from './types.ts';
 
 /**
  * Sends a message.

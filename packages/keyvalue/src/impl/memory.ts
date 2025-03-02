@@ -112,7 +112,7 @@ export class InMemoryKeyValueStore extends BaseKeyValueStore implements SyncKeyV
     if (!newValue) {
       this.data.delete(key);
     } else {
-      this.data.set(key, newValue)
+      this.data.set(key, newValue);
     }
     return true;
   }

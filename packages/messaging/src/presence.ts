@@ -1,6 +1,6 @@
-import { type MaybePromise } from '@mithic/commons';
+import type { MaybePromise } from '@mithic/commons';
 import { Messaging } from './messaging.ts';
-import { type PeerId } from './types.ts';
+import type { PeerId } from './types.ts';
 
 /**
  * Get the list of known `peer-id` that subscribed to given topic.

@@ -6,7 +6,7 @@ import { KeyOrder } from '@mithic/keyvalue';
 import { DenoKeyValueProvider, DenoKeyValueStore } from './index.ts';
 
 const BUCKET = 'bucket';
-const KEY1 = 'a'
+const KEY1 = 'a';
 const KEY2 = 'b';
 const KEY3 = 'c3';
 const VALUE1 = new Uint8Array([1]);
@@ -43,7 +43,7 @@ describe('DenoKeyValueProvider', () => {
     it('throws if Kv is closed', () => {
       dispose(provider);
       assert.throws(() => provider.open(BUCKET), /StoreError: Kv is closed/);
-    })
+    });
   });
 
   describe('dispose', () => {
@@ -153,7 +153,7 @@ describe('DenoKeyValueStore', () => {
 
       const results3 = await store.listKeys({ order: KeyOrder.Desc }, results2.cursor);
       assert.deepStrictEqual(results3, { keys: [], cursor: undefined });
-    })
+    });
   });
 
   describe('increment', () => {

@@ -1,10 +1,10 @@
 [package]
 name = "mithic_example_cli"
-edition = "2021"
+edition = "2024"
 publish = false
 
 [dependencies]
-wit-bindgen = { version = "0.30" }
+wit-bindgen = { version = "0.39" }
 
 [lib]
 crate-type = ["cdylib"]

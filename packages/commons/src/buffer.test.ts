@@ -84,7 +84,7 @@ describe('AtomicRingBuffer', () => {
     it('should return undefined for empty pops', () => {
       assert.strictEqual(buffer.shift(new Uint8Array(1)), undefined);
       assert.strictEqual(buffer.shift(new Uint8Array(0)), undefined);
-    })
+    });
   });
 
   describe('waitAsync', () => {

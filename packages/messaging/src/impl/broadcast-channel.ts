@@ -127,7 +127,7 @@ export class BroadcastChannelMessagingService implements MessagingService, Reque
       from: this.peerId,
     };
     this.channel.postMessage(message);
-  }
+  };
 
   private handleMessage = async (event: MessageEvent<unknown>) => {
     const message = event.data as BroadcastChannelMessage;

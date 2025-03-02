@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { type Mock } from 'node:test';
+import type { Mock } from 'node:test';
 
 export function assertCallCount<Ret, Args extends unknown[]>(
   f: (...args: Args) => Ret, count: number

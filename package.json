@@ -5,13 +5,11 @@
   "type": "module",
   "sideEffects": false,
   "main": "./index.js",
-  "types": "./index.d.ts",
   "exports": {
     ".": "./index.js"
   },
   "files": [
-    "./index.js",
-    "./index.d.ts"
+    "./index.js"
   ],
   "engines": {
     "node": ">=22.8.0"
@@ -54,47 +52,39 @@
   "dependencies": {
     "@mithic/commons": "^0.3",
     "@mithic/core": "^0.3",
-    "@mithic/dom": "^0.3",
     "@mithic/keyvalue": "^0.3",
     "@mithic/messaging": "^0.3"
   },
   "devDependencies": {
-    "@babel/cli": "^7.25",
-    "@babel/core": "^7.25",
-    "@babel/plugin-proposal-explicit-resource-management": "^7.25",
-    "@babel/preset-env": "^7.25",
-    "@babel/preset-typescript": "^7.25",
-    "@eslint/js": "^9.15",
-    "@testing-library/dom": "^10.4",
-    "@testing-library/user-event": "^14.5",
+    "@swc/cli": "^0.6",
+    "@swc/core": "^1.11",
+    "@swc/plugin-transform-imports": "^7.0",
+    "@eslint/js": "^9.20",
+    "@stylistic/eslint-plugin": "^4.0",
     "@types/node": "^22.10",
-    "core-js": "^3.39",
+    "core-js": "^3.40",
     "cross-env": "^7.0",
-    "eslint": "^9.15",
-    "globals": "^15.10",
-    "global-jsdom": "^25.0",
-    "jsdom": "^25.0",
+    "eslint": "^9.20",
+    "eslint-config-next": "^15.2",
+    "globals": "^16.0",
+    "global-jsdom": "^26.0",
+    "jsdom": "^26.0",
+    "next": "^15.2",
     "rimraf": "^6.0",
     "typedoc": "^0.27",
     "typescript": "^5.7",
-    "typescript-eslint": "^8.15",
-    "webpack": "^5.97",
-    "webpack-cli": "^5.1",
-    "webpack-dev-server": "^5.1"
+    "typescript-eslint": "^8.25"
   },
   "workspaces": [
-    "./wit/dom",
     "./wit/keyvalue",
     "./wit/messaging",
     "./packages/commons",
     "./packages/core",
-    "./packages/dom",
     "./packages/keyvalue",
     "./packages/messaging",
     "./packages/plugins/denokv",
     "./packages/plugins/level",
     "./packages/plugins/redis",
-    "./packages/plugins/react",
     "./packages/examples/simple",
     "./packages/examples/rust-cli",
     "./packages/examples/browser"

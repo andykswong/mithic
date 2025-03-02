@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
-import { type IoStreamClientProvider, type SyncReadStream, type SyncWriteStream } from '../../types.ts';
+import type { IoStreamClientProvider, SyncReadStream, SyncWriteStream } from '../../types.ts';
 import { SyncStdioProvider } from './index.ts';
 
 describe('SyncStdioProvider', () => {

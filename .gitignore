@@ -46,6 +46,8 @@ typings/
 
 # TypeScript cache
 *.tsbuildinfo
+next-env.d.ts
+.swc/
 
 # Optional npm cache directory
 .npm
@@ -77,6 +79,8 @@ typings/
 
 # Next.js build output
 .next
+certificates/
+out/
 
 # Nuxt.js build / generate output
 .nuxt

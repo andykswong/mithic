@@ -1,6 +1,6 @@
-import { type Startable } from '../lifecycle.ts';
-import { type MaybePromise } from './promise.ts';
-import { type Queue } from '../queue/index.ts';
+import type { Startable } from '../lifecycle.ts';
+import type { MaybePromise } from './promise.ts';
+import type { Queue } from '../queue/index.ts';
 import { AtomicSemaphore, type Semaphore } from './semaphore.ts';
 
 /** A queue of async tasks. */
@@ -147,10 +147,10 @@ export interface Task<T = unknown> {
 
 /** A runnable task with priority in a {@link TaskQueue}. */
 export class RunnableTask {
-   /** The task's runnable function. */
-   public readonly run: () => Promise<void>;
-   /** Priority of this task. Operations with greater priority will be scheduled first. */
-   public readonly priority;
+  /** The task's runnable function. */
+  public readonly run: () => Promise<void>;
+  /** Priority of this task. Operations with greater priority will be scheduled first. */
+  public readonly priority;
 
   public constructor(
     /** The task's runnable function. */

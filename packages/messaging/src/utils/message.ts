@@ -1,4 +1,4 @@
-import { type Message } from '../types.ts';
+import type { Message } from '../types.ts';
 
 /** Checks if an object is a valid {@link Message}. */
 export function isMessage(obj: unknown): obj is Message {

@@ -1,5 +1,5 @@
 import type { MaybePromise } from '@mithic/commons';
-import { type Bucket } from './store.ts';
+import type { Bucket } from './store.ts';
 
 /**
  * Atomically increment the value associated with the key in the store by the given delta. It returns the new value.
@@ -10,7 +10,7 @@ export function increment(bucket: Bucket, key: string, delta: bigint): MaybeProm
   return bucket.store.increment(key, delta);
 }
 
-/** 
+/**
  * Atomically set the value associated with the key in the store to the given value.
  * It returns `true` if the value was set properly, or `false` if the swap failed.
  * @throws {@link StoreError}

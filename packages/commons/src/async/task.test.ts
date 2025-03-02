@@ -164,7 +164,7 @@ describe('TaskQueue', () => {
       taskQueue.pause();
       taskQueue.push(task);
       assert.strictEqual(taskQueue.started, false);
-  
+
       taskQueue.start();
       await delay();
 

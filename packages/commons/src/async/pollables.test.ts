@@ -19,7 +19,7 @@ describe('AtomicPollables', () => {
   });
 
   it('has the correct string tag', () => {
-    assert.strictEqual(`${new AtomicPollables()}`, `[object Pollables]`);
+    assert.strictEqual(`${new AtomicPollables()}`, '[object Pollables]');
   });
 
   describe('create', () => {

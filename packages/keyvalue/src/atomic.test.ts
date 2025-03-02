@@ -33,7 +33,7 @@ describe('atomic', () => {
     it('should perform compare-and-swap for given key', () => {
       bucket.set(KEY, VALUE);
       const newValue = new Uint8Array([3]);
-      assert.strictEqual(compareAndSwap(bucket, KEY, VALUE, newValue), true)
+      assert.strictEqual(compareAndSwap(bucket, KEY, VALUE, newValue), true);
       assert.deepStrictEqual(bucket.get(KEY), newValue);
     });
   });

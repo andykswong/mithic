@@ -95,12 +95,12 @@ describe('WebReadStream', () => {
       stream['buffer'] = new Uint8Array([1, 2, 3]);
       assert.strictEqual(stream.poll(), true);
     });
-  
+
     it('should trigger read and return false immediately if timeoutMs = 0', () => {
       assert.strictEqual(stream.poll(0), false);
       assert.ok(stream['pendingRead']);
     });
-  
+
     it('should return false on timeout', async () => {
       const stream = new WebReadStream(new ReadableStream({})); // no data, pending forever
       assert.strictEqual(await stream.poll(1), false);

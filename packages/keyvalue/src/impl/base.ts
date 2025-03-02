@@ -1,5 +1,5 @@
 import { MaybePromise } from '@mithic/commons';
-import { type KeyResponse, type KeySelector } from '../types.ts';
+import type { KeyResponse, KeySelector } from '../types.ts';
 import type { KeyValueStore } from '../service.ts';
 
 /** Abstract base class to simplify {@link KeyValueStore} implementation. */

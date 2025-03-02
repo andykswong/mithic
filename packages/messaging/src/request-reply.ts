@@ -1,6 +1,6 @@
-import { type MaybePromise } from '@mithic/commons';
+import type { MaybePromise } from '@mithic/commons';
 import { Messaging } from './messaging.ts';
-import { type Message, type RequestOptions } from './types.ts';
+import type { Message, RequestOptions } from './types.ts';
 
 /**
  * Performs a blocking request with an optional set of request options.

@@ -73,7 +73,7 @@ describe('SharedArrayBufferChannel', () => {
 
     it('should return undefined for empty receive queue', () => {
       assert.strictEqual(channel.receive(), undefined);
-    })
+    });
   });
 
   describe('waitAsync', () => {

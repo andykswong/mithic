@@ -5,7 +5,7 @@ import { imports, Cli, IoStreamReactor, SyncStdioProvider } from '@mithic/core';
 let reactor, worker;
 
 if (isMainThread) {
-  // create an I/O reactor on main thread to process 
+  // create an I/O reactor on main thread to process
   reactor = new IoStreamReactor();
   // run component on a worker, passing the reactor channel as worker data
   worker = new Worker(new URL(import.meta.url), {

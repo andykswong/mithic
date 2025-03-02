@@ -1,0 +1,33 @@
+{
+  "$schema": "https://swc.rs/schema.json",
+  "jsc": {
+    "parser": {
+      "syntax": "typescript"
+    },
+    "target": "esnext",
+    "transform": {
+      "verbatimModuleSyntax": true
+    },
+    "experimental": {
+      "plugins": [
+        [
+          "@swc/plugin-transform-imports",
+          {
+            "(.*?)\\.ts$": {
+              "handleNamespaceImport": true,
+              "skipDefaultConversion": true,
+              "transform": "{{matches.[1]}}.js"
+            }
+          }
+        ]
+      ]
+    }
+  },
+  "module": {
+    "type": "nodenext",
+    "resolveFully": true
+  },
+  "minify": true,
+  "sourceMaps": "inline",
+  "isModule": true
+}

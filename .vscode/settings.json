@@ -1,5 +1,8 @@
 {
     "editor.tabSize": 2,
+    "editor.codeActionsOnSave": {
+        "source.fixAll.eslint": "always"
+    },
     "javascript.preferences.quoteStyle": "single",
     "javascript.preferences.importModuleSpecifierEnding": "js",
     "typescript.preferences.quoteStyle": "single",

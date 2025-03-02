@@ -1,8 +1,12 @@
 {
   "compilerOptions": {
     "module": "nodenext",
-    "target": "es2024",
-    "lib": ["ES2024", "DOM"],
+    "target": "esnext",
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "moduleResolution": "nodenext",
     "esModuleInterop": true,
     "isolatedModules": true,
@@ -16,13 +20,13 @@
     "noImplicitOverride": true,
     "skipLibCheck": true,
     "declaration": true,
-    "declarationMap": true,
+    "incremental": true,
     "inlineSourceMap": true,
     "inlineSources": true,
     "verbatimModuleSyntax": true
   },
   "exclude": [
     "node_modules",
-    "dist"
+    "**/dist/*"
   ]
 }

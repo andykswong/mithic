@@ -21,7 +21,7 @@
     "postbuild": "npm run componentize && npm run transpile",
     "componentize": "../../../bin/wasm-tools component new -o ./dist/component.wasm ../../../target/${npm_package_config_target}/release/${npm_package_config_crate}.wasm",
     "transpile": "node transpile.js",
-    "clean": "rm -rf dist",
+    "clean": "rimraf dist",
     "start": "node .",
     "test": "echo 'test' | npm start"
   },
@@ -39,6 +39,6 @@
     "@mithic/core": "^0.3"
   },
   "devDependencies": {
-    "@bytecodealliance/jco": "^1.7"
+    "@bytecodealliance/jco": "^1.10"
   }
 }

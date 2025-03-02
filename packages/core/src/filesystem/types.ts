@@ -1,5 +1,5 @@
-import { type Error } from '../io/error.ts';
-import { type ErrorCode } from './error.ts';
+import type { Error } from '../io/error.ts';
+import type { ErrorCode } from './error.ts';
 
 /**
  * A descriptor is a reference to a filesystem object, which may be a file, directory,

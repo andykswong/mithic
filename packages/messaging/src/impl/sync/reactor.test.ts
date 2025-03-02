@@ -167,13 +167,13 @@ describe('MessagingReactor', () => {
       receive();
       assert.deepStrictEqual(receive(), { op: MessagingOp.Message, seq: 0, handle, msg, timeoutMs: TIMEOUT_MS });
       assert(send({ op: MessagingOp.Response, seq: 0, error: { tag: MessagingErrorType.PermissionDenied, val: MessagingErrorType.PermissionDenied } }));
-  
+
       await assert.rejects(
         async () => { await handleResult; },
         new MessagingError({ tag: MessagingErrorType.PermissionDenied, val: MessagingErrorType.PermissionDenied })
       );
     });
-  
+
     it('should throw timeout error when timeout', async () => {
       assert.strictEqual(send({ op: MessagingOp.Subscribe, seq: ++seq, handle, topics: [TOPIC] }), true);
       await delay(100);
@@ -183,7 +183,7 @@ describe('MessagingReactor', () => {
 
       receive();
       assert.deepStrictEqual(receive(), { op: MessagingOp.Message, seq: 0, handle, msg, timeoutMs: TIMEOUT_MS });
-  
+
       await assert.rejects(
         async () => { await handleResult; },
         new MessagingError({ tag: MessagingErrorType.Timeout })
