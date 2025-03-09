@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { delay, dispose } from '@mithic/commons';
+import { Message, type MessageRecord } from '../message.ts';
 import { deepStrictContainEqual } from '../test/assert.ts';
-import { MessageMetadata, type Message, type MessageHandler, type PeerId } from '../types.ts';
+import { MessageMetadata, type MessageHandler, type PeerId } from '../types.ts';
 import { BroadcastChannelMessagingService } from './index.ts';
 
 const MESSAGE = 'message' as const;
@@ -45,21 +46,21 @@ describe('BroadcastChannelMessagingService', () => {
         receivedMessages.push(event.data);
       });
 
-      const message: Message = {
-        topic: TOPIC,
+      const message =  Message.from({
         data: DATA,
         metadata: [['key1', 'value1']]
-      };
+      });
 
-      service.send(message);
+      service.send(TOPIC, message);
 
       await delay(100); // Wait for the message to be delivered
 
       deepStrictContainEqual(receivedMessages, {
         type: MESSAGE,
         from: PEER_ID,
-        msg: message,
-      });
+        topic: TOPIC,
+        msg: message.toRecord(),
+      } satisfies BroadcastChannelMessage);
     });
   });
 
@@ -72,16 +73,15 @@ describe('BroadcastChannelMessagingService', () => {
       });
 
       const cid = 'test_id123';
-      const message: Message = {
+      const message = Message.from({
         topic: TOPIC,
         data: DATA,
         metadata: [[MessageMetadata.RequestId, cid], [MessageMetadata.ReplyTopic, TOPIC2], [MessageMetadata.From, OTHER_PEER_ID]]
-      };
-      const reply: Message = {
-        topic: TOPIC,
+      });
+      const reply = Message.from({
         data: new Uint8Array([1, 2, 3, 5, 6]),
         metadata: [[MessageMetadata.CorrelationId, cid], [MessageMetadata.From, PEER_ID]]
-      };
+      });
 
       service.reply(message, reply);
 
@@ -90,7 +90,8 @@ describe('BroadcastChannelMessagingService', () => {
       deepStrictContainEqual(receivedMessages, {
         type: MESSAGE,
         from: PEER_ID,
-        msg: { ...reply, topic: TOPIC2 },
+        topic: TOPIC2,
+        msg: reply.toRecord(),
       });
     });
   });
@@ -104,38 +105,39 @@ describe('BroadcastChannelMessagingService', () => {
       });
 
       const cid = 'test_id123';
-      const message: Message = {
-        topic: TOPIC,
+      const message = Message.from({
         data: DATA,
         metadata: [[MessageMetadata.RequestId, cid], [MessageMetadata.ReplyTopic, TOPIC2], [MessageMetadata.From, PEER_ID]]
-      };
-      const reply: Message = {
-        topic: TOPIC,
+      });
+      const reply = Message.from({
         data: new Uint8Array([3, 5, 7]),
         metadata: [[MessageMetadata.CorrelationId, cid], [MessageMetadata.From, PEER_ID]]
-      };
+      });
 
-      const promise = service.request(message, { timeoutMs: 200 });
+      const promise = service.request(TOPIC, message, { timeoutMs: 200 });
       await delay(100);
-      service.reply(message, reply);
+      service.reply(Message.from({ ...message.toRecord(), topic: TOPIC }), reply);
 
       await delay(100);
-      assert.deepStrictEqual(await promise, [{ ...reply, topic: TOPIC2 }]);
+      assert.deepStrictEqual(
+        (await promise).map((msg) => msg.toRecord()),
+        [{ ...reply.toRecord(), topic: TOPIC2 }]
+      );
       deepStrictContainEqual(receivedMessages, {
         type: MESSAGE,
         from: PEER_ID,
-        msg: message,
+        topic: TOPIC,
+        msg: message.toRecord(),
       });
     });
 
     it('should return empty list if no reply', async () => {
       const cid = 'test_id123';
-      const message: Message = {
-        topic: TOPIC,
+      const message: MessageRecord = {
         data: DATA,
         metadata: [[MessageMetadata.CorrelationId, cid], [MessageMetadata.From, PEER_ID]]
       };
-      assert.deepStrictEqual(await service.request(message, { timeoutMs: 0 }), []);
+      assert.deepStrictEqual(await service.request(TOPIC, Message.from(message), { timeoutMs: 0 }), []);
     });
   });
 
@@ -159,10 +161,10 @@ describe('BroadcastChannelMessagingService', () => {
     });
 
     it('should start forwarding messages to handler', async () => {
-      const receivedMessages: Message[] = [];
-      const handle = mock.fn((msg: Message) => { receivedMessages.push(msg); });
-      const message: Message = {
-        topic: TOPIC,
+      const receivedMessages: MessageRecord[] = [];
+      const handle = mock.fn((msg: Message) => { receivedMessages.push(msg.toRecord()); });
+      const message: MessageRecord = {
+        contentType: undefined,
         data: DATA,
         metadata: []
       };
@@ -172,6 +174,7 @@ describe('BroadcastChannelMessagingService', () => {
       subscriber.postMessage({
         type: MESSAGE,
         from: OTHER_PEER_ID,
+        topic: TOPIC,
         msg: message,
       });
 
@@ -179,6 +182,7 @@ describe('BroadcastChannelMessagingService', () => {
 
       deepStrictContainEqual(receivedMessages, {
         ...message,
+        topic: TOPIC,
         metadata: [[MessageMetadata.From, OTHER_PEER_ID]],
       });
     });
@@ -191,11 +195,8 @@ describe('BroadcastChannelMessagingService', () => {
       subscriber.postMessage({
         type: MESSAGE,
         from: OTHER_PEER_ID,
-        data: {
-          topic: 'topic2',
-          data: DATA,
-          metadata: []
-        },
+        topic: 'topic2',
+        msg: { data: DATA },
       });
 
       await delay(100); // Wait for the message to be delivered
@@ -238,11 +239,6 @@ describe('BroadcastChannelMessagingService', () => {
       const handler: MessageHandler = {
         handle: mock.fn((msg: Message) => { receivedMessages.push(msg); })
       };
-      const message: Message = {
-        topic: TOPIC,
-        data: DATA,
-        metadata: []
-      };
 
       service.subscribe([TOPIC, TOPIC2], handler);
       service.subscribe([TOPIC2], handler);
@@ -250,7 +246,8 @@ describe('BroadcastChannelMessagingService', () => {
       subscriber.postMessage({
         type: MESSAGE,
         from: OTHER_PEER_ID,
-        msg: message,
+        topic: TOPIC,
+        msg: { data: DATA },
       });
 
       await delay(100); // Wait for the message to be delivered
@@ -265,11 +262,6 @@ describe('BroadcastChannelMessagingService', () => {
       const handler: MessageHandler = {
         handle: mock.fn((msg: Message) => { receivedMessages.push(msg); })
       };
-      const message: Message = {
-        topic: TOPIC,
-        data: DATA,
-        metadata: []
-      };
 
       service.subscribe([TOPIC, TOPIC2], handler);
       service.unsubscribe(handler);
@@ -277,7 +269,8 @@ describe('BroadcastChannelMessagingService', () => {
       subscriber.postMessage({
         type: MESSAGE,
         from: OTHER_PEER_ID,
-        msg: message,
+        topic: TOPIC,
+        msg: { data: DATA },
       });
 
       await delay(100); // Wait for the message to be delivered
@@ -320,6 +313,7 @@ describe('BroadcastChannelMessagingService', () => {
 type BroadcastChannelMessage = {
   type: typeof MESSAGE | typeof KEEPALIVE,
   from: PeerId,
+  topic?: string,
   topics?: string[],
-  msg?: Message,
+  msg?: MessageRecord,
 };

@@ -2,9 +2,14 @@ import { MessagingError, MessagingErrorType, type MessagingErrorPayload } from '
 
 const ABORT_ERROR_NAME = 'AbortError';
 
-/** @throws {@link MessagingError} with {@link MessagingErrorType.Unsupported} tag. */
+/** @throws {@link MessagingError} with unsupported tag. */
 export function unsupported(): never {
-  throw new MessagingError({ tag: MessagingErrorType.Unsupported });
+  throw new MessagingError({ tag: MessagingErrorType.Other, val: 'unsupported' });
+}
+
+/** @throws {@link MessagingError} with invalid request message tag. */
+export function invalidRequest(): never {
+  throw new MessagingError({ tag: MessagingErrorType.Other, val: 'invalid request message' });
 }
 
 /** Returns {@link MessagingErrorPayload} from error object. */

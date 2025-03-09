@@ -22,10 +22,10 @@ export const Messaging = {
   /** Messaging module imports. */
   imports: {
     'mithic:messaging/producer': {
-      send: (message) => service.send(message),
+      send: (topic, message) => service.send(topic, message),
     } satisfies MessageProducer,
     'mithic:messaging/request-reply': {
-      request: (request, options) => service.request?.(request, options) ?? unsupported(),
+      request: (topic, request, options) => service.request?.(topic, request, options) ?? unsupported(),
       reply: (request, reply) => service.reply ? service.reply(request, reply) : unsupported(),
     } satisfies RequestReply,
     'mithic:messaging/presence': {

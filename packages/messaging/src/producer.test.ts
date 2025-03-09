@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
-import { type Message, Messaging } from './index.ts';
+import { Messaging } from './index.ts';
 import { send } from './producer.ts';
-import { type MockMessagingService, createMockMessagingService } from './test/mocks.ts';
+import { type MockMessagingService, createMessage, createMockMessagingService } from './test/mocks.ts';
 
 const TOPIC = 'topic';
-const MSG: Message = { topic: TOPIC, metadata: [], data: new Uint8Array([1, 2, 3]) };
+const MSG = createMessage();
 
 describe('producer', () => {
   let service: MockMessagingService;
@@ -16,9 +16,9 @@ describe('producer', () => {
 
   describe('send', () => {
     it('should send message to topic', () => {
-      send(MSG);
+      send(TOPIC, MSG);
       assert.strictEqual(service.send.mock.callCount(), 1);
-      assert.deepStrictEqual(service.send.mock.calls[0].arguments, [MSG]);
+      assert.deepStrictEqual(service.send.mock.calls[0].arguments, [TOPIC, MSG]);
     });
   });
 });

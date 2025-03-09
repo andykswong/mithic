@@ -1,11 +1,11 @@
 import { mock, type Mock as _ } from 'node:test';
+import { Message } from '../message.ts';
 import type { MessagingService, PeerPresence, RequestReply } from '../service.ts';
-import type { Message } from '../types.ts';
 
 const DATA = new Uint8Array([9, 8, 7, 6, 5]);
 
-export function createMessage(topic: string, data: Uint8Array = DATA) {
-  return { topic, data, metadata: [] } satisfies Message;
+export function createMessage(topic?: string, data: Uint8Array = DATA) {
+  return Message.from({ topic, data, metadata: [] });
 }
 
 export function createMockMessagingService(hasRequestReply = true, hasPeerPrescence = true) {

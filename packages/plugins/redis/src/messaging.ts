@@ -1,9 +1,8 @@
 import { decode } from 'cbor-x/decode';
 import { encode } from 'cbor-x/encode';
 import type { MaybePromise, Codec, Startable } from '@mithic/commons';
-import {
-  isMessage, RequestReplyAdapter, type Message, type MessageHandler, type MessagingService, type RequestOptions
-} from '@mithic/messaging';
+import { isMessageRecord, RequestReplyAdapter } from '@mithic/messaging';
+import { Message, type MessageHandler, type MessageRecord, type MessagingService, type RequestOptions } from '@mithic/messaging';
 import type { RedisClientType } from '@redis/client';
 
 /** Redis pub/sub implementation of {@link MessagingService} with at-most-once delivery. */
@@ -12,7 +11,7 @@ implements MessagingService, Startable, AsyncDisposable {
 
   private readonly client: R;
   private readonly requestReply: RequestReplyAdapter;
-  private readonly codec: Codec<Message>;
+  private readonly codec: Codec<MessageRecord>;
   private readonly topicHandlers = new Map<string, MessageHandler[]>();
 
   public constructor({
@@ -41,12 +40,13 @@ implements MessagingService, Startable, AsyncDisposable {
     await this.client.connect();
   }
 
-  public async send(message: Message): Promise<void> {
-    await this.client.publish(message.topic, Buffer.from(this.codec.encode(message)));
+  public async send(topic: string, message: Message): Promise<void> {
+    const record = { ...message.toRecord(), topic } satisfies MessageRecord;
+    await this.client.publish(topic, Buffer.from(this.codec.encode(record)));
   }
 
-  public request(request: Message, options?: RequestOptions): Promise<Message[]> {
-    return this.requestReply.request(request, options);
+  public request(topic: string, request: Message, options?: RequestOptions): Promise<Message[]> {
+    return this.requestReply.request(topic, request, options);
   }
 
   public reply(request: Message, reply: Message): MaybePromise<void> {
@@ -88,10 +88,13 @@ implements MessagingService, Startable, AsyncDisposable {
   }
 
   private handle = async (msg: Uint8Array) => {
-    const message = this.codec.decode(msg);
-    if (!isMessage(message)) { return; }
-    this.requestReply.accept(message);
-    const handlers = this.topicHandlers.get(message.topic);
+    const record = this.codec.decode(msg);
+    if (!isMessageRecord(record)) { return; }
+    const message = Message.from(record);
+    const topic = message.topic();
+    if (this.requestReply.accept(message) || !topic) { return; }
+
+    const handlers = this.topicHandlers.get(topic);
     if (handlers?.length) {
       const results = [];
       for (const handler of handlers) {
@@ -121,5 +124,5 @@ export interface RedisPubSubMessagingServiceOptions<R extends RedisClientType> {
   readonly randomId?: () => string;
 
   /** Message codec. Defaults to CBOR. */
-  readonly codec?: Codec<Message>;
+  readonly codec?: Codec<MessageRecord>;
 }

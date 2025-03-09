@@ -2,13 +2,14 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { type Kv, openKv } from '@deno/kv';
 import { delay, dispose } from '@mithic/commons';
-import { MessagingError, MessagingErrorType, type Message, type MessageHandler, type MessagingErrorPayload } from '@mithic/messaging';
+import { Message, MessagingError, MessagingErrorType, type MessageHandler, type MessagingErrorPayload } from '@mithic/messaging';
 import { DenoKvMessagingService } from './index.ts';
 
 const TOPIC = 'testTopic';
 const TOPIC2 = 'test2';
 const INVALID_TOPIC_ERR = { tag: MessagingErrorType.PermissionDenied, val: 'invalid topic' } satisfies MessagingErrorPayload;
-const MSG = { topic: TOPIC, metadata: [], data: new Uint8Array([1]) } satisfies Message;
+const MSG = Message.from({ metadata: [], data: new Uint8Array([1]) });
+const MSG_RECEIVED = Message.from({ ...MSG.toRecord(), topic: TOPIC });
 const DELAY = 100;
 const KEYS_IF_UNDELIVERED = [['dlq', 1]];
 
@@ -37,10 +38,10 @@ describe('DenoKvMessagingService', () => {
   describe('send', () => {
     it('should enqueue message to Deno Kv', async () => {
       const messages: unknown[] = [];
-      await service.send(MSG);
+      await service.send(TOPIC, MSG);
       kv.listenQueue((msg) => { messages.push(msg); });
       await delay(200);
-      assert.deepStrictEqual(messages, [MSG]);
+      assert.deepStrictEqual(messages, [MSG_RECEIVED.toRecord()]);
     });
   });
 
@@ -50,9 +51,9 @@ describe('DenoKvMessagingService', () => {
       const handler = { handle(msg) { messages.push(msg); } } satisfies MessageHandler;
       await service.subscribe([TOPIC], handler);
 
-      await kv.enqueue(MSG);
+      await kv.enqueue(MSG_RECEIVED.toRecord());
       await delay();
-      assert.deepStrictEqual(messages, [MSG]);
+      assert.deepStrictEqual(messages, [MSG_RECEIVED]);
     });
 
     it('should close unsubscribed Deno message queue', async () => {

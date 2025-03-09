@@ -1,9 +1,10 @@
 import {
   delay, dispose, type SharedChannelBuffers, type Startable, type SyncMessageChannel, SyncMessageChannelReactor
 } from '@mithic/commons';
+import { Message } from '../../message.ts';
 import type { MessagingService } from '../../service.ts';
-import { MessagingError, MessagingErrorType, type Message, type MessageHandler, type MessagingErrorPayload } from '../../types.ts';
-import { getErrorPayload } from '../../utils/index.ts';
+import { MessagingError, MessagingErrorType, type MessageHandler, type MessagingErrorPayload } from '../../types.ts';
+import { getErrorPayload, unsupported } from '../../utils/index.ts';
 import { MessagingMessage, MessagingOp } from './codec.ts';
 
 const DEFAULT_TIMEOUT_MS = 5000;
@@ -104,20 +105,20 @@ export class MessagingReactor implements Startable, Disposable {
     message: MessagingMessage & { op: typeof MessagingOp.Message }
   ): Promise<void> {
     if (message.expectedReplies) {
-      if (!this.service.request) { throw new MessagingError({ tag: MessagingErrorType.Unsupported }); }
-      const msgs = await this.service.request(message.msg, {
+      if (!this.service.request) { return unsupported(); }
+      const msgs = (await this.service.request(message.topic, Message.from(message.msg), {
         expectedReplies: message.expectedReplies,
         timeoutMs: message.timeoutMs ?? this.handlerTimeoutMs,
-      });
+      })).map(toRecord);
       await channel.sendAsync({ op: MessagingOp.Response, seq: message.seq, msgs });
       return;
     }
 
     if (message.replyTo) {
-      if (!this.service.reply) { throw new MessagingError({ tag: MessagingErrorType.Unsupported }); }
-      await this.service.reply(message.replyTo, message.msg);
+      if (!this.service.reply) { return unsupported(); }
+      await this.service.reply(Message.from(message.replyTo), Message.from(message.msg));
     } else {
-      await this.service.send(message.msg);
+      await this.service.send(message.topic, Message.from(message.msg));
     }
     await channel.sendAsync({ op: MessagingOp.Response, seq: message.seq });
   }
@@ -153,7 +154,14 @@ export class MessagingReactor implements Startable, Disposable {
       handle: async (msg: Message) => {
         const start = this.now(), seq = this.seq++;
         await channel.sendAsync(
-          { op: MessagingOp.Message, seq, handle, msg, timeoutMs: this.handlerTimeoutMs },
+          {
+            op: MessagingOp.Message,
+            seq,
+            handle,
+            topic: msg.topic() || '',
+            msg: msg.toRecord(),
+            timeoutMs: this.handlerTimeoutMs
+          },
           this.handlerTimeoutMs
         );
         try {
@@ -199,4 +207,8 @@ export interface MessagingProviderOptions extends Partial<SharedChannelBuffers> 
 
 function assert(cond: unknown, error: MessagingErrorPayload): asserts cond {
   if (!cond) { throw new MessagingError(error); }
+}
+
+function toRecord(msg: Message) {
+  return msg.toRecord();
 }

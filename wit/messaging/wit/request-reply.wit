@@ -1,6 +1,6 @@
 /// This inferface provides request-reply messaging pattern.
 interface request-reply {
-    use types.{message, error};
+    use types.{error, message, topic};
 
     /// Options for a request operation.
     record request-options {
@@ -12,10 +12,10 @@ interface request-reply {
         expected-replies: u32
     }
 
-    /// Performs a blocking request operation with an optional set of request options.
+    /// Performs a blocking request operation to given topic with an optional set of request options.
     /// This returns all replies received up until timeout or the configured set of expected replies.
-    request: func(msg: message, options: option<request-options>) -> result<list<message>, error>;
+    request: func(topic: topic, msg: message, options: option<request-options>) -> result<list<message>, error>;
 
     /// Replies to the given message with the given response message.
-    reply: func(reply-to: message, msg: message) -> result<_, error>;
+    reply: func(reply-to: borrow<message>, msg: message) -> result<_, error>;
 }

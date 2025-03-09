@@ -72,8 +72,8 @@
     "next": "^15.2",
     "rimraf": "^6.0",
     "typedoc": "^0.27",
-    "typescript": "^5.7",
-    "typescript-eslint": "^8.25"
+    "typescript": "^5.8",
+    "typescript-eslint": "^8.26"
   },
   "workspaces": [
     "./wit/keyvalue",

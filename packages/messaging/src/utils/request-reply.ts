@@ -1,7 +1,8 @@
 import { delay, type MaybePromise } from '@mithic/commons';
 import type { MessagingService, RequestReply } from '../service.ts';
-import { MessageMetadata, MessagingError, MessagingErrorType, type Message, type RequestOptions } from '../types.ts';
-import { getMessageMetadata, setMessageMetadata } from './message.ts';
+import { MessageMetadata, type RequestOptions } from '../types.ts';
+import type { Message } from '../message.ts';
+import { invalidRequest } from './error.ts';
 
 const TICK_MS = 200;
 
@@ -29,15 +30,16 @@ export class RequestReplyAdapter implements RequestReply {
     this.replyTopic = replyTopic;
   }
 
-  public async request(request: Message, options?: RequestOptions): Promise<Message[]> {
+  public async request(topic: string, request: Message, options?: RequestOptions): Promise<Message[]> {
     const start = this.now();
     const expectedReplies = Math.max(options?.expectedReplies || 1, 1);
     const timeoutMs = options?.timeoutMs ?? Infinity;
-    const requestId = setMessageMetadata(request, MessageMetadata.RequestId, this.randomId(), false);
-    setMessageMetadata(request, MessageMetadata.ReplyTopic, this.replyTopic, false);
+    const requestId = request.getMetadata(MessageMetadata.RequestId) || this.randomId();
+    request.addMetadata(MessageMetadata.RequestId, requestId);
+    request.addMetadata(MessageMetadata.ReplyTopic, request.getMetadata(MessageMetadata.ReplyTopic) || this.replyTopic);
     this.replies.set(requestId, []);
 
-    await this.service.send(request);
+    await this.service.send(topic, request);
 
     while ((this.replies.get(requestId)?.length || 0) < expectedReplies) {
       const timeRemaining = timeoutMs - (this.now() - start);
@@ -53,18 +55,18 @@ export class RequestReplyAdapter implements RequestReply {
   }
 
   public reply(request: Message, reply: Message): MaybePromise<void> {
-    const correlationId = getMessageMetadata(request, MessageMetadata.RequestId);
-    const topic = getMessageMetadata(request, MessageMetadata.ReplyTopic);
+    const correlationId = request.getMetadata(MessageMetadata.RequestId);
+    const topic = request.getMetadata(MessageMetadata.ReplyTopic);
     if (correlationId === undefined || topic === undefined) {
-      throw new MessagingError({ tag: MessagingErrorType.Other, val: 'unable to reply to a non-request message' });
+      return invalidRequest();
     }
-    setMessageMetadata(reply, MessageMetadata.CorrelationId, correlationId, true);
-    return this.service.send({ ...reply, topic });
+    reply.addMetadata(MessageMetadata.CorrelationId, correlationId);
+    return this.service.send(topic, reply);
   }
 
   /** Checks if incoming message is a reply to active request and saves it if so. */
   public accept(message: Message): boolean {
-    const correlationId = getMessageMetadata(message, MessageMetadata.CorrelationId);
+    const correlationId = message.getMetadata(MessageMetadata.CorrelationId);
     if (correlationId && this.replies.has(correlationId)) {
       this.replies.get(correlationId)?.push(message);
       return true;

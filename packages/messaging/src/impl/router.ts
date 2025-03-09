@@ -1,7 +1,8 @@
 import { MaybePromise, type StringMatcher } from '@mithic/commons';
+import type { Message } from '../message.ts';
 import type { MessagingService, PeerPresence, RequestReply } from '../service.ts';
-import type { Message, MessageHandler, RequestOptions, PeerId } from '../types.ts';
-import { unsupported } from '../utils/index.ts';
+import type { MessageHandler, RequestOptions, PeerId } from '../types.ts';
+import { invalidRequest, unsupported } from '../utils/index.ts';
 
 /** {@link MessagingService} that routes to different {@link MessagingService} by topic. */
 export class RoutingMessagingService implements MessagingService, RequestReply, PeerPresence {
@@ -11,9 +12,9 @@ export class RoutingMessagingService implements MessagingService, RequestReply, 
     this.routes = [...routes];
   }
 
-  public send(message: Message): MaybePromise<void> {
-    const service = this.getService(message.topic) ?? unsupported();
-    return service.send(message);
+  public send(topic: string, message: Message): MaybePromise<void> {
+    const service = this.getService(topic) ?? unsupported();
+    return service.send(topic, message);
   }
 
   public subscribe(topics: Iterable<string>, handler: MessageHandler): MaybePromise<void> {
@@ -37,13 +38,14 @@ export class RoutingMessagingService implements MessagingService, RequestReply, 
     return MaybePromise.map(MaybePromise.all(results), asVoid);
   }
 
-  public request(request: Message, options?: RequestOptions): MaybePromise<Message[]> {
-    const service = this.getService(request.topic, isRequestReply) ?? unsupported();
-    return service.request(request, options);
+  public request(topic: string, request: Message, options?: RequestOptions): MaybePromise<Message[]> {
+    const service = this.getService(topic, isRequestReply) ?? unsupported();
+    return service.request(topic, request, options);
   }
 
   public reply(request: Message, reply: Message): MaybePromise<void> {
-    const service = this.getService(request.topic, isRequestReply) ?? unsupported();
+    const topic = request.topic() ?? invalidRequest();
+    const service = this.getService(topic, isRequestReply) ?? unsupported();
     return service.reply(request, reply);
   }
 

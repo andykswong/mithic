@@ -6,7 +6,7 @@ import { createMessage, createMockMessagingService } from '../test/mocks.ts';
 import { RoutingMessagingService } from './index.ts';
 
 const TOPIC = 'test';
-const UNSUPPORTED_ERR = new MessagingError({ tag: MessagingErrorType.Unsupported });
+const UNSUPPORTED_ERR = new MessagingError({ tag: MessagingErrorType.Other, val: 'unsupported' });
 
 describe('RoutingMessagingService', () => {
   let service: RoutingMessagingService;
@@ -23,17 +23,17 @@ describe('RoutingMessagingService', () => {
       service.route(StringMatcher.matchExact(TOPIC), mockService1);
       service.route(/^test.*$/, mockService2);
 
-      const msg = createMessage(TOPIC);
-      service.send(msg);
+      const msg = createMessage();
+      service.send(TOPIC, msg);
 
       assert.strictEqual(mockService2.send.mock.callCount(), 0);
       assert.strictEqual(mockService1.send.mock.callCount(), 1);
-      assert.deepStrictEqual(mockService1.send.mock.calls[0].arguments, [msg]);
+      assert.deepStrictEqual(mockService1.send.mock.calls[0].arguments, [TOPIC, msg]);
     });
 
     it('should throw an error if there is no matched messaging service', () => {
-      const msg = createMessage(TOPIC);
-      assert.throws(() => service.send(msg), UNSUPPORTED_ERR);
+      const msg = createMessage();
+      assert.throws(() => service.send(TOPIC, msg), UNSUPPORTED_ERR);
     });
   });
 
@@ -66,19 +66,19 @@ describe('RoutingMessagingService', () => {
       const expectedReplies = [createMessage('reply')];
       mockService1.request?.mock.mockImplementationOnce(() => expectedReplies);
 
-      const msg = createMessage(TOPIC);
+      const msg = createMessage();
       const options = { timeoutMs: 1000, expectedReplies: 2 };
-      const replies = service.request(msg, options);
+      const replies = service.request(TOPIC, msg, options);
 
       assert.deepStrictEqual(replies, expectedReplies);
       assert.strictEqual(mockService2.request?.mock.callCount(), 0);
       assert.strictEqual(mockService1.request?.mock.callCount(), 1);
-      assert.deepStrictEqual(mockService1.request.mock.calls[0].arguments, [msg, options]);
+      assert.deepStrictEqual(mockService1.request.mock.calls[0].arguments, [TOPIC, msg, options]);
     });
 
     it('should throw an error if there is no matched messaging service', () => {
-      const msg = createMessage(TOPIC);
-      assert.throws(() => { service.request(msg); }, UNSUPPORTED_ERR);
+      const msg = createMessage();
+      assert.throws(() => { service.request(TOPIC, msg); }, UNSUPPORTED_ERR);
     });
   });
 

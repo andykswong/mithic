@@ -1,17 +1,29 @@
-import type { Message } from '../types.ts';
+import type { MessageRecord } from '../message.ts';
 
-/** Checks if an object is a valid {@link Message}. */
-export function isMessage(obj: unknown): obj is Message {
-  const msg = obj as Message;
+/** Common Message metadata field names. */
+export const MessageMetadata = {
+  /** ID of the sender. */
+  From: 'from',
+  /** Topic to use to reply a request. */
+  ReplyTopic: 'X-Reply-Topic',
+  /** ID for a request. */
+  RequestId: 'X-Request-ID',
+  /** The request ID that a reply message corresponds to. */
+  CorrelationId: 'X-Correlation-ID',
+} as const;
+
+/** Checks if an object is a valid {@link MessageRecord}. */
+export function isMessageRecord(obj: unknown): obj is MessageRecord {
+  const msg = obj as MessageRecord;
   return (
-    typeof msg?.topic === 'string' &&
+    (msg.topic === undefined || typeof msg?.topic === 'string') &&
     (msg.contentType === undefined || typeof msg.contentType === 'string') &&
     msg.data instanceof Uint8Array &&
     isMessageMetadata(msg.metadata)
   );
 }
 
-function isMessageMetadata(obj: unknown): obj is Message['metadata'] {
+function isMessageMetadata(obj: unknown): obj is MessageRecord['metadata'] {
   if (!Array.isArray(obj)) {
     return false;
   }
@@ -21,24 +33,4 @@ function isMessageMetadata(obj: unknown): obj is Message['metadata'] {
     }
   }
   return true;
-}
-
-/** Helper function to get a message metadata value, if exists. */
-export function getMessageMetadata(message: Message, key: string): string | undefined {
-  return message.metadata.find((entry) => isKey(key, entry))?.[1];
-}
-
-function isKey(key: string, entry: [key: string, value: string]): boolean {
-  return entry[0].toLowerCase() === key.toLowerCase();
-}
-
-/** Helper function to set a message metadata value. */
-export function setMessageMetadata(message: Message, field: string, value: string, override = false): string {
-  const entry = message.metadata.find((entry) => isKey(field, entry));
-  if (entry) {
-    if (override) { entry[1] = value; }
-    return entry[1];
-  }
-  message.metadata.push([field, value]);
-  return value;
 }

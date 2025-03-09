@@ -1,7 +1,8 @@
 import { dispose, SyncMessageChannel, type SharedChannelBuffers, type Startable } from '@mithic/commons';
+import { Message } from '../../message.ts';
 import type { SyncMessagingService } from '../../service.ts';
 import {
-  MessagingError, MessagingErrorType, type MessageHandler, type Message, type MessagingErrorPayload, type PeerId, type RequestOptions
+  MessagingError, MessagingErrorType, type MessageHandler, type MessagingErrorPayload, type PeerId, type RequestOptions
 } from '../../types.ts';
 import { getErrorPayload } from '../../utils/index.ts';
 import { MessagingMessage, MessagingOp } from './codec.ts';
@@ -75,16 +76,16 @@ export class MessagingClient implements Startable, Disposable, SyncMessagingServ
     return this.messageChannel.flush(timeoutMs);
   }
 
-  public send(msg: Message): void {
-    this.sendMessage(msg);
+  public send(topic: string, msg: Message): void {
+    this.sendMessage(topic, msg);
   }
 
-  public request(msg: Message, options: RequestOptions = {}): Message[] {
+  public request(topic: string, msg: Message, options: RequestOptions = {}): Message[] {
     let { timeoutMs = 0, expectedReplies = 1 } = options;
     if (expectedReplies < 1) { expectedReplies = 1; }
     timeoutMs = timeoutMs > 0 ? timeoutMs : this.timeoutMs;
     try {
-      return this.sendMessage(msg, { timeoutMs, expectedReplies }) || [];
+      return this.sendMessage(topic, msg, { timeoutMs, expectedReplies }) || [];
     } catch (e) {
       if (e instanceof MessagingError && e.payload?.tag === MessagingErrorType.Timeout) {
         return [];
@@ -94,7 +95,7 @@ export class MessagingClient implements Startable, Disposable, SyncMessagingServ
   }
 
   public reply(replyTo: Message, msg: Message): void {
-    this.sendMessage(msg, undefined, replyTo);
+    this.sendMessage('', msg, undefined, replyTo);
   }
 
   public subscribe(topics: Iterable<string>, handler: MessageHandler): void {
@@ -124,11 +125,18 @@ export class MessagingClient implements Startable, Disposable, SyncMessagingServ
     return result.peers || [];
   }
 
-  private sendMessage(msg: Message, options?: RequestOptions, replyTo?: Message): Message[] | undefined {
+  private sendMessage(topic: string, msg: Message, options?: RequestOptions, replyTo?: Message): Message[] | undefined {
     const start = this.now(), seq = this.seq++;
-    this.sendRequest({ op: MessagingOp.Message, seq, msg, replyTo, ...options }, start);
+    this.sendRequest({
+      op: MessagingOp.Message,
+      seq,
+      topic,
+      msg: msg.toRecord(),
+      replyTo: replyTo?.toRecord(),
+      ...options
+    }, start);
     const response = this.waitForResponse(seq, start);
-    return response.msgs;
+    return response.msgs?.map(Message.from);
   }
 
   private sendRequest(msg: MessagingMessage, start: number, timeoutMs = this.timeoutMs) {
@@ -177,7 +185,7 @@ export class MessagingClient implements Startable, Disposable, SyncMessagingServ
 
     if (handler) {
       try {
-        await handler.handle(message.msg);
+        await handler.handle(Message.from(message.msg));
       } catch (e) {
         reply.error = getErrorPayload(e);
       }

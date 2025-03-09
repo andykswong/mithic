@@ -9,8 +9,6 @@ interface types {
         permission-denied(string),
         /// A catch all for other types of errors
         other(string),
-        /// The operation is unsupported
-        unsupported,
     }
 
     /// A message topic.
@@ -20,14 +18,25 @@ interface types {
     type metadata = list<tuple<string, string>>;
 
     /// A message with a binary payload and additional information
-    record message {
-        /// The topic/subject/channel this message was received or should be sent on
-        topic: topic,
-        /// The content type describing the format of the data in the message.
-        content-type: option<string>,
+    resource message {
+        constructor(data: list<u8>);
+        /// The topic/subject/channel this message was received on, if any
+        topic: func() -> option<topic>;
+        /// The content type describing the format of the data in the message
+        content-type: func() -> option<string>;
+        /// Sets the content type describing the format of the data in the message
+        set-content-type: func(content-type: string);
         /// An opaque blob of data
-        data: list<u8>,
+        data: func() -> list<u8>;
+        /// Sets the opaque blob of data for this message
+        set-data: func(data: list<u8>);
         /// Metadata (aka headers or attributes) attached to the message
-        metadata: metadata
+        metadata: func() -> option<metadata>;
+        /// Adds a new key-value pair to the metadata, overwriting any existing value for the same key
+        add-metadata: func(key: string, value: string);
+        /// Sets the metadata
+        set-metadata: func(data: metadata);
+        /// Removes a key-value pair from the metadata
+        remove-metadata: func(key: string);
     }
 }

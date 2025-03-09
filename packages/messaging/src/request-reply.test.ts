@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { StringMatcher } from '@mithic/commons';
-import { type Message, MessageMetadata, Messaging, RoutingMessagingService } from './index.ts';
+import { Message, MessageMetadata, Messaging, RoutingMessagingService } from './index.ts';
 import { reply, request } from './request-reply.ts';
 import { createMockMessagingService, type MockMessagingService } from './test/mocks.ts';
 
 const TOPIC = 'topic';
 const TOPIC2 = 'topic2';
 const CORRELATION_ID = 'cid';
-const REQUEST: Message = { topic: TOPIC, metadata: [[MessageMetadata.RequestId, CORRELATION_ID], [MessageMetadata.ReplyTopic, TOPIC2]], data: new Uint8Array([1, 2, 3]) };
-const REPLY: Message = { topic: TOPIC2, metadata: [[MessageMetadata.CorrelationId, CORRELATION_ID]], data: new Uint8Array([4]) };
+const REQUEST = Message.from({ topic: TOPIC2, metadata: [[MessageMetadata.RequestId, CORRELATION_ID], [MessageMetadata.ReplyTopic, TOPIC2]], data: new Uint8Array([1, 2, 3]) });
+const REPLY = Message.from({ metadata: [[MessageMetadata.CorrelationId, CORRELATION_ID]], data: new Uint8Array([4]) });
 
 describe('requestReply', () => {
   let service: MockMessagingService;
@@ -31,11 +31,11 @@ describe('requestReply', () => {
     it('should send request message to topic and wait for replies', () => {
       service.request?.mock.mockImplementationOnce(() => [REPLY]);
       const options = { expectedReplies: 2, timeoutMs: 1000 };
-      const replies = request(REQUEST, options);
+      const replies = request(TOPIC, REQUEST, options);
 
       assert.deepStrictEqual(replies, [REPLY]);
       assert.strictEqual(service.request?.mock.callCount(), 1);
-      assert.deepStrictEqual(service.request?.mock.calls[0].arguments, [REQUEST, options]);
+      assert.deepStrictEqual(service.request?.mock.calls[0].arguments, [TOPIC, REQUEST, options]);
     });
   });
 });

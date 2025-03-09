@@ -1,14 +1,15 @@
 import type { MaybePromise } from '@mithic/commons';
+import type { Message } from './message.ts';
 import { Messaging } from './messaging.ts';
-import type { Message, RequestOptions } from './types.ts';
+import type { RequestOptions } from './types.ts';
 
 /**
  * Performs a blocking request with an optional set of request options.
  * This returns all replies received up until timeout or the configured set of expected replies.
  * @throws {@link MessagingError}
  */
-export function request(request: Message, options?: RequestOptions): MaybePromise<Message[]> {
-  return Messaging.imports['mithic:messaging/request-reply'].request(request, options);
+export function request(topic: string, request: Message, options?: RequestOptions): MaybePromise<Message[]> {
+  return Messaging.imports['mithic:messaging/request-reply'].request(topic, request, options);
 }
 
 /**

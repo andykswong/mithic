@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { delay, dispose, SharedArrayBufferChannel } from '@mithic/commons';
-import { MessagingError, MessagingErrorType, type Message, type PeerId } from '../../types.ts';
+import { Message } from '../../message.ts';
+import { MessagingError, MessagingErrorType, type PeerId } from '../../types.ts';
 import { MessagingMessage, MessagingOp } from './codec.ts';
 import { MessagingReactor } from './index.ts';
 import { createMockMessagingService, type MockMessagingService } from '../../test/mocks.ts';
@@ -55,22 +56,22 @@ describe('MessagingReactor', () => {
   });
 
   describe('client message', () => {
-    const msg = { topic: TOPIC, metadata: [], data: new Uint8Array([1, 2, 3]) };
+    const msg = Message.from({ data: new Uint8Array([1, 2, 3]), metadata: [] });
 
     describe('message', () => {
       it('should send message to service', async () => {
-        assert.strictEqual(send({ op: MessagingOp.Message, seq: ++seq, msg }), true);
+        assert.strictEqual(send({ op: MessagingOp.Message, seq: ++seq, topic: TOPIC, msg: msg.toRecord() }), true);
         await delay(100);
         assert.deepStrictEqual(receive(), { op: MessagingOp.Response, seq });
         assert.strictEqual(service.send.mock.callCount(), 1);
-        assert.deepStrictEqual(service.send.mock.calls[0].arguments, [msg]);
+        assert.deepStrictEqual(service.send.mock.calls[0].arguments, [TOPIC, msg]);
       });
 
       it('should forward service error to client', async () => {
         const error = { tag: MessagingErrorType.PermissionDenied, val: 'err' };
         service.send.mock.mockImplementation(() => { throw new MessagingError(error); });
 
-        assert.strictEqual(send({ op: MessagingOp.Message, seq: ++seq, msg }), true);
+        assert.strictEqual(send({ op: MessagingOp.Message, seq: ++seq, topic: TOPIC, msg: msg.toRecord() }), true);
         await delay(100);
         assert.deepStrictEqual(receive(), { op: MessagingOp.Response, seq, error });
       });
@@ -79,7 +80,7 @@ describe('MessagingReactor', () => {
         const sendSpy = mock.method(service, 'send');
         sendSpy.mock.mockImplementation(() => { AbortSignal.abort().throwIfAborted(); });
 
-        assert.strictEqual(send({ op: MessagingOp.Message, seq: ++seq, msg }), true);
+        assert.strictEqual(send({ op: MessagingOp.Message, seq: ++seq, topic: TOPIC, msg: msg.toRecord() }), true);
         await delay(100);
         assert.deepStrictEqual(receive(), { op: MessagingOp.Response, seq, error: { tag: MessagingErrorType.Timeout } });
       });
@@ -111,27 +112,27 @@ describe('MessagingReactor', () => {
 
     describe('request', () => {
       it('should send request to service', async () => {
-        const reply = { topic: TOPIC, metadata: [], data: new Uint8Array([4]) };
-        const reply2 = { topic: TOPIC, metadata: [], data: new Uint8Array([5]) };
+        const reply = Message.from({ topic: TOPIC, metadata: [], data: new Uint8Array([4]) });
+        const reply2 = Message.from({ topic: TOPIC, metadata: [], data: new Uint8Array([5]) });
         const options = { expectedReplies: 2, timeoutMs: TIMEOUT };
 
         service.request?.mock.mockImplementation(async () => [reply, reply2]);
 
-        assert.strictEqual(send({ op: MessagingOp.Message, seq: ++seq, msg, ...options }), true);
+        assert.strictEqual(send({ op: MessagingOp.Message, seq: ++seq, topic: TOPIC, msg: msg.toRecord(), ...options }), true);
         await delay(100);
-        assert.deepStrictEqual(receive(), { op: MessagingOp.Response, seq, msgs: [reply, reply2] });
+        assert.deepStrictEqual(receive(), { op: MessagingOp.Response, seq, msgs: [reply.toRecord(), reply2.toRecord()] });
         assert.strictEqual(service.request?.mock.callCount(), 1);
-        assert.deepStrictEqual(service.request?.mock.calls[0].arguments, [msg, options]);
+        assert.deepStrictEqual(service.request?.mock.calls[0].arguments, [TOPIC, msg, options]);
       });
     });
 
     describe('reply', () => {
       it('should send reply to service', async () => {
-        const replyTo = { topic: TOPIC, metadata: [], data: new Uint8Array([4]) };
+        const replyTo = Message.from({ topic: TOPIC, metadata: [], data: new Uint8Array([4]) });
 
         service.reply?.mock.mockImplementation(() => Promise.resolve());
 
-        assert.strictEqual(send({ op: MessagingOp.Message, seq: ++seq, msg, replyTo }), true);
+        assert.strictEqual(send({ op: MessagingOp.Message, seq: ++seq, topic: TOPIC, msg: msg.toRecord(), replyTo: replyTo.toRecord() }), true);
         await delay(100);
         assert.deepStrictEqual(receive(), { op: MessagingOp.Response, seq });
         assert.strictEqual(service.reply?.mock.callCount(), 1);
@@ -141,7 +142,7 @@ describe('MessagingReactor', () => {
   });
 
   describe('server message', () => {
-    const msg = { topic: TOPIC, metadata: [], data: new Uint8Array([1, 2, 3]) };
+    const msg = Message.from({ topic: TOPIC, metadata: [], data: new Uint8Array([1, 2, 3]) });
     const handle = 1;
 
     it('should send message to client and wait for reply', async () => {
@@ -152,7 +153,7 @@ describe('MessagingReactor', () => {
       const handleResult = sendServerMessage(msg);
       await delay(100);
 
-      assert.deepStrictEqual(receive(), { op: MessagingOp.Message, seq: 0, handle, msg, timeoutMs: TIMEOUT_MS });
+      assert.deepStrictEqual(receive(), { op: MessagingOp.Message, seq: 0, handle, topic: TOPIC, msg: msg.toRecord(), timeoutMs: TIMEOUT_MS });
       assert(send({ op: MessagingOp.Response, seq: 0 }));
       await handleResult;
     });
@@ -165,7 +166,7 @@ describe('MessagingReactor', () => {
       await delay(100);
 
       receive();
-      assert.deepStrictEqual(receive(), { op: MessagingOp.Message, seq: 0, handle, msg, timeoutMs: TIMEOUT_MS });
+      assert.deepStrictEqual(receive(), { op: MessagingOp.Message, seq: 0, handle, topic: TOPIC, msg: msg.toRecord(), timeoutMs: TIMEOUT_MS });
       assert(send({ op: MessagingOp.Response, seq: 0, error: { tag: MessagingErrorType.PermissionDenied, val: MessagingErrorType.PermissionDenied } }));
 
       await assert.rejects(
@@ -182,7 +183,7 @@ describe('MessagingReactor', () => {
       await delay(100);
 
       receive();
-      assert.deepStrictEqual(receive(), { op: MessagingOp.Message, seq: 0, handle, msg, timeoutMs: TIMEOUT_MS });
+      assert.deepStrictEqual(receive(), { op: MessagingOp.Message, seq: 0, handle, topic: TOPIC, msg: msg.toRecord(), timeoutMs: TIMEOUT_MS });
 
       await assert.rejects(
         async () => { await handleResult; },

@@ -15,6 +15,7 @@
     "allowJs": true,
     "allowImportingTsExtensions": true,
     "allowSyntheticDefaultImports": true,
+    "erasableSyntaxOnly": true,
     "emitDeclarationOnly": true,
     "forceConsistentCasingInFileNames": true,
     "noImplicitOverride": true,

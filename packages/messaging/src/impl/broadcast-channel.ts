@@ -1,6 +1,7 @@
+import { Message, type MessageRecord } from '../message.ts';
 import type { MessagingService, PeerPresence, RequestReply } from '../service.ts';
-import { MessageMetadata, type MessageHandler, type Message, type PeerId, type RequestOptions } from '../types.ts';
-import { DualBroadcastChannel, isMessage, RequestReplyAdapter, setMessageMetadata } from '../utils/index.ts';
+import { MessageMetadata, type MessageHandler, type PeerId, type RequestOptions } from '../types.ts';
+import { DualBroadcastChannel, isMessageRecord, RequestReplyAdapter } from '../utils/index.ts';
 
 const DEFAULT_KEEPALIVE_MS = 1000;
 const NUM_KEEPALIVES_TO_WAIT = 3;
@@ -12,7 +13,7 @@ export class BroadcastChannelMessagingService implements MessagingService, Reque
   public readonly peerId?: PeerId;
 
   private readonly channel: BroadcastChannel;
-  private readonly requestReplyHelper: RequestReplyAdapter;
+  private readonly requestReply: RequestReplyAdapter;
   private readonly now: () => number;
   private readonly keepaliveMs: number;
   private keepAliveTimer = 0;
@@ -30,7 +31,7 @@ export class BroadcastChannelMessagingService implements MessagingService, Reque
     this.now = now;
     this.peerId = peerId;
     this.keepaliveMs = keepaliveMs;
-    this.requestReplyHelper = new RequestReplyAdapter({
+    this.requestReply = new RequestReplyAdapter({
       service: this, now, randomId, replyTopic: peerId ? `reply#${peerId}` : undefined,
     });
     this.channel = loopback ? new DualBroadcastChannel(channel) : new BroadcastChannel(channel);
@@ -43,21 +44,22 @@ export class BroadcastChannelMessagingService implements MessagingService, Reque
     this.keepAliveTimer = 0;
   }
 
-  public send(msg: Message): void {
+  public send(topic: string, msg: Message): void {
     const message: BroadcastChannelMessage = {
       type: BroadcastChannelMessageType.Message,
       from: this.peerId,
-      msg
+      topic,
+      msg: msg.toRecord(),
     };
     this.channel.postMessage(message);
   }
 
-  public request(request: Message, options?: RequestOptions): Promise<Message[]> {
-    return this.requestReplyHelper.request(request, options);
+  public request(topic: string, request: Message, options?: RequestOptions): Promise<Message[]> {
+    return this.requestReply.request(topic, request, options);
   }
 
   public reply(request: Message, reply: Message): void {
-    this.requestReplyHelper.reply(request, reply);
+    this.requestReply.reply(request, reply);
   }
 
   public subscribe(topics: Iterable<string>, handler: MessageHandler): void {
@@ -135,13 +137,17 @@ export class BroadcastChannelMessagingService implements MessagingService, Reque
       for (const topic of message.topics || []) {
         this.topicSubscribers.get(topic)?.set(`${message.from}`, [message.from, this.now()]);
       }
-    } else if (message.type === BroadcastChannelMessageType.Message && isMessage(message.msg)) {
+    } else if (message.type === BroadcastChannelMessageType.Message && isMessageRecord(message.msg)) {
+      const msg = Message.from({ ...message.msg, topic: message.topic });
       if (message.from) {
-        setMessageMetadata(message.msg, MessageMetadata.From, message.from, true);
+        msg.addMetadata(MessageMetadata.From, message.from);
       }
-      this.requestReplyHelper.accept(message.msg);
 
-      const handlers = this.topicHandlers.get(message.msg.topic);
+      if (this.requestReply.accept(msg)) {
+        return;
+      }
+
+      const handlers = this.topicHandlers.get(message.topic);
       if (handlers) {
         for (let i = 0; i < handlers.length; ++i) {
           const handler = handlers[i].deref();
@@ -152,7 +158,7 @@ export class BroadcastChannelMessagingService implements MessagingService, Reque
             continue;
           }
           try {
-            await handler.handle(message.msg);
+            await handler.handle(msg);
           } catch { /** noop */ }
         }
       }
@@ -187,7 +193,8 @@ type BroadcastChannelMessage = {
   from?: PeerId,
 } & ({
   type: typeof BroadcastChannelMessageType.Message,
-  msg: Message,
+  topic: string,
+  msg: MessageRecord,
 } | {
   type: typeof BroadcastChannelMessageType.Keepalive,
   from: PeerId,

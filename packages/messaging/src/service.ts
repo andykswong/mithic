@@ -1,5 +1,6 @@
 import type { MaybePromise } from '@mithic/commons';
-import type { MessageHandler, Message, PeerId, RequestOptions } from './types.ts';
+import type { Message } from './message.ts';
+import type { MessageHandler, PeerId, RequestOptions } from './types.ts';
 
 /** A messaging service adapter. */
 export interface MessagingService
@@ -8,7 +9,7 @@ export interface MessagingService
 /** A message sending service. */
 export interface MessageProducer {
   /** Sends a message. */
-  send(message: Message): MaybePromise<void>;
+  send(topic: string, message: Message): MaybePromise<void>;
 }
 
 /** A message subscription service. */
@@ -20,7 +21,7 @@ export interface MessageSubscription {
 /** Optional service for request-reply messaging. */
 export interface RequestReply {
   /** Sends a request message and waits for reply. */
-  request(request: Message, options?: RequestOptions): MaybePromise<Message[]>;
+  request(topic: string, request: Message, options?: RequestOptions): MaybePromise<Message[]>;
 
   /** Sends a reply to given request message. */
   reply(request: Message, reply: Message): MaybePromise<void>;
@@ -34,9 +35,9 @@ export interface PeerPresence {
 
 /** Synchronous messaging service adapter. */
 export interface SyncMessagingService extends MessagingService {
-  send(message: Message): void;
+  send(topic: string, message: Message): void;
   subscribe(topics: Iterable<string>, handler: MessageHandler): void;
-  request?(request: Message, options?: RequestOptions): Message[];
+  request?(topic: string, request: Message, options?: RequestOptions): Message[];
   reply?(request: Message, reply: Message): void;
   listSubscribers?(topic: string): PeerId[];
 }

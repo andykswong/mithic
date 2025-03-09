@@ -1,8 +1,7 @@
 import type { Kv, KvKey } from '@deno/kv';
 import type { MaybePromise } from '@mithic/commons';
-import {
-  isMessage, MessagingError, MessagingErrorType, type Message, type MessageHandler, type MessagingService
-} from '@mithic/messaging';
+import { isMessageRecord, Message, MessagingError, MessagingErrorType } from '@mithic/messaging';
+import type { MessageHandler, MessageRecord, MessagingService } from '@mithic/messaging';
 
 /**
  * Deno KV implementation of {@link MessagingService} with at-least-once delivery.
@@ -12,7 +11,7 @@ export class DenoKvMessagingService implements MessagingService, Disposable {
   private readonly kv = new Map<string, [kv: Kv, handler?: MessageHandler]>();
   private readonly provideKv: (topic: string) => MaybePromise<Kv>;
   private readonly delay?: number;
-  private readonly keysIfUndelivered?: (message: Message) => KvKey[];
+  private readonly keysIfUndelivered?: (message: MessageRecord) => KvKey[];
 
   public constructor({ kv, delay, keysIfUndelivered }: DenoKvMessagingServiceOptions) {
     this.provideKv = kv;
@@ -27,9 +26,10 @@ export class DenoKvMessagingService implements MessagingService, Disposable {
     this.kv.clear();
   }
 
-  public async send(message: Message): Promise<void> {
-    await (await this.openKv(message.topic))
-      .enqueue(message, { delay: this.delay, keysIfUndelivered: this.keysIfUndelivered?.(message) });
+  public async send(topic: string, message: Message): Promise<void> {
+    const record = { ...message.toRecord(), topic } satisfies MessageRecord;
+    await (await this.openKv(topic))
+      .enqueue(record, { delay: this.delay, keysIfUndelivered: this.keysIfUndelivered?.(record) });
   }
 
   public async subscribe(topics: Iterable<string>, handler: MessageHandler): Promise<void> {
@@ -43,17 +43,17 @@ export class DenoKvMessagingService implements MessagingService, Disposable {
     for (const topic of topicSet) {
       const kv = await this.openKv(topic);
       if (!this.kv.get(topic)?.[1]) {
-        kv.listenQueue(this.handle);
+        kv.listenQueue(this.handle.bind(this, topic));
         this.kv.set(topic, [kv, handler]);
       }
     }
   }
 
-  private handle = async (message: unknown) => {
-    if (!isMessage(message) || !this.kv.has(message.topic)) {
+  private handle = async (topic: string, message: unknown) => {
+    if (!isMessageRecord(message) || !this.kv.has(topic)) {
       throw new MessagingError({ tag: MessagingErrorType.Other, val: 'invalid message' });
     }
-    return this.kv.get(message.topic)?.[1]?.handle(message);
+    return this.kv.get(topic)?.[1]?.handle(Message.from({ ...message, topic }));
   };
 
   private async openKv(topic: string): Promise<Kv> {
@@ -73,5 +73,5 @@ export interface DenoKvMessagingServiceOptions {
   /** The delay (in milliseconds) of the value delivery */
   readonly delay?: number;
   /** Returns the keys to be set if message is not successfully delivered after retries. */
-  readonly keysIfUndelivered?: (message: Message) => KvKey[];
+  readonly keysIfUndelivered?: (message: MessageRecord) => KvKey[];
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, type Mock } from 'node:test';
 import { dispose } from '@mithic/commons';
-import { MessageMetadata, type Message, type MessageHandler } from '@mithic/messaging';
+import { Message, MessageMetadata, type MessageHandler } from '@mithic/messaging';
 import type { RedisClientType } from '@redis/client';
 import { encode } from 'cbor-x/encode';
 import { assertCalledWith, assertCalledWithArg, getCallArg } from './test/assert.ts';
@@ -11,12 +11,13 @@ import { RedisPubSubMessagingService } from './index.ts';
 const TOPIC = 'testTopic';
 const TOPIC2 = 'topic2';
 const CID = 'cid';
-const MSG: Message = {
-  topic: TOPIC,
+const MSG = Message.from({
   metadata: [[MessageMetadata.RequestId, CID], [MessageMetadata.ReplyTopic, TOPIC2]],
   data: new Uint8Array([1])
-};
-const REPLY: Message = { topic: TOPIC2, metadata: [[MessageMetadata.CorrelationId, CID]], data: new Uint8Array([2]) };
+});
+const MSG_RECEIVED = Message.from({ ...MSG.toRecord(), topic: TOPIC });
+const REPLY = Message.from({ metadata: [[MessageMetadata.CorrelationId, CID]], data: new Uint8Array([2]) });
+const REPLY_SENT = Message.from({ ...REPLY.toRecord(), topic: TOPIC2 });
 
 describe('RedisPubSubMessagingService', () => {
   let service: RedisPubSubMessagingService;
@@ -45,24 +46,24 @@ describe('RedisPubSubMessagingService', () => {
 
   describe('send', () => {
     it('should publish message to redis', async () => {
-      await service.send(MSG);
-      assertCalledWith(mockRedis.publish, 0, TOPIC, encode(MSG));
+      await service.send(TOPIC, MSG);
+      assertCalledWith(mockRedis.publish, 0, TOPIC, Buffer.from(encode(MSG_RECEIVED.toRecord())));
     });
   });
 
   describe('request', () => {
     it('should publish reply message to redis', async () => {
-      const replies = service.request(MSG);
-      service['requestReply'].accept(REPLY);
-      assert.deepStrictEqual(await replies, [REPLY]);
-      assertCalledWith(mockRedis.publish, 0, TOPIC, encode(MSG));
+      const replies = service.request(TOPIC, MSG);
+      assert.strictEqual(service['requestReply'].accept(REPLY_SENT), true);
+      assert.deepStrictEqual(await replies, [REPLY_SENT]);
+      assertCalledWith(mockRedis.publish, 0, TOPIC, encode(MSG_RECEIVED.toRecord()));
     });
   });
 
   describe('reply', () => {
     it('should publish reply message to redis', async () => {
       await service.reply(MSG, REPLY);
-      assertCalledWith(mockRedis.publish, 0, TOPIC2, encode(REPLY));
+      assertCalledWith(mockRedis.publish, 0, TOPIC2, Buffer.from(encode(REPLY_SENT.toRecord())));
     });
   });
 
@@ -74,8 +75,8 @@ describe('RedisPubSubMessagingService', () => {
 
       assertCalledWithArg(mockRedis.subscribe, 0, 0, TOPIC);
       assertCalledWithArg(mockRedis.subscribe, 0, 2, true);
-      await getCallArg(mockRedis.subscribe, 0, 1)(encode(MSG), Buffer.from([]));
-      assert.deepStrictEqual(messages, [MSG]);
+      await getCallArg(mockRedis.subscribe, 0, 1)(encode(MSG_RECEIVED.toRecord()), Buffer.from([]));
+      assert.deepStrictEqual(messages, [MSG_RECEIVED]);
     });
 
     it('should call unsubscribe to removed topics', async () => {

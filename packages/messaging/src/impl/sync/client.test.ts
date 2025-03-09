@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { delay, dispose, SyncMessageChannel } from '@mithic/commons';
-import { MessagingError, MessagingErrorType, type Message, type MessageHandler } from '../../types.ts';
+import { Message } from '../../message.ts';
+import { MessagingError, MessagingErrorType, type MessageHandler } from '../../types.ts';
 import { MessagingMessage, MessagingOp } from './codec.ts';
 import { MessagingClient } from './index.ts';
 
@@ -39,40 +40,40 @@ describe('MessagingClient', () => {
   });
 
   describe('send', () => {
-    const msg = { topic: TOPIC, metadata: [], data: new Uint8Array([1, 2, 3]) };
-    const reply: Message = { topic: TOPIC, metadata: [['reply', '123']], data: new Uint8Array([4, 5]) };
+    const msg = Message.from({ metadata: [], data: new Uint8Array([1, 2, 3]) });
+    const reply = Message.from({ topic: TOPIC, metadata: [['reply', '123']], data: new Uint8Array([4, 5]) });
 
     it('should send message', async () => {
       const seq = client['seq'];
       host.send({ op: MessagingOp.Response, seq });
-      client.send(msg);
+      client.send(TOPIC, msg);
       await delay(10);
-      assert.deepStrictEqual(messages, [{ op: MessagingOp.Message, seq, msg, replyTo: undefined }]);
+      assert.deepStrictEqual(messages, [{ op: MessagingOp.Message, seq, topic: TOPIC, msg: msg.toRecord(), replyTo: undefined }]);
     });
 
     it('throws if receiving error from host side', () => {
       const error = { tag: MessagingErrorType.PermissionDenied, val: 'test' };
       const seq = client['seq'];
       host.send({ op: MessagingOp.Response, seq, error });
-      assert.throws(() => client.send(msg), new MessagingError(error));
+      assert.throws(() => client.send(TOPIC, msg), new MessagingError(error));
     });
 
     describe('request', () => {
       it('should send message as request with default options', async () => {
         const seq = client['seq'];
-        host.send({ op: MessagingOp.Response, seq, msgs: [reply] });
-        assert.deepStrictEqual(client.request(msg), [reply]);
+        host.send({ op: MessagingOp.Response, seq, msgs: [reply.toRecord()] });
+        assert.deepStrictEqual(client.request(TOPIC, msg), [reply]);
         await delay(10);
-        assert.deepStrictEqual(messages, [{ op: MessagingOp.Message, seq, msg, timeoutMs: TIMEOUT, expectedReplies: 1, replyTo: undefined }]);
+        assert.deepStrictEqual(messages, [{ op: MessagingOp.Message, seq, topic: TOPIC, msg: msg.toRecord(), timeoutMs: TIMEOUT, expectedReplies: 1, replyTo: undefined }]);
       });
 
       it('should send message as request with options', async () => {
         const seq = client['seq'];
         const timeoutMs = 1337, expectedReplies = 2;
-        host.send({ op: MessagingOp.Response, seq, msgs: [reply] });
-        assert.deepStrictEqual(client.request(msg, { timeoutMs, expectedReplies }), [reply]);
+        host.send({ op: MessagingOp.Response, seq, msgs: [reply.toRecord()] });
+        assert.deepStrictEqual(client.request(TOPIC, msg, { timeoutMs, expectedReplies }), [reply]);
         await delay(10);
-        assert.deepStrictEqual(messages, [{ op: MessagingOp.Message, seq, msg, timeoutMs, expectedReplies, replyTo: undefined }]);
+        assert.deepStrictEqual(messages, [{ op: MessagingOp.Message, seq, topic: TOPIC, msg: msg.toRecord(), timeoutMs, expectedReplies, replyTo: undefined }]);
       });
     });
 
@@ -82,7 +83,7 @@ describe('MessagingClient', () => {
         host.send({ op: MessagingOp.Response, seq });
         client.reply(msg, reply);
         await delay(10);
-        assert.deepStrictEqual(messages, [{ op: MessagingOp.Message, seq, msg: reply, replyTo: msg }]);
+        assert.deepStrictEqual(messages, [{ op: MessagingOp.Message, seq, topic: '', msg: reply.toRecord(), replyTo: msg.toRecord() }]);
       });
     });
   });
@@ -108,7 +109,7 @@ describe('MessagingClient', () => {
     });
 
     describe('handler', () => {
-      const msg = { topic: TOPIC, metadata: [], data: new Uint8Array([1, 2, 3]) };
+      const msg = Message.from({ topic: TOPIC, metadata: [], data: new Uint8Array([1, 2, 3]) });
       const handle = 1;
       let seq = 0;
       let handler: ReturnType<typeof createHandler>;
@@ -121,7 +122,7 @@ describe('MessagingClient', () => {
       });
 
       it('should be called on message', async () => {
-        host.send({ op: MessagingOp.Message, seq, handle, msg, timeoutMs: TIMEOUT });
+        host.send({ op: MessagingOp.Message, seq, handle, topic: TOPIC, msg: msg.toRecord(), timeoutMs: TIMEOUT });
         await delay(100);
 
         assert.deepStrictEqual(messages, [{ op: MessagingOp.Response, seq }]);
@@ -131,7 +132,7 @@ describe('MessagingClient', () => {
 
       it('should send error back to host', async () => {
         handler.handle.mock.mockImplementationOnce(() => AbortSignal.abort().throwIfAborted());
-        host.send({ op: MessagingOp.Message, seq, handle, msg, timeoutMs: TIMEOUT });
+        host.send({ op: MessagingOp.Message, seq, handle, topic: TOPIC, msg: msg.toRecord(), timeoutMs: TIMEOUT });
         await delay(100);
 
         assert.deepStrictEqual(messages, [{ op: MessagingOp.Response, seq, error: { tag: MessagingErrorType.Timeout } }]);
