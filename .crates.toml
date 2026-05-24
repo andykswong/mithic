@@ -1,3 +1,3 @@
 [v1]
-"wasm-tools 1.227.0 (registry+https://github.com/rust-lang/crates.io-index)" = ["wasm-tools"]
-"wit-deps-cli 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)" = ["wit-deps"]
+"wasm-tools 1.250.0 (registry+https://github.com/rust-lang/crates.io-index)" = ["wasm-tools"]
+"wkg 0.15.0 (registry+https://github.com/rust-lang/crates.io-index)" = ["wkg"]

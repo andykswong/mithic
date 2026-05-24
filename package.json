@@ -4,23 +4,19 @@
   "description": "Modular library for universal full-stack applications",
   "type": "module",
   "sideEffects": false,
-  "main": "./index.js",
-  "exports": {
-    ".": "./index.js"
-  },
-  "files": [
-    "./index.js"
-  ],
   "engines": {
     "node": ">=22.8.0"
   },
   "scripts": {
-    "preinstall": "cargo install wasm-tools wit-deps-cli --root .",
+    "preinstall": "cargo install wasm-tools wkg --root .",
     "prepublishOnly": "npm run clean && npm run build && npm test && npm run doc",
-    "build": "npm run build -ws",
-    "clean": "npm run clean -ws && rimraf docs",
+    "build": "npm run build --ws --if-present",
+    "clean": "npm run clean --ws --if-present && rimraf docs/api",
+    "dev": "npm run dev --workspace=packages/examples/browser",
     "doc": "typedoc",
-    "test": "npm test -ws"
+    "lint": "eslint",
+    "typecheck": "npm run typecheck --ws --if-present",
+    "test": "npm test --ws --if-present"
   },
   "repository": {
     "type": "git",
@@ -56,28 +52,23 @@
     "@mithic/messaging": "^0.3"
   },
   "devDependencies": {
-    "@swc/cli": "^0.6",
-    "@swc/core": "^1.11",
-    "@swc/plugin-transform-imports": "^7.0",
-    "@eslint/js": "^9.20",
-    "@stylistic/eslint-plugin": "^4.0",
-    "@types/node": "^22.10",
-    "core-js": "^3.40",
-    "cross-env": "^7.0",
-    "eslint": "^9.20",
-    "eslint-config-next": "^15.2",
-    "globals": "^16.0",
-    "global-jsdom": "^26.0",
-    "jsdom": "^26.0",
-    "next": "^15.2",
+    "@eslint/js": "^10.0",
+    "@stylistic/eslint-plugin": "^5.0",
+    "@types/node": "^25.0",
+    "@vitejs/plugin-react": "^6.0",
+    "cross-env": "^10.0",
+    "eslint": "^10.0",
+    "globals": "^17.0",
+    "global-jsdom": "^29.0",
+    "jsdom": "^29.0",
     "rimraf": "^6.0",
-    "typedoc": "^0.27",
-    "typescript": "^5.8",
-    "typescript-eslint": "^8.26"
+    "typedoc": "^0.28",
+    "typescript": "^6.0",
+    "typescript-eslint": "^8.50",
+    "vite": "^8.0",
+    "vite-plugin-dts": "^5.0"
   },
   "workspaces": [
-    "./wit/keyvalue",
-    "./wit/messaging",
     "./packages/commons",
     "./packages/core",
     "./packages/keyvalue",

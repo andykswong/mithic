@@ -8,10 +8,11 @@ jobs:
   build_gh_pages:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: actions/checkout@v6
+    - uses: actions/setup-node@v6
       with:
-        node-version: '22'
+        node-version: '24'
+    - run: rustup target add wasm32-wasip2
     - run: npm ci --ignore-scripts
     - run: npm run doc
     - run: cp -r ./docs ./public

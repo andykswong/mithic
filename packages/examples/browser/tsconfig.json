@@ -1,22 +1,14 @@
 {
   "extends": "../../../tsconfig.json",
   "compilerOptions": {
-    "target": "es2017",
-    "jsx": "preserve",
+    "lib": ["esnext", "dom"],
+    "jsx": "react-jsx",
     "module": "esnext",
     "moduleResolution": "bundler",
-    "noEmit": true,
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ]
+    "noEmit": true
   },
   "include": [
-    "next-env.d.ts",
-    ".next/types/**/*.ts",
-    "**/*.ts",
-    "**/*.tsx"
+    "src"
   ],
   "exclude": [
     "node_modules"

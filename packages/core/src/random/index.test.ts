@@ -10,12 +10,12 @@ describe('random', () => {
   const U64 = 0xefcdab9078563412n;
   const BYTES2 = [0x45, 0x67, 0x89] as const;
   const U64_2 = 0x896745n;
-  let getRandomValuesSpy: Mock<(buffer: ArrayBufferView | null) => ArrayBufferView | null>;
+  let getRandomValuesSpy: Mock<typeof crypto.getRandomValues>;
 
   beforeEach(() => {
     getRandomValuesSpy = mock.method(crypto, 'getRandomValues');
-    getRandomValuesSpy.mock.mockImplementationOnce(getRandomValuesMock.bind(null, BYTES), 0);
-    getRandomValuesSpy.mock.mockImplementationOnce(getRandomValuesMock.bind(null, BYTES2), 1);
+    getRandomValuesSpy.mock.mockImplementationOnce(((a: never) => getRandomValuesMock(BYTES, a)) as typeof crypto.getRandomValues, 0);
+    getRandomValuesSpy.mock.mockImplementationOnce(((a: never) => getRandomValuesMock(BYTES2, a)) as typeof crypto.getRandomValues, 1);
   });
 
   afterEach(() => {
@@ -90,11 +90,10 @@ describe('random', () => {
   });
 });
 
-function getRandomValuesMock(val: readonly number[], buffer: ArrayBufferView | null) {
-  if (buffer) {
-    new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
-      .fill(0)
-      .set(val.slice(0, Math.min(val.length, buffer.byteLength)));
-  }
-  return buffer;
+function getRandomValuesMock<T extends Exclude<BufferSource, ArrayBuffer>>(val: readonly number[], array: T): T {
+  const buffer = array as ArrayBufferView;
+  new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+    .fill(0)
+    .set(val.slice(0, Math.min(val.length, buffer.byteLength)));
+  return array;
 }

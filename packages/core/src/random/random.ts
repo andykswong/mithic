@@ -30,6 +30,6 @@ export function getRandomU64(): bigint {
 
 function randomFill(bytes: Uint8Array): void {
   for (let i = 0; i < bytes.length; i += MAX_BYTES) {
-    crypto.getRandomValues(bytes.subarray(i, Math.min(bytes.length, i + MAX_BYTES)));
+    crypto.getRandomValues(bytes.subarray(i, Math.min(bytes.length, i + MAX_BYTES)) as Uint8Array<ArrayBuffer>);
   }
 }

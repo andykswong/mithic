@@ -12,14 +12,13 @@
   },
   "config": {
     "crate": "mithic_example_cli",
-    "target": "wasm32-unknown-unknown"
+    "target": "wasm32-wasip2"
   },
   "scripts": {
     "preinstall": "rustup target add $npm_package_config_target",
     "prebuild": "eslint && mkdir -p dist",
     "build": "cargo build -p $npm_package_config_crate -r --target $npm_package_config_target",
-    "postbuild": "npm run componentize && npm run transpile",
-    "componentize": "../../../bin/wasm-tools component new -o ./dist/component.wasm ../../../target/${npm_package_config_target}/release/${npm_package_config_crate}.wasm",
+    "postbuild": "cp ../../../target/${npm_package_config_target}/release/${npm_package_config_crate}.wasm ./dist/component.wasm && npm run transpile",
     "transpile": "node transpile.js",
     "clean": "rimraf dist",
     "start": "node .",

@@ -4,11 +4,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
-wit-bindgen = { version = "0.39" }
-
-[lib]
-crate-type = ["cdylib"]
-name = "mithic_example_cli"
+wit-bindgen = { version = "0.57" }
 
 [package.metadata.component]
 package = "mithic:example"

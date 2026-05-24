@@ -1,10 +1,8 @@
-'use client';
-
 import { IoStreamReactor, WebReadStream, WebWriteStream } from '@mithic/core';
-import { StrictMode, useCallback, useEffect, useRef, useState } from 'react';
-import { stdin, stdout } from '../stdio.ts';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { stdin, stdout } from './stdio.ts';
 
-export default function Page() {
+export function App() {
   const reactorRef = useRef<IoStreamReactor | undefined>(undefined);
   const workerRef = useRef<Worker | undefined>(undefined);
 
@@ -32,17 +30,13 @@ export default function Page() {
       },
     });
 
-    const worker = workerRef.current = new Worker(new URL('../worker.ts', import.meta.url));
+    const worker = workerRef.current = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
     worker.postMessage(reactor.addChannel());
 
     return () => workerRef.current?.terminate();
   }, [log, setOnInput]);
 
-  return (
-    <StrictMode>
-      <Console logs={logs} onInput={input} />
-    </StrictMode>
-  );
+  return <Console logs={logs} onInput={input} />;
 }
 
 function Console({ logs, onInput }: { logs: string[], onInput?: (val: string) => void }) {

@@ -15,10 +15,9 @@
   "scripts": {
     "prepublishOnly": "npm run clean && npm run build",
     "clean": "rimraf dist",
-    "prebuild": "mkdir -p dist",
+    "prebuild": "../../bin/wkg wit fetch && mkdir -p dist",
     "build": "../../bin/wasm-tools component wit -w -o dist/keyvalue.wasm wit",
-    "test": "echo \"ok\"",
-    "wit-deps": "../../bin/wit-deps"
+    "test": "echo \"ok\""
   },
   "repository": {
     "type": "git",

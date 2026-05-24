@@ -6,7 +6,7 @@ import tseslint from 'typescript-eslint';
 /** @type {import('eslint').Linter.Config[]} */
 export default tseslint.config(
   {
-    ignores: ['**/dist/*', '**/coverage/*', '**/.next/*'],
+    ignores: ['**/dist/*', '**/coverage/*'],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
@@ -45,6 +45,7 @@ export default tseslint.config(
       }],
       '@typescript-eslint/no-import-type-side-effects': 'error',
       'no-unused-vars': 'off',
+      'no-useless-assignment': 'off',
     },
   }
 );
