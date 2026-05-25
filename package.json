@@ -8,7 +8,7 @@
     "node": ">=22.8.0"
   },
   "scripts": {
-    "preinstall": "cargo install wasm-tools wkg --root .",
+    "prepare": "cargo install wasm-tools wkg --root .",
     "prepublishOnly": "npm run clean && npm run build && npm test && npm run doc",
     "build": "npm run build --ws --if-present",
     "clean": "npm run clean --ws --if-present && rimraf docs/api",

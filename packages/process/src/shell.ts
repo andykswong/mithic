@@ -1,10 +1,9 @@
 /**
  * Shell interface for @mithic/process.
- * Higher-level abstraction — not part of the WIT interface.
+ * Any shell implementation (just-bash, Rust WASM shell) implements this contract.
  */
 
-import type { Process } from './types.ts';
-import type { ExecResult, SpawnOptions } from './types.ts';
+import type { ExecResult, ProcessManager } from './types.ts';
 
 export interface ExecOptions {
   cwd?: string;
@@ -14,14 +13,21 @@ export interface ExecOptions {
 }
 
 /**
- * Shell interface — any bash-like interpreter can implement this.
+ * Shell interface — a process that orchestrates command execution.
+ * Consumes a ProcessManager to spawn child processes and create pipes.
  */
 export interface Shell {
+  /** The process manager this shell uses to spawn children. */
+  readonly manager: ProcessManager;
+
+  /** Execute a command string and return the result. */
   exec(command: string, options?: ExecOptions): Promise<ExecResult>;
-  spawn(command: string, args: string[], options?: SpawnOptions): Process;
+
+  /** Get/set the working directory. */
   setCwd(path: string): void;
   getCwd(): string;
+
+  /** Get/set environment variables. */
   setEnv(env: Record<string, string>): void;
   getEnv(): Record<string, string>;
-  registerCommand(name: string, handler: (args: string[], ctx: unknown) => Promise<{ exitCode: number }>): void;
 }

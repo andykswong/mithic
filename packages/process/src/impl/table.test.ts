@@ -1,20 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ProcessTable } from './table.ts';
-import { Process, type ProcessHandler } from './types.ts';
+import { ProcessTable } from './simple.ts';
+import { Process, type ProcessHandler } from '../types.ts';
 
 function makeStubProcess(pid: number): Process {
   const handler: ProcessHandler = {
-    stdinHandler: { write() {}, flush() {} },
-    stdoutHandler: {
-      read() { return undefined; },
-      blockingRead() { throw { tag: 'closed' }; },
-    },
-    stderrHandler: {
-      read() { return undefined; },
-      blockingRead() { throw { tag: 'closed' }; },
-    },
-    wait: () => Promise.resolve({ stdout: new Uint8Array(), stderr: new Uint8Array(), exitCode: 0 }),
+    wait: () => Promise.resolve(0),
   };
   return new Process(pid, handler);
 }

@@ -1,26 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { Process, SIGNAL_NUMBER, type ProcessHandler, type ExecResult, type Signal } from './types.ts';
-import { InputStream, OutputStream, type InputStreamHandler, type OutputStreamHandler } from '@mithic/wasip2/io/streams';
+import { Process, SIGNAL_NUMBER, type ProcessHandler, type Signal } from './types.ts';
 
 describe('Process', () => {
-  function createMockHandler(result: ExecResult = { stdout: new Uint8Array(), stderr: new Uint8Array(), exitCode: 0 }) {
+  function createMockHandler(exitCode = 0) {
     const handler = {
       killed: null as Signal | null,
-      stdinHandler: {
-        write() {},
-        flush() {},
-      } as OutputStreamHandler,
-      stdoutHandler: {
-        read() { return undefined; },
-        blockingRead() { throw { tag: 'closed' }; },
-      } as InputStreamHandler,
-      stderrHandler: {
-        read() { return undefined; },
-        blockingRead() { throw { tag: 'closed' }; },
-      } as InputStreamHandler,
       onKill(signal: Signal) { handler.killed = signal; },
-      wait() { return Promise.resolve(result); },
+      wait() { return Promise.resolve(exitCode); },
     };
     return handler;
   }
@@ -31,54 +18,11 @@ describe('Process', () => {
     assert.equal(proc.pid, 42);
   });
 
-  it('stdin() returns an OutputStream', () => {
-    const handler = createMockHandler();
+  it('wait() resolves with exit code', async () => {
+    const handler = createMockHandler(7);
     const proc = new Process(1, handler);
-    assert.ok(proc.stdin() instanceof OutputStream);
-  });
-
-  it('stdout() returns an InputStream', () => {
-    const handler = createMockHandler();
-    const proc = new Process(1, handler);
-    assert.ok(proc.stdout() instanceof InputStream);
-  });
-
-  it('stderr() returns an InputStream', () => {
-    const handler = createMockHandler();
-    const proc = new Process(1, handler);
-    assert.ok(proc.stderr() instanceof InputStream);
-  });
-
-  it('stdin() write delegates to stdinHandler', () => {
-    const written: Uint8Array[] = [];
-    const handler = createMockHandler();
-    handler.stdinHandler = {
-      write(data: Uint8Array) { written.push(new Uint8Array(data)); },
-      flush() {},
-    } as OutputStreamHandler;
-    const proc = new Process(1, handler);
-    proc.stdin().write(new Uint8Array([1, 2, 3]));
-    assert.equal(written.length, 1);
-    assert.deepEqual(written[0], new Uint8Array([1, 2, 3]));
-  });
-
-  it('stdout() read delegates to stdoutHandler', () => {
-    const handler = createMockHandler();
-    handler.stdoutHandler = {
-      read(len: number) { return new Uint8Array([65, 66]).slice(0, len); },
-      blockingRead(len: number) { return new Uint8Array([65, 66]).slice(0, len); },
-    };
-    const proc = new Process(1, handler);
-    const data = proc.stdout().read(2n);
-    assert.deepEqual(data, new Uint8Array([65, 66]));
-  });
-
-  it('wait() resolves with handler result', async () => {
-    const expected: ExecResult = { stdout: new Uint8Array([1]), stderr: new Uint8Array([2]), exitCode: 7 };
-    const handler = createMockHandler(expected);
-    const proc = new Process(1, handler);
-    const result = await proc.wait();
-    assert.deepEqual(result, expected);
+    const exitCode = await proc.wait();
+    assert.equal(exitCode, 7);
   });
 
   it('kill() calls onKill with signal', () => {

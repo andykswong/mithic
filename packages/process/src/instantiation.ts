@@ -1,44 +1,55 @@
 /**
- * WASIProcess — configures process spawning for a WASM component.
- * Analogous to WASIShim for WASI interfaces.
+ * WASIProcess — provides the mithic:process/manager import object for WASM components.
+ * Accepts any ProcessManager implementation.
  *
  * Usage:
- *   const proc = new WASIProcess({ commandResolver: myResolver });
+ *   const proc = new WASIProcess({ manager: myProcessManager });
  *   const imports = proc.getImportObject();
  */
 
-import type { Process, SpawnOptions } from './types.ts';
-import { spawnProcess, type CommandResolver } from './spawn.ts';
-import { ProcessTable } from './table.ts';
+import type { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
+import type { Process, SpawnOptions, ProcessManager, PipeOptions } from './types.ts';
+import { SimpleProcessManager, type SimpleProcessManagerConfig } from './impl/simple.ts';
 
 export interface WASIProcessConfig {
-  /** Command resolver — maps file paths to handlers. */
-  commandResolver?: CommandResolver;
-  /** Process table to use (default: creates new one). */
-  processTable?: ProcessTable;
+  /** Provide a fully custom ProcessManager. Takes precedence over other options. */
+  manager?: ProcessManager;
+  /** Config for the built-in SimpleProcessManager (used when manager is not provided). */
+  commandResolver?: SimpleProcessManagerConfig['commandResolver'];
+  processTable?: SimpleProcessManagerConfig['processTable'];
+  hostStreams?: SimpleProcessManagerConfig['hostStreams'];
 }
 
 export class WASIProcess {
-  #table: ProcessTable;
-  #resolver: CommandResolver;
+  readonly #manager: ProcessManager;
 
   constructor(config?: WASIProcessConfig) {
-    this.#table = config?.processTable ?? new ProcessTable();
-    this.#resolver = config?.commandResolver ?? (() => undefined);
+    if (config?.manager) {
+      this.#manager = config.manager;
+    } else {
+      this.#manager = new SimpleProcessManager({
+        commandResolver: config?.commandResolver,
+        processTable: config?.processTable,
+        hostStreams: config?.hostStreams,
+      });
+    }
   }
 
-  /** Get the mithic:process import object for component instantiation. */
-  getImportObject(): { 'mithic:process/spawn': { spawn: (file: string, args: string[], options?: SpawnOptions) => Process } } {
-    const table = this.#table;
-    const resolver = this.#resolver;
+  /** Get the mithic:process/manager import object for component instantiation. */
+  getImportObject(): {
+    'mithic:process/manager': {
+      spawn: (file: string, args: string[], options?: SpawnOptions) => Process;
+      createPipe: (options?: PipeOptions) => { input: InputStream; output: OutputStream };
+    };
+  } {
     return {
-      'mithic:process/spawn': {
-        spawn: (file: string, args: string[], options?: SpawnOptions) =>
-          spawnProcess(table, resolver, file, args, options),
+      'mithic:process/manager': {
+        spawn: (file, args, options) => this.#manager.spawn(file, args, options),
+        createPipe: (options) => this.#manager.createPipe(options),
       },
     };
   }
 
-  /** Get the process table for this instance. */
-  get table(): ProcessTable { return this.#table; }
+  /** Get the underlying ProcessManager. */
+  get manager(): ProcessManager { return this.#manager; }
 }

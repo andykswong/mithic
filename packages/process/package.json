@@ -8,9 +8,13 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js",
+    "./manager": "./dist/manager.js",
     "./types": "./dist/types.js",
-    "./spawn": "./dist/spawn.js",
-    "./instantiation": "./dist/instantiation.js"
+    "./imports": "./dist/imports.js",
+    "./instantiation": "./dist/instantiation.js",
+    "./shell": "./dist/shell.js",
+    "./utils": "./dist/utils.js",
+    "./impl/simple": "./dist/impl/simple.js"
   },
   "files": [
     "/dist"

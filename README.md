@@ -1,82 +1,83 @@
-<h1 align="center">mithic</h1>
+# mithic
 
 [![mithic](https://img.shields.io/badge/project-mithic-blueviolet.svg?style=flat-square&logo=github)](https://github.com/andykswong/mithic)
-[![npm](https://img.shields.io/npm/v/mithic?style=flat-square&logo=npm)](https://www.npmjs.com/package/mithic)
-[![docs](https://img.shields.io/badge/docs-typedoc-blue?style=flat-square&logo=typescript&logoColor=white)](http://andykswong.github.io/mithic)
 [![license: MIT](https://img.shields.io/badge/License-MIT-red.svg?style=flat-square)](./LICENSE)
-[![codecov](https://codecov.io/gh/andykswong/mithic/branch/main/graph/badge.svg?token=2OYVQSTDMC)](https://codecov.io/gh/andykswong/mithic)
 [![build](https://img.shields.io/github/actions/workflow/status/andykswong/mithic/build.yaml?style=flat-square)](https://github.com/andykswong/mithic/actions/workflows/build.yaml)
 
-<br/>
-
-> Modular library for universal full-stack JavaScript and WebAssembly applications 
+> Isomorphic virtual process runtime for JavaScript and WebAssembly
 
 ## Overview
-`mithic` provides the building blocks for creating universal full-stack applications using JavaScript and/or WebAssembly. `mithic` is platform and runtime agnostic, being usable for both frontend (web, desktop, mobile) and backend in traditional client-server or decentralized architecture, through a set of standardized API abstractions extending on [WASI](https://wasi.dev/), including [keyvalue store](./packages/keyvalue/), [messaging](./packages/messaging/), [virtual DOM](./packages/dom/), etc. Target use cases include business apps, collaborative editing, multiplayer gaming, etc.
 
-`mithic` supports [WebAssembly Component](https://github.com/WebAssembly/component-model). As Wasm components are not yet widely supported, they need to be transpiled, using [jco](https://github.com/bytecodealliance/jco). For detailed usages, see the following [examples](./packages/examples/):
-- [Simple](./packages/examples/simple) - JS WebAssembly component built with [ComponentizeJS](https://github.com/bytecodealliance/ComponentizeJS)
-- [Rust cli](./packages/examples/rust-cli) - Rust WebAssembly component
-- [Browser](./packages/examples/browser) - running WebAssembly component in browser
+Mithic provides a virtual process runtime that runs identically in the browser (via [jco](https://github.com/bytecodealliance/jco) / WebAssembly Component Model) and on native systems (Node.js, wasmtime). It bridges Unix-style terminal workflows with modern web applications through a pluggable virtual filesystem and WASI Preview 2 runtime.
+
+### Core Pillars
+
+- **Isomorphic** — Code runs in the browser via `jco` and on native systems using compatible WASM runtimes, backed by the same provider implementations.
+- **Everything is a File** — A unified VFS interface backs local storage, cloud resources, synthetic devices, and collaborative sync layers. Process I/O uses POSIX-style pipes and signals.
+- **Composable** — Only foundational I/O primitives (filesystem, HTTP, sockets). Higher-level services compose on top via standard protocols over virtualized connections.
+- **Scalable** — Each WASM component runs in an isolated worker with scoped permissions. The sync bridge (`SharedArrayBuffer` + `Atomics`) allows many concurrent processes without blocking the I/O loop.
 
 ## Getting Started
 
-To use the library, you can depend on individual [modular packages](#packages) or the monorepo:
 ```shell
-npm install --save @mithic/core @mithic/keyvalue @mithic/messaging # core API packages
-npm install --save mithic # monorepo has dependency to all of above
+npm install mithic
+# or individual packages:
+npm install @mithic/io @mithic/wasip2 @mithic/process @mithic/just-bash
 ```
 
-Below is an example script to run a wasm component in Node.js. As components may be blocking, they must be run in a worker.
+### Run a WASM Component (Node.js)
+
 ```js
-import { isMainThread, workerData, Worker } from 'node:worker_threads';
-import { readFile } from 'node:fs/promises';
-import { Cli, Config, imports, IoStreamReactor, Logger, Level, SyncStdioProvider } from '@mithic/core';
+import { WASIShim } from '@mithic/wasip2/instantiation';
 
-if (isMainThread) {
-  const reactor = new IoStreamReactor(); // required to use stdin/out/err from wasi-cli
-  new Worker(new URL(import.meta.url), { workerData: reactor.addChannel() });
-} else {
-  Cli.stdio = new SyncStdioProvider(workerData); // connects stdio to the reactor on main thread
-  Logger.level = Level.Info; // set log level for wasi-logging
+const shim = new WASIShim({
+  sandbox: {
+    preopens: { '/': { dir: { 'home': { dir: {} } } } },
+    env: { HOME: '/home', PATH: '/bin' },
+    args: ['my-program', '--verbose'],
+  },
+});
 
-  // instantiate the component built with jco
-  const { instantiate } = await import('./component.js');
-  const { run } = await instantiate(async (path) => WebAssembly.compile(await readFile(path)), imports);
-
-  run.run();
-}
+const { instantiate } = await import('./transpiled-component.js');
+const { run } = await instantiate(null, shim.getImportObject());
+run.run();
 ```
-
-## API
-See generated TypeDoc: https://andykswong.github.io/mithic/
 
 ## Packages
 
-Core:
+| Package | Description |
+|---------|-------------|
+| [`@mithic/io`](./packages/io) | I/O layer: virtual file system, HTTP/socket providers, sync-bridge |
+| [`@mithic/wasip2`](./packages/wasip2) | WASI Preview 2 shim for WASM components |
+| [`@mithic/process`](./packages/process) | Process manager: spawn WASM processes with piped I/O |
 
-|Package|NPM|Description|
-|-------|---|-----------|
-|[`@mithic/commons`](./packages/commons)|[![npm](https://img.shields.io/npm/v/@mithic/commons?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/commons)|Common utilities|
-|[`@mithic/core`](./packages/core)|[![npm](https://img.shields.io/npm/v/@mithic/core?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/core)|Core runtime APIs based on WASI|
-|[`@mithic/keyvalue`](./packages/keyvalue)|[![npm](https://img.shields.io/npm/v/@mithic/keyvalue?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/keyvalue)|Key-value store API|
-|[`@mithic/messaging`](./packages/messaging)|[![npm](https://img.shields.io/npm/v/@mithic/messaging?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/messaging)|Messaging API for pub/sub, message queue, etc.|
+### Examples
 
-Interfaces (WIT):
+| Example | Description |
+|---------|-------------|
+| [`examples/simple`](./packages/examples/simple) | JS WebAssembly component built with ComponentizeJS |
+| [`examples/rust-cli`](./packages/examples/rust-cli) | Rust WebAssembly component |
+| [`examples/browser`](./packages/examples/browser) | Running a WASM component in the browser |
 
-|Package|NPM|Description|
-|-------|---|-----------|
-|[`@mithic/interface-keyvalue`](./wit/keyvalue)|[![npm](https://img.shields.io/npm/v/@mithic/keyvalue?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/interface-keyvalue)|Key-value store interface|
-|[`@mithic/interface-messaging`](./wit/messaging)|[![npm](https://img.shields.io/npm/v/@mithic/interface-messaging?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/interface-messaging)|Messaging interface for pub/sub, message queue, etc.|
+## Development
 
+### Prerequisites
 
-Plugins:
+- Node.js >= 22.8.0
+- Rust toolchain (for `wasm-tools` and `wkg`, installed via `prepare` script)
 
-|Package|NPM|Description|
-|-------|---|-----------|
-|[`@mithic/denokv`](./packages/plugins/denokv)|[![npm](https://img.shields.io/npm/v/@mithic/denokv?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/denokv)|Deno KV adapters for keyvalue and messaging APIs|
-|[`@mithic/level`](./packages/plugins/level)|[![npm](https://img.shields.io/npm/v/@mithic/level?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/level)|abstract-level adapter for keyvalue API|
-|[`@mithic/redis`](./packages/plugins/redis)|[![npm](https://img.shields.io/npm/v/@mithic/redis?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/redis)|Redis adapter for keyvalue and messaging APIs|
+### Commands
+
+```shell
+npm install          # install deps + rust tools
+npm run build        # build all packages
+npm test             # test all packages
+npm run lint         # lint all packages
+npm run typecheck    # type-check all packages
+```
+
+Tests use `node --test` (Node.js built-in test runner) with `--experimental-strip-types` for direct TypeScript execution.
 
 ## License
+
 This repository and the code inside it is licensed under the MIT License. Read [LICENSE](./LICENSE) for more information.
