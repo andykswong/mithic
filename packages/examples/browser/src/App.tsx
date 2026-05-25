@@ -1,40 +1,46 @@
-import { IoStreamReactor, WebReadStream, WebWriteStream } from '@mithic/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { stdin, stdout } from './stdio.ts';
+
+const encoder = new TextEncoder();
 
 export function App() {
-  const reactorRef = useRef<IoStreamReactor | undefined>(undefined);
   const workerRef = useRef<Worker | undefined>(undefined);
+  const stdinSignalRef = useRef<Int32Array | null>(null);
+  const stdinDataRef = useRef<Uint8Array | null>(null);
 
   const [logs, setLogs] = useState<string[]>([]);
-  const [onInput, setOnInput] = useState<(val: string) => void>(() => () => undefined);
-  const log = useCallback((val: string) => setLogs((logs) => [...logs, `${val}\n`]), [setLogs]);
+  const log = useCallback((val: string) => setLogs((logs) => [...logs, `${val}`]), [setLogs]);
   const input = useCallback((val: string) => {
-    onInput(val);
-    log(`> ${val}`);
-  }, [log, onInput]);
+    const signal = stdinSignalRef.current;
+    const data = stdinDataRef.current;
+    if (!signal || !data) return;
+
+    // Write input bytes into the shared data buffer
+    const bytes = encoder.encode(val + '\n');
+    const writeLen = Math.min(bytes.byteLength, data.byteLength);
+    data.set(bytes.subarray(0, writeLen));
+
+    // Signal the worker: data length, then ready flag
+    Atomics.store(signal, 1, writeLen);
+    Atomics.store(signal, 0, 1);
+    Atomics.notify(signal, 0);
+
+    log(`> ${val}\n`);
+  }, [log]);
 
   useEffect(() => {
-    const reactor = reactorRef.current = new IoStreamReactor({
-      read(identifier) {
-        if (identifier === '/dev/stdin') {
-          return [0, new WebReadStream(stdin((onInput) => setOnInput(() => onInput)))];
-        }
-      },
-      write(identifier) {
-        if (identifier === '/dev/stdout') {
-          return [1, new WebWriteStream(stdout(log))];
-        } else if (identifier === '/dev/stderr') {
-          return [2, new WebWriteStream(stdout(log))];
-        }
-      },
-    });
-
     const worker = workerRef.current = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
-    worker.postMessage(reactor.addChannel());
+    worker.onmessage = (e: MessageEvent) => {
+      if (e.data?.type === 'stdout' || e.data?.type === 'stderr') {
+        log(e.data.value);
+      } else if (e.data?.type === 'stdin-init') {
+        // Worker sent us the shared buffers for stdin communication
+        stdinSignalRef.current = new Int32Array(e.data.signal);
+        stdinDataRef.current = new Uint8Array(e.data.data);
+      }
+    };
 
     return () => workerRef.current?.terminate();
-  }, [log, setOnInput]);
+  }, [log]);
 
   return <Console logs={logs} onInput={input} />;
 }

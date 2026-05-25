@@ -1,0 +1,50 @@
+{
+  "name": "@mithic/process",
+  "version": "0.1.0",
+  "description": "mithic process management - shell, process spawn",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./types": "./dist/types.js",
+    "./spawn": "./dist/spawn.js",
+    "./instantiation": "./dist/instantiation.js"
+  },
+  "files": [
+    "/dist"
+  ],
+  "scripts": {
+    "prepublishOnly": "npm run clean && npm run build && npm test",
+    "clean": "rimraf dist *.tsbuildinfo *.lcov",
+    "prebuild": "npm run lint",
+    "build": "vite build",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --experimental-test-coverage --test-coverage-include=\"src/**/*.ts\" --test-coverage-exclude=\"**/*.test.ts\" --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage.lcov --test \"**/*.test.ts\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andykswong/mithic.git"
+  },
+  "keywords": [
+    "mithic",
+    "typescript",
+    "wasm",
+    "process",
+    "shell"
+  ],
+  "author": "Andy K.S. Wong <andykswong@outlook.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/andykswong/mithic/issues"
+  },
+  "homepage": "https://github.com/andykswong/mithic",
+  "dependencies": {
+    "@mithic/io": "^0.4",
+    "@mithic/wasip2": "^0.1"
+  },
+  "devDependencies": {
+  }
+}

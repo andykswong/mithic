@@ -2,27 +2,15 @@ comment:
   layout: "header, diff, flags, components"
 component_management:
   individual_components:
-    - component_id: "@mithic/commons"
+    - component_id: "@mithic/io"
       paths:
-        - "packages/commons"
-    - component_id: "@mithic/core"
+        - "packages/io"
+    - component_id: "@mithic/process"
       paths:
-        - "packages/core"
-    - component_id: "@mithic/keyvalue"
+        - "packages/process"
+    - component_id: "@mithic/wasip2"
       paths:
-        - "packages/keyvalue"
-    - component_id: "@mithic/messaging"
-      paths:
-        - "packages/messaging"
-    - component_id: "@mithic/denokv"
-      paths:
-        - "packages/plugins/denokv"
-    - component_id: "@mithic/level"
-      paths:
-        - "packages/plugins/level"
-    - component_id: "@mithic/redis"
-      paths:
-        - "packages/plugins/redis"
+        - "packages/wasip2"
 coverage:
   status:
     project:

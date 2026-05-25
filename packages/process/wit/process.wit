@@ -1,0 +1,65 @@
+package mithic:process@0.1.0;
+
+interface types {
+  use wasi:io/streams.{input-stream, output-stream};
+
+  /// A running process handle.
+  resource process {
+    /// Get the process ID.
+    pid: func() -> u32;
+
+    /// Wait for the process to exit. Returns the exit status code.
+    wait: func() -> status-code;
+
+    /// Send a signal to the process.
+    kill: func(signal: signal) -> result<_, error-code>;
+
+    /// Get the stdin stream for writing to the process.
+    stdin: func() -> output-stream;
+
+    /// Get the stdout stream for reading from the process.
+    stdout: func() -> input-stream;
+
+    /// Get the stderr stream for reading from the process.
+    stderr: func() -> input-stream;
+  }
+
+  /// Options for spawning a process.
+  record spawn-options {
+    /// Working directory for the child process.
+    cwd: option<string>,
+    /// Environment variables (if none, inherit parent).
+    env: option<list<tuple<string, string>>>,
+  }
+
+  /// Process exit status code.
+  type status-code = u8;
+
+  /// POSIX kill signals.
+  enum signal {
+    sigterm,
+    sigkill,
+    sigint,
+    signull,
+  }
+
+  variant error-code {
+    not-found,
+    permission-denied,
+    invalid-argument,
+    resource-exhausted,
+    other(string),
+  }
+}
+
+interface spawn {
+  use types.{process, spawn-options, error-code};
+
+  /// Spawn a child process.
+  spawn: func(file: string, args: list<string>, options: option<spawn-options>) -> result<process, error-code>;
+}
+
+world process {
+  import types;
+  import spawn;
+}

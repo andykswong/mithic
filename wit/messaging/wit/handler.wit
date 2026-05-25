@@ -1,7 +1,0 @@
-/// The inferface exposes a message handler for guests. 
-interface incoming-handler {
-    use types.{error, message};
-
-    /// Callback handler for incoming message from a subscribed topic.
-    handle: func(msg: message) -> result<_, error>;
-}

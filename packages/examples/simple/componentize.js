@@ -8,7 +8,7 @@ const outputDir = './dist';
 const { component } = await componentize(jsSource, {
   witPath: '../wit',
   worldName: 'simple',
-  disableFeatures: ['http'],
+  disableFeatures: ['http', 'fetch-event'],
 });
 
 if (!existsSync(outputDir)) {

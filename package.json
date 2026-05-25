@@ -12,7 +12,6 @@
     "prepublishOnly": "npm run clean && npm run build && npm test && npm run doc",
     "build": "npm run build --ws --if-present",
     "clean": "npm run clean --ws --if-present && rimraf docs/api",
-    "dev": "npm run dev --workspace=packages/examples/browser",
     "doc": "typedoc",
     "lint": "eslint",
     "typecheck": "npm run typecheck --ws --if-present",
@@ -23,21 +22,15 @@
     "url": "git+https://github.com/andykswong/mithic.git"
   },
   "keywords": [
-    "collaboration",
-    "cqrs",
-    "crdt",
-    "decentralized",
-    "distributed",
-    "eventsourcing",
-    "eventstore",
-    "p2p",
-    "offline-first",
-    "state-channel",
-    "triplestore",
-    "typescript",
+    "isomorphic",
+    "vfs",
+    "virtual-filesystem",
+    "wasi",
     "wasm",
     "webassembly",
-    "web3"
+    "shell",
+    "typescript",
+    "sandbox"
   ],
   "author": "Andy K.S. Wong <andykswong@outlook.com>",
   "license": "MIT",
@@ -46,10 +39,9 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/commons": "^0.3",
-    "@mithic/core": "^0.3",
-    "@mithic/keyvalue": "^0.3",
-    "@mithic/messaging": "^0.3"
+    "@mithic/io": "^0.4",
+    "@mithic/wasip2": "^0.1",
+    "@mithic/process": "^0.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0",
@@ -69,13 +61,9 @@
     "vite-plugin-dts": "^5.0"
   },
   "workspaces": [
-    "./packages/commons",
-    "./packages/core",
-    "./packages/keyvalue",
-    "./packages/messaging",
-    "./packages/plugins/denokv",
-    "./packages/plugins/level",
-    "./packages/plugins/redis",
+    "./packages/io",
+    "./packages/wasip2",
+    "./packages/process",
     "./packages/examples/simple",
     "./packages/examples/rust-cli",
     "./packages/examples/browser"

@@ -23,7 +23,7 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/core": "^0.3",
+    "@mithic/wasip2": "^0.1",
     "@mithic/example-rust-cli": "^0.3",
     "react": "^19.0",
     "react-dom": "^19.0"

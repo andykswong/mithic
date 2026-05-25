@@ -6,28 +6,28 @@ mod bindings {
     });
 }
 
-use bindings::wasi::clocks::wall_clock::now;
-use bindings::wasi::cli::stdin::get_stdin;
-use bindings::wasi::cli::stdout::get_stdout;
-use bindings::wasi::config::runtime::get;
-use bindings::wasi::logging::logging::{log, Level};
+use std::io::Write;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn main() {
-    let stdin = get_stdin();
-    let stdout = get_stdout();
-    log(Level::Info, "log", format!("Hello! The time now is: {}", now().seconds).as_str());
-    log(Level::Warn, "log", "This is a warning");
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards");
 
-    let cfg = get("test").ok().flatten().unwrap_or("<null>".into());
-    log(Level::Info, "config", format!("Config.runtime.test = \"{}\"", cfg.as_str()).as_str());
+    println!("Hello! The time now is: {}", now.as_secs());
 
-    let _ = stdout.blocking_write_and_flush(format!("Please enter your name: ").as_bytes());
+    let test_env = std::env::var("TEST").unwrap_or("<null>".into());
+    println!("ENV.TEST = \"{}\"", test_env);
 
-    if let Ok(data) = stdin.blocking_read(256) {
-        if let Ok(input) = std::str::from_utf8(&data) {
-            let _ = stdout.write(format!("Hello world, {}!\n", input.trim()).as_bytes());
-        }
+    print!("Please enter your name: ");
+    std::io::stdout().flush().unwrap();
+
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).unwrap_or(0);
+
+    if !input.is_empty() {
+        // Upper-case the input as a transformation demo
+        println!("Hello world, {}!\n", input.trim());
     }
 
-    log(Level::Info, "log", format!("Goodbye! The time now is: {}", now().seconds).as_str());
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards");
+    println!("Goodbye! The time now is: {}", now.as_secs());
 }

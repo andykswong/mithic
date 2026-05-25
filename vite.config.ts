@@ -19,7 +19,10 @@ function findEntries(dir: string, base = ''): Record<string, string> {
 
 export default defineConfig({
   plugins: [
-    dts({ tsconfigPath: './tsconfig.build.json' }),
+    dts({
+      tsconfigPath: './tsconfig.json',
+      exclude: ['**/*.test.ts']
+    }),
   ],
   build: {
     lib: {

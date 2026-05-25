@@ -1,0 +1,341 @@
+import type { FileHandle, OpenFlags, DirEntry, FileSystemProvider, FileStat } from '../provider.ts';
+import { FileSystemError } from '../provider.ts';
+
+/**
+ * Origin Private File System provider for browser persistent storage.
+ * Only available in browsers and web workers that support the Storage Foundation API.
+ */
+export class OPFSProvider implements FileSystemProvider {
+  #root: FileSystemDirectoryHandle | null = null;
+  #nextFd = 3;
+  #handles = new Map<number, { nativeHandle: FileSystemFileHandle; path: string; flags: OpenFlags }>();
+
+  async init(): Promise<void> {
+    this.#root = await navigator.storage.getDirectory();
+  }
+
+  async dispose(): Promise<void> {
+    this.#handles.clear();
+    this.#root = null;
+  }
+
+  async open(path: string, flags: OpenFlags): Promise<FileHandle> {
+    this.#ensureInit();
+    const normalized = this.#normalizePath(path);
+
+    if (flags.directory) {
+      const dir = await this.#getDirectoryHandle(normalized);
+      if (!dir) {
+        throw new FileSystemError('not-directory', `Not a directory: ${path}`);
+      }
+      const fd = this.#nextFd++;
+      return { fd, path: normalized, flags };
+    }
+
+    const { dir: parentPath, base } = this.#splitPath(normalized);
+    const parentDir = await this.#getDirectoryHandle(parentPath);
+    if (!parentDir) {
+      throw new FileSystemError('not-found', `Parent directory not found: ${parentPath}`);
+    }
+
+    if (flags.exclusive && flags.create) {
+      // Check if file already exists
+      try {
+        await parentDir.getFileHandle(base);
+        throw new FileSystemError('exist', `File already exists: ${path}`);
+      } catch (e) {
+        if (e instanceof FileSystemError) throw e;
+        // NotFoundError means file doesn't exist — proceed to create
+      }
+    }
+
+    let fileHandle: FileSystemFileHandle;
+    try {
+      fileHandle = await parentDir.getFileHandle(base, { create: flags.create });
+    } catch (e: unknown) {
+      if ((e as DOMException)?.name === 'NotFoundError') {
+        throw new FileSystemError('not-found', `File not found: ${path}`);
+      }
+      if ((e as DOMException)?.name === 'TypeMismatchError') {
+        throw new FileSystemError('is-directory', `Is a directory: ${path}`);
+      }
+      throw e;
+    }
+
+    if (flags.truncate) {
+      const writable = await fileHandle.createWritable();
+      await writable.truncate(0);
+      await writable.close();
+    }
+
+    const fd = this.#nextFd++;
+    this.#handles.set(fd, { nativeHandle: fileHandle, path: normalized, flags });
+    return { fd, path: normalized, flags };
+  }
+
+  async close(handle: FileHandle): Promise<void> {
+    if (!this.#handles.has(handle.fd)) {
+      throw new FileSystemError('invalid', `Invalid file descriptor: ${handle.fd}`);
+    }
+    this.#handles.delete(handle.fd);
+  }
+
+  async read(handle: FileHandle, offset: number, len: number): Promise<Uint8Array> {
+    const openHandle = this.#handles.get(handle.fd);
+    if (!openHandle) {
+      throw new FileSystemError('invalid', `Invalid file descriptor: ${handle.fd}`);
+    }
+    const file = await openHandle.nativeHandle.getFile();
+    const blob = file.slice(offset, offset + len);
+    const buffer = await blob.arrayBuffer();
+    return new Uint8Array(buffer);
+  }
+
+  async write(handle: FileHandle, data: Uint8Array, offset: number): Promise<number> {
+    const openHandle = this.#handles.get(handle.fd);
+    if (!openHandle) {
+      throw new FileSystemError('invalid', `Invalid file descriptor: ${handle.fd}`);
+    }
+    const writable = await openHandle.nativeHandle.createWritable({ keepExistingData: true });
+    await writable.seek(offset);
+    await writable.write(data as unknown as FileSystemWriteChunkType);
+    await writable.close();
+    return data.length;
+  }
+
+  async truncate(handle: FileHandle, size: number): Promise<void> {
+    const openHandle = this.#handles.get(handle.fd);
+    if (!openHandle) {
+      throw new FileSystemError('invalid', `Invalid file descriptor: ${handle.fd}`);
+    }
+    const writable = await openHandle.nativeHandle.createWritable({ keepExistingData: true });
+    await writable.truncate(size);
+    await writable.close();
+  }
+
+  async stat(path: string, _options?: { followSymlinks?: boolean }): Promise<FileStat> {
+    this.#ensureInit();
+    const normalized = this.#normalizePath(path);
+
+    // Check if it's a directory
+    const dirHandle = await this.#getDirectoryHandle(normalized);
+    if (dirHandle) {
+      return {
+        type: 'directory',
+        size: 0n,
+        mode: 0o755,
+        mtime: new Date(0),
+        atime: new Date(0),
+        ctime: new Date(0),
+        linkCount: 1n,
+      };
+    }
+
+    // Try as a file
+    const { dir: parentPath, base } = this.#splitPath(normalized);
+    const parentDir = await this.#getDirectoryHandle(parentPath);
+    if (!parentDir) {
+      throw new FileSystemError('not-found', `No such file or directory: ${path}`);
+    }
+
+    let fileHandle: FileSystemFileHandle;
+    try {
+      fileHandle = await parentDir.getFileHandle(base);
+    } catch {
+      throw new FileSystemError('not-found', `No such file or directory: ${path}`);
+    }
+
+    const file = await fileHandle.getFile();
+    return {
+      type: 'file',
+      size: BigInt(file.size),
+      mode: 0o644,
+      mtime: new Date(file.lastModified),
+      atime: new Date(file.lastModified),
+      ctime: new Date(file.lastModified),
+      linkCount: 1n,
+    };
+  }
+
+  async readdir(path: string): Promise<DirEntry[]> {
+    this.#ensureInit();
+    const normalized = this.#normalizePath(path);
+    const dirHandle = await this.#getDirectoryHandle(normalized);
+    if (!dirHandle) {
+      throw new FileSystemError('not-directory', `Not a directory: ${path}`);
+    }
+
+    const entries: DirEntry[] = [];
+    for await (const [name, handle] of dirHandle.entries()) {
+      entries.push({
+        name,
+        type: handle.kind === 'file' ? 'file' : 'directory',
+      });
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    return entries;
+  }
+
+  async mkdir(path: string): Promise<void> {
+    this.#ensureInit();
+    const normalized = this.#normalizePath(path);
+    const { dir: parentPath, base } = this.#splitPath(normalized);
+    const parentDir = await this.#getDirectoryHandle(parentPath);
+    if (!parentDir) {
+      throw new FileSystemError('not-found', `Parent directory not found: ${parentPath}`);
+    }
+
+    // Check if already exists
+    try {
+      await parentDir.getDirectoryHandle(base);
+      throw new FileSystemError('exist', `Already exists: ${path}`);
+    } catch (e) {
+      if (e instanceof FileSystemError) throw e;
+      // NotFoundError means we can create it
+    }
+
+    await parentDir.getDirectoryHandle(base, { create: true });
+  }
+
+  async unlink(path: string): Promise<void> {
+    this.#ensureInit();
+    const normalized = this.#normalizePath(path);
+    const { dir: parentPath, base } = this.#splitPath(normalized);
+    const parentDir = await this.#getDirectoryHandle(parentPath);
+    if (!parentDir) {
+      throw new FileSystemError('not-found', `Parent directory not found: ${parentPath}`);
+    }
+
+    try {
+      await parentDir.removeEntry(base);
+    } catch (e: unknown) {
+      if ((e as DOMException)?.name === 'NotFoundError') {
+        throw new FileSystemError('not-found', `No such file: ${path}`);
+      }
+      throw e;
+    }
+  }
+
+  async rmdir(path: string): Promise<void> {
+    this.#ensureInit();
+    const normalized = this.#normalizePath(path);
+    const { dir: parentPath, base } = this.#splitPath(normalized);
+    const parentDir = await this.#getDirectoryHandle(parentPath);
+    if (!parentDir) {
+      throw new FileSystemError('not-found', `Parent directory not found: ${parentPath}`);
+    }
+
+    try {
+      await parentDir.removeEntry(base);
+    } catch (e: unknown) {
+      if ((e as DOMException)?.name === 'NotFoundError') {
+        throw new FileSystemError('not-found', `No such directory: ${path}`);
+      }
+      if ((e as DOMException)?.name === 'InvalidModificationError') {
+        throw new FileSystemError('not-empty', `Directory not empty: ${path}`);
+      }
+      throw e;
+    }
+  }
+
+  async rename(oldPath: string, newPath: string): Promise<void> {
+    this.#ensureInit();
+    const oldNormalized = this.#normalizePath(oldPath);
+    const newNormalized = this.#normalizePath(newPath);
+
+    // OPFS doesn't have a native rename; we have to copy + delete
+    const { dir: oldParentPath, base: oldBase } = this.#splitPath(oldNormalized);
+    const { dir: newParentPath, base: newBase } = this.#splitPath(newNormalized);
+
+    const oldParent = await this.#getDirectoryHandle(oldParentPath);
+    const newParent = await this.#getDirectoryHandle(newParentPath);
+    if (!oldParent || !newParent) {
+      throw new FileSystemError('not-found', 'Parent directory not found');
+    }
+
+    let sourceHandle: FileSystemFileHandle;
+    try {
+      sourceHandle = await oldParent.getFileHandle(oldBase);
+    } catch {
+      throw new FileSystemError('not-found', `No such file: ${oldPath}`);
+    }
+
+    const file = await sourceHandle.getFile();
+    const data = new Uint8Array(await file.arrayBuffer());
+
+    const destHandle = await newParent.getFileHandle(newBase, { create: true });
+    const writable = await destHandle.createWritable();
+    await writable.write(data);
+    await writable.close();
+
+    await oldParent.removeEntry(oldBase);
+  }
+
+  async symlink(_target: string, _linkPath: string): Promise<void> {
+    throw new FileSystemError('not-supported', 'OPFS does not support symlinks');
+  }
+
+  async readlink(_path: string): Promise<string> {
+    throw new FileSystemError('not-supported', 'OPFS does not support symlinks');
+  }
+
+  async link(_existingPath: string, _newPath: string): Promise<void> {
+    throw new FileSystemError('not-supported', 'OPFS does not support hard links');
+  }
+
+  async chmod(_path: string, _mode: number): Promise<void> {
+    throw new FileSystemError('not-supported', 'OPFS does not support chmod');
+  }
+
+  async utimes(_path: string, _atime: Date, _mtime: Date): Promise<void> {
+    throw new FileSystemError('not-supported', 'OPFS does not support utimes');
+  }
+
+  // --- Private helpers ---
+
+  #ensureInit(): asserts this is { '#root': FileSystemDirectoryHandle } {
+    if (!this.#root) {
+      throw new FileSystemError('invalid', 'OPFSProvider not initialized. Call init() first.');
+    }
+  }
+
+  #normalizePath(path: string): string {
+    if (!path || path === '/') return '/';
+    if (!path.startsWith('/')) {
+      path = '/' + path;
+    }
+    const parts = path.split('/');
+    const resolved: string[] = [];
+    for (const part of parts) {
+      if (part === '' || part === '.') continue;
+      if (part === '..') {
+        resolved.pop();
+      } else {
+        resolved.push(part);
+      }
+    }
+    return '/' + resolved.join('/');
+  }
+
+  #splitPath(path: string): { dir: string; base: string } {
+    if (path === '/') return { dir: '/', base: '' };
+    const lastSlash = path.lastIndexOf('/');
+    const dir = lastSlash === 0 ? '/' : path.slice(0, lastSlash);
+    const base = path.slice(lastSlash + 1);
+    return { dir, base };
+  }
+
+  async #getDirectoryHandle(path: string): Promise<FileSystemDirectoryHandle | null> {
+    if (path === '/') return this.#root!;
+    const parts = path.split('/').filter(p => p !== '');
+    let current: FileSystemDirectoryHandle = this.#root!;
+    for (const part of parts) {
+      try {
+        current = await current.getDirectoryHandle(part);
+      } catch {
+        return null;
+      }
+    }
+    return current;
+  }
+}

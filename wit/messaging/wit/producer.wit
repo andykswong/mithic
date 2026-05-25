@@ -1,7 +1,0 @@
-/// Interface to send messages to a channel/topic.
-interface producer {
-    use types.{error, message, topic};
-
-    /// Sends a message to given topic.
-    send: func(topic: topic, msg: message) -> result<_, error>;
-}

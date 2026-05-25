@@ -1,8 +1,8 @@
 # Mithic: Core Architecture & Technical Design Document
 
-**System Version:** 2026.1
+**System Version:** 2026.2
 
-**Core Components:** Isomorphic Virtual Shell + Universal Mount VFS (`VFS`) + WASI Preview 2 Runtime (`jco` / Native Worker Bridges).
+**Core Components:** Isomorphic Virtual Shell + Universal Mount VFS + WASI Preview 2 Runtime (`jco` / Native Worker Bridges).
 
 ---
 
@@ -13,176 +13,213 @@ Mithic is designed to provide a secure, foundational isomorphic execution enviro
 ### Core Pillars
 
 - **Isomorphic Execution**: Code runs in the browser via `jco` (WebAssembly Component Model) and on native systems using compatible WASM runtimes, ensuring portability.
-- **Everything is a File**: Instead of implementing point-to-point abstractions for separate integrations, Mithic generalizes the VFS into an unified provider interface. Cloud integration (S3, Google Drive), browser primitives (`/dev/clipboard`, `/dev/gpu`), decoupled frontend presentation layers (`/dev/gui`) can all be implemented symmetrically as pluggable system mounts. 
+- **Everything is a File**: Instead of implementing point-to-point abstractions for separate integrations, Mithic generalizes the VFS into a unified provider interface. Cloud integration (S3, Google Drive), browser primitives (`/dev/clipboard`, `/dev/gpu`), decoupled frontend presentation layers (`/dev/gui`) can all be implemented symmetrically as pluggable system mounts.
+- **Minimal Core, Maximum Composability**: The system provides only foundational I/O primitives (filesystem, HTTP, sockets). Higher-level services (key-value stores, pub/sub messaging, databases) are composed on top of these primitives via standard protocols over virtualized HTTP and socket connections — not through specialized interfaces.
 - **Agentic Foundations**: The system is built for any running process (WASM binary, bash script, or AI agent) to interact with resources through the virtual shell, utilizing standardized CLI tools (`cat`, `ls`, `cp`, `grep`, `mkdir`) and filesystem paths rather than custom APIs, without awareness of the underlying physical, cloud, or synthetic transport medium.
 
 ---
 
-## 2. Universal Pluggable Virtual File System (`VFS`)
+## 2. Universal Pluggable Virtual File System
 
 The backbone of Mithic is a highly extensible, reactive VFS router that handles absolute file paths by delegating read, write, watch, and stat events to decoupled, targeted drivers.
 
 ```
-                          [ VFS Core Router ]
+                            [ FileSystemRouter ]
                                      |
     +-----------------+--------------+---------------+-------------------+
     |                 |                              |                   |
-[/home /etc]     [/mnt/cloud]                    [/dev]               [/shared]
+[/home /etc]     [/mnt/cloud]                     [/dev]             [/shared]
     |                 |                              |                   |
- [Local Storage]  [Isomorphic Cloud Bridge]     [Synthetic IPC Engine] [P2P CRDT Sync]
+[Local Storage]  [Isomorphic Cloud Bridge] [Synthetic IPC Engine] [P2P CRDT Sync]
     |                 |                              |                   |
-(IndexedDB/OPFS) (S3 API / REST Web Proxies)  (React MessagePorts)   (Automerge/libp2p)
+(IndexedDB/OPFS) (S3 API / REST Web Proxies) (React MessagePorts)     (libp2p)
 
 ```
 
-### 2.1 Driver Mount Architecture
+### 2.1 FileSystemProvider Interface
 
-VFS implements a simple, uniform interface definition block across both Web Workers and native runtime implementations. Custom mount providers must implement the following lifecycle hooks:
+VFS implements a simple, uniform async interface across both Web Workers and native runtime implementations:
 
 ```typescript
-interface VFSMountProvider {
-  mountPoint: string;
-  init(): Promise<void>;
-  read(path: string, options?: ReadOptions): Promise<Uint8Array>;
-  write(path: string, data: Uint8Array, options?: WriteOptions): Promise<void>;
-  stat(path: string): Promise<FileStat>;
-  readdir(path: string): Promise<string[]>;
-  watch(path: string, callback: (event: VFSChangeEvent) => void): UnsubscribeFunc;
+interface FileSystemProvider {
+  init?(): Promise<void>;
+  dispose?(): Promise<void>;
+  open(path: string, flags: OpenFlags): Promise<FileHandle>;
+  close(handle: FileHandle): Promise<void>;
+  read(handle: FileHandle, offset: number, len: number): Promise<Uint8Array>;
+  write(handle: FileHandle, data: Uint8Array, offset: number): Promise<number>;
+  stat(path: string, options?: { followSymlinks?: boolean }): Promise<FileStat>;
+  readdir(path: string): Promise<DirEntry[]>;
+  mkdir(path: string): Promise<void>;
+  unlink(path: string): Promise<void>;
+  rmdir(path: string): Promise<void>;
+  rename(oldPath: string, newPath: string): Promise<void>;
+  chmod(path: string, mode: number): Promise<void>;
+  symlink(target: string, linkPath: string): Promise<void>;
+  readlink(path: string): Promise<string>;
+  watch?(path: string, callback: (event: WatchEvent) => void): () => void;
 }
-
 ```
 
 ### 2.2 Standard Mount Registry Layout
 
-* **`/home` and `/etc` (Local Client Persistence):** Backed by high-performance storage blocks inside the host runtime環境. In browsers, this leverages the **Origin Private File System (OPFS)** or indexed database engines (`BrowserFS`), assuring sub-millisecond, zero-network write speeds and robust data boundaries.
+* **`/home` and `/etc` (Local Client Persistence):** Backed by high-performance storage in the host runtime. In browsers, this leverages the **Origin Private File System (OPFS)** or indexed database engines, assuring sub-millisecond, zero-network write speeds.
 * **`/mnt/cloud/*` (The Isomorphic Cloud Bridge):** Provides standard native filesystem access to remote resources.
-* `/mnt/s3/backups`: Intercepts calls and streams multi-part file chunks on-demand via authenticated S3 REST API protocols.
-* `/mnt/http/api`: Translates file write actions into outgoing web-hook payloads or REST requests, and directory listing commands into API schema queries.
-
-
-* **`/dev/*` (Synthetic Device Abstraction Layer):** Bridges the sandboxed runtime directly to Host features and UI constructs through safe, virtual target descriptors.
-* `/dev/gui` & `/dev/ui`: Acts as the rendering highway. When a sandboxed utility writes a serialized `remote-dom` configuration layout into `/dev/gui`, the host UI thread captures the event, parses the declarative JSON layout, and surfaces interactive UI components seamlessly. Blocked reads to `/dev/gui` pause execution until user interaction clicks or input events flush state back downstream.
-* `/dev/clipboard`: Forwards Unix pipelines directly into host operating system clipboards via basic CLI commands (`echo "data" > /dev/clipboard`).
-* `/dev/gpu`: Allocates direct parallel computing hardware tasks by translating binary filesystem reads/writes into browser **WebGPU** contexts.
-
-
-* **`/shared/*` (P2P Synchronization / Multi-user Collaborative Layer):** Encapsulates the entire collaborative engine. Directory hierarchies mounted here automatically pass underlying file metadata structural mutations through an **Automerge CRDT** object to avoid tree conflicts across peers. Large raw binary blobs are mapped via an IPFS content-addressed hash layer, streaming file chunks peer-to-peer via **libp2p WebRTC** paths strictly when requested.
+  * `/mnt/s3/backups`: Intercepts calls and streams multi-part file chunks on-demand via authenticated S3 REST API protocols.
+  * `/mnt/http/api`: Translates file write actions into outgoing web-hook payloads or REST requests, and directory listing commands into API schema queries.
+* **`/dev/*` (Synthetic Device Abstraction Layer):** Bridges the sandboxed runtime directly to host features through safe, virtual target descriptors.
+  * `/dev/gui` & `/dev/ui`: Rendering highway for `remote-dom` declarative UI layouts.
+  * `/dev/clipboard`: Forwards Unix pipelines into host operating system clipboards.
+  * `/dev/gpu`: Allocates parallel computing tasks via browser **WebGPU** contexts.
+* **`/shared/*` (P2P Synchronization / Multi-user Collaborative Layer):** Encapsulates the collaborative engine using **Automerge CRDT** and **libp2p WebRTC** transports.
 
 ---
 
-## 3. The Virtual Shell notebook Framework (`just-bash`)
+## 3. Networking as a Primitive
 
-Mithic exposes this universal filesystem interface via an interactive terminal cell workspace environment leveraging the lightweight `just-bash` scripting core.
+Rather than providing specialized high-level service interfaces (key-value stores, pub/sub messaging, RPC), Mithic provides virtualized HTTP and socket primitives. Higher-level services are composed on top:
 
-### 3.1 Dynamic Command Fallback Pattern
+### 3.1 HTTP Client/Server
 
-To enable decoupled execution of dynamic application components, Mithic explicitly avoids manually mapping hardcoded platform script calls. Instead, `just-bash` implements a customized Abstract Syntax Tree (AST) **Transform Plugin**:
+```typescript
+interface HttpClient {
+  send(request: HttpRequest): Promise<HttpResponse>;
+}
 
-1. **Command Interception:** When a script, user, or AI agent types an unregistered command name expression (e.g., `shrink-video --input raw.mp4`), the shell checks its internal aliases. If the binary command is completely absent, execution triggers an immediate fallback hook.
-2. **AST Transformation plugin:** The AST engine dynamically rewrites the parsed input script into a system command wrapper call targeting the core execution driver:
+interface HttpServer {
+  listen(handler: IncomingHttpHandler): Promise<void>;
+  close(): Promise<void>;
+}
+```
+
+A key-value store, messaging system, or database client is simply an HTTP or socket client talking to a service endpoint — local, remote, or virtual. This keeps the core minimal while supporting any protocol.
+
+### 3.2 Socket Provider
+
+```typescript
+interface SocketProvider {
+  createTcpSocket(): Promise<TcpSocket>;
+  createUdpSocket(): Promise<UdpSocket>;
+  resolveName(name: string): Promise<IpAddress[]>;
+}
+```
+
+Redis, NATS, PostgreSQL, or any TCP-based service can be accessed through the socket provider without Mithic needing specialized interfaces for each.
+
+---
+
+## 4. The Virtual Shell Framework (`just-bash`)
+
+Mithic exposes the universal filesystem interface via an interactive terminal workspace environment leveraging the `just-bash` scripting core.
+
+### 4.1 Dynamic Command Fallback Pattern
+
+To enable decoupled execution of dynamic application components, `just-bash` implements a customized AST **Transform Plugin**:
+
+1. **Command Interception:** When an unregistered command is typed, the shell checks aliases. If absent, execution triggers a fallback hook.
+2. **AST Transformation:** The engine rewrites the input into a system command targeting the execution driver:
 ```bash
 # Original Input:
 shrink-video --input raw.mp4
 
 # Transformed Execution Path:
 exec /bin/shrink-video.wasm --input raw.mp4
-
 ```
+3. **VFS Path Resolution:** Checks `/bin` or `PATH` within VFS to locate the `.wasm` component artifact.
 
+### 4.2 VFS as a Reactive Signal Engine
 
-3. **VFS Path Resolution:** The fallback logic checks `/bin` or path environment parameters within VFS to locate the targeted `.wasm` component artifact, and boots it instantly.
-
-### 3.2 VFS as a Reactive Signal Engine
-
-Because VFS handles all storage and device operations natively, the shell notebook replaces standard heavyweight background process communication buses with file watchers. Cells subscribe to targeted VFS path scopes.
-
-For example, when a DuckDB/SQLite WASM process flushes raw processed output into `/home/data/results.csv`, VFS fires a change event that signals the front-end display frontend to refresh data components instantly—providing automated persistence, complete inspection, and strict state reliability.
+The shell notebook replaces heavyweight background process communication with file watchers. Cells subscribe to targeted VFS path scopes. When a process writes output to a file, VFS fires a change event that signals the frontend to refresh — providing automated persistence and strict state reliability.
 
 ---
 
-## 4. Multi-Process Execution Engine (WASM Sandboxing)
+## 5. Multi-Process Execution Engine (WASM Sandboxing)
 
-Mithic preserves full host security and environment portability using sandboxed WebAssembly execution pipelines.
-
-```
-+------------------------------------------------------------+
-|                       Host Runtime                         |
-|   (React MFE UI Thread / Node.js Native Desktop Process)    |
-+------------------------------------------------------------+
-       ^                                              ^
-       | [SharedArrayBuffer / MessagePorts]            | [WASI P2 Filesystem Shim]
-       v                                              v
-+-----------------------------+        +-----------------------------+
-|     WASM Execution Worker   |        |     WASM Execution Worker   |
-|   [Process ID 102: ffmpeg]  |        |    [Process ID 103: pandoc] |
-+-----------------------------+        +-----------------------------+
+Mithic preserves full host security using sandboxed WebAssembly execution pipelines.
 
 ```
+┌─────────────────────────────────────────────────────────────────┐
+│          I/O Loop (main thread or dedicated worker)             │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │  FileSystemRouter + HttpClient + SocketProvider + Stdio    │ │
+│  └────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────┬──────────────────────────┘
+                                       │ Atomics.wait / notify
+┌──────────────────────────────────────┴──────────────────────────┐
+│                   WASM Worker(s) (blocking)                     │
+│  ┌─────────────────────┐    ┌─────────────────────┐             │
+│  │ Process 101: ffmpeg │    │ Process 102: pandoc │             │
+│  └─────────────────────┘    └─────────────────────┘             │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-### 4.1 Process Table Isolation
+### 5.1 Process Table Isolation
 
-Each executable utility is launched as an isolated multi-threaded system worker lifecycle block. The core host maintains a centralized `Process Table` tracking:
+Each executable is launched as an isolated worker. The host maintains a `Process Table` tracking:
 
 * Active Process IDs (PIDs).
-* Scoped mount maps (e.g., giving a tool access strictly to `/home/user/sandbox` and `/dev/gui`).
-* Standard I/O pointers (`stdin`, `stdout`, `stderr`) piped cleanly across processing lines.
+* Scoped mount maps (giving a tool access strictly to allowed VFS paths).
+* Standard I/O pointers (`stdin`, `stdout`, `stderr`) piped across processing lines.
 
-### 4.2 Isomorphic Runtime Bridge
+### 5.2 Isomorphic Runtime Bridge
 
-Mithic bridges the gap between different host architectures using identical software abstractions:
+* **Web Context:** Workers run `.wasm` binaries via **`jco`** (WebAssembly Component Model).
+* **Native Context:** Desktop frameworks (Electron/Tauri) invoke Node.js worker threads or spawn sandboxed native processes (`wasmtime`).
 
-* **Web Context:** Sandboxed workers run target `.wasm` binaries using bytecode generated via the **`jco`** (WebAssembly Component Model) compiler infrastructure.
-* **Native Context:** To maintain total environment parity without sacrificing raw execution speed, native desktop frameworks (built on Electron or Tauri) invoke identical Node.js worker blocks running the same component targets, or spawn highly secure sandboxed rust native execution processes (like `wasmtime`).
+### 5.3 Sync Bridge (`SharedArrayBuffer`)
 
-### 4.3 Low-Latency System Shims (`SharedArrayBuffer`)
-
-To handle raw data throughput boundaries when passing massive binary files (like raw video frames or hefty databases) from VFS to the sandboxed runtime, execution threads bypass standard asynchronous `postMessage` loops.
-
-Instead, a low-level **WASI Preview 2 Filesystem Shim** opens synchronous memory tunnels over **`SharedArrayBuffer`** references. When a sandboxed utility executes standard file read operations, the worker blocks thread loop execution using atomic operations (`Atomics.wait`), reading direct storage data instantly out of shared physical memory addresses.
+WASM workers make synchronous WASI calls. The I/O loop processes them asynchronously. The bridge uses `SharedArrayBuffer` + `Atomics.wait/notify` to block the worker until the I/O loop resolves the async operation — enabling synchronous WASI semantics over async providers.
 
 ---
 
-## 5. Security Architecture & Permission Framework
+## 6. Security Architecture & Permission Framework
 
-Because VFS handles *all* input/output vectors identically, Mithic establishes an absolute sandbox defense layer with simple path-permission scoping rule checks.
+VFS handles all I/O vectors uniformly, enabling a simple path-permission sandbox:
 
-1. **Zero-Trust by Default:** By default, a freshly spawned process possesses zero host visibility, zero network socket loops, and can neither read nor write to any VFS mount path.
-2. **Declarative Manifest Routing:** Every application or script configuration declares its required file system dependency boundaries explicitly:
+1. **Zero-Trust by Default:** A freshly spawned process has zero host visibility, zero network access, and cannot read/write any VFS path.
+2. **Declarative Manifest Routing:** Each application declares its filesystem boundaries:
 ```json
 {
-  "lab": "ffmpeg-compressor",
   "permissions": {
     "read": ["/home/user/videos", "/dev/gpu"],
-    "write": ["/home/user/videos/compressed", "/dev/gui"]
+    "write": ["/home/user/videos/compressed", "/dev/gui"],
+    "network": ["https://api.example.com"]
   }
 }
-
 ```
-
-
-3. **Host Authorization Prompts:** VFS intercepts mount read/write requests at the router level. If an application attempts to write outside authorized parameters, the host runtime intercepts execution and triggers a security approval layout context to the user: *“Allow this tool to write to /home/user/videos? [Grant / Deny]”*.
+3. **Host Authorization Prompts:** VFS intercepts unauthorized access at the router level and triggers user approval prompts.
 
 ---
 
-## 6. Engineering Implementation Roadmap
+## 7. Package Structure
+
+```
+@mithic/io            Stable I/O engine: VFS, HTTP, sockets, sync-bridge
+@mithic/wasip2        WASI Preview 2 shim (thin adapter over @mithic/io)
+@mithic/process       Process table, spawn/exec, Shell interface
+```
+
+---
+
+## 8. Engineering Implementation Roadmap
 
 ### Phase 1: Core Router Foundation
 
-* Implement the core reactive `VFS` router block.
-* Establish structural code configurations for standard local persistence storage drivers (`OPFS` / `IndexedDB`).
-* Integrate the dynamic AST transform plugin inside the `just-bash` interpreter loop.
+* Implement the `FileSystemRouter` with pluggable `FileSystemProvider` mounts.
+* Establish local persistence storage drivers (OPFS, MemoryProvider).
+* Implement the sync-bridge for WASM worker ↔ I/O loop communication.
 
-### Phase 2: Synthetic Devices & Cloud Mounting
+### Phase 2: WASI P2 Shim + Virtual Shell
 
-* Build the synthetic IPC driver layer supporting `/dev/gui`, `/dev/clipboard`, and `/dev/gpu` pipelines.
-* Create the Isomorphic Cloud Bridge module to map remote S3 backends into standard file hierarchies.
+* Implement full WASI Preview 2 interfaces (filesystem, io, cli, http, sockets).
+* Integrate `just-bash` as the virtual shell with VFS adapter.
+* Build the process table and spawn/exec infrastructure.
 
-### Phase 3: Multi-Process Execution & Security Shims
+### Phase 3: Synthetic Devices & Cloud Mounting
 
-* Build the `jco` Web Worker execution framework managing isolated Process Tables.
-* Optimize system read/write overhead by completing the low-latency `SharedArrayBuffer` WASI P2 filesystem shim.
-* Enforce path-scoped authorization rules and user prompt callbacks across all active mounts.
+* Build the synthetic device layer (`/dev/gui`, `/dev/clipboard`, `/dev/gpu`).
+* Create the cloud bridge module for S3/HTTP-backed filesystem mounts.
 
-### Phase 4: Collaborative Layer Integration
+### Phase 4: Collaborative Layer
 
-* Mount the collaborative network system driver into `/shared/*` using `libp2p` transport wrappers and `Automerge` conflict trees.
+* Mount the P2P sync driver into `/shared/*` using `libp2p`.

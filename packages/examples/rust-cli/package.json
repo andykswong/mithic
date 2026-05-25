@@ -21,8 +21,8 @@
     "postbuild": "cp ../../../target/${npm_package_config_target}/release/${npm_package_config_crate}.wasm ./dist/component.wasm && npm run transpile",
     "transpile": "node transpile.js",
     "clean": "rimraf dist",
-    "start": "node .",
-    "test": "echo 'test' | npm start"
+    "start": "TEST=itworks node .",
+    "test": "echo 'User' | npm start"
   },
   "repository": {
     "type": "git",
@@ -35,7 +35,7 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/core": "^0.3"
+    "@mithic/wasip2": "^0.1"
   },
   "devDependencies": {
     "@bytecodealliance/jco": "^1.10"

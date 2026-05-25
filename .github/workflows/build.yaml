@@ -14,8 +14,8 @@ jobs:
         node-version: '24'
     - run: rustup target add wasm32-wasip2
     - run: npm ci
-    - run: npm run typecheck
     - run: npm run build
+    - run: npm run typecheck
     - run: npm test
     - uses: codecov/codecov-action@v6
       with:
