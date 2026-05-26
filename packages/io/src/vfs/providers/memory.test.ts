@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it, beforeEach } from 'node:test';
-import { MemoryProvider } from './memory.ts';
+import { MemoryFsProvider } from './memory.ts';
 import { FileSystemError } from '../provider.ts';
 
-describe('MemoryProvider', () => {
-  let fs: MemoryProvider;
+describe('MemoryFsProvider', () => {
+  let fs: MemoryFsProvider;
 
   beforeEach(() => {
-    fs = new MemoryProvider();
+    fs = new MemoryFsProvider();
   });
 
   describe('create and read file', () => {
@@ -106,7 +106,7 @@ describe('MemoryProvider', () => {
       await fs.symlink('/b', '/a');
       await fs.symlink('/a', '/b');
 
-      await assert.rejects(
+      assert.throws(
         () => fs.stat('/a'),
         (err: unknown) => err instanceof FileSystemError && err.code === 'loop'
       );
@@ -134,7 +134,7 @@ describe('MemoryProvider', () => {
       await fs.close(handle);
 
       await fs.unlink('/remove.txt');
-      await assert.rejects(
+      assert.throws(
         () => fs.stat('/remove.txt'),
         (err: unknown) => err instanceof FileSystemError && err.code === 'not-found'
       );
@@ -143,7 +143,7 @@ describe('MemoryProvider', () => {
     it('should rmdir an empty directory', async () => {
       await fs.mkdir('/emptydir');
       await fs.rmdir('/emptydir');
-      await assert.rejects(
+      assert.throws(
         () => fs.stat('/emptydir'),
         (err: unknown) => err instanceof FileSystemError && err.code === 'not-found'
       );
@@ -154,7 +154,7 @@ describe('MemoryProvider', () => {
       const h = await fs.open('/fulldir/child.txt', { create: true, write: true });
       await fs.close(h);
 
-      await assert.rejects(
+      assert.throws(
         () => fs.rmdir('/fulldir'),
         (err: unknown) => err instanceof FileSystemError && err.code === 'not-empty'
       );
@@ -170,7 +170,7 @@ describe('MemoryProvider', () => {
 
       await fs.rename('/old.txt', '/new.txt');
 
-      await assert.rejects(
+      assert.throws(
         () => fs.stat('/old.txt'),
         (err: unknown) => err instanceof FileSystemError && err.code === 'not-found'
       );
@@ -204,14 +204,14 @@ describe('MemoryProvider', () => {
       const h = await fs.open('/exclusive.txt', { create: true, write: true });
       await fs.close(h);
 
-      await assert.rejects(
+      assert.throws(
         () => fs.open('/exclusive.txt', { create: true, exclusive: true }),
         (err: unknown) => err instanceof FileSystemError && err.code === 'exist'
       );
     });
 
     it('should fail without create flag if file does not exist', async () => {
-      await assert.rejects(
+      assert.throws(
         () => fs.open('/nonexistent.txt', { read: true }),
         (err: unknown) => err instanceof FileSystemError && err.code === 'not-found'
       );
@@ -233,7 +233,7 @@ describe('MemoryProvider', () => {
       await fs.write(handle, new TextEncoder().encode('data'), 0);
       await fs.close(handle);
 
-      await assert.rejects(
+      assert.throws(
         () => fs.read(handle, 0, 4),
         (err: unknown) => err instanceof FileSystemError && err.code === 'invalid'
       );
@@ -242,7 +242,7 @@ describe('MemoryProvider', () => {
 
   describe('constructor with initial files', () => {
     it('should initialize with provided files', async () => {
-      const provider = new MemoryProvider({
+      const provider = new MemoryFsProvider({
         files: {
           '/a/b/c.txt': 'hello',
           '/x.bin': new Uint8Array([1, 2, 3]),

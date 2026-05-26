@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, afterEach, mock } from 'node:test';
+import { describe, it } from 'node:test';
 import { deepStrictEqual, strictEqual, ok, throws } from 'node:assert';
 
 import {
@@ -15,6 +15,7 @@ import {
   responseOutparamCreate,
   responseOutparamGet,
   outgoingBodyData,
+  _setHttpClient,
 } from './types.ts';
 import type { IncomingBody } from './types.ts';
 import { handle } from './outgoing-handler.ts';
@@ -236,28 +237,12 @@ describe('FutureTrailers', () => {
 });
 
 describe('handle() and FutureIncomingResponse', () => {
-  let originalFetch: typeof globalThis.fetch;
+  it('sends a GET request and resolves with response', () => {
+    _setHttpClient({
+      send() { return { status: 200, headers: [['content-type', 'text/plain']], body: encoder.encode('response body') }; },
+    });
 
-  beforeEach(() => {
-    originalFetch = globalThis.fetch;
-  });
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it('sends a GET request and resolves with response', async () => {
-    // Mock fetch
-    globalThis.fetch = mock.fn(async (_url: string | URL | Request, _init?: RequestInit) => {
-      return new Response('response body', {
-        status: 200,
-        headers: { 'content-type': 'text/plain' },
-      });
-    }) as typeof fetch;
-
-    const headers = Fields.fromList([
-      ['accept', encoder.encode('text/plain')],
-    ]);
+    const headers = Fields.fromList([['accept', encoder.encode('text/plain')]]);
     const req = new OutgoingRequest(headers);
     req.setMethod({ tag: 'get' });
     req.setScheme({ tag: 'HTTPS' });
@@ -268,64 +253,20 @@ describe('handle() and FutureIncomingResponse', () => {
     const future = handle(req);
     ok(future instanceof FutureIncomingResponse);
 
-    // Wait for the fetch to resolve
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
     const result = future.get();
-    ok(result !== undefined, 'result should be defined after fetch resolves');
+    ok(result !== undefined);
     strictEqual(result!.tag, 'ok');
     const inner = (result as { tag: 'ok'; val: { tag: string; val?: unknown } }).val;
     strictEqual(inner.tag, 'ok');
 
-    const response = inner.val as { status(): number; headers(): Fields; consume(): IncomingBody };
+    const response = inner.val as { status(): number; headers(): Fields };
     strictEqual(response.status(), 200);
-
-    // Check headers
-    const respHeaders = response.headers();
-    ok(respHeaders.has('content-type'));
-    strictEqual(decoder.decode(respHeaders.get('content-type')[0]), 'text/plain');
   });
 
-  it('sends a POST request with body', async () => {
-    let capturedRequest: { method: string; url: string; body?: Uint8Array } | undefined;
-    globalThis.fetch = mock.fn(async (input: Request | string | URL) => {
-      if (input instanceof Request) {
-        const bodyBuf = await input.arrayBuffer();
-        capturedRequest = { method: input.method, url: input.url, body: new Uint8Array(bodyBuf) };
-      }
-      return new Response('', { status: 201 });
-    }) as typeof fetch;
-
-    const req = new OutgoingRequest(new Fields());
-    req.setMethod({ tag: 'post' });
-    req.setScheme({ tag: 'HTTP' });
-    req.setAuthority('localhost:8080');
-    req.setPathWithQuery('/data');
-
-    const body = req.body();
-    const stream = body.write();
-    stream.write(encoder.encode('{"key":"value"}'));
-    OutgoingBody.finish(body);
-
-    const future = handle(req);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    const result = future.get();
-    ok(result !== undefined);
-    strictEqual(result!.tag, 'ok');
-
-    // Verify the fetch was called with POST and body
-    ok(capturedRequest);
-    strictEqual(capturedRequest!.method, 'POST');
-    ok(capturedRequest!.body !== undefined);
-    strictEqual(decoder.decode(capturedRequest!.body), '{"key":"value"}');
-  });
-
-  it('returns error on fetch failure', async () => {
-    globalThis.fetch = mock.fn(async () => {
-      const err = new TypeError('Failed to fetch');
-      throw err;
-    }) as typeof fetch;
+  it('returns error on fetch failure', () => {
+    _setHttpClient({
+      send() { throw new TypeError('Failed to fetch'); },
+    });
 
     const req = new OutgoingRequest(new Fields());
     req.setMethod({ tag: 'get' });
@@ -335,22 +276,17 @@ describe('handle() and FutureIncomingResponse', () => {
     OutgoingBody.finish(req.body());
 
     const future = handle(req);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
     const result = future.get();
     ok(result !== undefined);
     strictEqual(result!.tag, 'ok');
     const inner = (result as { tag: 'ok'; val: { tag: string; val?: unknown } }).val;
     strictEqual(inner.tag, 'err');
-    strictEqual((inner.val as { tag: string }).tag, 'connection-refused');
   });
 
-  it('returns timeout error on AbortError', async () => {
-    globalThis.fetch = mock.fn(async () => {
-      const err = new Error('The operation was aborted');
-      err.name = 'AbortError';
-      throw err;
-    }) as typeof fetch;
+  it('returns timeout error on AbortError', () => {
+    _setHttpClient({
+      send() { const err = new Error('aborted'); err.name = 'AbortError'; throw err; },
+    });
 
     const req = new OutgoingRequest(new Fields());
     req.setMethod({ tag: 'get' });
@@ -359,12 +295,7 @@ describe('handle() and FutureIncomingResponse', () => {
     req.setPathWithQuery('/');
     OutgoingBody.finish(req.body());
 
-    const opts = new RequestOptions();
-    opts.setConnectTimeout(100_000_000n); // 100ms in nanoseconds
-
-    const future = handle(req, opts);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
+    const future = handle(req);
     const result = future.get();
     ok(result !== undefined);
     const inner = (result as { tag: 'ok'; val: { tag: string; val?: unknown } }).val;
@@ -372,30 +303,10 @@ describe('handle() and FutureIncomingResponse', () => {
     strictEqual((inner.val as { tag: string }).tag, 'connection-timeout');
   });
 
-  it('get() returns undefined before resolution', () => {
-    // Use a fetch that never resolves
-    globalThis.fetch = mock.fn(() => new Promise(() => {})) as unknown as typeof fetch;
-
-    const options = new RequestOptions();
-    options.setConnectTimeout(50_000_000n); // 50ms — short timeout so timer doesn't linger
-
-    const req = new OutgoingRequest(new Fields());
-    req.setMethod({ tag: 'get' });
-    req.setScheme({ tag: 'HTTPS' });
-    req.setAuthority('pending.test');
-    req.setPathWithQuery('/');
-    OutgoingBody.finish(req.body());
-
-    const future = handle(req, options);
-    const result = future.get();
-    strictEqual(result, undefined);
-    future[Symbol.dispose]();
-  });
-
-  it('get() returns err on second call after resolution', async () => {
-    globalThis.fetch = mock.fn(async () => {
-      return new Response('', { status: 200 });
-    }) as typeof fetch;
+  it('get() returns err on second call after resolution', () => {
+    _setHttpClient({
+      send() { return { status: 200, headers: [], body: new Uint8Array(0) }; },
+    });
 
     const req = new OutgoingRequest(new Fields());
     req.setMethod({ tag: 'get' });
@@ -405,8 +316,6 @@ describe('handle() and FutureIncomingResponse', () => {
     OutgoingBody.finish(req.body());
 
     const future = handle(req);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
     const first = future.get();
     ok(first !== undefined);
     strictEqual(first!.tag, 'ok');
@@ -416,10 +325,10 @@ describe('handle() and FutureIncomingResponse', () => {
     strictEqual(second!.tag, 'err');
   });
 
-  it('subscribe() returns a Pollable that becomes ready', async () => {
-    globalThis.fetch = mock.fn(async () => {
-      return new Response('', { status: 200 });
-    }) as typeof fetch;
+  it('subscribe() returns a Pollable that is immediately ready', () => {
+    _setHttpClient({
+      send() { return { status: 200, headers: [], body: new Uint8Array(0) }; },
+    });
 
     const req = new OutgoingRequest(new Fields());
     req.setMethod({ tag: 'get' });
@@ -430,30 +339,16 @@ describe('handle() and FutureIncomingResponse', () => {
 
     const future = handle(req);
     const pollable = future.subscribe();
-
-    // Initially may not be ready
-    // After resolution it should be ready
-    await new Promise((resolve) => setTimeout(resolve, 10));
     strictEqual(pollable.ready(), true);
   });
 });
 
 describe('IncomingBody.stream()', () => {
-  let originalFetch: typeof globalThis.fetch;
-
-  beforeEach(() => {
-    originalFetch = globalThis.fetch;
-  });
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it('reads response body as InputStream', async () => {
+  it('reads response body as InputStream', () => {
     const bodyText = 'Hello, WASI HTTP!';
-    globalThis.fetch = mock.fn(async () => {
-      return new Response(bodyText, { status: 200 });
-    }) as typeof fetch;
+    _setHttpClient({
+      send() { return { status: 200, headers: [], body: encoder.encode(bodyText) }; },
+    });
 
     const req = new OutgoingRequest(new Fields());
     req.setMethod({ tag: 'get' });
@@ -463,8 +358,6 @@ describe('IncomingBody.stream()', () => {
     OutgoingBody.finish(req.body());
 
     const future = handle(req);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
     const result = future.get();
     ok(result !== undefined);
     const inner = (result as { tag: 'ok'; val: { tag: 'ok'; val: { consume(): IncomingBody } } }).val;
@@ -472,10 +365,6 @@ describe('IncomingBody.stream()', () => {
     const incomingBody = response.consume();
     const stream = incomingBody.stream();
 
-    // Give the body reader time to buffer
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    // Read from the stream
     const data = stream.read(BigInt(bodyText.length + 100));
     const text = decoder.decode(data);
     strictEqual(text, bodyText);

@@ -1,10 +1,10 @@
 /**
  * Implements wasi:filesystem/types - filesystem types and Descriptor resource.
- * Sync in-process mode using an in-memory FileData tree (similar to jco browser shim).
+ * Descriptor delegates to a DescriptorHandler (pluggable: in-memory or sync-bridge).
  */
 
 import type { IoError } from '../io/error.ts';
-import { InputStream, OutputStream } from '../io/streams.ts';
+import type { InputStream, OutputStream } from '../io/streams.ts';
 
 // ─── Types matching WIT definitions ─────────────────────────────────────────
 
@@ -73,11 +73,6 @@ export interface DescriptorStat {
   statusChangeTimestamp: Datetime | undefined;
 }
 
-export type NewTimestamp =
-  | { tag: 'no-change' }
-  | { tag: 'now' }
-  | { tag: 'timestamp'; val: Datetime };
-
 export interface DirectoryEntry {
   type: DescriptorType;
   name: string;
@@ -108,175 +103,50 @@ export interface MetadataHashValue {
   upper: bigint;
 }
 
-// ─── Internal file data model ───────────────────────────────────────────────
+export type NewTimestamp =
+  | { tag: 'no-change' }
+  | { tag: 'now' }
+  | { tag: 'timestamp'; val: Datetime };
 
-export interface FileData {
-  /** File content (for regular files). */
-  source?: Uint8Array | string;
-  /** Directory children (for directories). */
-  dir?: Record<string, FileData>;
-  /** Symlink target path. */
-  symlink?: string;
-  /** File mode/permissions. */
-  mode?: number;
-  /** Last modification time in ms since epoch. */
-  mtime?: number;
-  /** Last access time in ms since epoch. */
-  atime?: number;
-  /** Creation/status-change time in ms since epoch. */
-  ctime?: number;
-}
+// ─── DescriptorHandler interface ──────────────────────────────────────────────
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-const timeZero: Datetime = { seconds: 0n, nanoseconds: 0 };
-
-function msToDatetime(ms: number | undefined): Datetime | undefined {
-  if (ms === undefined) return undefined;
-  const seconds = BigInt(Math.floor(ms / 1000));
-  const nanoseconds = (ms % 1000) * 1_000_000;
-  return { seconds, nanoseconds };
-}
-
-function resolveTimestamp(ts: NewTimestamp, current: number | undefined): number | undefined {
-  switch (ts.tag) {
-    case 'no-change':
-      return current;
-    case 'now':
-      return Date.now();
-    case 'timestamp': {
-      const { seconds, nanoseconds } = ts.val;
-      return Number(seconds) * 1000 + Math.floor(nanoseconds / 1_000_000);
-    }
-  }
-}
-
-function getSource(entry: FileData): Uint8Array {
-  if (typeof entry.source === 'string') {
-    entry.source = new TextEncoder().encode(entry.source);
-  }
-  return entry.source ?? new Uint8Array(0);
-}
-
-function getChildEntry(parentEntry: FileData, subpath: string, openFlags: OpenFlags): FileData {
-  let entry: FileData | undefined = parentEntry;
-  let remaining = subpath;
-
-  // Normalize: strip leading slash for relative resolution
-  if (remaining.startsWith('/') && remaining !== '/') {
-    remaining = remaining.slice(1);
-  }
-
-  let segmentIdx: number;
-  do {
-    if (!entry || !entry.dir) {
-      throw 'not-directory' as ErrorCode;
-    }
-    segmentIdx = remaining.indexOf('/');
-    const segment = segmentIdx === -1 ? remaining : remaining.slice(0, segmentIdx);
-
-    if (segment === '..') {
-      throw 'not-permitted' as ErrorCode;
-    }
-    if (segment === '' || segment === '.') {
-      // skip
-    } else if (entry.dir[segment] === undefined) {
-      if (openFlags.create) {
-        const now = Date.now();
-        entry.dir[segment] = openFlags.directory
-          ? { dir: {}, mtime: now, atime: now, ctime: now }
-          : { source: new Uint8Array(0), mtime: now, atime: now, ctime: now };
-        entry = entry.dir[segment];
-      } else {
-        throw 'no-entry' as ErrorCode;
-      }
-    } else {
-      // Follow symlinks if present
-      const child: FileData = entry.dir[segment];
-      if (child.symlink !== undefined) {
-        // Resolve symlink relative to parent entry
-        entry = getChildEntry(parentEntry, child.symlink, { create: false });
-      } else {
-        entry = child;
-      }
-    }
-    remaining = remaining.slice(segmentIdx + 1);
-  } while (segmentIdx !== -1);
-
-  if (!entry) {
-    throw 'no-entry' as ErrorCode;
-  }
-
-  if (openFlags.exclusive && entry.source !== undefined) {
-    throw 'exist' as ErrorCode;
-  }
-
-  if (openFlags.truncate && entry.source !== undefined) {
-    entry.source = new Uint8Array(0);
-    entry.mtime = Date.now();
-  }
-
-  return entry;
-}
-
-function getEntryType(entry: FileData): DescriptorType {
-  if (entry.symlink !== undefined) return 'symbolic-link';
-  if (entry.dir) return 'directory';
-  if (entry.source !== undefined) return 'regular-file';
-  return 'unknown';
-}
-
-function statEntry(entry: FileData): DescriptorStat {
-  const type = getEntryType(entry);
-  let size = 0n;
-  if (type === 'regular-file') {
-    const source = getSource(entry);
-    size = BigInt(source.byteLength);
-  } else if (type === 'symbolic-link' && entry.symlink) {
-    size = BigInt(new TextEncoder().encode(entry.symlink).byteLength);
-  }
-  return {
-    type,
-    linkCount: 1n,
-    size,
-    dataAccessTimestamp: msToDatetime(entry.atime) ?? timeZero,
-    dataModificationTimestamp: msToDatetime(entry.mtime) ?? timeZero,
-    statusChangeTimestamp: msToDatetime(entry.ctime) ?? timeZero,
-  };
-}
-
-/**
- * Find a parent directory entry and the final segment from a path.
- */
-function resolveParentAndName(
-  root: FileData,
-  path: string,
-): { parent: FileData; name: string } {
-  const segments = path.split('/').filter((s) => s !== '' && s !== '.');
-  if (segments.length === 0) {
-    throw 'invalid' as ErrorCode;
-  }
-  const name = segments.pop()!;
-  let parent = root;
-  for (const seg of segments) {
-    if (seg === '..') throw 'not-permitted' as ErrorCode;
-    if (!parent.dir || !parent.dir[seg]) throw 'no-entry' as ErrorCode;
-    parent = parent.dir[seg];
-    if (parent.symlink !== undefined) {
-      parent = getChildEntry(root, parent.symlink, { create: false });
-    }
-  }
-  if (!parent.dir) throw 'not-directory' as ErrorCode;
-  return { parent, name };
+export interface DescriptorHandler {
+  getFlags(): DescriptorFlags;
+  readViaStream(offset: bigint): InputStream;
+  writeViaStream(offset: bigint): OutputStream;
+  appendViaStream(): OutputStream;
+  advise(offset: bigint, length: bigint, advice: Advice): void;
+  syncData(): void;
+  getType(): DescriptorType;
+  setSize(size: bigint): void;
+  setTimes(dataAccessTimestamp: NewTimestamp, dataModificationTimestamp: NewTimestamp): void;
+  read(length: bigint, offset: bigint): [Uint8Array, boolean];
+  write(buffer: Uint8Array, offset: bigint): bigint;
+  readDirectory(): DirectoryEntryStream;
+  sync(): void;
+  createDirectoryAt(path: string): void;
+  stat(): DescriptorStat;
+  statAt(pathFlags: PathFlags, path: string): DescriptorStat;
+  setTimesAt(pathFlags: PathFlags, path: string, atime: NewTimestamp, mtime: NewTimestamp): void;
+  linkAt(oldPathFlags: PathFlags, oldPath: string, newDescriptor: Descriptor, newPath: string): void;
+  openAt(pathFlags: PathFlags, path: string, openFlags: OpenFlags, flags: DescriptorFlags): Descriptor;
+  readlinkAt(path: string): string;
+  removeDirectoryAt(path: string): void;
+  renameAt(oldPath: string, newDescriptor: Descriptor, newPath: string): void;
+  symlinkAt(oldPath: string, newPath: string): void;
+  unlinkFileAt(path: string): void;
+  isSameObject(other: Descriptor): boolean;
+  metadataHash(): MetadataHashValue;
+  metadataHashAt(pathFlags: PathFlags, path: string): MetadataHashValue;
 }
 
 // ─── DirectoryEntryStream ───────────────────────────────────────────────────
 
 export class DirectoryEntryStream {
-  #entries: [string, FileData][];
+  #entries: DirectoryEntry[];
   #idx = 0;
 
-  constructor(entries: [string, FileData][]) {
+  constructor(entries: DirectoryEntry[]) {
     this.#entries = entries;
   }
 
@@ -284,373 +154,61 @@ export class DirectoryEntryStream {
     if (this.#idx >= this.#entries.length) {
       return null;
     }
-    const [name, entry] = this.#entries[this.#idx];
-    this.#idx++;
-    return {
-      name,
-      type: getEntryType(entry),
-    };
+    return this.#entries[this.#idx++];
   }
 }
 
 // ─── Descriptor ─────────────────────────────────────────────────────────────
 
 export class Descriptor {
-  #entry: FileData;
-  #flags: DescriptorFlags;
+  #handler: DescriptorHandler;
 
-  constructor(entry: FileData, flags?: DescriptorFlags) {
-    this.#entry = entry;
-    this.#flags = flags ?? { read: true, write: true, mutateDirectory: true };
+  constructor(handler: DescriptorHandler) {
+    this.#handler = handler;
   }
 
-  /** @internal - get underlying entry for isSameObject comparison */
-  _getEntry(): FileData {
-    return this.#entry;
-  }
-
-  readViaStream(offset: bigint): InputStream {
-    if (this.#entry.dir) {
-      throw 'is-directory' as ErrorCode;
-    }
-    const entry = this.#entry;
-    let pos = Number(offset);
-    return new InputStream({
-      read(len: number): Uint8Array | undefined {
-        const source = getSource(entry);
-        if (pos >= source.byteLength) {
-          return undefined;
-        }
-        const bytes = source.slice(pos, pos + len);
-        pos += bytes.byteLength;
-        return bytes;
-      },
-      blockingRead(len: number): Uint8Array {
-        const source = getSource(entry);
-        if (pos >= source.byteLength) {
-          throw { tag: 'closed' };
-        }
-        const bytes = source.slice(pos, pos + len);
-        pos += bytes.byteLength;
-        return bytes;
-      },
-    });
-  }
-
-  writeViaStream(offset: bigint): OutputStream {
-    if (this.#entry.dir) {
-      throw 'is-directory' as ErrorCode;
-    }
-    const entry = this.#entry;
-    let pos = Number(offset);
-    return new OutputStream({
-      write(buf: Uint8Array): void {
-        const source = getSource(entry);
-        const needed = pos + buf.byteLength;
-        if (needed > source.byteLength) {
-          const newSource = new Uint8Array(needed);
-          newSource.set(source, 0);
-          newSource.set(buf, pos);
-          entry.source = newSource;
-        } else {
-          const newSource = new Uint8Array(source);
-          newSource.set(buf, pos);
-          entry.source = newSource;
-        }
-        pos += buf.byteLength;
-        entry.mtime = Date.now();
-      },
-      flush(): void {
-        // No-op for in-memory
-      },
-    });
-  }
-
-  appendViaStream(): OutputStream {
-    if (this.#entry.dir) {
-      throw 'is-directory' as ErrorCode;
-    }
-    const entry = this.#entry;
-    return new OutputStream({
-      write(buf: Uint8Array): void {
-        const source = getSource(entry);
-        const newSource = new Uint8Array(source.byteLength + buf.byteLength);
-        newSource.set(source, 0);
-        newSource.set(buf, source.byteLength);
-        entry.source = newSource;
-        entry.mtime = Date.now();
-      },
-      flush(): void {
-        // No-op for in-memory
-      },
-    });
-  }
-
-  advise(_offset: bigint, _length: bigint, _advice: Advice): void {
-    // Advisory only — no-op for in-memory filesystem
-  }
-
-  syncData(): void {
-    // No-op for in-memory filesystem
+  /** @internal */
+  _getHandler(): DescriptorHandler {
+    return this.#handler;
   }
 
   getFlags(): DescriptorFlags {
-    return { ...this.#flags };
+    return this.#handler.getFlags();
   }
 
-  getType(): DescriptorType {
-    return getEntryType(this.#entry);
-  }
-
-  setSize(size: bigint): void {
-    if (this.#entry.dir) {
-      throw 'is-directory' as ErrorCode;
-    }
-    const source = getSource(this.#entry);
-    const newSize = Number(size);
-    if (newSize === source.byteLength) return;
-    const newSource = new Uint8Array(newSize);
-    newSource.set(source.slice(0, Math.min(source.byteLength, newSize)));
-    this.#entry.source = newSource;
-    this.#entry.mtime = Date.now();
-  }
-
-  setTimes(dataAccessTimestamp: NewTimestamp, dataModificationTimestamp: NewTimestamp): void {
-    this.#entry.atime = resolveTimestamp(dataAccessTimestamp, this.#entry.atime);
-    this.#entry.mtime = resolveTimestamp(dataModificationTimestamp, this.#entry.mtime);
-    this.#entry.ctime = Date.now();
-  }
-
-  read(length: bigint, offset: bigint): [Uint8Array, boolean] {
-    if (this.#entry.dir) {
-      throw 'is-directory' as ErrorCode;
-    }
-    const source = getSource(this.#entry);
-    const off = Number(offset);
-    const len = Number(length);
-    const data = source.slice(off, off + len);
-    const eof = off + len >= source.byteLength;
-    this.#entry.atime = Date.now();
-    return [data, eof];
-  }
-
-  write(buffer: Uint8Array, offset: bigint): bigint {
-    if (this.#entry.dir) {
-      throw 'is-directory' as ErrorCode;
-    }
-    const off = Number(offset);
-    const source = getSource(this.#entry);
-    const needed = off + buffer.byteLength;
-    if (needed > source.byteLength) {
-      const newSource = new Uint8Array(needed);
-      newSource.set(source, 0);
-      newSource.set(buffer, off);
-      this.#entry.source = newSource;
-    } else {
-      const newSource = new Uint8Array(source);
-      newSource.set(buffer, off);
-      this.#entry.source = newSource;
-    }
-    this.#entry.mtime = Date.now();
-    return BigInt(buffer.byteLength);
-  }
-
-  readDirectory(): DirectoryEntryStream {
-    if (!this.#entry.dir) {
-      throw 'bad-descriptor' as ErrorCode;
-    }
-    const entries = Object.entries(this.#entry.dir).sort(([a], [b]) => (a > b ? 1 : -1));
-    return new DirectoryEntryStream(entries);
-  }
-
-  sync(): void {
-    // No-op for in-memory filesystem
-  }
-
-  createDirectoryAt(path: string): void {
-    if (!this.#entry.dir) {
-      throw 'not-directory' as ErrorCode;
-    }
-    const { parent, name } = resolveParentAndName(this.#entry, path);
-    if (parent.dir![name]) {
-      throw 'exist' as ErrorCode;
-    }
-    const now = Date.now();
-    parent.dir![name] = { dir: {}, mtime: now, atime: now, ctime: now };
-  }
-
-  stat(): DescriptorStat {
-    return statEntry(this.#entry);
-  }
-
-  statAt(_pathFlags: PathFlags, path: string): DescriptorStat {
-    const entry = getChildEntry(this.#entry, path, { create: false });
-    return statEntry(entry);
-  }
-
-  setTimesAt(
-    _pathFlags: PathFlags,
-    path: string,
-    dataAccessTimestamp: NewTimestamp,
-    dataModificationTimestamp: NewTimestamp,
-  ): void {
-    const entry = getChildEntry(this.#entry, path, { create: false });
-    entry.atime = resolveTimestamp(dataAccessTimestamp, entry.atime);
-    entry.mtime = resolveTimestamp(dataModificationTimestamp, entry.mtime);
-    entry.ctime = Date.now();
-  }
-
-  linkAt(
-    _oldPathFlags: PathFlags,
-    oldPath: string,
-    newDescriptor: Descriptor,
-    newPath: string,
-  ): void {
-    const sourceEntry = getChildEntry(this.#entry, oldPath, { create: false });
-    if (sourceEntry.dir) {
-      throw 'not-permitted' as ErrorCode;
-    }
-    const targetRoot = newDescriptor._getEntry();
-    const { parent, name } = resolveParentAndName(targetRoot, newPath);
-    if (parent.dir![name]) {
-      throw 'exist' as ErrorCode;
-    }
-    // Hard link: reference the same object
-    parent.dir![name] = sourceEntry;
-  }
-
-  openAt(
-    _pathFlags: PathFlags,
-    path: string,
-    openFlags: OpenFlags,
-    flags: DescriptorFlags,
-  ): Descriptor {
-    if (!this.#entry.dir) {
-      throw 'not-directory' as ErrorCode;
-    }
-    // Permission checks
-    if (
-      (flags.write || flags.mutateDirectory || openFlags.truncate || openFlags.create) &&
-      !this.#flags.mutateDirectory
-    ) {
-      throw 'read-only' as ErrorCode;
-    }
-    const childEntry = getChildEntry(this.#entry, path, openFlags);
-    if (openFlags.directory && !childEntry.dir) {
-      throw 'not-directory' as ErrorCode;
-    }
-    return new Descriptor(childEntry, flags);
-  }
-
-  readlinkAt(path: string): string {
-    const { parent, name } = resolveParentAndName(this.#entry, path);
-    const entry = parent.dir![name];
-    if (!entry) {
-      throw 'no-entry' as ErrorCode;
-    }
-    if (entry.symlink === undefined) {
-      throw 'invalid' as ErrorCode;
-    }
-    if (entry.symlink.startsWith('/')) {
-      throw 'not-permitted' as ErrorCode;
-    }
-    return entry.symlink;
-  }
-
-  removeDirectoryAt(path: string): void {
-    const { parent, name } = resolveParentAndName(this.#entry, path);
-    const entry = parent.dir![name];
-    if (!entry) {
-      throw 'no-entry' as ErrorCode;
-    }
-    if (!entry.dir) {
-      throw 'not-directory' as ErrorCode;
-    }
-    if (Object.keys(entry.dir).length > 0) {
-      throw 'not-empty' as ErrorCode;
-    }
-    delete parent.dir![name];
-  }
-
-  renameAt(oldPath: string, newDescriptor: Descriptor, newPath: string): void {
-    const { parent: oldParent, name: oldName } = resolveParentAndName(this.#entry, oldPath);
-    const entry = oldParent.dir![oldName];
-    if (!entry) {
-      throw 'no-entry' as ErrorCode;
-    }
-    const targetRoot = newDescriptor._getEntry();
-    const { parent: newParent, name: newName } = resolveParentAndName(targetRoot, newPath);
-    // If target exists and is a non-empty directory, fail
-    const existing = newParent.dir![newName];
-    if (existing?.dir && Object.keys(existing.dir).length > 0) {
-      throw 'not-empty' as ErrorCode;
-    }
-    newParent.dir![newName] = entry;
-    delete oldParent.dir![oldName];
-  }
-
-  symlinkAt(oldPath: string, newPath: string): void {
-    if (oldPath.startsWith('/')) {
-      throw 'not-permitted' as ErrorCode;
-    }
-    const { parent, name } = resolveParentAndName(this.#entry, newPath);
-    if (parent.dir![name]) {
-      throw 'exist' as ErrorCode;
-    }
-    const now = Date.now();
-    parent.dir![name] = { symlink: oldPath, mtime: now, atime: now, ctime: now };
-  }
-
-  unlinkFileAt(path: string): void {
-    const { parent, name } = resolveParentAndName(this.#entry, path);
-    const entry = parent.dir![name];
-    if (!entry) {
-      throw 'no-entry' as ErrorCode;
-    }
-    if (entry.dir) {
-      throw 'is-directory' as ErrorCode;
-    }
-    delete parent.dir![name];
-  }
-
-  isSameObject(other: Descriptor): boolean {
-    return this.#entry === other._getEntry();
-  }
-
-  metadataHash(): MetadataHashValue {
-    const source = this.#entry.source !== undefined ? getSource(this.#entry) : undefined;
-    const mtime = this.#entry.mtime ?? 0;
-    const size = source ? source.byteLength : 0;
-    return {
-      lower: BigInt(size),
-      upper: BigInt(mtime),
-    };
-  }
-
-  metadataHashAt(_pathFlags: PathFlags, path: string): MetadataHashValue {
-    const entry = getChildEntry(this.#entry, path, { create: false });
-    const source = entry.source !== undefined ? getSource(entry) : undefined;
-    const mtime = entry.mtime ?? 0;
-    const size = source ? source.byteLength : 0;
-    return {
-      lower: BigInt(size),
-      upper: BigInt(mtime),
-    };
-  }
+  readViaStream(offset: bigint): InputStream { return this.#handler.readViaStream(offset); }
+  writeViaStream(offset: bigint): OutputStream { return this.#handler.writeViaStream(offset); }
+  appendViaStream(): OutputStream { return this.#handler.appendViaStream(); }
+  advise(offset: bigint, length: bigint, advice: Advice): void { this.#handler.advise(offset, length, advice); }
+  syncData(): void { this.#handler.syncData(); }
+  getType(): DescriptorType { return this.#handler.getType(); }
+  setSize(size: bigint): void { this.#handler.setSize(size); }
+  setTimes(a: NewTimestamp, m: NewTimestamp): void { this.#handler.setTimes(a, m); }
+  read(length: bigint, offset: bigint): [Uint8Array, boolean] { return this.#handler.read(length, offset); }
+  write(buffer: Uint8Array, offset: bigint): bigint { return this.#handler.write(buffer, offset); }
+  readDirectory(): DirectoryEntryStream { return this.#handler.readDirectory(); }
+  sync(): void { this.#handler.sync(); }
+  createDirectoryAt(path: string): void { this.#handler.createDirectoryAt(path); }
+  stat(): DescriptorStat { return this.#handler.stat(); }
+  statAt(pf: PathFlags, path: string): DescriptorStat { return this.#handler.statAt(pf, path); }
+  setTimesAt(pf: PathFlags, path: string, a: NewTimestamp, m: NewTimestamp): void { this.#handler.setTimesAt(pf, path, a, m); }
+  linkAt(opf: PathFlags, op: string, nd: Descriptor, np: string): void { this.#handler.linkAt(opf, op, nd, np); }
+  openAt(pf: PathFlags, path: string, of: OpenFlags, f: DescriptorFlags): Descriptor { return this.#handler.openAt(pf, path, of, f); }
+  readlinkAt(path: string): string { return this.#handler.readlinkAt(path); }
+  removeDirectoryAt(path: string): void { this.#handler.removeDirectoryAt(path); }
+  renameAt(op: string, nd: Descriptor, np: string): void { this.#handler.renameAt(op, nd, np); }
+  symlinkAt(op: string, np: string): void { this.#handler.symlinkAt(op, np); }
+  unlinkFileAt(path: string): void { this.#handler.unlinkFileAt(path); }
+  isSameObject(other: Descriptor): boolean { return this.#handler.isSameObject(other); }
+  metadataHash(): MetadataHashValue { return this.#handler.metadataHash(); }
+  metadataHashAt(pf: PathFlags, path: string): MetadataHashValue { return this.#handler.metadataHashAt(pf, path); }
 }
 
 // ─── filesystemErrorCode ────────────────────────────────────────────────────
 
-/**
- * Attempt to extract a filesystem error code from an IoError.
- * In jco, IoError wraps a payload that may contain a Node.js-style error code.
- * In our in-memory implementation, filesystem errors are thrown as ErrorCode strings
- * directly, but the IoError payload may still carry a `code` property.
- */
 export function filesystemErrorCode(err: IoError): ErrorCode | undefined {
   const payload = err.payload;
   if (!payload) {
-    // Try the debug string as a direct error code
     const msg = err.toDebugString();
     if (isErrorCode(msg)) {
       return msg as ErrorCode;

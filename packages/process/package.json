@@ -12,7 +12,6 @@
     "./types": "./dist/types.js",
     "./imports": "./dist/imports.js",
     "./instantiation": "./dist/instantiation.js",
-    "./shell": "./dist/shell.js",
     "./utils": "./dist/utils.js",
     "./impl/simple": "./dist/impl/simple.js"
   },

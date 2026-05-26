@@ -2,19 +2,19 @@ import assert from 'node:assert/strict';
 import { describe, it, beforeEach } from 'node:test';
 import { FileSystemRouter } from './router.ts';
 import { FileSystemError } from './provider.ts';
-import { MemoryProvider } from './providers/memory.ts';
+import { MemoryFsProvider } from './providers/memory.ts';
 
 describe('FileSystemRouter', () => {
   let router: FileSystemRouter;
-  let rootProvider: MemoryProvider;
-  let homeProvider: MemoryProvider;
+  let rootProvider: MemoryFsProvider;
+  let homeProvider: MemoryFsProvider;
 
   beforeEach(async () => {
     router = new FileSystemRouter();
-    rootProvider = new MemoryProvider({
+    rootProvider = new MemoryFsProvider({
       files: { '/etc/config.txt': 'root config' },
     });
-    homeProvider = new MemoryProvider({
+    homeProvider = new MemoryFsProvider({
       files: { '/user/file.txt': 'home file' },
     });
     await router.mount('/', rootProvider);

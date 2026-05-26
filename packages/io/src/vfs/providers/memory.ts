@@ -1,4 +1,4 @@
-import type { FileHandle, OpenFlags, DirEntry, FileSystemProvider, FileStat } from '../provider.ts';
+import type { FileHandle, OpenFlags, DirEntry, SyncFileSystemProvider, FileStat } from '../provider.ts';
 import { FileSystemError } from '../provider.ts';
 
 /** In-memory file entry. */
@@ -33,7 +33,7 @@ interface MemSymlinkEntry {
 
 type MemEntry = MemFileEntry | MemDirectoryEntry | MemSymlinkEntry;
 
-/** Options for constructing a MemoryProvider. */
+/** Options for constructing a MemoryFsProvider. */
 export interface MemoryProviderOptions {
   files?: Record<string, string | Uint8Array | { content: string | Uint8Array; mode?: number; mtime?: Date }>;
 }
@@ -50,7 +50,7 @@ const encoder = new TextEncoder();
 /**
  * In-memory filesystem provider with full Unix semantics.
  */
-export class MemoryProvider implements FileSystemProvider {
+export class MemoryFsProvider implements SyncFileSystemProvider {
   private root: MemDirectoryEntry;
   private handles = new Map<number, OpenFileHandle>();
   private nextFd = 3; // 0, 1, 2 reserved for stdio
@@ -87,10 +87,10 @@ export class MemoryProvider implements FileSystemProvider {
     }
   }
 
-  async init(): Promise<void> {}
-  async dispose(): Promise<void> {}
+  init(): void {}
+  dispose(): void {}
 
-  async open(path: string, flags: OpenFlags): Promise<FileHandle> {
+  open(path: string, flags: OpenFlags): FileHandle {
     const normalized = this.normalizePath(path);
 
     if (flags.directory) {
@@ -152,14 +152,14 @@ export class MemoryProvider implements FileSystemProvider {
     return { fd, path: normalized, flags };
   }
 
-  async close(handle: FileHandle): Promise<void> {
+  close(handle: FileHandle): void {
     if (!this.handles.has(handle.fd)) {
       throw new FileSystemError('invalid', `Invalid file descriptor: ${handle.fd}`);
     }
     this.handles.delete(handle.fd);
   }
 
-  async read(handle: FileHandle, offset: number, len: number): Promise<Uint8Array> {
+  read(handle: FileHandle, offset: number, len: number): Uint8Array {
     const openHandle = this.handles.get(handle.fd);
     if (!openHandle) {
       throw new FileSystemError('invalid', `Invalid file descriptor: ${handle.fd}`);
@@ -171,7 +171,7 @@ export class MemoryProvider implements FileSystemProvider {
     return entry.source.slice(start, end);
   }
 
-  async write(handle: FileHandle, data: Uint8Array, offset: number): Promise<number> {
+  write(handle: FileHandle, data: Uint8Array, offset: number): number {
     const openHandle = this.handles.get(handle.fd);
     if (!openHandle) {
       throw new FileSystemError('invalid', `Invalid file descriptor: ${handle.fd}`);
@@ -191,7 +191,7 @@ export class MemoryProvider implements FileSystemProvider {
     return data.length;
   }
 
-  async truncate(handle: FileHandle, size: number): Promise<void> {
+  truncate(handle: FileHandle, size: number): void {
     const openHandle = this.handles.get(handle.fd);
     if (!openHandle) {
       throw new FileSystemError('invalid', `Invalid file descriptor: ${handle.fd}`);
@@ -209,7 +209,7 @@ export class MemoryProvider implements FileSystemProvider {
     entry.ctime = now;
   }
 
-  async stat(path: string, options?: { followSymlinks?: boolean }): Promise<FileStat> {
+  stat(path: string, options?: { followSymlinks?: boolean }): FileStat {
     const normalized = this.normalizePath(path);
     const followSymlinks = options?.followSymlinks !== false;
     const entry = this.resolveEntry(normalized, followSymlinks);
@@ -219,7 +219,7 @@ export class MemoryProvider implements FileSystemProvider {
     return this.entryToStat(entry);
   }
 
-  async readdir(path: string): Promise<DirEntry[]> {
+  readdir(path: string): DirEntry[] {
     const normalized = this.normalizePath(path);
     const entry = this.resolveEntry(normalized, true);
     if (!entry) {
@@ -236,7 +236,7 @@ export class MemoryProvider implements FileSystemProvider {
     return entries;
   }
 
-  async mkdir(path: string): Promise<void> {
+  mkdir(path: string): void {
     const normalized = this.normalizePath(path);
     const { dir, base } = this.splitPath(normalized);
     const parent = this.resolveEntry(dir, true);
@@ -258,7 +258,7 @@ export class MemoryProvider implements FileSystemProvider {
     parent.mtime = now;
   }
 
-  async unlink(path: string): Promise<void> {
+  unlink(path: string): void {
     const normalized = this.normalizePath(path);
     const { dir, base } = this.splitPath(normalized);
     const parent = this.resolveEntry(dir, true);
@@ -276,7 +276,7 @@ export class MemoryProvider implements FileSystemProvider {
     parent.mtime = new Date();
   }
 
-  async rmdir(path: string): Promise<void> {
+  rmdir(path: string): void {
     const normalized = this.normalizePath(path);
     const { dir, base } = this.splitPath(normalized);
     const parent = this.resolveEntry(dir, true);
@@ -297,7 +297,7 @@ export class MemoryProvider implements FileSystemProvider {
     parent.mtime = new Date();
   }
 
-  async rename(oldPath: string, newPath: string): Promise<void> {
+  rename(oldPath: string, newPath: string): void {
     const oldNormalized = this.normalizePath(oldPath);
     const newNormalized = this.normalizePath(newPath);
     const { dir: oldDir, base: oldBase } = this.splitPath(oldNormalized);
@@ -324,7 +324,7 @@ export class MemoryProvider implements FileSystemProvider {
     newParent.mtime = now;
   }
 
-  async symlink(target: string, linkPath: string): Promise<void> {
+  symlink(target: string, linkPath: string): void {
     const normalized = this.normalizePath(linkPath);
     const { dir, base } = this.splitPath(normalized);
     const parent = this.resolveEntry(dir, true);
@@ -346,7 +346,7 @@ export class MemoryProvider implements FileSystemProvider {
     parent.mtime = now;
   }
 
-  async readlink(path: string): Promise<string> {
+  readlink(path: string): string {
     const normalized = this.normalizePath(path);
     const entry = this.resolveEntry(normalized, false);
     if (!entry) {
@@ -358,7 +358,7 @@ export class MemoryProvider implements FileSystemProvider {
     return entry.target;
   }
 
-  async link(existingPath: string, newPath: string): Promise<void> {
+  link(existingPath: string, newPath: string): void {
     const existingNormalized = this.normalizePath(existingPath);
     const newNormalized = this.normalizePath(newPath);
     const entry = this.resolveEntry(existingNormalized, true);
@@ -380,7 +380,7 @@ export class MemoryProvider implements FileSystemProvider {
     parent.mtime = new Date();
   }
 
-  async chmod(path: string, mode: number): Promise<void> {
+  chmod(path: string, mode: number): void {
     const normalized = this.normalizePath(path);
     const entry = this.resolveEntry(normalized, true);
     if (!entry) {
@@ -390,7 +390,7 @@ export class MemoryProvider implements FileSystemProvider {
     entry.ctime = new Date();
   }
 
-  async utimes(path: string, atime: Date, mtime: Date): Promise<void> {
+  utimes(path: string, atime: Date, mtime: Date): void {
     const normalized = this.normalizePath(path);
     const entry = this.resolveEntry(normalized, true);
     if (!entry) {
@@ -400,7 +400,7 @@ export class MemoryProvider implements FileSystemProvider {
     entry.mtime = mtime;
   }
 
-  async realpath(path: string): Promise<string> {
+  realpath(path: string): string {
     const normalized = this.normalizePath(path);
     return this.resolveSymlinkPath(normalized, 0);
   }

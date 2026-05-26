@@ -2,45 +2,28 @@
  * Implements wasi:io/streams - input and output stream resources.
  */
 
+import type { SyncInputStreamHandler, SyncOutputStreamHandler } from '@mithic/io/io';
 import type { IoError } from './error.ts';
 import { Pollable } from './poll.ts';
+
+export type { SyncInputStreamHandler as InputStreamHandler, SyncOutputStreamHandler as OutputStreamHandler };
 
 export type StreamError =
   | { tag: 'last-operation-failed'; val: IoError }
   | { tag: 'closed' };
 
-export interface InputStreamHandler {
-  /** Non-blocking read. Returns undefined if no data available yet. */
-  read?(len: number): Uint8Array | undefined;
-  /** Blocking read. Must return data or throw StreamError. */
-  blockingRead(len: number): Uint8Array;
-  /** Skip bytes, returning count skipped. */
-  skip?(len: number): number;
-  /** Subscribe for readiness. */
-  subscribe?(): Pollable;
-  /** Cleanup. */
-  drop?(): void;
-}
-
-export interface OutputStreamHandler {
-  /** Returns available write capacity. */
-  checkWrite?(): number;
-  /** Write data. */
-  write(data: Uint8Array): void;
-  /** Flush buffered output. */
-  flush?(): void;
-  /** Subscribe for write readiness. */
-  subscribe?(): Pollable;
-  /** Cleanup. */
-  drop?(): void;
-}
-
 export class InputStream {
-  #handler: InputStreamHandler;
+  #handler: SyncInputStreamHandler;
+  #subscribe?: () => Pollable;
+  #isatty: boolean;
 
-  constructor(handler: InputStreamHandler) {
+  constructor(handler: SyncInputStreamHandler, subscribe?: () => Pollable, isatty = false) {
     this.#handler = handler;
+    this.#subscribe = subscribe;
+    this.#isatty = isatty;
   }
+
+  get isatty(): boolean { return this.#isatty; }
 
   read(len: bigint): Uint8Array {
     const n = Number(len);
@@ -49,7 +32,6 @@ export class InputStream {
       if (data !== undefined) {
         return data;
       }
-      // No data available — return empty (non-blocking semantics)
       return new Uint8Array(0);
     }
     return this.#handler.blockingRead(n);
@@ -82,8 +64,8 @@ export class InputStream {
   }
 
   subscribe(): Pollable {
-    if (this.#handler.subscribe) {
-      return this.#handler.subscribe();
+    if (this.#subscribe) {
+      return this.#subscribe();
     }
     return new Pollable();
   }
@@ -96,12 +78,18 @@ export class InputStream {
 }
 
 export class OutputStream {
-  #handler: OutputStreamHandler;
+  #handler: SyncOutputStreamHandler;
+  #subscribe?: () => Pollable;
+  #isatty: boolean;
   #open = true;
 
-  constructor(handler: OutputStreamHandler) {
+  constructor(handler: SyncOutputStreamHandler, subscribe?: () => Pollable, isatty = false) {
     this.#handler = handler;
+    this.#subscribe = subscribe;
+    this.#isatty = isatty;
   }
+
+  get isatty(): boolean { return this.#isatty; }
 
   checkWrite(): bigint {
     if (!this.#open) {
@@ -143,8 +131,8 @@ export class OutputStream {
   }
 
   subscribe(): Pollable {
-    if (this.#handler.subscribe) {
-      return this.#handler.subscribe();
+    if (this.#subscribe) {
+      return this.#subscribe();
     }
     return new Pollable();
   }
@@ -153,29 +141,25 @@ export class OutputStream {
     this.write(new Uint8Array(Number(len)));
   }
 
-  blockingWriteZeroesAndFlush(len: bigint): void {
-    this.blockingWriteAndFlush(new Uint8Array(Number(len)));
-  }
-
   splice(src: InputStream, len: bigint): bigint {
-    const available = Number(this.checkWrite());
-    const spliceLen = Math.min(Number(len), available);
-    const bytes = src.read(BigInt(spliceLen));
-    if (bytes.byteLength > 0) {
-      this.#handler.write(bytes);
-    }
-    return BigInt(bytes.byteLength);
+    const n = Number(len);
+    const capacity = Number(this.checkWrite());
+    const toRead = Math.min(n, capacity);
+    if (toRead <= 0) return 0n;
+
+    const data = src.read(BigInt(toRead));
+    if (data.byteLength === 0) return 0n;
+    this.write(data);
+    return BigInt(data.byteLength);
   }
 
   blockingSplice(src: InputStream, len: bigint): bigint {
-    const bytes = src.blockingRead(len);
-    if (bytes.byteLength > 0) {
-      this.#handler.write(bytes);
-      if (this.#handler.flush) {
-        this.#handler.flush();
-      }
-    }
-    return BigInt(bytes.byteLength);
+    const n = Number(len);
+    const data = src.blockingRead(BigInt(n));
+    if (data.byteLength === 0) return 0n;
+    this.write(data);
+    this.flush();
+    return BigInt(data.byteLength);
   }
 
   [Symbol.dispose](): void {

@@ -8,7 +8,6 @@ describe('IoLoop', () => {
     const port = loop.addWorker();
     assert.ok(port);
     assert.strictEqual(typeof port.postMessage, 'function');
-    assert.strictEqual(typeof port.on, 'function');
     loop.dispose();
   });
 

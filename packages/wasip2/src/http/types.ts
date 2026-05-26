@@ -5,16 +5,15 @@
 
 import { InputStream, OutputStream } from '../io/streams.ts';
 import { Pollable } from '../io/poll.ts';
-import type { HttpClient, HttpResponse } from '@mithic/io/net';
-import { FetchHttpClient } from '@mithic/io/net';
+import { type SyncHttpClient, type HttpResponse, DisabledHttpClient } from '@mithic/io/net';
 
-let _defaultHttpClient: HttpClient = new FetchHttpClient();
+let _defaultHttpClient: SyncHttpClient = new DisabledHttpClient();
 
-export function _setHttpClient(client: HttpClient): void {
+export function _setHttpClient(client: SyncHttpClient): void {
   _defaultHttpClient = client;
 }
 
-export function _getHttpClient(): HttpClient {
+export function _getHttpClient(): SyncHttpClient {
   return _defaultHttpClient;
 }
 
@@ -251,10 +250,7 @@ function incomingBodyCreateFromBuffer(data: Uint8Array | undefined): IncomingBod
       offset += toRead;
       return slice;
     },
-    subscribe(): Pollable {
-      return new Pollable(() => true);
-    },
-  });
+  }, () => new Pollable(() => true));
 
   return incomingBody;
 }
@@ -297,7 +293,7 @@ function futureIncomingResponseCreate(
   headers: [string, string][],
   bodyData: Uint8Array | null,
   timeoutMs: number,
-  httpClient?: HttpClient,
+  httpClient?: SyncHttpClient,
 ): FutureIncomingResponse {
   const future = new FutureIncomingResponse(INTERNAL);
   const internal = (future as unknown as Record<symbol, FutureIncomingResponseInternal>)[INTERNAL];
@@ -308,35 +304,33 @@ function futureIncomingResponseCreate(
   }
 
   const client = httpClient ?? _getHttpClient();
-  internal.promise = client.send({
-    method,
-    url,
-    headers,
-    body: (bodyData && method !== 'GET' && method !== 'HEAD') ? bodyData : undefined,
-  }).then(
-    (response) => {
-      if (internal.timer) { clearTimeout(internal.timer); internal.timer = undefined; }
-      internal.result = {
+  try {
+    const response = client.send({
+      method,
+      url,
+      headers,
+      body: (bodyData && method !== 'GET' && method !== 'HEAD') ? bodyData : undefined,
+    });
+    if (internal.timer) { clearTimeout(internal.timer); internal.timer = undefined; }
+    internal.result = {
+      tag: 'ok',
+      val: {
         tag: 'ok',
-        val: {
-          tag: 'ok',
-          val: incomingResponseCreateFromClientResponse(response),
-        },
-      };
-      internal.resolved = true;
-    },
-    (err: Error) => {
-      if (internal.timer) { clearTimeout(internal.timer); internal.timer = undefined; }
-      internal.result = {
-        tag: 'ok',
-        val: {
-          tag: 'err',
-          val: mapFetchError(err),
-        },
-      };
-      internal.resolved = true;
-    },
-  );
+        val: incomingResponseCreateFromClientResponse(response),
+      },
+    };
+    internal.resolved = true;
+  } catch (err) {
+    if (internal.timer) { clearTimeout(internal.timer); internal.timer = undefined; }
+    internal.result = {
+      tag: 'ok',
+      val: {
+        tag: 'err',
+        val: mapFetchError(err as Error),
+      },
+    };
+    internal.resolved = true;
+  }
 
   return future;
 }
@@ -1008,7 +1002,7 @@ export function httpErrorCode(err: unknown): ErrorCode | undefined {
 // --- Exported handler function for outgoing-handler ---
 
 /** Execute an outgoing request - called by outgoing-handler. Accepts optional client for instance isolation. */
-export function outgoingRequestHandle(request: OutgoingRequest, options?: RequestOptions, client?: HttpClient): FutureIncomingResponse {
+export function outgoingRequestHandle(request: OutgoingRequest, options?: RequestOptions, client?: SyncHttpClient): FutureIncomingResponse {
   const internal = request[INTERNAL];
   const scheme = schemeString(internal.scheme);
   const method = (internal.method as { val?: string }).val || internal.method.tag;

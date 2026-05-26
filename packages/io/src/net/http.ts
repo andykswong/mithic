@@ -1,3 +1,5 @@
+import type { MaybePromise } from '../types.ts';
+
 export interface HttpRequest {
   method: string;
   url: string;
@@ -12,8 +14,12 @@ export interface HttpResponse {
 }
 
 export interface HttpClient {
-  send(request: HttpRequest): Promise<HttpResponse>;
+  send(request: HttpRequest): MaybePromise<HttpResponse>;
   dispose?(): void;
+}
+
+export interface SyncHttpClient extends HttpClient {
+  send(request: HttpRequest): HttpResponse;
 }
 
 export interface FetchHttpClientOptions {
@@ -30,4 +36,4 @@ export interface HttpServer {
   close(): Promise<void>;
 }
 
-export type IncomingHttpHandler = (request: HttpRequest) => Promise<HttpResponse>;
+export type IncomingHttpHandler = (request: HttpRequest) => MaybePromise<HttpResponse>;

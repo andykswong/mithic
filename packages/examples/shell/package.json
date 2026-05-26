@@ -1,0 +1,32 @@
+{
+  "name": "@mithic/example-shell",
+  "version": "0.3.0",
+  "private": true,
+  "description": "mithic shell example - xterm.js browser terminal with JustBashShell",
+  "type": "module",
+  "scripts": {
+    "clean": "rimraf dist",
+    "build": "vite build",
+    "dev": "vite",
+    "test": "echo 'ok'"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andykswong/mithic.git"
+  },
+  "author": "Andy K.S. Wong <andykswong@outlook.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/andykswong/mithic/issues"
+  },
+  "homepage": "https://github.com/andykswong/mithic",
+  "dependencies": {
+    "@mithic/io": "^0.4",
+    "@mithic/process": "^0.1",
+    "@mithic/just-bash": "^0.1",
+    "@xterm/xterm": "^6.0",
+    "@xterm/addon-fit": "^0.11"
+  },
+  "devDependencies": {
+  }
+}

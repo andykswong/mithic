@@ -5,15 +5,18 @@ import {
   _setPreopens,
   _addPreopen,
   _clearPreopens,
-  _setFileData,
-  _getFileData,
 } from './preopens.ts';
-import { Descriptor, type FileData } from './types.ts';
+import { Descriptor } from './types.ts';
+import { SyncFsDescriptorHandler } from './sync-fs-handler.ts';
+import { MemoryFsProvider } from '@mithic/io/vfs';
+
+function makeDescriptor(): Descriptor {
+  return new Descriptor(new SyncFsDescriptorHandler(new MemoryFsProvider(), '/'));
+}
 
 describe('preopens', () => {
   it('default preopens has one root entry [Descriptor, "/"]', () => {
-    // Reset to default state
-    _setFileData({ dir: {} });
+    _setPreopens({ '/': makeDescriptor() });
     const dirs = getDirectories();
     assert.equal(dirs.length, 1);
     assert.ok(dirs[0][0] instanceof Descriptor);
@@ -21,7 +24,7 @@ describe('preopens', () => {
   });
 
   it('getDirectories() returns array of [Descriptor, string] tuples', () => {
-    _setFileData({ dir: {} });
+    _setPreopens({ '/': makeDescriptor() });
     const dirs = getDirectories();
     assert.ok(Array.isArray(dirs));
     for (const [desc, path] of dirs) {
@@ -31,9 +34,9 @@ describe('preopens', () => {
   });
 
   it('_setPreopens replaces all preopens', () => {
-    const fsA: FileData = { dir: { 'a.txt': { source: 'aaa' } } };
-    const fsB: FileData = { dir: { 'b.txt': { source: 'bbb' } } };
-    _setPreopens({ '/home': fsA, '/tmp': fsB });
+    const descA = makeDescriptor();
+    const descB = makeDescriptor();
+    _setPreopens({ '/home': descA, '/tmp': descB });
 
     const dirs = getDirectories();
     assert.equal(dirs.length, 2);
@@ -43,9 +46,9 @@ describe('preopens', () => {
   });
 
   it('_addPreopen adds to existing preopens', () => {
-    _setFileData({ dir: {} });
+    _setPreopens({ '/': makeDescriptor() });
     const initialCount = getDirectories().length;
-    _addPreopen('/data', { dir: { 'file.txt': { source: 'data' } } });
+    _addPreopen('/data', makeDescriptor());
     const dirs = getDirectories();
     assert.equal(dirs.length, initialCount + 1);
     const last = dirs[dirs.length - 1];
@@ -54,40 +57,19 @@ describe('preopens', () => {
   });
 
   it('_clearPreopens removes all preopens', () => {
-    _setFileData({ dir: {} });
+    _setPreopens({ '/': makeDescriptor() });
     assert.ok(getDirectories().length > 0);
     _clearPreopens();
     assert.equal(getDirectories().length, 0);
   });
 
-  it('_setFileData resets to single root preopen', () => {
+  it('_addPreopen with "/" adds root preopen', () => {
     _clearPreopens();
-    assert.equal(getDirectories().length, 0);
-
-    const newFs: FileData = { dir: { 'test.txt': { source: 'hello' } } };
-    _setFileData(newFs);
-
+    const rootDesc = makeDescriptor();
+    _addPreopen('/', rootDesc);
     const dirs = getDirectories();
     assert.equal(dirs.length, 1);
     assert.equal(dirs[0][1], '/');
-    assert.ok(dirs[0][0] instanceof Descriptor);
-  });
-
-  it('_getFileData returns current file data', () => {
-    const testFs: FileData = { dir: { 'x.txt': { source: 'x' } } };
-    _setFileData(testFs);
-    const result = _getFileData();
-    assert.equal(result, testFs);
-  });
-
-  it('_addPreopen with "/" updates root preopen and file data', () => {
-    _clearPreopens();
-    const rootFs: FileData = { dir: { 'root.txt': { source: 'root' } } };
-    _addPreopen('/', rootFs);
-    const data = _getFileData();
-    assert.equal(data, rootFs);
-    const dirs = getDirectories();
-    assert.equal(dirs.length, 1);
-    assert.equal(dirs[0][1], '/');
+    assert.equal(dirs[0][0], rootDesc);
   });
 });

@@ -3,14 +3,9 @@
  * Pipe implementation and convenience helpers.
  */
 
-import type { InputStream, OutputStream, InputStreamHandler, OutputStreamHandler, StreamError } from '@mithic/wasip2/io/streams';
+import { InputStream, OutputStream, type InputStreamHandler, type OutputStreamHandler, type StreamError } from '@mithic/wasip2/io/streams';
 import { Pollable } from '@mithic/wasip2/io/poll';
 import type { Process, PipeOptions, SpawnOptions, ProcessManager } from './types.ts';
-
-export interface PipeEnd {
-  input: InputStreamHandler;
-  output: OutputStreamHandler;
-}
 
 /**
  * Convenience helper: spawn a process with pipes pre-created for all three streams.
@@ -44,11 +39,10 @@ export function spawnWithPipes(
 const DEFAULT_BUFFER_SIZE = 65536;
 
 /**
- * Create an anonymous pipe — a linked (input, output) stream handler pair.
- * Data written to the output handler is readable from the input handler.
- * This is the low-level primitive; use manager.createPipe() for the WIT-level API.
+ * Create an anonymous pipe — a linked (InputStream, OutputStream) pair.
+ * Data written to the output is readable from the input.
  */
-export function createPipeHandlers(options?: PipeOptions): PipeEnd {
+export function createPipe(options?: PipeOptions): { input: InputStream; output: OutputStream } {
   const bufferSize = options?.bufferSize ?? DEFAULT_BUFFER_SIZE;
 
   if (options?.shared) {
@@ -59,13 +53,13 @@ export function createPipeHandlers(options?: PipeOptions): PipeEnd {
 
 // --- QueuePipe: Uint8Array[] queue for same-thread use ---
 
-function createQueuePipe(bufferSize: number): PipeEnd {
+function createQueuePipe(bufferSize: number): { input: InputStream; output: OutputStream } {
   const queue: Uint8Array[] = [];
   let buffered = 0;
   let writerClosed = false;
   let readerClosed = false;
 
-  const input: InputStreamHandler = {
+  const inputHandler: InputStreamHandler = {
     read(len: number): Uint8Array | undefined {
       if (queue.length === 0) {
         if (writerClosed) throw { tag: 'closed' } as StreamError;
@@ -81,10 +75,6 @@ function createQueuePipe(bufferSize: number): PipeEnd {
       return dequeue(len);
     },
 
-    subscribe(): Pollable {
-      return new Pollable(() => queue.length > 0 || writerClosed);
-    },
-
     drop(): void {
       readerClosed = true;
       queue.length = 0;
@@ -92,7 +82,7 @@ function createQueuePipe(bufferSize: number): PipeEnd {
     },
   };
 
-  const output: OutputStreamHandler = {
+  const outputHandler: OutputStreamHandler = {
     checkWrite(): number {
       if (readerClosed) return 0;
       return Math.max(0, bufferSize - buffered);
@@ -108,10 +98,6 @@ function createQueuePipe(bufferSize: number): PipeEnd {
     },
 
     flush(): void {},
-
-    subscribe(): Pollable {
-      return new Pollable(() => readerClosed || buffered < bufferSize);
-    },
 
     drop(): void {
       writerClosed = true;
@@ -132,13 +118,15 @@ function createQueuePipe(bufferSize: number): PipeEnd {
     return result;
   }
 
-  return { input, output };
+  return {
+    input: new InputStream(inputHandler, () => new Pollable(() => queue.length > 0 || writerClosed)),
+    output: new OutputStream(outputHandler, () => new Pollable(() => readerClosed || buffered < bufferSize)),
+  };
 }
 
 // --- SharedPipe: SharedArrayBuffer ring buffer for cross-thread use ---
 
-function createSharedPipe(bufferSize: number): PipeEnd {
-  // Layout: [readPos (4 bytes)] [writePos (4 bytes)] [writerClosed (4 bytes)] [readerClosed (4 bytes)] [data...]
+function createSharedPipe(bufferSize: number): { input: InputStream; output: OutputStream } {
   const HEADER_SIZE = 16;
   const sab = new SharedArrayBuffer(HEADER_SIZE + bufferSize);
   const control = new Int32Array(sab, 0, 4);
@@ -159,7 +147,7 @@ function createSharedPipe(bufferSize: number): PipeEnd {
     return bufferSize - 1 - available();
   }
 
-  const input: InputStreamHandler = {
+  const inputHandler: InputStreamHandler = {
     read(len: number): Uint8Array | undefined {
       const avail = available();
       if (avail === 0) {
@@ -174,7 +162,6 @@ function createSharedPipe(bufferSize: number): PipeEnd {
       let avail = available();
       if (avail === 0) {
         if (Atomics.load(control, WRITER_CLOSED)) throw { tag: 'closed' } as StreamError;
-        // Block until data arrives or writer closes
         Atomics.wait(control, WRITE_POS, Atomics.load(control, WRITE_POS));
         avail = available();
         if (avail === 0 && Atomics.load(control, WRITER_CLOSED)) {
@@ -185,35 +172,27 @@ function createSharedPipe(bufferSize: number): PipeEnd {
       return readFromRing(toRead);
     },
 
-    subscribe(): Pollable {
-      return new Pollable(() => available() > 0 || Atomics.load(control, WRITER_CLOSED) !== 0);
-    },
-
     drop(): void {
       Atomics.store(control, READER_CLOSED, 1);
       Atomics.notify(control, READER_CLOSED);
     },
   };
 
-  const output: OutputStreamHandler = {
+  const outputHandler: OutputStreamHandler = {
     checkWrite(): number {
       if (Atomics.load(control, READER_CLOSED)) return 0;
       return freeSpace();
     },
 
-    write(data: Uint8Array): void {
+    write(buf: Uint8Array): void {
       if (Atomics.load(control, READER_CLOSED)) {
         throw { tag: 'last-operation-failed', val: { toDebugString: () => 'broken-pipe' } } as StreamError;
       }
-      if (data.byteLength === 0) return;
-      writeToRing(data);
+      if (buf.byteLength === 0) return;
+      writeToRing(buf);
     },
 
     flush(): void {},
-
-    subscribe(): Pollable {
-      return new Pollable(() => Atomics.load(control, READER_CLOSED) !== 0 || freeSpace() > 0);
-    },
 
     drop(): void {
       Atomics.store(control, WRITER_CLOSED, 1);
@@ -241,5 +220,8 @@ function createSharedPipe(bufferSize: number): PipeEnd {
     Atomics.notify(control, WRITE_POS);
   }
 
-  return { input, output };
+  return {
+    input: new InputStream(inputHandler, () => new Pollable(() => available() > 0 || Atomics.load(control, WRITER_CLOSED) !== 0)),
+    output: new OutputStream(outputHandler, () => new Pollable(() => Atomics.load(control, READER_CLOSED) !== 0 || freeSpace() > 0)),
+  };
 }

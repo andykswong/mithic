@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it, beforeEach } from 'node:test';
-import { MemoryProvider } from './providers/memory.ts';
+import { MemoryFsProvider } from './providers/memory.ts';
 import { FileSystemRouter } from './router.ts';
 import { VFSDirectoryHandle } from './handles.ts';
 
@@ -10,7 +10,7 @@ describe('VFS Handles', () => {
 
   beforeEach(async () => {
     router = new FileSystemRouter();
-    await router.mount('/', new MemoryProvider());
+    await router.mount('/', new MemoryFsProvider());
     root = new VFSDirectoryHandle(router, '/');
   });
 

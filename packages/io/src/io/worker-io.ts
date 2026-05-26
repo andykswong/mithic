@@ -5,7 +5,6 @@
  * synchronous I/O calls from within a worker.
  */
 
-import type { MessagePort } from 'node:worker_threads';
 import { createBlockingCall, type BlockingCallFn } from './sync-bridge.ts';
 
 /** Blocking I/O interface for WASM worker threads. */

@@ -41,7 +41,8 @@
   "dependencies": {
     "@mithic/io": "^0.4",
     "@mithic/wasip2": "^0.1",
-    "@mithic/process": "^0.1"
+    "@mithic/process": "^0.1",
+    "@mithic/just-bash": "^0.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0",
@@ -64,8 +65,10 @@
     "./packages/io",
     "./packages/wasip2",
     "./packages/process",
+    "./packages/just-bash",
     "./packages/examples/simple",
     "./packages/examples/rust-cli",
-    "./packages/examples/browser"
+    "./packages/examples/browser",
+    "./packages/examples/shell"
   ]
 }

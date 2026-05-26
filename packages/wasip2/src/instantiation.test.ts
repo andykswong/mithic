@@ -2,9 +2,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { WASIShim } from './instantiation.ts';
 import { imports } from './imports.ts';
-import { Descriptor, type FileData } from './filesystem/types.ts';
+import { Descriptor } from './filesystem/types.ts';
+import { SyncFsDescriptorHandler } from './filesystem/sync-fs-handler.ts';
+import { MemoryFsProvider } from '@mithic/io/vfs';
 import { InputStream, OutputStream } from './io/streams.ts';
-import type { SocketProvider, IoTcpSocket, IoUdpSocket } from './sockets/index.ts';
+import type { SyncSocketProvider, IoTcpSocket, IoUdpSocket } from './sockets/index.ts';
 import type { IpAddress } from '@mithic/io/net';
 import { TcpSocket } from './sockets/tcp.ts';
 
@@ -147,14 +149,14 @@ describe('WASIShim', () => {
   });
 
   it('two WASIShim instances with different preopens do not interfere', () => {
-    const fsA: FileData = { dir: { 'a.txt': { source: 'content-a' } } };
-    const fsB: FileData = { dir: { 'b.txt': { source: 'content-b' } } };
+    const descA = new Descriptor(new SyncFsDescriptorHandler(new MemoryFsProvider({ files: { '/a.txt': 'content-a' } }), '/'));
+    const descB = new Descriptor(new SyncFsDescriptorHandler(new MemoryFsProvider({ files: { '/b.txt': 'content-b' } }), '/'));
 
     const shim1 = new WASIShim({
-      sandbox: { preopens: { '/': fsA } },
+      sandbox: { preopens: { '/': descA } },
     });
     const shim2 = new WASIShim({
-      sandbox: { preopens: { '/': fsB } },
+      sandbox: { preopens: { '/': descB } },
     });
 
     const obj1 = shim1.getImportObject();
@@ -187,15 +189,12 @@ describe('WASIShim', () => {
   });
 
   it('WASIShim with preopens — getDirectories returns correct descriptors', () => {
-    const testFs: FileData = {
-      dir: {
-        'hello.txt': { source: 'Hello World' },
-        docs: { dir: { 'readme.txt': { source: 'Read me' } } },
-      },
-    };
+    const testDesc = new Descriptor(new SyncFsDescriptorHandler(
+      new MemoryFsProvider({ files: { '/hello.txt': 'Hello World', '/docs/readme.txt': 'Read me' } }), '/'
+    ));
 
     const shim = new WASIShim({
-      sandbox: { preopens: { '/': testFs } },
+      sandbox: { preopens: { '/': testDesc } },
     });
 
     const obj = shim.getImportObject();
@@ -289,22 +288,67 @@ describe('WASIShim', () => {
     assert.deepEqual(written[0], new Uint8Array([65, 66]));
   });
 
+  it('configures stdin with StdioConfig (handler + isatty)', () => {
+    const shim = new WASIShim({
+      sandbox: {
+        stdin: {
+          handler: { blockingRead() { return new Uint8Array([42]); } },
+          isatty: true,
+        },
+      },
+    });
+    const obj = shim.getImportObject();
+
+    const stdinInterface = obj['wasi:cli/stdin'] as { getStdin: () => InputStream };
+    const stream = stdinInterface.getStdin();
+    assert.deepEqual(stream.blockingRead(1n), new Uint8Array([42]));
+
+    const termStdin = obj['wasi:cli/terminal-stdin'] as { getTerminalStdin: () => unknown };
+    assert.ok(termStdin.getTerminalStdin() !== undefined);
+  });
+
+  it('terminal returns undefined when isatty is false', () => {
+    const shim = new WASIShim({
+      sandbox: {
+        stdin: { blockingRead() { return new Uint8Array(0); } },
+      },
+    });
+    const obj = shim.getImportObject();
+    const termStdin = obj['wasi:cli/terminal-stdin'] as { getTerminalStdin: () => unknown };
+    assert.equal(termStdin.getTerminalStdin(), undefined);
+  });
+
+  it('two WASIShim instances with different isatty do not interfere', () => {
+    const shim1 = new WASIShim({
+      sandbox: { stdout: { handler: { write() {} }, isatty: true } },
+    });
+    const shim2 = new WASIShim({
+      sandbox: { stdout: { handler: { write() {} }, isatty: false } },
+    });
+
+    const term1 = (shim1.getImportObject()['wasi:cli/terminal-stdout'] as { getTerminalStdout: () => unknown }).getTerminalStdout();
+    const term2 = (shim2.getImportObject()['wasi:cli/terminal-stdout'] as { getTerminalStdout: () => unknown }).getTerminalStdout();
+
+    assert.ok(term1 !== undefined);
+    assert.equal(term2, undefined);
+  });
+
   it('two WASIShim instances with different socket providers do not interfere', () => {
     // Create two mock socket providers that track calls
     const calls1: string[] = [];
     const calls2: string[] = [];
 
-    function makeMockProvider(calls: string[]): SocketProvider {
+    function makeMockProvider(calls: string[]): SyncSocketProvider {
       return {
-        async createTcpSocket(): Promise<IoTcpSocket> {
+        createTcpSocket(): IoTcpSocket {
           calls.push('createTcpSocket');
           throw new Error('mock tcp');
         },
-        async createUdpSocket(): Promise<IoUdpSocket> {
+        createUdpSocket(): IoUdpSocket {
           calls.push('createUdpSocket');
           throw new Error('mock udp');
         },
-        async resolveName(name: string): Promise<IpAddress[]> {
+        resolveName(name: string): IpAddress[] {
           calls.push(`resolveName:${name}`);
           return [{ family: 'ipv4', address: '127.0.0.1' }];
         },

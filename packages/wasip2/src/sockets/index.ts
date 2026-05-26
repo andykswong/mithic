@@ -5,10 +5,10 @@ export * as tcpCreateSocket from './tcp-create-socket.ts';
 export * as udp from './udp.ts';
 export * as udpCreateSocket from './udp-create-socket.ts';
 export * as ipNameLookup from './ip-name-lookup.ts';
-export type { SocketProvider, TcpSocket as IoTcpSocket, UdpSocket as IoUdpSocket } from '@mithic/io/net';
+export type { SyncSocketProvider, SyncTcpSocket as IoTcpSocket, SyncUdpSocket as IoUdpSocket } from '@mithic/io/net';
 export { DisabledSocketProvider } from '@mithic/io/net';
 
-import type { SocketProvider } from '@mithic/io/net';
+import type { SyncSocketProvider } from '@mithic/io/net';
 import type { WasiSockets } from '../interfaces.ts';
 import { Network } from './network.ts';
 import { TcpSocket } from './tcp.ts';
@@ -18,7 +18,7 @@ import type { IpAddressFamily, ErrorCode } from './network.ts';
 
 export type { WasiSockets };
 
-export function _createIsolatedSockets(provider: SocketProvider): WasiSockets {
+export function _createIsolatedSockets(provider: SyncSocketProvider): WasiSockets {
   return {
     network: { Network },
     instanceNetwork: {

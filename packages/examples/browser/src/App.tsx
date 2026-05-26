@@ -1,45 +1,70 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { IoLoop, createCallHandler } from '@mithic/io/io';
+import type { InputStreamHandler, OutputStreamHandler } from '@mithic/io/io';
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
 export function App() {
   const workerRef = useRef<Worker | undefined>(undefined);
-  const stdinSignalRef = useRef<Int32Array | null>(null);
-  const stdinDataRef = useRef<Uint8Array | null>(null);
+  const stdinQueueRef = useRef<Uint8Array[]>([]);
+  const stdinResolveRef = useRef<((data: Uint8Array) => void) | null>(null);
 
   const [logs, setLogs] = useState<string[]>([]);
-  const log = useCallback((val: string) => setLogs((logs) => [...logs, `${val}`]), [setLogs]);
+  const log = useCallback((val: string) => setLogs((prev) => [...prev, val]), []);
+
   const input = useCallback((val: string) => {
-    const signal = stdinSignalRef.current;
-    const data = stdinDataRef.current;
-    if (!signal || !data) return;
-
-    // Write input bytes into the shared data buffer
     const bytes = encoder.encode(val + '\n');
-    const writeLen = Math.min(bytes.byteLength, data.byteLength);
-    data.set(bytes.subarray(0, writeLen));
-
-    // Signal the worker: data length, then ready flag
-    Atomics.store(signal, 1, writeLen);
-    Atomics.store(signal, 0, 1);
-    Atomics.notify(signal, 0);
-
+    const resolve = stdinResolveRef.current;
+    if (resolve) {
+      stdinResolveRef.current = null;
+      resolve(bytes);
+    } else {
+      stdinQueueRef.current.push(bytes);
+    }
     log(`> ${val}\n`);
   }, [log]);
 
   useEffect(() => {
-    const worker = workerRef.current = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
-    worker.onmessage = (e: MessageEvent) => {
-      if (e.data?.type === 'stdout' || e.data?.type === 'stderr') {
-        log(e.data.value);
-      } else if (e.data?.type === 'stdin-init') {
-        // Worker sent us the shared buffers for stdin communication
-        stdinSignalRef.current = new Int32Array(e.data.signal);
-        stdinDataRef.current = new Uint8Array(e.data.data);
-      }
+    const stdinHandler: InputStreamHandler = {
+      blockingRead(len: number): Promise<Uint8Array> {
+        const queued = stdinQueueRef.current.shift();
+        if (queued) return Promise.resolve(queued.subarray(0, len));
+        return new Promise((resolve) => {
+          stdinResolveRef.current = (data) => resolve(data.subarray(0, len));
+        });
+      },
     };
 
-    return () => workerRef.current?.terminate();
+    const stdoutHandler: OutputStreamHandler = {
+      write(buf: Uint8Array) {
+        log(decoder.decode(buf));
+      },
+    };
+
+    const stderrHandler: OutputStreamHandler = {
+      write(buf: Uint8Array) {
+        log(decoder.decode(buf));
+      },
+    };
+
+    const loop = new IoLoop({
+      onCall: createCallHandler({
+        stdin: stdinHandler,
+        stdout: stdoutHandler,
+        stderr: stderrHandler,
+      }),
+    });
+
+    const port = loop.addWorker();
+
+    const worker = workerRef.current = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+    worker.postMessage({ type: 'port', port }, [port]);
+
+    return () => {
+      workerRef.current?.terminate();
+      loop.dispose();
+    };
   }, [log]);
 
   return <Console logs={logs} onInput={input} />;
@@ -47,7 +72,7 @@ export function App() {
 
 function Console({ logs, onInput }: { logs: string[], onInput?: (val: string) => void }) {
   const handleKey = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key !== 'Enter') { return; }
+    if (e.key !== 'Enter') return;
     const val = e.currentTarget.value;
     onInput?.(val);
     e.currentTarget.value = '';

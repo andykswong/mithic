@@ -159,10 +159,7 @@ describe('InputStream', () => {
       blockingRead(_len: number) {
         return new Uint8Array(0);
       },
-      subscribe() {
-        return customPollable;
-      },
-    });
+    }, () => customPollable);
 
     const p = stream.subscribe();
     strictEqual(p, customPollable);
@@ -449,10 +446,7 @@ describe('OutputStream', () => {
     const customPollable = new Pollable(() => false);
     const stream = new OutputStream({
       write(_data: Uint8Array) {},
-      subscribe() {
-        return customPollable;
-      },
-    });
+    }, () => customPollable);
 
     const p = stream.subscribe();
     strictEqual(p, customPollable);

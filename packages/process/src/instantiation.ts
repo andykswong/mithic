@@ -8,7 +8,7 @@
  */
 
 import type { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
-import type { Process, SpawnOptions, ProcessManager, PipeOptions } from './types.ts';
+import { Process, type SpawnOptions, type ProcessManager, type PipeOptions } from './types.ts';
 import { SimpleProcessManager, type SimpleProcessManagerConfig } from './impl/simple.ts';
 
 export interface WASIProcessConfig {
@@ -35,14 +35,16 @@ export class WASIProcess {
     }
   }
 
-  /** Get the mithic:process/manager import object for component instantiation. */
+  /** Get the mithic:process import object for component instantiation. */
   getImportObject(): {
+    'mithic:process/types': { Process: typeof Process };
     'mithic:process/manager': {
       spawn: (file: string, args: string[], options?: SpawnOptions) => Process;
       createPipe: (options?: PipeOptions) => { input: InputStream; output: OutputStream };
     };
   } {
     return {
+      'mithic:process/types': { Process },
       'mithic:process/manager': {
         spawn: (file, args, options) => this.#manager.spawn(file, args, options),
         createPipe: (options) => this.#manager.createPipe(options),

@@ -8,7 +8,7 @@ describe('NodeSocketProvider', () => {
   let provider: NodeSocketProvider;
   const cleanups: (() => Promise<void> | void)[] = [];
 
-  function track<T extends { close(): Promise<void> }>(resource: T): T {
+  function track<T extends { close(): void | Promise<void> }>(resource: T): T {
     cleanups.push(() => resource.close());
     return resource;
   }
@@ -125,7 +125,7 @@ describe('NodeSocketProvider', () => {
       await udp.close();
       // Sending after close should throw
       await assert.rejects(
-        () => udp.send(new Uint8Array(1), { host: '127.0.0.1', port: 9999 }),
+        async () => { await udp.send(new Uint8Array(1), { host: '127.0.0.1', port: 9999 }); },
       );
     });
   });

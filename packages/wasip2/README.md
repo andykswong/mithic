@@ -8,7 +8,7 @@
 
 ## Overview
 
-`@mithic/wasip2` is an implementation of WASI Preview 2 interfaces. It allows WASM components transpiled by jco to run with a fully functional filesystem, HTTP, sockets, stdio, and clock implementation.
+`@mithic/wasip2` is an implementation of WASI Preview 2 interfaces. It allows WASM components transpiled by jco to run with a fully functional filesystem, HTTP, sockets, stdio, and clock implementation. All I/O delegates to sync provider interfaces from `@mithic/io`.
 
 ## Install
 
@@ -18,31 +18,64 @@ npm install @mithic/wasip2
 
 ## Usage
 
+### In-memory (same thread)
+
 ```typescript
 import { WASIShim } from '@mithic/wasip2/instantiation';
+import { Descriptor } from '@mithic/wasip2/filesystem/types';
+import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
+import { MemoryFsProvider } from '@mithic/io/vfs';
 
 const shim = new WASIShim({
   sandbox: {
-    preopens: { '/': { dir: { 'home': { dir: {} } } } },
-    env: { HOME: '/home', PATH: '/bin' },
-    args: ['my-program', '--verbose'],
+    preopens: {
+      '/': new Descriptor(new SyncFsDescriptorHandler(
+        new MemoryFsProvider({ files: { '/hello.txt': 'Hello World' } }), '/'
+      )),
+    },
+    env: { HOME: '/', PATH: '/bin' },
+    args: ['my-program'],
   },
 });
 
-// Instantiate a jco-transpiled component
 const { instantiate } = await import('./my-component.js');
 const instance = await instantiate(null, shim.getImportObject());
 instance.run.run();
 ```
 
+### Cross-thread (worker → main thread)
+
+```typescript
+import { WASIShim } from '@mithic/wasip2/instantiation';
+import { Descriptor } from '@mithic/wasip2/filesystem/types';
+import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
+import {
+  WorkerIo, SyncBridgeFsProvider, SyncBridgeHttpClient,
+  createStdinHandler, createStdoutHandler,
+} from '@mithic/io/io';
+
+const io = new WorkerIo(port); // port from main thread's IoLoop.addWorker()
+
+const shim = new WASIShim({
+  sandbox: {
+    preopens: {
+      '/': new Descriptor(new SyncFsDescriptorHandler(new SyncBridgeFsProvider(io), '/')),
+    },
+    httpClient: new SyncBridgeHttpClient(io),
+    stdin: createStdinHandler(io),
+    stdout: createStdoutHandler(io),
+  },
+});
+```
+
 ## Design
 
 - **Per-instance isolation** — each `WASIShim` has its own preopens, env, args, stdio, and network policy
-- **Thin adapter** — all I/O delegates to `@mithic/io` providers (VFS, HTTP, sockets)
+- **Pluggable providers** — filesystem, HTTP, sockets, and stdio are all injectable via `WASIShim` config. `Descriptor` delegates to a `DescriptorHandler` interface, which adapts any `SyncFileSystemProvider` implementation.
+- **Synchronous by design** — WASI APIs are synchronous. All I/O interfaces accept only `Sync*` variants from `@mithic/io` (`SyncFileSystemProvider`, `SyncHttpClient`, `SyncSocketProvider`, `SyncInputStreamHandler`), ensuring no Promise leaks into WASI call paths.
+- **Sync-bridge for cross-thread** — For WASM running in a worker thread, `@mithic/io` provides `SyncBridge*` providers that dispatch through `SharedArrayBuffer` + `Atomics` to async providers on the I/O loop. Same interfaces, transparent to WASI code.
 
 ### jco Transpile Integration
-
-Configure jco to use `@mithic/wasip2` as the shim provider:
 
 ```shell
 jco transpile my-component.wasm -o ./out --map 'wasi:*=@mithic/wasip2/*'

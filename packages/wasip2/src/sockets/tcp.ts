@@ -1,11 +1,11 @@
 /**
  * Implements wasi:sockets/tcp - TcpSocket resource with full state machine.
  *
- * Delegates actual socket operations to SocketProvider from @mithic/io.
+ * Delegates actual socket operations to SyncSocketProvider from @mithic/io.
  * State machine is enforced per the WIT spec regardless of provider availability.
  */
 
-import type { SocketProvider, TcpSocket as IoTcpSocket } from '@mithic/io/net';
+import type { SyncSocketProvider, SyncTcpSocket as IoTcpSocket } from '@mithic/io/net';
 import { DisabledSocketProvider } from '@mithic/io/net';
 import { InputStream, OutputStream } from '../io/streams.ts';
 import type { InputStreamHandler, OutputStreamHandler } from '../io/streams.ts';
@@ -32,14 +32,14 @@ type TcpSocketState =
   | 'connected'
   | 'closed';
 
-/** Module-level socket provider. Set via _setSocketProvider. */
-let _socketProvider: SocketProvider = new DisabledSocketProvider();
+/** Module-level socket provider. Set via _setSyncSocketProvider. */
+let _socketProvider: SyncSocketProvider = new DisabledSocketProvider() as unknown as SyncSocketProvider;
 
-export function _setSocketProvider(provider: SocketProvider): void {
+export function _setSyncSocketProvider(provider: SyncSocketProvider): void {
   _socketProvider = provider;
 }
 
-export function _getSocketProvider(): SocketProvider {
+export function _getSyncSocketProvider(): SyncSocketProvider {
   return _socketProvider;
 }
 
@@ -49,7 +49,7 @@ export function _getSocketProvider(): SocketProvider {
 export class TcpSocket {
   #state: TcpSocketState = 'initial';
   #family: IpAddressFamily;
-  #provider: SocketProvider;
+  #provider: SyncSocketProvider;
   #virtualSocket: IoTcpSocket | null = null;
   #localAddress: IpSocketAddress | null = null;
   #remoteAddress: IpSocketAddress | null = null;
@@ -73,7 +73,7 @@ export class TcpSocket {
   #receiveBufferSize = 65536n;
   #sendBufferSize = 65536n;
 
-  constructor(family: IpAddressFamily, provider?: SocketProvider) {
+  constructor(family: IpAddressFamily, provider?: SyncSocketProvider) {
     this.#family = family;
     this.#provider = provider ?? _socketProvider;
   }
@@ -93,23 +93,15 @@ export class TcpSocket {
     this.#bindDone = false;
     this.#connectError = null;
 
-    // Start the async bind operation
     const addr = serializeAddress(localAddress);
-    this.#provider.createTcpSocket().then((sock) => {
+    try {
+      const sock = this.#provider.createTcpSocket();
       this.#virtualSocket = sock;
-      return sock.bind(addr);
-    }).then(() => {
+      sock.bind(addr);
       this.#localAddress = localAddress;
-      this.#bindDone = true;
-    }).catch((err) => {
-      this.#bindDone = true;
+    } catch (err) {
       this.#connectError = convertError(err);
-    });
-    // Mark done synchronously — the promise .then/.catch will update
-    // #connectError in a microtask if it rejects. For fully synchronous
-    // callers (test/disabled), finishBind should be called after awaiting
-    // the subscribe() pollable. We mark done=true so finishBind doesn't
-    // throw would-block in the simple sync case.
+    }
     this.#bindDone = true;
   }
 
@@ -283,22 +275,12 @@ export class TcpSocket {
     let acceptError: ErrorCode | null = null;
 
     // Attempt synchronous-style accept
-    const promise = this.#virtualSocket.accept();
-    // Since we cannot await in sync context, we report would-block
-    // unless the promise already resolved (microtask).
-    // In practice, with sync-bridge providers, this resolves immediately.
-    let resolved = false;
-    promise.then((sock) => {
-      acceptedSocket = sock;
-      resolved = true;
-    }).catch((err) => {
+    try {
+      acceptedSocket = this.#virtualSocket.accept();
+    } catch (err) {
       acceptError = convertError(err);
-      resolved = true;
-    });
-
-    if (!resolved) {
-      throw 'would-block' as ErrorCode;
     }
+
     if (acceptError) {
       throw acceptError;
     }

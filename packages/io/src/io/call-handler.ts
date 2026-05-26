@@ -1,0 +1,236 @@
+/**
+ * Unified I/O call handler for the IoLoop.
+ *
+ * Dispatches FS/HTTP/socket/stream/poll calls to the appropriate providers.
+ * Maintains handle tables for open file descriptors and streams.
+ */
+
+import type { FileSystemProvider } from '../vfs/provider.ts';
+import type { SocketAddress, SocketProvider, TcpSocket } from '../net/sockets.ts';
+import type { HttpClient, HttpRequest } from '../net/http.ts';
+import type { FileHandle, OpenFlags } from '../vfs/provider.ts';
+import type { CallHandler } from './sync-bridge.ts';
+import type { InputStreamHandler, OutputStreamHandler } from './streams.ts';
+import {
+  CALL_MASK, TYPE_MASK,
+  STDIN, STDOUT, STDERR,
+  INPUT_STREAM_READ, INPUT_STREAM_BLOCKING_READ, INPUT_STREAM_DISPOSE,
+  OUTPUT_STREAM_WRITE, OUTPUT_STREAM_FLUSH, OUTPUT_STREAM_DISPOSE,
+  FS_OPEN, FS_CLOSE, FS_READ, FS_WRITE, FS_STAT, FS_READDIR,
+  FS_MKDIR, FS_UNLINK, FS_RMDIR, FS_RENAME, FS_SYMLINK, FS_READLINK,
+  FS_CHMOD, FS_UTIMES, FS_TRUNCATE, FS_LINK, FS_REALPATH,
+  HTTP_SEND,
+  SOCKET_CREATE, SOCKET_BIND, SOCKET_CONNECT, SOCKET_LISTEN,
+  SOCKET_ACCEPT, SOCKET_SEND, SOCKET_RECV, SOCKET_CLOSE, SOCKET_RESOLVE,
+} from './calls.ts';
+
+export interface CallHandlerOptions {
+  fs?: FileSystemProvider;
+  http?: HttpClient;
+  sockets?: SocketProvider;
+  stdin?: InputStreamHandler;
+  stdout?: OutputStreamHandler;
+  stderr?: OutputStreamHandler;
+}
+
+interface StreamHandle {
+  read?(len: number): Promise<Uint8Array>;
+  write?(data: Uint8Array): Promise<void>;
+  flush?(): Promise<void>;
+}
+
+/**
+ * Creates a CallHandler that dispatches I/O calls to providers.
+ */
+export function createCallHandler(options: CallHandlerOptions): CallHandler {
+  const { fs, http, sockets } = options;
+  const fileHandles = new Map<number, FileHandle>();
+  const streamHandles = new Map<number, StreamHandle>();
+  const socketHandles = new Map<number, TcpSocket>();
+  let nextHandleId = 1;
+
+  function allocId(): number {
+    return nextHandleId++;
+  }
+
+  function getSocket(id: number | null): TcpSocket {
+    const socket = socketHandles.get(id!);
+    if (!socket) throw new Error('invalid socket handle');
+    return socket;
+  }
+
+  function getFileHandle(id: number | null): FileHandle {
+    const handle = fileHandles.get(id!);
+    if (!handle) throw new Error('invalid file handle');
+    return handle;
+  }
+
+  return async (call: number, id: number | null, payload: unknown): Promise<unknown> => {
+    const method = call & CALL_MASK;
+    const resourceType = call & TYPE_MASK;
+
+    switch (method) {
+      // ─── Stream calls ───────────────────────────────────────────────
+      case INPUT_STREAM_READ:
+      case INPUT_STREAM_BLOCKING_READ: {
+        const { len } = payload as { len: number };
+        if (resourceType === STDIN && options.stdin) return options.stdin.blockingRead(len);
+        const stream = streamHandles.get(id!);
+        return stream?.read ? stream.read(len) : new Uint8Array(0);
+      }
+
+      case OUTPUT_STREAM_WRITE: {
+        const { data } = payload as { data: Uint8Array };
+        if (resourceType === STDOUT && options.stdout) return options.stdout.write(data);
+        if (resourceType === STDERR && options.stderr) return options.stderr.write(data);
+        const stream = streamHandles.get(id!);
+        if (stream?.write) await stream.write(data);
+        return;
+      }
+
+      case OUTPUT_STREAM_FLUSH: {
+        const stream = streamHandles.get(id!);
+        if (stream?.flush) await stream.flush();
+        return;
+      }
+
+      case INPUT_STREAM_DISPOSE:
+      case OUTPUT_STREAM_DISPOSE:
+        streamHandles.delete(id!);
+        return;
+
+      // ─── Filesystem calls ───────────────────────────────────────────
+      case FS_OPEN: {
+        const { path, flags } = payload as { path: string; flags: OpenFlags };
+        const handle = await fs!.open(path, flags);
+        const handleId = allocId();
+        fileHandles.set(handleId, handle);
+        return handleId;
+      }
+
+      case FS_CLOSE: {
+        const handle = fileHandles.get(id!);
+        if (handle) {
+          await fs!.close(handle);
+          fileHandles.delete(id!);
+        }
+        return;
+      }
+
+      case FS_READ: {
+        const { offset, len } = payload as { offset: number; len: number };
+        return fs!.read(getFileHandle(id), offset, len);
+      }
+
+      case FS_WRITE: {
+        const { data, offset } = payload as { data: Uint8Array; offset: number };
+        return fs!.write(getFileHandle(id), data, offset);
+      }
+
+      case FS_TRUNCATE: {
+        const { size } = payload as { size: number };
+        return fs!.truncate(getFileHandle(id), size);
+      }
+
+      case FS_STAT: {
+        const { path, options: statOpts } = payload as { path: string; options?: { followSymlinks?: boolean } };
+        return fs!.stat(path, statOpts);
+      }
+
+      case FS_READDIR:
+        return fs!.readdir((payload as { path: string }).path);
+
+      case FS_MKDIR:
+        return fs!.mkdir((payload as { path: string }).path);
+
+      case FS_UNLINK:
+        return fs!.unlink((payload as { path: string }).path);
+
+      case FS_RMDIR:
+        return fs!.rmdir((payload as { path: string }).path);
+
+      case FS_RENAME: {
+        const { oldPath, newPath } = payload as { oldPath: string; newPath: string };
+        return fs!.rename(oldPath, newPath);
+      }
+
+      case FS_SYMLINK: {
+        const { target, linkPath } = payload as { target: string; linkPath: string };
+        return fs!.symlink(target, linkPath);
+      }
+
+      case FS_READLINK:
+        return fs!.readlink((payload as { path: string }).path);
+
+      case FS_CHMOD: {
+        const { path, mode } = payload as { path: string; mode: number };
+        return fs!.chmod(path, mode);
+      }
+
+      case FS_UTIMES: {
+        const { path, atime, mtime } = payload as { path: string; atime: number; mtime: number };
+        return fs!.utimes(path, new Date(atime), new Date(mtime));
+      }
+
+      case FS_LINK: {
+        const { existingPath, newPath } = payload as { existingPath: string; newPath: string };
+        return fs!.link(existingPath, newPath);
+      }
+
+      case FS_REALPATH:
+        return fs!.realpath ? fs!.realpath((payload as { path: string }).path) : (payload as { path: string }).path;
+
+      // ─── HTTP calls ─────────────────────────────────────────────────
+      case HTTP_SEND:
+        return http!.send(payload as HttpRequest);
+
+      // ─── Socket calls ───────────────────────────────────────────────
+      case SOCKET_CREATE: {
+        const socket = await sockets!.createTcpSocket();
+        const socketId = allocId();
+        socketHandles.set(socketId, socket);
+        return socketId;
+      }
+
+      case SOCKET_BIND:
+        await getSocket(id).bind((payload as { address: SocketAddress }).address);
+        return;
+
+      case SOCKET_CONNECT:
+        await getSocket(id).connect((payload as { address: SocketAddress }).address);
+        return;
+
+      case SOCKET_LISTEN:
+        await getSocket(id).listen((payload as { backlog?: number }).backlog);
+        return;
+
+      case SOCKET_ACCEPT: {
+        const accepted = await getSocket(id).accept();
+        const acceptedId = allocId();
+        socketHandles.set(acceptedId, accepted);
+        return acceptedId;
+      }
+
+      case SOCKET_SEND:
+        return getSocket(id).send((payload as { data: Uint8Array }).data);
+
+      case SOCKET_RECV:
+        return getSocket(id).receive((payload as { len: number }).len);
+
+      case SOCKET_CLOSE: {
+        const socket = socketHandles.get(id!);
+        if (socket) {
+          await socket.close();
+          socketHandles.delete(id!);
+        }
+        return;
+      }
+
+      case SOCKET_RESOLVE:
+        return sockets!.resolveName((payload as { name: string }).name);
+
+      default:
+        throw new Error(`unknown call: method=0x${method.toString(16)}, type=0x${resourceType.toString(16)}`);
+    }
+  };
+}

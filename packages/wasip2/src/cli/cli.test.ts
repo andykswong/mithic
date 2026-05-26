@@ -8,17 +8,38 @@ import { stdin, stdout, stderr, _setStdin, _setStdout, _setStderr, getStdin, get
 import { InputStream, OutputStream } from '../io/streams.ts';
 
 describe('terminal', () => {
-  it('getTerminalStdin returns a TerminalInput instance', () => {
+  it('getTerminalStdin returns undefined when not a TTY', () => {
+    _setStdin({ blockingRead() { throw { tag: 'closed' }; } });
+    const result = terminalStdin.getTerminalStdin();
+    assert.equal(result, undefined);
+  });
+
+  it('getTerminalStdin returns TerminalInput when isatty is true', () => {
+    _setStdin({ handler: { blockingRead() { throw { tag: 'closed' }; } }, isatty: true });
     const result = terminalStdin.getTerminalStdin();
     assert.ok(result instanceof TerminalInput);
   });
 
-  it('getTerminalStdout returns a TerminalOutput instance', () => {
+  it('getTerminalStdout returns undefined when not a TTY', () => {
+    _setStdout({ write() {} });
+    const result = terminalStdout.getTerminalStdout();
+    assert.equal(result, undefined);
+  });
+
+  it('getTerminalStdout returns TerminalOutput when isatty is true', () => {
+    _setStdout({ handler: { write() {} }, isatty: true });
     const result = terminalStdout.getTerminalStdout();
     assert.ok(result instanceof TerminalOutput);
   });
 
-  it('getTerminalStderr returns a TerminalOutput instance', () => {
+  it('getTerminalStderr returns undefined when not a TTY', () => {
+    _setStderr({ write() {} });
+    const result = terminalStderr.getTerminalStderr();
+    assert.equal(result, undefined);
+  });
+
+  it('getTerminalStderr returns TerminalOutput when isatty is true', () => {
+    _setStderr({ handler: { write() {} }, isatty: true });
     const result = terminalStderr.getTerminalStderr();
     assert.ok(result instanceof TerminalOutput);
   });

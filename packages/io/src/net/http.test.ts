@@ -3,9 +3,9 @@ import { describe, it } from 'node:test';
 import { DisabledHttpClient, DisabledHttpServer } from './providers/disabled-http.ts';
 
 describe('DisabledHttpClient', () => {
-  it('should always throw', async () => {
+  it('should always throw', () => {
     const provider = new DisabledHttpClient();
-    await assert.rejects(
+    assert.throws(
       () => provider.send({ method: 'GET', url: 'https://example.com', headers: [] }),
       { message: 'HTTP access is disabled' }
     );

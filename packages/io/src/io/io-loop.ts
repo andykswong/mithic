@@ -6,7 +6,6 @@
  * registered handlers.
  */
 
-import { MessageChannel, type MessagePort } from 'node:worker_threads';
 import { handleBlockingCalls, type CallHandler } from './sync-bridge.ts';
 
 /** Options for creating an {@link IoLoop}. */

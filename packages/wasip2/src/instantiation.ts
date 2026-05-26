@@ -15,12 +15,12 @@ import * as io from './io/index.ts';
 import * as http from './http/index.ts';
 import * as random from './random/index.ts';
 import * as sockets from './sockets/index.ts';
-import { Descriptor, type FileData } from './filesystem/types.ts';
+import { Descriptor } from './filesystem/types.ts';
 import { InputStream, OutputStream, type InputStreamHandler, type OutputStreamHandler } from './io/streams.ts';
+import type { InputStdioConfig, OutputStdioConfig } from './cli/stdio.ts';
 import { outgoingRequestHandle } from './http/types.ts';
 import type { OutgoingRequest, RequestOptions, FutureIncomingResponse } from './http/types.ts';
-import type { SocketProvider } from '@mithic/io/net';
-import type { HttpClient } from '@mithic/io/net';
+import type { SyncSocketProvider, SyncHttpClient } from '@mithic/io/net';
 import type {
   WasiEnvironment,
   WasiPreopens,
@@ -30,20 +30,22 @@ import type {
   WasiOutgoingHandler,
   WasiSockets,
 } from './interfaces.ts';
+import { TerminalInput, TerminalOutput } from './cli/terminal.ts';
 
 export type { WasiEnvironment, WasiPreopens, WasiStdin, WasiStdout, WasiStderr, WasiOutgoingHandler, WasiSockets };
+export type { InputStdioConfig, OutputStdioConfig };
 
 export interface WASIShimConfig {
   sandbox?: {
-    preopens?: Record<string, FileData>;
+    preopens?: Record<string, Descriptor>;
     env?: Record<string, string>;
     args?: string[];
     cwd?: string;
-    stdin?: InputStreamHandler;
-    stdout?: OutputStreamHandler;
-    stderr?: OutputStreamHandler;
-    sockets?: SocketProvider;
-    httpClient?: HttpClient;
+    stdin?: InputStream | InputStreamHandler | InputStdioConfig;
+    stdout?: OutputStream | OutputStreamHandler | OutputStdioConfig;
+    stderr?: OutputStream | OutputStreamHandler | OutputStdioConfig;
+    sockets?: SyncSocketProvider;
+    httpClient?: SyncHttpClient;
   };
 }
 
@@ -55,6 +57,9 @@ export class WASIShim {
   #stdin: WasiStdin | null = null;
   #stdout: WasiStdout | null = null;
   #stderr: WasiStderr | null = null;
+  #terminalStdin: object | null = null;
+  #terminalStdout: object | null = null;
+  #terminalStderr: object | null = null;
   #sockets: WasiSockets | null = null;
   #httpOutgoingHandler: WasiOutgoingHandler | null = null;
 
@@ -71,18 +76,21 @@ export class WASIShim {
     }
 
     if (sandbox.stdin) {
-      const stream = new InputStream(sandbox.stdin);
+      const stream = toInputStream(sandbox.stdin);
       this.#stdin = { InputStream, getStdin: () => stream };
+      this.#terminalStdin = createIsolatedTerminalStdin(stream.isatty);
     }
 
     if (sandbox.stdout) {
-      const stream = new OutputStream(sandbox.stdout);
+      const stream = toOutputStream(sandbox.stdout);
       this.#stdout = { OutputStream, getStdout: () => stream };
+      this.#terminalStdout = createIsolatedTerminalStdout(stream.isatty);
     }
 
     if (sandbox.stderr) {
-      const stream = new OutputStream(sandbox.stderr);
+      const stream = toOutputStream(sandbox.stderr);
       this.#stderr = { OutputStream, getStderr: () => stream };
+      this.#terminalStderr = createIsolatedTerminalStderr(stream.isatty);
     }
 
     if (sandbox.sockets) {
@@ -107,9 +115,9 @@ export class WASIShim {
       'wasi:cli/stderr': this.#stderr ?? cli.stderr,
       'wasi:cli/terminal-input': cli.terminalInput,
       'wasi:cli/terminal-output': cli.terminalOutput,
-      'wasi:cli/terminal-stdin': cli.terminalStdin,
-      'wasi:cli/terminal-stdout': cli.terminalStdout,
-      'wasi:cli/terminal-stderr': cli.terminalStderr,
+      'wasi:cli/terminal-stdin': this.#terminalStdin ?? cli.terminalStdin,
+      'wasi:cli/terminal-stdout': this.#terminalStdout ?? cli.terminalStdout,
+      'wasi:cli/terminal-stderr': this.#terminalStderr ?? cli.terminalStderr,
       'wasi:clocks/monotonic-clock': clocks.monotonicClock,
       'wasi:clocks/wall-clock': clocks.wallClock,
       'wasi:filesystem/preopens': this.#preopens ?? filesystem.preopens,
@@ -149,15 +157,46 @@ function createIsolatedEnvironment(
   };
 }
 
-function createIsolatedPreopens(preopensConfig: Record<string, FileData>): WasiPreopens {
-  const entries: [Descriptor, string][] = [];
-
-  for (const [virtualPath, fileData] of Object.entries(preopensConfig)) {
-    entries.push([new Descriptor(fileData), virtualPath]);
-  }
+function createIsolatedPreopens(preopensConfig: Record<string, Descriptor>): WasiPreopens {
+  const entries: [Descriptor, string][] = Object.entries(preopensConfig).map(
+    ([virtualPath, descriptor]) => [descriptor, virtualPath],
+  );
 
   return {
     Descriptor,
     getDirectories() { return entries; },
   };
+}
+
+function createIsolatedTerminalStdin(isatty: boolean) {
+  return {
+    TerminalInput,
+    getTerminalStdin: () => isatty ? new TerminalInput() : undefined,
+  };
+}
+
+function createIsolatedTerminalStdout(isatty: boolean) {
+  return {
+    TerminalOutput,
+    getTerminalStdout: () => isatty ? new TerminalOutput() : undefined,
+  };
+}
+
+function createIsolatedTerminalStderr(isatty: boolean) {
+  return {
+    TerminalOutput,
+    getTerminalStderr: () => isatty ? new TerminalOutput() : undefined,
+  };
+}
+
+function toInputStream(value: InputStream | InputStreamHandler | InputStdioConfig): InputStream {
+  if (value instanceof InputStream) return value;
+  if ('handler' in value) return new InputStream((value as InputStdioConfig).handler, (value as InputStdioConfig).subscribe, (value as InputStdioConfig).isatty);
+  return new InputStream(value as InputStreamHandler);
+}
+
+function toOutputStream(value: OutputStream | OutputStreamHandler | OutputStdioConfig): OutputStream {
+  if (value instanceof OutputStream) return value;
+  if ('handler' in value) return new OutputStream((value as OutputStdioConfig).handler, (value as OutputStdioConfig).subscribe, (value as OutputStdioConfig).isatty);
+  return new OutputStream(value as OutputStreamHandler);
 }

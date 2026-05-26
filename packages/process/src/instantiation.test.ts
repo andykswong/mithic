@@ -11,10 +11,12 @@ describe('WASIProcess', () => {
     assert.ok(wp.manager);
   });
 
-  it('getImportObject returns mithic:process/manager', () => {
+  it('getImportObject returns mithic:process/types and mithic:process/manager', () => {
     const wp = new WASIProcess();
     const imports = wp.getImportObject();
+    assert.ok('mithic:process/types' in imports);
     assert.ok('mithic:process/manager' in imports);
+    assert.equal(imports['mithic:process/types'].Process, Process);
     assert.equal(typeof imports['mithic:process/manager'].spawn, 'function');
     assert.equal(typeof imports['mithic:process/manager'].createPipe, 'function');
   });

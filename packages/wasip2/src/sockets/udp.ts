@@ -4,7 +4,7 @@
  * Delegates actual socket operations to SocketProvider from @mithic/io.
  */
 
-import type { SocketProvider, UdpSocket as IoUdpSocket } from '@mithic/io/net';
+import type { SyncSocketProvider, SyncUdpSocket as IoUdpSocket } from '@mithic/io/net';
 import { Pollable } from '../io/poll.ts';
 import {
   type ErrorCode,
@@ -15,7 +15,7 @@ import {
   serializeAddress,
   zeroAddress,
 } from './network.ts';
-import { _getSocketProvider } from './tcp.ts';
+import { _getSyncSocketProvider } from './tcp.ts';
 
 export type IncomingDatagram = {
   data: Uint8Array;
@@ -35,7 +35,7 @@ type UdpSocketState = 'initial' | 'bind-in-progress' | 'bound' | 'connected' | '
 export class UdpSocket {
   #state: UdpSocketState = 'initial';
   #family: IpAddressFamily;
-  #provider: SocketProvider;
+  #provider: SyncSocketProvider;
   #virtualSocket: IoUdpSocket | null = null;
   #localAddress: IpSocketAddress | null = null;
   #remoteAddress: IpSocketAddress | null = null;
@@ -48,9 +48,9 @@ export class UdpSocket {
   #receiveBufferSize = 65536n;
   #sendBufferSize = 65536n;
 
-  constructor(family: IpAddressFamily, provider?: SocketProvider) {
+  constructor(family: IpAddressFamily, provider?: SyncSocketProvider) {
     this.#family = family;
-    this.#provider = provider ?? _getSocketProvider();
+    this.#provider = provider ?? _getSyncSocketProvider();
   }
 
   /**
@@ -69,17 +69,14 @@ export class UdpSocket {
     this.#bindError = null;
 
     const addr = serializeAddress(localAddress);
-    this.#provider.createUdpSocket().then((sock) => {
+    try {
+      const sock = this.#provider.createUdpSocket();
       this.#virtualSocket = sock;
-      return sock.bind(addr);
-    }).then(() => {
+      sock.bind(addr);
       this.#localAddress = localAddress;
-      this.#bindDone = true;
-    }).catch((err) => {
-      this.#bindDone = true;
+    } catch (err) {
       this.#bindError = convertError(err);
-    });
-    // Synchronous fallback for sync providers
+    }
     this.#bindDone = true;
   }
 

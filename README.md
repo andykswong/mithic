@@ -43,6 +43,15 @@ const { run } = await instantiate(null, shim.getImportObject());
 run.run();
 ```
 
+### Browser Shell Example
+
+The [shell example](./packages/examples/shell/) demonstrates an xterm.js terminal connected to `JustBashShell`, running WASM programs in the browser.
+
+```shell
+cd packages/examples/shell
+npm run dev
+```
+
 ## Packages
 
 | Package | Description |
@@ -50,6 +59,7 @@ run.run();
 | [`@mithic/io`](./packages/io) | I/O layer: virtual file system, HTTP/socket providers, sync-bridge |
 | [`@mithic/wasip2`](./packages/wasip2) | WASI Preview 2 shim for WASM components |
 | [`@mithic/process`](./packages/process) | Process manager: spawn WASM processes with piped I/O |
+| [`@mithic/just-bash`](./packages/just-bash) | Shell integration: adapts [just-bash](https://github.com/nicholasgasior/just-bash) to mithic VFS and process manager |
 
 ### Examples
 
@@ -58,6 +68,7 @@ run.run();
 | [`examples/simple`](./packages/examples/simple) | JS WebAssembly component built with ComponentizeJS |
 | [`examples/rust-cli`](./packages/examples/rust-cli) | Rust WebAssembly component |
 | [`examples/browser`](./packages/examples/browser) | Running a WASM component in the browser |
+| [`examples/shell`](./packages/examples/shell) | xterm.js browser terminal with JustBashShell |
 
 ## Development
 

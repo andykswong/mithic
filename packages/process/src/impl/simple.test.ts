@@ -4,7 +4,7 @@ import { SimpleProcessManager, type CommandHandler } from './simple.ts';
 import { Process } from '../types.ts';
 import { spawnWithPipes } from '../utils.ts';
 import { WASIProcess } from '../instantiation.ts';
-import { createPipeHandlers } from '../utils.ts';
+import { createPipe } from '../utils.ts';
 import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 
 describe('SimpleProcessManager', () => {
@@ -208,8 +208,8 @@ describe('WASIProcess', () => {
         return new Process(99, { wait: () => Promise.resolve(0) });
       },
       createPipe() {
-        const pipe = createPipeHandlers();
-        return { input: new InputStream(pipe.input), output: new OutputStream(pipe.output) };
+        const pipe = createPipe();
+        return pipe;
       },
     };
     const wp = new WASIProcess({ manager: customManager });

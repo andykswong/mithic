@@ -1,10 +1,10 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
-import { spawn, createPipe, _setProcessManager, _getProcessManager } from './manager.ts';
+import { spawn, _setProcessManager, _getProcessManager } from './manager.ts';
 import { Process, type ProcessManager } from './types.ts';
 import { SimpleProcessManager, type CommandHandler } from './impl/simple.ts';
-import { createPipeHandlers } from './utils.ts';
+import { createPipe } from './utils.ts';
 
 describe('manager (global WIT-level functions)', () => {
   beforeEach(() => {
@@ -69,8 +69,7 @@ describe('manager (global WIT-level functions)', () => {
         return new Process(50, { wait: () => Promise.resolve(0) });
       },
       createPipe() {
-        const p = createPipeHandlers();
-        return { input: new InputStream(p.input), output: new OutputStream(p.output) };
+        return createPipe();
       },
     };
     _setProcessManager(custom);

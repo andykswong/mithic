@@ -1,8 +1,8 @@
-import type { HttpClient, HttpRequest, HttpResponse, HttpServer, IncomingHttpHandler } from '../http.ts';
+import type { HttpRequest, HttpResponse, HttpServer, IncomingHttpHandler, SyncHttpClient } from '../http.ts';
 
 /** HTTP client that always throws (for sandboxed environments). */
-export class DisabledHttpClient implements HttpClient {
-  async send(_request: HttpRequest): Promise<HttpResponse> {
+export class DisabledHttpClient implements SyncHttpClient {
+  send(_request: HttpRequest): HttpResponse {
     throw new Error('HTTP access is disabled');
   }
 }

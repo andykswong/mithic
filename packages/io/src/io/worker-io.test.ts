@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { MessageChannel } from 'node:worker_threads';
+// Uses global MessageChannel
 import { WorkerIo } from './worker-io.ts';
 
 describe('WorkerIo', () => {

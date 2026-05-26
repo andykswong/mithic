@@ -69,6 +69,7 @@ interface manager {
   create-pipe: func() -> tuple<input-stream, output-stream>;
 }
 
-world process-host {
+world imports {
+  import types;
   import manager;
 }

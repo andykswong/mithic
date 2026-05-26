@@ -28,8 +28,9 @@ export interface ResolveResult {
 
 /**
  * VFS mount router. Uses longest-prefix matching to resolve paths to providers.
+ * Implements FileSystemProvider so it can be composed (e.g., mounted inside another router).
  */
-export class FileSystemRouter {
+export class FileSystemRouter implements FileSystemProvider {
   private mounts: Array<{ mountPoint: string; provider: FileSystemProvider }> = [];
 
   /** Mount a provider at a path prefix. */

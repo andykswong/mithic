@@ -2,11 +2,13 @@
  * Implements wasi:filesystem/preopens - pre-opened directory configuration.
  */
 
-import { Descriptor, type FileData } from './types.ts';
+import { Descriptor } from './types.ts';
+import { MemoryFsProvider } from '@mithic/io/vfs';
+import { SyncFsDescriptorHandler } from './sync-fs-handler.ts';
 
-let _fileData: FileData = { dir: {} };
-let _preopens: [Descriptor, string][] = [[new Descriptor(_fileData), '/']];
-let _rootPreopen: [Descriptor, string] | null = _preopens[0];
+let _preopens: [Descriptor, string][] = [
+  [new Descriptor(new SyncFsDescriptorHandler(new MemoryFsProvider(), '/')), '/'],
+];
 
 /**
  * Return the set of preopened directories, and their paths.
@@ -18,24 +20,18 @@ export function getDirectories(): [Descriptor, string][] {
 /**
  * Replace all preopens with the given set.
  */
-export function _setPreopens(preopensConfig: Record<string, FileData>): void {
+export function _setPreopens(preopensConfig: Record<string, Descriptor>): void {
   _preopens = [];
-  _rootPreopen = null;
-  for (const [virtualPath, fileData] of Object.entries(preopensConfig)) {
-    _addPreopen(virtualPath, fileData);
+  for (const [virtualPath, descriptor] of Object.entries(preopensConfig)) {
+    _preopens.push([descriptor, virtualPath]);
   }
 }
 
 /**
  * Add a single preopen mapping.
  */
-export function _addPreopen(virtualPath: string, fileData: FileData): void {
-  const descriptor = new Descriptor(fileData);
+export function _addPreopen(virtualPath: string, descriptor: Descriptor): void {
   _preopens.push([descriptor, virtualPath]);
-  if (virtualPath === '/') {
-    _rootPreopen = [descriptor, virtualPath];
-    _fileData = fileData;
-  }
 }
 
 /**
@@ -43,21 +39,4 @@ export function _addPreopen(virtualPath: string, fileData: FileData): void {
  */
 export function _clearPreopens(): void {
   _preopens = [];
-  _rootPreopen = null;
-}
-
-/**
- * Set the root file data, resetting preopens to a single '/' preopen.
- */
-export function _setFileData(fileData: FileData): void {
-  _fileData = fileData;
-  _preopens = [[new Descriptor(fileData), '/']];
-  _rootPreopen = _preopens[0];
-}
-
-/**
- * Get the root file data.
- */
-export function _getFileData(): FileData {
-  return _fileData;
 }

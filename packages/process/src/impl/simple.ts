@@ -6,7 +6,7 @@
 
 import { InputStream, OutputStream, type InputStreamHandler, type OutputStreamHandler } from '@mithic/wasip2/io/streams';
 import { Process, type SpawnOptions, type ProcessHandler, type Signal, type ProcessManager, SIGNAL_NUMBER } from '../types.ts';
-import { createPipeHandlers } from '../utils.ts';
+import { createPipe as createPipeImpl } from '../utils.ts';
 import type { PipeOptions } from '../types.ts';
 
 export interface ProcessEntry {
@@ -157,7 +157,6 @@ export class SimpleProcessManager implements ProcessManager {
   }
 
   createPipe(options?: PipeOptions): { input: InputStream; output: OutputStream } {
-    const pipe = createPipeHandlers(options);
-    return { input: new InputStream(pipe.input), output: new OutputStream(pipe.output) };
+    return createPipeImpl(options);
   }
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { MessageChannel } from 'node:worker_threads';
+// Uses global MessageChannel (available in Node.js 15+ and browsers)
 import {
   CALL_MASK, CALL_SHIFT, TYPE_MASK,
   STDIN, STDOUT, STDERR, FILE, SOCKET_TCP, SOCKET_UDP, HTTP,
@@ -15,7 +15,7 @@ import {
   SOCKET_SEND, SOCKET_RECV, SOCKET_CLOSE, SOCKET_RESOLVE,
   POLL_READY, POLL_BLOCK, POLL_LIST, POLL_DISPOSE,
 } from './calls.ts';
-import { handleBlockingCalls, type CallHandler } from './sync-bridge.ts';
+import { handleBlockingCalls, unpack, type CallHandler } from './sync-bridge.ts';
 
 describe('calls', () => {
   describe('masks and shift', () => {
@@ -146,8 +146,21 @@ describe('calls', () => {
 });
 
 describe('sync-bridge', () => {
+  const HEADER_SIZE = 12;
+  const BUFFER_SIZE = 1024;
+
+  function waitForSignal(signalView: Int32Array): Promise<void> {
+    return new Promise((resolve) => {
+      const check = () => {
+        if (Atomics.load(signalView, 0) !== 0) { resolve(); return; }
+        setTimeout(check, 1);
+      };
+      check();
+    });
+  }
+
   describe('handleBlockingCalls', () => {
-    it('should dispatch calls to the handler and send result back', async () => {
+    it('should dispatch calls and write JSON result into SAB', async () => {
       const { port1, port2 } = new MessageChannel();
       const calls: Array<{ call: number; id: number | null; payload: unknown }> = [];
 
@@ -158,59 +171,96 @@ describe('sync-bridge', () => {
 
       handleBlockingCalls(handler, port1);
 
-      // Simulate a call message from the worker side
-      const sharedBuffer = new SharedArrayBuffer(4);
-      const view = new Int32Array(sharedBuffer);
-      Atomics.store(view, 0, 0);
-
-      const resultPromise = new Promise<unknown>((resolve) => {
-        port2.on('message', (msg) => {
-          resolve(msg);
-        });
-      });
+      const sharedBuffer = new SharedArrayBuffer(HEADER_SIZE + BUFFER_SIZE, { maxByteLength: HEADER_SIZE + BUFFER_SIZE * 4 });
+      const headerView = new Int32Array(sharedBuffer, 0, 3);
+      const dataView = new Uint8Array(sharedBuffer, HEADER_SIZE);
+      Atomics.store(headerView, 0, 0);
 
       port2.postMessage({ sharedBuffer, call: 42, id: null, payload: 7 });
+      await waitForSignal(headerView);
 
-      const result = await resultPromise;
-      assert.deepStrictEqual(result, { result: 14 });
+      assert.strictEqual(Atomics.load(headerView, 0), 1);
+      assert.strictEqual(headerView[1], 1); // TYPE_JSON
+      const resultLen = headerView[2]!;
+      assert.ok(resultLen > 0);
+      const copy = new Uint8Array(resultLen); copy.set(dataView.subarray(0, resultLen));
+      const result = unpack(1, copy);
+      assert.strictEqual(result, 14);
+
       assert.strictEqual(calls.length, 1);
       assert.deepStrictEqual(calls[0], { call: 42, id: null, payload: 7 });
-
-      // Verify the signal was set
-      assert.strictEqual(Atomics.load(view, 0), 1);
 
       port1.close();
       port2.close();
     });
 
-    it('should propagate errors through the bridge', async () => {
+    it('should write Uint8Array result as raw bytes', async () => {
       const { port1, port2 } = new MessageChannel();
 
-      const handler: CallHandler = async (_call, _id, _payload) => {
-        throw new Error('test error');
+      const handler: CallHandler = async () => new Uint8Array([65, 66, 67]);
+
+      handleBlockingCalls(handler, port1);
+
+      const sharedBuffer = new SharedArrayBuffer(HEADER_SIZE + BUFFER_SIZE, { maxByteLength: HEADER_SIZE + BUFFER_SIZE * 4 });
+      const headerView = new Int32Array(sharedBuffer, 0, 3);
+      const dataView = new Uint8Array(sharedBuffer, HEADER_SIZE);
+      Atomics.store(headerView, 0, 0);
+
+      port2.postMessage({ sharedBuffer, call: 0, id: null, payload: null });
+      await waitForSignal(headerView);
+
+      assert.strictEqual(headerView[1], 2); // TYPE_BYTES
+      assert.strictEqual(headerView[2], 3);
+      assert.deepStrictEqual(Array.from(dataView.subarray(0, 3)), [65, 66, 67]);
+
+      port1.close();
+      port2.close();
+    });
+
+    it('should write error into SAB with TYPE_ERROR', async () => {
+      const { port1, port2 } = new MessageChannel();
+
+      const handler: CallHandler = async () => {
+        throw { message: 'test error' };
       };
 
       handleBlockingCalls(handler, port1);
 
-      const sharedBuffer = new SharedArrayBuffer(4);
-      const view = new Int32Array(sharedBuffer);
-      Atomics.store(view, 0, 0);
-
-      const resultPromise = new Promise<unknown>((resolve) => {
-        port2.on('message', (msg) => {
-          resolve(msg);
-        });
-      });
+      const sharedBuffer = new SharedArrayBuffer(HEADER_SIZE + BUFFER_SIZE, { maxByteLength: HEADER_SIZE + BUFFER_SIZE * 4 });
+      const headerView = new Int32Array(sharedBuffer, 0, 3);
+      const dataView = new Uint8Array(sharedBuffer, HEADER_SIZE);
+      Atomics.store(headerView, 0, 0);
 
       port2.postMessage({ sharedBuffer, call: 1, id: 5, payload: 'test' });
+      await waitForSignal(headerView);
 
-      const result = await resultPromise as { error?: unknown };
-      assert.ok('error' in result);
-      assert.ok(result.error instanceof Error);
-      assert.strictEqual((result.error as Error).message, 'test error');
+      assert.strictEqual(headerView[1], -1); // TYPE_ERROR
+      const resultLen = headerView[2]!;
+      assert.ok(resultLen > 0);
+      const errCopy = new Uint8Array(resultLen); errCopy.set(dataView.subarray(0, resultLen));
+      const error = unpack(1, errCopy) as { message: string };
+      assert.strictEqual(error.message, 'test error');
 
-      // Verify the signal was still set even on error
-      assert.strictEqual(Atomics.load(view, 0), 1);
+      port1.close();
+      port2.close();
+    });
+
+    it('should write TYPE_UNDEFINED for undefined result', async () => {
+      const { port1, port2 } = new MessageChannel();
+
+      const handler: CallHandler = async () => undefined;
+
+      handleBlockingCalls(handler, port1);
+
+      const sharedBuffer = new SharedArrayBuffer(HEADER_SIZE + BUFFER_SIZE, { maxByteLength: HEADER_SIZE + BUFFER_SIZE * 4 });
+      const headerView = new Int32Array(sharedBuffer, 0, 3);
+      Atomics.store(headerView, 0, 0);
+
+      port2.postMessage({ sharedBuffer, call: 0, id: null, payload: null });
+      await waitForSignal(headerView);
+
+      assert.strictEqual(headerView[1], 0); // TYPE_UNDEFINED
+      assert.strictEqual(headerView[2], 0);
 
       port1.close();
       port2.close();
@@ -228,21 +278,19 @@ describe('sync-bridge', () => {
       handleBlockingCalls(handler, port1);
 
       for (let i = 0; i < 3; i++) {
-        const sharedBuffer = new SharedArrayBuffer(4);
-        const view = new Int32Array(sharedBuffer);
-        Atomics.store(view, 0, 0);
-
-        const resultPromise = new Promise<unknown>((resolve) => {
-          port2.once('message', (msg) => {
-            resolve(msg);
-          });
-        });
+        const sharedBuffer = new SharedArrayBuffer(HEADER_SIZE + BUFFER_SIZE, { maxByteLength: HEADER_SIZE + BUFFER_SIZE * 4 });
+        const headerView = new Int32Array(sharedBuffer, 0, 3);
+        const dataView = new Uint8Array(sharedBuffer, HEADER_SIZE);
+        Atomics.store(headerView, 0, 0);
 
         port2.postMessage({ sharedBuffer, call: i, id: null, payload: i });
+        await waitForSignal(headerView);
 
-        const result = await resultPromise;
-        assert.deepStrictEqual(result, { result: `result-${i}` });
-        assert.strictEqual(Atomics.load(view, 0), 1);
+        assert.strictEqual(headerView[1], 1); // TYPE_JSON
+        const resultLen = headerView[2]!;
+        const copy = new Uint8Array(resultLen); copy.set(dataView.subarray(0, resultLen));
+        const result = unpack(1, copy);
+        assert.strictEqual(result, `result-${i}`);
       }
 
       assert.strictEqual(callCount, 3);
@@ -251,10 +299,4 @@ describe('sync-bridge', () => {
       port2.close();
     });
   });
-
-  // NOTE: Full integration testing of createBlockingCall requires a worker_threads
-  // setup because Atomics.wait cannot be called on the main thread when the signal
-  // source is also on the main thread (it would deadlock). The tests above verify
-  // the handler/protocol side. A proper integration test would spawn a Worker that
-  // calls createBlockingCall and verifies round-trip blocking behavior.
 });
