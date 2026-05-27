@@ -4,7 +4,7 @@ use crate::bindings::mithic::process::manager as proc_manager;
 use crate::bindings::mithic::process::types::{InputStream, OutputStream, SpawnOptions};
 use crate::bindings::wasi::cli::{environment, terminal_stdin};
 use crate::io::{self, LineReader};
-use crate::parser::{List, ListItem, ListOp, Parser, Pipeline, SimpleCommand, Word, WordPart};
+use crate::parser::{Command, List, ListItem, ListOp, Parser, Pipeline, SimpleCommand, Word, WordPart};
 
 pub struct Shell {
     env: HashMap<String, String>,
@@ -102,7 +102,11 @@ impl Shell {
         }
 
         if n == 1 {
-            let exit = self.exec_command(cmds.into_iter().next().unwrap(), None, None);
+            let cmd = match cmds.into_iter().next().unwrap() {
+                Command::Simple(sc) => sc,
+                _ => return 0,
+            };
+            let exit = self.exec_command(cmd, None, None);
             return if pipeline.negate { if exit == 0 { 1 } else { 0 } } else { exit };
         }
 
@@ -126,7 +130,11 @@ impl Shell {
         let mut processes: Vec<crate::bindings::mithic::process::types::Process> = Vec::new();
         let mut last_builtin_exit: Option<u8> = None;
 
-        for (i, cmd) in cmds.into_iter().enumerate() {
+        for (i, command) in cmds.into_iter().enumerate() {
+            let cmd = match command {
+                Command::Simple(sc) => sc,
+                _ => continue,
+            };
             let mut stdin_opt = pipe_read_ends[i].take();
             let mut stdout_opt = pipe_write_ends[i].take();
 
@@ -390,7 +398,10 @@ impl Shell {
         if n == 0 { return 0; }
 
         if n == 1 {
-            let cmd = cmds.into_iter().next().unwrap();
+            let cmd = match cmds.into_iter().next().unwrap() {
+                Command::Simple(sc) => sc,
+                _ => { drop(stdout); return 0; }
+            };
             let args: Vec<String> = cmd.words.iter()
                 .flat_map(|w| {
                     let expanded = self.expand_word(w);
@@ -435,7 +446,11 @@ impl Shell {
         let mut processes: Vec<crate::bindings::mithic::process::types::Process> = Vec::new();
         let mut last_builtin_exit: Option<u8> = None;
 
-        for (i, cmd) in cmds.into_iter().enumerate() {
+        for (i, command) in cmds.into_iter().enumerate() {
+            let cmd = match command {
+                Command::Simple(sc) => sc,
+                _ => continue,
+            };
             let stdin_opt = pipe_read_ends[i].take();
             let stdout_opt = pipe_write_ends[i].take();
             let args: Vec<String> = cmd.words.iter()
