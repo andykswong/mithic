@@ -49,26 +49,64 @@ impl Shell {
             io::write_stdout("mithic shell v0.1.0\n");
         }
 
+        let mut input_buf = String::new();
+
         loop {
             if self.is_interactive {
-                let prompt = format!("{}$ ", self.cwd);
+                let prompt = if input_buf.is_empty() {
+                    format!("{}$ ", self.cwd)
+                } else {
+                    "> ".to_string()
+                };
                 io::write_stdout(&prompt);
             }
 
             let line = match self.reader.read_line() {
                 Some(l) => l,
-                None => break,
+                None => {
+                    // EOF: try to parse whatever is buffered
+                    if !input_buf.is_empty() {
+                        let trimmed = input_buf.trim().to_string();
+                        if !trimmed.is_empty() {
+                            let mut parser = Parser::new(&trimmed);
+                            if let Some(list) = parser.parse() {
+                                self.last_exit = self.exec_list(list);
+                            }
+                        }
+                    }
+                    break;
+                }
             };
 
-            let trimmed = line.trim();
+            input_buf.push_str(&line);
+
+            let trimmed = input_buf.trim().to_string();
             if trimmed.is_empty() {
+                input_buf.clear();
                 continue;
             }
 
-            let mut parser = Parser::new(trimmed);
-            if let Some(list) = parser.parse() {
+            // Check for line continuation (trailing backslash)
+            if trimmed.ends_with('\\') {
+                let without_backslash = trimmed.trim_end_matches('\\').to_string();
+                input_buf = without_backslash;
+                input_buf.push(' ');
+                continue;
+            }
+
+            let mut parser = Parser::new(&trimmed);
+            let result = parser.parse();
+
+            if parser.is_incomplete() {
+                // Incomplete compound command — keep reading
+                continue;
+            }
+
+            if let Some(list) = result {
                 self.last_exit = self.exec_list(list);
             }
+
+            input_buf.clear();
 
             if self.exit_requested {
                 break;
@@ -86,7 +124,7 @@ impl Shell {
             if !skip_next {
                 exit = self.exec_pipeline(pipeline);
                 self.last_exit = exit;
-                if self.exit_requested || self.return_requested || self.break_depth > 0 {
+                if self.exit_requested || self.return_requested || self.break_depth > 0 || self.continue_depth > 0 {
                     break;
                 }
             }

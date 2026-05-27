@@ -474,6 +474,41 @@ impl Parser {
             _ => None,
         }
     }
+
+    pub fn is_incomplete(&self) -> bool {
+        let mut if_depth = 0i32;
+        let mut while_depth = 0i32;
+        let mut for_depth = 0i32;
+        let mut case_depth = 0i32;
+        let mut brace_depth = 0i32;
+        let mut paren_depth = 0i32;
+
+        for tok in &self.tokens {
+            if let Token::Word(parts) = tok {
+                if parts.len() == 1 {
+                    if let WordPart::Literal(s) = &parts[0] {
+                        match s.as_str() {
+                            "if" => if_depth += 1,
+                            "fi" => if_depth -= 1,
+                            "while" | "until" => while_depth += 1,
+                            "for" => for_depth += 1,
+                            "done" => { while_depth -= 1; for_depth -= 1; }
+                            "case" => case_depth += 1,
+                            "esac" => case_depth -= 1,
+                            "{" => brace_depth += 1,
+                            "}" => brace_depth -= 1,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            if let Token::LParen = tok { paren_depth += 1; }
+            if let Token::RParen = tok { paren_depth -= 1; }
+        }
+
+        if_depth > 0 || while_depth > 0 || for_depth > 0 ||
+        case_depth > 0 || brace_depth > 0 || paren_depth > 0
+    }
 }
 
 #[cfg(test)]
@@ -826,5 +861,40 @@ mod tests {
             }
             _ => panic!("expected Simple command for [["),
         }
+    }
+
+    #[test]
+    fn test_incomplete_if() {
+        let mut p = Parser::new("if true; then");
+        p.parse();
+        assert!(p.is_incomplete());
+    }
+
+    #[test]
+    fn test_complete_if() {
+        let mut p = Parser::new("if true; then echo x; fi");
+        p.parse();
+        assert!(!p.is_incomplete());
+    }
+
+    #[test]
+    fn test_incomplete_for() {
+        let mut p = Parser::new("for i in a b c; do");
+        p.parse();
+        assert!(p.is_incomplete());
+    }
+
+    #[test]
+    fn test_incomplete_brace() {
+        let mut p = Parser::new("{ echo a;");
+        p.parse();
+        assert!(p.is_incomplete());
+    }
+
+    #[test]
+    fn test_complete_brace() {
+        let mut p = Parser::new("{ echo a; }");
+        p.parse();
+        assert!(!p.is_incomplete());
     }
 }
