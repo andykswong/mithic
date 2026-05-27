@@ -68,11 +68,11 @@ impl Parser {
         if negate { self.advance(); }
 
         let mut commands = Vec::new();
-        commands.push(self.parse_simple_command());
+        commands.push(Command::Simple(self.parse_simple_command()));
         while matches!(self.peek(), Token::Pipe) {
             self.advance();
             self.skip_newlines();
-            commands.push(self.parse_simple_command());
+            commands.push(Command::Simple(self.parse_simple_command()));
         }
         Pipeline { commands, negate }
     }
@@ -166,10 +166,10 @@ mod tests {
     fn simple(words: &[&str]) -> Pipeline {
         Pipeline {
             negate: false,
-            commands: vec![SimpleCommand {
+            commands: vec![Command::Simple(SimpleCommand {
                 words: words.iter().map(|s| Word::literal(*s)).collect(),
                 redirects: vec![],
-            }],
+            })],
         }
     }
 
@@ -191,8 +191,14 @@ mod tests {
         let list = parse("echo hello | cat").unwrap();
         let pipeline = &list.items[0].pipeline;
         assert_eq!(pipeline.commands.len(), 2);
-        assert_eq!(pipeline.commands[0].words, vec![Word::literal("echo"), Word::literal("hello")]);
-        assert_eq!(pipeline.commands[1].words, vec![Word::literal("cat")]);
+        match &pipeline.commands[0] {
+            Command::Simple(cmd) => assert_eq!(cmd.words, vec![Word::literal("echo"), Word::literal("hello")]),
+            _ => panic!("expected Simple command"),
+        }
+        match &pipeline.commands[1] {
+            Command::Simple(cmd) => assert_eq!(cmd.words, vec![Word::literal("cat")]),
+            _ => panic!("expected Simple command"),
+        }
     }
 
     #[test]
@@ -215,53 +221,67 @@ mod tests {
     #[test]
     fn test_redirect_out() {
         let list = parse("echo hi > /tmp/f").unwrap();
-        let cmd = &list.items[0].pipeline.commands[0];
-        assert_eq!(cmd.redirects, vec![Redirect::Out(Word::literal("/tmp/f"))]);
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => assert_eq!(cmd.redirects, vec![Redirect::Out(Word::literal("/tmp/f"))]),
+            _ => panic!("expected Simple command"),
+        }
     }
 
     #[test]
     fn test_redirect_in() {
         let list = parse("cat < file.txt").unwrap();
-        let cmd = &list.items[0].pipeline.commands[0];
-        assert_eq!(cmd.redirects, vec![Redirect::In(Word::literal("file.txt"))]);
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => assert_eq!(cmd.redirects, vec![Redirect::In(Word::literal("file.txt"))]),
+            _ => panic!("expected Simple command"),
+        }
     }
 
     #[test]
     fn test_redirect_append() {
         let list = parse("echo x >> log").unwrap();
-        let cmd = &list.items[0].pipeline.commands[0];
-        assert_eq!(cmd.redirects, vec![Redirect::OutAppend(Word::literal("log"))]);
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => assert_eq!(cmd.redirects, vec![Redirect::OutAppend(Word::literal("log"))]),
+            _ => panic!("expected Simple command"),
+        }
     }
 
     #[test]
     fn test_redirect_stderr() {
         let list = parse("cmd 2>/dev/null").unwrap();
-        let cmd = &list.items[0].pipeline.commands[0];
-        assert_eq!(cmd.redirects, vec![Redirect::Err(Word::literal("/dev/null"))]);
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => assert_eq!(cmd.redirects, vec![Redirect::Err(Word::literal("/dev/null"))]),
+            _ => panic!("expected Simple command"),
+        }
     }
 
     #[test]
     fn test_redirect_err_to_out() {
         let list = parse("cmd 2>&1").unwrap();
-        let cmd = &list.items[0].pipeline.commands[0];
-        assert_eq!(cmd.redirects, vec![Redirect::ErrToOut]);
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => assert_eq!(cmd.redirects, vec![Redirect::ErrToOut]),
+            _ => panic!("expected Simple command"),
+        }
     }
 
     #[test]
     fn test_single_quoted() {
         let list = parse("echo 'hello world'").unwrap();
-        let cmd = &list.items[0].pipeline.commands[0];
-        assert_eq!(cmd.words[1], Word(vec![WordPart::Literal("hello world".into())]));
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => assert_eq!(cmd.words[1], Word(vec![WordPart::Literal("hello world".into())])),
+            _ => panic!("expected Simple command"),
+        }
     }
 
     #[test]
     fn test_double_quoted() {
         let list = parse("echo \"hello $NAME\"").unwrap();
-        let cmd = &list.items[0].pipeline.commands[0];
-        assert_eq!(cmd.words[1], Word(vec![
-            WordPart::Literal("hello ".into()),
-            WordPart::Var("NAME".into()),
-        ]));
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => assert_eq!(cmd.words[1], Word(vec![
+                WordPart::Literal("hello ".into()),
+                WordPart::Var("NAME".into()),
+            ])),
+            _ => panic!("expected Simple command"),
+        }
     }
 
     #[test]
@@ -273,59 +293,75 @@ mod tests {
     #[test]
     fn test_var_in_word() {
         let list = parse("echo $HOME/bin").unwrap();
-        let cmd = &list.items[0].pipeline.commands[0];
-        assert_eq!(cmd.words[1], Word(vec![
-            WordPart::Var("HOME".into()),
-            WordPart::Literal("/bin".into()),
-        ]));
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => assert_eq!(cmd.words[1], Word(vec![
+                WordPart::Var("HOME".into()),
+                WordPart::Literal("/bin".into()),
+            ])),
+            _ => panic!("expected Simple command"),
+        }
     }
 
     #[test]
     fn test_brace_var() {
         let list = parse("echo ${FOO:-default}").unwrap();
-        let cmd = &list.items[0].pipeline.commands[0];
-        assert_eq!(cmd.words[1], Word(vec![
-            WordPart::BraceVar("FOO:-default".into()),
-        ]));
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => assert_eq!(cmd.words[1], Word(vec![
+                WordPart::BraceVar("FOO:-default".into()),
+            ])),
+            _ => panic!("expected Simple command"),
+        }
     }
 
     #[test]
     fn test_here_string() {
         let list = parse("cat <<< hello").unwrap();
-        let cmd = &list.items[0].pipeline.commands[0];
-        assert_eq!(cmd.redirects, vec![Redirect::HereString(Word::literal("hello"))]);
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => assert_eq!(cmd.redirects, vec![Redirect::HereString(Word::literal("hello"))]),
+            _ => panic!("expected Simple command"),
+        }
     }
 
     #[test]
     fn test_cmd_sub_in_word() {
         let list = parse("echo $(whoami)").unwrap();
-        let cmd = &list.items[0].pipeline.commands[0];
-        assert_eq!(cmd.words[1], Word(vec![
-            WordPart::CmdSub("whoami".into()),
-        ]));
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => assert_eq!(cmd.words[1], Word(vec![
+                WordPart::CmdSub("whoami".into()),
+            ])),
+            _ => panic!("expected Simple command"),
+        }
     }
 
     #[test]
     fn test_adjacent_quoting() {
         // echo 'foo'"bar"  →  single word with two literal parts
         let list = parse("echo 'foo'\"bar\"").unwrap();
-        let cmd = &list.items[0].pipeline.commands[0];
-        assert_eq!(cmd.words.len(), 2);
-        assert_eq!(cmd.words[1], Word(vec![
-            WordPart::Literal("foo".into()),
-            WordPart::Literal("bar".into()),
-        ]));
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => {
+                assert_eq!(cmd.words.len(), 2);
+                assert_eq!(cmd.words[1], Word(vec![
+                    WordPart::Literal("foo".into()),
+                    WordPart::Literal("bar".into()),
+                ]));
+            }
+            _ => panic!("expected Simple command"),
+        }
     }
 
     #[test]
     fn test_adjacent_bare_and_quoted() {
         // echo foo'bar'  →  single word "foobar"
         let list = parse("echo foo'bar'").unwrap();
-        let cmd = &list.items[0].pipeline.commands[0];
-        assert_eq!(cmd.words.len(), 2);
-        assert_eq!(cmd.words[1], Word(vec![
-            WordPart::Literal("foo".into()),
-            WordPart::Literal("bar".into()),
-        ]));
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => {
+                assert_eq!(cmd.words.len(), 2);
+                assert_eq!(cmd.words[1], Word(vec![
+                    WordPart::Literal("foo".into()),
+                    WordPart::Literal("bar".into()),
+                ]));
+            }
+            _ => panic!("expected Simple command"),
+        }
     }
 }

@@ -53,11 +53,64 @@ pub struct SimpleCommand {
     pub redirects: Vec<Redirect>,
 }
 
+/// A single command — either simple or compound.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Command {
+    Simple(SimpleCommand),
+    If(IfCommand),
+    While(WhileCommand),
+    Until(WhileCommand),
+    For(ForCommand),
+    Case(CaseCommand),
+    FunctionDef(FunctionDef),
+    Group(List),
+    Subshell(List),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IfCommand {
+    pub condition: List,
+    pub then_body: List,
+    pub elifs: Vec<(List, List)>,
+    pub else_body: Option<List>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WhileCommand {
+    pub condition: List,
+    pub body: List,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForCommand {
+    pub var: String,
+    pub words: Option<Vec<Word>>,
+    pub body: List,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaseCommand {
+    pub word: Word,
+    pub arms: Vec<CaseArm>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaseArm {
+    pub patterns: Vec<Word>,
+    pub body: List,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionDef {
+    pub name: String,
+    pub body: Box<Command>,
+}
+
 /// A pipeline: one or more commands connected by `|`.
 /// `negate` is true when the pipeline is prefixed with `!`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pipeline {
-    pub commands: Vec<SimpleCommand>,
+    pub commands: Vec<Command>,
     pub negate: bool,
 }
 
