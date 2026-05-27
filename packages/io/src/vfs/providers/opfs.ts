@@ -1,17 +1,22 @@
 import type { FileHandle, OpenFlags, DirEntry, FileSystemProvider, FileStat } from '../provider.ts';
 import { FileSystemError } from '../provider.ts';
 
-/**
- * Origin Private File System provider for browser persistent storage.
- * Only available in browsers and web workers that support the Storage Foundation API.
- */
+export interface OPFSStorageManager {
+  getDirectory(): Promise<FileSystemDirectoryHandle>;
+}
+
 export class OPFSProvider implements FileSystemProvider {
   #root: FileSystemDirectoryHandle | null = null;
+  #storage: OPFSStorageManager;
   #nextFd = 3;
   #handles = new Map<number, { nativeHandle: FileSystemFileHandle; path: string; flags: OpenFlags }>();
 
+  constructor(storage?: OPFSStorageManager) {
+    this.#storage = storage ?? navigator.storage;
+  }
+
   async init(): Promise<void> {
-    this.#root = await navigator.storage.getDirectory();
+    this.#root = await this.#storage.getDirectory();
   }
 
   async dispose(): Promise<void> {

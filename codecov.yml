@@ -11,6 +11,9 @@ component_management:
     - component_id: "@mithic/wasip2"
       paths:
         - "packages/wasip2"
+    - component_id: "@mithic/just-bash"
+      paths:
+        - "packages/just-bash"
 coverage:
   status:
     project:

@@ -1,12 +1,9 @@
-/**
- * JustBashShell — wires just-bash with mithic ProcessManager and VFS.
- */
-
-import { Bash, type BashOptions, type ExecOptions as JustBashExecOptions } from 'just-bash';
+import { Bash, getCommandNames, type BashOptions, type ExecOptions as JustBashExecOptions } from 'just-bash';
 import type { ProcessManager, ExecResult } from '@mithic/process/types';
 import type { FileSystemRouter } from '@mithic/io/vfs';
 import { VirtualFileSystem } from './adapter.ts';
 import { createProcessCommands } from './commands.ts';
+import { createExecFallbackPlugin } from './transform.ts';
 
 export interface ExecOptions {
   cwd?: string;
@@ -36,17 +33,24 @@ export class JustBashShell {
     this.#vfs = new VirtualFileSystem(config.vfsRouter, this.#cwd);
 
     const processCommands = createProcessCommands(this.manager);
+    const customCommands = [
+      ...(config.bashOptions?.customCommands ?? []),
+      ...processCommands,
+    ];
 
     this.#bash = new Bash({
       ...config.bashOptions,
       fs: this.#vfs,
       env: this.#env,
       cwd: this.#cwd,
-      customCommands: [
-        ...(config.bashOptions?.customCommands ?? []),
-        ...processCommands,
-      ],
+      customCommands,
     });
+
+    const knownCommands = new Set([
+      ...getCommandNames(),
+      ...customCommands.map(c => c.name),
+    ]);
+    this.#bash.registerTransformPlugin(createExecFallbackPlugin({ knownCommands }));
   }
 
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {

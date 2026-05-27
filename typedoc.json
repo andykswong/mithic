@@ -5,8 +5,7 @@
   "name": "mithic",
   "entryPointStrategy": "packages",
   "entryPoints": [
-    "packages/*",
-    "packages/plugins/*"
+    "packages/*"
   ],
   "includeVersion": true,
   "validation": {

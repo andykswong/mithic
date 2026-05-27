@@ -12,7 +12,7 @@ import type { SyncHttpClient, HttpRequest, HttpResponse } from '../../net/http.t
 import type { SyncSocketProvider, SyncTcpSocket, SyncUdpSocket, IpAddress, SocketAddress } from '../../net/sockets.ts';
 import type { SyncInputStreamHandler, SyncOutputStreamHandler } from '../streams.ts';
 import {
-  STDIN, STDOUT, STDERR, FILE,
+  STDIN, STDOUT, STDERR, FILE, SOCKET_UDP,
   INPUT_STREAM_READ, INPUT_STREAM_BLOCKING_READ, INPUT_STREAM_DISPOSE,
   OUTPUT_STREAM_WRITE, OUTPUT_STREAM_FLUSH, OUTPUT_STREAM_DISPOSE,
   HTTP_SEND,
@@ -151,6 +151,36 @@ class SyncBridgeTcpSocket implements SyncTcpSocket {
   }
 }
 
+class SyncBridgeUdpSocket implements SyncUdpSocket {
+  readonly #io: WorkerIo;
+  readonly #socketId: number;
+
+  constructor(io: WorkerIo, socketId: number) {
+    this.#io = io;
+    this.#socketId = socketId;
+  }
+
+  bind(address: SocketAddress): void {
+    this.#io.ioCall(SOCKET_BIND | SOCKET_UDP, this.#socketId, { address });
+  }
+
+  send(data: Uint8Array, remoteAddress: SocketAddress): number {
+    return this.#io.ioCall(SOCKET_SEND | SOCKET_UDP, this.#socketId, { data, remoteAddress }) as number;
+  }
+
+  receive(len: number): { data: Uint8Array; remoteAddress: SocketAddress } {
+    return this.#io.ioCall(SOCKET_RECV | SOCKET_UDP, this.#socketId, { len }) as { data: Uint8Array; remoteAddress: SocketAddress };
+  }
+
+  close(): void {
+    this.#io.ioCall(SOCKET_CLOSE | SOCKET_UDP, this.#socketId, null);
+  }
+
+  localAddress(): SocketAddress | undefined {
+    return undefined;
+  }
+}
+
 export class SyncBridgeSocketProvider implements SyncSocketProvider {
   readonly #io: WorkerIo;
 
@@ -163,8 +193,9 @@ export class SyncBridgeSocketProvider implements SyncSocketProvider {
     return new SyncBridgeTcpSocket(this.#io, socketId);
   }
 
-  createUdpSocket(): SyncUdpSocket {
-    throw new Error('UDP not yet supported via sync-bridge');
+  createUdpSocket(): SyncBridgeUdpSocket {
+    const socketId = this.#io.ioCall(SOCKET_CREATE | SOCKET_UDP, null, null) as number;
+    return new SyncBridgeUdpSocket(this.#io, socketId);
   }
 
   resolveName(name: string): IpAddress[] {

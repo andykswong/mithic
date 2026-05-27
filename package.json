@@ -11,7 +11,7 @@
     "prepare": "cargo install wasm-tools wkg --root .",
     "prepublishOnly": "npm run clean && npm run build && npm test && npm run doc",
     "build": "npm run build --ws --if-present",
-    "clean": "npm run clean --ws --if-present && rimraf docs/api",
+    "clean": "npm run clean --ws --if-present && rimraf docs/api *.tsbuildinfo target/",
     "doc": "typedoc",
     "lint": "eslint",
     "typecheck": "npm run typecheck --ws --if-present",
@@ -68,7 +68,6 @@
     "./packages/just-bash",
     "./packages/examples/simple",
     "./packages/examples/rust-cli",
-    "./packages/examples/browser",
     "./packages/examples/shell"
   ]
 }

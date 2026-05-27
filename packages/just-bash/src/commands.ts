@@ -1,50 +1,47 @@
-/**
- * Built-in command registry for JustBashShell.
- * Provides commands that bridge just-bash's command model to mithic ProcessManager.
- */
-
 import type { Command, CommandContext, ExecResult } from 'just-bash';
 import type { ProcessManager } from '@mithic/process/types';
-import { spawnWithPipes } from '@mithic/process/utils';
+import { isStreamClosed } from '@mithic/wasip2/io/streams';
+export const RUN_COMMAND_NAME = 'run';
 
-/**
- * Create commands that use the ProcessManager to spawn child processes.
- * These commands allow just-bash to invoke external programs (e.g., WASM binaries)
- * via the process manager's spawn mechanism.
- */
 export function createProcessCommands(manager: ProcessManager): Command[] {
   return [
-    createSpawnCommand(manager),
+    createRunCommand(manager),
   ];
 }
 
-/**
- * `spawn` command — explicitly spawns a child process via the ProcessManager.
- * Usage: spawn <program> [args...]
- */
-function createSpawnCommand(manager: ProcessManager): Command {
+function createRunCommand(manager: ProcessManager): Command {
   return {
-    name: 'spawn',
+    name: RUN_COMMAND_NAME,
     trusted: true,
     async execute(args: string[], ctx: CommandContext): Promise<ExecResult> {
       if (args.length === 0) {
-        return { stdout: '', stderr: 'spawn: missing program name\n', exitCode: 1 };
+        return { stdout: '', stderr: 'run: missing program name\n', exitCode: 1 };
       }
 
       const [program, ...programArgs] = args;
 
       try {
-        const { process, stdin, stdout, stderr } = spawnWithPipes(
-          manager, program!, programArgs, { cwd: ctx.cwd, env: Object.fromEntries(ctx.env) },
-        );
+        // Pre-fill stdin pipe before spawning so the child can read immediately.
+        // Same-thread QueuePipe can't block, so data must be present before the child runs.
+        const stdinPipe = manager.createPipe();
+        const stdoutPipe = manager.createPipe();
+        const stderrPipe = manager.createPipe();
 
         if (ctx.stdin) {
           const inputBytes = new TextEncoder().encode(ctx.stdin as unknown as string);
           if (inputBytes.byteLength > 0) {
-            stdin.write(inputBytes);
+            stdinPipe.output.write(inputBytes);
           }
         }
-        stdin[Symbol.dispose]();
+        stdinPipe.output[Symbol.dispose]();
+
+        const process = manager.spawn(program!, programArgs, {
+          cwd: ctx.cwd,
+          env: Object.fromEntries(ctx.env),
+          stdin: stdinPipe.input,
+          stdout: stdoutPipe.output,
+          stderr: stderrPipe.output,
+        });
 
         const exitCode = await process.wait();
 
@@ -52,19 +49,19 @@ function createSpawnCommand(manager: ProcessManager): Command {
         const stderrChunks: Uint8Array[] = [];
 
         try {
-          let chunk = stdout.read(65536n);
+          let chunk = stdoutPipe.input.read(65536n);
           while (chunk.byteLength > 0) {
             stdoutChunks.push(chunk);
-            chunk = stdout.read(65536n);
+            chunk = stdoutPipe.input.read(65536n);
           }
         } catch (e: unknown) {
           if (!isStreamClosed(e)) throw e;
         }
         try {
-          let chunk = stderr.read(65536n);
+          let chunk = stderrPipe.input.read(65536n);
           while (chunk.byteLength > 0) {
             stderrChunks.push(chunk);
-            chunk = stderr.read(65536n);
+            chunk = stderrPipe.input.read(65536n);
           }
         } catch (e: unknown) {
           if (!isStreamClosed(e)) throw e;
@@ -78,16 +75,12 @@ function createSpawnCommand(manager: ProcessManager): Command {
         };
       } catch (e) {
         if (e === 'not-found') {
-          return { stdout: '', stderr: `spawn: ${program}: command not found\n`, exitCode: 127 };
+          return { stdout: '', stderr: `run: ${program}: command not found\n`, exitCode: 127 };
         }
-        return { stdout: '', stderr: `spawn: ${String(e)}\n`, exitCode: 1 };
+        return { stdout: '', stderr: `run: ${String(e)}\n`, exitCode: 1 };
       }
     },
   };
-}
-
-function isStreamClosed(e: unknown): boolean {
-  return typeof e === 'object' && e !== null && 'tag' in e && (e as { tag: string }).tag === 'closed';
 }
 
 function concat(chunks: Uint8Array[]): Uint8Array {

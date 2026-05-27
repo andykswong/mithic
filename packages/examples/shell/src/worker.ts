@@ -12,6 +12,9 @@ import { FileSystemRouter } from '@mithic/io/vfs';
 import { MemoryFsProvider } from '@mithic/io/vfs';
 import { SimpleProcessManager } from '@mithic/process/impl/simple';
 import { JustBashShell } from '@mithic/just-bash';
+import { WASIShim } from '@mithic/wasip2';
+import { ComponentExit } from '@mithic/wasip2/cli/exit';
+import { isStreamClosed } from '@mithic/wasip2/io/streams';
 import type { CommandHandler, CommandContext } from '@mithic/process/impl/simple';
 
 const decoder = new TextDecoder();
@@ -59,9 +62,7 @@ function createBuiltinResolver(): (file: string) => CommandHandler | undefined {
           ctx.stdout.write(chunk);
         }
       } catch (e: unknown) {
-        if (typeof e === 'object' && e !== null && 'tag' in e && (e as { tag: string }).tag === 'closed') {
-          return 0;
-        }
+        if (isStreamClosed(e)) return 0;
         throw e;
       }
     }
@@ -136,9 +137,7 @@ function createBuiltinResolver(): (file: string) => CommandHandler | undefined {
         ctx.stdout.write(chunk);
       }
     } catch (e: unknown) {
-      if (!(typeof e === 'object' && e !== null && 'tag' in e && (e as { tag: string }).tag === 'closed')) {
-        throw e;
-      }
+      if (!isStreamClosed(e)) throw e;
     }
     // Write collected input to files
     const allData = concat(chunks);
@@ -154,8 +153,46 @@ function createBuiltinResolver(): (file: string) => CommandHandler | undefined {
   return (file: string) => builtins.get(file);
 }
 
+// --- WASM `example` command via ProcessManager ---
+function createExampleCommand(): CommandHandler {
+  return async (args: string[], ctx: CommandContext): Promise<number> => {
+    const shim = new WASIShim({
+      sandbox: {
+        args: ['example', ...args],
+        env: ctx.env,
+        stdin: ctx.stdin,
+        stdout: ctx.stdout,
+        stderr: ctx.stderr,
+      }
+    });
+
+    try {
+      const { instantiate, modules } = await import('@mithic/example-rust-cli/component');
+      const { run } = await instantiate(
+        async (path: keyof typeof modules) => modules[path] && WebAssembly.compile(await (await fetch(modules[path])).arrayBuffer()),
+        shim.getImportObject()
+      );
+
+      run.run();
+      return 0;
+    } catch (e: unknown) {
+      if (e instanceof ComponentExit) {
+        return e.code;
+      }
+      ctx.stderr.write(encoder.encode(`example: ${String(e)}\n`));
+      return 1;
+    }
+  };
+}
+
+const builtinResolver = createBuiltinResolver();
+const exampleHandler = createExampleCommand();
+
 const manager = new SimpleProcessManager({
-  commandResolver: createBuiltinResolver(),
+  commandResolver: (file: string) => {
+    if (file === 'example') return exampleHandler;
+    return builtinResolver(file);
+  },
 });
 
 // --- Setup Shell ---
@@ -199,8 +236,9 @@ while (true) {
   }
 
   if (line === 'help') {
-    postOutput('stdout', 'Available commands: echo, cat, ls, pwd, mkdir, touch, tee\n');
-    postOutput('stdout', 'Pipelines supported: echo hello | cat\n');
+    postOutput('stdout', 'Built-in: echo, cat, ls, pwd, mkdir, touch, tee\n');
+    postOutput('stdout', 'WASM:     example (via ProcessManager)\n');
+    postOutput('stdout', 'Pipelines: echo "my name" | example\n');
     postOutput('prompt', '$ ');
     continue;
   }

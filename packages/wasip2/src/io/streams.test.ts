@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import { deepStrictEqual, strictEqual, throws } from 'node:assert';
 
-import { InputStream, OutputStream } from './streams.ts';
+import { InputStream, OutputStream, isStreamClosed } from './streams.ts';
 import { Pollable, poll } from './poll.ts';
 
 describe('InputStream', () => {
@@ -487,6 +487,36 @@ describe('Pollable', () => {
   it('default pollable is always ready', () => {
     const p = new Pollable();
     strictEqual(p.ready(), true);
+  });
+});
+
+describe('isStreamClosed', () => {
+  it('returns true for {tag:"closed"}', () => {
+    strictEqual(isStreamClosed({ tag: 'closed' }), true);
+  });
+
+  it('returns false for {tag:"last-operation-failed"}', () => {
+    strictEqual(isStreamClosed({ tag: 'last-operation-failed', val: {} }), false);
+  });
+
+  it('returns false for null', () => {
+    strictEqual(isStreamClosed(null), false);
+  });
+
+  it('returns false for undefined', () => {
+    strictEqual(isStreamClosed(undefined), false);
+  });
+
+  it('returns false for a plain Error', () => {
+    strictEqual(isStreamClosed(new Error('closed')), false);
+  });
+
+  it('returns false for a string', () => {
+    strictEqual(isStreamClosed('closed'), false);
+  });
+
+  it('returns false for object with no tag', () => {
+    strictEqual(isStreamClosed({ message: 'closed' }), false);
   });
 });
 

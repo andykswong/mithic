@@ -12,6 +12,10 @@ export type StreamError =
   | { tag: 'last-operation-failed'; val: IoError }
   | { tag: 'closed' };
 
+export function isStreamClosed(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'tag' in error && (error as StreamError).tag === 'closed';
+}
+
 export class InputStream {
   #handler: SyncInputStreamHandler;
   #subscribe?: () => Pollable;

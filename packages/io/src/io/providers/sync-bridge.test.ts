@@ -2,16 +2,18 @@ import { describe, it } from 'node:test';
 import { ok } from 'node:assert';
 import type { SyncFileSystemProvider } from '../../vfs/provider.ts';
 import type { SyncHttpClient } from '../../net/http.ts';
-import type { SyncSocketProvider } from '../../net/sockets.ts';
+import type { SyncSocketProvider, SyncUdpSocket } from '../../net/sockets.ts';
 import type { SyncInputStreamHandler, SyncOutputStreamHandler } from '../streams.ts';
-import type { SyncBridgeFsProvider, SyncBridgeHttpClient, SyncBridgeSocketProvider } from './sync-bridge.ts';
+import type { SyncBridgeFsProvider, SyncBridgeHttpClient } from './sync-bridge.ts';
 import {
   SyncBridgeInputStreamHandler,
   SyncBridgeOutputStreamHandler,
+  SyncBridgeSocketProvider,
   createStdinHandler,
   createStdoutHandler,
   createStderrHandler,
 } from './sync-bridge.ts';
+import { SOCKET_CREATE, SOCKET_BIND, SOCKET_SEND, SOCKET_RECV, SOCKET_CLOSE, SOCKET_UDP } from '../calls.ts';
 
 describe('SyncBridgeFsProvider', () => {
   it('satisfies SyncFileSystemProvider interface', () => {
@@ -45,6 +47,46 @@ describe('SyncBridgeOutputStreamHandler', () => {
   it('satisfies SyncOutputStreamHandler interface', () => {
     const handler: SyncOutputStreamHandler = null as unknown as SyncBridgeOutputStreamHandler;
     ok(handler !== undefined || true);
+  });
+});
+
+describe('SyncBridgeSocketProvider.createUdpSocket', () => {
+  it('creates a UDP socket that dispatches via ioCall', () => {
+    const calls: Array<{ call: number; id: number | null; payload: unknown }> = [];
+    const mockIo = {
+      ioCall(call: number, id: number | null, payload: unknown) {
+        calls.push({ call, id, payload });
+        const method = call & 0xff000000;
+        if (method === SOCKET_CREATE) return 42;
+        if (method === SOCKET_SEND) return 5;
+        if (method === SOCKET_RECV) return { data: new Uint8Array([1, 2, 3]), remoteAddress: { host: '127.0.0.1', port: 9000 } };
+        return undefined;
+      },
+    };
+
+    const provider = new SyncBridgeSocketProvider(mockIo as never);
+    const udp = provider.createUdpSocket();
+
+    ok(udp !== undefined);
+    ok(calls.some(c => (c.call & 0xff000000) === SOCKET_CREATE && (c.call & 0x00ffffff) === SOCKET_UDP));
+
+    udp.bind({ host: '0.0.0.0', port: 0 });
+    ok(calls.some(c => (c.call & 0xff000000) === SOCKET_BIND));
+
+    const sent = udp.send(new Uint8Array([10, 20]), { host: '127.0.0.1', port: 9000 });
+    ok(sent === 5);
+
+    const received = udp.receive(1024);
+    ok(received.data);
+    ok(received.remoteAddress.port === 9000);
+
+    udp.close();
+    ok(calls.some(c => (c.call & 0xff000000) === SOCKET_CLOSE));
+  });
+
+  it('satisfies SyncUdpSocket interface', () => {
+    const udp: SyncUdpSocket = null as unknown as ReturnType<SyncBridgeSocketProvider['createUdpSocket']>;
+    ok(udp !== undefined || true);
   });
 });
 

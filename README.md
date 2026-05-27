@@ -67,7 +67,6 @@ npm run dev
 |---------|-------------|
 | [`examples/simple`](./packages/examples/simple) | JS WebAssembly component built with ComponentizeJS |
 | [`examples/rust-cli`](./packages/examples/rust-cli) | Rust WebAssembly component |
-| [`examples/browser`](./packages/examples/browser) | Running a WASM component in the browser |
 | [`examples/shell`](./packages/examples/shell) | xterm.js browser terminal with JustBashShell |
 
 ## Development
