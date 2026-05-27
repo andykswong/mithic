@@ -13,6 +13,10 @@ pub struct Shell {
     is_interactive: bool,
     exit_requested: bool,
     reader: LineReader,
+    functions: HashMap<String, Command>,
+    break_depth: usize,
+    continue_depth: usize,
+    return_requested: bool,
 }
 
 impl Shell {
@@ -33,6 +37,10 @@ impl Shell {
             is_interactive,
             exit_requested: false,
             reader: LineReader::new(),
+            functions: HashMap::new(),
+            break_depth: 0,
+            continue_depth: 0,
+            return_requested: false,
         }
     }
 
@@ -78,7 +86,7 @@ impl Shell {
             if !skip_next {
                 exit = self.exec_pipeline(pipeline);
                 self.last_exit = exit;
-                if self.exit_requested {
+                if self.exit_requested || self.return_requested || self.break_depth > 0 {
                     break;
                 }
             }
@@ -102,11 +110,11 @@ impl Shell {
         }
 
         if n == 1 {
-            let cmd = match cmds.into_iter().next().unwrap() {
-                Command::Simple(sc) => sc,
-                _ => return 0,
+            let cmd = cmds.into_iter().next().unwrap();
+            let exit = match cmd {
+                Command::Simple(sc) => self.exec_command(sc, None, None),
+                other => self.exec_compound(other),
             };
-            let exit = self.exec_command(cmd, None, None);
             return if pipeline.negate { if exit == 0 { 1 } else { 0 } } else { exit };
         }
 
@@ -133,7 +141,11 @@ impl Shell {
         for (i, command) in cmds.into_iter().enumerate() {
             let cmd = match command {
                 Command::Simple(sc) => sc,
-                _ => continue,
+                other => {
+                    let exit = self.exec_compound(other);
+                    if i == n - 1 { last_builtin_exit = Some(exit); }
+                    continue;
+                }
             };
             let mut stdin_opt = pipe_read_ends[i].take();
             let mut stdout_opt = pipe_write_ends[i].take();
@@ -159,7 +171,12 @@ impl Shell {
             }
 
             let name = args[0].clone();
-            if Self::is_builtin(&name) {
+            if let Some(body) = self.functions.get(&name).cloned() {
+                let exit = self.exec_function_call(&args[1..], body);
+                if i == n - 1 {
+                    last_builtin_exit = Some(exit);
+                }
+            } else if Self::is_builtin(&name) {
                 let exit = self.exec_builtin(&name, &args[1..], stdin_opt, stdout_opt);
                 if self.exit_requested {
                     for p in processes { let _ = p.wait(); }
@@ -225,6 +242,9 @@ impl Shell {
         }
 
         let name = args[0].clone();
+        if let Some(body) = self.functions.get(&name).cloned() {
+            return self.exec_function_call(&args[1..], body);
+        }
         if Self::is_builtin(&name) {
             self.exec_builtin(&name, &args[1..], stdin, stdout)
         } else {
@@ -248,7 +268,8 @@ impl Shell {
     fn is_builtin(name: &str) -> bool {
         matches!(name,
             "exit" | "echo" | "pwd" | "cd" | "export" | "unset" |
-            "env" | "true" | "false"
+            "env" | "true" | "false" | "break" | "continue" |
+            "return" | "source" | "." | "read" | "test" | "[" | "[["
         )
     }
 
@@ -256,7 +277,7 @@ impl Shell {
         &mut self,
         name: &str,
         args: &[String],
-        _stdin: Option<InputStream>,
+        stdin: Option<InputStream>,
         stdout: Option<OutputStream>,
     ) -> u8 {
         macro_rules! write_out {
@@ -316,6 +337,50 @@ impl Shell {
             }
             "true" => 0,
             "false" => 1,
+            "break" => {
+                let n: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(1);
+                self.break_depth = n;
+                0
+            }
+            "continue" => {
+                let n: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(1);
+                self.continue_depth = n;
+                0
+            }
+            "return" => {
+                let code: u8 = args.first().and_then(|s| s.parse().ok()).unwrap_or(self.last_exit);
+                self.return_requested = true;
+                code
+            }
+            "source" | "." => {
+                let file = match args.first() {
+                    Some(f) => f.clone(),
+                    None => {
+                        io::write_stderr("msh: source: filename argument required\n");
+                        return 2;
+                    }
+                };
+                self.exec_source(&file)
+            }
+            "read" => {
+                self.exec_read(args, stdin)
+            }
+            "test" | "[" => {
+                let test_args: &[String] = if name == "[" {
+                    if args.last().map(|s| s.as_str()) == Some("]") {
+                        &args[..args.len() - 1]
+                    } else {
+                        io::write_stderr("msh: [: missing `]'\n");
+                        return 2;
+                    }
+                } else {
+                    args
+                };
+                if self.eval_test(test_args) { 0 } else { 1 }
+            }
+            "[[" => {
+                if self.eval_extended_test(args) { 0 } else { 1 }
+            }
             _ => 127,
         }
     }
@@ -398,35 +463,39 @@ impl Shell {
         if n == 0 { return 0; }
 
         if n == 1 {
-            let cmd = match cmds.into_iter().next().unwrap() {
-                Command::Simple(sc) => sc,
-                _ => { drop(stdout); return 0; }
-            };
-            let args: Vec<String> = cmd.words.iter()
-                .flat_map(|w| {
-                    let expanded = self.expand_word(w);
-                    if has_glob(&expanded) { self.expand_glob(&expanded) } else { vec![expanded] }
-                })
-                .collect();
-            if args.is_empty() { drop(stdout); return 0; }
-            let name = args[0].clone();
-            let exit = if Self::is_builtin(&name) {
-                self.exec_builtin(&name, &args[1..], None, Some(stdout))
-            } else {
-                let opts = SpawnOptions {
-                    cwd: None,
-                    env: Some(self.env_list()),
-                    stdin: None,
-                    stdout: Some(stdout),
-                    stderr: None,
-                };
-                match proc_manager::spawn(&name, &args[1..], Some(opts)) {
-                    Ok(proc) => proc.wait() as u8,
-                    Err(_) => {
-                        io::write_stderr(&format!("msh: {}: command not found\n", name));
-                        127
+            let cmd = cmds.into_iter().next().unwrap();
+            let exit = match cmd {
+                Command::Simple(sc) => {
+                    let args: Vec<String> = sc.words.iter()
+                        .flat_map(|w| {
+                            let expanded = self.expand_word(w);
+                            if has_glob(&expanded) { self.expand_glob(&expanded) } else { vec![expanded] }
+                        })
+                        .collect();
+                    if args.is_empty() { drop(stdout); return 0; }
+                    let name = args[0].clone();
+                    if let Some(body) = self.functions.get(&name).cloned() {
+                        self.exec_function_call(&args[1..], body)
+                    } else if Self::is_builtin(&name) {
+                        self.exec_builtin(&name, &args[1..], None, Some(stdout))
+                    } else {
+                        let opts = SpawnOptions {
+                            cwd: None,
+                            env: Some(self.env_list()),
+                            stdin: None,
+                            stdout: Some(stdout),
+                            stderr: None,
+                        };
+                        match proc_manager::spawn(&name, &args[1..], Some(opts)) {
+                            Ok(proc) => proc.wait() as u8,
+                            Err(_) => {
+                                io::write_stderr(&format!("msh: {}: command not found\n", name));
+                                127
+                            }
+                        }
                     }
                 }
+                other => { drop(stdout); self.exec_compound(other) }
             };
             return if pipeline.negate { if exit == 0 { 1 } else { 0 } } else { exit };
         }
@@ -449,7 +518,11 @@ impl Shell {
         for (i, command) in cmds.into_iter().enumerate() {
             let cmd = match command {
                 Command::Simple(sc) => sc,
-                _ => continue,
+                other => {
+                    let exit = self.exec_compound(other);
+                    if i == n - 1 { last_builtin_exit = Some(exit); }
+                    continue;
+                }
             };
             let stdin_opt = pipe_read_ends[i].take();
             let stdout_opt = pipe_write_ends[i].take();
@@ -461,7 +534,10 @@ impl Shell {
                 .collect();
             if args.is_empty() { continue; }
             let name = args[0].clone();
-            if Self::is_builtin(&name) {
+            if let Some(body) = self.functions.get(&name).cloned() {
+                let exit = self.exec_function_call(&args[1..], body);
+                if i == n - 1 { last_builtin_exit = Some(exit); }
+            } else if Self::is_builtin(&name) {
                 let exit = self.exec_builtin(&name, &args[1..], stdin_opt, stdout_opt);
                 if self.exit_requested {
                     for p in processes { let _ = p.wait(); }
@@ -529,8 +605,8 @@ impl Shell {
     fn expand_var(&self, name: &str) -> String {
         match name {
             "?" => self.last_exit.to_string(),
-            "#" => "0".to_string(),
-            "@" | "*" => String::new(),
+            "#" => self.env.get("#").cloned().unwrap_or_else(|| "0".to_string()),
+            "@" | "*" => self.env.get("@").cloned().unwrap_or_default(),
             _ => self.env.get(name).cloned().unwrap_or_default(),
         }
     }
@@ -624,6 +700,444 @@ impl Shell {
     fn expand_glob(&self, pattern: &str) -> Vec<String> {
         vec![pattern.to_string()]
     }
+
+    fn exec_compound(&mut self, cmd: Command) -> u8 {
+        match cmd {
+            Command::Simple(sc) => self.exec_command(sc, None, None),
+            Command::If(ic) => self.exec_if(ic),
+            Command::While(wc) => self.exec_while(wc),
+            Command::Until(wc) => self.exec_until(wc),
+            Command::For(fc) => self.exec_for(fc),
+            Command::Case(cc) => self.exec_case(cc),
+            Command::FunctionDef(fd) => {
+                self.functions.insert(fd.name, *fd.body);
+                0
+            }
+            Command::Group(list) => self.exec_list(list),
+            Command::Subshell(list) => self.exec_list(list),
+        }
+    }
+
+    fn exec_if(&mut self, cmd: crate::parser::IfCommand) -> u8 {
+        let cond_exit = self.exec_list(cmd.condition);
+        if cond_exit == 0 {
+            return self.exec_list(cmd.then_body);
+        }
+
+        for (elif_cond, elif_body) in cmd.elifs {
+            let elif_exit = self.exec_list(elif_cond);
+            if elif_exit == 0 {
+                return self.exec_list(elif_body);
+            }
+        }
+
+        if let Some(else_body) = cmd.else_body {
+            return self.exec_list(else_body);
+        }
+
+        cond_exit
+    }
+
+    fn exec_while(&mut self, cmd: crate::parser::WhileCommand) -> u8 {
+        let mut exit = 0u8;
+        loop {
+            let cond = self.exec_list(cmd.condition.clone());
+            if cond != 0 { break; }
+            exit = self.exec_list(cmd.body.clone());
+            if self.exit_requested || self.return_requested { break; }
+            if self.break_depth > 0 {
+                self.break_depth -= 1;
+                break;
+            }
+            if self.continue_depth > 0 {
+                self.continue_depth -= 1;
+            }
+        }
+        exit
+    }
+
+    fn exec_until(&mut self, cmd: crate::parser::WhileCommand) -> u8 {
+        let mut exit = 0u8;
+        loop {
+            let cond = self.exec_list(cmd.condition.clone());
+            if cond == 0 { break; }
+            exit = self.exec_list(cmd.body.clone());
+            if self.exit_requested || self.return_requested { break; }
+            if self.break_depth > 0 {
+                self.break_depth -= 1;
+                break;
+            }
+            if self.continue_depth > 0 {
+                self.continue_depth -= 1;
+            }
+        }
+        exit
+    }
+
+    fn exec_for(&mut self, cmd: crate::parser::ForCommand) -> u8 {
+        let items: Vec<String> = match cmd.words {
+            Some(words) => words.iter()
+                .flat_map(|w| {
+                    let expanded = self.expand_word(w);
+                    if has_glob(&expanded) {
+                        self.expand_glob(&expanded)
+                    } else {
+                        vec![expanded]
+                    }
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+
+        let mut exit = 0u8;
+        for item in items {
+            self.env.insert(cmd.var.clone(), item);
+            exit = self.exec_list(cmd.body.clone());
+            self.last_exit = exit;
+            if self.exit_requested || self.return_requested { break; }
+            if self.break_depth > 0 {
+                self.break_depth -= 1;
+                break;
+            }
+            if self.continue_depth > 0 {
+                self.continue_depth -= 1;
+            }
+        }
+        exit
+    }
+
+    fn exec_case(&mut self, cmd: crate::parser::CaseCommand) -> u8 {
+        let value = self.expand_word(&cmd.word);
+
+        for arm in cmd.arms {
+            let matched = arm.patterns.iter().any(|pat| {
+                let pattern = self.expand_word(pat);
+                glob_match(&pattern, &value)
+            });
+            if matched {
+                return self.exec_list(arm.body);
+            }
+        }
+        0
+    }
+
+    fn exec_function_call(&mut self, args: &[String], body: Command) -> u8 {
+        let old_hash = self.env.get("#").cloned();
+        let old_at = self.env.get("@").cloned();
+        let mut old_positional: Vec<(String, Option<String>)> = Vec::new();
+        for (i, arg) in args.iter().enumerate() {
+            let key = (i + 1).to_string();
+            old_positional.push((key.clone(), self.env.get(&key).cloned()));
+            self.env.insert(key, arg.clone());
+        }
+        self.env.insert("#".to_string(), args.len().to_string());
+        self.env.insert("@".to_string(), args.join(" "));
+
+        let exit = self.exec_compound(body);
+        self.return_requested = false;
+
+        for (key, old_val) in old_positional {
+            match old_val {
+                Some(v) => { self.env.insert(key, v); }
+                None => { self.env.remove(&key); }
+            };
+        }
+        let mut i = args.len() + 1;
+        loop {
+            let key = i.to_string();
+            if self.env.remove(&key).is_none() { break; }
+            i += 1;
+        }
+        match old_hash {
+            Some(v) => { self.env.insert("#".to_string(), v); }
+            None => { self.env.remove("#"); }
+        };
+        match old_at {
+            Some(v) => { self.env.insert("@".to_string(), v); }
+            None => { self.env.remove("@"); }
+        };
+
+        exit
+    }
+
+    fn eval_test(&self, args: &[String]) -> bool {
+        if args.is_empty() { return false; }
+
+        if args[0] == "!" {
+            return !self.eval_test(&args[1..]);
+        }
+
+        if args.len() == 1 {
+            return !args[0].is_empty();
+        }
+
+        if args.len() == 2 {
+            let op = args[0].as_str();
+            let val = &args[1];
+            return match op {
+                "-z" => val.is_empty(),
+                "-n" => !val.is_empty(),
+                "-e" | "-f" | "-d" | "-r" | "-w" | "-x" => self.test_file(op, val),
+                _ => false,
+            };
+        }
+
+        if args.len() == 3 {
+            let left = &args[0];
+            let op = args[1].as_str();
+            let right = &args[2];
+            return match op {
+                "=" | "==" => left == right,
+                "!=" => left != right,
+                "-eq" => self.parse_int(left) == self.parse_int(right),
+                "-ne" => self.parse_int(left) != self.parse_int(right),
+                "-lt" => self.parse_int(left) < self.parse_int(right),
+                "-gt" => self.parse_int(left) > self.parse_int(right),
+                "-le" => self.parse_int(left) <= self.parse_int(right),
+                "-ge" => self.parse_int(left) >= self.parse_int(right),
+                "-a" => self.eval_test(&args[..1]) && self.eval_test(&args[2..]),
+                "-o" => self.eval_test(&args[..1]) || self.eval_test(&args[2..]),
+                _ => false,
+            };
+        }
+
+        for i in 0..args.len() {
+            if args[i] == "-a" {
+                return self.eval_test(&args[..i]) && self.eval_test(&args[i+1..]);
+            }
+        }
+        for i in 0..args.len() {
+            if args[i] == "-o" {
+                return self.eval_test(&args[..i]) || self.eval_test(&args[i+1..]);
+            }
+        }
+
+        false
+    }
+
+    fn parse_int(&self, s: &str) -> i64 {
+        s.parse().unwrap_or(0)
+    }
+
+    #[cfg(not(test))]
+    fn test_file(&self, op: &str, path: &str) -> bool {
+        use crate::bindings::wasi::filesystem::types::{DescriptorFlags, DescriptorType, OpenFlags, PathFlags};
+        use crate::bindings::wasi::filesystem::preopens;
+
+        let resolved = self.resolve_path(path);
+        let rel = resolved.trim_start_matches('/');
+
+        let root = match preopens::get_directories().into_iter().find(|(_, p)| p == "/") {
+            Some((d, _)) => d,
+            None => return false,
+        };
+
+        match op {
+            "-e" | "-r" | "-w" | "-x" => {
+                root.open_at(PathFlags::SYMLINK_FOLLOW, rel, OpenFlags::empty(), DescriptorFlags::READ).is_ok()
+            }
+            "-f" => {
+                match root.open_at(PathFlags::SYMLINK_FOLLOW, rel, OpenFlags::empty(), DescriptorFlags::READ) {
+                    Ok(desc) => matches!(desc.get_type(), Ok(DescriptorType::RegularFile)),
+                    Err(_) => false,
+                }
+            }
+            "-d" => {
+                match root.open_at(PathFlags::SYMLINK_FOLLOW, rel, OpenFlags::DIRECTORY, DescriptorFlags::READ) {
+                    Ok(desc) => matches!(desc.get_type(), Ok(DescriptorType::Directory)),
+                    Err(_) => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    #[cfg(test)]
+    fn test_file(&self, _op: &str, _path: &str) -> bool { false }
+
+    fn eval_extended_test(&self, args: &[String]) -> bool {
+        if args.is_empty() { return false; }
+
+        if args[0] == "!" {
+            return !self.eval_extended_test(&args[1..]);
+        }
+
+        for i in 0..args.len() {
+            if args[i] == "&&" {
+                return self.eval_extended_test(&args[..i]) && self.eval_extended_test(&args[i+1..]);
+            }
+        }
+        for i in 0..args.len() {
+            if args[i] == "||" {
+                return self.eval_extended_test(&args[..i]) || self.eval_extended_test(&args[i+1..]);
+            }
+        }
+
+        if args.len() == 1 {
+            return !args[0].is_empty();
+        }
+
+        if args.len() == 2 {
+            return match args[0].as_str() {
+                "-z" => args[1].is_empty(),
+                "-n" => !args[1].is_empty(),
+                "-e" | "-f" | "-d" | "-r" | "-w" | "-x" => self.test_file(&args[0], &args[1]),
+                _ => false,
+            };
+        }
+
+        if args.len() == 3 {
+            let left = &args[0];
+            let op = args[1].as_str();
+            let right = &args[2];
+            return match op {
+                "==" | "=" => glob_match(right, left),
+                "!=" => !glob_match(right, left),
+                "<" => left < right,
+                ">" => left > right,
+                "-eq" => self.parse_int(left) == self.parse_int(right),
+                "-ne" => self.parse_int(left) != self.parse_int(right),
+                "-lt" => self.parse_int(left) < self.parse_int(right),
+                "-gt" => self.parse_int(left) > self.parse_int(right),
+                "-le" => self.parse_int(left) <= self.parse_int(right),
+                "-ge" => self.parse_int(left) >= self.parse_int(right),
+                _ => false,
+            };
+        }
+
+        false
+    }
+
+    #[cfg(not(test))]
+    fn exec_source(&mut self, file: &str) -> u8 {
+        use crate::bindings::wasi::filesystem::types::{DescriptorFlags, OpenFlags, PathFlags};
+        use crate::bindings::wasi::filesystem::preopens;
+
+        let path = self.resolve_path(file);
+        let rel = path.trim_start_matches('/');
+
+        let root = match preopens::get_directories().into_iter().find(|(_, p)| p == "/") {
+            Some((d, _)) => d,
+            None => {
+                io::write_stderr(&format!("msh: source: {}: No such file or directory\n", file));
+                return 1;
+            }
+        };
+
+        let desc = match root.open_at(
+            PathFlags::SYMLINK_FOLLOW, rel,
+            OpenFlags::empty(), DescriptorFlags::READ,
+        ) {
+            Ok(d) => d,
+            Err(_) => {
+                io::write_stderr(&format!("msh: source: {}: No such file or directory\n", file));
+                return 1;
+            }
+        };
+
+        let stream = match desc.read_via_stream(0) {
+            Ok(s) => s,
+            Err(_) => return 1,
+        };
+
+        let mut contents = Vec::new();
+        loop {
+            match stream.blocking_read(4096) {
+                Ok(bytes) if bytes.is_empty() => break,
+                Ok(bytes) => contents.extend_from_slice(&bytes),
+                Err(_) => break,
+            }
+        }
+
+        let script = String::from_utf8_lossy(&contents);
+        let mut parser = Parser::new(&script);
+        if let Some(list) = parser.parse() {
+            self.exec_list(list)
+        } else {
+            0
+        }
+    }
+
+    #[cfg(test)]
+    fn exec_source(&mut self, _file: &str) -> u8 { 0 }
+
+    #[cfg(not(test))]
+    fn exec_read(&mut self, args: &[String], stdin: Option<InputStream>) -> u8 {
+        let mut var_names: Vec<&str> = Vec::new();
+        let mut prompt = None;
+        let mut raw = false;
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "-p" => {
+                    i += 1;
+                    if i < args.len() { prompt = Some(args[i].as_str()); }
+                }
+                "-r" => { raw = true; }
+                _ => { var_names.push(&args[i]); }
+            }
+            i += 1;
+        }
+
+        if var_names.is_empty() {
+            var_names.push("REPLY");
+        }
+
+        if let Some(p) = prompt {
+            io::write_stderr(p);
+        }
+
+        let line = match &stdin {
+            Some(s) => {
+                let mut buf = Vec::new();
+                loop {
+                    match s.blocking_read(1) {
+                        Ok(bytes) if bytes.is_empty() => break,
+                        Ok(bytes) => {
+                            buf.extend_from_slice(&bytes);
+                            if bytes.last() == Some(&b'\n') { break; }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                if buf.is_empty() { return 1; }
+                String::from_utf8_lossy(&buf).trim_end_matches('\n').to_string()
+            }
+            None => {
+                match self.reader.read_line() {
+                    Some(l) => l.trim_end_matches('\n').to_string(),
+                    None => return 1,
+                }
+            }
+        };
+
+        let line = if raw { line } else { line.replace("\\\n", "") };
+
+        let ifs = self.env.get("IFS").cloned().unwrap_or_else(|| " \t\n".to_string());
+        let fields: Vec<&str> = if ifs.is_empty() {
+            vec![&line]
+        } else {
+            line.split(|c: char| ifs.contains(c))
+                .filter(|s| !s.is_empty())
+                .collect()
+        };
+
+        for (idx, var_name) in var_names.iter().enumerate() {
+            if idx == var_names.len() - 1 {
+                let remaining: Vec<&str> = if idx < fields.len() { fields[idx..].to_vec() } else { vec![] };
+                self.env.insert(var_name.to_string(), remaining.join(" "));
+            } else if idx < fields.len() {
+                self.env.insert(var_name.to_string(), fields[idx].to_string());
+            } else {
+                self.env.insert(var_name.to_string(), String::new());
+            }
+        }
+
+        0
+    }
+
+    #[cfg(test)]
+    fn exec_read(&mut self, _args: &[String], _stdin: Option<InputStream>) -> u8 { 0 }
 
     #[cfg(not(test))]
     /// Returns `true` on success, `false` if a redirect failed (command should not execute).
