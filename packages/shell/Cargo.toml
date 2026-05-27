@@ -1,0 +1,10 @@
+[package]
+name = "mithic_shell"
+edition = "2024"
+publish = false
+
+[dependencies]
+wit-bindgen = { version = "0.57" }
+
+[package.metadata.component]
+package = "mithic:shell"

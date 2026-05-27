@@ -66,6 +66,7 @@
     "./packages/wasip2",
     "./packages/process",
     "./packages/just-bash",
+    "./packages/shell",
     "./packages/examples/simple",
     "./packages/examples/rust-cli",
     "./packages/examples/shell"

@@ -1,0 +1,65 @@
+{
+  "name": "@mithic/shell",
+  "version": "0.1.0",
+  "description": "mithic shell - Rust WASM WASIP2 shell component",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/ts/index.js",
+  "types": "./dist/ts/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/ts/index.d.ts",
+      "default": "./dist/ts/index.js"
+    },
+    "./component": {
+      "types": "./dist/wasm/index.d.ts",
+      "default": "./dist/wasm/index.js"
+    }
+  },
+  "files": [
+    "/dist"
+  ],
+  "config": {
+    "crate": "mithic_shell",
+    "target": "wasm32-wasip2"
+  },
+  "scripts": {
+    "preinstall": "rustup target add $npm_package_config_target",
+    "clean": "rimraf dist *.tsbuildinfo",
+    "prebuild": "mkdir -p dist/wasm dist/ts",
+    "build": "npm run build:rust && npm run build:ts",
+    "build:rust": "cargo build -p $npm_package_config_crate -r --target $npm_package_config_target",
+    "postbuild:rust": "cp ../../target/${npm_package_config_target}/release/${npm_package_config_crate}.wasm ./dist/wasm/component.wasm && npm run transpile",
+    "transpile": "node transpile.js",
+    "build:ts": "vite build",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "start": "node --experimental-strip-types ts/cli.ts",
+    "test:rust": "cargo test -p $npm_package_config_crate --config \"build.target=\\\"$(rustc -vV | sed -n 's/host: //p')\\\"\"",
+    "test": "npm run test:rust && node --experimental-strip-types --test \"ts/**/*.test.ts\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andykswong/mithic.git"
+  },
+  "keywords": [
+    "mithic",
+    "typescript",
+    "wasm",
+    "shell",
+    "wasip2"
+  ],
+  "author": "Andy K.S. Wong <andykswong@outlook.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/andykswong/mithic/issues"
+  },
+  "homepage": "https://github.com/andykswong/mithic",
+  "dependencies": {
+    "@mithic/wasip2": "^0.1",
+    "@mithic/process": "^0.1"
+  },
+  "devDependencies": {
+    "@bytecodealliance/jco": "^1.10"
+  }
+}

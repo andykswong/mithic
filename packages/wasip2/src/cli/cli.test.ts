@@ -233,4 +233,54 @@ describe('stdio', () => {
     assert.equal(written.length, 1);
     assert.deepEqual(written[0], new Uint8Array([69, 82, 82]));
   });
+
+  it('_setStdin accepts InputStream instance directly', () => {
+    const data = new Uint8Array([7, 8, 9]);
+    _setStdin(new InputStream({ blockingRead(len) { return data.slice(0, len); } }));
+    const stream = getStdin();
+    assert.deepEqual(stream.blockingRead(2n), new Uint8Array([7, 8]));
+  });
+
+  it('_setStdout accepts OutputStream instance directly', () => {
+    const written: Uint8Array[] = [];
+    _setStdout(new OutputStream({ write(d) { written.push(new Uint8Array(d)); } }));
+    getStdout().write(new Uint8Array([1]));
+    assert.equal(written.length, 1);
+  });
+
+  it('_setStderr accepts OutputStream instance directly', () => {
+    const written: Uint8Array[] = [];
+    _setStderr(new OutputStream({ write(d) { written.push(new Uint8Array(d)); } }));
+    getStderr().write(new Uint8Array([2]));
+    assert.equal(written.length, 1);
+  });
+
+  it('getStdout returns a new borrow on each call', () => {
+    _setStdout({ write() {} });
+    const a = getStdout();
+    const b = getStdout();
+    assert.notStrictEqual(a, b);
+  });
+
+  it('disposing one borrow from getStdout does not affect subsequent borrows', () => {
+    const written: Uint8Array[] = [];
+    _setStdout({ write(d) { written.push(new Uint8Array(d)); } });
+
+    const first = getStdout();
+    first.write(new Uint8Array([1]));
+    first[Symbol.dispose]();
+
+    const second = getStdout();
+    second.write(new Uint8Array([2]));
+
+    assert.equal(written.length, 2);
+    assert.deepEqual(written[1], new Uint8Array([2]));
+  });
+
+  it('getStdin returns a new borrow on each call', () => {
+    _setStdin({ blockingRead() { return new Uint8Array(0); } });
+    const a = getStdin();
+    const b = getStdin();
+    assert.notStrictEqual(a, b);
+  });
 });

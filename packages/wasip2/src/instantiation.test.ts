@@ -307,6 +307,67 @@ describe('WASIShim', () => {
     assert.ok(termStdin.getTerminalStdin() !== undefined);
   });
 
+  it('getStdout returns a new borrow on each call — disposing one does not affect the next', () => {
+    const written: Uint8Array[] = [];
+    const shim = new WASIShim({
+      sandbox: { stdout: { write(d: Uint8Array) { written.push(new Uint8Array(d)); } } },
+    });
+    const iface = shim.getImportObject()['wasi:cli/stdout'] as { getStdout: () => OutputStream };
+
+    const first = iface.getStdout();
+    first.write(new Uint8Array([1]));
+    first[Symbol.dispose]();
+
+    const second = iface.getStdout();
+    second.write(new Uint8Array([2]));
+
+    assert.equal(written.length, 2);
+    assert.deepEqual(written[0], new Uint8Array([1]));
+    assert.deepEqual(written[1], new Uint8Array([2]));
+  });
+
+  it('getStdin returns a new borrow on each call — disposing one does not affect the next', () => {
+    let reads = 0;
+    const shim = new WASIShim({
+      sandbox: { stdin: { blockingRead(len: number) { reads++; return new Uint8Array(len); } } },
+    });
+    const iface = shim.getImportObject()['wasi:cli/stdin'] as { getStdin: () => InputStream };
+
+    const first = iface.getStdin();
+    first.blockingRead(1n);
+    first[Symbol.dispose]();
+
+    const second = iface.getStdin();
+    second.blockingRead(1n);
+
+    assert.equal(reads, 2);
+  });
+
+  it('[Symbol.dispose] disposes the shim without throwing', () => {
+    const shim = new WASIShim({
+      sandbox: {
+        stdin: { blockingRead() { return new Uint8Array(0); } },
+        stdout: { write() {} },
+        stderr: { write() {} },
+      },
+    });
+    assert.doesNotThrow(() => shim[Symbol.dispose]());
+  });
+
+  it('[Symbol.dispose] calls handler drop on owned streams', () => {
+    let stdinDropped = false;
+    let stdoutDropped = false;
+    const shim = new WASIShim({
+      sandbox: {
+        stdin: { blockingRead() { return new Uint8Array(0); }, drop() { stdinDropped = true; } },
+        stdout: { write() {}, drop() { stdoutDropped = true; } },
+      },
+    });
+    shim[Symbol.dispose]();
+    assert.ok(stdinDropped);
+    assert.ok(stdoutDropped);
+  });
+
   it('terminal returns undefined when isatty is false', () => {
     const shim = new WASIShim({
       sandbox: {

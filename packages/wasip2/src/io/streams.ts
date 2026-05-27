@@ -20,11 +20,19 @@ export class InputStream {
   #handler: SyncInputStreamHandler;
   #subscribe?: () => Pollable;
   #isatty: boolean;
+  // Borrowed streams don't drop the handler on dispose.
+  #owned: boolean;
 
-  constructor(handler: SyncInputStreamHandler, subscribe?: () => Pollable, isatty = false) {
+  constructor(handler: SyncInputStreamHandler, subscribe?: () => Pollable, isatty = false, owned = true) {
     this.#handler = handler;
     this.#subscribe = subscribe;
     this.#isatty = isatty;
+    this.#owned = owned;
+  }
+
+  /** Returns a borrowed view of this stream: delegates all ops but never drops the handler. */
+  borrow(): InputStream {
+    return new InputStream(this.#handler, this.#subscribe, this.#isatty, false);
   }
 
   get isatty(): boolean { return this.#isatty; }
@@ -75,7 +83,7 @@ export class InputStream {
   }
 
   [Symbol.dispose](): void {
-    if (this.#handler.drop) {
+    if (this.#owned && this.#handler.drop) {
       this.#handler.drop();
     }
   }
@@ -86,11 +94,19 @@ export class OutputStream {
   #subscribe?: () => Pollable;
   #isatty: boolean;
   #open = true;
+  // Borrowed streams don't close the handler on dispose.
+  #owned: boolean;
 
-  constructor(handler: SyncOutputStreamHandler, subscribe?: () => Pollable, isatty = false) {
+  constructor(handler: SyncOutputStreamHandler, subscribe?: () => Pollable, isatty = false, owned = true) {
     this.#handler = handler;
     this.#subscribe = subscribe;
     this.#isatty = isatty;
+    this.#owned = owned;
+  }
+
+  /** Returns a borrowed view of this stream: delegates all ops but never drops or closes the handler. */
+  borrow(): OutputStream {
+    return new OutputStream(this.#handler, this.#subscribe, this.#isatty, false);
   }
 
   get isatty(): boolean { return this.#isatty; }
@@ -168,7 +184,7 @@ export class OutputStream {
 
   [Symbol.dispose](): void {
     this.#open = false;
-    if (this.#handler.drop) {
+    if (this.#owned && this.#handler.drop) {
       this.#handler.drop();
     }
   }

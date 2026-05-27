@@ -54,9 +54,9 @@ export type WASIImportObject = { [key: string]: object };
 export class WASIShim {
   #environment: WasiEnvironment | null = null;
   #preopens: WasiPreopens | null = null;
-  #stdin: WasiStdin | null = null;
-  #stdout: WasiStdout | null = null;
-  #stderr: WasiStderr | null = null;
+  #stdinStream: InputStream | null = null;
+  #stdoutStream: OutputStream | null = null;
+  #stderrStream: OutputStream | null = null;
   #terminalStdin: object | null = null;
   #terminalStdout: object | null = null;
   #terminalStderr: object | null = null;
@@ -76,21 +76,18 @@ export class WASIShim {
     }
 
     if (sandbox.stdin) {
-      const stream = toInputStream(sandbox.stdin);
-      this.#stdin = { InputStream, getStdin: () => stream };
-      this.#terminalStdin = createIsolatedTerminalStdin(stream.isatty);
+      this.#stdinStream = toInputStream(sandbox.stdin);
+      this.#terminalStdin = createIsolatedTerminalStdin(this.#stdinStream.isatty);
     }
 
     if (sandbox.stdout) {
-      const stream = toOutputStream(sandbox.stdout);
-      this.#stdout = { OutputStream, getStdout: () => stream };
-      this.#terminalStdout = createIsolatedTerminalStdout(stream.isatty);
+      this.#stdoutStream = toOutputStream(sandbox.stdout);
+      this.#terminalStdout = createIsolatedTerminalStdout(this.#stdoutStream.isatty);
     }
 
     if (sandbox.stderr) {
-      const stream = toOutputStream(sandbox.stderr);
-      this.#stderr = { OutputStream, getStderr: () => stream };
-      this.#terminalStderr = createIsolatedTerminalStderr(stream.isatty);
+      this.#stderrStream = toOutputStream(sandbox.stderr);
+      this.#terminalStderr = createIsolatedTerminalStderr(this.#stderrStream.isatty);
     }
 
     if (sandbox.sockets) {
@@ -106,13 +103,19 @@ export class WASIShim {
     }
   }
 
+  [Symbol.dispose](): void {
+    this.#stdinStream?.[Symbol.dispose]();
+    this.#stdoutStream?.[Symbol.dispose]();
+    this.#stderrStream?.[Symbol.dispose]();
+  }
+
   getImportObject(): WASIImportObject {
     return {
       'wasi:cli/environment': this.#environment ?? cli.environment,
       'wasi:cli/exit': cli.exit,
-      'wasi:cli/stdin': this.#stdin ?? cli.stdin,
-      'wasi:cli/stdout': this.#stdout ?? cli.stdout,
-      'wasi:cli/stderr': this.#stderr ?? cli.stderr,
+      'wasi:cli/stdin': this.#stdinStream ? { InputStream, getStdin: () => this.#stdinStream!.borrow() } : cli.stdin,
+      'wasi:cli/stdout': this.#stdoutStream ? { OutputStream, getStdout: () => this.#stdoutStream!.borrow() } : cli.stdout,
+      'wasi:cli/stderr': this.#stderrStream ? { OutputStream, getStderr: () => this.#stderrStream!.borrow() } : cli.stderr,
       'wasi:cli/terminal-input': cli.terminalInput,
       'wasi:cli/terminal-output': cli.terminalOutput,
       'wasi:cli/terminal-stdin': this.#terminalStdin ?? cli.terminalStdin,

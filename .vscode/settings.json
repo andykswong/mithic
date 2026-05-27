@@ -20,6 +20,7 @@
     "nodejs-testing.env": {
         "COLORS": "false"
     },
+    "npm.exclude": "**/docs/api/**",
 	"js/ts.tsdk.path": "node_modules/typescript/lib",
 	"rust-analyzer.cargo.target": "wasm32-wasip2",
 	"rust-analyzer.cargo.features": [

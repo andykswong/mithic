@@ -52,7 +52,7 @@ const defaultStderrHandler: OutputStreamHandler = {
   flush(): void {},
 };
 
-// ─── State ──────────────────────────────────────────────────────────────────
+// ─── Singletons ─────────────────────────────────────────────────────────────
 
 let stdinStream = new InputStream(defaultStdinHandler);
 let stdoutStream = new OutputStream(defaultStdoutHandler);
@@ -60,45 +60,49 @@ let stderrStream = new OutputStream(defaultStderrHandler);
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
+// Return a borrow each call so WASM resource drops don't dispose the owned singleton.
 export function getStdin(): InputStream {
-  return stdinStream;
+  return stdinStream.borrow();
 }
 
 export function getStdout(): OutputStream {
-  return stdoutStream;
+  return stdoutStream.borrow();
 }
 
 export function getStderr(): OutputStream {
-  return stderrStream;
+  return stderrStream.borrow();
 }
 
 export function _setStdin(config: InputStream | InputStreamHandler | InputStdioConfig): void {
+  stdinStream[Symbol.dispose]();
   if (config instanceof InputStream) {
     stdinStream = config;
   } else if ('handler' in config) {
     stdinStream = new InputStream(config.handler, config.subscribe, config.isatty);
   } else {
-    stdinStream = new InputStream(config);
+    stdinStream = new InputStream(config as InputStreamHandler);
   }
 }
 
 export function _setStdout(config: OutputStream | OutputStreamHandler | OutputStdioConfig): void {
+  stdoutStream[Symbol.dispose]();
   if (config instanceof OutputStream) {
     stdoutStream = config;
   } else if ('handler' in config) {
     stdoutStream = new OutputStream(config.handler, config.subscribe, config.isatty);
   } else {
-    stdoutStream = new OutputStream(config);
+    stdoutStream = new OutputStream(config as OutputStreamHandler);
   }
 }
 
 export function _setStderr(config: OutputStream | OutputStreamHandler | OutputStdioConfig): void {
+  stderrStream[Symbol.dispose]();
   if (config instanceof OutputStream) {
     stderrStream = config;
   } else if ('handler' in config) {
     stderrStream = new OutputStream(config.handler, config.subscribe, config.isatty);
   } else {
-    stderrStream = new OutputStream(config);
+    stderrStream = new OutputStream(config as OutputStreamHandler);
   }
 }
 
