@@ -67,6 +67,10 @@ interface manager {
   /// Create an anonymous pipe (linked input/output stream pair).
   /// Data written to the output-stream is readable from the input-stream.
   create-pipe: func() -> tuple<input-stream, output-stream>;
+
+  /// Duplicate an output-stream: returns a new handle writing to the same destination.
+  /// Disposing the duplicate does NOT close the original stream's destination.
+  dup-output-stream: func(src: borrow<output-stream>) -> output-stream;
 }
 
 world imports {

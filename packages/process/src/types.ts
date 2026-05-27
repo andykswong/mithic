@@ -22,6 +22,22 @@ export type ErrorCode =
   | 'broken-pipe'
   | string;
 
+export type ProcessErrorTag = 'not-found' | 'permission-denied' | 'invalid-argument' | 'resource-exhausted' | 'broken-pipe';
+
+export type ProcessErrorPayload =
+  | { tag: ProcessErrorTag }
+  | { tag: 'other'; val: string };
+
+export class ProcessError extends Error {
+  readonly payload: ProcessErrorPayload;
+
+  constructor(tag: ProcessErrorTag | 'other', message?: string, val?: string) {
+    super(message ?? tag);
+    this.name = 'ProcessError';
+    this.payload = tag === 'other' ? { tag, val: val ?? message ?? '' } : { tag };
+  }
+}
+
 export interface ExecResult {
   stdout: Uint8Array;
   stderr: Uint8Array;
@@ -82,4 +98,5 @@ export class Process {
 export interface ProcessManager {
   spawn(file: string, args: string[], options?: SpawnOptions): Process;
   createPipe(options?: PipeOptions): { input: InputStream; output: OutputStream };
+  dupOutputStream(stream: OutputStream): OutputStream;
 }

@@ -111,13 +111,13 @@ export class MemoryFsProvider implements SyncFileSystemProvider {
 
     if (!entry) {
       if (!flags.create) {
-        throw new FileSystemError('not-found', `File not found: ${path}`);
+        throw new FileSystemError('no-entry', `File not found: ${path}`);
       }
       // Create the file — parent must exist
       const { dir, base } = this.splitPath(normalized);
       const parent = this.resolveEntry(dir, true);
       if (!parent || parent.type !== 'directory') {
-        throw new FileSystemError('not-found', `Parent directory not found: ${dir}`);
+        throw new FileSystemError('no-entry', `Parent directory not found: ${dir}`);
       }
       const now = new Date();
       const newFile: MemFileEntry = {
@@ -214,7 +214,7 @@ export class MemoryFsProvider implements SyncFileSystemProvider {
     const followSymlinks = options?.followSymlinks !== false;
     const entry = this.resolveEntry(normalized, followSymlinks);
     if (!entry) {
-      throw new FileSystemError('not-found', `No such file or directory: ${path}`);
+      throw new FileSystemError('no-entry', `No such file or directory: ${path}`);
     }
     return this.entryToStat(entry);
   }
@@ -223,7 +223,7 @@ export class MemoryFsProvider implements SyncFileSystemProvider {
     const normalized = this.normalizePath(path);
     const entry = this.resolveEntry(normalized, true);
     if (!entry) {
-      throw new FileSystemError('not-found', `No such directory: ${path}`);
+      throw new FileSystemError('no-entry', `No such directory: ${path}`);
     }
     if (entry.type !== 'directory') {
       throw new FileSystemError('not-directory', `Not a directory: ${path}`);
@@ -241,7 +241,7 @@ export class MemoryFsProvider implements SyncFileSystemProvider {
     const { dir, base } = this.splitPath(normalized);
     const parent = this.resolveEntry(dir, true);
     if (!parent || parent.type !== 'directory') {
-      throw new FileSystemError('not-found', `Parent directory not found: ${dir}`);
+      throw new FileSystemError('no-entry', `Parent directory not found: ${dir}`);
     }
     if (parent.children.has(base)) {
       throw new FileSystemError('exist', `Already exists: ${path}`);
@@ -263,11 +263,11 @@ export class MemoryFsProvider implements SyncFileSystemProvider {
     const { dir, base } = this.splitPath(normalized);
     const parent = this.resolveEntry(dir, true);
     if (!parent || parent.type !== 'directory') {
-      throw new FileSystemError('not-found', `Parent directory not found: ${dir}`);
+      throw new FileSystemError('no-entry', `Parent directory not found: ${dir}`);
     }
     const entry = parent.children.get(base);
     if (!entry) {
-      throw new FileSystemError('not-found', `No such file: ${path}`);
+      throw new FileSystemError('no-entry', `No such file: ${path}`);
     }
     if (entry.type === 'directory') {
       throw new FileSystemError('is-directory', `Is a directory: ${path}`);
@@ -281,11 +281,11 @@ export class MemoryFsProvider implements SyncFileSystemProvider {
     const { dir, base } = this.splitPath(normalized);
     const parent = this.resolveEntry(dir, true);
     if (!parent || parent.type !== 'directory') {
-      throw new FileSystemError('not-found', `Parent directory not found: ${dir}`);
+      throw new FileSystemError('no-entry', `Parent directory not found: ${dir}`);
     }
     const entry = parent.children.get(base);
     if (!entry) {
-      throw new FileSystemError('not-found', `No such directory: ${path}`);
+      throw new FileSystemError('no-entry', `No such directory: ${path}`);
     }
     if (entry.type !== 'directory') {
       throw new FileSystemError('not-directory', `Not a directory: ${path}`);
@@ -305,16 +305,16 @@ export class MemoryFsProvider implements SyncFileSystemProvider {
 
     const oldParent = this.resolveEntry(oldDir, true);
     if (!oldParent || oldParent.type !== 'directory') {
-      throw new FileSystemError('not-found', `Source parent not found: ${oldDir}`);
+      throw new FileSystemError('no-entry', `Source parent not found: ${oldDir}`);
     }
     const entry = oldParent.children.get(oldBase);
     if (!entry) {
-      throw new FileSystemError('not-found', `No such file or directory: ${oldPath}`);
+      throw new FileSystemError('no-entry', `No such file or directory: ${oldPath}`);
     }
 
     const newParent = this.resolveEntry(newDir, true);
     if (!newParent || newParent.type !== 'directory') {
-      throw new FileSystemError('not-found', `Destination parent not found: ${newDir}`);
+      throw new FileSystemError('no-entry', `Destination parent not found: ${newDir}`);
     }
 
     oldParent.children.delete(oldBase);
@@ -329,7 +329,7 @@ export class MemoryFsProvider implements SyncFileSystemProvider {
     const { dir, base } = this.splitPath(normalized);
     const parent = this.resolveEntry(dir, true);
     if (!parent || parent.type !== 'directory') {
-      throw new FileSystemError('not-found', `Parent directory not found: ${dir}`);
+      throw new FileSystemError('no-entry', `Parent directory not found: ${dir}`);
     }
     if (parent.children.has(base)) {
       throw new FileSystemError('exist', `Already exists: ${linkPath}`);
@@ -350,7 +350,7 @@ export class MemoryFsProvider implements SyncFileSystemProvider {
     const normalized = this.normalizePath(path);
     const entry = this.resolveEntry(normalized, false);
     if (!entry) {
-      throw new FileSystemError('not-found', `No such file: ${path}`);
+      throw new FileSystemError('no-entry', `No such file: ${path}`);
     }
     if (entry.type !== 'symlink') {
       throw new FileSystemError('invalid', `Not a symlink: ${path}`);
@@ -363,15 +363,15 @@ export class MemoryFsProvider implements SyncFileSystemProvider {
     const newNormalized = this.normalizePath(newPath);
     const entry = this.resolveEntry(existingNormalized, true);
     if (!entry) {
-      throw new FileSystemError('not-found', `No such file: ${existingPath}`);
+      throw new FileSystemError('no-entry', `No such file: ${existingPath}`);
     }
     if (entry.type === 'directory') {
-      throw new FileSystemError('permission-denied', `Cannot hard link a directory: ${existingPath}`);
+      throw new FileSystemError('not-permitted', `Cannot hard link a directory: ${existingPath}`);
     }
     const { dir, base } = this.splitPath(newNormalized);
     const parent = this.resolveEntry(dir, true);
     if (!parent || parent.type !== 'directory') {
-      throw new FileSystemError('not-found', `Parent directory not found: ${dir}`);
+      throw new FileSystemError('no-entry', `Parent directory not found: ${dir}`);
     }
     if (parent.children.has(base)) {
       throw new FileSystemError('exist', `Already exists: ${newPath}`);
@@ -384,7 +384,7 @@ export class MemoryFsProvider implements SyncFileSystemProvider {
     const normalized = this.normalizePath(path);
     const entry = this.resolveEntry(normalized, true);
     if (!entry) {
-      throw new FileSystemError('not-found', `No such file or directory: ${path}`);
+      throw new FileSystemError('no-entry', `No such file or directory: ${path}`);
     }
     entry.mode = mode;
     entry.ctime = new Date();
@@ -394,7 +394,7 @@ export class MemoryFsProvider implements SyncFileSystemProvider {
     const normalized = this.normalizePath(path);
     const entry = this.resolveEntry(normalized, true);
     if (!entry) {
-      throw new FileSystemError('not-found', `No such file or directory: ${path}`);
+      throw new FileSystemError('no-entry', `No such file or directory: ${path}`);
     }
     entry.atime = atime;
     entry.mtime = mtime;
@@ -483,7 +483,7 @@ export class MemoryFsProvider implements SyncFileSystemProvider {
       }
       const child = current.children.get(part);
       if (!child) {
-        throw new FileSystemError('not-found', `No such file or directory: ${path}`);
+        throw new FileSystemError('no-entry', `No such file or directory: ${path}`);
       }
       if (child.type === 'symlink') {
         const target = this.normalizePath(child.target);

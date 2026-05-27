@@ -80,7 +80,7 @@ export class VFSDirectoryHandle implements FileSystemDirectoryHandle {
           );
         }
       } catch (e) {
-        if (e instanceof FileSystemError && e.code === 'not-found') {
+        if (e instanceof FileSystemError && e.code === 'no-entry') {
           throw new DOMException(
             `A requested file or directory could not be found: "${name}"`,
             'NotFoundError'
@@ -99,7 +99,7 @@ export class VFSDirectoryHandle implements FileSystemDirectoryHandle {
           );
         }
       } catch (e) {
-        if (e instanceof FileSystemError && e.code === 'not-found') {
+        if (e instanceof FileSystemError && e.code === 'no-entry') {
           // Create the file
           const handle = await this.#router.open(childPath, { create: true, write: true });
           await this.#router.close(handle);
@@ -126,7 +126,7 @@ export class VFSDirectoryHandle implements FileSystemDirectoryHandle {
           );
         }
       } catch (e) {
-        if (e instanceof FileSystemError && e.code === 'not-found') {
+        if (e instanceof FileSystemError && e.code === 'no-entry') {
           throw new DOMException(
             `A requested file or directory could not be found: "${name}"`,
             'NotFoundError'
@@ -144,7 +144,7 @@ export class VFSDirectoryHandle implements FileSystemDirectoryHandle {
           );
         }
       } catch (e) {
-        if (e instanceof FileSystemError && e.code === 'not-found') {
+        if (e instanceof FileSystemError && e.code === 'no-entry') {
           await this.#router.mkdir(childPath);
         } else {
           throw e;
@@ -169,7 +169,7 @@ export class VFSDirectoryHandle implements FileSystemDirectoryHandle {
         await this.#router.unlink(childPath);
       }
     } catch (e) {
-      if (e instanceof FileSystemError && e.code === 'not-found') {
+      if (e instanceof FileSystemError && e.code === 'no-entry') {
         throw new DOMException(
           `A requested file or directory could not be found: "${name}"`,
           'NotFoundError'

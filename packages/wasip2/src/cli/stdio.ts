@@ -60,17 +60,17 @@ let stderrStream = new OutputStream(defaultStderrHandler);
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
-// Return a borrow each call so WASM resource drops don't dispose the owned singleton.
+// Return a dup each call so WASM resource drops don't dispose the owned singleton.
 export function getStdin(): InputStream {
-  return stdinStream.borrow();
+  return stdinStream.dup();
 }
 
 export function getStdout(): OutputStream {
-  return stdoutStream.borrow();
+  return stdoutStream.dup();
 }
 
 export function getStderr(): OutputStream {
-  return stderrStream.borrow();
+  return stderrStream.dup();
 }
 
 export function _setStdin(config: InputStream | InputStreamHandler | InputStdioConfig): void {

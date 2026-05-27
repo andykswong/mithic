@@ -20,19 +20,19 @@ export class InputStream {
   #handler: SyncInputStreamHandler;
   #subscribe?: () => Pollable;
   #isatty: boolean;
-  // Borrowed streams don't drop the handler on dispose.
-  #owned: boolean;
+  #refs: { count: number };
 
-  constructor(handler: SyncInputStreamHandler, subscribe?: () => Pollable, isatty = false, owned = true) {
+  constructor(handler: SyncInputStreamHandler, subscribe?: () => Pollable, isatty = false, refs?: { count: number }) {
     this.#handler = handler;
     this.#subscribe = subscribe;
     this.#isatty = isatty;
-    this.#owned = owned;
+    this.#refs = refs ?? { count: 1 };
   }
 
-  /** Returns a borrowed view of this stream: delegates all ops but never drops the handler. */
-  borrow(): InputStream {
-    return new InputStream(this.#handler, this.#subscribe, this.#isatty, false);
+  /** Duplicate this stream: returns a new handle to the same underlying handler. The handler is dropped only when the last handle is disposed. */
+  dup(): InputStream {
+    this.#refs.count++;
+    return new InputStream(this.#handler, this.#subscribe, this.#isatty, this.#refs);
   }
 
   get isatty(): boolean { return this.#isatty; }
@@ -83,7 +83,7 @@ export class InputStream {
   }
 
   [Symbol.dispose](): void {
-    if (this.#owned && this.#handler.drop) {
+    if (--this.#refs.count === 0 && this.#handler.drop) {
       this.#handler.drop();
     }
   }
@@ -94,19 +94,19 @@ export class OutputStream {
   #subscribe?: () => Pollable;
   #isatty: boolean;
   #open = true;
-  // Borrowed streams don't close the handler on dispose.
-  #owned: boolean;
+  #refs: { count: number };
 
-  constructor(handler: SyncOutputStreamHandler, subscribe?: () => Pollable, isatty = false, owned = true) {
+  constructor(handler: SyncOutputStreamHandler, subscribe?: () => Pollable, isatty = false, refs?: { count: number }) {
     this.#handler = handler;
     this.#subscribe = subscribe;
     this.#isatty = isatty;
-    this.#owned = owned;
+    this.#refs = refs ?? { count: 1 };
   }
 
-  /** Returns a borrowed view of this stream: delegates all ops but never drops or closes the handler. */
-  borrow(): OutputStream {
-    return new OutputStream(this.#handler, this.#subscribe, this.#isatty, false);
+  /** Duplicate this stream: returns a new handle to the same underlying handler. The handler is dropped only when the last handle is disposed. */
+  dup(): OutputStream {
+    this.#refs.count++;
+    return new OutputStream(this.#handler, this.#subscribe, this.#isatty, this.#refs);
   }
 
   get isatty(): boolean { return this.#isatty; }
@@ -184,7 +184,7 @@ export class OutputStream {
 
   [Symbol.dispose](): void {
     this.#open = false;
-    if (this.#owned && this.#handler.drop) {
+    if (--this.#refs.count === 0 && this.#handler.drop) {
       this.#handler.drop();
     }
   }

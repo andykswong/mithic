@@ -33,7 +33,7 @@ describe('WASIProcess', () => {
   it('spawn via getImportObject throws not-found for unknown command', () => {
     const wp = new WASIProcess({ commandResolver: () => undefined });
     const { spawn } = wp.getImportObject()['mithic:process/manager'];
-    assert.throws(() => spawn('nonexistent', []), (err) => err === 'not-found');
+    assert.throws(() => spawn('nonexistent', []), (err: unknown) => err instanceof Error && (err as Error & { payload: { tag: string } }).payload.tag === 'not-found');
   });
 
   it('accepts custom ProcessManager', () => {

@@ -36,7 +36,7 @@ describe('manager (global WIT-level functions)', () => {
 
   it('spawn throws not-found when command not resolved', () => {
     _setProcessManager(new SimpleProcessManager({ commandResolver: () => undefined }));
-    assert.throws(() => spawn('missing', []), (err) => err === 'not-found');
+    assert.throws(() => spawn('missing', []), (err: unknown) => err instanceof Error && (err as Error & { payload: { tag: string } }).payload.tag === 'not-found');
   });
 
   it('createPipe returns linked InputStream and OutputStream', () => {
@@ -70,6 +70,9 @@ describe('manager (global WIT-level functions)', () => {
       },
       createPipe() {
         return createPipe();
+      },
+      dupOutputStream(stream: OutputStream) {
+        return stream.dup();
       },
     };
     _setProcessManager(custom);

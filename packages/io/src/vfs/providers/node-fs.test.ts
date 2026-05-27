@@ -96,7 +96,7 @@ describe('NodeFsProvider', () => {
 
     await assert.rejects(
       () => provider.stat('/oldname.txt'),
-      (err: unknown) => err instanceof FileSystemError && err.code === 'not-found'
+      (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
     );
 
     const stat = await provider.stat('/newname.txt');
@@ -112,7 +112,7 @@ describe('NodeFsProvider', () => {
 
     await assert.rejects(
       () => provider.stat('/unlinkme.txt'),
-      (err: unknown) => err instanceof FileSystemError && err.code === 'not-found'
+      (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
     );
   });
 
@@ -120,17 +120,17 @@ describe('NodeFsProvider', () => {
     // Paths with .. that would logically escape root get normalized to stay within root.
     // /../../etc/passwd normalizes to /etc/passwd which resolves under root.
     // The provider should NOT grant access to files outside root.
-    // After normalization, /../../etc/passwd -> <root>/etc/passwd which doesn't exist => not-found.
+    // After normalization, /../../etc/passwd -> <root>/etc/passwd which doesn't exist => no-entry.
     await assert.rejects(
       () => provider.stat('/../../etc/passwd'),
-      (err: unknown) => err instanceof FileSystemError && err.code === 'not-found'
+      (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
     );
 
     // Verify that a path like /subdir/../../etc/hosts still resolves under root
     await provider.mkdir('/subdir');
     await assert.rejects(
       () => provider.stat('/subdir/../../etc/hosts'),
-      (err: unknown) => err instanceof FileSystemError && err.code === 'not-found'
+      (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
     );
   });
 

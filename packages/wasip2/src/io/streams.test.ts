@@ -520,33 +520,46 @@ describe('isStreamClosed', () => {
   });
 });
 
-describe('InputStream.borrow()', () => {
-  it('borrow delegates read to the same handler', () => {
+describe('InputStream.dup()', () => {
+  it('dup delegates read to the same handler', () => {
     const data = new Uint8Array([1, 2, 3]);
     const stream = new InputStream({
       blockingRead(len) { return data.slice(0, len); },
     });
-    const borrowed = stream.borrow();
-    deepStrictEqual(borrowed.blockingRead(2n), new Uint8Array([1, 2]));
+    const duped = stream.dup();
+    deepStrictEqual(duped.blockingRead(2n), new Uint8Array([1, 2]));
   });
 
-  it('borrow inherits isatty from owner', () => {
+  it('dup inherits isatty from owner', () => {
     const stream = new InputStream({ blockingRead() { return new Uint8Array(0); } }, undefined, true);
-    strictEqual(stream.borrow().isatty, true);
+    strictEqual(stream.dup().isatty, true);
   });
 
-  it('disposing a borrow does NOT call handler drop', () => {
+  it('disposing a dup when original is still alive does NOT call handler drop', () => {
     let dropped = false;
     const stream = new InputStream({
       blockingRead() { return new Uint8Array(0); },
       drop() { dropped = true; },
     });
-    const borrowed = stream.borrow();
-    borrowed[Symbol.dispose]();
+    const duped = stream.dup();
+    duped[Symbol.dispose]();
     strictEqual(dropped, false);
   });
 
-  it('disposing the owner calls handler drop', () => {
+  it('disposing the original when dup is still alive does NOT call handler drop', () => {
+    let dropped = false;
+    const stream = new InputStream({
+      blockingRead() { return new Uint8Array(0); },
+      drop() { dropped = true; },
+    });
+    const duped = stream.dup();
+    stream[Symbol.dispose]();
+    strictEqual(dropped, false);
+    duped[Symbol.dispose]();
+    strictEqual(dropped, true);
+  });
+
+  it('disposing the last handle calls handler drop', () => {
     let dropped = false;
     const stream = new InputStream({
       blockingRead() { return new Uint8Array(0); },
@@ -557,45 +570,64 @@ describe('InputStream.borrow()', () => {
   });
 });
 
-describe('OutputStream.borrow()', () => {
-  it('borrow delegates write to the same handler', () => {
+describe('OutputStream.dup()', () => {
+  it('dup delegates write to the same handler', () => {
     const written: Uint8Array[] = [];
     const stream = new OutputStream({ write(d) { written.push(new Uint8Array(d)); } });
-    const borrowed = stream.borrow();
-    borrowed.write(new Uint8Array([42]));
+    const duped = stream.dup();
+    duped.write(new Uint8Array([42]));
     strictEqual(written.length, 1);
     deepStrictEqual(written[0], new Uint8Array([42]));
   });
 
-  it('borrow inherits isatty from owner', () => {
+  it('dup inherits isatty from owner', () => {
     const stream = new OutputStream({ write() {} }, undefined, true);
-    strictEqual(stream.borrow().isatty, true);
+    strictEqual(stream.dup().isatty, true);
   });
 
-  it('disposing a borrow closes that borrow but does NOT call handler drop', () => {
+  it('disposing a dup closes that dup but does NOT call handler drop', () => {
     let dropped = false;
     const stream = new OutputStream({
       write() {},
       drop() { dropped = true; },
     });
-    const borrowed = stream.borrow();
-    borrowed[Symbol.dispose]();
+    const duped = stream.dup();
+    duped[Symbol.dispose]();
     strictEqual(dropped, false);
-    // The borrow is closed — writes throw
-    throws(() => borrowed.write(new Uint8Array([1])), (e: unknown) => (e as { tag: string }).tag === 'closed');
+    // The dup is closed — writes throw
+    throws(() => duped.write(new Uint8Array([1])), (e: unknown) => (e as { tag: string }).tag === 'closed');
   });
 
-  it('disposing a borrow does not close the owner', () => {
+  it('disposing a dup does not close the owner', () => {
     const written: Uint8Array[] = [];
     const stream = new OutputStream({ write(d) { written.push(new Uint8Array(d)); } });
-    const borrowed = stream.borrow();
-    borrowed[Symbol.dispose]();
+    const duped = stream.dup();
+    duped[Symbol.dispose]();
     // Owner can still write
     stream.write(new Uint8Array([99]));
     strictEqual(written.length, 1);
   });
 
-  it('disposing the owner calls handler drop', () => {
+  it('disposing the original when dup is still alive does NOT call handler drop; dup can still write', () => {
+    let dropped = false;
+    const written: Uint8Array[] = [];
+    const stream = new OutputStream({
+      write(d) { written.push(new Uint8Array(d)); },
+      drop() { dropped = true; },
+    });
+    const duped = stream.dup();
+    stream[Symbol.dispose]();
+    strictEqual(dropped, false);
+    // dup still works
+    duped.write(new Uint8Array([55]));
+    strictEqual(written.length, 1);
+    deepStrictEqual(written[0], new Uint8Array([55]));
+    // only after dup is disposed does handler.drop() fire
+    duped[Symbol.dispose]();
+    strictEqual(dropped, true);
+  });
+
+  it('disposing the last handle calls handler drop', () => {
     let dropped = false;
     const stream = new OutputStream({
       write() {},
@@ -605,14 +637,14 @@ describe('OutputStream.borrow()', () => {
     strictEqual(dropped, true);
   });
 
-  it('multiple borrows are independent — disposing one does not affect others', () => {
+  it('multiple dups are independent — disposing one does not affect others', () => {
     const written: Uint8Array[] = [];
     const stream = new OutputStream({ write(d) { written.push(new Uint8Array(d)); } });
-    const b1 = stream.borrow();
-    const b2 = stream.borrow();
-    b1[Symbol.dispose]();
-    // b2 still works
-    b2.write(new Uint8Array([7]));
+    const d1 = stream.dup();
+    const d2 = stream.dup();
+    d1[Symbol.dispose]();
+    // d2 still works
+    d2.write(new Uint8Array([7]));
     strictEqual(written.length, 1);
     deepStrictEqual(written[0], new Uint8Array([7]));
   });

@@ -5,7 +5,7 @@
  */
 
 import { InputStream, OutputStream, type InputStreamHandler, type OutputStreamHandler } from '@mithic/wasip2/io/streams';
-import { Process, type SpawnOptions, type ProcessHandler, type Signal, type ProcessManager, SIGNAL_NUMBER } from '../types.ts';
+import { Process, ProcessError, type SpawnOptions, type ProcessHandler, type Signal, type ProcessManager, SIGNAL_NUMBER } from '../types.ts';
 import { createPipe as createPipeImpl } from '../utils.ts';
 import type { PipeOptions } from '../types.ts';
 
@@ -99,7 +99,7 @@ export class SimpleProcessManager implements ProcessManager {
   spawn(file: string, args: string[], options?: SpawnOptions): Process {
     const handler = this.#resolver(file);
     if (!handler) {
-      throw 'not-found';
+      throw new ProcessError('not-found', `command not found: ${file}`);
     }
 
     const pid = this.table.allocPid();
@@ -158,5 +158,9 @@ export class SimpleProcessManager implements ProcessManager {
 
   createPipe(options?: PipeOptions): { input: InputStream; output: OutputStream } {
     return createPipeImpl(options);
+  }
+
+  dupOutputStream(stream: OutputStream): OutputStream {
+    return stream.dup();
   }
 }

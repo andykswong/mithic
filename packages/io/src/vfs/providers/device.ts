@@ -59,7 +59,7 @@ export class DeviceProvider implements FileSystemProvider {
       case 'stderr':
         return new Uint8Array(0);
       default:
-        throw new FileSystemError('not-found', `Unknown device: ${device}`);
+        throw new FileSystemError('no-entry', `Unknown device: ${device}`);
     }
   }
 
@@ -80,14 +80,14 @@ export class DeviceProvider implements FileSystemProvider {
         await this.stderrFn(data);
         return data.length;
       case 'stdin':
-        throw new FileSystemError('permission-denied', 'Cannot write to stdin');
+        throw new FileSystemError('not-permitted', 'Cannot write to stdin');
       default:
-        throw new FileSystemError('not-found', `Unknown device: ${device}`);
+        throw new FileSystemError('no-entry', `Unknown device: ${device}`);
     }
   }
 
   async truncate(_handle: FileHandle, _size: number): Promise<void> {
-    throw new FileSystemError('permission-denied', 'Cannot truncate a device');
+    throw new FileSystemError('not-permitted', 'Cannot truncate a device');
   }
 
   async stat(path: string, _options?: { followSymlinks?: boolean }): Promise<FileStat> {
@@ -129,23 +129,23 @@ export class DeviceProvider implements FileSystemProvider {
   }
 
   async mkdir(_path: string): Promise<void> {
-    throw new FileSystemError('permission-denied', 'Cannot create directories in /dev');
+    throw new FileSystemError('not-permitted', 'Cannot create directories in /dev');
   }
 
   async unlink(_path: string): Promise<void> {
-    throw new FileSystemError('permission-denied', 'Cannot unlink devices');
+    throw new FileSystemError('not-permitted', 'Cannot unlink devices');
   }
 
   async rmdir(_path: string): Promise<void> {
-    throw new FileSystemError('permission-denied', 'Cannot remove directories in /dev');
+    throw new FileSystemError('not-permitted', 'Cannot remove directories in /dev');
   }
 
   async rename(_oldPath: string, _newPath: string): Promise<void> {
-    throw new FileSystemError('permission-denied', 'Cannot rename devices');
+    throw new FileSystemError('not-permitted', 'Cannot rename devices');
   }
 
   async symlink(_target: string, _linkPath: string): Promise<void> {
-    throw new FileSystemError('permission-denied', 'Cannot create symlinks in /dev');
+    throw new FileSystemError('not-permitted', 'Cannot create symlinks in /dev');
   }
 
   async readlink(_path: string): Promise<string> {
@@ -153,15 +153,15 @@ export class DeviceProvider implements FileSystemProvider {
   }
 
   async link(_existingPath: string, _newPath: string): Promise<void> {
-    throw new FileSystemError('permission-denied', 'Cannot create links in /dev');
+    throw new FileSystemError('not-permitted', 'Cannot create links in /dev');
   }
 
   async chmod(_path: string, _mode: number): Promise<void> {
-    throw new FileSystemError('permission-denied', 'Cannot chmod devices');
+    throw new FileSystemError('not-permitted', 'Cannot chmod devices');
   }
 
   async utimes(_path: string, _atime: Date, _mtime: Date): Promise<void> {
-    throw new FileSystemError('permission-denied', 'Cannot change timestamps of devices');
+    throw new FileSystemError('not-permitted', 'Cannot change timestamps of devices');
   }
 
   // --- Private helpers ---
@@ -181,7 +181,7 @@ export class DeviceProvider implements FileSystemProvider {
     // Path is like /null, /zero, /stdin, etc. or just null, zero, stdin
     const name = normalized.startsWith('/') ? normalized.slice(1) : normalized;
     if (!DEVICE_NAMES.includes(name as typeof DEVICE_NAMES[number])) {
-      throw new FileSystemError('not-found', `Unknown device: ${path}`);
+      throw new FileSystemError('no-entry', `Unknown device: ${path}`);
     }
     return name;
   }

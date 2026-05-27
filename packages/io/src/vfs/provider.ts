@@ -93,31 +93,33 @@ export interface SyncFileSystemProvider extends FileSystemProvider {
   realpath?(path: string): string;
 }
 
-/** Error codes for VFS operations. */
+/** Error codes for VFS operations (aligned with WIT wasi:filesystem error-code names). */
 export type FileSystemErrorCode =
   | 'access'
   | 'exist'
-  | 'not-found'
+  | 'no-entry'
   | 'not-directory'
   | 'is-directory'
   | 'not-empty'
   | 'invalid'
-  | 'no-space'
+  | 'insufficient-space'
   | 'io'
   | 'loop'
   | 'name-too-long'
-  | 'permission-denied'
+  | 'not-permitted'
   | 'read-only'
   | 'cross-device'
-  | 'not-supported';
+  | 'unsupported';
 
 /** Error thrown by VFS operations. */
 export class FileSystemError extends Error {
   readonly code: FileSystemErrorCode;
+  readonly payload: FileSystemErrorCode;
 
   constructor(code: FileSystemErrorCode, message?: string) {
     super(message ?? code);
     this.name = 'FileSystemError';
     this.code = code;
+    this.payload = code;
   }
 }

@@ -32,6 +32,12 @@ export function spawn(file: string, args: string[], options?: SpawnOptions): Pro
 }
 
 /** Create an anonymous pipe (delegates to global ProcessManager). */
-export function createPipe(options?: PipeOptions): { input: InputStream; output: OutputStream } {
-  return getOrCreateManager().createPipe(options);
+export function createPipe(options?: PipeOptions): [InputStream, OutputStream] {
+  const { input, output } = getOrCreateManager().createPipe(options);
+  return [input, output];
+}
+
+/** Duplicate an output-stream (delegates to global ProcessManager). */
+export function dupOutputStream(stream: OutputStream): OutputStream {
+  return getOrCreateManager().dupOutputStream(stream);
 }

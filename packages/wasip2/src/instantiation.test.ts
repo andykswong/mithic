@@ -307,7 +307,7 @@ describe('WASIShim', () => {
     assert.ok(termStdin.getTerminalStdin() !== undefined);
   });
 
-  it('getStdout returns a new borrow on each call — disposing one does not affect the next', () => {
+  it('getStdout returns a new dup on each call — disposing one does not affect the next', () => {
     const written: Uint8Array[] = [];
     const shim = new WASIShim({
       sandbox: { stdout: { write(d: Uint8Array) { written.push(new Uint8Array(d)); } } },
@@ -326,7 +326,7 @@ describe('WASIShim', () => {
     assert.deepEqual(written[1], new Uint8Array([2]));
   });
 
-  it('getStdin returns a new borrow on each call — disposing one does not affect the next', () => {
+  it('getStdin returns a new dup on each call — disposing one does not affect the next', () => {
     let reads = 0;
     const shim = new WASIShim({
       sandbox: { stdin: { blockingRead(len: number) { reads++; return new Uint8Array(len); } } },

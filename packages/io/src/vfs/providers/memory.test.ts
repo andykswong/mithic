@@ -136,7 +136,7 @@ describe('MemoryFsProvider', () => {
       await fs.unlink('/remove.txt');
       assert.throws(
         () => fs.stat('/remove.txt'),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'not-found'
+        (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
       );
     });
 
@@ -145,7 +145,7 @@ describe('MemoryFsProvider', () => {
       await fs.rmdir('/emptydir');
       assert.throws(
         () => fs.stat('/emptydir'),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'not-found'
+        (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
       );
     });
 
@@ -172,7 +172,7 @@ describe('MemoryFsProvider', () => {
 
       assert.throws(
         () => fs.stat('/old.txt'),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'not-found'
+        (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
       );
 
       const stat = await fs.stat('/new.txt');
@@ -213,7 +213,7 @@ describe('MemoryFsProvider', () => {
     it('should fail without create flag if file does not exist', async () => {
       assert.throws(
         () => fs.open('/nonexistent.txt', { read: true }),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'not-found'
+        (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
       );
     });
   });

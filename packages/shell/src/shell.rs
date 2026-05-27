@@ -77,6 +77,7 @@ impl Shell {
         for ListItem { pipeline, op } in list.items {
             if !skip_next {
                 exit = self.exec_pipeline(pipeline);
+                self.last_exit = exit;
                 if self.exit_requested {
                     break;
                 }
@@ -126,13 +127,24 @@ impl Shell {
         let mut last_builtin_exit: Option<u8> = None;
 
         for (i, cmd) in cmds.into_iter().enumerate() {
-            let stdin_opt = pipe_read_ends[i].take();
-            let stdout_opt = pipe_write_ends[i].take();
+            let mut stdin_opt = pipe_read_ends[i].take();
+            let mut stdout_opt = pipe_write_ends[i].take();
 
             let args: Vec<String> = cmd.words.iter()
-                .map(|w| self.expand_word(w))
+                .flat_map(|w| {
+                    let expanded = self.expand_word(w);
+                    if has_glob(&expanded) {
+                        self.expand_glob(&expanded)
+                    } else {
+                        vec![expanded]
+                    }
+                })
                 .collect();
-            let _ = &cmd.redirects; // Phase 4
+            let mut stderr_opt: Option<OutputStream> = None;
+            if !self.apply_redirects(&cmd.redirects, &mut stdin_opt, &mut stdout_opt, &mut stderr_opt) {
+                for p in processes { let _ = p.wait(); }
+                return if pipeline.negate { 0 } else { 1 };
+            }
 
             if args.is_empty() {
                 continue;
@@ -154,7 +166,7 @@ impl Shell {
                     env: Some(env_list.clone()),
                     stdin: stdin_opt,
                     stdout: stdout_opt,
-                    stderr: None,
+                    stderr: stderr_opt,
                 };
                 match proc_manager::spawn(&name, &args[1..], Some(opts)) {
                     Ok(proc) => processes.push(proc),
@@ -182,23 +194,46 @@ impl Shell {
     fn exec_command(
         &mut self,
         cmd: SimpleCommand,
-        stdin: Option<InputStream>,
-        stdout: Option<OutputStream>,
+        mut stdin: Option<InputStream>,
+        mut stdout: Option<OutputStream>,
     ) -> u8 {
         if cmd.words.is_empty() {
             return 0;
         }
 
         let args: Vec<String> = cmd.words.iter()
-            .map(|w| self.expand_word(w))
+            .flat_map(|w| {
+                let expanded = self.expand_word(w);
+                if has_glob(&expanded) {
+                    self.expand_glob(&expanded)
+                } else {
+                    vec![expanded]
+                }
+            })
             .collect();
-        let _ = &cmd.redirects; // Phase 4
+        let mut stderr_opt: Option<OutputStream> = None;
+        if !self.apply_redirects(&cmd.redirects, &mut stdin, &mut stdout, &mut stderr_opt) {
+            return 1;
+        }
 
         let name = args[0].clone();
         if Self::is_builtin(&name) {
             self.exec_builtin(&name, &args[1..], stdin, stdout)
         } else {
-            self.exec_external(&name, &args[1..], stdin, stdout)
+            let opts = SpawnOptions {
+                cwd: None,
+                env: Some(self.env_list()),
+                stdin,
+                stdout,
+                stderr: stderr_opt,
+            };
+            match proc_manager::spawn(&name, &args[1..], Some(opts)) {
+                Ok(proc) => proc.wait() as u8,
+                Err(_) => {
+                    io::write_stderr(&format!("msh: {}: command not found\n", name));
+                    127
+                }
+            }
         }
     }
 
@@ -277,6 +312,7 @@ impl Shell {
         }
     }
 
+    #[allow(dead_code)]
     fn exec_external(
         &self,
         name: &str,
@@ -300,36 +336,178 @@ impl Shell {
         }
     }
 
+    #[cfg(not(test))]
+    fn exec_capturing(&mut self, raw: &str) -> String {
+        let (inp, out) = proc_manager::create_pipe();
+        let mut parser = Parser::new(raw);
+        if let Some(list) = parser.parse() {
+            self.exec_list_with_stdout(list, out);
+        } else {
+            drop(out);
+        }
+        let mut buf = Vec::new();
+        loop {
+            match inp.blocking_read(4096) {
+                Ok(bytes) if bytes.is_empty() => break,
+                Ok(bytes) => buf.extend_from_slice(&bytes),
+                Err(_) => break,
+            }
+        }
+        let s = String::from_utf8_lossy(&buf).into_owned();
+        s.trim_end_matches('\n').to_string()
+    }
+
+    #[cfg(test)]
+    fn exec_capturing(&mut self, _raw: &str) -> String {
+        String::new()
+    }
+
+    #[cfg(not(test))]
+    fn exec_list_with_stdout(&mut self, list: List, stdout: OutputStream) -> u8 {
+        let mut exit = 0u8;
+        let mut skip_next = false;
+
+        for ListItem { pipeline, op } in list.items {
+            if !skip_next {
+                let out = proc_manager::dup_output_stream(&stdout);
+                exit = self.exec_pipeline_with_stdout(pipeline, out);
+                if self.exit_requested { break; }
+            }
+            skip_next = match op {
+                Some(ListOp::And) => exit != 0,
+                Some(ListOp::Or)  => exit == 0,
+                _ => false,
+            };
+        }
+        drop(stdout);
+        exit
+    }
+
+    #[cfg(not(test))]
+    fn exec_pipeline_with_stdout(&mut self, pipeline: Pipeline, stdout: OutputStream) -> u8 {
+        let cmds = pipeline.commands;
+        let n = cmds.len();
+        if n == 0 { return 0; }
+
+        if n == 1 {
+            let cmd = cmds.into_iter().next().unwrap();
+            let args: Vec<String> = cmd.words.iter()
+                .flat_map(|w| {
+                    let expanded = self.expand_word(w);
+                    if has_glob(&expanded) { self.expand_glob(&expanded) } else { vec![expanded] }
+                })
+                .collect();
+            if args.is_empty() { drop(stdout); return 0; }
+            let name = args[0].clone();
+            let exit = if Self::is_builtin(&name) {
+                self.exec_builtin(&name, &args[1..], None, Some(stdout))
+            } else {
+                let opts = SpawnOptions {
+                    cwd: None,
+                    env: Some(self.env_list()),
+                    stdin: None,
+                    stdout: Some(stdout),
+                    stderr: None,
+                };
+                match proc_manager::spawn(&name, &args[1..], Some(opts)) {
+                    Ok(proc) => proc.wait() as u8,
+                    Err(_) => {
+                        io::write_stderr(&format!("msh: {}: command not found\n", name));
+                        127
+                    }
+                }
+            };
+            return if pipeline.negate { if exit == 0 { 1 } else { 0 } } else { exit };
+        }
+
+        // Multi-command pipeline: internal pipes + last stage → provided stdout
+        let mut pipe_read_ends: Vec<Option<InputStream>> = Vec::with_capacity(n);
+        let mut pipe_write_ends: Vec<Option<OutputStream>> = Vec::with_capacity(n);
+        pipe_read_ends.push(None);
+        for _ in 0..n - 1 {
+            let (inp, out) = proc_manager::create_pipe();
+            pipe_read_ends.push(Some(inp));
+            pipe_write_ends.push(Some(out));
+        }
+        pipe_write_ends.push(Some(stdout));
+
+        let env_list = self.env_list();
+        let mut processes: Vec<crate::bindings::mithic::process::types::Process> = Vec::new();
+        let mut last_builtin_exit: Option<u8> = None;
+
+        for (i, cmd) in cmds.into_iter().enumerate() {
+            let stdin_opt = pipe_read_ends[i].take();
+            let stdout_opt = pipe_write_ends[i].take();
+            let args: Vec<String> = cmd.words.iter()
+                .flat_map(|w| {
+                    let expanded = self.expand_word(w);
+                    if has_glob(&expanded) { self.expand_glob(&expanded) } else { vec![expanded] }
+                })
+                .collect();
+            if args.is_empty() { continue; }
+            let name = args[0].clone();
+            if Self::is_builtin(&name) {
+                let exit = self.exec_builtin(&name, &args[1..], stdin_opt, stdout_opt);
+                if self.exit_requested {
+                    for p in processes { let _ = p.wait(); }
+                    return exit;
+                }
+                if i == n - 1 { last_builtin_exit = Some(exit); }
+            } else {
+                let opts = SpawnOptions {
+                    cwd: None,
+                    env: Some(env_list.clone()),
+                    stdin: stdin_opt,
+                    stdout: stdout_opt,
+                    stderr: None,
+                };
+                match proc_manager::spawn(&name, &args[1..], Some(opts)) {
+                    Ok(proc) => processes.push(proc),
+                    Err(_) => {
+                        io::write_stderr(&format!("msh: {}: command not found\n", name));
+                        for p in processes { let _ = p.wait(); }
+                        return if pipeline.negate { 0 } else { 127 };
+                    }
+                }
+            }
+        }
+
+        let last_proc = processes.pop();
+        for p in processes { let _ = p.wait(); }
+        let exit = if let Some(p) = last_proc { p.wait() as u8 }
+                   else { last_builtin_exit.unwrap_or(self.last_exit) };
+        if pipeline.negate { if exit == 0 { 1 } else { 0 } } else { exit }
+    }
+
     fn env_list(&self) -> Vec<(String, String)> {
         self.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
     }
 
     fn resolve_path(&self, path: &str) -> String {
-        let base = if path.starts_with('/') {
-            path.to_string()
-        } else if path == "~" || path.starts_with("~/") {
-            let home = self.env.get("HOME").cloned().unwrap_or_else(|| "/".to_string());
-            if path == "~" {
-                home
-            } else {
-                format!("{}/{}", home.trim_end_matches('/'), &path[2..])
-            }
+        let home = self.env.get("HOME").map(|s| s.as_str()).unwrap_or("/");
+        let expanded = expand_tilde(path, home);
+        let base = if expanded.starts_with('/') {
+            expanded
         } else {
-            format!("{}/{}", self.cwd.trim_end_matches('/'), path)
+            format!("{}/{}", self.cwd.trim_end_matches('/'), expanded)
         };
         normalize_path(&base)
     }
 
-    fn expand_word(&self, word: &Word) -> String {
-        word.parts().iter().map(|p| self.expand_part(p)).collect()
+    fn expand_word(&mut self, word: &Word) -> String {
+        let parts: Vec<_> = word.parts().to_vec();
+        parts.iter().map(|p| self.expand_part(p)).collect()
     }
 
-    fn expand_part(&self, part: &WordPart) -> String {
+    fn expand_part(&mut self, part: &WordPart) -> String {
         match part {
-            WordPart::Literal(s) => s.clone(),
+            WordPart::Literal(s) => {
+                let home = self.env.get("HOME").map(|s| s.as_str()).unwrap_or("/");
+                expand_tilde(s, home)
+            }
             WordPart::Var(name) => self.expand_var(name),
             WordPart::BraceVar(raw) => self.expand_brace_var(raw),
-            WordPart::CmdSub(_raw) => String::new(), // Phase 4
+            WordPart::CmdSub(raw) => self.exec_capturing(raw),
         }
     }
 
@@ -355,6 +533,288 @@ impl Shell {
             self.expand_var(raw)
         }
     }
+
+    #[cfg(not(test))]
+    fn expand_glob(&self, pattern: &str) -> Vec<String> {
+        use crate::bindings::wasi::filesystem::{preopens, types as fs_types};
+        use fs_types::{DescriptorFlags, OpenFlags, PathFlags};
+
+        let (dir_part, name_pat) = match pattern.rfind('/') {
+            Some(pos) => (&pattern[..pos], &pattern[pos + 1..]),
+            None => ("", pattern),
+        };
+
+        let dir_path = if dir_part.is_empty() {
+            self.cwd.clone()
+        } else {
+            self.resolve_path(dir_part)
+        };
+
+        let dirs = preopens::get_directories();
+        let root_desc = match dirs.into_iter().find(|(_, p)| p == "/") {
+            Some((d, _)) => d,
+            None => return vec![pattern.to_string()],
+        };
+
+        let rel_path = dir_path.trim_start_matches('/');
+        let target_desc = if rel_path.is_empty() {
+            root_desc
+        } else {
+            match root_desc.open_at(
+                PathFlags::SYMLINK_FOLLOW,
+                rel_path,
+                OpenFlags::DIRECTORY,
+                DescriptorFlags::READ | DescriptorFlags::MUTATE_DIRECTORY,
+            ) {
+                Ok(d) => d,
+                Err(_) => return vec![pattern.to_string()],
+            }
+        };
+
+        let stream = match target_desc.read_directory() {
+            Ok(s) => s,
+            Err(_) => return vec![pattern.to_string()],
+        };
+
+        let mut matches: Vec<String> = Vec::new();
+        loop {
+            match stream.read_directory_entry() {
+                Ok(Some(entry)) => {
+                    if entry.name.starts_with('.') && !name_pat.starts_with('.') {
+                        continue;
+                    }
+                    if glob_match(name_pat, &entry.name) {
+                        let full = if dir_part.is_empty() {
+                            entry.name
+                        } else {
+                            format!("{}/{}", dir_part, entry.name)
+                        };
+                        matches.push(full);
+                    }
+                }
+                Ok(None) => break,
+                Err(_) => break,
+            }
+        }
+
+        if matches.is_empty() {
+            vec![pattern.to_string()]
+        } else {
+            matches.sort();
+            matches
+        }
+    }
+
+    #[cfg(test)]
+    fn expand_glob(&self, pattern: &str) -> Vec<String> {
+        vec![pattern.to_string()]
+    }
+
+    #[cfg(not(test))]
+    /// Returns `true` on success, `false` if a redirect failed (command should not execute).
+    fn apply_redirects(
+        &mut self,
+        redirects: &[crate::parser::Redirect],
+        stdin: &mut Option<InputStream>,
+        stdout: &mut Option<OutputStream>,
+        stderr: &mut Option<OutputStream>,
+    ) -> bool {
+        use crate::bindings::wasi::filesystem::types::{DescriptorFlags, OpenFlags, PathFlags};
+        use crate::bindings::wasi::filesystem::preopens;
+        use crate::parser::Redirect;
+
+        let root = match preopens::get_directories().into_iter().find(|(_, p)| p == "/") {
+            Some((d, _)) => d,
+            None => return true,
+        };
+
+        for redirect in redirects {
+            match redirect {
+                Redirect::Out(w) => {
+                    let expanded = self.expand_word(w);
+                    let path = self.resolve_path(&expanded);
+                    let rel = path.trim_start_matches('/');
+                    match root.open_at(
+                        PathFlags::SYMLINK_FOLLOW, rel,
+                        OpenFlags::CREATE | OpenFlags::TRUNCATE, DescriptorFlags::WRITE,
+                    ) {
+                        Ok(desc) => match desc.write_via_stream(0) {
+                            Ok(stream) => *stdout = Some(stream),
+                            Err(_) => { io::write_stderr(&format!("msh: {}: cannot open for writing\n", expanded)); return false; }
+                        },
+                        Err(_) => { io::write_stderr(&format!("msh: {}: No such file or directory\n", expanded)); return false; }
+                    }
+                }
+                Redirect::OutAppend(w) => {
+                    let expanded = self.expand_word(w);
+                    let path = self.resolve_path(&expanded);
+                    let rel = path.trim_start_matches('/');
+                    match root.open_at(
+                        PathFlags::SYMLINK_FOLLOW, rel,
+                        OpenFlags::CREATE, DescriptorFlags::WRITE,
+                    ) {
+                        Ok(desc) => match desc.append_via_stream() {
+                            Ok(stream) => *stdout = Some(stream),
+                            Err(_) => { io::write_stderr(&format!("msh: {}: cannot open for appending\n", expanded)); return false; }
+                        },
+                        Err(_) => { io::write_stderr(&format!("msh: {}: No such file or directory\n", expanded)); return false; }
+                    }
+                }
+                Redirect::In(w) => {
+                    let expanded = self.expand_word(w);
+                    let path = self.resolve_path(&expanded);
+                    let rel = path.trim_start_matches('/');
+                    match root.open_at(
+                        PathFlags::SYMLINK_FOLLOW, rel,
+                        OpenFlags::empty(), DescriptorFlags::READ,
+                    ) {
+                        Ok(desc) => match desc.read_via_stream(0) {
+                            Ok(stream) => *stdin = Some(stream),
+                            Err(_) => { io::write_stderr(&format!("msh: {}: cannot open for reading\n", expanded)); return false; }
+                        },
+                        Err(_) => { io::write_stderr(&format!("msh: {}: No such file or directory\n", expanded)); return false; }
+                    }
+                }
+                Redirect::Err(w) => {
+                    let expanded = self.expand_word(w);
+                    let path = self.resolve_path(&expanded);
+                    let rel = path.trim_start_matches('/');
+                    match root.open_at(
+                        PathFlags::SYMLINK_FOLLOW, rel,
+                        OpenFlags::CREATE | OpenFlags::TRUNCATE, DescriptorFlags::WRITE,
+                    ) {
+                        Ok(desc) => match desc.write_via_stream(0) {
+                            Ok(stream) => *stderr = Some(stream),
+                            Err(_) => { io::write_stderr(&format!("msh: {}: cannot open for writing\n", expanded)); return false; }
+                        },
+                        Err(_) => { io::write_stderr(&format!("msh: {}: No such file or directory\n", expanded)); return false; }
+                    }
+                }
+                Redirect::ErrAppend(w) => {
+                    let expanded = self.expand_word(w);
+                    let path = self.resolve_path(&expanded);
+                    let rel = path.trim_start_matches('/');
+                    match root.open_at(
+                        PathFlags::SYMLINK_FOLLOW, rel,
+                        OpenFlags::CREATE, DescriptorFlags::WRITE,
+                    ) {
+                        Ok(desc) => match desc.append_via_stream() {
+                            Ok(stream) => *stderr = Some(stream),
+                            Err(_) => { io::write_stderr(&format!("msh: {}: cannot open for appending\n", expanded)); return false; }
+                        },
+                        Err(_) => { io::write_stderr(&format!("msh: {}: No such file or directory\n", expanded)); return false; }
+                    }
+                }
+                Redirect::ErrToOut => {
+                    if let Some(out) = stdout.as_ref() {
+                        *stderr = Some(proc_manager::dup_output_stream(out));
+                    }
+                }
+                Redirect::Both(w) => {
+                    let expanded = self.expand_word(w);
+                    let path = self.resolve_path(&expanded);
+                    let rel = path.trim_start_matches('/');
+                    match root.open_at(
+                        PathFlags::SYMLINK_FOLLOW, rel,
+                        OpenFlags::CREATE | OpenFlags::TRUNCATE, DescriptorFlags::WRITE,
+                    ) {
+                        Ok(desc) => match desc.write_via_stream(0) {
+                            Ok(stream) => {
+                                let dup = proc_manager::dup_output_stream(&stream);
+                                *stdout = Some(stream);
+                                *stderr = Some(dup);
+                            },
+                            Err(_) => { io::write_stderr(&format!("msh: {}: cannot open for writing\n", expanded)); return false; }
+                        },
+                        Err(_) => { io::write_stderr(&format!("msh: {}: No such file or directory\n", expanded)); return false; }
+                    }
+                }
+                Redirect::HereString(w) => {
+                    let content = self.expand_word(w);
+                    let mut bytes = content.into_bytes();
+                    bytes.push(b'\n');
+                    let (inp, out) = proc_manager::create_pipe();
+                    let _ = out.blocking_write_and_flush(&bytes);
+                    drop(out);
+                    *stdin = Some(inp);
+                }
+            }
+        }
+        true
+    }
+
+    #[cfg(test)]
+    fn apply_redirects(
+        &mut self,
+        _redirects: &[crate::parser::Redirect],
+        _stdin: &mut Option<InputStream>,
+        _stdout: &mut Option<OutputStream>,
+        _stderr: &mut Option<OutputStream>,
+    ) -> bool { true }
+}
+
+fn expand_tilde(s: &str, home: &str) -> String {
+    if s == "~" {
+        home.to_string()
+    } else if let Some(rest) = s.strip_prefix("~/") {
+        format!("{}/{}", home.trim_end_matches('/'), rest)
+    } else {
+        s.to_string()
+    }
+}
+
+fn has_glob(s: &str) -> bool {
+    s.contains('*') || s.contains('?') || s.contains('[')
+}
+
+fn glob_match(pattern: &str, name: &str) -> bool {
+    let pat: Vec<char> = pattern.chars().collect();
+    let nam: Vec<char> = name.chars().collect();
+    glob_match_inner(&pat, &nam)
+}
+
+fn glob_match_inner(pat: &[char], name: &[char]) -> bool {
+    match (pat.first(), name.first()) {
+        (None, None) => true,
+        (None, _) => false,
+        (Some(&'*'), _) => {
+            for skip in 0..=name.len() {
+                if glob_match_inner(&pat[1..], &name[skip..]) {
+                    return true;
+                }
+            }
+            false
+        }
+        (Some(&'?'), Some(_)) => glob_match_inner(&pat[1..], &name[1..]),
+        (Some(&'?'), None) => false,
+        (Some(&'['), _) => {
+            let close = pat[1..].iter().position(|&c| c == ']');
+            if let Some(rel) = close {
+                let class = &pat[1..1 + rel];
+                let rest = &pat[2 + rel..];
+                if let Some(&nc) = name.first() {
+                    if class.contains(&nc) {
+                        return glob_match_inner(rest, &name[1..]);
+                    }
+                }
+                false
+            } else {
+                if name.first() == Some(&'[') {
+                    glob_match_inner(&pat[1..], &name[1..])
+                } else {
+                    false
+                }
+            }
+        }
+        (Some(pc), Some(nc)) => {
+            if pc == nc {
+                glob_match_inner(&pat[1..], &name[1..])
+            } else {
+                false
+            }
+        }
+        (Some(_), None) => false,
+    }
 }
 
 fn normalize_path(path: &str) -> String {
@@ -375,7 +835,15 @@ fn normalize_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_path;
+    use super::{expand_tilde, glob_match, has_glob, normalize_path};
+
+    #[test]
+    fn test_tilde_expansion_in_word() {
+        assert_eq!(expand_tilde("~/foo", "/home"), "/home/foo");
+        assert_eq!(expand_tilde("~", "/home"), "/home");
+        assert_eq!(expand_tilde("/abs/path", "/home"), "/abs/path");
+        assert_eq!(expand_tilde("relative", "/home"), "relative");
+    }
 
     #[test]
     fn test_normalize_simple() {
@@ -410,5 +878,38 @@ mod tests {
     #[test]
     fn test_normalize_above_root() {
         assert_eq!(normalize_path("/../.."), "/");
+    }
+
+    #[test]
+    fn test_glob_match_star() {
+        assert!(glob_match("*.rs", "foo.rs"));
+        assert!(glob_match("*.rs", ".rs"));
+        assert!(!glob_match("*.rs", "foo.txt"));
+        assert!(glob_match("foo*", "foobar"));
+        assert!(!glob_match("foo*", "barfoo"));
+    }
+
+    #[test]
+    fn test_glob_match_question() {
+        assert!(glob_match("f?o", "foo"));
+        assert!(glob_match("f?o", "fXo"));
+        assert!(!glob_match("f?o", "fo"));
+        assert!(!glob_match("f?o", "fooo"));
+    }
+
+    #[test]
+    fn test_glob_match_bracket() {
+        assert!(glob_match("[abc]at", "bat"));
+        assert!(glob_match("[abc]at", "cat"));
+        assert!(!glob_match("[abc]at", "dat"));
+    }
+
+    #[test]
+    fn test_has_glob() {
+        assert!(has_glob("*.rs"));
+        assert!(has_glob("foo?bar"));
+        assert!(has_glob("[abc]"));
+        assert!(!has_glob("normal"));
+        assert!(!has_glob("/path/to/file"));
     }
 }

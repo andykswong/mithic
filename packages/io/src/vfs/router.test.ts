@@ -71,12 +71,12 @@ describe('FileSystemRouter', () => {
     });
   });
 
-  describe('not-found error', () => {
-    it('should throw not-found when no mount matches', async () => {
+  describe('no-entry error', () => {
+    it('should throw no-entry when no mount matches', async () => {
       const emptyRouter = new FileSystemRouter();
       assert.throws(
         () => emptyRouter.resolve('/some/path'),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'not-found'
+        (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
       );
     });
   });

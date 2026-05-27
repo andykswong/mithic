@@ -81,21 +81,21 @@ describe('DeviceProvider', () => {
     it('should throw permission-denied on mkdir', async () => {
       await assert.rejects(
         () => dev.mkdir('/newdir'),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'permission-denied'
+        (err: unknown) => err instanceof FileSystemError && err.code === 'not-permitted'
       );
     });
 
     it('should throw permission-denied on chmod', async () => {
       await assert.rejects(
         () => dev.chmod('/null', 0o777),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'permission-denied'
+        (err: unknown) => err instanceof FileSystemError && err.code === 'not-permitted'
       );
     });
 
     it('should throw permission-denied on unlink', async () => {
       await assert.rejects(
         () => dev.unlink('/null'),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'permission-denied'
+        (err: unknown) => err instanceof FileSystemError && err.code === 'not-permitted'
       );
     });
   });

@@ -40,7 +40,7 @@ export class OPFSProvider implements FileSystemProvider {
     const { dir: parentPath, base } = this.#splitPath(normalized);
     const parentDir = await this.#getDirectoryHandle(parentPath);
     if (!parentDir) {
-      throw new FileSystemError('not-found', `Parent directory not found: ${parentPath}`);
+      throw new FileSystemError('no-entry', `Parent directory not found: ${parentPath}`);
     }
 
     if (flags.exclusive && flags.create) {
@@ -59,7 +59,7 @@ export class OPFSProvider implements FileSystemProvider {
       fileHandle = await parentDir.getFileHandle(base, { create: flags.create });
     } catch (e: unknown) {
       if ((e as DOMException)?.name === 'NotFoundError') {
-        throw new FileSystemError('not-found', `File not found: ${path}`);
+        throw new FileSystemError('no-entry', `File not found: ${path}`);
       }
       if ((e as DOMException)?.name === 'TypeMismatchError') {
         throw new FileSystemError('is-directory', `Is a directory: ${path}`);
@@ -140,14 +140,14 @@ export class OPFSProvider implements FileSystemProvider {
     const { dir: parentPath, base } = this.#splitPath(normalized);
     const parentDir = await this.#getDirectoryHandle(parentPath);
     if (!parentDir) {
-      throw new FileSystemError('not-found', `No such file or directory: ${path}`);
+      throw new FileSystemError('no-entry', `No such file or directory: ${path}`);
     }
 
     let fileHandle: FileSystemFileHandle;
     try {
       fileHandle = await parentDir.getFileHandle(base);
     } catch {
-      throw new FileSystemError('not-found', `No such file or directory: ${path}`);
+      throw new FileSystemError('no-entry', `No such file or directory: ${path}`);
     }
 
     const file = await fileHandle.getFile();
@@ -187,7 +187,7 @@ export class OPFSProvider implements FileSystemProvider {
     const { dir: parentPath, base } = this.#splitPath(normalized);
     const parentDir = await this.#getDirectoryHandle(parentPath);
     if (!parentDir) {
-      throw new FileSystemError('not-found', `Parent directory not found: ${parentPath}`);
+      throw new FileSystemError('no-entry', `Parent directory not found: ${parentPath}`);
     }
 
     // Check if already exists
@@ -208,14 +208,14 @@ export class OPFSProvider implements FileSystemProvider {
     const { dir: parentPath, base } = this.#splitPath(normalized);
     const parentDir = await this.#getDirectoryHandle(parentPath);
     if (!parentDir) {
-      throw new FileSystemError('not-found', `Parent directory not found: ${parentPath}`);
+      throw new FileSystemError('no-entry', `Parent directory not found: ${parentPath}`);
     }
 
     try {
       await parentDir.removeEntry(base);
     } catch (e: unknown) {
       if ((e as DOMException)?.name === 'NotFoundError') {
-        throw new FileSystemError('not-found', `No such file: ${path}`);
+        throw new FileSystemError('no-entry', `No such file: ${path}`);
       }
       throw e;
     }
@@ -227,14 +227,14 @@ export class OPFSProvider implements FileSystemProvider {
     const { dir: parentPath, base } = this.#splitPath(normalized);
     const parentDir = await this.#getDirectoryHandle(parentPath);
     if (!parentDir) {
-      throw new FileSystemError('not-found', `Parent directory not found: ${parentPath}`);
+      throw new FileSystemError('no-entry', `Parent directory not found: ${parentPath}`);
     }
 
     try {
       await parentDir.removeEntry(base);
     } catch (e: unknown) {
       if ((e as DOMException)?.name === 'NotFoundError') {
-        throw new FileSystemError('not-found', `No such directory: ${path}`);
+        throw new FileSystemError('no-entry', `No such directory: ${path}`);
       }
       if ((e as DOMException)?.name === 'InvalidModificationError') {
         throw new FileSystemError('not-empty', `Directory not empty: ${path}`);
@@ -255,14 +255,14 @@ export class OPFSProvider implements FileSystemProvider {
     const oldParent = await this.#getDirectoryHandle(oldParentPath);
     const newParent = await this.#getDirectoryHandle(newParentPath);
     if (!oldParent || !newParent) {
-      throw new FileSystemError('not-found', 'Parent directory not found');
+      throw new FileSystemError('no-entry', 'Parent directory not found');
     }
 
     let sourceHandle: FileSystemFileHandle;
     try {
       sourceHandle = await oldParent.getFileHandle(oldBase);
     } catch {
-      throw new FileSystemError('not-found', `No such file: ${oldPath}`);
+      throw new FileSystemError('no-entry', `No such file: ${oldPath}`);
     }
 
     const file = await sourceHandle.getFile();
@@ -277,23 +277,23 @@ export class OPFSProvider implements FileSystemProvider {
   }
 
   async symlink(_target: string, _linkPath: string): Promise<void> {
-    throw new FileSystemError('not-supported', 'OPFS does not support symlinks');
+    throw new FileSystemError('unsupported', 'OPFS does not support symlinks');
   }
 
   async readlink(_path: string): Promise<string> {
-    throw new FileSystemError('not-supported', 'OPFS does not support symlinks');
+    throw new FileSystemError('unsupported', 'OPFS does not support symlinks');
   }
 
   async link(_existingPath: string, _newPath: string): Promise<void> {
-    throw new FileSystemError('not-supported', 'OPFS does not support hard links');
+    throw new FileSystemError('unsupported', 'OPFS does not support hard links');
   }
 
   async chmod(_path: string, _mode: number): Promise<void> {
-    throw new FileSystemError('not-supported', 'OPFS does not support chmod');
+    throw new FileSystemError('unsupported', 'OPFS does not support chmod');
   }
 
   async utimes(_path: string, _atime: Date, _mtime: Date): Promise<void> {
-    throw new FileSystemError('not-supported', 'OPFS does not support utimes');
+    throw new FileSystemError('unsupported', 'OPFS does not support utimes');
   }
 
   // --- Private helpers ---

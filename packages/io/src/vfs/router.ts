@@ -81,7 +81,7 @@ export class FileSystemRouter implements FileSystemProvider {
         return { provider, relativePath: relativePath || '/', mountPoint };
       }
     }
-    throw new FileSystemError('not-found', `No mount found for path: ${absolutePath}`);
+    throw new FileSystemError('no-entry', `No mount found for path: ${absolutePath}`);
   }
 
   async open(path: string, flags: OpenFlags): Promise<FileHandle> {
@@ -189,7 +189,7 @@ export class FileSystemRouter implements FileSystemProvider {
       await this.stat(path);
       return true;
     } catch (err) {
-      if (err instanceof FileSystemError && err.code === 'not-found') {
+      if (err instanceof FileSystemError && err.code === 'no-entry') {
         return false;
       }
       throw err;

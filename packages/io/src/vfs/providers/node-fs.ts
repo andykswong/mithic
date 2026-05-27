@@ -285,14 +285,14 @@ export class NodeFsProvider implements FileSystemProvider {
   #mapError(e: unknown, path: string): FileSystemError {
     const err = e as NodeJS.ErrnoException;
     switch (err?.code) {
-      case 'ENOENT': return new FileSystemError('not-found', `No such file or directory: ${path}`);
+      case 'ENOENT': return new FileSystemError('no-entry', `No such file or directory: ${path}`);
       case 'EEXIST': return new FileSystemError('exist', `Already exists: ${path}`);
       case 'ENOTDIR': return new FileSystemError('not-directory', `Not a directory: ${path}`);
       case 'EISDIR': return new FileSystemError('is-directory', `Is a directory: ${path}`);
       case 'ENOTEMPTY': return new FileSystemError('not-empty', `Directory not empty: ${path}`);
       case 'EACCES':
-      case 'EPERM': return new FileSystemError('permission-denied', `Permission denied: ${path}`);
-      case 'ENOSPC': return new FileSystemError('no-space', `No space left: ${path}`);
+      case 'EPERM': return new FileSystemError('not-permitted', `Permission denied: ${path}`);
+      case 'ENOSPC': return new FileSystemError('insufficient-space', `No space left: ${path}`);
       case 'ELOOP': return new FileSystemError('loop', `Too many symlinks: ${path}`);
       case 'ENAMETOOLONG': return new FileSystemError('name-too-long', `Name too long: ${path}`);
       case 'EXDEV': return new FileSystemError('cross-device', `Cross-device link: ${path}`);

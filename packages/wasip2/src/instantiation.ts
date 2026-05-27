@@ -113,9 +113,9 @@ export class WASIShim {
     return {
       'wasi:cli/environment': this.#environment ?? cli.environment,
       'wasi:cli/exit': cli.exit,
-      'wasi:cli/stdin': this.#stdinStream ? { InputStream, getStdin: () => this.#stdinStream!.borrow() } : cli.stdin,
-      'wasi:cli/stdout': this.#stdoutStream ? { OutputStream, getStdout: () => this.#stdoutStream!.borrow() } : cli.stdout,
-      'wasi:cli/stderr': this.#stderrStream ? { OutputStream, getStderr: () => this.#stderrStream!.borrow() } : cli.stderr,
+      'wasi:cli/stdin': this.#stdinStream ? { InputStream, getStdin: () => this.#stdinStream!.dup() } : cli.stdin,
+      'wasi:cli/stdout': this.#stdoutStream ? { OutputStream, getStdout: () => this.#stdoutStream!.dup() } : cli.stdout,
+      'wasi:cli/stderr': this.#stderrStream ? { OutputStream, getStderr: () => this.#stderrStream!.dup() } : cli.stderr,
       'wasi:cli/terminal-input': cli.terminalInput,
       'wasi:cli/terminal-output': cli.terminalOutput,
       'wasi:cli/terminal-stdin': this.#terminalStdin ?? cli.terminalStdin,

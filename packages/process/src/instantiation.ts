@@ -40,14 +40,19 @@ export class WASIProcess {
     'mithic:process/types': { Process: typeof Process };
     'mithic:process/manager': {
       spawn: (file: string, args: string[], options?: SpawnOptions) => Process;
-      createPipe: (options?: PipeOptions) => { input: InputStream; output: OutputStream };
+      createPipe: (options?: PipeOptions) => [InputStream, OutputStream];
+      dupOutputStream: (stream: OutputStream) => OutputStream;
     };
   } {
     return {
       'mithic:process/types': { Process },
       'mithic:process/manager': {
         spawn: (file, args, options) => this.#manager.spawn(file, args, options),
-        createPipe: (options) => this.#manager.createPipe(options),
+        createPipe: (options) => {
+          const { input, output } = this.#manager.createPipe(options);
+          return [input, output];
+        },
+        dupOutputStream: (stream) => this.#manager.dupOutputStream(stream),
       },
     };
   }

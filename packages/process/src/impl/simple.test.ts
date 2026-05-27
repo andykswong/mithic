@@ -34,7 +34,7 @@ describe('SimpleProcessManager', () => {
 
   it('throws not-found when resolver returns undefined', () => {
     const mgr = new SimpleProcessManager({ commandResolver: () => undefined });
-    assert.throws(() => mgr.spawn('missing', []), (err) => err === 'not-found');
+    assert.throws(() => mgr.spawn('missing', []), (err: unknown) => err instanceof Error && (err as Error & { payload: { tag: string } }).payload.tag === 'not-found');
   });
 
   it('passes cwd and env to command context', async () => {
@@ -197,7 +197,7 @@ describe('WASIProcess', () => {
   it('spawn throws not-found for unknown command', () => {
     const wp = new WASIProcess();
     const { spawn } = wp.getImportObject()['mithic:process/manager'];
-    assert.throws(() => spawn('anything', []), (err) => err === 'not-found');
+    assert.throws(() => spawn('anything', []), (err: unknown) => err instanceof Error && (err as Error & { payload: { tag: string } }).payload.tag === 'not-found');
   });
 
   it('accepts custom ProcessManager', async () => {
@@ -210,6 +210,9 @@ describe('WASIProcess', () => {
       createPipe() {
         const pipe = createPipe();
         return pipe;
+      },
+      dupOutputStream(stream: OutputStream) {
+        return stream.dup();
       },
     };
     const wp = new WASIProcess({ manager: customManager });
@@ -231,16 +234,16 @@ describe('WASIProcess', () => {
     const wp1 = new WASIProcess({ commandResolver: () => handler1 });
     const wp2 = new WASIProcess({ commandResolver: () => handler2 });
 
-    const pipe1 = wp1.getImportObject()['mithic:process/manager'].createPipe();
-    const pipe2 = wp2.getImportObject()['mithic:process/manager'].createPipe();
+    const [pipe1In, pipe1Out] = wp1.getImportObject()['mithic:process/manager'].createPipe();
+    const [pipe2In, pipe2Out] = wp2.getImportObject()['mithic:process/manager'].createPipe();
 
-    const proc1 = wp1.getImportObject()['mithic:process/manager'].spawn('cmd', [], { stdout: pipe1.output });
-    const proc2 = wp2.getImportObject()['mithic:process/manager'].spawn('cmd', [], { stdout: pipe2.output });
+    const proc1 = wp1.getImportObject()['mithic:process/manager'].spawn('cmd', [], { stdout: pipe1Out });
+    const proc2 = wp2.getImportObject()['mithic:process/manager'].spawn('cmd', [], { stdout: pipe2Out });
 
     await proc1.wait();
     await proc2.wait();
 
-    assert.deepEqual(pipe1.input.read(1n), new Uint8Array([1]));
-    assert.deepEqual(pipe2.input.read(1n), new Uint8Array([2]));
+    assert.deepEqual(pipe1In.read(1n), new Uint8Array([1]));
+    assert.deepEqual(pipe2In.read(1n), new Uint8Array([2]));
   });
 });

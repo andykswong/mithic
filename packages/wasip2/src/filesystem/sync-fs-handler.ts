@@ -4,7 +4,7 @@
  * cross-thread (SyncBridgeFsProvider) filesystem access.
  */
 
-import type { SyncFileSystemProvider, FileStat, OpenFlags as FsOpenFlags } from '@mithic/io/vfs';
+import { type SyncFileSystemProvider, type FileStat, type OpenFlags as FsOpenFlags, FileSystemError } from '@mithic/io/vfs';
 import type { SyncInputStreamHandler, SyncOutputStreamHandler } from '@mithic/io/io';
 import { InputStream, OutputStream } from '../io/streams.ts';
 import {
@@ -15,13 +15,13 @@ import {
   type DescriptorHandler,
   type DescriptorStat,
   type DescriptorType,
-  type ErrorCode,
   type MetadataHashValue,
   type NewTimestamp,
   type OpenFlags,
   type PathFlags,
   type Datetime,
 } from './types.ts';
+
 
 export class SyncFsDescriptorHandler implements DescriptorHandler {
   readonly #fs: SyncFileSystemProvider;
@@ -175,7 +175,7 @@ export class SyncFsDescriptorHandler implements DescriptorHandler {
     }
     if (openFlags.directory) {
       const stat = this.#fs.stat(childPath);
-      if (stat.type !== 'directory') throw 'not-directory' as ErrorCode;
+      if (stat.type !== 'directory') throw new FileSystemError('not-directory');
     }
     return new Descriptor(new SyncFsDescriptorHandler(this.#fs, childPath, flags));
   }
