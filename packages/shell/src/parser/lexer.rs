@@ -36,6 +36,14 @@ pub enum Token {
     AmpGt,
     /// `<<<`
     HereString,
+    /// `(`
+    LParen,
+    /// `)`
+    RParen,
+    /// `[[`
+    DoubleBracketOpen,
+    /// `]]`
+    DoubleBracketClose,
     /// End of input
     Eof,
 }
@@ -128,6 +136,22 @@ impl Lexer {
                     Token::Fd2Gt
                 }
             }
+            Some('(') => { self.advance(); Token::LParen }
+            Some(')') => { self.advance(); Token::RParen }
+            Some('[') if self.peek2() == Some('[') => {
+                // Only emit DoubleBracketOpen if what follows the [[ is whitespace/EOF
+                let after = self.chars.get(self.pos + 2).copied();
+                if matches!(after, Some(' ') | Some('\t') | Some('\n') | None) {
+                    self.advance(); self.advance();
+                    Token::DoubleBracketOpen
+                } else {
+                    self.read_word()
+                }
+            }
+            Some(']') if self.peek2() == Some(']') => {
+                self.advance(); self.advance();
+                Token::DoubleBracketClose
+            }
             // Quotes and word chars all enter read_word.
             // Adjacent quoting ('foo'"bar"baz) is merged inside read_word.
             _ => self.read_word(),
@@ -142,7 +166,7 @@ impl Lexer {
             match self.peek() {
                 None => break,
                 // Hard delimiters — end word
-                Some(c) if matches!(c, ' ' | '\t' | '\n' | '|' | '&' | ';' | ')') => break,
+                Some(c) if matches!(c, ' ' | '\t' | '\n' | '|' | '&' | ';' | '(' | ')') => break,
                 // Redirect operators — end word (special: '2' followed by '>' is handled in next_token,
                 // so here we only stop if the word is empty or the buf is just '2')
                 Some('>') | Some('<') => {
@@ -526,6 +550,31 @@ mod tests {
         assert_eq!(lex("'foo' \"bar\""), vec![
             word(vec![lit("foo")]),
             word(vec![lit("bar")]),
+        ]);
+    }
+
+    #[test]
+    fn test_parens() {
+        assert_eq!(lex("("), vec![Token::LParen]);
+        assert_eq!(lex(")"), vec![Token::RParen]);
+        assert_eq!(lex("()"), vec![Token::LParen, Token::RParen]);
+    }
+
+    #[test]
+    fn test_double_brackets() {
+        assert_eq!(lex("[[ x ]]"), vec![
+            Token::DoubleBracketOpen,
+            word(vec![lit("x")]),
+            Token::DoubleBracketClose,
+        ]);
+    }
+
+    #[test]
+    fn test_function_syntax_tokens() {
+        assert_eq!(lex("foo()"), vec![
+            word(vec![lit("foo")]),
+            Token::LParen,
+            Token::RParen,
         ]);
     }
 }
