@@ -22,7 +22,7 @@ Mithic provides a virtual process runtime that runs identically in the browser (
 ```shell
 npm install mithic
 # or individual packages:
-npm install @mithic/io @mithic/wasip2 @mithic/process @mithic/just-bash
+npm install @mithic/io @mithic/wasip2 @mithic/process @mithic/shell
 ```
 
 ### Run a WASM Component (Node.js)
@@ -45,7 +45,7 @@ run.run();
 
 ### Browser Shell Example
 
-The [shell example](./packages/examples/shell/) demonstrates an xterm.js terminal connected to `JustBashShell`, running WASM programs in the browser.
+The [shell example](./packages/examples/shell/) demonstrates an xterm.js terminal connected to `MithicShell` (Rust WASM), running WASM programs in the browser.
 
 ```shell
 cd packages/examples/shell
@@ -59,6 +59,7 @@ npm run dev
 | [`@mithic/io`](./packages/io) | I/O layer: virtual file system, HTTP/socket providers, sync-bridge |
 | [`@mithic/wasip2`](./packages/wasip2) | WASI Preview 2 shim for WASM components |
 | [`@mithic/process`](./packages/process) | Process manager: spawn WASM processes with piped I/O |
+| [`@mithic/shell`](./packages/shell) | Rust WASM shell: bash-like interpreter as a WASI P2 component |
 | [`@mithic/just-bash`](./packages/just-bash) | Shell integration: adapts [just-bash](https://github.com/nicholasgasior/just-bash) to mithic VFS and process manager |
 
 ### Examples

@@ -11,12 +11,13 @@ packages/
 ├── io/           @mithic/io        — VFS router, providers, HTTP/sockets, sync-bridge
 ├── wasip2/       @mithic/wasip2    — WASI P2 shim (thin adapter over @mithic/io)
 ├── process/      @mithic/process   — Process spawn, pipes, stream inversion
-├── just-bash/    @mithic/just-bash — Shell: just-bash + VFS + ProcessManager
+├── shell/        @mithic/shell     — Rust WASM shell: bash-like WASI P2 component
+├── just-bash/    @mithic/just-bash — Shell: just-bash + VFS + ProcessManager (legacy)
 └── examples/
     ├── simple/   — ComponentizeJS WASM component
     ├── rust-cli/ — Rust WASM component
     ├── browser/  — Browser WASM component
-    └── shell/    — xterm.js + JustBashShell
+    └── shell/    — xterm.js + MithicShell
 ```
 
 ## Build & Test
