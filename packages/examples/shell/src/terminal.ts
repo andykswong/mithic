@@ -1,30 +1,15 @@
-/**
- * Terminal adapter — bridges xterm.js to the shell worker via SharedArrayBuffer.
- *
- * Protocol (main → worker stdin):
- * - signal[0]: 0 = waiting, 1 = data ready, 2 = closed
- * - signal[1]: byte length of data in dataBuffer
- * - dataBuffer: raw UTF-8 bytes
- *
- * Protocol (worker → main stdout/stderr):
- * - Worker posts { type: 'stdout' | 'stderr', value: string } messages
- */
-
 import type { Terminal } from '@xterm/xterm';
 
 const STDIN_BUFFER_SIZE = 4096;
 
 export interface TerminalBridge {
-  /** SharedArrayBuffer signal for stdin (Int32Array of length 2). */
   stdinSignal: SharedArrayBuffer;
-  /** SharedArrayBuffer data buffer for stdin bytes. */
   stdinData: SharedArrayBuffer;
-  /** Write output text to the terminal. */
   writeToTerminal(text: string): void;
 }
 
 export function createTerminalBridge(terminal: Terminal, worker: Worker): TerminalBridge {
-  const stdinSignal = new SharedArrayBuffer(8);
+  const stdinSignal = new SharedArrayBuffer(12);
   const stdinData = new SharedArrayBuffer(STDIN_BUFFER_SIZE);
   const signalView = new Int32Array(stdinSignal);
 
@@ -45,10 +30,13 @@ export function createTerminalBridge(terminal: Terminal, worker: Worker): Termin
           terminal.write('\b \b');
         }
       } else if (ch === '\x03') {
-        // Ctrl+C — send empty line to unblock, then reset
         terminal.write('^C\r\n');
         lineBuffer = '';
-        sendLine('\n');
+        sendSignal(2);
+      } else if (ch === '\x1a') {
+        terminal.write('^Z\r\n');
+        lineBuffer = '';
+        sendSignal(20);
       } else {
         lineBuffer += ch;
         terminal.write(ch);
@@ -65,8 +53,13 @@ export function createTerminalBridge(terminal: Terminal, worker: Worker): Termin
     Atomics.notify(signalView, 0);
   }
 
+  function sendSignal(sigNum: number): void {
+    Atomics.store(signalView, 2, sigNum);
+    Atomics.store(signalView, 0, 1);
+    Atomics.notify(signalView, 0);
+  }
+
   function writeToTerminal(text: string): void {
-    // Normalize newlines for xterm
     terminal.write(text.replace(/\n/g, '\r\n'));
   }
 

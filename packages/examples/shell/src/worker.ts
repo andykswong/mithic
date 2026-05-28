@@ -1,17 +1,3 @@
-/**
- * Shell worker — runs the Rust/WASM MithicShell in a Web Worker.
- *
- * The shell's stdin is wired directly to the terminal SharedArrayBuffer:
- * blocking_read() inside the WASM component calls Atomics.wait on the same
- * SAB the terminal bridge writes to, so no intermediate pipe or extra thread
- * is needed.
- *
- * SAB protocol (main → worker stdin):
- *   signal[0]: 0 = waiting, 1 = data ready, 2 = closed
- *   signal[1]: byte length of pending data
- *   dataBuffer: raw UTF-8 bytes
- */
-
 import { MemoryFsProvider } from '@mithic/io/vfs';
 import { SimpleProcessManager } from '@mithic/process/impl/simple';
 import type { CommandHandler } from '@mithic/process/impl/simple';
@@ -20,11 +6,11 @@ import { ComponentExit } from '@mithic/wasip2/cli/exit';
 import { Descriptor } from '@mithic/wasip2/filesystem/types';
 import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
 import type { SyncInputStreamHandler } from '@mithic/io/io';
+import type { Signal } from '@mithic/process/types';
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
-// --- Wait for init message with SharedArrayBuffer handles ---
 const initPromise = new Promise<{ signal: SharedArrayBuffer; data: SharedArrayBuffer }>((resolve) => {
   globalThis.onmessage = (e: MessageEvent) => {
     if (e.data?.type === 'init') {
@@ -37,38 +23,54 @@ const { signal, data } = await initPromise;
 const signalView = new Int32Array(signal);
 const dataView = new Uint8Array(data);
 
-// --- SAB-backed stdin handler ---
-// The WASM shell calls blocking_read() for each byte/chunk of input.
-// This handler Atomics.wait(signalView, 0, 0) until the terminal posts a line.
+function sigFromNum(num: number): Signal | null {
+  switch (num) {
+    case 2: return 'sigint';
+    case 9: return 'sigkill';
+    case 15: return 'sigterm';
+    case 18: return 'sigcont';
+    case 20: return 'sigtstp';
+    default: return null;
+  }
+}
+
 let stdinRemainder = new Uint8Array(0);
+let shell: MithicShell;
 
 const sabStdinHandler: SyncInputStreamHandler = {
   blockingRead(len: number): Uint8Array {
-    // Drain buffered remainder first.
     if (stdinRemainder.byteLength > 0) {
       const chunk = stdinRemainder.subarray(0, Math.min(len, stdinRemainder.byteLength));
       stdinRemainder = stdinRemainder.subarray(chunk.byteLength);
       return chunk;
     }
 
-    // Wait for the terminal to signal data.
     while (Atomics.load(signalView, 0) === 0) {
       Atomics.wait(signalView, 0, 0);
     }
 
+    const pendingSig = Atomics.load(signalView, 2);
+    if (pendingSig !== 0) {
+      Atomics.store(signalView, 2, 0);
+      const sig = sigFromNum(pendingSig);
+      if (sig && shell.hasForeground) {
+        shell.signal(sig);
+      }
+      Atomics.store(signalView, 0, 0);
+      Atomics.store(signalView, 1, 0);
+      return encoder.encode('\n');
+    }
+
     if (Atomics.load(signalView, 0) === 2) {
-      // Closed — signal EOF to the WASM stream.
       throw { tag: 'closed' };
     }
 
     const byteLen = Atomics.load(signalView, 1);
     const bytes = new Uint8Array(byteLen);
     bytes.set(dataView.subarray(0, byteLen));
-    // Reset signal
     Atomics.store(signalView, 0, 0);
     Atomics.store(signalView, 1, 0);
 
-    // Hand out up to `len` bytes, carry over the rest.
     if (bytes.byteLength <= len) {
       return bytes;
     }
@@ -77,13 +79,11 @@ const sabStdinHandler: SyncInputStreamHandler = {
   },
 };
 
-// --- Setup VFS ---
 const memFs = new MemoryFsProvider();
 memFs.mkdir('/home');
 memFs.mkdir('/tmp');
 memFs.mkdir('/bin');
 
-// --- Setup ProcessManager with example WASM command ---
 const manager = new SimpleProcessManager({
   commandResolver: (file: string) => {
     if (file === 'example') return createExampleCommand();
@@ -121,11 +121,9 @@ function createExampleCommand(): CommandHandler {
   };
 }
 
-// --- Create VFS preopen descriptor ---
 const rootDescriptor = new Descriptor(new SyncFsDescriptorHandler(memFs, '/'));
 
-// --- Setup MithicShell ---
-const shell = new MithicShell({
+shell = new MithicShell({
   wasi: {
     sandbox: {
       preopens: { '/': rootDescriptor },
@@ -158,7 +156,6 @@ const shell = new MithicShell({
   component: () => import('@mithic/shell/component'),
 });
 
-// --- Run the shell (blocks until it exits) ---
 try {
   const exitCode = await shell.run();
   globalThis.postMessage({ type: 'exit', code: exitCode });
