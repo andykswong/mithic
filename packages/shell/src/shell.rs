@@ -4,7 +4,7 @@ use crate::bindings::mithic::process::manager as proc_manager;
 use crate::bindings::mithic::process::types::{InputStream, OutputStream, SpawnOptions};
 use crate::bindings::wasi::cli::{environment, terminal_stdin};
 use crate::io::{self, LineReader};
-use crate::parser::{Command, List, ListItem, ListOp, Parser, Pipeline, SimpleCommand, Word, WordPart};
+use crate::parser::{ArrayAssign, Command, List, ListItem, ListOp, Parser, Pipeline, SimpleCommand, Word, WordPart};
 use crate::value::ShellValue;
 
 pub struct Shell {
@@ -266,6 +266,18 @@ impl Shell {
         mut stdout: Option<OutputStream>,
         env_list: Option<&[(String, String)]>,
     ) -> u8 {
+        // Detect scalar assignment: `VAR=value` (no spaces, only first word).
+        // Also detect indexed array assignment: `arr[idx]=value`.
+        // We check the raw (unexpanded) first word for these patterns before
+        // expanding everything, because assignment words must not be globbed.
+        if cmd.words.len() == 1 {
+            if let Some(raw) = literal_text(&cmd.words[0]) {
+                if let Some(exit) = self.try_assignment(&raw) {
+                    return exit;
+                }
+            }
+        }
+
         let args: Vec<String> = cmd.words.iter()
             .flat_map(|w| {
                 let expanded = self.expand_word(w);
@@ -283,6 +295,14 @@ impl Shell {
 
         if args.is_empty() {
             return 0;
+        }
+
+        // Detect scalar/indexed-array assignment from expanded first arg.
+        // This covers `VAR=value` or `arr[0]=value` as the sole word.
+        if args.len() == 1 {
+            if let Some(exit) = self.try_assignment(&args[0]) {
+                return exit;
+            }
         }
 
         let name = args[0].clone();
@@ -310,6 +330,47 @@ impl Shell {
                 }
             }
         }
+    }
+
+    /// If `word` is a standalone assignment (`VAR=val` or `arr[idx]=val`), execute it and return
+    /// `Some(exit_code)`. Otherwise return `None`.
+    fn try_assignment(&mut self, word: &str) -> Option<u8> {
+        // `arr[idx]=value`
+        if let Some(eq_pos) = word.find('=') {
+            let lhs = &word[..eq_pos];
+            let rhs = &word[eq_pos + 1..];
+            if let Some((arr_name, subscript)) = parse_array_subscript(lhs) {
+                if arr_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    if let Ok(idx) = subscript.parse::<usize>() {
+                        let val = rhs.to_string();
+                        let arr_name = arr_name.to_string();
+                        let entry = self.env.entry(arr_name).or_insert_with(|| ShellValue::Array(Vec::new()));
+                        match entry {
+                            ShellValue::Array(v) => {
+                                if idx >= v.len() {
+                                    v.resize(idx + 1, String::new());
+                                }
+                                v[idx] = val;
+                            }
+                            ShellValue::Scalar(_) => {
+                                *entry = ShellValue::Array({
+                                    let mut v = vec![String::new(); idx + 1];
+                                    v[idx] = val;
+                                    v
+                                });
+                            }
+                        }
+                        return Some(0);
+                    }
+                }
+            }
+            // `VAR=value` — plain scalar assignment
+            if lhs.chars().all(|c| c.is_alphanumeric() || c == '_') && !lhs.is_empty() {
+                self.env.insert(lhs.to_string(), ShellValue::Scalar(rhs.to_string()));
+                return Some(0);
+            }
+        }
+        None
     }
 
     fn is_builtin(name: &str) -> bool {
@@ -618,14 +679,50 @@ impl Shell {
     }
 
     fn expand_brace_var(&self, raw: &str) -> String {
+        // ${#arr[@]} or ${#arr[*]} — array length
+        if let Some(inner) = raw.strip_prefix('#') {
+            if let Some((arr_name, subscript)) = parse_array_subscript(inner) {
+                if subscript == "@" || subscript == "*" {
+                    return match self.env.get(arr_name) {
+                        Some(v) => v.len().to_string(),
+                        None => "0".to_string(),
+                    };
+                }
+                // ${#arr[n]} — length of element at index
+                if let Ok(idx) = subscript.parse::<usize>() {
+                    return match self.env.get(arr_name) {
+                        Some(v) => v.index(idx).len().to_string(),
+                        None => "0".to_string(),
+                    };
+                }
+            }
+            // ${#VAR} — length of scalar variable
+            return self.expand_var(inner).len().to_string();
+        }
+
+        // ${arr[@]} or ${arr[*]} — all elements space-joined
+        // ${arr[n]} — single element at index n
+        if let Some((arr_name, subscript)) = parse_array_subscript(raw) {
+            return match self.env.get(arr_name) {
+                Some(v) => {
+                    if subscript == "@" || subscript == "*" {
+                        v.all_elements()
+                    } else if let Ok(idx) = subscript.parse::<usize>() {
+                        v.index(idx).to_string()
+                    } else {
+                        String::new()
+                    }
+                }
+                None => String::new(),
+            };
+        }
+
         if let Some((name, rest)) = raw.split_once(":-") {
             let val = self.expand_var(name);
             if val.is_empty() { rest.to_string() } else { val }
         } else if let Some((name, alt)) = raw.split_once(":+") {
             let val = self.expand_var(name);
             if val.is_empty() { String::new() } else { alt.to_string() }
-        } else if let Some(name) = raw.strip_prefix('#') {
-            self.expand_var(name).len().to_string()
         } else {
             self.expand_var(raw)
         }
@@ -720,7 +817,35 @@ impl Shell {
             }
             Command::Group(list) => self.exec_list(list),
             Command::Subshell(list) => self.exec_list(list),
+            Command::ArrayAssign(aa) => self.exec_array_assign(aa),
         }
+    }
+
+    fn exec_array_assign(&mut self, aa: ArrayAssign) -> u8 {
+        let elements: Vec<String> = aa.elements.iter()
+            .flat_map(|w| {
+                let expanded = self.expand_word(w);
+                if has_glob(&expanded) {
+                    self.expand_glob(&expanded)
+                } else {
+                    vec![expanded]
+                }
+            })
+            .collect();
+
+        if aa.append {
+            let existing = match self.env.get(&aa.name) {
+                Some(ShellValue::Array(v)) => v.clone(),
+                Some(ShellValue::Scalar(s)) if !s.is_empty() => vec![s.clone()],
+                _ => Vec::new(),
+            };
+            let mut combined = existing;
+            combined.extend(elements);
+            self.env.insert(aa.name, ShellValue::Array(combined));
+        } else {
+            self.env.insert(aa.name, ShellValue::Array(elements));
+        }
+        0
     }
 
     fn exec_if(&mut self, cmd: crate::parser::IfCommand) -> u8 {
@@ -1301,6 +1426,29 @@ impl Shell {
         _stdout: &mut Option<OutputStream>,
         _stderr: &mut Option<OutputStream>,
     ) -> bool { true }
+}
+
+/// Return the literal string of a Word if it consists solely of `Literal` parts.
+fn literal_text(word: &Word) -> Option<String> {
+    let mut s = String::new();
+    for part in word.parts() {
+        match part {
+            WordPart::Literal(l) => s.push_str(l),
+            _ => return None,
+        }
+    }
+    Some(s)
+}
+
+/// Parse `name[subscript]` from a string; returns `(name, subscript)` or `None`.
+fn parse_array_subscript(s: &str) -> Option<(&str, &str)> {
+    let open = s.find('[')?;
+    let close = s.rfind(']')?;
+    if close <= open { return None; }
+    let name = &s[..open];
+    let subscript = &s[open + 1..close];
+    if name.is_empty() { return None; }
+    Some((name, subscript))
 }
 
 fn expand_tilde(s: &str, home: &str) -> String {

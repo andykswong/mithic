@@ -269,6 +269,33 @@ describe('edge cases', () => {
   });
 });
 
+describe('arrays', () => {
+  it('assigns and indexes an array', async () => {
+    const { stdout } = await runShell('arr=(hello world foo)\necho ${arr[0]}\necho ${arr[1]}\necho ${arr[2]}\n');
+    assert.strictEqual(stdout.trim(), 'hello\nworld\nfoo');
+  });
+
+  it('expands all elements with ${arr[@]}', async () => {
+    const { stdout } = await runShell('arr=(a b c)\necho ${arr[@]}\n');
+    assert.strictEqual(stdout.trim(), 'a b c');
+  });
+
+  it('gets array length with ${#arr[@]}', async () => {
+    const { stdout } = await runShell('arr=(one two three four)\necho ${#arr[@]}\n');
+    assert.strictEqual(stdout.trim(), '4');
+  });
+
+  it('modifies individual array elements', async () => {
+    const { stdout } = await runShell('arr=(a b c)\narr[1]=X\necho ${arr[@]}\n');
+    assert.strictEqual(stdout.trim(), 'a X c');
+  });
+
+  it('appends to array with +=', async () => {
+    const { stdout } = await runShell('arr=(a b)\narr+=(c d)\necho ${arr[@]}\necho ${#arr[@]}\n');
+    assert.strictEqual(stdout.trim(), 'a b c d\n4');
+  });
+});
+
 describe('multi-line input', () => {
   it('if spanning multiple lines', async () => {
     const { stdout } = await runShell('if true\nthen\necho yes\nfi\n');

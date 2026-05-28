@@ -65,6 +65,16 @@ pub enum Command {
     FunctionDef(FunctionDef),
     Group(List),
     Subshell(List),
+    /// `arr=(a b c)` or `arr+=(x y)` — array assignment
+    ArrayAssign(ArrayAssign),
+}
+
+/// Array assignment: `name=(elements)` or `name+=(elements)`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayAssign {
+    pub name: String,
+    pub append: bool,
+    pub elements: Vec<Word>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

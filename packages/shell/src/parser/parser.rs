@@ -358,20 +358,54 @@ impl Parser {
     fn parse_maybe_function_def(&mut self) -> Command {
         if let Token::Word(parts) = self.peek() {
             if parts.len() == 1 {
-                if let WordPart::Literal(name) = &parts[0] {
-                    let name = name.clone();
+                if let WordPart::Literal(lit) = &parts[0] {
+                    let lit = lit.clone();
+
+                    // Detect array assignment: `name=(` or `name+=(`.
+                    // The lexer emits Word("name=") or Word("name+=") followed by LParen.
+                    let (arr_name, append) = if lit.ends_with("+=") {
+                        (Some(lit[..lit.len() - 2].to_string()), true)
+                    } else if lit.ends_with('=') {
+                        (Some(lit[..lit.len() - 1].to_string()), false)
+                    } else {
+                        (None, false)
+                    };
+
+                    if let Some(name) = arr_name {
+                        if self.tokens.get(self.pos + 1) == Some(&Token::LParen) {
+                            self.advance(); // consume Word("name=") / Word("name+=")
+                            self.advance(); // consume (
+                            let mut elements = Vec::new();
+                            loop {
+                                self.skip_newlines();
+                                if matches!(self.peek(), Token::RParen | Token::Eof) { break; }
+                                if let Some(w) = self.parse_word() {
+                                    elements.push(w);
+                                } else {
+                                    break;
+                                }
+                            }
+                            if matches!(self.peek(), Token::RParen) { self.advance(); }
+                            return Command::ArrayAssign(ArrayAssign { name, append, elements });
+                        }
+                    }
+
+                    // Detect function definition: `name()`.
                     if self.tokens.get(self.pos + 1) == Some(&Token::LParen)
                         && self.tokens.get(self.pos + 2) == Some(&Token::RParen)
                     {
-                        self.advance(); // consume name
-                        self.advance(); // consume (
-                        self.advance(); // consume )
-                        self.skip_newlines();
-                        let body = self.parse_command();
-                        return Command::FunctionDef(FunctionDef {
-                            name,
-                            body: Box::new(body),
-                        });
+                        // Only treat as function def if the literal has no `=` (already handled above).
+                        if !lit.contains('=') {
+                            self.advance(); // consume name
+                            self.advance(); // consume (
+                            self.advance(); // consume )
+                            self.skip_newlines();
+                            let body = self.parse_command();
+                            return Command::FunctionDef(FunctionDef {
+                                name: lit,
+                                body: Box::new(body),
+                            });
+                        }
                     }
                 }
             }
