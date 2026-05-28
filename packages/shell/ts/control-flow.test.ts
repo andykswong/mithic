@@ -625,6 +625,13 @@ describe('set/shopt options', () => {
   });
 });
 
+describe('error reporting', () => {
+  it('syntax error reports position', async () => {
+    const { stderr } = await runShell('if then\n');
+    assert.match(stderr, /syntax error/);
+  });
+});
+
 describe('subshell isolation', () => {
   it('subshell does not leak env changes', async () => {
     const { stdout } = await runShell('X=outer; (X=inner; echo $X); echo $X\n');

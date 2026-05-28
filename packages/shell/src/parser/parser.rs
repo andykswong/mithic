@@ -1,16 +1,36 @@
 use crate::parser::ast::*;
 use crate::parser::lexer::{Lexer, Token};
 
+pub struct ParseError {
+    pub message: String,
+    pub span: Span,
+}
+
 pub struct Parser {
     tokens: Vec<Token>,
+    spans: Vec<Span>,
     pos: usize,
+    errors: Vec<ParseError>,
 }
 
 impl Parser {
     pub fn new(input: &str) -> Self {
         let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize();
-        Parser { tokens, pos: 0 }
+        let (tokens, spans) = lexer.tokenize_with_spans();
+        Parser { tokens, spans, pos: 0, errors: Vec::new() }
+    }
+
+    pub fn errors(&self) -> &[ParseError] {
+        &self.errors
+    }
+
+    fn current_span(&self) -> Span {
+        self.spans.get(self.pos).copied().unwrap_or_default()
+    }
+
+    fn push_error(&mut self, message: impl Into<String>) {
+        let span = self.current_span();
+        self.errors.push(ParseError { message: message.into(), span });
     }
 
     fn peek(&self) -> &Token {
@@ -82,6 +102,15 @@ impl Parser {
             self.advance();
             true
         } else {
+            let found = match self.peek() {
+                Token::Eof => "end of input".to_string(),
+                Token::Word(parts) if parts.len() == 1 => {
+                    if let WordPart::Literal(s) = &parts[0] { format!("'{}'", s) }
+                    else { "token".to_string() }
+                }
+                _ => "token".to_string(),
+            };
+            self.push_error(format!("expected '{}', got {}", kw, found));
             false
         }
     }

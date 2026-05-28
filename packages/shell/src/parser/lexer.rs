@@ -1,4 +1,4 @@
-use crate::parser::ast::WordPart;
+use crate::parser::ast::{Span, WordPart};
 
 /// Tokens produced by the lexer.
 #[derive(Debug, Clone, PartialEq)]
@@ -53,22 +53,35 @@ pub enum Token {
 pub struct Lexer {
     chars: Vec<char>,
     pos: usize,
+    line: u32,
+    col: u32,
 }
 
 impl Lexer {
     pub fn new(input: &str) -> Self {
-        Lexer { chars: input.chars().collect(), pos: 0 }
+        Lexer { chars: input.chars().collect(), pos: 0, line: 1, col: 1 }
+    }
+
+    pub fn span(&self) -> Span {
+        Span { line: self.line, col: self.col }
     }
 
     pub fn tokenize(&mut self) -> Vec<Token> {
+        self.tokenize_with_spans().0
+    }
+
+    pub fn tokenize_with_spans(&mut self) -> (Vec<Token>, Vec<Span>) {
         let mut tokens = Vec::new();
+        let mut spans = Vec::new();
         loop {
+            let span = self.span();
             let tok = self.next_token();
             let done = tok == Token::Eof;
+            spans.push(span);
             tokens.push(tok);
             if done { break; }
         }
-        tokens
+        (tokens, spans)
     }
 
     fn peek(&self) -> Option<char> {
@@ -81,7 +94,15 @@ impl Lexer {
 
     fn advance(&mut self) -> Option<char> {
         let c = self.chars.get(self.pos).copied();
-        if c.is_some() { self.pos += 1; }
+        if let Some(ch) = c {
+            self.pos += 1;
+            if ch == '\n' {
+                self.line += 1;
+                self.col = 1;
+            } else {
+                self.col += 1;
+            }
+        }
         c
     }
 

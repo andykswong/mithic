@@ -1,3 +1,10 @@
+/// Source position for error reporting.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Span {
+    pub line: u32,
+    pub col: u32,
+}
+
 /// A word that may contain literals, variable refs, and command substitutions.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WordPart {

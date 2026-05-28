@@ -97,7 +97,14 @@ impl Shell {
                         let trimmed = input_buf.trim().to_string();
                         if !trimmed.is_empty() {
                             let mut parser = Parser::new(&trimmed);
-                            if let Some(list) = parser.parse() {
+                            let result = parser.parse();
+                            for err in parser.errors() {
+                                io::write_stderr(&format!(
+                                    "msh: syntax error at line {}, col {}: {}\n",
+                                    err.span.line, err.span.col, err.message
+                                ));
+                            }
+                            if let Some(list) = result {
                                 self.last_exit = self.exec_list(list);
                             }
                         }
@@ -128,6 +135,13 @@ impl Shell {
             if parser.is_incomplete() {
                 // Incomplete compound command — keep reading
                 continue;
+            }
+
+            for err in parser.errors() {
+                io::write_stderr(&format!(
+                    "msh: syntax error at line {}, col {}: {}\n",
+                    err.span.line, err.span.col, err.message
+                ));
             }
 
             if let Some(list) = result {
