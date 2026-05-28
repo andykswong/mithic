@@ -409,6 +409,20 @@ describe('brace expansion', () => {
   });
 });
 
+describe('process substitution', () => {
+  it('<(cmd) expands to a file path containing command output', async () => {
+    const { stdout } = await runShell('read result < <(echo hello)\necho $result\n');
+    assert.strictEqual(stdout.trim(), 'hello');
+  });
+
+  it('multiple <(cmd) substitutions expand to distinct paths', async () => {
+    const { stdout } = await runShell(
+      'read a < <(echo line1)\nread b < <(echo line2)\necho $a\necho $b\n'
+    );
+    assert.strictEqual(stdout.trim(), 'line1\nline2');
+  });
+});
+
 describe('extended parameter expansion', () => {
   it('${VAR#prefix} removes shortest prefix', async () => {
     const { stdout } = await runShell('export x=hello_world\necho ${x#hell}\n');

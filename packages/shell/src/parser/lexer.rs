@@ -112,17 +112,31 @@ impl Lexer {
                 else { Token::Amp }
             }
             Some('>') => {
-                self.advance();
-                if self.peek() == Some('>') { self.advance(); Token::GtGt }
-                else { Token::Gt }
+                if self.peek2() == Some('(') {
+                    self.advance(); // consume '>'
+                    self.advance(); // consume '('
+                    let raw = self.read_until_close_paren();
+                    Token::Word(vec![WordPart::ProcSubOut(raw)])
+                } else {
+                    self.advance();
+                    if self.peek() == Some('>') { self.advance(); Token::GtGt }
+                    else { Token::Gt }
+                }
             }
             Some('<') => {
-                self.advance();
-                if self.peek() == Some('<') && self.peek2() == Some('<') {
-                    self.advance(); self.advance();
-                    Token::HereString
+                if self.peek2() == Some('(') {
+                    self.advance(); // consume '<'
+                    self.advance(); // consume '('
+                    let raw = self.read_until_close_paren();
+                    Token::Word(vec![WordPart::ProcSubIn(raw)])
                 } else {
-                    Token::Lt
+                    self.advance();
+                    if self.peek() == Some('<') && self.peek2() == Some('<') {
+                        self.advance(); self.advance();
+                        Token::HereString
+                    } else {
+                        Token::Lt
+                    }
                 }
             }
             Some('2') if self.peek2() == Some('>') => {
@@ -688,5 +702,43 @@ mod tests {
         assert_eq!(lex("(( x = 5 + 3 ))"), vec![
             Token::ArithCommand("x = 5 + 3".into()),
         ]);
+    }
+
+    #[test]
+    fn test_proc_sub_in() {
+        let tokens = lex("cat <(echo hi)");
+        assert_eq!(tokens, vec![
+            word(vec![lit("cat")]),
+            word(vec![WordPart::ProcSubIn("echo hi".into())]),
+        ]);
+    }
+
+    #[test]
+    fn test_proc_sub_out() {
+        let tokens = lex("tee >(cat)");
+        assert_eq!(tokens, vec![
+            word(vec![lit("tee")]),
+            word(vec![WordPart::ProcSubOut("cat".into())]),
+        ]);
+    }
+
+    #[test]
+    fn test_proc_sub_in_nested_parens() {
+        let tokens = lex("<(echo (foo))");
+        assert_eq!(tokens, vec![
+            word(vec![WordPart::ProcSubIn("echo (foo)".into())]),
+        ]);
+    }
+
+    #[test]
+    fn test_redirect_lt_still_works() {
+        assert_eq!(lex("<"), vec![Token::Lt]);
+        assert_eq!(lex("< file"), vec![Token::Lt, word(vec![lit("file")])]);
+    }
+
+    #[test]
+    fn test_redirect_gt_still_works() {
+        assert_eq!(lex(">"), vec![Token::Gt]);
+        assert_eq!(lex(">> file"), vec![Token::GtGt, word(vec![lit("file")])]);
     }
 }

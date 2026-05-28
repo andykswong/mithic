@@ -659,7 +659,68 @@ impl Shell {
             WordPart::BraceVar(raw) => self.expand_brace_var(raw),
             WordPart::CmdSub(raw) => self.exec_capturing(raw),
             WordPart::ArithSub(expr) => self.eval_arithmetic(expr),
+            WordPart::ProcSubIn(raw) => self.exec_proc_sub_in(raw),
+            WordPart::ProcSubOut(raw) => self.exec_proc_sub_out(raw),
         }
+    }
+
+    #[cfg(not(test))]
+    fn exec_proc_sub_in(&mut self, raw: &str) -> String {
+        use crate::bindings::wasi::filesystem::types as fs_types;
+        use fs_types::{DescriptorFlags, OpenFlags, PathFlags};
+
+        let output = self.exec_capturing(raw);
+
+        let tmp_path = format!("/tmp/.procsub_{}", self.next_id());
+
+        let root = match get_root_descriptor() {
+            Some(d) => d,
+            None => return String::new(),
+        };
+
+        let _ = root.create_directory_at("tmp");
+
+        let rel = tmp_path.trim_start_matches('/');
+        if let Ok(fd) = root.open_at(
+            PathFlags::empty(),
+            rel,
+            OpenFlags::CREATE | OpenFlags::TRUNCATE,
+            DescriptorFlags::WRITE,
+        ) {
+            if let Ok(stream) = fd.write_via_stream(0) {
+                let mut data = output.into_bytes();
+                data.push(b'\n');
+                let _ = stream.blocking_write_and_flush(&data);
+            }
+        }
+
+        tmp_path
+    }
+
+    #[cfg(not(test))]
+    fn exec_proc_sub_out(&mut self, _raw: &str) -> String {
+        io::write_stderr("msh: >(cmd) process substitution not yet supported\n");
+        String::new()
+    }
+
+    #[cfg(test)]
+    fn exec_proc_sub_in(&mut self, _raw: &str) -> String {
+        "/dev/fd/63".to_string()
+    }
+
+    #[cfg(test)]
+    fn exec_proc_sub_out(&mut self, _raw: &str) -> String {
+        "/dev/fd/62".to_string()
+    }
+
+    fn next_id(&mut self) -> u64 {
+        let key = "__procsub_id";
+        let current: u64 = self.env.get(key)
+            .map(|v| v.as_scalar().parse().unwrap_or(0))
+            .unwrap_or(0);
+        let next = current + 1;
+        self.env.insert(key.to_string(), ShellValue::Scalar(next.to_string()));
+        next
     }
 
     fn eval_arithmetic(&mut self, expr: &str) -> String {

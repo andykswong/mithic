@@ -10,6 +10,10 @@ pub enum WordPart {
     CmdSub(String),
     /// `$((expr))` — arithmetic substitution
     ArithSub(String),
+    /// `<(cmd)` — input process substitution
+    ProcSubIn(String),
+    /// `>(cmd)` — output process substitution
+    ProcSubOut(String),
 }
 
 /// A word passed as an argument. The lexer merges adjacent quoting styles
