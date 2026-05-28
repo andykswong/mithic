@@ -238,12 +238,20 @@ impl Lexer {
                 parts.push(WordPart::BraceVar(raw));
             }
             Some('(') => {
-                self.advance();
+                self.advance(); // consume first '('
                 if !buf.is_empty() {
                     parts.push(WordPart::Literal(std::mem::take(buf)));
                 }
-                let raw = self.read_until_close_paren();
-                parts.push(WordPart::CmdSub(raw));
+                if self.peek() == Some('(') {
+                    // $(( — arithmetic substitution
+                    self.advance(); // consume second '('
+                    let raw = self.read_arith_expr();
+                    parts.push(WordPart::ArithSub(raw));
+                } else {
+                    // $( — command substitution
+                    let raw = self.read_until_close_paren();
+                    parts.push(WordPart::CmdSub(raw));
+                }
             }
             Some(c) if c.is_alphanumeric() || c == '_' => {
                 if !buf.is_empty() {
@@ -351,6 +359,30 @@ impl Lexer {
                     s.push(')');
                 }
                 Some(c) => s.push(c),
+            }
+        }
+        s
+    }
+
+    fn read_arith_expr(&mut self) -> String {
+        let mut s = String::new();
+        let mut paren_depth = 0;
+        loop {
+            match self.peek() {
+                None => break,
+                Some('(') => { paren_depth += 1; s.push('('); self.advance(); }
+                Some(')') if paren_depth > 0 => { paren_depth -= 1; s.push(')'); self.advance(); }
+                Some(')') => {
+                    // Check for ))
+                    if self.chars.get(self.pos + 1) == Some(&')') {
+                        self.advance(); // first )
+                        self.advance(); // second )
+                        break;
+                    }
+                    s.push(')');
+                    self.advance();
+                }
+                Some(c) => { s.push(c); self.advance(); }
             }
         }
         s
@@ -566,6 +598,33 @@ mod tests {
             Token::DoubleBracketOpen,
             word(vec![lit("x")]),
             Token::DoubleBracketClose,
+        ]);
+    }
+
+    #[test]
+    fn test_arith_sub() {
+        let tokens = lex("echo $((1 + 2))");
+        assert_eq!(tokens, vec![
+            word(vec![lit("echo")]),
+            word(vec![WordPart::ArithSub("1 + 2".into())]),
+        ]);
+    }
+
+    #[test]
+    fn test_arith_sub_nested_parens() {
+        let tokens = lex("echo $(( (3+4) * 2 ))");
+        assert_eq!(tokens, vec![
+            word(vec![lit("echo")]),
+            word(vec![WordPart::ArithSub(" (3+4) * 2 ".into())]),
+        ]);
+    }
+
+    #[test]
+    fn test_arith_vs_cmdsub() {
+        let tokens = lex("$((x+1)) $(echo hi)");
+        assert_eq!(tokens, vec![
+            word(vec![WordPart::ArithSub("x+1".into())]),
+            word(vec![WordPart::CmdSub("echo hi".into())]),
         ]);
     }
 

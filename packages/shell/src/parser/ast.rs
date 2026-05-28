@@ -8,6 +8,8 @@ pub enum WordPart {
     BraceVar(String),
     /// `$(cmd)` or `` `cmd` `` — raw inner string
     CmdSub(String),
+    /// `$((expr))` — arithmetic substitution
+    ArithSub(String),
 }
 
 /// A word passed as an argument. The lexer merges adjacent quoting styles
