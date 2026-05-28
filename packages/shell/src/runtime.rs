@@ -1,25 +1,25 @@
 // Opaque handles — the runtime maps these to internal resources
-pub(crate) struct InputHandle(pub(crate) u32);
-pub(crate) struct OutputHandle(pub(crate) u32);
-pub(crate) struct ProcessHandle(pub(crate) u32);
+pub struct InputHandle(pub u32);
+pub struct OutputHandle(pub u32);
+pub struct ProcessHandle(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum FileType { Regular, Directory, Other, NotFound }
+pub enum FileType { Regular, Directory, Other, NotFound }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum Signal { Term, Kill, Int, Tstp, Cont, Null }
+pub enum Signal { Term, Kill, Int, Tstp, Cont, Null }
 
-pub(crate) struct SpawnOpts {
+pub struct SpawnOpts {
     pub env: Option<Vec<(String, String)>>,
     pub stdin: Option<InputHandle>,
     pub stdout: Option<OutputHandle>,
     pub stderr: Option<OutputHandle>,
 }
 
-pub(crate) struct SpawnError;
+pub struct SpawnError;
 
 // Sub-trait 1: I/O (backed by std::io in production)
-pub(crate) trait Io {
+pub trait Io {
     fn write_stdout(&self, data: &str);
     fn write_stderr(&self, data: &str);
     fn read_line(&mut self) -> Option<String>;
@@ -28,7 +28,7 @@ pub(crate) trait Io {
 // Sub-trait 2: Filesystem
 // Methods producing handles MUST use raw WASI (stream resources for spawn).
 // Read-only query methods use std::fs on WasiRuntime.
-pub(crate) trait Filesystem {
+pub trait Filesystem {
     /// Open file for writing, return stream handle for spawn. Uses raw WASI binding.
     fn open_file_write(&mut self, path: &str, append: bool) -> Option<OutputHandle>;
     /// Open file for reading, return stream handle for spawn. Uses raw WASI binding.
@@ -44,7 +44,7 @@ pub(crate) trait Filesystem {
 }
 
 // Sub-trait 3: Process management (mithic:process WIT — no std equivalent)
-pub(crate) trait ProcessMgr {
+pub trait ProcessMgr {
     fn create_pipe(&mut self) -> (InputHandle, OutputHandle);
     fn dup_output(&mut self, handle: &OutputHandle) -> OutputHandle;
     fn spawn(&mut self, cmd: &str, args: &[String], opts: SpawnOpts) -> Result<ProcessHandle, SpawnError>;
@@ -60,5 +60,5 @@ pub(crate) trait ProcessMgr {
 }
 
 // Supertrait: blanket implementation
-pub(crate) trait Runtime: Io + Filesystem + ProcessMgr {}
+pub trait Runtime: Io + Filesystem + ProcessMgr {}
 impl<T: Io + Filesystem + ProcessMgr> Runtime for T {}

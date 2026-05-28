@@ -5,7 +5,7 @@ use crate::executor::expansion::{
     shell_substring, split_var_and_op, parse_array_subscript,
 };
 use crate::parser::{Parser, Word, WordPart};
-use crate::runtime::{InputHandle, OutputHandle, Runtime};
+use crate::runtime::Runtime;
 use crate::shell::Shell;
 use crate::value::ShellValue;
 

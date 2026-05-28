@@ -1,6 +1,6 @@
 use crate::runtime::{OutputHandle, Runtime};
 use crate::shell::Shell;
-use crate::parser::{Command, List, ListItem, ListOp, Pipeline, SimpleCommand};
+use crate::parser::{Command, List, ListItem, ListOp};
 use crate::parser::{ArrayAssign, Redirect};
 use crate::value::ShellValue;
 use crate::executor::expansion::glob_match;
