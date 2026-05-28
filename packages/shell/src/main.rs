@@ -1,4 +1,5 @@
 pub mod parser;
+pub mod value;
 
 #[cfg(not(test))]
 mod io;

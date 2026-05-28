@@ -5,9 +5,10 @@ use crate::bindings::mithic::process::types::{InputStream, OutputStream, SpawnOp
 use crate::bindings::wasi::cli::{environment, terminal_stdin};
 use crate::io::{self, LineReader};
 use crate::parser::{Command, List, ListItem, ListOp, Parser, Pipeline, SimpleCommand, Word, WordPart};
+use crate::value::ShellValue;
 
 pub struct Shell {
-    env: HashMap<String, String>,
+    env: HashMap<String, ShellValue>,
     cwd: String,
     last_exit: u8,
     is_interactive: bool,
@@ -23,8 +24,9 @@ pub struct Shell {
 
 impl Shell {
     pub fn new() -> Self {
-        let env: HashMap<String, String> = environment::get_environment()
+        let env: HashMap<String, ShellValue> = environment::get_environment()
             .into_iter()
+            .map(|(k, v)| (k, ShellValue::Scalar(v)))
             .collect();
 
         let cwd = environment::initial_cwd()
@@ -356,16 +358,16 @@ impl Shell {
             }
             "cd" => {
                 let target = args.first().cloned()
-                    .unwrap_or_else(|| self.env.get("HOME").cloned().unwrap_or_else(|| "/".to_string()));
+                    .unwrap_or_else(|| self.env.get("HOME").map(|v| v.as_scalar().to_string()).unwrap_or_else(|| "/".to_string()));
                 let resolved = self.resolve_path(&target);
                 self.cwd = resolved;
-                self.env.insert("PWD".to_string(), self.cwd.clone());
+                self.env.insert("PWD".to_string(), ShellValue::Scalar(self.cwd.clone()));
                 0
             }
             "export" => {
                 for arg in args {
                     if let Some((key, value)) = arg.split_once('=') {
-                        self.env.insert(key.to_string(), value.to_string());
+                        self.env.insert(key.to_string(), ShellValue::Scalar(value.to_string()));
                     }
                 }
                 0
@@ -376,7 +378,7 @@ impl Shell {
             }
             "env" => {
                 for (key, value) in &self.env {
-                    write_out!(&format!("{}={}\n", key, value));
+                    write_out!(&format!("{}={}\n", key, value.as_scalar()));
                 }
                 0
             }
@@ -575,11 +577,11 @@ impl Shell {
     }
 
     fn env_list(&self) -> Vec<(String, String)> {
-        self.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        self.env.iter().map(|(k, v)| (k.clone(), v.as_scalar().to_string())).collect()
     }
 
     fn resolve_path(&self, path: &str) -> String {
-        let home = self.env.get("HOME").map(|s| s.as_str()).unwrap_or("/");
+        let home = self.env.get("HOME").map(|v| v.as_scalar()).unwrap_or("/");
         let expanded = expand_tilde(path, home);
         let base = if expanded.starts_with('/') {
             expanded
@@ -597,7 +599,7 @@ impl Shell {
     fn expand_part(&mut self, part: &WordPart) -> String {
         match part {
             WordPart::Literal(s) => {
-                let home = self.env.get("HOME").map(|s| s.as_str()).unwrap_or("/");
+                let home = self.env.get("HOME").map(|v| v.as_scalar()).unwrap_or("/");
                 expand_tilde(s, home)
             }
             WordPart::Var(name) => self.expand_var(name),
@@ -609,9 +611,9 @@ impl Shell {
     fn expand_var(&self, name: &str) -> String {
         match name {
             "?" => self.last_exit.to_string(),
-            "#" => self.env.get("#").cloned().unwrap_or_else(|| "0".to_string()),
-            "@" | "*" => self.env.get("@").cloned().unwrap_or_default(),
-            _ => self.env.get(name).cloned().unwrap_or_default(),
+            "#" => self.env.get("#").map(|v| v.as_scalar().to_string()).unwrap_or_else(|| "0".to_string()),
+            "@" | "*" => self.env.get("@").map(|v| v.as_scalar().to_string()).unwrap_or_default(),
+            _ => self.env.get(name).map(|v| v.as_scalar().to_string()).unwrap_or_default(),
         }
     }
 
@@ -794,7 +796,7 @@ impl Shell {
                 })
                 .collect(),
             None => {
-                let at = self.env.get("@").cloned().unwrap_or_default();
+                let at = self.env.get("@").map(|v| v.as_scalar().to_string()).unwrap_or_default();
                 if at.is_empty() {
                     Vec::new()
                 } else {
@@ -806,7 +808,7 @@ impl Shell {
         self.in_loop_depth += 1;
         let mut exit = 0u8;
         for item in items {
-            self.env.insert(cmd.var.clone(), item);
+            self.env.insert(cmd.var.clone(), ShellValue::Scalar(item));
             exit = self.exec_list(cmd.body.clone());
             self.last_exit = exit;
             if self.exit_requested || self.return_requested { break; }
@@ -838,16 +840,16 @@ impl Shell {
     }
 
     fn exec_function_call(&mut self, args: &[String], body: Command) -> u8 {
-        let old_hash = self.env.get("#").cloned();
-        let old_at = self.env.get("@").cloned();
+        let old_hash = self.env.get("#").map(|v| v.as_scalar().to_string());
+        let old_at = self.env.get("@").map(|v| v.as_scalar().to_string());
         let mut old_positional: Vec<(String, Option<String>)> = Vec::new();
         for (i, arg) in args.iter().enumerate() {
             let key = (i + 1).to_string();
-            old_positional.push((key.clone(), self.env.get(&key).cloned()));
-            self.env.insert(key, arg.clone());
+            old_positional.push((key.clone(), self.env.get(&key).map(|v| v.as_scalar().to_string())));
+            self.env.insert(key, ShellValue::Scalar(arg.clone()));
         }
-        self.env.insert("#".to_string(), args.len().to_string());
-        self.env.insert("@".to_string(), args.join(" "));
+        self.env.insert("#".to_string(), ShellValue::Scalar(args.len().to_string()));
+        self.env.insert("@".to_string(), ShellValue::Scalar(args.join(" ")));
 
         self.in_function_depth += 1;
         let exit = self.exec_compound(body);
@@ -856,7 +858,7 @@ impl Shell {
 
         for (key, old_val) in old_positional {
             match old_val {
-                Some(v) => { self.env.insert(key, v); }
+                Some(v) => { self.env.insert(key, ShellValue::Scalar(v)); }
                 None => { self.env.remove(&key); }
             };
         }
@@ -867,11 +869,11 @@ impl Shell {
             i += 1;
         }
         match old_hash {
-            Some(v) => { self.env.insert("#".to_string(), v); }
+            Some(v) => { self.env.insert("#".to_string(), ShellValue::Scalar(v)); }
             None => { self.env.remove("#"); }
         };
         match old_at {
-            Some(v) => { self.env.insert("@".to_string(), v); }
+            Some(v) => { self.env.insert("@".to_string(), ShellValue::Scalar(v)); }
             None => { self.env.remove("@"); }
         };
 
@@ -1133,7 +1135,7 @@ impl Shell {
 
         let line = if raw { line } else { line.replace("\\\n", "") };
 
-        let ifs = self.env.get("IFS").cloned().unwrap_or_else(|| " \t\n".to_string());
+        let ifs = self.env.get("IFS").map(|v| v.as_scalar().to_string()).unwrap_or_else(|| " \t\n".to_string());
         let fields: Vec<&str> = if ifs.is_empty() {
             vec![&line]
         } else {
@@ -1145,11 +1147,11 @@ impl Shell {
         for (idx, var_name) in var_names.iter().enumerate() {
             if idx == var_names.len() - 1 {
                 let remaining: Vec<&str> = if idx < fields.len() { fields[idx..].to_vec() } else { vec![] };
-                self.env.insert(var_name.to_string(), remaining.join(" "));
+                self.env.insert(var_name.to_string(), ShellValue::Scalar(remaining.join(" ")));
             } else if idx < fields.len() {
-                self.env.insert(var_name.to_string(), fields[idx].to_string());
+                self.env.insert(var_name.to_string(), ShellValue::Scalar(fields[idx].to_string()));
             } else {
-                self.env.insert(var_name.to_string(), String::new());
+                self.env.insert(var_name.to_string(), ShellValue::Scalar(String::new()));
             }
         }
 
@@ -1466,4 +1468,5 @@ mod tests {
         assert!(!has_glob("normal"));
         assert!(!has_glob("/path/to/file"));
     }
+
 }
