@@ -7,6 +7,7 @@ use crate::brace::expand_braces;
 use crate::io::{self, LineReader};
 use crate::parser::{ArrayAssign, Command, List, ListItem, ListOp, Parser, Pipeline, SimpleCommand, Word, WordPart};
 use crate::value::ShellValue;
+use crate::jobs::{JobTable, JobStatus};
 
 pub struct Shell {
     env: HashMap<String, ShellValue>,
@@ -23,6 +24,9 @@ pub struct Shell {
     in_function_depth: usize,
     procsub_counter: u64,
     procsub_paths: Vec<String>,
+    jobs: JobTable,
+    traps: HashMap<String, String>,
+    foreground_pids: Vec<u32>,
 }
 
 impl Shell {
@@ -52,6 +56,9 @@ impl Shell {
             in_function_depth: 0,
             procsub_counter: 0,
             procsub_paths: Vec::new(),
+            jobs: JobTable::new(),
+            traps: HashMap::new(),
+            foreground_pids: Vec::new(),
         }
     }
 
@@ -118,6 +125,7 @@ impl Shell {
             }
 
             input_buf.clear();
+            self.check_background_jobs();
 
             if self.exit_requested {
                 break;
@@ -134,8 +142,14 @@ impl Shell {
 
         for ListItem { pipeline, op } in list.items {
             if !skip_next {
-                exit = self.exec_pipeline(pipeline);
-                self.last_exit = exit;
+                if op == Some(ListOp::Background) {
+                    self.exec_pipeline_background(pipeline);
+                    exit = 0;
+                    self.last_exit = 0;
+                } else {
+                    exit = self.exec_pipeline(pipeline);
+                    self.last_exit = exit;
+                }
                 if self.exit_requested || self.return_requested || self.break_depth > 0 || self.continue_depth > 0 {
                     break;
                 }
@@ -149,6 +163,100 @@ impl Shell {
         }
 
         exit
+    }
+
+    fn exec_pipeline_background(&mut self, pipeline: Pipeline) {
+        let cmds = pipeline.commands;
+        let n = cmds.len();
+        if n == 0 { return; }
+
+        if n == 1 {
+            let cmd = cmds.into_iter().next().unwrap();
+            match cmd {
+                Command::Simple(sc) => {
+                    let args: Vec<String> = sc.words.iter()
+                        .flat_map(|w| self.expand_word_to_args(w))
+                        .collect();
+                    if args.is_empty() { return; }
+                    let name = args[0].clone();
+                    let display = args.join(" ");
+
+                    if Self::is_builtin(&name) || self.functions.contains_key(&name) {
+                        self.dispatch_simple(sc, None, None, None);
+                        return;
+                    }
+
+                    let env_list = self.env_list();
+                    let opts = SpawnOptions {
+                        cwd: None,
+                        env: Some(env_list),
+                        stdin: None,
+                        stdout: None,
+                        stderr: None,
+                    };
+                    match proc_manager::spawn(&name, &args[1..], Some(opts)) {
+                        Ok(proc) => {
+                            let pid = proc.pid();
+                            let job_id = self.jobs.add(vec![proc], display);
+                            io::write_stderr(&format!("[{}] {}\n", job_id, pid));
+                        }
+                        Err(_) => {
+                            io::write_stderr(&format!("msh: {}: command not found\n", name));
+                        }
+                    }
+                }
+                other => { self.exec_compound(other); }
+            }
+        } else {
+            let mut pipe_read_ends: Vec<Option<InputStream>> = Vec::with_capacity(n);
+            let mut pipe_write_ends: Vec<Option<OutputStream>> = Vec::with_capacity(n);
+            pipe_read_ends.push(None);
+            for _ in 0..n - 1 {
+                let (inp, out) = proc_manager::create_pipe();
+                pipe_read_ends.push(Some(inp));
+                pipe_write_ends.push(Some(out));
+            }
+            pipe_write_ends.push(None);
+
+            let env_list = self.env_list();
+            let mut processes: Vec<crate::bindings::mithic::process::types::Process> = Vec::new();
+            let mut display_parts: Vec<String> = Vec::new();
+
+            for (i, command) in cmds.into_iter().enumerate() {
+                let cmd = match command {
+                    Command::Simple(sc) => sc,
+                    _ => continue,
+                };
+                let stdin_opt = pipe_read_ends[i].take();
+                let stdout_opt = pipe_write_ends[i].take();
+                let args: Vec<String> = cmd.words.iter()
+                    .flat_map(|w| self.expand_word_to_args(w))
+                    .collect();
+                if args.is_empty() { continue; }
+                let name = args[0].clone();
+                display_parts.push(args.join(" "));
+                let opts = SpawnOptions {
+                    cwd: None,
+                    env: Some(env_list.clone()),
+                    stdin: stdin_opt,
+                    stdout: stdout_opt,
+                    stderr: None,
+                };
+                match proc_manager::spawn(&name, &args[1..], Some(opts)) {
+                    Ok(proc) => processes.push(proc),
+                    Err(_) => {
+                        io::write_stderr(&format!("msh: {}: command not found\n", name));
+                    }
+                }
+            }
+
+            if !processes.is_empty() {
+                let last_pid = processes.last().map(|p| p.pid()).unwrap_or(0);
+                let display = display_parts.join(" | ");
+                let job_id = self.jobs.add(processes, display);
+                io::write_stderr(&format!("[{}] {}\n", job_id, last_pid));
+            }
+        }
     }
 
     fn exec_pipeline(&mut self, pipeline: Pipeline) -> u8 {
@@ -247,7 +355,8 @@ impl Shell {
             }
         }
 
-        // Wait for all spawned processes; exit code = last stage.
+        self.foreground_pids = processes.iter().map(|p| p.pid()).collect();
+
         let last_proc = processes.pop();
         for p in processes { let _ = p.wait(); }
         let exit = if let Some(p) = last_proc {
@@ -255,6 +364,8 @@ impl Shell {
         } else {
             last_builtin_exit.unwrap_or(self.last_exit)
         };
+
+        self.foreground_pids.clear();
         if pipeline.negate { if exit == 0 { 1 } else { 0 } } else { exit }
     }
 
@@ -307,7 +418,12 @@ impl Shell {
                 stderr: stderr_opt,
             };
             match proc_manager::spawn(&name, &args[1..], Some(opts)) {
-                Ok(proc) => proc.wait() as u8,
+                Ok(proc) => {
+                    self.foreground_pids = vec![proc.pid()];
+                    let exit = proc.wait() as u8;
+                    self.foreground_pids.clear();
+                    exit
+                }
                 Err(_) => {
                     io::write_stderr(&format!("msh: {}: command not found\n", name));
                     127
@@ -689,6 +805,24 @@ impl Shell {
         let exit = if let Some(p) = last_proc { p.wait() as u8 }
                    else { last_builtin_exit.unwrap_or(self.last_exit) };
         if pipeline.negate { if exit == 0 { 1 } else { 0 } } else { exit }
+    }
+
+    fn check_background_jobs(&mut self) {
+        let mut done_ids: Vec<(usize, String)> = Vec::new();
+        for job in self.jobs.iter() {
+            if job.status != JobStatus::Running { continue; }
+            if let Some(proc) = job.processes.last() {
+                if proc.kill(crate::bindings::mithic::process::types::Signal::Signull).is_err() {
+                    done_ids.push((job.id, job.command.clone()));
+                }
+            }
+        }
+        for (id, cmd) in &done_ids {
+            if self.is_interactive {
+                io::write_stderr(&format!("[{}]+ Done                    {}\n", id, cmd));
+            }
+            self.jobs.remove(*id);
+        }
     }
 
     fn env_list(&self) -> Vec<(String, String)> {
