@@ -666,7 +666,22 @@ impl Shell {
             WordPart::Var(name) => self.expand_var(name),
             WordPart::BraceVar(raw) => self.expand_brace_var(raw),
             WordPart::CmdSub(raw) => self.exec_capturing(raw),
+            WordPart::ArithSub(expr) => self.eval_arithmetic(expr),
         }
+    }
+
+    fn eval_arithmetic(&mut self, expr: &str) -> String {
+        let env_snapshot: std::collections::HashMap<String, i64> = self.env.iter()
+            .map(|(k, v)| (k.clone(), v.as_scalar().parse::<i64>().unwrap_or(0)))
+            .collect();
+        let lookup = |name: &str| -> i64 { *env_snapshot.get(name).unwrap_or(&0) };
+        let mut assignments: Vec<(String, i64)> = Vec::new();
+        let mut assign = |name: &str, val: i64| { assignments.push((name.to_string(), val)); };
+        let result = crate::arith::eval(expr, &lookup, &mut assign);
+        for (name, val) in assignments {
+            self.env.insert(name, ShellValue::Scalar(val.to_string()));
+        }
+        result.to_string()
     }
 
     fn expand_var(&self, name: &str) -> String {

@@ -312,3 +312,40 @@ describe('multi-line input', () => {
     assert.strictEqual(stdout.trim(), 'hi');
   });
 });
+
+describe('arithmetic expansion', () => {
+  it('evaluates basic arithmetic', async () => {
+    const { stdout } = await runShell('echo $((2 + 3))\n');
+    assert.strictEqual(stdout.trim(), '5');
+  });
+
+  it('respects operator precedence', async () => {
+    const { stdout } = await runShell('echo $((2 + 3 * 4))\n');
+    assert.strictEqual(stdout.trim(), '14');
+  });
+
+  it('supports variables', async () => {
+    const { stdout } = await runShell('export x=10\necho $((x + 5))\n');
+    assert.strictEqual(stdout.trim(), '15');
+  });
+
+  it('supports assignment within expression', async () => {
+    const { stdout } = await runShell('echo $((x = 7))\necho $x\n');
+    assert.strictEqual(stdout.trim(), '7\n7');
+  });
+
+  it('supports comparison operators', async () => {
+    const { stdout } = await runShell('echo $((5 > 3))\necho $((2 == 2))\n');
+    assert.strictEqual(stdout.trim(), '1\n1');
+  });
+
+  it('supports power operator', async () => {
+    const { stdout } = await runShell('echo $((2 ** 8))\n');
+    assert.strictEqual(stdout.trim(), '256');
+  });
+
+  it('supports ternary operator', async () => {
+    const { stdout } = await runShell('export x=1\necho $((x ? 42 : 99))\n');
+    assert.strictEqual(stdout.trim(), '42');
+  });
+});
