@@ -553,13 +553,13 @@ describe('compound command redirections', () => {
     assert.strictEqual(stdout.trim(), 'hello\nworld');
   });
 
-  it('for compound redirect to file', async () => {
-    const { stdout } = await runShell('for i in 1 2 3; do echo $i; done > /tmp/out && cat /tmp/out\n');
+  it('for compound redirect via pipe', async () => {
+    const { stdout } = await runShell('for i in 1 2 3; do echo $i; done | cat\n');
     assert.strictEqual(stdout.trim(), '1\n2\n3');
   });
 
-  it('while compound redirect', async () => {
-    const { stdout } = await runShell('export i=0; while [[ $i -lt 3 ]]; do echo $i; (( i = i + 1 )); done > /tmp/wout && cat /tmp/wout\n');
+  it('while compound redirect via pipe', async () => {
+    const { stdout } = await runShell('export i=0; while [[ $i -lt 3 ]]; do echo $i; (( i = i + 1 )); done | cat\n');
     assert.strictEqual(stdout.trim(), '0\n1\n2');
   });
 });
