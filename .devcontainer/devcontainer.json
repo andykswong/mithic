@@ -3,21 +3,38 @@
 {
 	"name": "Node.js & TypeScript",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	"image": "mcr.microsoft.com/devcontainers/typescript-node:1-24-bullseye",
+	"image": "mcr.microsoft.com/devcontainers/typescript-node:1-24-trixie",
 
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	"features": {
-		"ghcr.io/devcontainers/features/rust:1.5.0": {}
+		"ghcr.io/devcontainers/features/rust:1": {},
+		"ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
 	},
+
+	"mounts": [
+    "source=${localEnv:HOME}/.claude,target=/home/node/.claude,type=bind"
+  ],
 
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	"forwardPorts": [8080],
 
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "npm install"
+	"postCreateCommand": "npm install",
 
 	// Configure tool-specific properties.
-	// "customizations": {},
+	"customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "claudeCode.allowDangerouslySkipPermissions": true,
+        "claudeCode.initialPermissionMode": "bypassPermissions",
+        "claudeCode.selectedModel": "opus"
+      }
+    }
+  },
 
 	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
 	// "remoteUser": "root"
