@@ -3,6 +3,7 @@ pub mod brace;
 pub mod builtins;
 pub mod executor;
 pub mod parser;
+pub mod regex;
 pub mod value;
 
 #[cfg(not(test))]

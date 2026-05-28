@@ -430,7 +430,19 @@ impl Parser {
                 Token::PipePipe => { self.advance(); words.push(Word::literal("||")); }
                 _ => {
                     if let Some(w) = self.parse_word() {
+                        // When the operator is =~, the RHS is a raw regex pattern.
+                        // Collect all remaining tokens until ]] as a single literal word,
+                        // because the lexer splits on ( and ) which are valid regex syntax.
+                        let is_regex_op = w.0.len() == 1
+                            && matches!(&w.0[0], WordPart::Literal(s) if s == "=~");
                         words.push(w);
+                        if is_regex_op {
+                            let pattern_word = self.collect_regex_pattern();
+                            if !pattern_word.0.is_empty() {
+                                words.push(pattern_word);
+                            }
+                            break;
+                        }
                     } else {
                         self.advance();
                     }
@@ -438,6 +450,52 @@ impl Parser {
             }
         }
         Command::Simple(SimpleCommand { words, redirects: vec![] })
+    }
+
+    /// Collect all tokens until `]]` or EOF and reconstruct them as a Word for regex matching.
+    /// Literal text parts are stored as `Quoted` to prevent glob expansion.
+    /// Variable-reference parts (`Var`, `BraceVar`) are kept for expansion.
+    fn collect_regex_pattern(&mut self) -> Word {
+        let mut word_parts: Vec<WordPart> = Vec::new();
+        // Accumulate non-Word tokens as a literal string
+        let mut literal_buf = String::new();
+
+        let flush_literal = |buf: &mut String, parts: &mut Vec<WordPart>| {
+            if !buf.is_empty() {
+                parts.push(WordPart::Quoted(std::mem::take(buf)));
+            }
+        };
+
+        loop {
+            match self.peek().clone() {
+                Token::DoubleBracketClose => { self.advance(); break; }
+                Token::Eof => break,
+                Token::Word(parts) => {
+                    self.advance();
+                    for p in parts {
+                        match p {
+                            // Literals become Quoted to avoid glob expansion
+                            WordPart::Literal(s) | WordPart::Quoted(s) => {
+                                flush_literal(&mut literal_buf, &mut word_parts);
+                                word_parts.push(WordPart::Quoted(s));
+                            }
+                            // Variable references are kept for expansion
+                            other => {
+                                flush_literal(&mut literal_buf, &mut word_parts);
+                                word_parts.push(other);
+                            }
+                        }
+                    }
+                }
+                tok => {
+                    // Non-word tokens (LParen, RParen, etc.) become literal text
+                    literal_buf.push_str(&token_to_text(&tok));
+                    self.advance();
+                }
+            }
+        }
+        flush_literal(&mut literal_buf, &mut word_parts);
+        Word(word_parts)
     }
 
     fn parse_simple_command(&mut self) -> SimpleCommand {
@@ -550,6 +608,49 @@ impl Parser {
 
         if_depth > 0 || while_depth > 0 || for_depth > 0 ||
         case_depth > 0 || brace_depth > 0 || paren_depth > 0
+    }
+}
+
+/// Convert a token back to its source text representation.
+/// Used to reconstruct the raw regex pattern after `=~` in `[[ ]]`.
+fn token_to_text(tok: &Token) -> String {
+    match tok {
+        Token::Word(parts) => {
+            let mut s = String::new();
+            for p in parts {
+                match p {
+                    WordPart::Literal(t) => s.push_str(t),
+                    WordPart::Quoted(t) => s.push_str(t),
+                    WordPart::Var(name) => { s.push('$'); s.push_str(name); }
+                    WordPart::BraceVar(raw) => { s.push_str("${"); s.push_str(raw); s.push('}'); }
+                    WordPart::CmdSub(raw) => { s.push_str("$("); s.push_str(raw); s.push(')'); }
+                    WordPart::ArithSub(raw) => { s.push_str("$(("); s.push_str(raw); s.push_str("))"); }
+                    WordPart::ProcSubIn(raw) => { s.push_str("<("); s.push_str(raw); s.push(')'); }
+                    WordPart::ProcSubOut(raw) => { s.push_str(">("); s.push_str(raw); s.push(')'); }
+                }
+            }
+            s
+        }
+        Token::LParen => "(".to_string(),
+        Token::RParen => ")".to_string(),
+        Token::Pipe => "|".to_string(),
+        Token::Amp => "&".to_string(),
+        Token::AmpAmp => "&&".to_string(),
+        Token::PipePipe => "||".to_string(),
+        Token::Semi => ";".to_string(),
+        Token::Newline => "\n".to_string(),
+        Token::Gt => ">".to_string(),
+        Token::GtGt => ">>".to_string(),
+        Token::Lt => "<".to_string(),
+        Token::Fd2Gt => "2>".to_string(),
+        Token::Fd2GtGt => "2>>".to_string(),
+        Token::Fd2GtAmp1 => "2>&1".to_string(),
+        Token::AmpGt => "&>".to_string(),
+        Token::HereString => "<<<".to_string(),
+        Token::ArithCommand(raw) => format!("(({raw}))"),
+        Token::DoubleBracketOpen => "[[".to_string(),
+        Token::DoubleBracketClose => "]]".to_string(),
+        Token::Eof => String::new(),
     }
 }
 

@@ -1145,21 +1145,25 @@ impl Shell {
     #[cfg(test)]
     pub(crate) fn test_file(&self, _op: &str, _path: &str) -> bool { false }
 
-    pub(crate) fn eval_extended_test(&self, args: &[String]) -> bool {
+    pub(crate) fn eval_extended_test(&mut self, args: &[String]) -> bool {
         if args.is_empty() { return false; }
 
         if args[0] == "!" {
-            return !self.eval_extended_test(&args[1..]);
+            return !self.eval_extended_test(&args[1..].to_vec());
         }
 
         for i in 0..args.len() {
             if args[i] == "&&" {
-                return self.eval_extended_test(&args[..i]) && self.eval_extended_test(&args[i+1..]);
+                let left = args[..i].to_vec();
+                let right = args[i+1..].to_vec();
+                return self.eval_extended_test(&left) && self.eval_extended_test(&right);
             }
         }
         for i in 0..args.len() {
             if args[i] == "||" {
-                return self.eval_extended_test(&args[..i]) || self.eval_extended_test(&args[i+1..]);
+                let left = args[..i].to_vec();
+                let right = args[i+1..].to_vec();
+                return self.eval_extended_test(&left) || self.eval_extended_test(&right);
             }
         }
 
@@ -1177,20 +1181,28 @@ impl Shell {
         }
 
         if args.len() == 3 {
-            let left = &args[0];
-            let op = args[1].as_str();
-            let right = &args[2];
-            return match op {
-                "==" | "=" => glob_match(right, left),
-                "!=" => !glob_match(right, left),
+            let left = args[0].clone();
+            let op = args[1].as_str().to_string();
+            let right = args[2].clone();
+            return match op.as_str() {
+                "==" | "=" => glob_match(&right, &left),
+                "!=" => !glob_match(&right, &left),
                 "<" => left < right,
                 ">" => left > right,
-                "-eq" => self.parse_int(left) == self.parse_int(right),
-                "-ne" => self.parse_int(left) != self.parse_int(right),
-                "-lt" => self.parse_int(left) < self.parse_int(right),
-                "-gt" => self.parse_int(left) > self.parse_int(right),
-                "-le" => self.parse_int(left) <= self.parse_int(right),
-                "-ge" => self.parse_int(left) >= self.parse_int(right),
+                "-eq" => self.parse_int(&left) == self.parse_int(&right),
+                "-ne" => self.parse_int(&left) != self.parse_int(&right),
+                "-lt" => self.parse_int(&left) < self.parse_int(&right),
+                "-gt" => self.parse_int(&left) > self.parse_int(&right),
+                "-le" => self.parse_int(&left) <= self.parse_int(&right),
+                "-ge" => self.parse_int(&left) >= self.parse_int(&right),
+                "=~" => {
+                    let m = crate::regex::regex_match(&left, &right);
+                    self.env.insert(
+                        "BASH_REMATCH".to_string(),
+                        ShellValue::Array(if m.matched { m.groups } else { vec![] }),
+                    );
+                    m.matched
+                }
                 _ => false,
             };
         }

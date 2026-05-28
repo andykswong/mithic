@@ -210,6 +210,16 @@ describe('[[ extended test ]]', () => {
     const { exit } = await runShell('export x=hello\n[[ $x != world ]]\n');
     assert.strictEqual(exit, 0);
   });
+
+  it('regex match with =~ sets BASH_REMATCH', async () => {
+    const { stdout } = await runShell('[[ "hello123" =~ ^hello([0-9]+)$ ]] && echo "${BASH_REMATCH[1]}"\n');
+    assert.strictEqual(stdout.trim(), '123');
+  });
+
+  it('regex no match returns false', async () => {
+    const { stdout } = await runShell('[[ "hello" =~ ^world ]] && echo yes || echo no\n');
+    assert.strictEqual(stdout.trim(), 'no');
+  });
 });
 
 describe('until/do/done', () => {
