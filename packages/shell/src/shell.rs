@@ -17,6 +17,8 @@ pub struct Shell {
     break_depth: usize,
     continue_depth: usize,
     return_requested: bool,
+    in_loop_depth: usize,
+    in_function_depth: usize,
 }
 
 impl Shell {
@@ -41,6 +43,8 @@ impl Shell {
             break_depth: 0,
             continue_depth: 0,
             return_requested: false,
+            in_loop_depth: 0,
+            in_function_depth: 0,
         }
     }
 
@@ -150,7 +154,7 @@ impl Shell {
         if n == 1 {
             let cmd = cmds.into_iter().next().unwrap();
             let exit = match cmd {
-                Command::Simple(sc) => self.exec_command(sc, None, None),
+                Command::Simple(sc) => self.dispatch_simple(sc, None, None, None),
                 other => self.exec_compound(other),
             };
             return if pipeline.negate { if exit == 0 { 1 } else { 0 } } else { exit };
@@ -253,17 +257,13 @@ impl Shell {
         if pipeline.negate { if exit == 0 { 1 } else { 0 } } else { exit }
     }
 
-    /// Execute a single command with optional pre-wired stdin/stdout (used in pipeline).
-    fn exec_command(
+    fn dispatch_simple(
         &mut self,
         cmd: SimpleCommand,
         mut stdin: Option<InputStream>,
         mut stdout: Option<OutputStream>,
+        env_list: Option<&[(String, String)]>,
     ) -> u8 {
-        if cmd.words.is_empty() {
-            return 0;
-        }
-
         let args: Vec<String> = cmd.words.iter()
             .flat_map(|w| {
                 let expanded = self.expand_word(w);
@@ -279,16 +279,23 @@ impl Shell {
             return 1;
         }
 
+        if args.is_empty() {
+            return 0;
+        }
+
         let name = args[0].clone();
         if let Some(body) = self.functions.get(&name).cloned() {
-            return self.exec_function_call(&args[1..], body);
-        }
-        if Self::is_builtin(&name) {
+            self.exec_function_call(&args[1..], body)
+        } else if Self::is_builtin(&name) {
             self.exec_builtin(&name, &args[1..], stdin, stdout)
         } else {
+            let env = match env_list {
+                Some(list) => list.to_vec(),
+                None => self.env_list(),
+            };
             let opts = SpawnOptions {
                 cwd: None,
-                env: Some(self.env_list()),
+                env: Some(env),
                 stdin,
                 stdout,
                 stderr: stderr_opt,
@@ -376,16 +383,28 @@ impl Shell {
             "true" => 0,
             "false" => 1,
             "break" => {
+                if self.in_loop_depth == 0 {
+                    io::write_stderr("msh: break: only meaningful in a loop\n");
+                    return 1;
+                }
                 let n: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(1);
                 self.break_depth = n;
                 0
             }
             "continue" => {
+                if self.in_loop_depth == 0 {
+                    io::write_stderr("msh: continue: only meaningful in a loop\n");
+                    return 1;
+                }
                 let n: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(1);
                 self.continue_depth = n;
                 0
             }
             "return" => {
+                if self.in_function_depth == 0 {
+                    io::write_stderr("msh: return: can only return from a function or sourced script\n");
+                    return 1;
+                }
                 let code: u8 = args.first().and_then(|s| s.parse().ok()).unwrap_or(self.last_exit);
                 self.return_requested = true;
                 code
@@ -420,30 +439,6 @@ impl Shell {
                 if self.eval_extended_test(args) { 0 } else { 1 }
             }
             _ => 127,
-        }
-    }
-
-    #[allow(dead_code)]
-    fn exec_external(
-        &self,
-        name: &str,
-        args: &[String],
-        stdin: Option<InputStream>,
-        stdout: Option<OutputStream>,
-    ) -> u8 {
-        let opts = SpawnOptions {
-            cwd: None,
-            env: Some(self.env_list()),
-            stdin,
-            stdout,
-            stderr: None,
-        };
-        match proc_manager::spawn(name, args, Some(opts)) {
-            Ok(proc) => proc.wait() as u8,
-            Err(_) => {
-                io::write_stderr(&format!("msh: {}: command not found\n", name));
-                127
-            }
         }
     }
 
@@ -503,36 +498,7 @@ impl Shell {
         if n == 1 {
             let cmd = cmds.into_iter().next().unwrap();
             let exit = match cmd {
-                Command::Simple(sc) => {
-                    let args: Vec<String> = sc.words.iter()
-                        .flat_map(|w| {
-                            let expanded = self.expand_word(w);
-                            if has_glob(&expanded) { self.expand_glob(&expanded) } else { vec![expanded] }
-                        })
-                        .collect();
-                    if args.is_empty() { drop(stdout); return 0; }
-                    let name = args[0].clone();
-                    if let Some(body) = self.functions.get(&name).cloned() {
-                        self.exec_function_call(&args[1..], body)
-                    } else if Self::is_builtin(&name) {
-                        self.exec_builtin(&name, &args[1..], None, Some(stdout))
-                    } else {
-                        let opts = SpawnOptions {
-                            cwd: None,
-                            env: Some(self.env_list()),
-                            stdin: None,
-                            stdout: Some(stdout),
-                            stderr: None,
-                        };
-                        match proc_manager::spawn(&name, &args[1..], Some(opts)) {
-                            Ok(proc) => proc.wait() as u8,
-                            Err(_) => {
-                                io::write_stderr(&format!("msh: {}: command not found\n", name));
-                                127
-                            }
-                        }
-                    }
-                }
+                Command::Simple(sc) => self.dispatch_simple(sc, None, Some(stdout), None),
                 other => { drop(stdout); self.exec_compound(other) }
             };
             return if pipeline.negate { if exit == 0 { 1 } else { 0 } } else { exit };
@@ -665,7 +631,7 @@ impl Shell {
 
     #[cfg(not(test))]
     fn expand_glob(&self, pattern: &str) -> Vec<String> {
-        use crate::bindings::wasi::filesystem::{preopens, types as fs_types};
+        use crate::bindings::wasi::filesystem::types as fs_types;
         use fs_types::{DescriptorFlags, OpenFlags, PathFlags};
 
         let (dir_part, name_pat) = match pattern.rfind('/') {
@@ -679,9 +645,8 @@ impl Shell {
             self.resolve_path(dir_part)
         };
 
-        let dirs = preopens::get_directories();
-        let root_desc = match dirs.into_iter().find(|(_, p)| p == "/") {
-            Some((d, _)) => d,
+        let root_desc = match get_root_descriptor() {
+            Some(d) => d,
             None => return vec![pattern.to_string()],
         };
 
@@ -741,7 +706,7 @@ impl Shell {
 
     fn exec_compound(&mut self, cmd: Command) -> u8 {
         match cmd {
-            Command::Simple(sc) => self.exec_command(sc, None, None),
+            Command::Simple(sc) => self.dispatch_simple(sc, None, None, None),
             Command::If(ic) => self.exec_if(ic),
             Command::While(wc) => self.exec_while(wc),
             Command::Until(wc) => self.exec_until(wc),
@@ -777,6 +742,7 @@ impl Shell {
     }
 
     fn exec_while(&mut self, cmd: crate::parser::WhileCommand) -> u8 {
+        self.in_loop_depth += 1;
         let mut exit = 0u8;
         loop {
             let cond = self.exec_list(cmd.condition.clone());
@@ -791,10 +757,12 @@ impl Shell {
                 self.continue_depth -= 1;
             }
         }
+        self.in_loop_depth -= 1;
         exit
     }
 
     fn exec_until(&mut self, cmd: crate::parser::WhileCommand) -> u8 {
+        self.in_loop_depth += 1;
         let mut exit = 0u8;
         loop {
             let cond = self.exec_list(cmd.condition.clone());
@@ -809,6 +777,7 @@ impl Shell {
                 self.continue_depth -= 1;
             }
         }
+        self.in_loop_depth -= 1;
         exit
     }
 
@@ -824,9 +793,17 @@ impl Shell {
                     }
                 })
                 .collect(),
-            None => Vec::new(),
+            None => {
+                let at = self.env.get("@").cloned().unwrap_or_default();
+                if at.is_empty() {
+                    Vec::new()
+                } else {
+                    at.split_whitespace().map(|s| s.to_string()).collect()
+                }
+            }
         };
 
+        self.in_loop_depth += 1;
         let mut exit = 0u8;
         for item in items {
             self.env.insert(cmd.var.clone(), item);
@@ -841,6 +818,7 @@ impl Shell {
                 self.continue_depth -= 1;
             }
         }
+        self.in_loop_depth -= 1;
         exit
     }
 
@@ -871,7 +849,9 @@ impl Shell {
         self.env.insert("#".to_string(), args.len().to_string());
         self.env.insert("@".to_string(), args.join(" "));
 
+        self.in_function_depth += 1;
         let exit = self.exec_compound(body);
+        self.in_function_depth -= 1;
         self.return_requested = false;
 
         for (key, old_val) in old_positional {
@@ -960,13 +940,12 @@ impl Shell {
     #[cfg(not(test))]
     fn test_file(&self, op: &str, path: &str) -> bool {
         use crate::bindings::wasi::filesystem::types::{DescriptorFlags, DescriptorType, OpenFlags, PathFlags};
-        use crate::bindings::wasi::filesystem::preopens;
 
         let resolved = self.resolve_path(path);
         let rel = resolved.trim_start_matches('/');
 
-        let root = match preopens::get_directories().into_iter().find(|(_, p)| p == "/") {
-            Some((d, _)) => d,
+        let root = match get_root_descriptor() {
+            Some(d) => d,
             None => return false,
         };
 
@@ -1049,13 +1028,12 @@ impl Shell {
     #[cfg(not(test))]
     fn exec_source(&mut self, file: &str) -> u8 {
         use crate::bindings::wasi::filesystem::types::{DescriptorFlags, OpenFlags, PathFlags};
-        use crate::bindings::wasi::filesystem::preopens;
 
         let path = self.resolve_path(file);
         let rel = path.trim_start_matches('/');
 
-        let root = match preopens::get_directories().into_iter().find(|(_, p)| p == "/") {
-            Some((d, _)) => d,
+        let root = match get_root_descriptor() {
+            Some(d) => d,
             None => {
                 io::write_stderr(&format!("msh: source: {}: No such file or directory\n", file));
                 return 1;
@@ -1090,7 +1068,11 @@ impl Shell {
         let script = String::from_utf8_lossy(&contents);
         let mut parser = Parser::new(&script);
         if let Some(list) = parser.parse() {
-            self.exec_list(list)
+            self.in_function_depth += 1;
+            let result = self.exec_list(list);
+            self.in_function_depth -= 1;
+            self.return_requested = false;
+            result
         } else {
             0
         }
@@ -1187,11 +1169,10 @@ impl Shell {
         stderr: &mut Option<OutputStream>,
     ) -> bool {
         use crate::bindings::wasi::filesystem::types::{DescriptorFlags, OpenFlags, PathFlags};
-        use crate::bindings::wasi::filesystem::preopens;
         use crate::parser::Redirect;
 
-        let root = match preopens::get_directories().into_iter().find(|(_, p)| p == "/") {
-            Some((d, _)) => d,
+        let root = match get_root_descriptor() {
+            Some(d) => d,
             None => return true,
         };
 
@@ -1398,6 +1379,12 @@ fn normalize_path(path: &str) -> String {
     } else {
         format!("/{}", parts.join("/"))
     }
+}
+
+#[cfg(not(test))]
+fn get_root_descriptor() -> Option<crate::bindings::wasi::filesystem::types::Descriptor> {
+    use crate::bindings::wasi::filesystem::preopens;
+    preopens::get_directories().into_iter().find(|(_, p)| p == "/").map(|(d, _)| d)
 }
 
 #[cfg(test)]

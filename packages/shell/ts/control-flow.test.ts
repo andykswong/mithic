@@ -212,6 +212,63 @@ describe('[[ extended test ]]', () => {
   });
 });
 
+describe('until/do/done', () => {
+  it('loops until condition is true', async () => {
+    const { stdout } = await runShell(
+      'export x=no\nuntil [ $x = yes ]; do\necho loop\nexport x=yes\ndone\n'
+    );
+    assert.strictEqual(stdout.trim(), 'loop');
+  });
+});
+
+describe('edge cases', () => {
+  it('break outside loop prints error', async () => {
+    const { stderr } = await runShell('break\n');
+    assert.ok(stderr.includes('only meaningful in a loop'));
+  });
+
+  it('continue outside loop prints error', async () => {
+    const { stderr } = await runShell('continue\n');
+    assert.ok(stderr.includes('only meaningful in a loop'));
+  });
+
+  it('return outside function prints error', async () => {
+    const { stderr } = await runShell('return\n');
+    assert.ok(stderr.includes('can only return'));
+  });
+
+  it('nested break 2 exits outer loop', async () => {
+    const { stdout } = await runShell(
+      'for i in a b; do\nfor j in 1 2 3; do\nif [ $j = 2 ]; then break 2; fi\necho $i$j\ndone\ndone\n'
+    );
+    assert.strictEqual(stdout.trim(), 'a1');
+  });
+
+  it('case with * default pattern', async () => {
+    const { stdout } = await runShell(
+      'export x=unknown\ncase $x in a) echo a;; *) echo default;; esac\n'
+    );
+    assert.strictEqual(stdout.trim(), 'default');
+  });
+
+  it('[[ with && operator', async () => {
+    const { exit } = await runShell('export x=hello\n[[ -n $x && $x == h* ]]\n');
+    assert.strictEqual(exit, 0);
+  });
+
+  it('[[ with || operator', async () => {
+    const { exit } = await runShell('[[ -z "" || -n hello ]]\n');
+    assert.strictEqual(exit, 0);
+  });
+
+  it('for without in clause uses positional params', async () => {
+    const { stdout } = await runShell(
+      'f() { for x; do echo $x; done; }\nf a b c\n'
+    );
+    assert.strictEqual(stdout.trim(), 'a\nb\nc');
+  });
+});
+
 describe('multi-line input', () => {
   it('if spanning multiple lines', async () => {
     const { stdout } = await runShell('if true\nthen\necho yes\nfi\n');

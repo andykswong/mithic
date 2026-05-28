@@ -386,6 +386,8 @@ impl Parser {
             match self.peek() {
                 Token::DoubleBracketClose => { self.advance(); break; }
                 Token::Eof => break,
+                Token::AmpAmp => { self.advance(); words.push(Word::literal("&&")); }
+                Token::PipePipe => { self.advance(); words.push(Word::literal("||")); }
                 _ => {
                     if let Some(w) = self.parse_word() {
                         words.push(w);
