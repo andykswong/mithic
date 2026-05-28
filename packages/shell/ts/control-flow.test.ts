@@ -654,4 +654,40 @@ describe('subshell isolation', () => {
     const { stdout } = await runShell('(exit 42); echo "still here: $?"\n');
     assert.strictEqual(stdout.trim(), 'still here: 42');
   });
+
+  it('subshell does not leak set -e', async () => {
+    const { stdout } = await runShell('(set -e; false); echo "ok"\n');
+    assert.strictEqual(stdout.trim(), 'ok');
+  });
+
+  it('subshell does not leak break to parent loop', async () => {
+    const { stdout } = await runShell('for x in a b c; do (break); echo $x; done\n');
+    assert.strictEqual(stdout.trim(), 'a\nb\nc');
+  });
+});
+
+describe('set -e edge cases', () => {
+  it('set -e does not trigger in while condition', async () => {
+    const { stdout } = await runShell('set -e\nexport x=yes\nwhile false; do echo loop; done\necho ok\n');
+    assert.strictEqual(stdout.trim(), 'ok');
+  });
+
+  it('set -e inside function exits caller', async () => {
+    const { stdout, exit } = await runShell('set -e\nf() { false; }\nf\necho unreachable\n');
+    assert.strictEqual(stdout.trim(), '');
+    assert.strictEqual(exit, 1);
+  });
+
+  it('set -u with ${VAR:-default} does not error', async () => {
+    const { stdout, exit } = await runShell('set -u\necho "${UNSET_XYZ:-fallback}"\n');
+    assert.strictEqual(stdout.trim(), 'fallback');
+    assert.strictEqual(exit, 0);
+  });
+});
+
+describe('group command in pipe', () => {
+  it('{ echo a; echo b; } | cat captures both outputs', async () => {
+    const { stdout } = await runShell('{ echo a; echo b; } | cat\n');
+    assert.strictEqual(stdout.trim(), 'a\nb');
+  });
 });

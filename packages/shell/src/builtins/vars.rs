@@ -6,6 +6,8 @@ use crate::bindings::mithic::process::types::{InputStream, OutputStream};
 use crate::io;
 #[cfg(not(test))]
 use crate::value::ShellValue;
+#[cfg(not(test))]
+use crate::executor::expansion::parse_array_subscript;
 
 #[cfg(not(test))]
 pub(super) fn exec_builtin(
@@ -205,13 +207,3 @@ fn exec_set(shell: &mut Shell, args: &[String]) -> u8 {
     0
 }
 
-fn parse_array_subscript(s: &str) -> Option<(&str, &str)> {
-    let open = s.find('[')?;
-    let close = s.rfind(']')?;
-    if close <= open { return None; }
-    let name = &s[..open];
-    let subscript = &s[open + 1..close];
-    if name.is_empty() { return None; }
-    if !name.chars().all(|c| c.is_alphanumeric() || c == '_') { return None; }
-    Some((name, subscript))
-}

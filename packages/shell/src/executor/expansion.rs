@@ -89,6 +89,17 @@ pub(crate) fn shell_substring(val: &str, spec: &str) -> String {
     chars[start.min(end)..end].iter().collect()
 }
 
+pub(crate) fn parse_array_subscript(s: &str) -> Option<(&str, &str)> {
+    let open = s.find('[')?;
+    let close = s.rfind(']')?;
+    if close <= open { return None; }
+    let name = &s[..open];
+    let subscript = &s[open + 1..close];
+    if name.is_empty() { return None; }
+    if !name.chars().all(|c| c.is_alphanumeric() || c == '_') { return None; }
+    Some((name, subscript))
+}
+
 pub(crate) fn expand_tilde(s: &str, home: &str) -> String {
     if s == "~" {
         home.to_string()

@@ -7,7 +7,7 @@ use crate::brace::expand_braces;
 use crate::executor::expansion::{
     expand_tilde, has_glob, glob_match, glob_replace_first, glob_replace_all,
     remove_shortest_prefix, remove_longest_prefix, remove_shortest_suffix, remove_longest_suffix,
-    shell_substring, split_var_and_op, literal_text, normalize_path,
+    shell_substring, split_var_and_op, literal_text, normalize_path, parse_array_subscript,
 };
 use crate::io::{self, LineReader};
 use crate::parser::{ArrayAssign, Command, List, ListItem, ListOp, Parser, Pipeline, SimpleCommand, Word, WordPart};
@@ -388,6 +388,25 @@ impl Shell {
             let cmd = cmds.into_iter().next().unwrap();
             let exit = match cmd {
                 Command::Simple(sc) => self.dispatch_simple(sc, None, Some(stdout), None),
+                Command::Group(list) => self.exec_list_with_stdout(list, stdout),
+                Command::Subshell(list) => {
+                    let saved_env = self.env.clone();
+                    let saved_cwd = self.cwd.clone();
+                    let saved_functions = self.functions.clone();
+                    let saved_traps = self.traps.clone();
+                    let saved_options = self.options.clone();
+                    let saved_params = self.params.clone();
+                    let saved_exit_requested = self.exit_requested;
+                    let exit = self.exec_list_with_stdout(list, stdout);
+                    self.env = saved_env;
+                    self.cwd = saved_cwd;
+                    self.functions = saved_functions;
+                    self.traps = saved_traps;
+                    self.options = saved_options;
+                    self.params = saved_params;
+                    self.exit_requested = saved_exit_requested;
+                    exit
+                }
                 other => { drop(stdout); self.exec_compound(other) }
             };
             return if pipeline.negate { if exit == 0 { 1 } else { 0 } } else { exit };
@@ -557,7 +576,7 @@ impl Shell {
                 expand_tilde(s, home)
             }
             WordPart::Quoted(s) => s.clone(),
-            WordPart::Var(name) => self.expand_var(name),
+            WordPart::Var(name) => self.expand_var(name, true),
             WordPart::BraceVar(raw) => self.expand_brace_var(raw),
             WordPart::CmdSub(raw) => self.exec_capturing(raw),
             WordPart::ArithSub(expr) => self.eval_arithmetic(expr),
@@ -691,27 +710,7 @@ impl Shell {
         result
     }
 
-    fn expand_var(&mut self, name: &str) -> String {
-        self.expand_var_impl(name, true)
-    }
-
-    /// Expand a variable without triggering nounset (used for operators like `:-`, `:+`).
-    fn expand_var_raw(&self, name: &str) -> String {
-        match name {
-            "?" => self.last_exit.to_string(),
-            "#" => self.params.count().to_string(),
-            "@" | "*" => self.params.all().join(" "),
-            _ => {
-                if let Ok(n) = name.parse::<usize>() {
-                    self.params.get(n).unwrap_or("").to_string()
-                } else {
-                    self.env.get(name).map(|v| v.as_scalar().to_string()).unwrap_or_default()
-                }
-            }
-        }
-    }
-
-    fn expand_var_impl(&mut self, name: &str, check_nounset: bool) -> String {
+    fn expand_var(&mut self, name: &str, check_nounset: bool) -> String {
         match name {
             "?" => self.last_exit.to_string(),
             "#" => self.params.count().to_string(),
@@ -758,7 +757,7 @@ impl Shell {
                 }
             }
             // ${#VAR} — length of scalar variable
-            return self.expand_var(inner).len().to_string();
+            return self.expand_var(inner, true).len().to_string();
         }
 
         // ${arr[@]} or ${arr[*]} — all elements space-joined
@@ -788,39 +787,39 @@ impl Shell {
 
         // ${VAR//pat/rep} — replace all occurrences (glob-based)
         if let Some(pat_rep) = op_and_rest.strip_prefix("//") {
-            let val = self.expand_var(var_name);
+            let val = self.expand_var(var_name, true);
             let (pat, rep) = pat_rep.split_once('/').unwrap_or((pat_rep, ""));
             return glob_replace_all(&val, pat, rep);
         }
 
         // ${VAR/pat/rep} — replace first occurrence (glob-based)
         if let Some(pat_rep) = op_and_rest.strip_prefix('/') {
-            let val = self.expand_var(var_name);
+            let val = self.expand_var(var_name, true);
             let (pat, rep) = pat_rep.split_once('/').unwrap_or((pat_rep, ""));
             return glob_replace_first(&val, pat, rep);
         }
 
         // ${VAR##pat} — remove longest matching prefix (check before single #)
         if let Some(pat) = op_and_rest.strip_prefix("##") {
-            let val = self.expand_var(var_name);
+            let val = self.expand_var(var_name, true);
             return remove_longest_prefix(&val, pat);
         }
 
         // ${VAR#pat} — remove shortest matching prefix
         if let Some(pat) = op_and_rest.strip_prefix('#') {
-            let val = self.expand_var(var_name);
+            let val = self.expand_var(var_name, true);
             return remove_shortest_prefix(&val, pat);
         }
 
         // ${VAR%%pat} — remove longest matching suffix (check before single %)
         if let Some(pat) = op_and_rest.strip_prefix("%%") {
-            let val = self.expand_var(var_name);
+            let val = self.expand_var(var_name, true);
             return remove_longest_suffix(&val, pat);
         }
 
         // ${VAR%pat} — remove shortest matching suffix
         if let Some(pat) = op_and_rest.strip_prefix('%') {
-            let val = self.expand_var(var_name);
+            let val = self.expand_var(var_name, true);
             return remove_shortest_suffix(&val, pat);
         }
 
@@ -828,27 +827,26 @@ impl Shell {
         if let Some(colon_rest) = op_and_rest.strip_prefix(':') {
             // ${VAR:-default} — default if empty (nounset should NOT fire here)
             if let Some(default) = colon_rest.strip_prefix('-') {
-                let val = self.expand_var_raw(var_name);
+                let val = self.expand_var(var_name, false);
                 return if val.is_empty() { default.to_string() } else { val };
             }
             // ${VAR:+alt} — alternate if not empty (nounset should NOT fire here)
             if let Some(alt) = colon_rest.strip_prefix('+') {
-                let val = self.expand_var_raw(var_name);
+                let val = self.expand_var(var_name, false);
                 return if val.is_empty() { String::new() } else { alt.to_string() };
             }
             // ${VAR:offset} or ${VAR:offset:length} — substring (digit or minus sign)
             if colon_rest.starts_with(|c: char| c.is_ascii_digit() || c == '-') {
-                let val = self.expand_var(var_name);
+                let val = self.expand_var(var_name, true);
                 return shell_substring(&val, colon_rest);
             }
         }
 
         // Plain ${VAR} — but use raw if var_name is empty (shouldn't happen) or op is empty
         if op_and_rest.is_empty() {
-            self.expand_var(var_name)
+            self.expand_var(var_name, true)
         } else {
-            // Fallback: treat entire raw as a variable name
-            self.expand_var(raw)
+            self.expand_var(raw, true)
         }
     }
 
@@ -978,7 +976,22 @@ impl Shell {
                 let saved_cwd = self.cwd.clone();
                 let saved_functions = self.functions.clone();
                 let saved_traps = self.traps.clone();
+                let saved_options = self.options.clone();
+                let saved_params = self.params.clone();
                 let saved_exit_requested = self.exit_requested;
+                let saved_in_condition = self.in_condition;
+                let saved_in_loop_depth = self.in_loop_depth;
+                let saved_in_function_depth = self.in_function_depth;
+                let saved_break_depth = self.break_depth;
+                let saved_continue_depth = self.continue_depth;
+                let saved_return_requested = self.return_requested;
+
+                self.in_loop_depth = 0;
+                self.in_function_depth = 0;
+                self.in_condition = 0;
+                self.break_depth = 0;
+                self.continue_depth = 0;
+                self.return_requested = false;
 
                 let exit = self.exec_list(list);
 
@@ -986,7 +999,15 @@ impl Shell {
                 self.cwd = saved_cwd;
                 self.functions = saved_functions;
                 self.traps = saved_traps;
+                self.options = saved_options;
+                self.params = saved_params;
                 self.exit_requested = saved_exit_requested;
+                self.in_condition = saved_in_condition;
+                self.in_loop_depth = saved_in_loop_depth;
+                self.in_function_depth = saved_in_function_depth;
+                self.break_depth = saved_break_depth;
+                self.continue_depth = saved_continue_depth;
+                self.return_requested = saved_return_requested;
 
                 exit
             }
@@ -1395,17 +1416,6 @@ impl Shell {
 
 }
 
-fn parse_array_subscript(s: &str) -> Option<(&str, &str)> {
-    let open = s.find('[')?;
-    let close = s.rfind(']')?;
-    if close <= open { return None; }
-    let name = &s[..open];
-    let subscript = &s[open + 1..close];
-    if name.is_empty() { return None; }
-    // Name must be a valid identifier (only alphanumeric + underscore)
-    if !name.chars().all(|c| c.is_alphanumeric() || c == '_') { return None; }
-    Some((name, subscript))
-}
 
 #[cfg(not(test))]
 pub(crate) fn get_root_descriptor() -> Option<crate::bindings::wasi::filesystem::types::Descriptor> {
