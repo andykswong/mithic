@@ -1,21 +1,14 @@
-#[cfg(not(test))]
+use crate::runtime::{InputHandle, OutputHandle, Runtime};
 use crate::shell::Shell;
-#[cfg(not(test))]
-use crate::bindings::mithic::process::types::{InputStream, OutputStream};
-#[cfg(not(test))]
-use crate::io;
-#[cfg(not(test))]
 use crate::value::ShellValue;
-#[cfg(not(test))]
 use super::write_out;
 
-#[cfg(not(test))]
-pub(super) fn exec_builtin(
-    shell: &mut Shell,
+pub(super) fn exec_builtin<R: Runtime>(
+    shell: &mut Shell<R>,
     name: &str,
     args: &[String],
-    _stdin: Option<InputStream>,
-    stdout: Option<OutputStream>,
+    _stdin: Option<InputHandle>,
+    stdout: Option<OutputHandle>,
 ) -> u8 {
     match name {
         "exit" => {
@@ -27,13 +20,13 @@ pub(super) fn exec_builtin(
         }
         "echo" => {
             let output = args.join(" ");
-            write_out(&stdout, &output);
-            write_out(&stdout, "\n");
+            write_out(shell, &stdout, &output);
+            write_out(shell, &stdout, "\n");
             0
         }
         "pwd" => {
-            write_out(&stdout, &shell.cwd);
-            write_out(&stdout, "\n");
+            write_out(shell, &stdout, &shell.cwd.clone());
+            write_out(shell, &stdout, "\n");
             0
         }
         "cd" => {
@@ -45,15 +38,18 @@ pub(super) fn exec_builtin(
             0
         }
         "env" => {
-            for (key, value) in &shell.env {
-                write_out(&stdout, &format!("{}={}\n", key, value.as_scalar()));
+            let pairs: Vec<(String, String)> = shell.env.iter()
+                .map(|(k, v)| (k.clone(), v.as_scalar().to_string()))
+                .collect();
+            for (key, value) in &pairs {
+                write_out(shell, &stdout, &format!("{}={}\n", key, value));
             }
             0
         }
         "true" => 0,
         "false" => 1,
         _ => {
-            io::write_stderr(&format!("msh: {}: not handled in core builtin\n", name));
+            shell.rt.write_stderr(&format!("msh: {}: not handled in core builtin\n", name));
             127
         }
     }

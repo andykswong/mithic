@@ -98,6 +98,10 @@ impl ProcessMgr for TestRuntime {
         vec![]
     }
 
+    fn pipe_read_line(&mut self, _handle: &InputHandle) -> Option<String> {
+        None
+    }
+
     fn pipe_write(&mut self, _handle: &OutputHandle, _data: &[u8]) {}
 
     fn pipe_close_write(&mut self, _handle: OutputHandle) {}

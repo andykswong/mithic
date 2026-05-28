@@ -4,33 +4,24 @@ pub mod flow;
 pub mod test;
 pub mod jobs;
 
-#[cfg(not(test))]
-use crate::bindings::mithic::process::types::OutputStream;
-#[cfg(not(test))]
-use crate::io;
+use crate::runtime::{InputHandle, OutputHandle, Runtime};
+use crate::shell::Shell;
 
-#[cfg(not(test))]
-pub(crate) fn write_out(stdout: &Option<OutputStream>, s: &str) {
+pub(crate) fn write_out<R: Runtime>(shell: &mut Shell<R>, stdout: &Option<OutputHandle>, s: &str) {
     if let Some(out) = stdout {
-        let _ = out.blocking_write_and_flush(s.as_bytes());
+        shell.rt.pipe_write(out, s.as_bytes());
     } else {
-        io::write_stdout(s);
+        shell.rt.write_stdout(s);
     }
 }
 
-#[cfg(not(test))]
-use crate::shell::Shell;
-#[cfg(not(test))]
-use crate::bindings::mithic::process::types::InputStream;
-
-#[cfg(not(test))]
-impl Shell {
+impl<R: Runtime> Shell<R> {
     pub(crate) fn exec_builtin(
         &mut self,
         name: &str,
         args: &[String],
-        stdin: Option<InputStream>,
-        stdout: Option<OutputStream>,
+        stdin: Option<InputHandle>,
+        stdout: Option<OutputHandle>,
     ) -> u8 {
         match name {
             "exit" | "echo" | "pwd" | "cd" | "env" | "true" | "false" => {

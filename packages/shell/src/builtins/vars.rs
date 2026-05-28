@@ -1,21 +1,14 @@
-#[cfg(not(test))]
+use crate::runtime::{InputHandle, OutputHandle, Runtime};
 use crate::shell::Shell;
-#[cfg(not(test))]
-use crate::bindings::mithic::process::types::{InputStream, OutputStream};
-#[cfg(not(test))]
-use crate::io;
-#[cfg(not(test))]
 use crate::value::ShellValue;
-#[cfg(not(test))]
 use crate::executor::expansion::parse_array_subscript;
 
-#[cfg(not(test))]
-pub(super) fn exec_builtin(
-    shell: &mut Shell,
+pub(super) fn exec_builtin<R: Runtime>(
+    shell: &mut Shell<R>,
     name: &str,
     args: &[String],
-    stdin: Option<InputStream>,
-    _stdout: Option<OutputStream>,
+    stdin: Option<InputHandle>,
+    _stdout: Option<OutputHandle>,
 ) -> u8 {
     match name {
         "export" => {
@@ -51,14 +44,13 @@ pub(super) fn exec_builtin(
         "read" => exec_read(shell, args, stdin),
         "set" => exec_set(shell, args),
         _ => {
-            io::write_stderr(&format!("msh: {}: not handled in vars builtin\n", name));
+            shell.rt.write_stderr(&format!("msh: {}: not handled in vars builtin\n", name));
             127
         }
     }
 }
 
-#[cfg(not(test))]
-fn exec_declare(shell: &mut Shell, args: &[String]) -> u8 {
+fn exec_declare<R: Runtime>(shell: &mut Shell<R>, args: &[String]) -> u8 {
     let mut is_array = false;
     let mut print_mode = false;
     let mut remaining_args: Vec<&str> = Vec::new();
@@ -77,17 +69,20 @@ fn exec_declare(shell: &mut Shell, args: &[String]) -> u8 {
     }
 
     if print_mode {
-        for name in &remaining_args {
-            match shell.env.get(*name) {
+        let names: Vec<String> = remaining_args.iter().map(|s| s.to_string()).collect();
+        for name in &names {
+            match shell.env.get(name) {
                 Some(ShellValue::Scalar(s)) => {
-                    io::write_stdout(&format!("declare -- {}=\"{}\"\n", name, s));
+                    let line = format!("declare -- {}=\"{}\"\n", name, s);
+                    shell.rt.write_stdout(&line);
                 }
                 Some(ShellValue::Array(v)) => {
                     let elements: Vec<String> = v.iter().map(|e| format!("\"{}\"", e)).collect();
-                    io::write_stdout(&format!("declare -a {}=({})\n", name, elements.join(" ")));
+                    let line = format!("declare -a {}=({})\n", name, elements.join(" "));
+                    shell.rt.write_stdout(&line);
                 }
                 None => {
-                    io::write_stderr(&format!("declare: {}: not found\n", name));
+                    shell.rt.write_stderr(&format!("declare: {}: not found\n", name));
                 }
             }
         }
@@ -110,8 +105,7 @@ fn exec_declare(shell: &mut Shell, args: &[String]) -> u8 {
     0
 }
 
-#[cfg(not(test))]
-fn exec_read(shell: &mut Shell, args: &[String], stdin: Option<InputStream>) -> u8 {
+fn exec_read<R: Runtime>(shell: &mut Shell<R>, args: &[String], stdin: Option<InputHandle>) -> u8 {
     let mut var_names: Vec<&str> = Vec::new();
     let mut prompt = None;
     let mut raw = false;
@@ -133,27 +127,18 @@ fn exec_read(shell: &mut Shell, args: &[String], stdin: Option<InputStream>) -> 
     }
 
     if let Some(p) = prompt {
-        io::write_stderr(p);
+        shell.rt.write_stderr(p);
     }
 
     let line = match &stdin {
-        Some(s) => {
-            let mut buf = Vec::new();
-            loop {
-                match s.blocking_read(1) {
-                    Ok(bytes) if bytes.is_empty() => break,
-                    Ok(bytes) => {
-                        buf.extend_from_slice(&bytes);
-                        if bytes.last() == Some(&b'\n') { break; }
-                    }
-                    Err(_) => break,
-                }
+        Some(h) => {
+            match shell.rt.pipe_read_line(h) {
+                Some(l) => l,
+                None => return 1,
             }
-            if buf.is_empty() { return 1; }
-            String::from_utf8_lossy(&buf).trim_end_matches('\n').to_string()
         }
         None => {
-            match shell.reader.read_line() {
+            match shell.rt.read_line() {
                 Some(l) => l.trim_end_matches('\n').to_string(),
                 None => return 1,
             }
@@ -171,6 +156,7 @@ fn exec_read(shell: &mut Shell, args: &[String], stdin: Option<InputStream>) -> 
             .collect()
     };
 
+    let var_names: Vec<String> = var_names.iter().map(|s| s.to_string()).collect();
     for (idx, var_name) in var_names.iter().enumerate() {
         if idx == var_names.len() - 1 {
             let remaining: Vec<&str> = if idx < fields.len() { fields[idx..].to_vec() } else { vec![] };
@@ -185,8 +171,7 @@ fn exec_read(shell: &mut Shell, args: &[String], stdin: Option<InputStream>) -> 
     0
 }
 
-#[cfg(not(test))]
-fn exec_set(shell: &mut Shell, args: &[String]) -> u8 {
+fn exec_set<R: Runtime>(shell: &mut Shell<R>, args: &[String]) -> u8 {
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
@@ -206,4 +191,3 @@ fn exec_set(shell: &mut Shell, args: &[String]) -> u8 {
     }
     0
 }
-

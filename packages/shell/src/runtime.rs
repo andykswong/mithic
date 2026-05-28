@@ -49,6 +49,8 @@ pub(crate) trait ProcessMgr {
     fn dup_output(&mut self, handle: &OutputHandle) -> OutputHandle;
     fn spawn(&mut self, cmd: &str, args: &[String], opts: SpawnOpts) -> Result<ProcessHandle, SpawnError>;
     fn pipe_read_all(&mut self, handle: InputHandle) -> Vec<u8>;
+    /// Read a single line (up to `\n`) from a pipe input handle. Returns None on EOF.
+    fn pipe_read_line(&mut self, handle: &InputHandle) -> Option<String>;
     fn pipe_write(&mut self, handle: &OutputHandle, data: &[u8]);
     fn pipe_close_write(&mut self, handle: OutputHandle);
     fn wait(&mut self, handle: &ProcessHandle) -> u8;

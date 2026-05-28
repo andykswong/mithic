@@ -1,22 +1,18 @@
-#[cfg(not(test))]
+use crate::runtime::{InputHandle, OutputHandle, Runtime};
 use crate::shell::Shell;
-#[cfg(not(test))]
-use crate::bindings::mithic::process::types::{InputStream, OutputStream};
-#[cfg(not(test))]
-use crate::io;
+use crate::parser::Parser;
 
-#[cfg(not(test))]
-pub(super) fn exec_builtin(
-    shell: &mut Shell,
+pub(super) fn exec_builtin<R: Runtime>(
+    shell: &mut Shell<R>,
     name: &str,
     args: &[String],
-    _stdin: Option<InputStream>,
-    _stdout: Option<OutputStream>,
+    _stdin: Option<InputHandle>,
+    _stdout: Option<OutputHandle>,
 ) -> u8 {
     match name {
         "break" => {
             if shell.in_loop_depth == 0 {
-                io::write_stderr("msh: break: only meaningful in a loop\n");
+                shell.rt.write_stderr("msh: break: only meaningful in a loop\n");
                 return 1;
             }
             let n: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(1);
@@ -25,7 +21,7 @@ pub(super) fn exec_builtin(
         }
         "continue" => {
             if shell.in_loop_depth == 0 {
-                io::write_stderr("msh: continue: only meaningful in a loop\n");
+                shell.rt.write_stderr("msh: continue: only meaningful in a loop\n");
                 return 1;
             }
             let n: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(1);
@@ -34,7 +30,7 @@ pub(super) fn exec_builtin(
         }
         "return" => {
             if shell.in_function_depth == 0 {
-                io::write_stderr("msh: return: can only return from a function or sourced script\n");
+                shell.rt.write_stderr("msh: return: can only return from a function or sourced script\n");
                 return 1;
             }
             let code: u8 = args.first().and_then(|s| s.parse().ok()).unwrap_or(shell.last_exit);
@@ -45,59 +41,25 @@ pub(super) fn exec_builtin(
             let file = match args.first() {
                 Some(f) => f.clone(),
                 None => {
-                    io::write_stderr("msh: source: filename argument required\n");
+                    shell.rt.write_stderr("msh: source: filename argument required\n");
                     return 2;
                 }
             };
             exec_source(shell, &file)
         }
         _ => {
-            io::write_stderr(&format!("msh: {}: not handled in flow builtin\n", name));
+            shell.rt.write_stderr(&format!("msh: {}: not handled in flow builtin\n", name));
             127
         }
     }
 }
 
-#[cfg(not(test))]
-fn exec_source(shell: &mut Shell, file: &str) -> u8 {
-    use crate::bindings::wasi::filesystem::types::{DescriptorFlags, OpenFlags, PathFlags};
-    use crate::shell::get_root_descriptor;
-    use crate::parser::Parser;
-
+fn exec_source<R: Runtime>(shell: &mut Shell<R>, file: &str) -> u8 {
     let path = shell.resolve_path(file);
-    let rel = path.trim_start_matches('/');
-
-    let root = match get_root_descriptor() {
-        Some(d) => d,
-        None => {
-            io::write_stderr(&format!("msh: source: {}: No such file or directory\n", file));
-            return 1;
-        }
-    };
-
-    let desc = match root.open_at(
-        PathFlags::SYMLINK_FOLLOW, rel,
-        OpenFlags::empty(), DescriptorFlags::READ,
-    ) {
-        Ok(d) => d,
-        Err(_) => {
-            io::write_stderr(&format!("msh: source: {}: No such file or directory\n", file));
-            return 1;
-        }
-    };
-
-    let stream = match desc.read_via_stream(0) {
-        Ok(s) => s,
-        Err(_) => return 1,
-    };
-
-    let mut contents = Vec::new();
-    loop {
-        match stream.blocking_read(4096) {
-            Ok(bytes) if bytes.is_empty() => break,
-            Ok(bytes) => contents.extend_from_slice(&bytes),
-            Err(_) => break,
-        }
+    let contents = shell.rt.read_file(&path);
+    if contents.is_empty() {
+        shell.rt.write_stderr(&format!("msh: source: {}: No such file or directory\n", file));
+        return 1;
     }
 
     let script = String::from_utf8_lossy(&contents);

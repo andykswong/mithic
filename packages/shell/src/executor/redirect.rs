@@ -1,135 +1,102 @@
-#[cfg(not(test))]
+use crate::runtime::{InputHandle, OutputHandle, Runtime};
 use crate::shell::Shell;
 
-#[cfg(not(test))]
-impl Shell {
+impl<R: Runtime> Shell<R> {
     /// Returns `true` on success, `false` if a redirect failed (command should not execute).
     pub(crate) fn apply_redirects(
         &mut self,
         redirects: &[crate::parser::Redirect],
-        stdin: &mut Option<crate::bindings::mithic::process::types::InputStream>,
-        stdout: &mut Option<crate::bindings::mithic::process::types::OutputStream>,
-        stderr: &mut Option<crate::bindings::mithic::process::types::OutputStream>,
+        stdin: &mut Option<InputHandle>,
+        stdout: &mut Option<OutputHandle>,
+        stderr: &mut Option<OutputHandle>,
     ) -> bool {
-        use crate::bindings::mithic::process::manager as proc_manager;
-        use crate::bindings::wasi::filesystem::types::{DescriptorFlags, OpenFlags, PathFlags};
         use crate::parser::Redirect;
-        use crate::io;
-        use crate::shell::get_root_descriptor;
-
-        let root = match get_root_descriptor() {
-            Some(d) => d,
-            None => return true,
-        };
 
         for redirect in redirects {
             match redirect {
                 Redirect::Out(w) => {
                     let expanded = self.expand_word(w);
                     let path = self.resolve_path(&expanded);
-                    let rel = path.trim_start_matches('/');
-                    match root.open_at(
-                        PathFlags::SYMLINK_FOLLOW, rel,
-                        OpenFlags::CREATE | OpenFlags::TRUNCATE, DescriptorFlags::WRITE,
-                    ) {
-                        Ok(desc) => match desc.write_via_stream(0) {
-                            Ok(stream) => *stdout = Some(stream),
-                            Err(_) => { io::write_stderr(&format!("msh: {}: cannot open for writing\n", expanded)); return false; }
-                        },
-                        Err(_) => { io::write_stderr(&format!("msh: {}: No such file or directory\n", expanded)); return false; }
+                    match self.rt.open_file_write(&path, false) {
+                        Some(h) => *stdout = Some(h),
+                        None => {
+                            self.rt.write_stderr(&format!("msh: {}: cannot open for writing\n", expanded));
+                            return false;
+                        }
                     }
                 }
                 Redirect::OutAppend(w) => {
                     let expanded = self.expand_word(w);
                     let path = self.resolve_path(&expanded);
-                    let rel = path.trim_start_matches('/');
-                    match root.open_at(
-                        PathFlags::SYMLINK_FOLLOW, rel,
-                        OpenFlags::CREATE, DescriptorFlags::WRITE,
-                    ) {
-                        Ok(desc) => match desc.append_via_stream() {
-                            Ok(stream) => *stdout = Some(stream),
-                            Err(_) => { io::write_stderr(&format!("msh: {}: cannot open for appending\n", expanded)); return false; }
-                        },
-                        Err(_) => { io::write_stderr(&format!("msh: {}: No such file or directory\n", expanded)); return false; }
+                    match self.rt.open_file_write(&path, true) {
+                        Some(h) => *stdout = Some(h),
+                        None => {
+                            self.rt.write_stderr(&format!("msh: {}: cannot open for appending\n", expanded));
+                            return false;
+                        }
                     }
                 }
                 Redirect::In(w) => {
                     let expanded = self.expand_word(w);
                     let path = self.resolve_path(&expanded);
-                    let rel = path.trim_start_matches('/');
-                    match root.open_at(
-                        PathFlags::SYMLINK_FOLLOW, rel,
-                        OpenFlags::empty(), DescriptorFlags::READ,
-                    ) {
-                        Ok(desc) => match desc.read_via_stream(0) {
-                            Ok(stream) => *stdin = Some(stream),
-                            Err(_) => { io::write_stderr(&format!("msh: {}: cannot open for reading\n", expanded)); return false; }
-                        },
-                        Err(_) => { io::write_stderr(&format!("msh: {}: No such file or directory\n", expanded)); return false; }
+                    match self.rt.open_file_read(&path) {
+                        Some(h) => *stdin = Some(h),
+                        None => {
+                            self.rt.write_stderr(&format!("msh: {}: No such file or directory\n", expanded));
+                            return false;
+                        }
                     }
                 }
                 Redirect::Err(w) => {
                     let expanded = self.expand_word(w);
                     let path = self.resolve_path(&expanded);
-                    let rel = path.trim_start_matches('/');
-                    match root.open_at(
-                        PathFlags::SYMLINK_FOLLOW, rel,
-                        OpenFlags::CREATE | OpenFlags::TRUNCATE, DescriptorFlags::WRITE,
-                    ) {
-                        Ok(desc) => match desc.write_via_stream(0) {
-                            Ok(stream) => *stderr = Some(stream),
-                            Err(_) => { io::write_stderr(&format!("msh: {}: cannot open for writing\n", expanded)); return false; }
-                        },
-                        Err(_) => { io::write_stderr(&format!("msh: {}: No such file or directory\n", expanded)); return false; }
+                    match self.rt.open_file_write(&path, false) {
+                        Some(h) => *stderr = Some(h),
+                        None => {
+                            self.rt.write_stderr(&format!("msh: {}: cannot open for writing\n", expanded));
+                            return false;
+                        }
                     }
                 }
                 Redirect::ErrAppend(w) => {
                     let expanded = self.expand_word(w);
                     let path = self.resolve_path(&expanded);
-                    let rel = path.trim_start_matches('/');
-                    match root.open_at(
-                        PathFlags::SYMLINK_FOLLOW, rel,
-                        OpenFlags::CREATE, DescriptorFlags::WRITE,
-                    ) {
-                        Ok(desc) => match desc.append_via_stream() {
-                            Ok(stream) => *stderr = Some(stream),
-                            Err(_) => { io::write_stderr(&format!("msh: {}: cannot open for appending\n", expanded)); return false; }
-                        },
-                        Err(_) => { io::write_stderr(&format!("msh: {}: No such file or directory\n", expanded)); return false; }
+                    match self.rt.open_file_write(&path, true) {
+                        Some(h) => *stderr = Some(h),
+                        None => {
+                            self.rt.write_stderr(&format!("msh: {}: cannot open for appending\n", expanded));
+                            return false;
+                        }
                     }
                 }
                 Redirect::ErrToOut => {
                     if let Some(out) = stdout.as_ref() {
-                        *stderr = Some(proc_manager::dup_output_stream(out));
+                        let duped = self.rt.dup_output(out);
+                        *stderr = Some(duped);
                     }
                 }
                 Redirect::Both(w) => {
                     let expanded = self.expand_word(w);
                     let path = self.resolve_path(&expanded);
-                    let rel = path.trim_start_matches('/');
-                    match root.open_at(
-                        PathFlags::SYMLINK_FOLLOW, rel,
-                        OpenFlags::CREATE | OpenFlags::TRUNCATE, DescriptorFlags::WRITE,
-                    ) {
-                        Ok(desc) => match desc.write_via_stream(0) {
-                            Ok(stream) => {
-                                let dup = proc_manager::dup_output_stream(&stream);
-                                *stdout = Some(stream);
-                                *stderr = Some(dup);
-                            },
-                            Err(_) => { io::write_stderr(&format!("msh: {}: cannot open for writing\n", expanded)); return false; }
-                        },
-                        Err(_) => { io::write_stderr(&format!("msh: {}: No such file or directory\n", expanded)); return false; }
+                    match self.rt.open_file_write(&path, false) {
+                        Some(h) => {
+                            let dup = self.rt.dup_output(&h);
+                            *stdout = Some(h);
+                            *stderr = Some(dup);
+                        }
+                        None => {
+                            self.rt.write_stderr(&format!("msh: {}: cannot open for writing\n", expanded));
+                            return false;
+                        }
                     }
                 }
                 Redirect::HereString(w) => {
                     let content = self.expand_word(w);
                     let mut bytes = content.into_bytes();
                     bytes.push(b'\n');
-                    let (inp, out) = proc_manager::create_pipe();
-                    let _ = out.blocking_write_and_flush(&bytes);
-                    drop(out);
+                    let (inp, out) = self.rt.create_pipe();
+                    self.rt.pipe_write(&out, &bytes);
+                    self.rt.pipe_close_write(out);
                     *stdin = Some(inp);
                 }
             }

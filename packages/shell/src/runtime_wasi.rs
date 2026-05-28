@@ -222,6 +222,28 @@ impl ProcessMgr for WasiRuntime {
         buf
     }
 
+    fn pipe_read_line(&mut self, handle: &InputHandle) -> Option<String> {
+        let stream = self.inputs[handle.0 as usize].as_ref()?;
+        let mut buf = Vec::new();
+        loop {
+            match stream.blocking_read(1) {
+                Ok(bytes) if bytes.is_empty() => break,
+                Ok(bytes) => {
+                    buf.extend_from_slice(&bytes);
+                    if bytes.last() == Some(&b'\n') {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        if buf.is_empty() {
+            None
+        } else {
+            Some(String::from_utf8_lossy(&buf).trim_end_matches('\n').to_string())
+        }
+    }
+
     fn pipe_write(&mut self, handle: &OutputHandle, data: &[u8]) {
         if let Some(stream) = self.outputs[handle.0 as usize].as_ref() {
             let _ = stream.blocking_write_and_flush(data);

@@ -1,4 +1,4 @@
-use crate::bindings::mithic::process::types::Process;
+use crate::runtime::ProcessHandle;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum JobStatus {
@@ -12,7 +12,7 @@ pub struct Job {
     pub pids: Vec<u32>,
     pub command: String,
     pub status: JobStatus,
-    pub processes: Vec<Process>,
+    pub processes: Vec<ProcessHandle>,
 }
 
 pub struct JobTable {
@@ -25,9 +25,8 @@ impl JobTable {
         JobTable { jobs: Vec::new(), current: None }
     }
 
-    pub fn add(&mut self, processes: Vec<Process>, command: String) -> usize {
+    pub fn add(&mut self, processes: Vec<ProcessHandle>, pids: Vec<u32>, command: String) -> usize {
         let id = self.next_id();
-        let pids: Vec<u32> = processes.iter().map(|p| p.pid()).collect();
         let job = Job {
             id,
             pids,
