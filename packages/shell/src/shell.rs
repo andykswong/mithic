@@ -15,13 +15,13 @@ use crate::value::ShellValue;
 use crate::jobs::{JobTable, JobStatus};
 
 pub struct Shell {
-    env: HashMap<String, ShellValue>,
+    pub(crate) env: HashMap<String, ShellValue>,
     cwd: String,
-    last_exit: u8,
+    pub(crate) last_exit: u8,
     is_interactive: bool,
-    exit_requested: bool,
+    pub(crate) exit_requested: bool,
     reader: LineReader,
-    functions: HashMap<String, Command>,
+    pub(crate) functions: HashMap<String, Command>,
     break_depth: usize,
     continue_depth: usize,
     return_requested: bool,
@@ -29,9 +29,9 @@ pub struct Shell {
     in_function_depth: usize,
     procsub_counter: u64,
     procsub_paths: Vec<String>,
-    jobs: JobTable,
+    pub(crate) jobs: JobTable,
     traps: HashMap<String, String>,
-    foreground_pids: Vec<u32>,
+    pub(crate) foreground_pids: Vec<u32>,
 }
 
 impl Shell {
@@ -171,230 +171,7 @@ impl Shell {
         exit
     }
 
-    fn exec_pipeline_background(&mut self, pipeline: Pipeline) {
-        let cmds = pipeline.commands;
-        let n = cmds.len();
-        if n == 0 { return; }
-
-        if n == 1 {
-            let cmd = cmds.into_iter().next().unwrap();
-            match cmd {
-                Command::Simple(sc) => {
-                    let args: Vec<String> = sc.words.iter()
-                        .flat_map(|w| self.expand_word_to_args(w))
-                        .collect();
-                    if args.is_empty() { return; }
-                    let name = args[0].clone();
-                    let display = args.join(" ");
-
-                    if Self::is_builtin(&name) || self.functions.contains_key(&name) {
-                        self.dispatch_simple(sc, None, None, None);
-                        return;
-                    }
-
-                    let mut stdin_opt: Option<InputStream> = None;
-                    let mut stdout_opt: Option<OutputStream> = None;
-                    let mut stderr_opt: Option<OutputStream> = None;
-                    if !self.apply_redirects(&sc.redirects, &mut stdin_opt, &mut stdout_opt, &mut stderr_opt) {
-                        return;
-                    }
-
-                    let env_list = self.env_list();
-                    let opts = SpawnOptions {
-                        cwd: None,
-                        env: Some(env_list),
-                        stdin: stdin_opt,
-                        stdout: stdout_opt,
-                        stderr: stderr_opt,
-                    };
-                    match proc_manager::spawn(&name, &args[1..], Some(opts)) {
-                        Ok(proc) => {
-                            let pid = proc.pid();
-                            let job_id = self.jobs.add(vec![proc], display);
-                            io::write_stderr(&format!("[{}] {}\n", job_id, pid));
-                            self.env.insert("!".to_string(), ShellValue::Scalar(pid.to_string()));
-                        }
-                        Err(_) => {
-                            io::write_stderr(&format!("msh: {}: command not found\n", name));
-                        }
-                    }
-                }
-                other => { self.exec_compound(other); }
-            }
-        } else {
-            let mut pipe_read_ends: Vec<Option<InputStream>> = Vec::with_capacity(n);
-            let mut pipe_write_ends: Vec<Option<OutputStream>> = Vec::with_capacity(n);
-            pipe_read_ends.push(None);
-            for _ in 0..n - 1 {
-                let (inp, out) = proc_manager::create_pipe();
-                pipe_read_ends.push(Some(inp));
-                pipe_write_ends.push(Some(out));
-            }
-            pipe_write_ends.push(None);
-
-            let env_list = self.env_list();
-            let mut processes: Vec<crate::bindings::mithic::process::types::Process> = Vec::new();
-            let mut display_parts: Vec<String> = Vec::new();
-
-            for (i, command) in cmds.into_iter().enumerate() {
-                let cmd = match command {
-                    Command::Simple(sc) => sc,
-                    _ => continue,
-                };
-                let mut stdin_opt = pipe_read_ends[i].take();
-                let mut stdout_opt = pipe_write_ends[i].take();
-                let args: Vec<String> = cmd.words.iter()
-                    .flat_map(|w| self.expand_word_to_args(w))
-                    .collect();
-                if args.is_empty() { continue; }
-                let name = args[0].clone();
-                display_parts.push(args.join(" "));
-                let mut stderr_opt: Option<OutputStream> = None;
-                if !self.apply_redirects(&cmd.redirects, &mut stdin_opt, &mut stdout_opt, &mut stderr_opt) {
-                    continue;
-                }
-                let opts = SpawnOptions {
-                    cwd: None,
-                    env: Some(env_list.clone()),
-                    stdin: stdin_opt,
-                    stdout: stdout_opt,
-                    stderr: stderr_opt,
-                };
-                match proc_manager::spawn(&name, &args[1..], Some(opts)) {
-                    Ok(proc) => processes.push(proc),
-                    Err(_) => {
-                        io::write_stderr(&format!("msh: {}: command not found\n", name));
-                    }
-                }
-            }
-
-            if !processes.is_empty() {
-                let last_pid = processes.last().map(|p| p.pid()).unwrap_or(0);
-                let display = display_parts.join(" | ");
-                let job_id = self.jobs.add(processes, display);
-                io::write_stderr(&format!("[{}] {}\n", job_id, last_pid));
-                self.env.insert("!".to_string(), ShellValue::Scalar(last_pid.to_string()));
-            }
-        }
-    }
-
-    fn exec_pipeline(&mut self, pipeline: Pipeline) -> u8 {
-        let cmds = pipeline.commands;
-        let n = cmds.len();
-
-        if n == 0 {
-            return 0;
-        }
-
-        if n == 1 {
-            let cmd = cmds.into_iter().next().unwrap();
-            let exit = match cmd {
-                Command::Simple(sc) => self.dispatch_simple(sc, None, None, None),
-                other => self.exec_compound(other),
-            };
-            return if pipeline.negate { if exit == 0 { 1 } else { 0 } } else { exit };
-        }
-
-        // Multi-command pipeline: create N-1 pipes.
-        // pipes[i] = (read_end, write_end) connecting stage i to stage i+1.
-        let mut pipe_read_ends: Vec<Option<InputStream>> = Vec::with_capacity(n);
-        let mut pipe_write_ends: Vec<Option<OutputStream>> = Vec::with_capacity(n);
-
-        // Stage 0 has no upstream pipe read end.
-        pipe_read_ends.push(None);
-        // Stage n-1 has no downstream pipe write end.
-        for _ in 0..n - 1 {
-            let (inp, out) = proc_manager::create_pipe();
-            pipe_read_ends.push(Some(inp));   // read end for stage i+1
-            pipe_write_ends.push(Some(out));  // write end for stage i
-        }
-        pipe_write_ends.push(None); // last stage writes to shell stdout
-
-        let env_list = self.env_list();
-
-        let mut processes: Vec<crate::bindings::mithic::process::types::Process> = Vec::new();
-        let mut last_builtin_exit: Option<u8> = None;
-
-        for (i, command) in cmds.into_iter().enumerate() {
-            let cmd = match command {
-                Command::Simple(sc) => sc,
-                other => {
-                    let exit = self.exec_compound(other);
-                    if i == n - 1 { last_builtin_exit = Some(exit); }
-                    continue;
-                }
-            };
-            let mut stdin_opt = pipe_read_ends[i].take();
-            let mut stdout_opt = pipe_write_ends[i].take();
-
-            let args: Vec<String> = cmd.words.iter()
-                .flat_map(|w| self.expand_word_to_args(w))
-                .collect();
-            let mut stderr_opt: Option<OutputStream> = None;
-            if !self.apply_redirects(&cmd.redirects, &mut stdin_opt, &mut stdout_opt, &mut stderr_opt) {
-                for p in processes { let _ = p.wait(); }
-                return if pipeline.negate { 0 } else { 1 };
-            }
-
-            if args.is_empty() {
-                continue;
-            }
-
-            let name = args[0].clone();
-            if let Some(body) = self.functions.get(&name).cloned() {
-                let exit = self.exec_function_call(&args[1..], body);
-                if i == n - 1 {
-                    last_builtin_exit = Some(exit);
-                }
-            } else if Self::is_builtin(&name) {
-                let exit = self.exec_builtin(&name, &args[1..], stdin_opt, stdout_opt);
-                if self.exit_requested {
-                    for p in processes { let _ = p.wait(); }
-                    return exit;
-                }
-                if i == n - 1 {
-                    last_builtin_exit = Some(exit);
-                }
-            } else {
-                let opts = SpawnOptions {
-                    cwd: None, // inherit; cwd is a Descriptor in WIT, we propagate env instead
-                    env: Some(env_list.clone()),
-                    stdin: stdin_opt,
-                    stdout: stdout_opt,
-                    stderr: stderr_opt,
-                };
-                match proc_manager::spawn(&name, &args[1..], Some(opts)) {
-                    Ok(proc) => processes.push(proc),
-                    Err(_) => {
-                        io::write_stderr(&format!("msh: {}: command not found\n", name));
-                        for p in processes { let _ = p.wait(); }
-                        return if pipeline.negate { 0 } else { 127 };
-                    }
-                }
-            }
-        }
-
-        self.foreground_pids = processes.iter().map(|p| p.pid()).collect();
-
-        let last_proc = processes.pop();
-        for p in processes { let _ = p.wait(); }
-        let exit = if let Some(p) = last_proc {
-            p.wait() as u8
-        } else {
-            last_builtin_exit.unwrap_or(self.last_exit)
-        };
-
-        self.foreground_pids.clear();
-        if exit >= 128 {
-            let sig_name = signal_name_from_num(exit - 128);
-            if !sig_name.is_empty() {
-                self.run_trap(sig_name);
-            }
-        }
-        if pipeline.negate { if exit == 0 { 1 } else { 0 } } else { exit }
-    }
-
-    fn dispatch_simple(
+    pub(crate) fn dispatch_simple(
         &mut self,
         cmd: SimpleCommand,
         mut stdin: Option<InputStream>,
@@ -504,7 +281,7 @@ impl Shell {
         None
     }
 
-    fn is_builtin(name: &str) -> bool {
+    pub(crate) fn is_builtin(name: &str) -> bool {
         matches!(name,
             "exit" | "echo" | "pwd" | "cd" | "export" | "unset" |
             "env" | "true" | "false" | "break" | "continue" |
@@ -514,7 +291,7 @@ impl Shell {
         )
     }
 
-    fn exec_builtin(
+    pub(crate) fn exec_builtin(
         &mut self,
         name: &str,
         args: &[String],
@@ -1059,7 +836,7 @@ impl Shell {
         }
     }
 
-    fn run_trap(&mut self, signal: &str) {
+    pub(crate) fn run_trap(&mut self, signal: &str) {
         if let Some(handler) = self.traps.get(signal).cloned() {
             if !handler.is_empty() {
                 let mut parser = Parser::new(&handler);
@@ -1085,7 +862,7 @@ impl Shell {
         }
     }
 
-    fn env_list(&self) -> Vec<(String, String)> {
+    pub(crate) fn env_list(&self) -> Vec<(String, String)> {
         self.env.iter().map(|(k, v)| (k.clone(), v.as_scalar().to_string())).collect()
     }
 
@@ -1105,7 +882,7 @@ impl Shell {
         parts.iter().map(|p| self.expand_part(p)).collect()
     }
 
-    fn expand_word_to_args(&mut self, w: &Word) -> Vec<String> {
+    pub(crate) fn expand_word_to_args(&mut self, w: &Word) -> Vec<String> {
         // Special case: a word that is just ${arr[@]}, ${arr[*]}, $@, or $* should expand
         // to multiple words rather than a single space-joined string.
         if let Some(elements) = self.try_expand_array_all(w) {
@@ -1511,7 +1288,7 @@ impl Shell {
         vec![pattern.to_string()]
     }
 
-    fn exec_compound(&mut self, cmd: Command) -> u8 {
+    pub(crate) fn exec_compound(&mut self, cmd: Command) -> u8 {
         match cmd {
             Command::Simple(sc) => self.dispatch_simple(sc, None, None, None),
             Command::If(ic) => self.exec_if(ic),
@@ -1663,7 +1440,7 @@ impl Shell {
         0
     }
 
-    fn exec_function_call(&mut self, args: &[String], body: Command) -> u8 {
+    pub(crate) fn exec_function_call(&mut self, args: &[String], body: Command) -> u8 {
         let old_hash = self.env.get("#").map(|v| v.as_scalar().to_string());
         let old_at = self.env.get("@").map(|v| v.as_scalar().to_string());
         let mut old_positional: Vec<(String, Option<String>)> = Vec::new();
@@ -2005,7 +1782,7 @@ pub(crate) fn get_root_descriptor() -> Option<crate::bindings::wasi::filesystem:
     preopens::get_directories().into_iter().find(|(_, p)| p == "/").map(|(d, _)| d)
 }
 
-fn signal_name_from_num(num: u8) -> &'static str {
+pub(crate) fn signal_name_from_num(num: u8) -> &'static str {
     match num {
         2 => "INT",
         9 => "KILL",
