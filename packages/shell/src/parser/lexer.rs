@@ -40,6 +40,8 @@ pub enum Token {
     LParen,
     /// `)`
     RParen,
+    /// `(( expr ))` — arithmetic command (raw expression content)
+    ArithCommand(String),
     /// `[[`
     DoubleBracketOpen,
     /// `]]`
@@ -136,7 +138,16 @@ impl Lexer {
                     Token::Fd2Gt
                 }
             }
-            Some('(') => { self.advance(); Token::LParen }
+            Some('(') => {
+                if self.peek2() == Some('(') {
+                    self.advance(); self.advance(); // consume ((
+                    let expr = self.read_until_double_close_paren();
+                    Token::ArithCommand(expr)
+                } else {
+                    self.advance();
+                    Token::LParen
+                }
+            }
             Some(')') => { self.advance(); Token::RParen }
             Some('[') if self.peek2() == Some('[') => {
                 // Only emit DoubleBracketOpen if what follows the [[ is whitespace/EOF
@@ -362,6 +373,27 @@ impl Lexer {
             }
         }
         s
+    }
+
+    fn read_until_double_close_paren(&mut self) -> String {
+        let mut s = String::new();
+        let mut depth = 0usize;
+        loop {
+            match self.peek() {
+                None => break,
+                Some('(') => { depth += 1; s.push('('); self.advance(); }
+                Some(')') if depth > 0 => { depth -= 1; s.push(')'); self.advance(); }
+                Some(')') => {
+                    if self.chars.get(self.pos + 1) == Some(&')') {
+                        self.advance(); self.advance(); // consume ))
+                        break;
+                    }
+                    s.push(')'); self.advance();
+                }
+                Some(c) => { s.push(c); self.advance(); }
+            }
+        }
+        s.trim().to_string()
     }
 
     fn read_arith_expr(&mut self) -> String {
@@ -634,6 +666,27 @@ mod tests {
             word(vec![lit("foo")]),
             Token::LParen,
             Token::RParen,
+        ]);
+    }
+
+    #[test]
+    fn test_arith_command() {
+        assert_eq!(lex("(( x + 1 ))"), vec![
+            Token::ArithCommand("x + 1".into()),
+        ]);
+    }
+
+    #[test]
+    fn test_arith_command_nested_parens() {
+        assert_eq!(lex("(( (3+4) * 2 ))"), vec![
+            Token::ArithCommand("(3+4) * 2".into()),
+        ]);
+    }
+
+    #[test]
+    fn test_arith_command_assign() {
+        assert_eq!(lex("(( x = 5 + 3 ))"), vec![
+            Token::ArithCommand("x = 5 + 3".into()),
         ]);
     }
 }

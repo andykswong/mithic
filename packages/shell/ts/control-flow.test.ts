@@ -349,3 +349,25 @@ describe('arithmetic expansion', () => {
     assert.strictEqual(stdout.trim(), '42');
   });
 });
+
+describe('(( )) arithmetic command', () => {
+  it('exit 0 when result is non-zero (truthy)', async () => {
+    const { stdout } = await runShell('(( 5 > 3 ))\necho $?\n');
+    assert.strictEqual(stdout.trim(), '0');
+  });
+
+  it('exit 1 when result is 0 (falsy)', async () => {
+    const { stdout } = await runShell('(( 0 ))\necho $?\n');
+    assert.strictEqual(stdout.trim(), '1');
+  });
+
+  it('assigns variables', async () => {
+    const { stdout } = await runShell('(( x = 5 + 3 ))\necho $x\n');
+    assert.strictEqual(stdout.trim(), '8');
+  });
+
+  it('works in while loops', async () => {
+    const { stdout } = await runShell('export i=0\nwhile (( i < 3 )); do\necho $i\n(( i = i + 1 ))\ndone\n');
+    assert.strictEqual(stdout.trim(), '0\n1\n2');
+  });
+});

@@ -113,6 +113,10 @@ impl Parser {
         if matches!(self.peek(), Token::DoubleBracketOpen) {
             return self.parse_double_bracket();
         }
+        if let Token::ArithCommand(expr) = self.peek().clone() {
+            self.advance();
+            return Command::Arithmetic(expr);
+        }
         if matches!(self.peek(), Token::LParen) {
             return Command::Subshell(self.parse_subshell());
         }

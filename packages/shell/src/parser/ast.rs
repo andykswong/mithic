@@ -69,6 +69,8 @@ pub enum Command {
     Subshell(List),
     /// `arr=(a b c)` or `arr+=(x y)` — array assignment
     ArrayAssign(ArrayAssign),
+    /// `(( expr ))` — arithmetic command
+    Arithmetic(String),
 }
 
 /// Array assignment: `name=(elements)` or `name+=(elements)`.

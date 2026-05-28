@@ -833,6 +833,11 @@ impl Shell {
             Command::Group(list) => self.exec_list(list),
             Command::Subshell(list) => self.exec_list(list),
             Command::ArrayAssign(aa) => self.exec_array_assign(aa),
+            Command::Arithmetic(expr) => {
+                let result_str = self.eval_arithmetic(&expr);
+                let n: i64 = result_str.parse().unwrap_or(0);
+                if n != 0 { 0 } else { 1 }
+            }
         }
     }
 
