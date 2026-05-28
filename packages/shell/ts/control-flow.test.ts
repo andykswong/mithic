@@ -371,3 +371,50 @@ describe('(( )) arithmetic command', () => {
     assert.strictEqual(stdout.trim(), '0\n1\n2');
   });
 });
+
+describe('extended parameter expansion', () => {
+  it('${VAR#prefix} removes shortest prefix', async () => {
+    const { stdout } = await runShell('export x=hello_world\necho ${x#hell}\n');
+    assert.strictEqual(stdout.trim(), 'o_world');
+  });
+
+  it('${VAR##prefix} removes longest prefix (glob)', async () => {
+    const { stdout } = await runShell('export x="/a/b/c/file.txt"\necho ${x##*/}\n');
+    assert.strictEqual(stdout.trim(), 'file.txt');
+  });
+
+  it('${VAR%suffix} removes shortest suffix', async () => {
+    const { stdout } = await runShell('export x=hello_world\necho ${x%orld}\n');
+    assert.strictEqual(stdout.trim(), 'hello_w');
+  });
+
+  it('${VAR%%suffix} removes longest suffix (glob)', async () => {
+    const { stdout } = await runShell('export x="a/b/c/file.txt"\necho ${x%%/*}\n');
+    assert.strictEqual(stdout.trim(), 'a');
+  });
+
+  it('${VAR/pat/rep} replaces first occurrence', async () => {
+    const { stdout } = await runShell('export x=hello\necho ${x/l/L}\n');
+    assert.strictEqual(stdout.trim(), 'heLlo');
+  });
+
+  it('${VAR//pat/rep} replaces all occurrences', async () => {
+    const { stdout } = await runShell('export x=hello\necho ${x//l/L}\n');
+    assert.strictEqual(stdout.trim(), 'heLLo');
+  });
+
+  it('${VAR:offset} substring from offset', async () => {
+    const { stdout } = await runShell('export x=hello_world\necho ${x:6}\n');
+    assert.strictEqual(stdout.trim(), 'world');
+  });
+
+  it('${VAR:offset:length} substring with length', async () => {
+    const { stdout } = await runShell('export x=hello_world\necho ${x:0:5}\n');
+    assert.strictEqual(stdout.trim(), 'hello');
+  });
+
+  it('${VAR/pat/} removes pattern (empty replacement)', async () => {
+    const { stdout } = await runShell('export x=hello\necho ${x/l/}\n');
+    assert.strictEqual(stdout.trim(), 'helo');
+  });
+});

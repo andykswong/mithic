@@ -732,13 +732,71 @@ impl Shell {
             };
         }
 
-        if let Some((name, rest)) = raw.split_once(":-") {
-            let val = self.expand_var(name);
-            if val.is_empty() { rest.to_string() } else { val }
-        } else if let Some((name, alt)) = raw.split_once(":+") {
-            let val = self.expand_var(name);
-            if val.is_empty() { String::new() } else { alt.to_string() }
+        // Split into variable name and operator+pattern
+        let (var_name, op_and_rest) = split_var_and_op(raw);
+
+        // ${VAR//pat/rep} — replace all occurrences (check before single /)
+        if let Some(pat_rep) = op_and_rest.strip_prefix("//") {
+            let val = self.expand_var(var_name);
+            let (pat, rep) = pat_rep.split_once('/').unwrap_or((pat_rep, ""));
+            return val.replace(pat, rep);
+        }
+
+        // ${VAR/pat/rep} — replace first occurrence
+        if let Some(pat_rep) = op_and_rest.strip_prefix('/') {
+            let val = self.expand_var(var_name);
+            let (pat, rep) = pat_rep.split_once('/').unwrap_or((pat_rep, ""));
+            return val.replacen(pat, rep, 1);
+        }
+
+        // ${VAR##pat} — remove longest matching prefix (check before single #)
+        if let Some(pat) = op_and_rest.strip_prefix("##") {
+            let val = self.expand_var(var_name);
+            return remove_longest_prefix(&val, pat);
+        }
+
+        // ${VAR#pat} — remove shortest matching prefix
+        if let Some(pat) = op_and_rest.strip_prefix('#') {
+            let val = self.expand_var(var_name);
+            return remove_shortest_prefix(&val, pat);
+        }
+
+        // ${VAR%%pat} — remove longest matching suffix (check before single %)
+        if let Some(pat) = op_and_rest.strip_prefix("%%") {
+            let val = self.expand_var(var_name);
+            return remove_longest_suffix(&val, pat);
+        }
+
+        // ${VAR%pat} — remove shortest matching suffix
+        if let Some(pat) = op_and_rest.strip_prefix('%') {
+            let val = self.expand_var(var_name);
+            return remove_shortest_suffix(&val, pat);
+        }
+
+        // ${VAR:...} — substring or default/alternate
+        if let Some(colon_rest) = op_and_rest.strip_prefix(':') {
+            // ${VAR:-default} — default if empty
+            if let Some(default) = colon_rest.strip_prefix('-') {
+                let val = self.expand_var(var_name);
+                return if val.is_empty() { default.to_string() } else { val };
+            }
+            // ${VAR:+alt} — alternate if not empty
+            if let Some(alt) = colon_rest.strip_prefix('+') {
+                let val = self.expand_var(var_name);
+                return if val.is_empty() { String::new() } else { alt.to_string() };
+            }
+            // ${VAR:offset} or ${VAR:offset:length} — substring (digit or minus sign)
+            if colon_rest.starts_with(|c: char| c.is_ascii_digit() || c == '-') {
+                let val = self.expand_var(var_name);
+                return shell_substring(&val, colon_rest);
+            }
+        }
+
+        // Plain ${VAR} — but use raw if var_name is empty (shouldn't happen) or op is empty
+        if op_and_rest.is_empty() {
+            self.expand_var(var_name)
         } else {
+            // Fallback: treat entire raw as a variable name
             self.expand_var(raw)
         }
     }
@@ -1461,6 +1519,82 @@ fn literal_text(word: &Word) -> Option<String> {
 }
 
 /// Parse `name[subscript]` from a string; returns `(name, subscript)` or `None`.
+fn split_var_and_op(raw: &str) -> (&str, &str) {
+    let end = raw.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(raw.len());
+    (&raw[..end], &raw[end..])
+}
+
+fn remove_shortest_prefix(val: &str, pattern: &str) -> String {
+    for i in 0..=val.len() {
+        if !val.is_char_boundary(i) { continue; }
+        if glob_match(pattern, &val[..i]) {
+            return val[i..].to_string();
+        }
+    }
+    val.to_string()
+}
+
+fn remove_longest_prefix(val: &str, pattern: &str) -> String {
+    for i in (0..=val.len()).rev() {
+        if !val.is_char_boundary(i) { continue; }
+        if glob_match(pattern, &val[..i]) {
+            return val[i..].to_string();
+        }
+    }
+    val.to_string()
+}
+
+fn remove_shortest_suffix(val: &str, pattern: &str) -> String {
+    for i in (0..=val.len()).rev() {
+        if !val.is_char_boundary(i) { continue; }
+        if glob_match(pattern, &val[i..]) {
+            return val[..i].to_string();
+        }
+    }
+    val.to_string()
+}
+
+fn remove_longest_suffix(val: &str, pattern: &str) -> String {
+    for i in 0..=val.len() {
+        if !val.is_char_boundary(i) { continue; }
+        if glob_match(pattern, &val[i..]) {
+            return val[..i].to_string();
+        }
+    }
+    val.to_string()
+}
+
+fn shell_substring(val: &str, spec: &str) -> String {
+    let chars: Vec<char> = val.chars().collect();
+    let len = chars.len() as i64;
+
+    let (offset_str, length_str) = match spec.split_once(':') {
+        Some((o, l)) => (o, Some(l)),
+        None => (spec, None),
+    };
+
+    let offset: i64 = offset_str.parse().unwrap_or(0);
+    let start = if offset < 0 {
+        (len + offset).max(0) as usize
+    } else {
+        (offset as usize).min(chars.len())
+    };
+
+    let end = if let Some(l) = length_str {
+        let length: i64 = l.parse().unwrap_or(0);
+        if length < 0 {
+            let end_pos = len + length;
+            (end_pos.max(0) as usize).min(chars.len())
+        } else {
+            (start + length as usize).min(chars.len())
+        }
+    } else {
+        chars.len()
+    };
+
+    chars[start.min(end)..end].iter().collect()
+}
+
 fn parse_array_subscript(s: &str) -> Option<(&str, &str)> {
     let open = s.find('[')?;
     let close = s.rfind(']')?;
