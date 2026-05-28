@@ -185,7 +185,8 @@ impl Parser {
         };
 
         self.expect_keyword("fi");
-        IfCommand { condition, then_body, elifs, else_body }
+        let redirects = self.parse_redirects();
+        IfCommand { condition, then_body, elifs, else_body, redirects }
     }
 
     fn parse_while(&mut self) -> WhileCommand {
@@ -196,7 +197,8 @@ impl Parser {
         self.skip_terminators();
         let body = self.parse_compound_list_until(&["done"]);
         self.expect_keyword("done");
-        WhileCommand { condition, body }
+        let redirects = self.parse_redirects();
+        WhileCommand { condition, body, redirects }
     }
 
     fn parse_until(&mut self) -> WhileCommand {
@@ -207,7 +209,8 @@ impl Parser {
         self.skip_terminators();
         let body = self.parse_compound_list_until(&["done"]);
         self.expect_keyword("done");
-        WhileCommand { condition, body }
+        let redirects = self.parse_redirects();
+        WhileCommand { condition, body, redirects }
     }
 
     fn parse_for(&mut self) -> ForCommand {
@@ -249,7 +252,8 @@ impl Parser {
         self.skip_terminators();
         let body = self.parse_compound_list_until(&["done"]);
         self.expect_keyword("done");
-        ForCommand { var, words, body }
+        let redirects = self.parse_redirects();
+        ForCommand { var, words, body, redirects }
     }
 
     fn parse_case(&mut self) -> CaseCommand {
@@ -291,7 +295,8 @@ impl Parser {
         }
 
         self.expect_keyword("esac");
-        CaseCommand { word, arms }
+        let redirects = self.parse_redirects();
+        CaseCommand { word, arms, redirects }
     }
 
     fn parse_case_body(&mut self) -> List {
@@ -562,6 +567,56 @@ impl Parser {
         }
 
         SimpleCommand { words, redirects }
+    }
+
+    /// Parse any trailing redirections (used after compound command closing keywords).
+    fn parse_redirects(&mut self) -> Vec<Redirect> {
+        let mut redirects = Vec::new();
+        loop {
+            match self.peek() {
+                Token::Gt => {
+                    self.advance();
+                    let w = self.parse_word_required();
+                    redirects.push(Redirect::Out(w));
+                }
+                Token::GtGt => {
+                    self.advance();
+                    let w = self.parse_word_required();
+                    redirects.push(Redirect::OutAppend(w));
+                }
+                Token::Lt => {
+                    self.advance();
+                    let w = self.parse_word_required();
+                    redirects.push(Redirect::In(w));
+                }
+                Token::Fd2Gt => {
+                    self.advance();
+                    let w = self.parse_word_required();
+                    redirects.push(Redirect::Err(w));
+                }
+                Token::Fd2GtGt => {
+                    self.advance();
+                    let w = self.parse_word_required();
+                    redirects.push(Redirect::ErrAppend(w));
+                }
+                Token::Fd2GtAmp1 => {
+                    self.advance();
+                    redirects.push(Redirect::ErrToOut);
+                }
+                Token::AmpGt => {
+                    self.advance();
+                    let w = self.parse_word_required();
+                    redirects.push(Redirect::Both(w));
+                }
+                Token::HereString => {
+                    self.advance();
+                    let w = self.parse_word_required();
+                    redirects.push(Redirect::HereString(w));
+                }
+                _ => break,
+            }
+        }
+        redirects
     }
 
     fn parse_word_required(&mut self) -> Word {

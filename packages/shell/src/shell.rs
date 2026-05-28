@@ -858,6 +858,42 @@ impl Shell {
         vec![pattern.to_string()]
     }
 
+    /// Execute a list, applying the given redirects. On the non-test path, if redirects include
+    /// a stdout redirect, the body is executed with `exec_list_with_stdout`. Otherwise falls back
+    /// to `exec_list`. On the test path, redirects are ignored.
+    ///
+    /// When `reuse_stdout` is `Some`, that stream is duped rather than opening a new file; this
+    /// is used by loop bodies where the redirect is opened once and shared across iterations.
+    #[cfg(not(test))]
+    pub(crate) fn exec_list_redirected(
+        &mut self,
+        list: List,
+        redirects: &[crate::parser::Redirect],
+    ) -> u8 {
+        if redirects.is_empty() {
+            return self.exec_list(list);
+        }
+        let mut stdin_opt: Option<crate::bindings::mithic::process::types::InputStream> = None;
+        let mut stdout_opt: Option<crate::bindings::mithic::process::types::OutputStream> = None;
+        let mut stderr_opt: Option<crate::bindings::mithic::process::types::OutputStream> = None;
+        if !self.apply_redirects(redirects, &mut stdin_opt, &mut stdout_opt, &mut stderr_opt) {
+            return 1;
+        }
+        match stdout_opt {
+            Some(out) => self.exec_list_with_stdout(list, out),
+            None => self.exec_list(list),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn exec_list_redirected(
+        &mut self,
+        list: List,
+        _redirects: &[crate::parser::Redirect],
+    ) -> u8 {
+        self.exec_list(list)
+    }
+
     pub(crate) fn exec_compound(&mut self, cmd: Command) -> u8 {
         match cmd {
             Command::Simple(sc) => self.dispatch_simple(sc, None, None, None),
@@ -881,6 +917,7 @@ impl Shell {
         }
     }
 
+
     fn exec_array_assign(&mut self, aa: ArrayAssign) -> u8 {
         let elements: Vec<String> = aa.elements.iter()
             .flat_map(|w| self.expand_word_to_args(w))
@@ -903,31 +940,65 @@ impl Shell {
 
     fn exec_if(&mut self, cmd: crate::parser::IfCommand) -> u8 {
         let cond_exit = self.exec_list(cmd.condition);
-        if cond_exit == 0 {
-            return self.exec_list(cmd.then_body);
-        }
-
-        for (elif_cond, elif_body) in cmd.elifs {
-            let elif_exit = self.exec_list(elif_cond);
-            if elif_exit == 0 {
-                return self.exec_list(elif_body);
+        let body = if cond_exit == 0 {
+            Some(cmd.then_body)
+        } else {
+            let mut found = None;
+            for (elif_cond, elif_body) in cmd.elifs {
+                let elif_exit = self.exec_list(elif_cond);
+                if elif_exit == 0 {
+                    found = Some(elif_body);
+                    break;
+                }
             }
+            found.or(cmd.else_body)
+        };
+        match body {
+            Some(list) => self.exec_list_redirected(list, &cmd.redirects),
+            None => cond_exit,
         }
-
-        if let Some(else_body) = cmd.else_body {
-            return self.exec_list(else_body);
-        }
-
-        cond_exit
     }
 
     fn exec_while(&mut self, cmd: crate::parser::WhileCommand) -> u8 {
+        self.exec_while_inner(cmd, false)
+    }
+
+    fn exec_until(&mut self, cmd: crate::parser::WhileCommand) -> u8 {
+        self.exec_while_inner(cmd, true)
+    }
+
+    /// Shared implementation for while/until loops.
+    /// `invert` = true means "until" semantics (loop while condition is *false*).
+    #[cfg(not(test))]
+    fn exec_while_inner(&mut self, cmd: crate::parser::WhileCommand, invert: bool) -> u8 {
+        use crate::bindings::mithic::process::manager as proc_manager;
+
+        // Open redirect streams once before the loop so all iterations share the same file.
+        let loop_stdout = if !cmd.redirects.is_empty() {
+            let mut stdin_opt = None;
+            let mut stdout_opt = None;
+            let mut stderr_opt = None;
+            if !self.apply_redirects(&cmd.redirects, &mut stdin_opt, &mut stdout_opt, &mut stderr_opt) {
+                return 1;
+            }
+            stdout_opt
+        } else {
+            None
+        };
+
         self.in_loop_depth += 1;
         let mut exit = 0u8;
         loop {
             let cond = self.exec_list(cmd.condition.clone());
-            if cond != 0 { break; }
-            exit = self.exec_list(cmd.body.clone());
+            let keep_looping = if invert { cond != 0 } else { cond == 0 };
+            if !keep_looping { break; }
+            exit = match &loop_stdout {
+                Some(out) => {
+                    let duped = proc_manager::dup_output_stream(out);
+                    self.exec_list_with_stdout(cmd.body.clone(), duped)
+                }
+                None => self.exec_list(cmd.body.clone()),
+            };
             if self.exit_requested || self.return_requested { break; }
             if self.break_depth > 0 {
                 self.break_depth -= 1;
@@ -941,12 +1012,14 @@ impl Shell {
         exit
     }
 
-    fn exec_until(&mut self, cmd: crate::parser::WhileCommand) -> u8 {
+    #[cfg(test)]
+    fn exec_while_inner(&mut self, cmd: crate::parser::WhileCommand, invert: bool) -> u8 {
         self.in_loop_depth += 1;
         let mut exit = 0u8;
         loop {
             let cond = self.exec_list(cmd.condition.clone());
-            if cond == 0 { break; }
+            let keep_looping = if invert { cond != 0 } else { cond == 0 };
+            if !keep_looping { break; }
             exit = self.exec_list(cmd.body.clone());
             if self.exit_requested || self.return_requested { break; }
             if self.break_depth > 0 {
@@ -976,11 +1049,70 @@ impl Shell {
             }
         };
 
+        self.exec_for_inner(cmd.var, items, cmd.body, &cmd.redirects)
+    }
+
+    #[cfg(not(test))]
+    fn exec_for_inner(
+        &mut self,
+        var: String,
+        items: Vec<String>,
+        body: List,
+        redirects: &[crate::parser::Redirect],
+    ) -> u8 {
+        use crate::bindings::mithic::process::manager as proc_manager;
+
+        // Open redirect streams once before the loop.
+        let loop_stdout = if !redirects.is_empty() {
+            let mut stdin_opt = None;
+            let mut stdout_opt = None;
+            let mut stderr_opt = None;
+            if !self.apply_redirects(redirects, &mut stdin_opt, &mut stdout_opt, &mut stderr_opt) {
+                return 1;
+            }
+            stdout_opt
+        } else {
+            None
+        };
+
         self.in_loop_depth += 1;
         let mut exit = 0u8;
         for item in items {
-            self.env.insert(cmd.var.clone(), ShellValue::Scalar(item));
-            exit = self.exec_list(cmd.body.clone());
+            self.env.insert(var.clone(), ShellValue::Scalar(item));
+            exit = match &loop_stdout {
+                Some(out) => {
+                    let duped = proc_manager::dup_output_stream(out);
+                    self.exec_list_with_stdout(body.clone(), duped)
+                }
+                None => self.exec_list(body.clone()),
+            };
+            self.last_exit = exit;
+            if self.exit_requested || self.return_requested { break; }
+            if self.break_depth > 0 {
+                self.break_depth -= 1;
+                break;
+            }
+            if self.continue_depth > 0 {
+                self.continue_depth -= 1;
+            }
+        }
+        self.in_loop_depth -= 1;
+        exit
+    }
+
+    #[cfg(test)]
+    fn exec_for_inner(
+        &mut self,
+        var: String,
+        items: Vec<String>,
+        body: List,
+        _redirects: &[crate::parser::Redirect],
+    ) -> u8 {
+        self.in_loop_depth += 1;
+        let mut exit = 0u8;
+        for item in items {
+            self.env.insert(var.clone(), ShellValue::Scalar(item));
+            exit = self.exec_list(body.clone());
             self.last_exit = exit;
             if self.exit_requested || self.return_requested { break; }
             if self.break_depth > 0 {
@@ -1004,7 +1136,7 @@ impl Shell {
                 glob_match(&pattern, &value)
             });
             if matched {
-                return self.exec_list(arm.body);
+                return self.exec_list_redirected(arm.body, &cmd.redirects);
             }
         }
         0

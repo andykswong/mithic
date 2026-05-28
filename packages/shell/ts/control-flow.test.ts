@@ -547,6 +547,23 @@ describe('quoted brace expansion', () => {
   });
 });
 
+describe('compound command redirections', () => {
+  it('if compound redirect via pipe', async () => {
+    const { stdout } = await runShell('if true; then echo hello; echo world; fi | cat\n');
+    assert.strictEqual(stdout.trim(), 'hello\nworld');
+  });
+
+  it('for compound redirect to file', async () => {
+    const { stdout } = await runShell('for i in 1 2 3; do echo $i; done > /tmp/out && cat /tmp/out\n');
+    assert.strictEqual(stdout.trim(), '1\n2\n3');
+  });
+
+  it('while compound redirect', async () => {
+    const { stdout } = await runShell('export i=0; while [[ $i -lt 3 ]]; do echo $i; (( i = i + 1 )); done > /tmp/wout && cat /tmp/wout\n');
+    assert.strictEqual(stdout.trim(), '0\n1\n2');
+  });
+});
+
 describe('declare/local builtins', () => {
   it('declare -a creates empty array', async () => {
     const { stdout } = await runShell('declare -a arr\necho ${#arr[@]}\n');

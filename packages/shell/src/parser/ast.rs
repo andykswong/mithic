@@ -93,12 +93,14 @@ pub struct IfCommand {
     pub then_body: List,
     pub elifs: Vec<(List, List)>,
     pub else_body: Option<List>,
+    pub redirects: Vec<Redirect>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WhileCommand {
     pub condition: List,
     pub body: List,
+    pub redirects: Vec<Redirect>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -106,12 +108,14 @@ pub struct ForCommand {
     pub var: String,
     pub words: Option<Vec<Word>>,
     pub body: List,
+    pub redirects: Vec<Redirect>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CaseCommand {
     pub word: Word,
     pub arms: Vec<CaseArm>,
+    pub redirects: Vec<Redirect>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
