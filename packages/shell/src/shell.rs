@@ -12,25 +12,25 @@ use crate::executor::expansion::{
 use crate::io::{self, LineReader};
 use crate::parser::{ArrayAssign, Command, List, ListItem, ListOp, Parser, Pipeline, SimpleCommand, Word, WordPart};
 use crate::value::ShellValue;
-use crate::jobs::{JobTable, JobStatus};
+use crate::jobs::JobTable;
 
 pub struct Shell {
     pub(crate) env: HashMap<String, ShellValue>,
-    cwd: String,
+    pub(crate) cwd: String,
     pub(crate) last_exit: u8,
-    is_interactive: bool,
+    pub(crate) is_interactive: bool,
     pub(crate) exit_requested: bool,
-    reader: LineReader,
+    pub(crate) reader: LineReader,
     pub(crate) functions: HashMap<String, Command>,
-    break_depth: usize,
-    continue_depth: usize,
-    return_requested: bool,
-    in_loop_depth: usize,
-    in_function_depth: usize,
-    procsub_counter: u64,
-    procsub_paths: Vec<String>,
+    pub(crate) break_depth: usize,
+    pub(crate) continue_depth: usize,
+    pub(crate) return_requested: bool,
+    pub(crate) in_loop_depth: usize,
+    pub(crate) in_function_depth: usize,
+    pub(crate) procsub_counter: u64,
+    pub(crate) procsub_paths: Vec<String>,
     pub(crate) jobs: JobTable,
-    traps: HashMap<String, String>,
+    pub(crate) traps: HashMap<String, String>,
     pub(crate) foreground_pids: Vec<u32>,
 }
 
@@ -142,7 +142,7 @@ impl Shell {
         self.last_exit
     }
 
-    fn exec_list(&mut self, list: List) -> u8 {
+    pub(crate) fn exec_list(&mut self, list: List) -> u8 {
         let mut exit = 0u8;
         let mut skip_next = false;
 
@@ -291,403 +291,6 @@ impl Shell {
         )
     }
 
-    pub(crate) fn exec_builtin(
-        &mut self,
-        name: &str,
-        args: &[String],
-        stdin: Option<InputStream>,
-        stdout: Option<OutputStream>,
-    ) -> u8 {
-        macro_rules! write_out {
-            ($s:expr) => {
-                if let Some(ref out) = stdout {
-                    let _ = out.blocking_write_and_flush($s.as_bytes());
-                } else {
-                    io::write_stdout($s);
-                }
-            };
-        }
-
-        match name {
-            "exit" => {
-                let code: u8 = args.first()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(self.last_exit);
-                self.exit_requested = true;
-                code
-            }
-            "echo" => {
-                let output = args.join(" ");
-                write_out!(&output);
-                write_out!("\n");
-                0
-            }
-            "pwd" => {
-                write_out!(&self.cwd);
-                write_out!("\n");
-                0
-            }
-            "cd" => {
-                let target = args.first().cloned()
-                    .unwrap_or_else(|| self.env.get("HOME").map(|v| v.as_scalar().to_string()).unwrap_or_else(|| "/".to_string()));
-                let resolved = self.resolve_path(&target);
-                self.cwd = resolved;
-                self.env.insert("PWD".to_string(), ShellValue::Scalar(self.cwd.clone()));
-                0
-            }
-            "export" => {
-                for arg in args {
-                    if let Some((key, value)) = arg.split_once('=') {
-                        self.env.insert(key.to_string(), ShellValue::Scalar(value.to_string()));
-                    }
-                }
-                0
-            }
-            "unset" => {
-                for arg in args {
-                    if let Some((name, subscript)) = parse_array_subscript(arg) {
-                        if let Some(ShellValue::Array(v)) = self.env.get_mut(name) {
-                            if let Ok(idx) = subscript.parse::<i64>() {
-                                let actual = if idx < 0 {
-                                    (v.len() as i64 + idx).max(0) as usize
-                                } else {
-                                    idx as usize
-                                };
-                                if actual < v.len() {
-                                    v[actual] = String::new();
-                                }
-                            }
-                        }
-                    } else {
-                        self.env.remove(arg.as_str());
-                    }
-                }
-                0
-            }
-            "env" => {
-                for (key, value) in &self.env {
-                    write_out!(&format!("{}={}\n", key, value.as_scalar()));
-                }
-                0
-            }
-            "true" => 0,
-            "false" => 1,
-            "break" => {
-                if self.in_loop_depth == 0 {
-                    io::write_stderr("msh: break: only meaningful in a loop\n");
-                    return 1;
-                }
-                let n: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(1);
-                self.break_depth = n;
-                0
-            }
-            "continue" => {
-                if self.in_loop_depth == 0 {
-                    io::write_stderr("msh: continue: only meaningful in a loop\n");
-                    return 1;
-                }
-                let n: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(1);
-                self.continue_depth = n;
-                0
-            }
-            "return" => {
-                if self.in_function_depth == 0 {
-                    io::write_stderr("msh: return: can only return from a function or sourced script\n");
-                    return 1;
-                }
-                let code: u8 = args.first().and_then(|s| s.parse().ok()).unwrap_or(self.last_exit);
-                self.return_requested = true;
-                code
-            }
-            "source" | "." => {
-                let file = match args.first() {
-                    Some(f) => f.clone(),
-                    None => {
-                        io::write_stderr("msh: source: filename argument required\n");
-                        return 2;
-                    }
-                };
-                self.exec_source(&file)
-            }
-            "read" => {
-                self.exec_read(args, stdin)
-            }
-            "test" | "[" => {
-                let test_args: &[String] = if name == "[" {
-                    if args.last().map(|s| s.as_str()) == Some("]") {
-                        &args[..args.len() - 1]
-                    } else {
-                        io::write_stderr("msh: [: missing `]'\n");
-                        return 2;
-                    }
-                } else {
-                    args
-                };
-                if self.eval_test(test_args) { 0 } else { 1 }
-            }
-            "[[" => {
-                if self.eval_extended_test(args) { 0 } else { 1 }
-            }
-            "declare" | "local" => {
-                self.exec_declare(args)
-            }
-            "jobs" => {
-                for job in self.jobs.iter() {
-                    let marker = if self.jobs.current_id() == Some(job.id) { "+" } else { "-" };
-                    let status_str = match job.status {
-                        JobStatus::Running => "Running",
-                        JobStatus::Stopped => "Stopped",
-                        JobStatus::Done(_) => "Done",
-                    };
-                    let line = format!("[{}]{} {:24}{}\n", job.id, marker, status_str, job.command);
-                    write_out!(&line);
-                }
-                0
-            }
-            "fg" => {
-                let job_id = match self.resolve_job_id(args) {
-                    Ok(id) => id,
-                    Err(msg) => { io::write_stderr(&msg); return 1; }
-                };
-
-                let job = match self.jobs.get_mut(job_id) {
-                    Some(j) => j,
-                    None => {
-                        io::write_stderr(&format!("msh: fg: %{}: no such job\n", job_id));
-                        return 1;
-                    }
-                };
-
-                io::write_stderr(&format!("{}\n", job.command));
-
-                if job.status == JobStatus::Stopped {
-                    for proc in &job.processes {
-                        let _ = proc.kill(crate::bindings::mithic::process::types::Signal::Sigcont);
-                    }
-                    job.status = JobStatus::Running;
-                }
-
-                let mut job = self.jobs.remove(job_id).unwrap();
-                self.foreground_pids = job.pids.clone();
-
-                let last = job.processes.pop();
-                for p in job.processes { let _ = p.wait(); }
-                let exit = if let Some(p) = last { p.wait() as u8 } else { 0 };
-
-                self.foreground_pids.clear();
-                if exit >= 128 {
-                    let sig_name = signal_name_from_num(exit - 128);
-                    if !sig_name.is_empty() {
-                        self.run_trap(sig_name);
-                    }
-                }
-                exit
-            }
-            "bg" => {
-                let job_id = match self.resolve_job_id(args) {
-                    Ok(id) => id,
-                    Err(msg) => { io::write_stderr(&msg); return 1; }
-                };
-
-                let job = match self.jobs.get_mut(job_id) {
-                    Some(j) => j,
-                    None => {
-                        io::write_stderr(&format!("msh: bg: %{}: no such job\n", job_id));
-                        return 1;
-                    }
-                };
-
-                if job.status == JobStatus::Stopped {
-                    for proc in &job.processes {
-                        let _ = proc.kill(crate::bindings::mithic::process::types::Signal::Sigcont);
-                    }
-                    job.status = JobStatus::Running;
-                    io::write_stderr(&format!("[{}]+ {} &\n", job.id, job.command));
-                }
-                0
-            }
-            "wait" => {
-                if args.is_empty() {
-                    let ids: Vec<usize> = self.jobs.iter().map(|j| j.id).collect();
-                    let mut last_exit = 0u8;
-                    for id in ids {
-                        if let Some(mut job) = self.jobs.remove(id) {
-                            let last = job.processes.pop();
-                            for p in job.processes { let _ = p.wait(); }
-                            if let Some(p) = last {
-                                last_exit = p.wait() as u8;
-                            }
-                        }
-                    }
-                    last_exit
-                } else {
-                    let job_id = match self.resolve_job_id(args) {
-                        Ok(id) => id,
-                        Err(msg) => { io::write_stderr(&msg); return 127; }
-                    };
-                    if let Some(mut job) = self.jobs.remove(job_id) {
-                        let last = job.processes.pop();
-                        for p in job.processes { let _ = p.wait(); }
-                        if let Some(p) = last { p.wait() as u8 } else { 0 }
-                    } else {
-                        io::write_stderr(&format!("msh: wait: %{}: no such job\n", job_id));
-                        127
-                    }
-                }
-            }
-            "disown" => {
-                let job_id = match self.resolve_job_id(args) {
-                    Ok(id) => id,
-                    Err(msg) => { io::write_stderr(&msg); return 1; }
-                };
-                if self.jobs.remove(job_id).is_none() {
-                    io::write_stderr(&format!("msh: disown: %{}: no such job\n", job_id));
-                    return 1;
-                }
-                0
-            }
-            "kill" => {
-                use crate::bindings::mithic::process::types::Signal;
-                let mut signal = Signal::Sigterm;
-                let mut targets: Vec<String> = Vec::new();
-
-                for arg in args {
-                    if let Some(sig) = parse_signal_flag(arg) {
-                        signal = sig;
-                    } else {
-                        targets.push(arg.clone());
-                    }
-                }
-
-                if targets.is_empty() {
-                    io::write_stderr("msh: kill: usage: kill [-signal] pid|%job ...\n");
-                    return 1;
-                }
-
-                let mut exit = 0u8;
-                for target in &targets {
-                    if target.starts_with('%') {
-                        let id_str = &target[1..];
-                        if let Ok(id) = id_str.parse::<usize>() {
-                            if let Some(job) = self.jobs.get(id) {
-                                for proc in &job.processes {
-                                    let _ = proc.kill(signal);
-                                }
-                            } else {
-                                io::write_stderr(&format!("msh: kill: %{}: no such job\n", id));
-                                exit = 1;
-                            }
-                        }
-                    } else if let Ok(_pid) = target.parse::<u32>() {
-                        let found = self.jobs.iter()
-                            .find(|j| j.pids.contains(&_pid));
-                        if let Some(job) = found {
-                            for proc in &job.processes {
-                                if proc.pid() == _pid {
-                                    let _ = proc.kill(signal);
-                                }
-                            }
-                        } else {
-                            io::write_stderr(&format!("msh: kill: ({}) - No such process\n", _pid));
-                            exit = 1;
-                        }
-                    }
-                }
-                exit
-            }
-            "trap" => {
-                if args.is_empty() {
-                    for (sig, handler) in &self.traps {
-                        write_out!(&format!("trap -- '{}' {}\n", handler, sig));
-                    }
-                    return 0;
-                }
-
-                if args.len() == 1 && args[0] == "-" {
-                    self.traps.clear();
-                    return 0;
-                }
-
-                if args.len() < 2 {
-                    io::write_stderr("msh: trap: usage: trap 'command' signal ...\n");
-                    return 2;
-                }
-
-                let handler = &args[0];
-                for sig_name in &args[1..] {
-                    let normalized = if let Ok(num) = sig_name.parse::<u8>() {
-                        signal_name_from_num(num).to_string()
-                    } else {
-                        let upper = sig_name.to_uppercase();
-                        upper.strip_prefix("SIG").unwrap_or(&upper).to_string()
-                    };
-                    if normalized.is_empty() {
-                        io::write_stderr(&format!("msh: trap: {}: invalid signal\n", sig_name));
-                        continue;
-                    }
-                    if handler == "-" {
-                        self.traps.remove(&normalized);
-                    } else {
-                        self.traps.insert(normalized, handler.clone());
-                    }
-                }
-                0
-            }
-            _ => 127,
-        }
-    }
-
-    fn exec_declare(&mut self, args: &[String]) -> u8 {
-        let mut is_array = false;
-        let mut print_mode = false;
-        let mut remaining_args: Vec<&str> = Vec::new();
-
-        let mut i = 0;
-        while i < args.len() {
-            match args[i].as_str() {
-                "-a" => is_array = true,
-                "-p" => print_mode = true,
-                arg if arg.starts_with('-') => {
-                    // Unknown flag — ignore for now
-                }
-                _ => remaining_args.push(&args[i]),
-            }
-            i += 1;
-        }
-
-        if print_mode {
-            for name in &remaining_args {
-                match self.env.get(*name) {
-                    Some(ShellValue::Scalar(s)) => {
-                        io::write_stdout(&format!("declare -- {}=\"{}\"\n", name, s));
-                    }
-                    Some(ShellValue::Array(v)) => {
-                        let elements: Vec<String> = v.iter().map(|e| format!("\"{}\"", e)).collect();
-                        io::write_stdout(&format!("declare -a {}=({})\n", name, elements.join(" ")));
-                    }
-                    None => {
-                        io::write_stderr(&format!("declare: {}: not found\n", name));
-                    }
-                }
-            }
-            return 0;
-        }
-
-        for arg in &remaining_args {
-            if let Some((name, value)) = arg.split_once('=') {
-                if is_array {
-                    self.env.insert(name.to_string(), ShellValue::Array(vec![value.to_string()]));
-                } else {
-                    self.env.insert(name.to_string(), ShellValue::Scalar(value.to_string()));
-                }
-            } else if is_array {
-                if !self.env.contains_key(*arg) {
-                    self.env.insert(arg.to_string(), ShellValue::Array(Vec::new()));
-                }
-            }
-        }
-        0
-    }
 
     #[cfg(not(test))]
     fn exec_capturing(&mut self, raw: &str) -> String {
@@ -818,24 +421,6 @@ impl Shell {
         if pipeline.negate { if exit == 0 { 1 } else { 0 } } else { exit }
     }
 
-    fn check_background_jobs(&mut self) {
-        let mut done_ids: Vec<(usize, String)> = Vec::new();
-        for job in self.jobs.iter() {
-            if job.status != JobStatus::Running { continue; }
-            if let Some(proc) = job.processes.last() {
-                if proc.kill(crate::bindings::mithic::process::types::Signal::Signull).is_err() {
-                    done_ids.push((job.id, job.command.clone()));
-                }
-            }
-        }
-        for (id, cmd) in &done_ids {
-            if self.is_interactive {
-                io::write_stderr(&format!("[{}]+ Done                    {}\n", id, cmd));
-            }
-            self.jobs.remove(*id);
-        }
-    }
-
     pub(crate) fn run_trap(&mut self, signal: &str) {
         if let Some(handler) = self.traps.get(signal).cloned() {
             if !handler.is_empty() {
@@ -843,21 +428,6 @@ impl Shell {
                 if let Some(list) = parser.parse() {
                     self.exec_list(list);
                 }
-            }
-        }
-    }
-
-    fn resolve_job_id(&self, args: &[String]) -> Result<usize, String> {
-        if let Some(arg) = args.first() {
-            let id_str = arg.strip_prefix('%').unwrap_or(arg);
-            match id_str.parse::<usize>() {
-                Ok(id) => Ok(id),
-                Err(_) => Err(format!("msh: {}: no such job\n", arg)),
-            }
-        } else {
-            match self.jobs.current_id() {
-                Some(id) => Ok(id),
-                None => Err("msh: no current job\n".to_string()),
             }
         }
     }
@@ -1481,7 +1051,7 @@ impl Shell {
         exit
     }
 
-    fn eval_test(&self, args: &[String]) -> bool {
+    pub(crate) fn eval_test(&self, args: &[String]) -> bool {
         if args.is_empty() { return false; }
 
         if args[0] == "!" {
@@ -1536,12 +1106,12 @@ impl Shell {
         false
     }
 
-    fn parse_int(&self, s: &str) -> i64 {
+    pub(crate) fn parse_int(&self, s: &str) -> i64 {
         s.parse().unwrap_or(0)
     }
 
     #[cfg(not(test))]
-    fn test_file(&self, op: &str, path: &str) -> bool {
+    pub(crate) fn test_file(&self, op: &str, path: &str) -> bool {
         use crate::bindings::wasi::filesystem::types::{DescriptorFlags, DescriptorType, OpenFlags, PathFlags};
 
         let resolved = self.resolve_path(path);
@@ -1573,9 +1143,9 @@ impl Shell {
     }
 
     #[cfg(test)]
-    fn test_file(&self, _op: &str, _path: &str) -> bool { false }
+    pub(crate) fn test_file(&self, _op: &str, _path: &str) -> bool { false }
 
-    fn eval_extended_test(&self, args: &[String]) -> bool {
+    pub(crate) fn eval_extended_test(&self, args: &[String]) -> bool {
         if args.is_empty() { return false; }
 
         if args[0] == "!" {
@@ -1628,140 +1198,6 @@ impl Shell {
         false
     }
 
-    #[cfg(not(test))]
-    fn exec_source(&mut self, file: &str) -> u8 {
-        use crate::bindings::wasi::filesystem::types::{DescriptorFlags, OpenFlags, PathFlags};
-
-        let path = self.resolve_path(file);
-        let rel = path.trim_start_matches('/');
-
-        let root = match get_root_descriptor() {
-            Some(d) => d,
-            None => {
-                io::write_stderr(&format!("msh: source: {}: No such file or directory\n", file));
-                return 1;
-            }
-        };
-
-        let desc = match root.open_at(
-            PathFlags::SYMLINK_FOLLOW, rel,
-            OpenFlags::empty(), DescriptorFlags::READ,
-        ) {
-            Ok(d) => d,
-            Err(_) => {
-                io::write_stderr(&format!("msh: source: {}: No such file or directory\n", file));
-                return 1;
-            }
-        };
-
-        let stream = match desc.read_via_stream(0) {
-            Ok(s) => s,
-            Err(_) => return 1,
-        };
-
-        let mut contents = Vec::new();
-        loop {
-            match stream.blocking_read(4096) {
-                Ok(bytes) if bytes.is_empty() => break,
-                Ok(bytes) => contents.extend_from_slice(&bytes),
-                Err(_) => break,
-            }
-        }
-
-        let script = String::from_utf8_lossy(&contents);
-        let mut parser = Parser::new(&script);
-        if let Some(list) = parser.parse() {
-            self.in_function_depth += 1;
-            let result = self.exec_list(list);
-            self.in_function_depth -= 1;
-            self.return_requested = false;
-            result
-        } else {
-            0
-        }
-    }
-
-    #[cfg(test)]
-    fn exec_source(&mut self, _file: &str) -> u8 { 0 }
-
-    #[cfg(not(test))]
-    fn exec_read(&mut self, args: &[String], stdin: Option<InputStream>) -> u8 {
-        let mut var_names: Vec<&str> = Vec::new();
-        let mut prompt = None;
-        let mut raw = false;
-        let mut i = 0;
-        while i < args.len() {
-            match args[i].as_str() {
-                "-p" => {
-                    i += 1;
-                    if i < args.len() { prompt = Some(args[i].as_str()); }
-                }
-                "-r" => { raw = true; }
-                _ => { var_names.push(&args[i]); }
-            }
-            i += 1;
-        }
-
-        if var_names.is_empty() {
-            var_names.push("REPLY");
-        }
-
-        if let Some(p) = prompt {
-            io::write_stderr(p);
-        }
-
-        let line = match &stdin {
-            Some(s) => {
-                let mut buf = Vec::new();
-                loop {
-                    match s.blocking_read(1) {
-                        Ok(bytes) if bytes.is_empty() => break,
-                        Ok(bytes) => {
-                            buf.extend_from_slice(&bytes);
-                            if bytes.last() == Some(&b'\n') { break; }
-                        }
-                        Err(_) => break,
-                    }
-                }
-                if buf.is_empty() { return 1; }
-                String::from_utf8_lossy(&buf).trim_end_matches('\n').to_string()
-            }
-            None => {
-                match self.reader.read_line() {
-                    Some(l) => l.trim_end_matches('\n').to_string(),
-                    None => return 1,
-                }
-            }
-        };
-
-        let line = if raw { line } else { line.replace("\\\n", "") };
-
-        let ifs = self.env.get("IFS").map(|v| v.as_scalar().to_string()).unwrap_or_else(|| " \t\n".to_string());
-        let fields: Vec<&str> = if ifs.is_empty() {
-            vec![&line]
-        } else {
-            line.split(|c: char| ifs.contains(c))
-                .filter(|s| !s.is_empty())
-                .collect()
-        };
-
-        for (idx, var_name) in var_names.iter().enumerate() {
-            if idx == var_names.len() - 1 {
-                let remaining: Vec<&str> = if idx < fields.len() { fields[idx..].to_vec() } else { vec![] };
-                self.env.insert(var_name.to_string(), ShellValue::Scalar(remaining.join(" ")));
-            } else if idx < fields.len() {
-                self.env.insert(var_name.to_string(), ShellValue::Scalar(fields[idx].to_string()));
-            } else {
-                self.env.insert(var_name.to_string(), ShellValue::Scalar(String::new()));
-            }
-        }
-
-        0
-    }
-
-    #[cfg(test)]
-    fn exec_read(&mut self, _args: &[String], _stdin: Option<InputStream>) -> u8 { 0 }
-
 }
 
 fn parse_array_subscript(s: &str) -> Option<(&str, &str)> {
@@ -1793,17 +1229,4 @@ pub(crate) fn signal_name_from_num(num: u8) -> &'static str {
     }
 }
 
-fn parse_signal_flag(arg: &str) -> Option<crate::bindings::mithic::process::types::Signal> {
-    use crate::bindings::mithic::process::types::Signal;
-    if !arg.starts_with('-') { return None; }
-    let s = &arg[1..];
-    match s {
-        "INT" | "SIGINT" | "2" => Some(Signal::Sigint),
-        "TERM" | "SIGTERM" | "15" => Some(Signal::Sigterm),
-        "KILL" | "SIGKILL" | "9" => Some(Signal::Sigkill),
-        "TSTP" | "SIGTSTP" | "20" => Some(Signal::Sigtstp),
-        "CONT" | "SIGCONT" | "18" => Some(Signal::Sigcont),
-        _ => None,
-    }
-}
 

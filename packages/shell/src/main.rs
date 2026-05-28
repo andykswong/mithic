@@ -1,5 +1,6 @@
 pub mod arith;
 pub mod brace;
+pub mod builtins;
 pub mod executor;
 pub mod parser;
 pub mod value;
