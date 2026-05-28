@@ -28,7 +28,6 @@ async function runShell(script: string, timeout = 5000): Promise<{ stdout: strin
 
 describe('background execution (cmd &)', () => {
   it('builtin in background runs synchronously without job report', async () => {
-    // Builtins (e.g. true) run synchronously even with &; no [N] PID is emitted
     const { stderr, exit } = await runShell('true &\n');
     assert.strictEqual(exit, 0);
     assert.ok(!stderr.includes('command not found'));
@@ -37,6 +36,11 @@ describe('background execution (cmd &)', () => {
   it('background does not block foreground execution', async () => {
     const { stdout } = await runShell('true & echo foreground\n');
     assert.strictEqual(stdout.trim(), 'foreground');
+  });
+
+  it('$! is empty when no process was backgrounded', async () => {
+    const { stdout } = await runShell('echo "$!"\n');
+    assert.strictEqual(stdout.trim(), '');
   });
 });
 

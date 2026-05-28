@@ -285,7 +285,7 @@ impl Lexer {
                 let name = self.read_var_name();
                 parts.push(WordPart::Var(name));
             }
-            Some(c) if matches!(c, '?' | '#' | '@' | '*' | '0'..='9') => {
+            Some(c) if matches!(c, '?' | '#' | '@' | '*' | '!' | '0'..='9') => {
                 if !buf.is_empty() {
                     parts.push(WordPart::Literal(std::mem::take(buf)));
                 }
