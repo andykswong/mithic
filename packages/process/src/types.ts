@@ -5,12 +5,14 @@
 
 import type { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 
-export type Signal = 'sigterm' | 'sigkill' | 'sigint' | 'signull';
+export type Signal = 'sigterm' | 'sigkill' | 'sigint' | 'sigtstp' | 'sigcont' | 'signull';
 
 export const SIGNAL_NUMBER: Record<Signal, number> = {
   sigterm: 15,
   sigkill: 9,
   sigint: 2,
+  sigtstp: 20,
+  sigcont: 18,
   signull: 0,
 };
 

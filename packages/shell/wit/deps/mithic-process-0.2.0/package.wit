@@ -40,6 +40,8 @@ interface types {
     sigterm,
     sigkill,
     sigint,
+    sigtstp,
+    sigcont,
     signull,
   }
 
