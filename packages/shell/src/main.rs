@@ -12,8 +12,6 @@ pub mod shell;
 pub mod value;
 
 #[cfg(not(test))]
-mod io;
-#[cfg(not(test))]
 pub mod runtime_wasi;
 #[cfg(test)]
 pub mod runtime_test;
