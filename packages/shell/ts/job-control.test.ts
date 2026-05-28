@@ -119,4 +119,14 @@ describe('trap builtin', () => {
     assert.ok(!stdout.includes("'echo a' EXIT"));
     assert.ok(stdout.includes("'echo b' INT"));
   });
+
+  it('trap accepts signal numbers', async () => {
+    const { stdout } = await runShell('trap "echo caught" 2\ntrap\n');
+    assert.ok(stdout.includes("'echo caught' INT"));
+  });
+
+  it('trap - with signal number removes handler', async () => {
+    const { stdout } = await runShell('trap "echo x" INT\ntrap - 2\ntrap\n');
+    assert.ok(!stdout.includes('INT'));
+  });
 });

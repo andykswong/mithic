@@ -76,6 +76,27 @@ describe('SimpleProcessManager', () => {
     assert.equal(exitCode, 128 + 9);
   });
 
+  it('kill(signull) does not kill a running process', async () => {
+    const handler: CommandHandler = async () => {
+      await new Promise(r => setTimeout(r, 10000));
+      return 0;
+    };
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('sleep', ['100']);
+    assert.doesNotThrow(() => proc.kill('signull'));
+    proc.kill('sigterm');
+    const exitCode = await proc.wait();
+    assert.equal(exitCode, 128 + 15);
+  });
+
+  it('kill(signull) throws for completed process', async () => {
+    const handler: CommandHandler = async () => 0;
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('true', []);
+    await proc.wait();
+    assert.throws(() => proc.kill('signull'));
+  });
+
   it('handler error produces exit code 1 and writes to stderr', async () => {
     const handler: CommandHandler = async () => {
       throw new Error('something went wrong');

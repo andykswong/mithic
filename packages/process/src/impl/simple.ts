@@ -111,11 +111,16 @@ export class SimpleProcessManager implements ProcessManager {
     const childStderr = options?.stderr ?? new OutputStream(this.#hostStreams.stderr);
 
     let killed = false;
+    let done = false;
     let resolveWait: ((exitCode: number) => void) | null = null;
     const waitPromise = new Promise<number>(r => { resolveWait = r; });
 
     const processHandler: ProcessHandler = {
       onKill(signal: Signal) {
+        if (signal === 'signull') {
+          if (done || killed) throw new ProcessError('not-found', 'no such process');
+          return;
+        }
         killed = true;
         const sigNum = SIGNAL_NUMBER[signal];
         resolveWait?.(128 + sigNum);
@@ -136,12 +141,14 @@ export class SimpleProcessManager implements ProcessManager {
 
     handler(args, ctx).then(
       (exitCode) => {
+        done = true;
         if (!killed) {
           resolveWait?.(exitCode);
           this.table.remove(pid);
         }
       },
       (err) => {
+        done = true;
         if (!killed) {
           try {
             const msg = new TextEncoder().encode(String(err));

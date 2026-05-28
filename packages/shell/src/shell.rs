@@ -833,8 +833,16 @@ impl Shell {
 
                 let handler = &args[0];
                 for sig_name in &args[1..] {
-                    let normalized = sig_name.to_uppercase();
-                    let normalized = normalized.strip_prefix("SIG").unwrap_or(&normalized).to_string();
+                    let normalized = if let Ok(num) = sig_name.parse::<u8>() {
+                        signal_name_from_num(num).to_string()
+                    } else {
+                        let upper = sig_name.to_uppercase();
+                        upper.strip_prefix("SIG").unwrap_or(&upper).to_string()
+                    };
+                    if normalized.is_empty() {
+                        io::write_stderr(&format!("msh: trap: {}: invalid signal\n", sig_name));
+                        continue;
+                    }
                     if handler == "-" {
                         self.traps.remove(&normalized);
                     } else {
