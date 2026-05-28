@@ -7,6 +7,8 @@ pub mod value;
 mod io;
 #[cfg(not(test))]
 mod shell;
+#[cfg(not(test))]
+mod jobs;
 
 #[cfg(not(test))]
 mod bindings {
