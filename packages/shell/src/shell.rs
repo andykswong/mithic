@@ -537,13 +537,18 @@ impl Shell {
         }).collect()
     }
 
-    /// If the word is a standalone `${arr[@]}`, `${arr[*]}`, `$@`, or `$*`, return all elements
-    /// as separate words. Returns `None` if the word isn't this pattern.
+    /// If the word is a standalone `${arr[@]}`, `${arr[*]}`, `$@`, or `$*`, return elements.
+    /// `$@` / `${arr[@]}` → each element as a separate word.
+    /// `$*` / `${arr[*]}` → all elements joined by IFS[0] (default space) as one word.
     fn try_expand_array_all(&self, w: &Word) -> Option<Vec<String>> {
         let parts = w.parts();
         if parts.len() != 1 {
             return None;
         }
+
+        let ifs_sep = self.env.get("IFS")
+            .map(|v| v.as_scalar().chars().next().unwrap_or(' '))
+            .unwrap_or(' ');
 
         match &parts[0] {
             WordPart::BraceVar(raw) => {
@@ -551,16 +556,25 @@ impl Shell {
                 if subscript != "@" && subscript != "*" {
                     return None;
                 }
-                match self.env.get(name) {
-                    Some(ShellValue::Array(elements)) => Some(elements.clone()),
-                    Some(ShellValue::Scalar(s)) => Some(vec![s.clone()]),
-                    None => Some(Vec::new()),
+                let elements = match self.env.get(name) {
+                    Some(ShellValue::Array(elements)) => elements.clone(),
+                    Some(ShellValue::Scalar(s)) => vec![s.clone()],
+                    None => return Some(Vec::new()),
+                };
+                if subscript == "*" {
+                    let joined: String = elements.join(&ifs_sep.to_string());
+                    Some(vec![joined])
+                } else {
+                    Some(elements)
                 }
             }
             WordPart::Var(name) if name == "@" || name == "*" => {
                 let all = self.params.all();
                 if all.is_empty() {
                     Some(Vec::new())
+                } else if name == "*" {
+                    let joined = all.join(&ifs_sep.to_string());
+                    Some(vec![joined])
                 } else {
                     Some(all.to_vec())
                 }
@@ -714,7 +728,13 @@ impl Shell {
         match name {
             "?" => self.last_exit.to_string(),
             "#" => self.params.count().to_string(),
-            "@" | "*" => self.params.all().join(" "),
+            "@" => self.params.all().join(" "),
+            "*" => {
+                let ifs_sep = self.env.get("IFS")
+                    .map(|v| v.as_scalar().chars().next().unwrap_or(' '))
+                    .unwrap_or(' ');
+                self.params.all().join(&ifs_sep.to_string())
+            }
             "!" => self.env.get("!").map(|v| v.as_scalar().to_string()).unwrap_or_default(),
             _ => {
                 if let Ok(n) = name.parse::<usize>() {

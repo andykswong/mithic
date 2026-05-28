@@ -549,7 +549,7 @@ describe('quoted brace expansion', () => {
   });
 
   it('does not expand inside single quotes', async () => {
-    const { stdout } = await runShell("echo '{a,b}'\n");
+    const { stdout } = await runShell('echo \'{a,b}\'\n');
     assert.strictEqual(stdout.trim(), '{a,b}');
   });
 });

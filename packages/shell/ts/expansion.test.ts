@@ -207,3 +207,35 @@ describe('tilde expansion', () => {
     assert.ok(!stdout.trim().startsWith('~'));
   });
 });
+
+describe('$@ vs $* semantics', () => {
+  it('"$@" preserves separate words in for loop', async () => {
+    const { stdout } = await runShell('f() { for x in "$@"; do echo "[$x]"; done; }\nf "a b" c\n');
+    assert.strictEqual(stdout.trim(), '[a b]\n[c]');
+  });
+
+  it('"$*" joins into single word in for loop', async () => {
+    const { stdout } = await runShell('f() { for x in "$*"; do echo "[$x]"; done; }\nf "a b" c\n');
+    assert.strictEqual(stdout.trim(), '[a b c]');
+  });
+
+  it('$* uses IFS[0] as separator', async () => {
+    const { stdout } = await runShell('export IFS=","\nf() { echo "$*"; }\nf a b c\n');
+    assert.strictEqual(stdout.trim(), 'a,b,c');
+  });
+
+  it('$@ is not affected by IFS', async () => {
+    const { stdout } = await runShell('export IFS=","\nf() { echo "$@"; }\nf a b c\n');
+    assert.strictEqual(stdout.trim(), 'a b c');
+  });
+
+  it('${arr[*]} joins array with IFS[0]', async () => {
+    const { stdout } = await runShell('export IFS=":"\narr=(x y z)\necho "${arr[*]}"\n');
+    assert.strictEqual(stdout.trim(), 'x:y:z');
+  });
+
+  it('${arr[@]} keeps array elements separate', async () => {
+    const { stdout } = await runShell('arr=("a b" c)\nfor x in "${arr[@]}"; do echo "[$x]"; done\n');
+    assert.strictEqual(stdout.trim(), '[a b]\n[c]');
+  });
+});

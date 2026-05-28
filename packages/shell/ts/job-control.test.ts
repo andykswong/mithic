@@ -106,7 +106,7 @@ describe('trap builtin', () => {
 
   it('trap with no args lists traps', async () => {
     const { stdout } = await runShell('trap "echo hi" EXIT\ntrap\n');
-    assert.ok(stdout.includes("'echo hi' EXIT"));
+    assert.ok(stdout.includes('\'echo hi\' EXIT'));
   });
 
   it('trap - removes all handlers', async () => {
@@ -116,13 +116,13 @@ describe('trap builtin', () => {
 
   it('trap - SIG removes specific handler', async () => {
     const { stdout } = await runShell('trap "echo a" EXIT\ntrap "echo b" INT\ntrap - EXIT\ntrap\n');
-    assert.ok(!stdout.includes("'echo a' EXIT"));
-    assert.ok(stdout.includes("'echo b' INT"));
+    assert.ok(!stdout.includes('\'echo a\' EXIT'));
+    assert.ok(stdout.includes('\'echo b\' INT'));
   });
 
   it('trap accepts signal numbers', async () => {
     const { stdout } = await runShell('trap "echo caught" 2\ntrap\n');
-    assert.ok(stdout.includes("'echo caught' INT"));
+    assert.ok(stdout.includes('\'echo caught\' INT'));
   });
 
   it('trap - with signal number removes handler', async () => {
