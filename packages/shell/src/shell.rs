@@ -14,9 +14,11 @@ use crate::parser::{ArrayAssign, Command, List, ListItem, ListOp, Parser, Pipeli
 use crate::value::ShellValue;
 use crate::jobs::JobTable;
 use crate::options::ShellOptions;
+use crate::params::PositionalParams;
 
 pub struct Shell {
     pub(crate) env: HashMap<String, ShellValue>,
+    pub(crate) params: PositionalParams,
     pub(crate) cwd: String,
     pub(crate) last_exit: u8,
     pub(crate) is_interactive: bool,
@@ -51,6 +53,7 @@ impl Shell {
 
         Shell {
             env,
+            params: PositionalParams::new(),
             cwd,
             last_exit: 0,
             is_interactive,
@@ -536,13 +539,11 @@ impl Shell {
                 }
             }
             WordPart::Var(name) if name == "@" || name == "*" => {
-                let val = self.env.get("@")
-                    .map(|v| v.as_scalar().to_string())
-                    .unwrap_or_default();
-                if val.is_empty() {
+                let all = self.params.all();
+                if all.is_empty() {
                     Some(Vec::new())
                 } else {
-                    Some(val.split_whitespace().map(|s| s.to_string()).collect())
+                    Some(all.to_vec())
                 }
             }
             _ => None,
@@ -698,21 +699,28 @@ impl Shell {
     fn expand_var_raw(&self, name: &str) -> String {
         match name {
             "?" => self.last_exit.to_string(),
-            "#" => self.env.get("#").map(|v| v.as_scalar().to_string()).unwrap_or_else(|| "0".to_string()),
-            "@" | "*" => self.env.get("@").map(|v| v.as_scalar().to_string()).unwrap_or_default(),
-            _ => self.env.get(name).map(|v| v.as_scalar().to_string()).unwrap_or_default(),
+            "#" => self.params.count().to_string(),
+            "@" | "*" => self.params.all().join(" "),
+            _ => {
+                if let Ok(n) = name.parse::<usize>() {
+                    self.params.get(n).unwrap_or("").to_string()
+                } else {
+                    self.env.get(name).map(|v| v.as_scalar().to_string()).unwrap_or_default()
+                }
+            }
         }
     }
 
     fn expand_var_impl(&mut self, name: &str, check_nounset: bool) -> String {
         match name {
             "?" => self.last_exit.to_string(),
-            "#" => self.env.get("#").map(|v| v.as_scalar().to_string()).unwrap_or_else(|| "0".to_string()),
-            "@" | "*" => self.env.get("@").map(|v| v.as_scalar().to_string()).unwrap_or_default(),
-            "!" | "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => {
-                self.env.get(name).map(|v| v.as_scalar().to_string()).unwrap_or_default()
-            }
+            "#" => self.params.count().to_string(),
+            "@" | "*" => self.params.all().join(" "),
+            "!" => self.env.get("!").map(|v| v.as_scalar().to_string()).unwrap_or_default(),
             _ => {
+                if let Ok(n) = name.parse::<usize>() {
+                    return self.params.get(n).unwrap_or("").to_string();
+                }
                 if check_nounset && self.options.nounset && !self.env.contains_key(name) {
                     io::write_stderr(&format!("msh: {}: unbound variable\n", name));
                     self.last_exit = 1;
@@ -1120,14 +1128,7 @@ impl Shell {
             Some(words) => words.iter()
                 .flat_map(|w| self.expand_word_to_args(w))
                 .collect(),
-            None => {
-                let at = self.env.get("@").map(|v| v.as_scalar().to_string()).unwrap_or_default();
-                if at.is_empty() {
-                    Vec::new()
-                } else {
-                    at.split_whitespace().map(|s| s.to_string()).collect()
-                }
-            }
+            None => self.params.all().to_vec(),
         };
 
         self.exec_for_inner(cmd.var, items, cmd.body, &cmd.redirects)
@@ -1224,43 +1225,12 @@ impl Shell {
     }
 
     pub(crate) fn exec_function_call(&mut self, args: &[String], body: Command) -> u8 {
-        let old_hash = self.env.get("#").map(|v| v.as_scalar().to_string());
-        let old_at = self.env.get("@").map(|v| v.as_scalar().to_string());
-        let mut old_positional: Vec<(String, Option<String>)> = Vec::new();
-        for (i, arg) in args.iter().enumerate() {
-            let key = (i + 1).to_string();
-            old_positional.push((key.clone(), self.env.get(&key).map(|v| v.as_scalar().to_string())));
-            self.env.insert(key, ShellValue::Scalar(arg.clone()));
-        }
-        self.env.insert("#".to_string(), ShellValue::Scalar(args.len().to_string()));
-        self.env.insert("@".to_string(), ShellValue::Scalar(args.join(" ")));
-
+        self.params.push_frame(args.to_vec());
         self.in_function_depth += 1;
         let exit = self.exec_compound(body);
         self.in_function_depth -= 1;
         self.return_requested = false;
-
-        for (key, old_val) in old_positional {
-            match old_val {
-                Some(v) => { self.env.insert(key, ShellValue::Scalar(v)); }
-                None => { self.env.remove(&key); }
-            };
-        }
-        let mut i = args.len() + 1;
-        loop {
-            let key = i.to_string();
-            if self.env.remove(&key).is_none() { break; }
-            i += 1;
-        }
-        match old_hash {
-            Some(v) => { self.env.insert("#".to_string(), ShellValue::Scalar(v)); }
-            None => { self.env.remove("#"); }
-        };
-        match old_at {
-            Some(v) => { self.env.insert("@".to_string(), ShellValue::Scalar(v)); }
-            None => { self.env.remove("@"); }
-        };
-
+        self.params.pop_frame();
         exit
     }
 

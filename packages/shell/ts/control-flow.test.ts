@@ -151,6 +151,13 @@ describe('functions', () => {
     );
     assert.strictEqual(stdout.trim(), 'inner\nouter');
   });
+
+  it('nested function positional params are isolated', async () => {
+    const { stdout } = await runShell(
+      'outer() { echo "o:$1"; inner x y; echo "o:$1"; }\ninner() { echo "i:$1 $2"; }\nouter hello\n'
+    );
+    assert.strictEqual(stdout.trim(), 'o:hello\ni:x y\no:hello');
+  });
 });
 
 describe('test/[ builtin', () => {
