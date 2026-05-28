@@ -17,6 +17,8 @@ mod shell;
 mod jobs;
 #[cfg(not(test))]
 pub mod runtime_wasi;
+#[cfg(test)]
+pub mod runtime_test;
 
 #[cfg(not(test))]
 mod bindings {
