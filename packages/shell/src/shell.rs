@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::bindings::mithic::process::manager as proc_manager;
 use crate::bindings::mithic::process::types::{InputStream, OutputStream, SpawnOptions};
 use crate::bindings::wasi::cli::{environment, terminal_stdin};
+use crate::brace::expand_braces;
 use crate::io::{self, LineReader};
 use crate::parser::{ArrayAssign, Command, List, ListItem, ListOp, Parser, Pipeline, SimpleCommand, Word, WordPart};
 use crate::value::ShellValue;
@@ -195,14 +196,7 @@ impl Shell {
             let mut stdout_opt = pipe_write_ends[i].take();
 
             let args: Vec<String> = cmd.words.iter()
-                .flat_map(|w| {
-                    let expanded = self.expand_word(w);
-                    if has_glob(&expanded) {
-                        self.expand_glob(&expanded)
-                    } else {
-                        vec![expanded]
-                    }
-                })
+                .flat_map(|w| self.expand_word_to_args(w))
                 .collect();
             let mut stderr_opt: Option<OutputStream> = None;
             if !self.apply_redirects(&cmd.redirects, &mut stdin_opt, &mut stdout_opt, &mut stderr_opt) {
@@ -279,14 +273,7 @@ impl Shell {
         }
 
         let args: Vec<String> = cmd.words.iter()
-            .flat_map(|w| {
-                let expanded = self.expand_word(w);
-                if has_glob(&expanded) {
-                    self.expand_glob(&expanded)
-                } else {
-                    vec![expanded]
-                }
-            })
+            .flat_map(|w| self.expand_word_to_args(w))
             .collect();
         let mut stderr_opt: Option<OutputStream> = None;
         if !self.apply_redirects(&cmd.redirects, &mut stdin, &mut stdout, &mut stderr_opt) {
@@ -594,10 +581,7 @@ impl Shell {
             let stdin_opt = pipe_read_ends[i].take();
             let stdout_opt = pipe_write_ends[i].take();
             let args: Vec<String> = cmd.words.iter()
-                .flat_map(|w| {
-                    let expanded = self.expand_word(w);
-                    if has_glob(&expanded) { self.expand_glob(&expanded) } else { vec![expanded] }
-                })
+                .flat_map(|w| self.expand_word_to_args(w))
                 .collect();
             if args.is_empty() { continue; }
             let name = args[0].clone();
@@ -655,6 +639,14 @@ impl Shell {
     fn expand_word(&mut self, word: &Word) -> String {
         let parts: Vec<_> = word.parts().to_vec();
         parts.iter().map(|p| self.expand_part(p)).collect()
+    }
+
+    fn expand_word_to_args(&mut self, w: &Word) -> Vec<String> {
+        let expanded = self.expand_word(w);
+        let brace_results = expand_braces(&expanded);
+        brace_results.into_iter().flat_map(|s| {
+            if has_glob(&s) { self.expand_glob(&s) } else { vec![s] }
+        }).collect()
     }
 
     fn expand_part(&mut self, part: &WordPart) -> String {
@@ -901,14 +893,7 @@ impl Shell {
 
     fn exec_array_assign(&mut self, aa: ArrayAssign) -> u8 {
         let elements: Vec<String> = aa.elements.iter()
-            .flat_map(|w| {
-                let expanded = self.expand_word(w);
-                if has_glob(&expanded) {
-                    self.expand_glob(&expanded)
-                } else {
-                    vec![expanded]
-                }
-            })
+            .flat_map(|w| self.expand_word_to_args(w))
             .collect();
 
         if aa.append {
@@ -989,14 +974,7 @@ impl Shell {
     fn exec_for(&mut self, cmd: crate::parser::ForCommand) -> u8 {
         let items: Vec<String> = match cmd.words {
             Some(words) => words.iter()
-                .flat_map(|w| {
-                    let expanded = self.expand_word(w);
-                    if has_glob(&expanded) {
-                        self.expand_glob(&expanded)
-                    } else {
-                        vec![expanded]
-                    }
-                })
+                .flat_map(|w| self.expand_word_to_args(w))
                 .collect(),
             None => {
                 let at = self.env.get("@").map(|v| v.as_scalar().to_string()).unwrap_or_default();

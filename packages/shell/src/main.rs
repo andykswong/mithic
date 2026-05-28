@@ -1,4 +1,5 @@
 pub mod arith;
+pub mod brace;
 pub mod parser;
 pub mod value;
 

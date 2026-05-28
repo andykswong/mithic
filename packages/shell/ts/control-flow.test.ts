@@ -372,6 +372,43 @@ describe('(( )) arithmetic command', () => {
   });
 });
 
+describe('brace expansion', () => {
+  it('comma-separated list', async () => {
+    const { stdout } = await runShell('echo {a,b,c}\n');
+    assert.strictEqual(stdout.trim(), 'a b c');
+  });
+
+  it('with prefix and suffix', async () => {
+    const { stdout } = await runShell('echo file.{txt,md,rs}\n');
+    assert.strictEqual(stdout.trim(), 'file.txt file.md file.rs');
+  });
+
+  it('numeric sequence', async () => {
+    const { stdout } = await runShell('echo {1..5}\n');
+    assert.strictEqual(stdout.trim(), '1 2 3 4 5');
+  });
+
+  it('alpha sequence', async () => {
+    const { stdout } = await runShell('echo {a..e}\n');
+    assert.strictEqual(stdout.trim(), 'a b c d e');
+  });
+
+  it('reverse sequence', async () => {
+    const { stdout } = await runShell('echo {5..1}\n');
+    assert.strictEqual(stdout.trim(), '5 4 3 2 1');
+  });
+
+  it('nested braces', async () => {
+    const { stdout } = await runShell('echo {a,b{1,2}}\n');
+    assert.strictEqual(stdout.trim(), 'a b1 b2');
+  });
+
+  it('numeric sequence with step', async () => {
+    const { stdout } = await runShell('echo {0..10..2}\n');
+    assert.strictEqual(stdout.trim(), '0 2 4 6 8 10');
+  });
+});
+
 describe('extended parameter expansion', () => {
   it('${VAR#prefix} removes shortest prefix', async () => {
     const { stdout } = await runShell('export x=hello_world\necho ${x#hell}\n');
