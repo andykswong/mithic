@@ -132,6 +132,7 @@ impl Shell {
             }
         }
 
+        self.run_trap("EXIT");
         self.cleanup_procsub_files();
         self.last_exit
     }
@@ -422,6 +423,19 @@ impl Shell {
                     self.foreground_pids = vec![proc.pid()];
                     let exit = proc.wait() as u8;
                     self.foreground_pids.clear();
+                    if exit >= 128 {
+                        let sig_name = match exit - 128 {
+                            2 => "INT",
+                            9 => "KILL",
+                            15 => "TERM",
+                            18 => "CONT",
+                            20 => "TSTP",
+                            _ => "",
+                        };
+                        if !sig_name.is_empty() {
+                            self.run_trap(sig_name);
+                        }
+                    }
                     exit
                 }
                 Err(_) => {
@@ -479,7 +493,7 @@ impl Shell {
             "env" | "true" | "false" | "break" | "continue" |
             "return" | "source" | "." | "read" | "test" | "[" | "[[" |
             "declare" | "local" |
-            "jobs" | "fg" | "bg" | "wait" | "disown" | "kill"
+            "jobs" | "fg" | "bg" | "wait" | "disown" | "kill" | "trap"
         )
     }
 
@@ -781,6 +795,36 @@ impl Shell {
                 }
                 exit
             }
+            "trap" => {
+                if args.is_empty() {
+                    for (sig, handler) in &self.traps {
+                        write_out!(&format!("trap -- '{}' {}\n", handler, sig));
+                    }
+                    return 0;
+                }
+
+                if args.len() == 1 && args[0] == "-" {
+                    self.traps.clear();
+                    return 0;
+                }
+
+                if args.len() < 2 {
+                    io::write_stderr("msh: trap: usage: trap 'command' signal ...\n");
+                    return 2;
+                }
+
+                let handler = &args[0];
+                for sig_name in &args[1..] {
+                    let normalized = sig_name.to_uppercase();
+                    let normalized = normalized.strip_prefix("SIG").unwrap_or(&normalized).to_string();
+                    if handler == "-" {
+                        self.traps.remove(&normalized);
+                    } else {
+                        self.traps.insert(normalized, handler.clone());
+                    }
+                }
+                0
+            }
             _ => 127,
         }
     }
@@ -981,6 +1025,17 @@ impl Shell {
                 io::write_stderr(&format!("[{}]+ Done                    {}\n", id, cmd));
             }
             self.jobs.remove(*id);
+        }
+    }
+
+    fn run_trap(&mut self, signal: &str) {
+        if let Some(handler) = self.traps.get(signal).cloned() {
+            if !handler.is_empty() {
+                let mut parser = Parser::new(&handler);
+                if let Some(list) = parser.parse() {
+                    self.exec_list(list);
+                }
+            }
         }
     }
 
