@@ -67,16 +67,27 @@ rustup target add wasm32-wasip2
 
 ```
 src/
-├── main.rs           Entry point (wit-bindgen, Shell::run)
-├── shell.rs          REPL loop, command dispatch, expansion, builtins
-├── parser/
-│   ├── lexer.rs      Tokenizer (words, operators, quotes, substitutions)
-│   ├── ast.rs        AST node types (Command, Word, Redirect, etc.)
-│   └── parser.rs     Recursive descent parser
-├── arith.rs          Arithmetic expression evaluator
-├── brace.rs          Brace expansion ({a,b}, {1..10})
-├── value.rs          ShellValue enum (Scalar | Array)
-└── io.rs             Buffered line reader, write helpers
+├── main.rs            Entry point (constructs WasiRuntime, Shell::run)
+├── runtime.rs         Io, Filesystem, ProcessMgr traits + Runtime supertrait
+├── runtime_wasi.rs    WasiRuntime: real WASM impl (only file importing bindings)
+├── runtime_test.rs    TestRuntime: mocks for cargo test
+├── shell.rs           Shell<R>, REPL loop, exec_list, dispatch (~476 lines)
+├── executor/
+│   ├── expansion.rs   Free string utils: glob, tilde, normalize, etc.
+│   ├── expand.rs      Shell methods: expand_word, expand_var, expand_brace_var
+│   ├── compound.rs    exec_compound, exec_if/while/for/case, subshell
+│   ├── test_eval.rs   eval_test, eval_extended_test, test_file
+│   ├── redirect.rs    apply_redirects
+│   └── pipeline.rs    exec_pipeline, exec_pipeline_background
+├── builtins/
+│   ├── mod.rs         dispatch + write_out helper
+│   ├── core.rs        echo, pwd, cd, exit, env, true, false
+│   ├── vars.rs        export, unset, declare, local, read, set
+│   ├── flow.rs        break, continue, return, source
+│   ├── test.rs        [, [[, test
+│   └── jobs.rs        jobs, fg, bg, wait, disown, kill, trap
+├── parser/            lexer, AST, recursive descent parser
+└── arith.rs, brace.rs, regex.rs, value.rs, options.rs, params.rs, jobs.rs
 
 ts/
 ├── index.ts          Package exports
@@ -86,11 +97,24 @@ ts/
 
 The shell compiles to a WASI Preview 2 component (`wasm32-wasip2`), transpiled to JavaScript via `jco`. The TypeScript host-side (`MithicShell`) configures WASI imports and process management, then instantiates and runs the component.
 
+### Runtime Abstraction
+
+Shell logic is decoupled from WASM bindings via three ISP-compliant traits composed into a `Runtime` supertrait:
+
+| Trait | Responsibility | WasiRuntime impl | TestRuntime impl |
+|-------|---------------|------------------|------------------|
+| `Io` | stdout/stderr/stdin | WASI streams (blocking_read/write_and_flush) | Output capture buffers |
+| `Filesystem` | File queries + stream handles | std::fs for queries; raw WASI Descriptor for stream-producing opens | In-memory HashMap |
+| `ProcessMgr` | Pipes, spawn, wait, signals | Raw `mithic:process` WIT bindings + resource table | Stubs (spawn always fails) |
+
+`crate::bindings::*` is imported only in `runtime_wasi.rs` — all shell logic operates on opaque handles and trait methods.
+
 ### Shell Implementation
 
-- **Lexer** (`src/parser/lexer.rs`) — Tokenizes input into words, operators, quotes, substitutions
-- **Parser** (`src/parser/parser.rs`) — Recursive descent producing AST (`src/parser/ast.rs`)
-- **Shell** (`src/shell.rs`) — REPL loop, word expansion, command dispatch, builtins
+- **Parser** (`src/parser/`) — Lexer + recursive descent producing AST
+- **Shell** (`src/shell.rs`) — REPL loop, exec_list, builtin dispatch (`Shell<R: Runtime>`)
+- **Executor** (`src/executor/`) — Pipelines, redirections, compound commands, expansion
+- **Builtins** (`src/builtins/`) — All shell builtins, organized by category
 - **Arithmetic** (`src/arith.rs`) — Expression evaluator for `$((expr))`
 - **Brace** (`src/brace.rs`) — Brace expansion `{a,b}`, `{1..10}`
 - **Value** (`src/value.rs`) — `ShellValue` enum (Scalar | Array)
