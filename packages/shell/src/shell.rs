@@ -1089,7 +1089,7 @@ impl Shell {
         self.env.iter().map(|(k, v)| (k.clone(), v.as_scalar().to_string())).collect()
     }
 
-    fn resolve_path(&self, path: &str) -> String {
+    pub(crate) fn resolve_path(&self, path: &str) -> String {
         let home = self.env.get("HOME").map(|v| v.as_scalar()).unwrap_or("/");
         let expanded = expand_tilde(path, home);
         let base = if expanded.starts_with('/') {
@@ -1100,7 +1100,7 @@ impl Shell {
         normalize_path(&base)
     }
 
-    fn expand_word(&mut self, word: &Word) -> String {
+    pub(crate) fn expand_word(&mut self, word: &Word) -> String {
         let parts: Vec<_> = word.parts().to_vec();
         parts.iter().map(|p| self.expand_part(p)).collect()
     }
