@@ -142,9 +142,10 @@ pub struct List {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ListOp {
-    And,  // &&
-    Or,   // ||
-    Seq,  // ; or newline
+    And,        // &&
+    Or,         // ||
+    Seq,        // ; or newline
+    Background, // &
 }
 
 #[derive(Debug, Clone, PartialEq)]

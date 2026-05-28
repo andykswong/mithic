@@ -50,6 +50,7 @@ impl Parser {
                 Token::PipePipe => { self.advance(); Some(ListOp::Or) }
                 Token::Semi => { self.advance(); Some(ListOp::Seq) }
                 Token::Newline => { Some(ListOp::Seq) }
+                Token::Amp => { self.advance(); Some(ListOp::Background) }
                 _ => None,
             };
             let is_last = op.is_none();
@@ -146,6 +147,7 @@ impl Parser {
                 Token::PipePipe => { self.advance(); Some(ListOp::Or) }
                 Token::Semi => { self.advance(); Some(ListOp::Seq) }
                 Token::Newline => { self.advance(); Some(ListOp::Seq) }
+                Token::Amp => { self.advance(); Some(ListOp::Background) }
                 _ => None,
             };
             let is_last = op.is_none();
@@ -936,5 +938,36 @@ mod tests {
         let mut p = Parser::new("{ echo a; }");
         p.parse();
         assert!(!p.is_incomplete());
+    }
+
+    #[test]
+    fn test_background_operator() {
+        let mut p = Parser::new("sleep 10 &");
+        let list = p.parse().unwrap();
+        assert_eq!(list.items.len(), 1);
+        assert_eq!(list.items[0].op, Some(ListOp::Background));
+        let cmd = match &list.items[0].pipeline.commands[0] {
+            Command::Simple(sc) => sc,
+            _ => panic!("expected simple command"),
+        };
+        assert_eq!(cmd.words.len(), 2);
+    }
+
+    #[test]
+    fn test_background_in_list() {
+        let mut p = Parser::new("cmd1 & cmd2");
+        let list = p.parse().unwrap();
+        assert_eq!(list.items.len(), 2);
+        assert_eq!(list.items[0].op, Some(ListOp::Background));
+        assert_eq!(list.items[1].op, None);
+    }
+
+    #[test]
+    fn test_background_pipeline() {
+        let mut p = Parser::new("cmd1 | cmd2 &");
+        let list = p.parse().unwrap();
+        assert_eq!(list.items.len(), 1);
+        assert_eq!(list.items[0].op, Some(ListOp::Background));
+        assert_eq!(list.items[0].pipeline.commands.len(), 2);
     }
 }
