@@ -649,7 +649,10 @@ impl Parser {
     }
 
     fn parse_word_required(&mut self) -> Word {
-        self.parse_word().unwrap_or_else(|| Word::literal(""))
+        self.parse_word().unwrap_or_else(|| {
+            self.push_error("expected word after redirect operator");
+            Word::literal("")
+        })
     }
 
     fn parse_word(&mut self) -> Option<Word> {
