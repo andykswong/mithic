@@ -31,7 +31,7 @@ describe('manager (global WIT-level functions)', () => {
     _setProcessManager(new SimpleProcessManager({ commandResolver: () => handler }));
     const proc = spawn('test', []);
     assert.ok(proc instanceof Process);
-    assert.equal(proc.pid, 1);
+    assert.equal(proc.pid(),1);
   });
 
   it('spawn throws not-found when command not resolved', () => {
@@ -78,6 +78,6 @@ describe('manager (global WIT-level functions)', () => {
     _setProcessManager(custom);
     const proc = spawn('anything', []);
     assert.ok(called);
-    assert.equal(proc.pid, 50);
+    assert.equal(proc.pid(),50);
   });
 });

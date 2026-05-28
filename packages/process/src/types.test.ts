@@ -15,7 +15,7 @@ describe('Process', () => {
   it('constructor creates Process with correct pid', () => {
     const handler = createMockHandler();
     const proc = new Process(42, handler);
-    assert.equal(proc.pid, 42);
+    assert.equal(proc.pid(), 42);
   });
 
   it('wait() resolves with exit code', async () => {

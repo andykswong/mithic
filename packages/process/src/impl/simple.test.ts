@@ -13,7 +13,7 @@ describe('SimpleProcessManager', () => {
     const mgr = new SimpleProcessManager({ commandResolver: (f) => f === 'echo' ? handler : undefined });
     const proc = mgr.spawn('echo', ['hello']);
     assert.ok(proc instanceof Process);
-    assert.equal(proc.pid, 1);
+    assert.equal(proc.pid(),1);
   });
 
   it('spawn with pre-wired stdout captures output', async () => {
@@ -191,7 +191,7 @@ describe('WASIProcess', () => {
     const { spawn } = wp.getImportObject()['mithic:process/manager'];
     const proc = spawn('echo', ['hi']);
     assert.ok(proc instanceof Process);
-    assert.equal(proc.pid, 1);
+    assert.equal(proc.pid(),1);
   });
 
   it('spawn throws not-found for unknown command', () => {
@@ -218,7 +218,7 @@ describe('WASIProcess', () => {
     const wp = new WASIProcess({ manager: customManager });
     const { spawn } = wp.getImportObject()['mithic:process/manager'];
     const proc = spawn('test', []);
-    assert.equal(proc.pid, 99);
+    assert.equal(proc.pid(),99);
     assert.ok(spawnCalled);
   });
 

@@ -27,7 +27,7 @@ describe('WASIProcess', () => {
     const { spawn } = wp.getImportObject()['mithic:process/manager'];
     const proc = spawn('echo', ['hi']);
     assert.ok(proc instanceof Process);
-    assert.equal(proc.pid, 1);
+    assert.equal(proc.pid(), 1);
   });
 
   it('spawn via getImportObject throws not-found for unknown command', () => {

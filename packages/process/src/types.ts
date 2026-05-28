@@ -76,12 +76,16 @@ export interface ProcessHandler {
  * Streams are NOT on the process; they are pre-wired at spawn time.
  */
 export class Process {
-  readonly pid: number;
+  readonly #pid: number;
   readonly #handler: ProcessHandler;
 
   constructor(pid: number, handler: ProcessHandler) {
-    this.pid = pid;
+    this.#pid = pid;
     this.#handler = handler;
+  }
+
+  pid(): number {
+    return this.#pid;
   }
 
   wait(): Promise<number> {
