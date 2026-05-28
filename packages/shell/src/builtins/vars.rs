@@ -47,6 +47,7 @@ pub(super) fn exec_builtin(
         }
         "declare" | "local" => exec_declare(shell, args),
         "read" => exec_read(shell, args, stdin),
+        "set" => exec_set(shell, args),
         _ => {
             io::write_stderr(&format!("msh: {}: not handled in vars builtin\n", name));
             127
@@ -179,6 +180,28 @@ fn exec_read(shell: &mut Shell, args: &[String], stdin: Option<InputStream>) -> 
         }
     }
 
+    0
+}
+
+#[cfg(not(test))]
+fn exec_set(shell: &mut Shell, args: &[String]) -> u8 {
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "-o" || arg == "+o" {
+            let enable = arg.starts_with('-');
+            i += 1;
+            if i < args.len() {
+                shell.options.set_o_flag(&args[i], enable);
+            }
+        } else if arg.starts_with('-') || arg.starts_with('+') {
+            let enable = arg.starts_with('-');
+            for c in arg[1..].chars() {
+                shell.options.set_flag(c, enable);
+            }
+        }
+        i += 1;
+    }
     0
 }
 

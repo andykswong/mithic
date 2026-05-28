@@ -36,7 +36,7 @@ impl Shell {
             "exit" | "echo" | "pwd" | "cd" | "env" | "true" | "false" => {
                 core::exec_builtin(self, name, args, stdin, stdout)
             }
-            "export" | "unset" | "declare" | "local" | "read" => {
+            "export" | "unset" | "declare" | "local" | "read" | "set" => {
                 vars::exec_builtin(self, name, args, stdin, stdout)
             }
             "break" | "continue" | "return" | "source" | "." => {

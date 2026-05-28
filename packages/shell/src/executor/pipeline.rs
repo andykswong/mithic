@@ -163,12 +163,15 @@ impl Shell {
 
         let mut processes: Vec<crate::bindings::mithic::process::types::Process> = Vec::new();
         let mut last_builtin_exit: Option<u8> = None;
+        // Track builtin/function exits for pipefail
+        let mut builtin_exits: Vec<u8> = Vec::new();
 
         for (i, command) in cmds.into_iter().enumerate() {
             let cmd = match command {
                 Command::Simple(sc) => sc,
                 other => {
                     let exit = self.exec_compound(other);
+                    builtin_exits.push(exit);
                     if i == n - 1 { last_builtin_exit = Some(exit); }
                     continue;
                 }
@@ -192,11 +195,13 @@ impl Shell {
             let name = args[0].clone();
             if let Some(body) = self.functions.get(&name).cloned() {
                 let exit = self.exec_function_call(&args[1..], body);
+                builtin_exits.push(exit);
                 if i == n - 1 {
                     last_builtin_exit = Some(exit);
                 }
             } else if Self::is_builtin(&name) {
                 let exit = self.exec_builtin(&name, &args[1..], stdin_opt, stdout_opt);
+                builtin_exits.push(exit);
                 if self.exit_requested {
                     for p in processes { let _ = p.wait(); }
                     return exit;
@@ -226,11 +231,24 @@ impl Shell {
         self.foreground_pids = processes.iter().map(|p| p.pid()).collect();
 
         let last_proc = processes.pop();
-        for p in processes { let _ = p.wait(); }
-        let exit = if let Some(p) = last_proc {
+        // Collect intermediate process exits (for pipefail)
+        let intermediate_exits: Vec<u8> = processes.into_iter().map(|p| p.wait() as u8).collect();
+
+        let last_exit = if let Some(p) = last_proc {
             p.wait() as u8
         } else {
             last_builtin_exit.unwrap_or(self.last_exit)
+        };
+
+        let exit = if self.options.pipefail {
+            // Combine all exits: builtin/function exits + intermediate process exits + last exit
+            let mut all_exits = builtin_exits;
+            all_exits.extend(intermediate_exits);
+            all_exits.push(last_exit);
+            // Return last (rightmost) non-zero exit code, or 0 if all succeeded
+            all_exits.iter().rev().find(|&&e| e != 0).copied().unwrap_or(0)
+        } else {
+            last_exit
         };
 
         self.foreground_pids.clear();

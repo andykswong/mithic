@@ -2,6 +2,7 @@ pub mod arith;
 pub mod brace;
 pub mod builtins;
 pub mod executor;
+pub mod options;
 pub mod parser;
 pub mod regex;
 pub mod value;

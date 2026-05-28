@@ -13,6 +13,7 @@ use crate::io::{self, LineReader};
 use crate::parser::{ArrayAssign, Command, List, ListItem, ListOp, Parser, Pipeline, SimpleCommand, Word, WordPart};
 use crate::value::ShellValue;
 use crate::jobs::JobTable;
+use crate::options::ShellOptions;
 
 pub struct Shell {
     pub(crate) env: HashMap<String, ShellValue>,
@@ -32,6 +33,8 @@ pub struct Shell {
     pub(crate) jobs: JobTable,
     pub(crate) traps: HashMap<String, String>,
     pub(crate) foreground_pids: Vec<u32>,
+    pub(crate) options: ShellOptions,
+    pub(crate) in_condition: usize,
 }
 
 impl Shell {
@@ -64,6 +67,8 @@ impl Shell {
             jobs: JobTable::new(),
             traps: HashMap::new(),
             foreground_pids: Vec::new(),
+            options: ShellOptions::default(),
+            in_condition: 0,
         }
     }
 
@@ -159,6 +164,13 @@ impl Shell {
                 if self.exit_requested || self.return_requested || self.break_depth > 0 || self.continue_depth > 0 {
                     break;
                 }
+                // set -e: exit on non-zero status, but not in condition contexts or && / || chains
+                if self.options.errexit && exit != 0 && self.in_condition == 0 {
+                    if op == Some(ListOp::Seq) || op.is_none() {
+                        self.exit_requested = true;
+                        return exit;
+                    }
+                }
             }
 
             skip_next = match op {
@@ -193,6 +205,12 @@ impl Shell {
         let args: Vec<String> = cmd.words.iter()
             .flat_map(|w| self.expand_word_to_args(w))
             .collect();
+
+        // If nounset triggered during expansion, bail out with error
+        if self.exit_requested && self.options.nounset {
+            return self.last_exit;
+        }
+
         let mut stderr_opt: Option<OutputStream> = None;
         if !self.apply_redirects(&cmd.redirects, &mut stdin, &mut stdout, &mut stderr_opt) {
             return 1;
@@ -200,6 +218,10 @@ impl Shell {
 
         if args.is_empty() {
             return 0;
+        }
+
+        if self.options.xtrace {
+            io::write_stderr(&format!("+ {}\n", args.join(" ")));
         }
 
         let name = args[0].clone();
@@ -286,7 +308,7 @@ impl Shell {
             "exit" | "echo" | "pwd" | "cd" | "export" | "unset" |
             "env" | "true" | "false" | "break" | "continue" |
             "return" | "source" | "." | "read" | "test" | "[" | "[[" |
-            "declare" | "local" |
+            "declare" | "local" | "set" |
             "jobs" | "fg" | "bg" | "wait" | "disown" | "kill" | "trap"
         )
     }
@@ -654,7 +676,12 @@ impl Shell {
         result
     }
 
-    fn expand_var(&self, name: &str) -> String {
+    fn expand_var(&mut self, name: &str) -> String {
+        self.expand_var_impl(name, true)
+    }
+
+    /// Expand a variable without triggering nounset (used for operators like `:-`, `:+`).
+    fn expand_var_raw(&self, name: &str) -> String {
         match name {
             "?" => self.last_exit.to_string(),
             "#" => self.env.get("#").map(|v| v.as_scalar().to_string()).unwrap_or_else(|| "0".to_string()),
@@ -663,7 +690,27 @@ impl Shell {
         }
     }
 
-    fn expand_brace_var(&self, raw: &str) -> String {
+    fn expand_var_impl(&mut self, name: &str, check_nounset: bool) -> String {
+        match name {
+            "?" => self.last_exit.to_string(),
+            "#" => self.env.get("#").map(|v| v.as_scalar().to_string()).unwrap_or_else(|| "0".to_string()),
+            "@" | "*" => self.env.get("@").map(|v| v.as_scalar().to_string()).unwrap_or_default(),
+            "!" | "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => {
+                self.env.get(name).map(|v| v.as_scalar().to_string()).unwrap_or_default()
+            }
+            _ => {
+                if check_nounset && self.options.nounset && !self.env.contains_key(name) {
+                    io::write_stderr(&format!("msh: {}: unbound variable\n", name));
+                    self.last_exit = 1;
+                    self.exit_requested = true;
+                    return String::new();
+                }
+                self.env.get(name).map(|v| v.as_scalar().to_string()).unwrap_or_default()
+            }
+        }
+    }
+
+    fn expand_brace_var(&mut self, raw: &str) -> String {
         // ${#arr[@]} or ${#arr[*]} — array length
         if let Some(inner) = raw.strip_prefix('#') {
             if let Some((arr_name, subscript)) = parse_array_subscript(inner) {
@@ -757,14 +804,14 @@ impl Shell {
 
         // ${VAR:...} — substring or default/alternate
         if let Some(colon_rest) = op_and_rest.strip_prefix(':') {
-            // ${VAR:-default} — default if empty
+            // ${VAR:-default} — default if empty (nounset should NOT fire here)
             if let Some(default) = colon_rest.strip_prefix('-') {
-                let val = self.expand_var(var_name);
+                let val = self.expand_var_raw(var_name);
                 return if val.is_empty() { default.to_string() } else { val };
             }
-            // ${VAR:+alt} — alternate if not empty
+            // ${VAR:+alt} — alternate if not empty (nounset should NOT fire here)
             if let Some(alt) = colon_rest.strip_prefix('+') {
-                let val = self.expand_var(var_name);
+                let val = self.expand_var_raw(var_name);
                 return if val.is_empty() { String::new() } else { alt.to_string() };
             }
             // ${VAR:offset} or ${VAR:offset:length} — substring (digit or minus sign)
@@ -951,13 +998,17 @@ impl Shell {
     }
 
     fn exec_if(&mut self, cmd: crate::parser::IfCommand) -> u8 {
+        self.in_condition += 1;
         let cond_exit = self.exec_list(cmd.condition);
+        self.in_condition -= 1;
         let body = if cond_exit == 0 {
             Some(cmd.then_body)
         } else {
             let mut found = None;
             for (elif_cond, elif_body) in cmd.elifs {
+                self.in_condition += 1;
                 let elif_exit = self.exec_list(elif_cond);
+                self.in_condition -= 1;
                 if elif_exit == 0 {
                     found = Some(elif_body);
                     break;
@@ -967,7 +1018,7 @@ impl Shell {
         };
         match body {
             Some(list) => self.exec_list_redirected(list, &cmd.redirects),
-            None => cond_exit,
+            None => 0,
         }
     }
 
@@ -1001,7 +1052,9 @@ impl Shell {
         self.in_loop_depth += 1;
         let mut exit = 0u8;
         loop {
+            self.in_condition += 1;
             let cond = self.exec_list(cmd.condition.clone());
+            self.in_condition -= 1;
             let keep_looping = if invert { cond != 0 } else { cond == 0 };
             if !keep_looping { break; }
             exit = match &loop_stdout {
@@ -1029,7 +1082,9 @@ impl Shell {
         self.in_loop_depth += 1;
         let mut exit = 0u8;
         loop {
+            self.in_condition += 1;
             let cond = self.exec_list(cmd.condition.clone());
+            self.in_condition -= 1;
             let keep_looping = if invert { cond != 0 } else { cond == 0 };
             if !keep_looping { break; }
             exit = self.exec_list(cmd.body.clone());

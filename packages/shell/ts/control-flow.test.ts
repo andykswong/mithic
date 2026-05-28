@@ -591,6 +591,40 @@ describe('declare/local builtins', () => {
   });
 });
 
+describe('set/shopt options', () => {
+  it('set -e exits on failure', async () => {
+    const { stdout, exit } = await runShell('set -e\ntrue\nfalse\necho unreachable\n');
+    assert.strictEqual(stdout.trim(), '');
+    assert.strictEqual(exit, 1);
+  });
+
+  it('set -e does not trigger in if condition', async () => {
+    const { stdout } = await runShell('set -e\nif false; then echo a; fi\necho ok\n');
+    assert.strictEqual(stdout.trim(), 'ok');
+  });
+
+  it('set -u errors on unset var', async () => {
+    const { stderr, exit } = await runShell('set -u\necho $UNDEFINED_VAR_XYZ_123\n');
+    assert.notStrictEqual(exit, 0);
+    assert.match(stderr, /unbound variable/);
+  });
+
+  it('set -o pipefail', async () => {
+    const { stdout } = await runShell('set -o pipefail\nfalse | true\necho $?\n');
+    assert.strictEqual(stdout.trim(), '1');
+  });
+
+  it('set +e disables errexit', async () => {
+    const { stdout } = await runShell('set -e\nset +e\nfalse\necho ok\n');
+    assert.strictEqual(stdout.trim(), 'ok');
+  });
+
+  it('set -x prints commands to stderr', async () => {
+    const { stderr } = await runShell('set -x\necho hello\n');
+    assert.match(stderr, /\+ echo hello/);
+  });
+});
+
 describe('subshell isolation', () => {
   it('subshell does not leak env changes', async () => {
     const { stdout } = await runShell('X=outer; (X=inner; echo $X); echo $X\n');
