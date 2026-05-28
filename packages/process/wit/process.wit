@@ -14,6 +14,9 @@ interface types {
     /// Wait for the process to exit. Returns the exit status code.
     wait: func() -> status-code;
 
+    /// Non-blocking check: returns exit code if process has exited, none if still running.
+    try-wait: func() -> option<status-code>;
+
     /// Send a signal to the process.
     kill: func(signal: signal) -> result<_, error-code>;
   }

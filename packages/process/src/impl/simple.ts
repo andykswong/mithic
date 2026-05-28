@@ -112,6 +112,7 @@ export class SimpleProcessManager implements ProcessManager {
 
     let killed = false;
     let done = false;
+    let exitCode: number | undefined;
     let resolveWait: ((exitCode: number) => void) | null = null;
     const waitPromise = new Promise<number>(r => { resolveWait = r; });
 
@@ -123,9 +124,11 @@ export class SimpleProcessManager implements ProcessManager {
         }
         killed = true;
         const sigNum = SIGNAL_NUMBER[signal];
-        resolveWait?.(128 + sigNum);
+        exitCode = 128 + sigNum;
+        resolveWait?.(exitCode);
       },
       wait() { return waitPromise; },
+      tryWait() { return exitCode; },
     };
 
     const proc = new Process(pid, processHandler);
@@ -140,9 +143,10 @@ export class SimpleProcessManager implements ProcessManager {
     };
 
     handler(args, ctx).then(
-      (exitCode) => {
+      (code) => {
         done = true;
         if (!killed) {
+          exitCode = code;
           resolveWait?.(exitCode);
           this.table.remove(pid);
         }
@@ -154,7 +158,8 @@ export class SimpleProcessManager implements ProcessManager {
             const msg = new TextEncoder().encode(String(err));
             childStderr.write(msg);
           } catch { /* stderr may be closed */ }
-          resolveWait?.(1);
+          exitCode = 1;
+          resolveWait?.(exitCode);
           this.table.remove(pid);
         }
       },

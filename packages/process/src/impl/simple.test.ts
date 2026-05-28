@@ -150,6 +150,46 @@ describe('SimpleProcessManager', () => {
     assert.deepEqual(data, new Uint8Array([10, 20, 30]));
   });
 
+  it('tryWait() returns undefined before process completes', () => {
+    const handler: CommandHandler = async () => {
+      await new Promise(r => setTimeout(r, 10000));
+      return 0;
+    };
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('sleep', ['100']);
+    assert.equal(proc.tryWait(), undefined);
+    proc.kill('sigterm');
+  });
+
+  it('tryWait() returns exit code after process exits normally', async () => {
+    const handler: CommandHandler = async () => 42;
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('test', []);
+    await proc.wait();
+    assert.equal(proc.tryWait(), 42);
+  });
+
+  it('tryWait() returns signal exit code after kill', async () => {
+    const handler: CommandHandler = async () => {
+      await new Promise(r => setTimeout(r, 10000));
+      return 0;
+    };
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('sleep', ['100']);
+    proc.kill('sigterm');
+    await proc.wait();
+    assert.equal(proc.tryWait(), 128 + 15);
+  });
+
+  it('tryWait() returns 1 after handler error', async () => {
+    const handler: CommandHandler = async () => { throw new Error('fail'); };
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const pipe = mgr.createPipe();
+    const proc = mgr.spawn('fail', [], { stderr: pipe.output });
+    await proc.wait();
+    assert.equal(proc.tryWait(), 1);
+  });
+
   it('pipe between two processes', async () => {
     const writer: CommandHandler = async (_args, ctx) => {
       ctx.stdout.write(new Uint8Array([65, 66, 67]));

@@ -69,6 +69,7 @@ export interface SpawnOptions {
 export interface ProcessHandler {
   onKill?(signal: Signal): void;
   wait(): Promise<number>;
+  tryWait?(): number | undefined;
 }
 
 /**
@@ -90,6 +91,10 @@ export class Process {
 
   wait(): Promise<number> {
     return this.#handler.wait();
+  }
+
+  tryWait(): number | undefined {
+    return this.#handler.tryWait?.();
   }
 
   kill(signal: Signal = 'sigterm'): void {

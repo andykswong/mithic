@@ -230,18 +230,18 @@ pub(super) fn exec_builtin(
 #[cfg(not(test))]
 impl Shell {
     pub(crate) fn check_background_jobs(&mut self) {
-        let mut done_ids: Vec<(usize, String)> = Vec::new();
+        let mut done_ids: Vec<(usize, String, u8)> = Vec::new();
         for job in self.jobs.iter() {
             if job.status != JobStatus::Running { continue; }
             if let Some(proc) = job.processes.last() {
-                if proc.kill(crate::bindings::mithic::process::types::Signal::Signull).is_err() {
-                    done_ids.push((job.id, job.command.clone()));
+                if let Some(exit_code) = proc.try_wait() {
+                    done_ids.push((job.id, job.command.clone(), exit_code));
                 }
             }
         }
-        for (id, cmd) in &done_ids {
+        for (id, cmd, exit_code) in &done_ids {
             if self.is_interactive {
-                io::write_stderr(&format!("[{}]+ Done                    {}\n", id, cmd));
+                io::write_stderr(&format!("[{}]+ Done ({})             {}\n", id, exit_code, cmd));
             }
             self.jobs.remove(*id);
         }

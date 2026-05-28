@@ -45,6 +45,21 @@ describe('Process', () => {
     const proc = new Process(1, handler);
     assert.doesNotThrow(() => proc.kill('sigkill'));
   });
+
+  it('tryWait() returns undefined when handler has no tryWait', () => {
+    const handler = createMockHandler();
+    const proc = new Process(1, handler);
+    assert.equal(proc.tryWait(), undefined);
+  });
+
+  it('tryWait() returns value from handler.tryWait', () => {
+    const handler: ProcessHandler = {
+      wait() { return Promise.resolve(0); },
+      tryWait() { return 42; },
+    };
+    const proc = new Process(1, handler);
+    assert.equal(proc.tryWait(), 42);
+  });
 });
 
 describe('SIGNAL_NUMBER', () => {
