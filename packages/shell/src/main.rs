@@ -6,6 +6,7 @@ pub mod options;
 pub mod params;
 pub mod parser;
 pub mod regex;
+pub mod runtime;
 pub mod value;
 
 #[cfg(not(test))]
