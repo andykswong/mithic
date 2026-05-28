@@ -590,3 +590,20 @@ describe('declare/local builtins', () => {
     assert.strictEqual(stdout.trim(), '42');
   });
 });
+
+describe('subshell isolation', () => {
+  it('subshell does not leak env changes', async () => {
+    const { stdout } = await runShell('X=outer; (X=inner; echo $X); echo $X\n');
+    assert.strictEqual(stdout.trim(), 'inner\nouter');
+  });
+
+  it('subshell does not leak cd', async () => {
+    const { stdout } = await runShell('cd /; (cd /tmp; echo $PWD); echo $PWD\n');
+    assert.strictEqual(stdout.trim(), '/tmp\n/');
+  });
+
+  it('subshell exit does not exit parent', async () => {
+    const { stdout } = await runShell('(exit 42); echo "still here: $?"\n');
+    assert.strictEqual(stdout.trim(), 'still here: 42');
+  });
+});

@@ -904,7 +904,23 @@ impl Shell {
                 0
             }
             Command::Group(list) => self.exec_list(list),
-            Command::Subshell(list) => self.exec_list(list),
+            Command::Subshell(list) => {
+                let saved_env = self.env.clone();
+                let saved_cwd = self.cwd.clone();
+                let saved_functions = self.functions.clone();
+                let saved_traps = self.traps.clone();
+                let saved_exit_requested = self.exit_requested;
+
+                let exit = self.exec_list(list);
+
+                self.env = saved_env;
+                self.cwd = saved_cwd;
+                self.functions = saved_functions;
+                self.traps = saved_traps;
+                self.exit_requested = saved_exit_requested;
+
+                exit
+            }
             Command::ArrayAssign(aa) => self.exec_array_assign(aa),
             Command::Arithmetic(expr) => {
                 let result_str = self.eval_arithmetic(&expr);

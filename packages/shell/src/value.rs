@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub enum ShellValue {
     Scalar(String),
     Array(Vec<String>),
