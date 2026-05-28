@@ -225,7 +225,7 @@ impl Lexer {
                     if !buf.is_empty() {
                         parts.push(WordPart::Literal(std::mem::take(&mut buf)));
                     }
-                    parts.push(WordPart::Literal(s));
+                    parts.push(WordPart::Quoted(s));
                 }
                 // Inline double-quote: expansion within quotes
                 Some('"') => {
@@ -233,7 +233,7 @@ impl Lexer {
                     if !buf.is_empty() {
                         parts.push(WordPart::Literal(std::mem::take(&mut buf)));
                     }
-                    let dq = self.read_parts_until(|c| c == '"');
+                    let dq = self.read_dq_parts_until(|c| c == '"');
                     self.advance(); // consume closing "
                     parts.extend(dq);
                 }
@@ -296,9 +296,8 @@ impl Lexer {
         }
     }
 
-    /// Read parts (literals, vars, cmd subs) until `end_pred` matches.
-    /// Does NOT consume the terminator.
-    fn read_parts_until(&mut self, end_pred: impl Fn(char) -> bool) -> Vec<WordPart> {
+    /// Like the former `read_parts_until` but emits `Quoted` for literal segments (used inside double quotes).
+    fn read_dq_parts_until(&mut self, end_pred: impl Fn(char) -> bool) -> Vec<WordPart> {
         let mut parts: Vec<WordPart> = Vec::new();
         let mut buf = String::new();
 
@@ -316,11 +315,21 @@ impl Lexer {
                     }
                 }
                 Some('$') => {
-                    self.read_dollar(&mut parts, &mut buf);
+                    if !buf.is_empty() {
+                        parts.push(WordPart::Quoted(std::mem::take(&mut buf)));
+                    }
+                    // Temporarily borrow a plain buf for read_dollar, then convert Literals to Quoted
+                    let mut tmp_buf = String::new();
+                    let mut tmp_parts: Vec<WordPart> = Vec::new();
+                    self.read_dollar(&mut tmp_parts, &mut tmp_buf);
+                    if !tmp_buf.is_empty() {
+                        parts.push(WordPart::Quoted(tmp_buf));
+                    }
+                    parts.extend(tmp_parts);
                 }
                 Some('`') => {
                     if !buf.is_empty() {
-                        parts.push(WordPart::Literal(std::mem::take(&mut buf)));
+                        parts.push(WordPart::Quoted(std::mem::take(&mut buf)));
                     }
                     self.advance();
                     let raw = self.read_until_backtick();
@@ -334,7 +343,7 @@ impl Lexer {
         }
 
         if !buf.is_empty() {
-            parts.push(WordPart::Literal(buf));
+            parts.push(WordPart::Quoted(buf));
         }
         parts
     }
@@ -472,6 +481,7 @@ mod tests {
 
     fn word(parts: Vec<WordPart>) -> Token { Token::Word(parts) }
     fn lit(s: &str) -> WordPart { WordPart::Literal(s.into()) }
+    fn quoted(s: &str) -> WordPart { WordPart::Quoted(s.into()) }
     fn var(s: &str) -> WordPart { WordPart::Var(s.into()) }
 
     #[test]
@@ -512,16 +522,16 @@ mod tests {
 
     #[test]
     fn test_single_quoted() {
-        // Single-quoted string becomes Word([Literal(...)])
+        // Single-quoted string becomes Word([Quoted(...)])
         assert_eq!(lex("'hello world'"), vec![
-            word(vec![lit("hello world")]),
+            word(vec![quoted("hello world")]),
         ]);
     }
 
     #[test]
     fn test_double_quoted_literal() {
         assert_eq!(lex("\"hello\""), vec![
-            word(vec![lit("hello")]),
+            word(vec![quoted("hello")]),
         ]);
     }
 
@@ -536,9 +546,9 @@ mod tests {
     fn test_double_quoted_mixed() {
         assert_eq!(lex("\"hello $NAME!\""), vec![
             word(vec![
-                lit("hello "),
+                quoted("hello "),
                 var("NAME"),
-                lit("!"),
+                quoted("!"),
             ]),
         ]);
     }
@@ -610,7 +620,7 @@ mod tests {
     fn test_adjacent_single_double_quote() {
         // 'foo'"bar" is ONE word token
         assert_eq!(lex("'foo'\"bar\""), vec![
-            word(vec![lit("foo"), lit("bar")]),
+            word(vec![quoted("foo"), quoted("bar")]),
         ]);
     }
 
@@ -618,7 +628,7 @@ mod tests {
     fn test_adjacent_bare_and_single() {
         // foo'bar' is ONE word token
         assert_eq!(lex("foo'bar'"), vec![
-            word(vec![lit("foo"), lit("bar")]),
+            word(vec![lit("foo"), quoted("bar")]),
         ]);
     }
 
@@ -626,8 +636,8 @@ mod tests {
     fn test_adjacent_separated_are_two_words() {
         // 'foo' "bar" (with space) is TWO tokens
         assert_eq!(lex("'foo' \"bar\""), vec![
-            word(vec![lit("foo")]),
-            word(vec![lit("bar")]),
+            word(vec![quoted("foo")]),
+            word(vec![quoted("bar")]),
         ]);
     }
 

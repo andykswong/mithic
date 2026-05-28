@@ -2,6 +2,8 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum WordPart {
     Literal(String),
+    /// Content from inside single or double quotes — not subject to brace or glob expansion.
+    Quoted(String),
     /// `$VAR` or `$?` etc.
     Var(String),
     /// `${VAR}` or `${VAR:-default}` — raw inner string

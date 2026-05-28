@@ -294,6 +294,36 @@ describe('arrays', () => {
     const { stdout } = await runShell('arr=(a b)\narr+=(c d)\necho ${arr[@]}\necho ${#arr[@]}\n');
     assert.strictEqual(stdout.trim(), 'a b c d\n4');
   });
+
+  it('supports negative index ${arr[-1]}', async () => {
+    const { stdout } = await runShell('arr=(a b c d)\necho ${arr[-1]}\necho ${arr[-2]}\n');
+    assert.strictEqual(stdout.trim(), 'd\nc');
+  });
+
+  it('unset arr[N] removes single element', async () => {
+    const { stdout } = await runShell('arr=(a b c d)\nunset arr[1]\necho ${arr[@]}\necho ${#arr[@]}\n');
+    assert.strictEqual(stdout.trim(), 'a  c d\n4');
+  });
+
+  it('supports sparse arrays', async () => {
+    const { stdout } = await runShell('arr[5]=hello\necho ${arr[5]}\necho ${#arr[@]}\n');
+    assert.strictEqual(stdout.trim(), 'hello\n6');
+  });
+
+  it('empty array has length 0', async () => {
+    const { stdout } = await runShell('arr=()\necho ${#arr[@]}\n');
+    assert.strictEqual(stdout.trim(), '0');
+  });
+
+  it('${arr[@]} produces separate words in for loop', async () => {
+    const { stdout } = await runShell('arr=(one two three)\nfor x in ${arr[@]}; do echo "[$x]"; done\n');
+    assert.strictEqual(stdout.trim(), '[one]\n[two]\n[three]');
+  });
+
+  it('${arr[@]} with spaces in elements preserves each element', async () => {
+    const { stdout } = await runShell('arr=(one "two three" four)\nfor x in "${arr[@]}"; do echo "[$x]"; done\n');
+    assert.strictEqual(stdout.trim(), '[one]\n[two three]\n[four]');
+  });
 });
 
 describe('multi-line input', () => {
@@ -347,6 +377,21 @@ describe('arithmetic expansion', () => {
   it('supports ternary operator', async () => {
     const { stdout } = await runShell('export x=1\necho $((x ? 42 : 99))\n');
     assert.strictEqual(stdout.trim(), '42');
+  });
+
+  it('expands $VAR in expression', async () => {
+    const { stdout } = await runShell('export x=10\necho $(($x + 5))\n');
+    assert.strictEqual(stdout.trim(), '15');
+  });
+
+  it('expands ${VAR} in expression', async () => {
+    const { stdout } = await runShell('export y=3\necho $((${y} * 2))\n');
+    assert.strictEqual(stdout.trim(), '6');
+  });
+
+  it('comma operator with assignment reads updated value', async () => {
+    const { stdout } = await runShell('echo $((x = 5, x + 1))\n');
+    assert.strictEqual(stdout.trim(), '6');
   });
 });
 
@@ -467,5 +512,54 @@ describe('extended parameter expansion', () => {
   it('${VAR/pat/} removes pattern (empty replacement)', async () => {
     const { stdout } = await runShell('export x=hello\necho ${x/l/}\n');
     assert.strictEqual(stdout.trim(), 'helo');
+  });
+
+  it('${VAR/glob/rep} supports glob patterns', async () => {
+    const { stdout } = await runShell('export x=hello\necho ${x/h*/X}\n');
+    assert.strictEqual(stdout.trim(), 'X');
+  });
+
+  it('${VAR//[chars]/rep} replaces character class', async () => {
+    const { stdout } = await runShell('export x=hello\necho ${x//[lo]/X}\n');
+    assert.strictEqual(stdout.trim(), 'heXXX');
+  });
+});
+
+describe('quoted brace expansion', () => {
+  it('does not expand inside double quotes', async () => {
+    const { stdout } = await runShell('echo "{a,b,c}"\n');
+    assert.strictEqual(stdout.trim(), '{a,b,c}');
+  });
+
+  it('does not expand inside single quotes', async () => {
+    const { stdout } = await runShell("echo '{a,b}'\n");
+    assert.strictEqual(stdout.trim(), '{a,b}');
+  });
+});
+
+describe('declare/local builtins', () => {
+  it('declare -a creates empty array', async () => {
+    const { stdout } = await runShell('declare -a arr\necho ${#arr[@]}\n');
+    assert.strictEqual(stdout.trim(), '0');
+  });
+
+  it('declare assigns scalar', async () => {
+    const { stdout } = await runShell('declare x=hello\necho $x\n');
+    assert.strictEqual(stdout.trim(), 'hello');
+  });
+
+  it('declare -p prints variable', async () => {
+    const { stdout } = await runShell('export x=world\ndeclare -p x\n');
+    assert.strictEqual(stdout.trim(), 'declare -- x="world"');
+  });
+
+  it('declare -p prints array', async () => {
+    const { stdout } = await runShell('arr=(a b c)\ndeclare -p arr\n');
+    assert.strictEqual(stdout.trim(), 'declare -a arr=("a" "b" "c")');
+  });
+
+  it('local is synonym for declare', async () => {
+    const { stdout } = await runShell('local y=42\necho $y\n');
+    assert.strictEqual(stdout.trim(), '42');
   });
 });

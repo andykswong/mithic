@@ -21,6 +21,8 @@ pub struct Shell {
     return_requested: bool,
     in_loop_depth: usize,
     in_function_depth: usize,
+    procsub_counter: u64,
+    procsub_paths: Vec<String>,
 }
 
 impl Shell {
@@ -48,6 +50,8 @@ impl Shell {
             return_requested: false,
             in_loop_depth: 0,
             in_function_depth: 0,
+            procsub_counter: 0,
+            procsub_paths: Vec::new(),
         }
     }
 
@@ -120,6 +124,7 @@ impl Shell {
             }
         }
 
+        self.cleanup_procsub_files();
         self.last_exit
     }
 
@@ -284,14 +289,6 @@ impl Shell {
             return 0;
         }
 
-        // Detect scalar/indexed-array assignment from expanded first arg.
-        // This covers `VAR=value` or `arr[0]=value` as the sole word.
-        if args.len() == 1 {
-            if let Some(exit) = self.try_assignment(&args[0]) {
-                return exit;
-            }
-        }
-
         let name = args[0].clone();
         if let Some(body) = self.functions.get(&name).cloned() {
             self.exec_function_call(&args[1..], body)
@@ -364,7 +361,8 @@ impl Shell {
         matches!(name,
             "exit" | "echo" | "pwd" | "cd" | "export" | "unset" |
             "env" | "true" | "false" | "break" | "continue" |
-            "return" | "source" | "." | "read" | "test" | "[" | "[["
+            "return" | "source" | "." | "read" | "test" | "[" | "[[" |
+            "declare" | "local"
         )
     }
 
@@ -421,7 +419,24 @@ impl Shell {
                 0
             }
             "unset" => {
-                for arg in args { self.env.remove(arg.as_str()); }
+                for arg in args {
+                    if let Some((name, subscript)) = parse_array_subscript(arg) {
+                        if let Some(ShellValue::Array(v)) = self.env.get_mut(name) {
+                            if let Ok(idx) = subscript.parse::<i64>() {
+                                let actual = if idx < 0 {
+                                    (v.len() as i64 + idx).max(0) as usize
+                                } else {
+                                    idx as usize
+                                };
+                                if actual < v.len() {
+                                    v[actual] = String::new();
+                                }
+                            }
+                        }
+                    } else {
+                        self.env.remove(arg.as_str());
+                    }
+                }
                 0
             }
             "env" => {
@@ -488,8 +503,63 @@ impl Shell {
             "[[" => {
                 if self.eval_extended_test(args) { 0 } else { 1 }
             }
+            "declare" | "local" => {
+                self.exec_declare(args)
+            }
             _ => 127,
         }
+    }
+
+    fn exec_declare(&mut self, args: &[String]) -> u8 {
+        let mut is_array = false;
+        let mut print_mode = false;
+        let mut remaining_args: Vec<&str> = Vec::new();
+
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "-a" => is_array = true,
+                "-p" => print_mode = true,
+                arg if arg.starts_with('-') => {
+                    // Unknown flag — ignore for now
+                }
+                _ => remaining_args.push(&args[i]),
+            }
+            i += 1;
+        }
+
+        if print_mode {
+            for name in &remaining_args {
+                match self.env.get(*name) {
+                    Some(ShellValue::Scalar(s)) => {
+                        io::write_stdout(&format!("declare -- {}=\"{}\"\n", name, s));
+                    }
+                    Some(ShellValue::Array(v)) => {
+                        let elements: Vec<String> = v.iter().map(|e| format!("\"{}\"", e)).collect();
+                        io::write_stdout(&format!("declare -a {}=({})\n", name, elements.join(" ")));
+                    }
+                    None => {
+                        io::write_stderr(&format!("declare: {}: not found\n", name));
+                    }
+                }
+            }
+            return 0;
+        }
+
+        for arg in &remaining_args {
+            if let Some((name, value)) = arg.split_once('=') {
+                if is_array {
+                    self.env.insert(name.to_string(), ShellValue::Array(vec![value.to_string()]));
+                } else {
+                    self.env.insert(name.to_string(), ShellValue::Scalar(value.to_string()));
+                }
+            } else if is_array {
+                if !self.env.contains_key(*arg) {
+                    self.env.insert(arg.to_string(), ShellValue::Array(Vec::new()));
+                }
+            }
+        }
+        0
     }
 
     #[cfg(not(test))]
@@ -642,11 +712,64 @@ impl Shell {
     }
 
     fn expand_word_to_args(&mut self, w: &Word) -> Vec<String> {
+        // Special case: a word that is just ${arr[@]}, ${arr[*]}, $@, or $* should expand
+        // to multiple words rather than a single space-joined string.
+        if let Some(elements) = self.try_expand_array_all(w) {
+            return elements;
+        }
+
         let expanded = self.expand_word(w);
-        let brace_results = expand_braces(&expanded);
+        // Only apply brace expansion when the word has unquoted parts containing braces.
+        let has_unquoted_braces = w.parts().iter().any(|p| {
+            matches!(p, WordPart::Literal(s) if s.contains('{') || s.contains('}'))
+        });
+        // Only apply glob expansion when the word has unquoted parts containing glob chars.
+        let has_unquoted_globs = w.parts().iter().any(|p| {
+            matches!(p, WordPart::Literal(s) if has_glob(s))
+        });
+
+        let brace_results = if has_unquoted_braces {
+            expand_braces(&expanded)
+        } else {
+            vec![expanded]
+        };
         brace_results.into_iter().flat_map(|s| {
-            if has_glob(&s) { self.expand_glob(&s) } else { vec![s] }
+            if has_unquoted_globs && has_glob(&s) { self.expand_glob(&s) } else { vec![s] }
         }).collect()
+    }
+
+    /// If the word is a standalone `${arr[@]}`, `${arr[*]}`, `$@`, or `$*`, return all elements
+    /// as separate words. Returns `None` if the word isn't this pattern.
+    fn try_expand_array_all(&self, w: &Word) -> Option<Vec<String>> {
+        let parts = w.parts();
+        if parts.len() != 1 {
+            return None;
+        }
+
+        match &parts[0] {
+            WordPart::BraceVar(raw) => {
+                let (name, subscript) = parse_array_subscript(raw)?;
+                if subscript != "@" && subscript != "*" {
+                    return None;
+                }
+                match self.env.get(name) {
+                    Some(ShellValue::Array(elements)) => Some(elements.clone()),
+                    Some(ShellValue::Scalar(s)) => Some(vec![s.clone()]),
+                    None => Some(Vec::new()),
+                }
+            }
+            WordPart::Var(name) if name == "@" || name == "*" => {
+                let val = self.env.get("@")
+                    .map(|v| v.as_scalar().to_string())
+                    .unwrap_or_default();
+                if val.is_empty() {
+                    Some(Vec::new())
+                } else {
+                    Some(val.split_whitespace().map(|s| s.to_string()).collect())
+                }
+            }
+            _ => None,
+        }
     }
 
     fn expand_part(&mut self, part: &WordPart) -> String {
@@ -655,6 +778,7 @@ impl Shell {
                 let home = self.env.get("HOME").map(|v| v.as_scalar()).unwrap_or("/");
                 expand_tilde(s, home)
             }
+            WordPart::Quoted(s) => s.clone(),
             WordPart::Var(name) => self.expand_var(name),
             WordPart::BraceVar(raw) => self.expand_brace_var(raw),
             WordPart::CmdSub(raw) => self.exec_capturing(raw),
@@ -694,6 +818,7 @@ impl Shell {
             }
         }
 
+        self.procsub_paths.push(tmp_path.clone());
         tmp_path
     }
 
@@ -714,27 +839,78 @@ impl Shell {
     }
 
     fn next_id(&mut self) -> u64 {
-        let key = "__procsub_id";
-        let current: u64 = self.env.get(key)
-            .map(|v| v.as_scalar().parse().unwrap_or(0))
-            .unwrap_or(0);
-        let next = current + 1;
-        self.env.insert(key.to_string(), ShellValue::Scalar(next.to_string()));
-        next
+        self.procsub_counter += 1;
+        self.procsub_counter
     }
 
-    fn eval_arithmetic(&mut self, expr: &str) -> String {
-        let env_snapshot: std::collections::HashMap<String, i64> = self.env.iter()
-            .map(|(k, v)| (k.clone(), v.as_scalar().parse::<i64>().unwrap_or(0)))
-            .collect();
-        let lookup = |name: &str| -> i64 { *env_snapshot.get(name).unwrap_or(&0) };
-        let mut assignments: Vec<(String, i64)> = Vec::new();
-        let mut assign = |name: &str, val: i64| { assignments.push((name.to_string(), val)); };
-        let result = crate::arith::eval(expr, &lookup, &mut assign);
-        for (name, val) in assignments {
-            self.env.insert(name, ShellValue::Scalar(val.to_string()));
+    #[cfg(not(test))]
+    fn cleanup_procsub_files(&self) {
+        if let Some(root) = get_root_descriptor() {
+            for path in &self.procsub_paths {
+                let rel = path.trim_start_matches('/');
+                let _ = root.unlink_file_at(rel);
+            }
         }
+    }
+
+    #[cfg(test)]
+    fn cleanup_procsub_files(&self) {}
+
+    fn eval_arithmetic(&mut self, expr: &str) -> String {
+        use std::cell::RefCell;
+
+        let expanded_expr = self.expand_arith_vars(expr);
+
+        let working: RefCell<std::collections::HashMap<String, i64>> = RefCell::new(
+            self.env.iter()
+                .map(|(k, v)| (k.clone(), v.as_scalar().parse::<i64>().unwrap_or(0)))
+                .collect()
+        );
+
+        let lookup = |name: &str| -> i64 { *working.borrow().get(name).unwrap_or(&0) };
+        let mut assign = |name: &str, val: i64| { working.borrow_mut().insert(name.to_string(), val); };
+        let result = crate::arith::eval(&expanded_expr, &lookup, &mut assign);
+
+        for (k, v) in working.into_inner() {
+            let orig = self.env.get(&k)
+                .map(|sv| sv.as_scalar().parse::<i64>().unwrap_or(0))
+                .unwrap_or(0);
+            if v != orig {
+                self.env.insert(k, ShellValue::Scalar(v.to_string()));
+            }
+        }
+
         result.to_string()
+    }
+
+    fn expand_arith_vars(&self, expr: &str) -> String {
+        let mut result = String::new();
+        let chars: Vec<char> = expr.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '$' {
+                i += 1;
+                if i < chars.len() && chars[i] == '{' {
+                    i += 1;
+                    let start = i;
+                    while i < chars.len() && chars[i] != '}' { i += 1; }
+                    let name: String = chars[start..i].iter().collect();
+                    result.push_str(self.env.get(&name).map(|v| v.as_scalar()).unwrap_or("0"));
+                    if i < chars.len() { i += 1; }
+                } else if i < chars.len() && (chars[i].is_alphabetic() || chars[i] == '_') {
+                    let start = i;
+                    while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') { i += 1; }
+                    let name: String = chars[start..i].iter().collect();
+                    result.push_str(self.env.get(&name).map(|v| v.as_scalar()).unwrap_or("0"));
+                } else {
+                    result.push('$');
+                }
+            } else {
+                result.push(chars[i]);
+                i += 1;
+            }
+        }
+        result
     }
 
     fn expand_var(&self, name: &str) -> String {
@@ -756,10 +932,17 @@ impl Shell {
                         None => "0".to_string(),
                     };
                 }
-                // ${#arr[n]} — length of element at index
-                if let Ok(idx) = subscript.parse::<usize>() {
+                // ${#arr[n]} — length of element at index (supports negative indices)
+                if let Ok(idx) = subscript.parse::<i64>() {
                     return match self.env.get(arr_name) {
-                        Some(v) => v.index(idx).len().to_string(),
+                        Some(v) => {
+                            let actual_idx = if idx < 0 {
+                                (v.len() as i64 + idx).max(0) as usize
+                            } else {
+                                idx as usize
+                            };
+                            v.index(actual_idx).len().to_string()
+                        }
                         None => "0".to_string(),
                     };
                 }
@@ -775,8 +958,13 @@ impl Shell {
                 Some(v) => {
                     if subscript == "@" || subscript == "*" {
                         v.all_elements()
-                    } else if let Ok(idx) = subscript.parse::<usize>() {
-                        v.index(idx).to_string()
+                    } else if let Ok(idx) = subscript.parse::<i64>() {
+                        let actual_idx = if idx < 0 {
+                            (v.len() as i64 + idx).max(0) as usize
+                        } else {
+                            idx as usize
+                        };
+                        v.index(actual_idx).to_string()
                     } else {
                         String::new()
                     }
@@ -788,18 +976,18 @@ impl Shell {
         // Split into variable name and operator+pattern
         let (var_name, op_and_rest) = split_var_and_op(raw);
 
-        // ${VAR//pat/rep} — replace all occurrences (check before single /)
+        // ${VAR//pat/rep} — replace all occurrences (glob-based)
         if let Some(pat_rep) = op_and_rest.strip_prefix("//") {
             let val = self.expand_var(var_name);
             let (pat, rep) = pat_rep.split_once('/').unwrap_or((pat_rep, ""));
-            return val.replace(pat, rep);
+            return glob_replace_all(&val, pat, rep);
         }
 
-        // ${VAR/pat/rep} — replace first occurrence
+        // ${VAR/pat/rep} — replace first occurrence (glob-based)
         if let Some(pat_rep) = op_and_rest.strip_prefix('/') {
             let val = self.expand_var(var_name);
             let (pat, rep) = pat_rep.split_once('/').unwrap_or((pat_rep, ""));
-            return val.replacen(pat, rep, 1);
+            return glob_replace_first(&val, pat, rep);
         }
 
         // ${VAR##pat} — remove longest matching prefix (check before single #)
@@ -1545,12 +1733,12 @@ impl Shell {
     ) -> bool { true }
 }
 
-/// Return the literal string of a Word if it consists solely of `Literal` parts.
+/// Return the literal string of a Word if it consists solely of `Literal` or `Quoted` parts.
 fn literal_text(word: &Word) -> Option<String> {
     let mut s = String::new();
     for part in word.parts() {
         match part {
-            WordPart::Literal(l) => s.push_str(l),
+            WordPart::Literal(l) | WordPart::Quoted(l) => s.push_str(l),
             _ => return None,
         }
     }
@@ -1641,6 +1829,8 @@ fn parse_array_subscript(s: &str) -> Option<(&str, &str)> {
     let name = &s[..open];
     let subscript = &s[open + 1..close];
     if name.is_empty() { return None; }
+    // Name must be a valid identifier (only alphanumeric + underscore)
+    if !name.chars().all(|c| c.is_alphanumeric() || c == '_') { return None; }
     Some((name, subscript))
 }
 
@@ -1708,6 +1898,48 @@ fn glob_match_inner(pat: &[char], name: &[char]) -> bool {
     }
 }
 
+fn glob_replace_first(val: &str, pattern: &str, replacement: &str) -> String {
+    if pattern.is_empty() { return val.to_string(); }
+    let chars: Vec<char> = val.chars().collect();
+    // For each start position, try longest match first (greedy, matching bash behavior)
+    for start in 0..chars.len() {
+        for end in (start + 1..=chars.len()).rev() {
+            let substr: String = chars[start..end].iter().collect();
+            if glob_match(pattern, &substr) {
+                let prefix: String = chars[..start].iter().collect();
+                let suffix: String = chars[end..].iter().collect();
+                return format!("{}{}{}", prefix, replacement, suffix);
+            }
+        }
+    }
+    val.to_string()
+}
+
+fn glob_replace_all(val: &str, pattern: &str, replacement: &str) -> String {
+    if pattern.is_empty() { return val.to_string(); }
+    let chars: Vec<char> = val.chars().collect();
+    let mut result = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let mut matched = false;
+        // Try longest match first at position i (greedy, matching bash behavior)
+        for end in (i + 1..=chars.len()).rev() {
+            let substr: String = chars[i..end].iter().collect();
+            if glob_match(pattern, &substr) {
+                result.push_str(replacement);
+                i = end;
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+    result
+}
+
 fn normalize_path(path: &str) -> String {
     let mut parts: Vec<&str> = Vec::new();
     for segment in path.split('/') {
@@ -1732,7 +1964,7 @@ fn get_root_descriptor() -> Option<crate::bindings::wasi::filesystem::types::Des
 
 #[cfg(test)]
 mod tests {
-    use super::{expand_tilde, glob_match, has_glob, normalize_path};
+    use super::{expand_tilde, glob_match, glob_replace_all, glob_replace_first, has_glob, normalize_path};
 
     #[test]
     fn test_tilde_expansion_in_word() {
@@ -1808,6 +2040,25 @@ mod tests {
         assert!(has_glob("[abc]"));
         assert!(!has_glob("normal"));
         assert!(!has_glob("/path/to/file"));
+    }
+
+    #[test]
+    fn test_glob_replace_first_star() {
+        assert_eq!(glob_replace_first("hello", "h*", "X"), "X");
+        assert_eq!(glob_replace_first("hello", "h?", "X"), "Xllo");
+        assert_eq!(glob_replace_first("hello", "l", "L"), "heLlo");
+    }
+
+    #[test]
+    fn test_glob_replace_all_char_class() {
+        assert_eq!(glob_replace_all("hello", "[lo]", "X"), "heXXX");
+        assert_eq!(glob_replace_all("hello", "l", "L"), "heLLo");
+    }
+
+    #[test]
+    fn test_glob_replace_all_star() {
+        // greedy: "h*" starting at 0 matches "hello" (all chars)
+        assert_eq!(glob_replace_all("hello", "h*", "X"), "X");
     }
 
 }

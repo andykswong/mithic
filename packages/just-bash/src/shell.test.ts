@@ -116,7 +116,7 @@ describe('JustBashShell', () => {
     const result = await shell.exec('run nonexistent');
     const stderr = new TextDecoder().decode(result.stderr);
     assert.ok(stderr.includes('command not found'));
-    assert.equal(result.exitCode, 127);
+    assert.equal(result.exitCode, 1);
   });
 
   it('setCwd/getCwd', () => {

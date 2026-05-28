@@ -663,7 +663,7 @@ mod tests {
     fn test_single_quoted() {
         let list = parse("echo 'hello world'").unwrap();
         match &list.items[0].pipeline.commands[0] {
-            Command::Simple(cmd) => assert_eq!(cmd.words[1], Word(vec![WordPart::Literal("hello world".into())])),
+            Command::Simple(cmd) => assert_eq!(cmd.words[1], Word(vec![WordPart::Quoted("hello world".into())])),
             _ => panic!("expected Simple command"),
         }
     }
@@ -673,7 +673,7 @@ mod tests {
         let list = parse("echo \"hello $NAME\"").unwrap();
         match &list.items[0].pipeline.commands[0] {
             Command::Simple(cmd) => assert_eq!(cmd.words[1], Word(vec![
-                WordPart::Literal("hello ".into()),
+                WordPart::Quoted("hello ".into()),
                 WordPart::Var("NAME".into()),
             ])),
             _ => panic!("expected Simple command"),
@@ -731,14 +731,14 @@ mod tests {
 
     #[test]
     fn test_adjacent_quoting() {
-        // echo 'foo'"bar"  →  single word with two literal parts
+        // echo 'foo'"bar"  →  single word with two quoted parts
         let list = parse("echo 'foo'\"bar\"").unwrap();
         match &list.items[0].pipeline.commands[0] {
             Command::Simple(cmd) => {
                 assert_eq!(cmd.words.len(), 2);
                 assert_eq!(cmd.words[1], Word(vec![
-                    WordPart::Literal("foo".into()),
-                    WordPart::Literal("bar".into()),
+                    WordPart::Quoted("foo".into()),
+                    WordPart::Quoted("bar".into()),
                 ]));
             }
             _ => panic!("expected Simple command"),
@@ -747,14 +747,14 @@ mod tests {
 
     #[test]
     fn test_adjacent_bare_and_quoted() {
-        // echo foo'bar'  →  single word "foobar"
+        // echo foo'bar'  →  single word with bare literal + quoted parts
         let list = parse("echo foo'bar'").unwrap();
         match &list.items[0].pipeline.commands[0] {
             Command::Simple(cmd) => {
                 assert_eq!(cmd.words.len(), 2);
                 assert_eq!(cmd.words[1], Word(vec![
                     WordPart::Literal("foo".into()),
-                    WordPart::Literal("bar".into()),
+                    WordPart::Quoted("bar".into()),
                 ]));
             }
             _ => panic!("expected Simple command"),
