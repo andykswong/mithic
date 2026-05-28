@@ -861,9 +861,6 @@ impl Shell {
     /// Execute a list, applying the given redirects. On the non-test path, if redirects include
     /// a stdout redirect, the body is executed with `exec_list_with_stdout`. Otherwise falls back
     /// to `exec_list`. On the test path, redirects are ignored.
-    ///
-    /// When `reuse_stdout` is `Some`, that stream is duped rather than opening a new file; this
-    /// is used by loop bodies where the redirect is opened once and shared across iterations.
     #[cfg(not(test))]
     pub(crate) fn exec_list_redirected(
         &mut self,
@@ -916,7 +913,6 @@ impl Shell {
             }
         }
     }
-
 
     fn exec_array_assign(&mut self, aa: ArrayAssign) -> u8 {
         let elements: Vec<String> = aa.elements.iter()
