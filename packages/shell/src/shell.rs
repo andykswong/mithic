@@ -187,19 +187,27 @@ impl Shell {
                         return;
                     }
 
+                    let mut stdin_opt: Option<InputStream> = None;
+                    let mut stdout_opt: Option<OutputStream> = None;
+                    let mut stderr_opt: Option<OutputStream> = None;
+                    if !self.apply_redirects(&sc.redirects, &mut stdin_opt, &mut stdout_opt, &mut stderr_opt) {
+                        return;
+                    }
+
                     let env_list = self.env_list();
                     let opts = SpawnOptions {
                         cwd: None,
                         env: Some(env_list),
-                        stdin: None,
-                        stdout: None,
-                        stderr: None,
+                        stdin: stdin_opt,
+                        stdout: stdout_opt,
+                        stderr: stderr_opt,
                     };
                     match proc_manager::spawn(&name, &args[1..], Some(opts)) {
                         Ok(proc) => {
                             let pid = proc.pid();
                             let job_id = self.jobs.add(vec![proc], display);
                             io::write_stderr(&format!("[{}] {}\n", job_id, pid));
+                            self.env.insert("!".to_string(), ShellValue::Scalar(pid.to_string()));
                         }
                         Err(_) => {
                             io::write_stderr(&format!("msh: {}: command not found\n", name));
@@ -228,20 +236,24 @@ impl Shell {
                     Command::Simple(sc) => sc,
                     _ => continue,
                 };
-                let stdin_opt = pipe_read_ends[i].take();
-                let stdout_opt = pipe_write_ends[i].take();
+                let mut stdin_opt = pipe_read_ends[i].take();
+                let mut stdout_opt = pipe_write_ends[i].take();
                 let args: Vec<String> = cmd.words.iter()
                     .flat_map(|w| self.expand_word_to_args(w))
                     .collect();
                 if args.is_empty() { continue; }
                 let name = args[0].clone();
                 display_parts.push(args.join(" "));
+                let mut stderr_opt: Option<OutputStream> = None;
+                if !self.apply_redirects(&cmd.redirects, &mut stdin_opt, &mut stdout_opt, &mut stderr_opt) {
+                    continue;
+                }
                 let opts = SpawnOptions {
                     cwd: None,
                     env: Some(env_list.clone()),
                     stdin: stdin_opt,
                     stdout: stdout_opt,
-                    stderr: None,
+                    stderr: stderr_opt,
                 };
                 match proc_manager::spawn(&name, &args[1..], Some(opts)) {
                     Ok(proc) => processes.push(proc),
@@ -256,6 +268,7 @@ impl Shell {
                 let display = display_parts.join(" | ");
                 let job_id = self.jobs.add(processes, display);
                 io::write_stderr(&format!("[{}] {}\n", job_id, last_pid));
+                self.env.insert("!".to_string(), ShellValue::Scalar(last_pid.to_string()));
             }
         }
     }
@@ -367,6 +380,12 @@ impl Shell {
         };
 
         self.foreground_pids.clear();
+        if exit >= 128 {
+            let sig_name = signal_name_from_num(exit - 128);
+            if !sig_name.is_empty() {
+                self.run_trap(sig_name);
+            }
+        }
         if pipeline.negate { if exit == 0 { 1 } else { 0 } } else { exit }
     }
 
@@ -424,14 +443,7 @@ impl Shell {
                     let exit = proc.wait() as u8;
                     self.foreground_pids.clear();
                     if exit >= 128 {
-                        let sig_name = match exit - 128 {
-                            2 => "INT",
-                            9 => "KILL",
-                            15 => "TERM",
-                            18 => "CONT",
-                            20 => "TSTP",
-                            _ => "",
-                        };
+                        let sig_name = signal_name_from_num(exit - 128);
                         if !sig_name.is_empty() {
                             self.run_trap(sig_name);
                         }
@@ -681,6 +693,12 @@ impl Shell {
                 let exit = if let Some(p) = last { p.wait() as u8 } else { 0 };
 
                 self.foreground_pids.clear();
+                if exit >= 128 {
+                    let sig_name = signal_name_from_num(exit - 128);
+                    if !sig_name.is_empty() {
+                        self.run_trap(sig_name);
+                    }
+                }
                 exit
             }
             "bg" => {
@@ -2323,6 +2341,17 @@ fn normalize_path(path: &str) -> String {
 fn get_root_descriptor() -> Option<crate::bindings::wasi::filesystem::types::Descriptor> {
     use crate::bindings::wasi::filesystem::preopens;
     preopens::get_directories().into_iter().find(|(_, p)| p == "/").map(|(d, _)| d)
+}
+
+fn signal_name_from_num(num: u8) -> &'static str {
+    match num {
+        2 => "INT",
+        9 => "KILL",
+        15 => "TERM",
+        18 => "CONT",
+        20 => "TSTP",
+        _ => "",
+    }
 }
 
 fn parse_signal_flag(arg: &str) -> Option<crate::bindings::mithic::process::types::Signal> {
