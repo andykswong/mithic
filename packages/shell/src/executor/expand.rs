@@ -1,0 +1,389 @@
+use crate::brace::expand_braces;
+use crate::executor::expansion::{
+    expand_tilde, has_glob, glob_match, glob_replace_first, glob_replace_all,
+    remove_shortest_prefix, remove_longest_prefix, remove_shortest_suffix, remove_longest_suffix,
+    shell_substring, split_var_and_op, parse_array_subscript,
+};
+use crate::parser::{Parser, Word, WordPart};
+use crate::runtime::{InputHandle, OutputHandle, Runtime};
+use crate::shell::Shell;
+use crate::value::ShellValue;
+
+impl<R: Runtime> Shell<R> {
+    pub(crate) fn expand_word(&mut self, word: &Word) -> String {
+        let parts: Vec<_> = word.parts().to_vec();
+        parts.iter().map(|p| self.expand_part(p)).collect()
+    }
+
+    pub(crate) fn expand_word_to_args(&mut self, w: &Word) -> Vec<String> {
+        // Special case: a word that is just ${arr[@]}, ${arr[*]}, $@, or $* should expand
+        // to multiple words rather than a single space-joined string.
+        if let Some(elements) = self.try_expand_array_all(w) {
+            return elements;
+        }
+
+        let expanded = self.expand_word(w);
+        // Only apply brace expansion when the word has unquoted parts containing braces.
+        let has_unquoted_braces = w.parts().iter().any(|p| {
+            matches!(p, WordPart::Literal(s) if s.contains('{') || s.contains('}'))
+        });
+        // Only apply glob expansion when the word has unquoted parts containing glob chars.
+        let has_unquoted_globs = w.parts().iter().any(|p| {
+            matches!(p, WordPart::Literal(s) if has_glob(s))
+        });
+
+        let brace_results = if has_unquoted_braces {
+            expand_braces(&expanded)
+        } else {
+            vec![expanded]
+        };
+        brace_results.into_iter().flat_map(|s| {
+            if has_unquoted_globs && has_glob(&s) { self.expand_glob(&s) } else { vec![s] }
+        }).collect()
+    }
+
+    /// If the word is a standalone `${arr[@]}`, `${arr[*]}`, `$@`, or `$*`, return elements.
+    /// `$@` / `${arr[@]}` → each element as a separate word.
+    /// `$*` / `${arr[*]}` → all elements joined by IFS[0] (default space) as one word.
+    fn try_expand_array_all(&self, w: &Word) -> Option<Vec<String>> {
+        let parts = w.parts();
+        if parts.len() != 1 {
+            return None;
+        }
+
+        let ifs_sep = self.env.get("IFS")
+            .map(|v| v.as_scalar().chars().next().unwrap_or(' '))
+            .unwrap_or(' ');
+
+        match &parts[0] {
+            WordPart::BraceVar(raw) => {
+                let (name, subscript) = parse_array_subscript(raw)?;
+                if subscript != "@" && subscript != "*" {
+                    return None;
+                }
+                let elements = match self.env.get(name) {
+                    Some(ShellValue::Array(elements)) => elements.clone(),
+                    Some(ShellValue::Scalar(s)) => vec![s.clone()],
+                    None => return Some(Vec::new()),
+                };
+                if subscript == "*" {
+                    let joined: String = elements.join(&ifs_sep.to_string());
+                    Some(vec![joined])
+                } else {
+                    Some(elements)
+                }
+            }
+            WordPart::Var(name) if name == "@" || name == "*" => {
+                let all = self.params.all();
+                if all.is_empty() {
+                    Some(Vec::new())
+                } else if name == "*" {
+                    let joined = all.join(&ifs_sep.to_string());
+                    Some(vec![joined])
+                } else {
+                    Some(all.to_vec())
+                }
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn expand_part(&mut self, part: &WordPart) -> String {
+        match part {
+            WordPart::Literal(s) => {
+                let home = self.env.get("HOME").map(|v| v.as_scalar()).unwrap_or("/");
+                expand_tilde(s, home)
+            }
+            WordPart::Quoted(s) => s.clone(),
+            WordPart::Var(name) => self.expand_var(name, true),
+            WordPart::BraceVar(raw) => self.expand_brace_var(raw),
+            WordPart::CmdSub(raw) => self.exec_capturing(raw),
+            WordPart::ArithSub(expr) => self.eval_arithmetic(expr),
+            WordPart::ProcSubIn(raw) => self.exec_proc_sub_in(raw),
+            WordPart::ProcSubOut(raw) => self.exec_proc_sub_out(raw),
+        }
+    }
+
+    pub(crate) fn expand_var(&mut self, name: &str, check_nounset: bool) -> String {
+        match name {
+            "?" => self.last_exit.to_string(),
+            "#" => self.params.count().to_string(),
+            "@" => self.params.all().join(" "),
+            "*" => {
+                let ifs_sep = self.env.get("IFS")
+                    .map(|v| v.as_scalar().chars().next().unwrap_or(' '))
+                    .unwrap_or(' ');
+                self.params.all().join(&ifs_sep.to_string())
+            }
+            "!" => self.env.get("!").map(|v| v.as_scalar().to_string()).unwrap_or_default(),
+            _ => {
+                if let Ok(n) = name.parse::<usize>() {
+                    return self.params.get(n).unwrap_or("").to_string();
+                }
+                if check_nounset && self.options.nounset && !self.env.contains_key(name) {
+                    self.rt.write_stderr(&format!("msh: {}: unbound variable\n", name));
+                    self.last_exit = 1;
+                    self.exit_requested = true;
+                    return String::new();
+                }
+                self.env.get(name).map(|v| v.as_scalar().to_string()).unwrap_or_default()
+            }
+        }
+    }
+
+    pub(crate) fn expand_brace_var(&mut self, raw: &str) -> String {
+        // ${#arr[@]} or ${#arr[*]} — array length
+        if let Some(inner) = raw.strip_prefix('#') {
+            if let Some((arr_name, subscript)) = parse_array_subscript(inner) {
+                if subscript == "@" || subscript == "*" {
+                    return match self.env.get(arr_name) {
+                        Some(v) => v.len().to_string(),
+                        None => "0".to_string(),
+                    };
+                }
+                // ${#arr[n]} — length of element at index (supports negative indices)
+                if let Ok(idx) = subscript.parse::<i64>() {
+                    return match self.env.get(arr_name) {
+                        Some(v) => {
+                            let actual_idx = if idx < 0 {
+                                (v.len() as i64 + idx).max(0) as usize
+                            } else {
+                                idx as usize
+                            };
+                            v.index(actual_idx).len().to_string()
+                        }
+                        None => "0".to_string(),
+                    };
+                }
+            }
+            // ${#VAR} — length of scalar variable
+            return self.expand_var(inner, true).len().to_string();
+        }
+
+        // ${arr[@]} or ${arr[*]} — all elements space-joined
+        // ${arr[n]} — single element at index n
+        if let Some((arr_name, subscript)) = parse_array_subscript(raw) {
+            return match self.env.get(arr_name) {
+                Some(v) => {
+                    if subscript == "@" || subscript == "*" {
+                        v.all_elements()
+                    } else if let Ok(idx) = subscript.parse::<i64>() {
+                        let actual_idx = if idx < 0 {
+                            (v.len() as i64 + idx).max(0) as usize
+                        } else {
+                            idx as usize
+                        };
+                        v.index(actual_idx).to_string()
+                    } else {
+                        String::new()
+                    }
+                }
+                None => String::new(),
+            };
+        }
+
+        // Split into variable name and operator+pattern
+        let (var_name, op_and_rest) = split_var_and_op(raw);
+
+        // ${VAR//pat/rep} — replace all occurrences (glob-based)
+        if let Some(pat_rep) = op_and_rest.strip_prefix("//") {
+            let val = self.expand_var(var_name, true);
+            let (pat, rep) = pat_rep.split_once('/').unwrap_or((pat_rep, ""));
+            return glob_replace_all(&val, pat, rep);
+        }
+
+        // ${VAR/pat/rep} — replace first occurrence (glob-based)
+        if let Some(pat_rep) = op_and_rest.strip_prefix('/') {
+            let val = self.expand_var(var_name, true);
+            let (pat, rep) = pat_rep.split_once('/').unwrap_or((pat_rep, ""));
+            return glob_replace_first(&val, pat, rep);
+        }
+
+        // ${VAR##pat} — remove longest matching prefix (check before single #)
+        if let Some(pat) = op_and_rest.strip_prefix("##") {
+            let val = self.expand_var(var_name, true);
+            return remove_longest_prefix(&val, pat);
+        }
+
+        // ${VAR#pat} — remove shortest matching prefix
+        if let Some(pat) = op_and_rest.strip_prefix('#') {
+            let val = self.expand_var(var_name, true);
+            return remove_shortest_prefix(&val, pat);
+        }
+
+        // ${VAR%%pat} — remove longest matching suffix (check before single %)
+        if let Some(pat) = op_and_rest.strip_prefix("%%") {
+            let val = self.expand_var(var_name, true);
+            return remove_longest_suffix(&val, pat);
+        }
+
+        // ${VAR%pat} — remove shortest matching suffix
+        if let Some(pat) = op_and_rest.strip_prefix('%') {
+            let val = self.expand_var(var_name, true);
+            return remove_shortest_suffix(&val, pat);
+        }
+
+        // ${VAR:...} — substring or default/alternate
+        if let Some(colon_rest) = op_and_rest.strip_prefix(':') {
+            // ${VAR:-default} — default if empty (nounset should NOT fire here)
+            if let Some(default) = colon_rest.strip_prefix('-') {
+                let val = self.expand_var(var_name, false);
+                return if val.is_empty() { default.to_string() } else { val };
+            }
+            // ${VAR:+alt} — alternate if not empty (nounset should NOT fire here)
+            if let Some(alt) = colon_rest.strip_prefix('+') {
+                let val = self.expand_var(var_name, false);
+                return if val.is_empty() { String::new() } else { alt.to_string() };
+            }
+            // ${VAR:offset} or ${VAR:offset:length} — substring (digit or minus sign)
+            if colon_rest.starts_with(|c: char| c.is_ascii_digit() || c == '-') {
+                let val = self.expand_var(var_name, true);
+                return shell_substring(&val, colon_rest);
+            }
+        }
+
+        // Plain ${VAR} — but use raw if var_name is empty (shouldn't happen) or op is empty
+        if op_and_rest.is_empty() {
+            self.expand_var(var_name, true)
+        } else {
+            self.expand_var(raw, true)
+        }
+    }
+
+    pub(crate) fn expand_arith_vars(&self, expr: &str) -> String {
+        let mut result = String::new();
+        let chars: Vec<char> = expr.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '$' {
+                i += 1;
+                if i < chars.len() && chars[i] == '{' {
+                    i += 1;
+                    let start = i;
+                    while i < chars.len() && chars[i] != '}' { i += 1; }
+                    let name: String = chars[start..i].iter().collect();
+                    result.push_str(self.env.get(&name).map(|v| v.as_scalar()).unwrap_or("0"));
+                    if i < chars.len() { i += 1; }
+                } else if i < chars.len() && (chars[i].is_alphabetic() || chars[i] == '_') {
+                    let start = i;
+                    while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') { i += 1; }
+                    let name: String = chars[start..i].iter().collect();
+                    result.push_str(self.env.get(&name).map(|v| v.as_scalar()).unwrap_or("0"));
+                } else {
+                    result.push('$');
+                }
+            } else {
+                result.push(chars[i]);
+                i += 1;
+            }
+        }
+        result
+    }
+
+    pub(crate) fn eval_arithmetic(&mut self, expr: &str) -> String {
+        use std::cell::RefCell;
+
+        let expanded_expr = self.expand_arith_vars(expr);
+
+        let working: RefCell<std::collections::HashMap<String, i64>> = RefCell::new(
+            self.env.iter()
+                .map(|(k, v)| (k.clone(), v.as_scalar().parse::<i64>().unwrap_or(0)))
+                .collect()
+        );
+
+        let lookup = |name: &str| -> i64 { *working.borrow().get(name).unwrap_or(&0) };
+        let mut assign = |name: &str, val: i64| { working.borrow_mut().insert(name.to_string(), val); };
+        let result = crate::arith::eval(&expanded_expr, &lookup, &mut assign);
+
+        for (k, v) in working.into_inner() {
+            let orig = self.env.get(&k)
+                .map(|sv| sv.as_scalar().parse::<i64>().unwrap_or(0))
+                .unwrap_or(0);
+            if v != orig {
+                self.env.insert(k, ShellValue::Scalar(v.to_string()));
+            }
+        }
+
+        result.to_string()
+    }
+
+    pub(crate) fn expand_glob(&self, pattern: &str) -> Vec<String> {
+        let (dir_part, name_pat) = match pattern.rfind('/') {
+            Some(pos) => (&pattern[..pos], &pattern[pos + 1..]),
+            None => ("", pattern),
+        };
+
+        let dir_path = if dir_part.is_empty() {
+            self.cwd.clone()
+        } else {
+            self.resolve_path(dir_part)
+        };
+
+        let entries = self.rt.read_directory(&dir_path);
+        if entries.is_empty() {
+            return vec![pattern.to_string()];
+        }
+
+        let mut matches: Vec<String> = entries
+            .into_iter()
+            .filter(|name| {
+                !name.starts_with('.') || name_pat.starts_with('.')
+            })
+            .filter(|name| glob_match(name_pat, name))
+            .map(|name| {
+                if dir_part.is_empty() {
+                    name
+                } else {
+                    format!("{}/{}", dir_part, name)
+                }
+            })
+            .collect();
+
+        if matches.is_empty() {
+            vec![pattern.to_string()]
+        } else {
+            matches.sort();
+            matches
+        }
+    }
+
+    pub(crate) fn exec_capturing(&mut self, raw: &str) -> String {
+        let (inp, out) = self.rt.create_pipe();
+        let mut parser = Parser::new(raw);
+        if let Some(list) = parser.parse() {
+            self.exec_list_with_stdout(list, out);
+        } else {
+            self.rt.pipe_close_write(out);
+        }
+        let bytes = self.rt.pipe_read_all(inp);
+        let s = String::from_utf8_lossy(&bytes).into_owned();
+        s.trim_end_matches('\n').to_string()
+    }
+
+    pub(crate) fn exec_proc_sub_in(&mut self, raw: &str) -> String {
+        let output = self.exec_capturing(raw);
+        let tmp_path = format!("/tmp/.procsub_{}", self.next_id());
+        self.rt.mkdir("/tmp");
+        let mut data = output.into_bytes();
+        data.push(b'\n');
+        self.rt.write_file(&tmp_path, &data);
+        self.procsub_paths.push(tmp_path.clone());
+        tmp_path
+    }
+
+    pub(crate) fn exec_proc_sub_out(&mut self, _raw: &str) -> String {
+        self.rt.write_stderr("msh: >(cmd) process substitution not yet supported\n");
+        String::new()
+    }
+
+    pub(crate) fn next_id(&mut self) -> u64 {
+        self.procsub_counter += 1;
+        self.procsub_counter
+    }
+
+    pub(crate) fn cleanup_procsub_files(&self) {
+        for path in &self.procsub_paths {
+            self.rt.unlink(path);
+        }
+    }
+}
