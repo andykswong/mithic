@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::executor::expansion::{
     expand_tilde, literal_text, normalize_path, parse_array_subscript,
 };
-use crate::parser::{Command, List, ListItem, ListOp, Parser, Pipeline, SimpleCommand};
+use crate::parser::{Command, List, ListItem, ListOp, Parser, Pipeline, SimpleCommand, Word, WordPart};
 use crate::value::ShellValue;
 use crate::jobs::JobTable;
 use crate::options::ShellOptions;
@@ -31,6 +31,7 @@ pub struct Shell<R: Runtime> {
     pub(crate) foreground_pids: Vec<u32>,
     pub(crate) options: ShellOptions,
     pub(crate) in_condition: usize,
+    pub(crate) local_scopes: Vec<HashMap<String, Option<ShellValue>>>,
 }
 
 impl<R: Runtime> Shell<R> {
@@ -56,6 +57,7 @@ impl<R: Runtime> Shell<R> {
             foreground_pids: Vec::new(),
             options: ShellOptions::default(),
             in_condition: 0,
+            local_scopes: Vec::new(),
         }
     }
 
@@ -100,7 +102,20 @@ impl<R: Runtime> Shell<R> {
                 }
             };
 
-            input_buf.push_str(&line);
+            // Ensure the line ends with a newline so that accumulated lines are
+            // separated correctly (WasiRuntime includes '\n'; TestRuntime does not).
+            if !line.ends_with('\n') {
+                input_buf.push_str(&line);
+                input_buf.push('\n');
+            } else {
+                input_buf.push_str(&line);
+            }
+
+            // Check for unclosed quotes before trimming — the newline must be
+            // preserved as part of the quoted string content.
+            if input_needs_continuation(&input_buf) {
+                continue;
+            }
 
             let trimmed = input_buf.trim().to_string();
             if trimmed.is_empty() {
@@ -108,7 +123,7 @@ impl<R: Runtime> Shell<R> {
                 continue;
             }
 
-            // Check for line continuation (trailing backslash)
+            // Check for line continuation (trailing backslash outside quotes)
             if trimmed.ends_with('\\') {
                 let without_backslash = trimmed.trim_end_matches('\\').to_string();
                 input_buf = without_backslash;
@@ -193,13 +208,18 @@ impl<R: Runtime> Shell<R> {
     ) -> u8 {
         // Detect scalar assignment: `VAR=value` (no spaces, only first word).
         // Also detect indexed array assignment: `arr[idx]=value`.
-        // We check the raw (unexpanded) first word for these patterns before
-        // expanding everything, because assignment words must not be globbed.
+        // We handle two cases:
+        //   1. Fully literal word (e.g. `VAR=hello`) — use literal_text fast path.
+        //   2. Word with a leading Literal part containing `=` followed by dynamic parts
+        //      (e.g. `VAR=$(cmd)`, `VAR=$((expr))`, `VAR=${x:-default}`) — expand RHS parts
+        //      without glob/brace expansion and assign directly.
         if cmd.words.len() == 1 {
             if let Some(raw) = literal_text(&cmd.words[0]) {
                 if let Some(exit) = self.try_assignment(&raw) {
                     return exit;
                 }
+            } else if let Some(exit) = self.try_assignment_word(&cmd.words[0]) {
+                return exit;
             }
         }
 
@@ -218,6 +238,17 @@ impl<R: Runtime> Shell<R> {
         }
 
         if args.is_empty() {
+            // $(< file) optimization: if stdin was redirected with no command, copy stdin to stdout
+            if let Some(inp) = stdin {
+                let data = self.rt.pipe_read_all(inp);
+                if !data.is_empty() {
+                    if let Some(out) = stdout {
+                        self.rt.pipe_write(&out, &data);
+                    } else {
+                        self.rt.write_stdout(&String::from_utf8_lossy(&data));
+                    }
+                }
+            }
             return 0;
         }
 
@@ -304,13 +335,77 @@ impl<R: Runtime> Shell<R> {
         None
     }
 
+    /// Detect and execute a mixed assignment word like `VAR=$(cmd)` or `VAR=$((expr))`.
+    /// Called when `literal_text` returns None (word contains non-literal parts).
+    /// Returns `Some(exit_code)` if handled, `None` otherwise.
+    fn try_assignment_word(&mut self, word: &Word) -> Option<u8> {
+        let parts = word.parts();
+        if parts.is_empty() {
+            return None;
+        }
+        // The first part must be a Literal containing '='.
+        let first_literal = match &parts[0] {
+            WordPart::Literal(s) => s,
+            _ => return None,
+        };
+        let eq_pos = first_literal.find('=')?;
+        let lhs = &first_literal[..eq_pos];
+        let rhs_prefix = &first_literal[eq_pos + 1..];
+
+        // Validate: LHS must be a valid variable name or `arr[idx]`.
+        let is_valid_lhs = if let Some((arr_name, subscript)) = parse_array_subscript(lhs) {
+            arr_name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                && subscript.parse::<usize>().is_ok()
+        } else {
+            !lhs.is_empty() && lhs.chars().all(|c| c.is_alphanumeric() || c == '_')
+        };
+        if !is_valid_lhs {
+            return None;
+        }
+
+        // Expand the RHS: rhs_prefix (literal tail of first part) + remaining parts.
+        let mut rhs = rhs_prefix.to_string();
+        for part in &parts[1..] {
+            rhs.push_str(&self.expand_part(part));
+        }
+
+        // Perform the assignment.
+        if let Some((arr_name, subscript)) = parse_array_subscript(lhs) {
+            if let Ok(idx) = subscript.parse::<usize>() {
+                let arr_name = arr_name.to_string();
+                let entry = self.env.entry(arr_name).or_insert_with(|| ShellValue::Array(Vec::new()));
+                match entry {
+                    ShellValue::Array(v) => {
+                        if idx >= v.len() {
+                            v.resize(idx + 1, String::new());
+                        }
+                        v[idx] = rhs;
+                    }
+                    ShellValue::Scalar(_) => {
+                        *entry = ShellValue::Array({
+                            let mut v = vec![String::new(); idx + 1];
+                            v[idx] = rhs;
+                            v
+                        });
+                    }
+                }
+                return Some(0);
+            }
+        }
+        // Plain scalar assignment.
+        let lhs = lhs.to_string();
+        self.env.insert(lhs, ShellValue::Scalar(rhs));
+        Some(0)
+    }
+
     pub(crate) fn is_builtin(name: &str) -> bool {
         matches!(name,
-            "exit" | "echo" | "pwd" | "cd" | "export" | "unset" |
+            "exit" | "echo" | "printf" | "pwd" | "cd" | "export" | "unset" |
             "env" | "true" | "false" | "break" | "continue" |
             "return" | "source" | "." | "read" | "test" | "[" | "[[" |
             "declare" | "local" | "set" |
-            "jobs" | "fg" | "bg" | "wait" | "disown" | "kill" | "trap"
+            "jobs" | "fg" | "bg" | "wait" | "disown" | "kill" | "trap" |
+            "eval" | "shift" | "type" | "command"
         )
     }
 
@@ -473,4 +568,29 @@ pub(crate) fn signal_name_from_num(num: u8) -> &'static str {
         20 => "TSTP",
         _ => "",
     }
+}
+
+/// Returns true when `input` has an unclosed single or double quote, meaning
+/// the shell needs to read more lines before it can parse the command.
+/// A trailing backslash (line continuation outside quotes) is NOT checked here
+/// because that is handled separately in the REPL loop after trimming.
+pub(crate) fn input_needs_continuation(input: &str) -> bool {
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+
+    for c in input.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' if !in_single => escaped = true,
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            _ => {}
+        }
+    }
+
+    in_single || in_double
 }

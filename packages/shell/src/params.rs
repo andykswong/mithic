@@ -35,4 +35,11 @@ impl PositionalParams {
     pub fn all(&self) -> &[String] {
         self.current()
     }
+
+    pub fn shift(&mut self, n: usize) {
+        if let Some(frame) = self.frames.last_mut() {
+            let drain = n.min(frame.len());
+            frame.drain(..drain);
+        }
+    }
 }

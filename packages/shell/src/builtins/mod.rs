@@ -24,13 +24,13 @@ impl<R: Runtime> Shell<R> {
         stdout: Option<OutputHandle>,
     ) -> u8 {
         match name {
-            "exit" | "echo" | "pwd" | "cd" | "env" | "true" | "false" => {
+            "exit" | "echo" | "printf" | "pwd" | "cd" | "env" | "true" | "false" => {
                 core::exec_builtin(self, name, args, stdin, stdout)
             }
             "export" | "unset" | "declare" | "local" | "read" | "set" => {
                 vars::exec_builtin(self, name, args, stdin, stdout)
             }
-            "break" | "continue" | "return" | "source" | "." => {
+            "break" | "continue" | "return" | "source" | "." | "eval" | "shift" | "type" | "command" => {
                 flow::exec_builtin(self, name, args, stdin, stdout)
             }
             "test" | "[" | "[[" => {

@@ -40,7 +40,7 @@ pub(super) fn exec_builtin<R: Runtime>(
             }
             0
         }
-        "declare" | "local" => exec_declare(shell, args),
+        "declare" | "local" => exec_declare(shell, name, args),
         "read" => exec_read(shell, args, stdin),
         "set" => exec_set(shell, args),
         _ => {
@@ -50,7 +50,8 @@ pub(super) fn exec_builtin<R: Runtime>(
     }
 }
 
-fn exec_declare<R: Runtime>(shell: &mut Shell<R>, args: &[String]) -> u8 {
+fn exec_declare<R: Runtime>(shell: &mut Shell<R>, builtin_name: &str, args: &[String]) -> u8 {
+    let is_local = builtin_name == "local";
     let mut is_array = false;
     let mut print_mode = false;
     let mut remaining_args: Vec<&str> = Vec::new();
@@ -70,19 +71,19 @@ fn exec_declare<R: Runtime>(shell: &mut Shell<R>, args: &[String]) -> u8 {
 
     if print_mode {
         let names: Vec<String> = remaining_args.iter().map(|s| s.to_string()).collect();
-        for name in &names {
-            match shell.env.get(name) {
+        for var_name in &names {
+            match shell.env.get(var_name) {
                 Some(ShellValue::Scalar(s)) => {
-                    let line = format!("declare -- {}=\"{}\"\n", name, s);
+                    let line = format!("declare -- {}=\"{}\"\n", var_name, s);
                     shell.rt.write_stdout(&line);
                 }
                 Some(ShellValue::Array(v)) => {
                     let elements: Vec<String> = v.iter().map(|e| format!("\"{}\"", e)).collect();
-                    let line = format!("declare -a {}=({})\n", name, elements.join(" "));
+                    let line = format!("declare -a {}=({})\n", var_name, elements.join(" "));
                     shell.rt.write_stdout(&line);
                 }
                 None => {
-                    shell.rt.write_stderr(&format!("declare: {}: not found\n", name));
+                    shell.rt.write_stderr(&format!("declare: {}: not found\n", var_name));
                 }
             }
         }
@@ -90,6 +91,23 @@ fn exec_declare<R: Runtime>(shell: &mut Shell<R>, args: &[String]) -> u8 {
     }
 
     for arg in &remaining_args {
+        let var_name = if let Some((name, _)) = arg.split_once('=') {
+            name
+        } else {
+            arg
+        };
+
+        // When `local` is used inside a function, snapshot the outer value the first time
+        // this variable is declared local in this scope, so it can be restored on return.
+        if is_local && shell.in_function_depth > 0 {
+            if let Some(scope) = shell.local_scopes.last_mut() {
+                if !scope.contains_key(var_name) {
+                    let prev = shell.env.get(var_name).cloned();
+                    scope.insert(var_name.to_string(), prev);
+                }
+            }
+        }
+
         if let Some((name, value)) = arg.split_once('=') {
             if is_array {
                 shell.env.insert(name.to_string(), ShellValue::Array(vec![value.to_string()]));
@@ -97,9 +115,7 @@ fn exec_declare<R: Runtime>(shell: &mut Shell<R>, args: &[String]) -> u8 {
                 shell.env.insert(name.to_string(), ShellValue::Scalar(value.to_string()));
             }
         } else if is_array {
-            if !shell.env.contains_key(*arg) {
-                shell.env.insert(arg.to_string(), ShellValue::Array(Vec::new()));
-            }
+            shell.env.insert(arg.to_string(), ShellValue::Array(Vec::new()));
         }
     }
     0
@@ -109,6 +125,7 @@ fn exec_read<R: Runtime>(shell: &mut Shell<R>, args: &[String], stdin: Option<In
     let mut var_names: Vec<&str> = Vec::new();
     let mut prompt = None;
     let mut raw = false;
+    let mut array_mode = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -117,6 +134,16 @@ fn exec_read<R: Runtime>(shell: &mut Shell<R>, args: &[String], stdin: Option<In
                 if i < args.len() { prompt = Some(args[i].as_str()); }
             }
             "-r" => { raw = true; }
+            "-a" => { array_mode = true; }
+            flag if flag.starts_with('-') && flag.len() > 1 => {
+                for ch in flag[1..].chars() {
+                    match ch {
+                        'r' => raw = true,
+                        'a' => array_mode = true,
+                        _ => {}
+                    }
+                }
+            }
             _ => { var_names.push(&args[i]); }
         }
         i += 1;
@@ -156,15 +183,21 @@ fn exec_read<R: Runtime>(shell: &mut Shell<R>, args: &[String], stdin: Option<In
             .collect()
     };
 
-    let var_names: Vec<String> = var_names.iter().map(|s| s.to_string()).collect();
-    for (idx, var_name) in var_names.iter().enumerate() {
-        if idx == var_names.len() - 1 {
-            let remaining: Vec<&str> = if idx < fields.len() { fields[idx..].to_vec() } else { vec![] };
-            shell.env.insert(var_name.to_string(), ShellValue::Scalar(remaining.join(" ")));
-        } else if idx < fields.len() {
-            shell.env.insert(var_name.to_string(), ShellValue::Scalar(fields[idx].to_string()));
-        } else {
-            shell.env.insert(var_name.to_string(), ShellValue::Scalar(String::new()));
+    if array_mode {
+        let arr_name = var_names.first().map(|s| s.to_string()).unwrap_or_else(|| "REPLY".to_string());
+        let arr: Vec<String> = fields.iter().map(|s| s.to_string()).collect();
+        shell.env.insert(arr_name, ShellValue::Array(arr));
+    } else {
+        let var_names: Vec<String> = var_names.iter().map(|s| s.to_string()).collect();
+        for (idx, var_name) in var_names.iter().enumerate() {
+            if idx == var_names.len() - 1 {
+                let remaining: Vec<&str> = if idx < fields.len() { fields[idx..].to_vec() } else { vec![] };
+                shell.env.insert(var_name.to_string(), ShellValue::Scalar(remaining.join(" ")));
+            } else if idx < fields.len() {
+                shell.env.insert(var_name.to_string(), ShellValue::Scalar(fields[idx].to_string()));
+            } else {
+                shell.env.insert(var_name.to_string(), ShellValue::Scalar(String::new()));
+            }
         }
     }
 

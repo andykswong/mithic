@@ -1,13 +1,14 @@
-use crate::runtime::{InputHandle, OutputHandle, Runtime};
+use crate::runtime::{InputHandle, OutputHandle, Runtime, SpawnOpts};
 use crate::shell::Shell;
 use crate::parser::Parser;
+use super::write_out;
 
 pub(super) fn exec_builtin<R: Runtime>(
     shell: &mut Shell<R>,
     name: &str,
     args: &[String],
-    _stdin: Option<InputHandle>,
-    _stdout: Option<OutputHandle>,
+    stdin: Option<InputHandle>,
+    stdout: Option<OutputHandle>,
 ) -> u8 {
     match name {
         "break" => {
@@ -46,6 +47,79 @@ pub(super) fn exec_builtin<R: Runtime>(
                 }
             };
             exec_source(shell, &file)
+        }
+        "eval" => {
+            let input = args.join(" ");
+            if input.is_empty() {
+                return 0;
+            }
+            let mut parser = Parser::new(&input);
+            if let Some(list) = parser.parse() {
+                shell.exec_list(list)
+            } else {
+                shell.rt.write_stderr("msh: eval: parse error\n");
+                1
+            }
+        }
+        "shift" => {
+            let n: usize = args.first()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(1);
+            shell.params.shift(n);
+            0
+        }
+        "type" => {
+            let mut exit = 0u8;
+            for arg in args {
+                if Shell::<R>::is_builtin(arg) {
+                    let msg = format!("{} is a shell builtin\n", arg);
+                    write_out(shell, &stdout, &msg);
+                } else if shell.functions.contains_key(arg) {
+                    let msg = format!("{} is a function\n", arg);
+                    write_out(shell, &stdout, &msg);
+                } else {
+                    shell.rt.write_stderr(&format!("type: {}: not found\n", arg));
+                    exit = 1;
+                }
+            }
+            exit
+        }
+        "command" => {
+            if args.is_empty() {
+                return 0;
+            }
+            if args[0] == "-v" {
+                let mut exit = 0u8;
+                for arg in &args[1..] {
+                    if Shell::<R>::is_builtin(arg) || shell.functions.contains_key(arg) {
+                        let msg = format!("{}\n", arg);
+                        write_out(shell, &stdout, &msg);
+                    } else {
+                        exit = 1;
+                    }
+                }
+                exit
+            } else {
+                let name = args[0].clone();
+                if Shell::<R>::is_builtin(&name) {
+                    shell.exec_builtin(&name, &args[1..], stdin, stdout)
+                } else {
+                    let env = shell.env_list();
+                    let opts = SpawnOpts {
+                        env: Some(env),
+                        stdin,
+                        stdout,
+                        stderr: None,
+                    };
+                    match shell.rt.spawn(&name, &args[1..], opts) {
+                        Ok(proc) => shell.rt.wait(&proc),
+                        Err(_) => {
+                            shell.rt.write_stderr(&format!("msh: {}: command not found\n", name));
+                            127
+                        }
+                    }
+                }
+            }
         }
         _ => {
             shell.rt.write_stderr(&format!("msh: {}: not handled in flow builtin\n", name));

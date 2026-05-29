@@ -223,6 +223,38 @@ impl<R: Runtime> Shell<R> {
             return remove_shortest_suffix(&val, pat);
         }
 
+        // ${VAR^^} — convert entire value to uppercase (check ^^ before ^)
+        if op_and_rest.starts_with("^^") {
+            let val = self.expand_var(var_name, true);
+            return val.to_uppercase();
+        }
+
+        // ${VAR^} — capitalize first character only
+        if op_and_rest.starts_with('^') {
+            let val = self.expand_var(var_name, true);
+            let mut chars = val.chars();
+            return match chars.next() {
+                Some(c) => format!("{}{}", c.to_uppercase().collect::<String>(), chars.as_str()),
+                None => String::new(),
+            };
+        }
+
+        // ${VAR,,} — convert entire value to lowercase (check ,, before ,)
+        if op_and_rest.starts_with(",,") {
+            let val = self.expand_var(var_name, true);
+            return val.to_lowercase();
+        }
+
+        // ${VAR,} — lowercase first character only
+        if op_and_rest.starts_with(',') {
+            let val = self.expand_var(var_name, true);
+            let mut chars = val.chars();
+            return match chars.next() {
+                Some(c) => format!("{}{}", c.to_lowercase().collect::<String>(), chars.as_str()),
+                None => String::new(),
+            };
+        }
+
         // ${VAR:...} — substring or default/alternate
         if let Some(colon_rest) = op_and_rest.strip_prefix(':') {
             // ${VAR:-default} — default if empty (nounset should NOT fire here)

@@ -120,6 +120,36 @@ pub(crate) fn glob_match(pattern: &str, name: &str) -> bool {
     glob_match_inner(&pat, &nam)
 }
 
+fn char_class_matches(class: &[char], c: char) -> bool {
+    let (negate, class) = if class.first() == Some(&'!') || class.first() == Some(&'^') {
+        (true, &class[1..])
+    } else {
+        (false, class)
+    };
+
+    let mut matched = false;
+    let mut i = 0;
+    while i < class.len() {
+        if i + 2 < class.len() && class[i + 1] == '-' {
+            let start = class[i];
+            let end = class[i + 2];
+            if c >= start && c <= end {
+                matched = true;
+                break;
+            }
+            i += 3;
+        } else {
+            if class[i] == c {
+                matched = true;
+                break;
+            }
+            i += 1;
+        }
+    }
+
+    if negate { !matched } else { matched }
+}
+
 fn glob_match_inner(pat: &[char], name: &[char]) -> bool {
     match (pat.first(), name.first()) {
         (None, None) => true,
@@ -140,7 +170,7 @@ fn glob_match_inner(pat: &[char], name: &[char]) -> bool {
                 let class = &pat[1..1 + rel];
                 let rest = &pat[2 + rel..];
                 if let Some(&nc) = name.first() {
-                    if class.contains(&nc) {
+                    if char_class_matches(class, nc) {
                         return glob_match_inner(rest, &name[1..]);
                     }
                 }
@@ -291,6 +321,35 @@ mod tests {
         assert!(glob_match("[abc]at", "bat"));
         assert!(glob_match("[abc]at", "cat"));
         assert!(!glob_match("[abc]at", "dat"));
+    }
+
+    #[test]
+    fn test_glob_match_bracket_range() {
+        // digit range
+        assert!(glob_match("[0-9]", "5"));
+        assert!(glob_match("[0-9]", "0"));
+        assert!(glob_match("[0-9]", "9"));
+        assert!(!glob_match("[0-9]", "a"));
+        // lowercase range
+        assert!(glob_match("[a-z]", "m"));
+        assert!(!glob_match("[a-z]", "M"));
+        // uppercase range
+        assert!(glob_match("[A-Z]", "M"));
+        assert!(!glob_match("[A-Z]", "m"));
+        // multiple ranges
+        assert!(glob_match("[a-zA-Z0-9]", "Z"));
+        assert!(glob_match("[a-zA-Z0-9]", "7"));
+        assert!(!glob_match("[a-zA-Z0-9]", "-"));
+    }
+
+    #[test]
+    fn test_glob_match_bracket_negation() {
+        // ! negation
+        assert!(glob_match("[!0-9]", "a"));
+        assert!(!glob_match("[!0-9]", "5"));
+        // ^ negation
+        assert!(glob_match("[^a-z]", "A"));
+        assert!(!glob_match("[^a-z]", "a"));
     }
 
     #[test]

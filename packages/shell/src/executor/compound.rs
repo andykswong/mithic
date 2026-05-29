@@ -281,7 +281,16 @@ impl<R: Runtime> Shell<R> {
     pub(crate) fn exec_function_call(&mut self, args: &[String], body: Command) -> u8 {
         self.params.push_frame(args.to_vec());
         self.in_function_depth += 1;
+        self.local_scopes.push(std::collections::HashMap::new());
         let exit = self.exec_compound(body);
+        if let Some(scope) = self.local_scopes.pop() {
+            for (name, prev_value) in scope {
+                match prev_value {
+                    Some(val) => { self.env.insert(name, val); }
+                    None => { self.env.remove(&name); }
+                }
+            }
+        }
         self.in_function_depth -= 1;
         self.return_requested = false;
         self.params.pop_frame();
