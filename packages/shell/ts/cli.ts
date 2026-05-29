@@ -14,12 +14,19 @@ import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 import { MemoryFsProvider } from '@mithic/io/vfs';
 
 const componentUrl = new URL('../dist/wasm/component.js', import.meta.url);
+const coreutilsUrl = new URL('../../coreutils/dist/wasm/component.js', import.meta.url);
+
+const COREUTILS_COMMANDS = new Set([
+  'cat', 'head', 'tail', 'wc', 'grep', 'seq', 'sort', 'uniq',
+  'tr', 'cut', 'tee', 'xargs', 'sleep', 'basename', 'dirname',
+  'mkdir', 'rm', 'cp', 'mv', 'ls',
+]);
 
 const memFs = new MemoryFsProvider();
 memFs.mkdir('/tmp');
 const rootDescriptor = new Descriptor(new SyncFsDescriptorHandler(memFs, '/'));
 
-// Pre-compile WASM modules at startup for synchronous child shell instantiation.
+// Pre-compile shell WASM modules at startup for synchronous child shell instantiation.
 const coreNames = ['component.core.wasm', 'component.core2.wasm', 'component.core3.wasm'];
 const precompiledModules = new Map<string, WebAssembly.Module>();
 await Promise.all(
@@ -29,13 +36,35 @@ await Promise.all(
   }),
 );
 
-// Pre-load the instantiate function once.
+// Pre-compile coreutils WASM modules at startup for synchronous instantiation.
+const coreutilsCoreNames = ['component.core.wasm', 'component.core2.wasm', 'component.core3.wasm'];
+const coreutilsModules = new Map<string, WebAssembly.Module>();
+await Promise.all(
+  coreutilsCoreNames.map(async (name) => {
+    try {
+      const bytes = await readFile(new URL(name, coreutilsUrl));
+      coreutilsModules.set(name, await WebAssembly.compile(bytes));
+    } catch { /* some core files may not exist */ }
+  }),
+);
+
+// Pre-load the shell instantiate function once.
 const { instantiate } = await import(componentUrl.toString());
+
+// Pre-load the coreutils instantiate function once.
+const { instantiate: instantiateCoreutils } = await import(coreutilsUrl.toString());
 
 /** Synchronous WASM loader: returns a pre-compiled module by name. */
 function syncLoader(path: string): WebAssembly.Module {
   const mod = precompiledModules.get(path);
   if (!mod) throw new Error(`Module not precompiled: ${path}`);
+  return mod;
+}
+
+/** Synchronous coreutils WASM loader: returns a pre-compiled module by name. */
+function coreutilsSyncLoader(path: string): WebAssembly.Module {
+  const mod = coreutilsModules.get(path);
+  if (!mod) throw new Error(`Coreutils module not precompiled: ${path}`);
   return mod;
 }
 
@@ -85,7 +114,33 @@ function runChildSync(args: string[], ctx: CommandContext): number {
   }
 }
 
-/** Create the mithic:process import object with a custom spawn that handles 'sh'.
+/** Run a coreutils command synchronously and return its exit code. */
+function runCoreutilSync(name: string, args: string[], ctx: CommandContext): number {
+  const childShim = new WASIShim({
+    sandbox: {
+      preopens: { '/': rootDescriptor },
+      env: ctx.env,
+      args: [name, ...args],
+      cwd: '/',
+      stdin: ctx.stdin,
+      stdout: ctx.stdout,
+      stderr: ctx.stderr,
+    },
+  });
+
+  try {
+    const { run } = instantiateCoreutils(coreutilsSyncLoader, childShim.getImportObject(), syncInstantiator) as { run: { run: () => number } };
+    return run.run() ?? 0;
+  } catch (e: unknown) {
+    if (e instanceof ComponentExit) return e.code;
+    return 1;
+  } finally {
+    childShim[Symbol.dispose]();
+  }
+}
+
+/** Create the mithic:process import object with a custom spawn that handles 'sh'
+ * and all coreutils commands.
  * Intercepts 'sh' at every level to run child shells synchronously, ensuring
  * that Process.wait() returns the exit code before the WASM component resumes. */
 function createShellProcessImports() {
@@ -108,6 +163,25 @@ function createShellProcessImports() {
         stderr: options?.stderr ?? hostStderr.dup(),
       };
       const exitCode = runChildSync(args, ctx);
+      return new Process(pid, {
+        wait: (): Promise<number> => exitCode as unknown as Promise<number>,
+        tryWait: () => exitCode,
+      });
+    }
+    if (COREUTILS_COMMANDS.has(name)) {
+      const pid = spawnIdCounter++;
+      const rawEnv = options?.env as unknown;
+      const env: Record<string, string> = Array.isArray(rawEnv)
+        ? Object.fromEntries(rawEnv as [string, string][])
+        : (rawEnv as Record<string, string> | undefined) ?? {};
+      const ctx: CommandContext = {
+        cwd: options?.cwd ?? '/',
+        env,
+        stdin: options?.stdin ?? hostStdin.dup(),
+        stdout: options?.stdout ?? hostStdout.dup(),
+        stderr: options?.stderr ?? hostStderr.dup(),
+      };
+      const exitCode = runCoreutilSync(name, args, ctx);
       return new Process(pid, {
         wait: (): Promise<number> => exitCode as unknown as Promise<number>,
         tryWait: () => exitCode,

@@ -1,0 +1,17 @@
+[package]
+name = "mithic_coreutils"
+edition = "2024"
+publish = false
+
+[dependencies]
+wit-bindgen = { version = "0.57" }
+
+[package.metadata.component]
+package = "mithic:coreutils"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

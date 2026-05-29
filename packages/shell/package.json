@@ -57,7 +57,8 @@
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
     "@mithic/wasip2": "^0.1",
-    "@mithic/process": "^0.1"
+    "@mithic/process": "^0.1",
+    "@mithic/coreutils": "*"
   },
   "devDependencies": {
     "@bytecodealliance/jco": "^1.10"
