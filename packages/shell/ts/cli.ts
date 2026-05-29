@@ -19,7 +19,9 @@ const coreutilsUrl = new URL('../../coreutils/dist/wasm/component.js', import.me
 const COREUTILS_COMMANDS = new Set([
   'cat', 'head', 'tail', 'wc', 'grep', 'seq', 'sort', 'uniq',
   'tr', 'cut', 'tee', 'xargs', 'sleep', 'basename', 'dirname',
-  'mkdir', 'rm', 'cp', 'mv', 'ls',
+  'mkdir', 'rm', 'cp', 'mv', 'ls', 'rmdir', 'touch', 'ln',
+  'sed', 'find', 'date', 'diff', 'chmod', 'readlink', 'yes',
+  'rev', 'paste',
 ]);
 
 const memFs = new MemoryFsProvider();
