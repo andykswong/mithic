@@ -47,7 +47,7 @@ describe('POSIX mode: disabled bash extensions', () => {
   });
 
   it('source rejected in POSIX mode (use . instead)', async () => {
-    const { stderr, exit } = await runCli(['--posix', '-c', 'echo ok > /tmp/posix_dot.sh; source /tmp/posix_dot.sh']);
+    const { exit } = await runCli(['--posix', '-c', 'echo ok > /tmp/posix_dot.sh; source /tmp/posix_dot.sh']);
     assert.notStrictEqual(exit, 0);
   });
 

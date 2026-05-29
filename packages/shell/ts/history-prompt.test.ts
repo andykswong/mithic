@@ -40,8 +40,6 @@ describe('history builtin', () => {
 
   it('history does not include itself in output', async () => {
     const { stdout } = await runShell('echo a\nhistory\n');
-    const lines = stdout.split('\n').filter(l => l.trim());
-    // Should have "a" from echo + history entries, but history command itself shouldn't be in the numbered list yet
     assert.ok(stdout.includes('echo a'));
   });
 });

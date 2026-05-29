@@ -10,6 +10,7 @@ import { Process } from '@mithic/process/types';
 import type { CommandContext } from '@mithic/process/impl/simple';
 import type { SpawnOptions } from '@mithic/process/types';
 import { NodeStdinHandler, NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
+import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 import { MemoryFsProvider } from '@mithic/io/vfs';
 
 const componentUrl = new URL('../dist/wasm/component.js', import.meta.url);
@@ -45,26 +46,21 @@ function syncInstantiator(module: WebAssembly.Module, imports: object): WebAssem
 
 let spawnIdCounter = 1_000_000;
 
-// Host terminal handlers — used as fallback when child inherits parent's stdio
-const hostStdin = new NodeStdinHandler();
-const hostStdout = new NodeStdoutHandler();
-const hostStderr = new NodeStderrHandler();
 
 /** Run a child shell synchronously and return its exit code.
  * Uses synchronous WASM instantiation so the exit code is available before
- * returning, enabling Process.wait() to return a numeric value immediately. */
+ * returning, enabling Process.wait() to return a numeric value immediately.
+ * Callers must ensure ctx.stdin/stdout/stderr are always defined. */
 function runChildSync(args: string[], ctx: CommandContext): number {
-  // When stdin/stdout/stderr are undefined (not piped), inherit the host terminal.
-  // This enables interactive child shells (bare `sh` invocation).
   const childShim = new WASIShim({
     sandbox: {
       preopens: { '/': rootDescriptor },
       env: ctx.env,
       args: ['sh', ...args],
       cwd: '/',
-      stdin: ctx.stdin ?? { handler: hostStdin, isatty: isatty(0) },
-      stdout: ctx.stdout ?? { handler: hostStdout, isatty: isatty(1) },
-      stderr: ctx.stderr ?? { handler: hostStderr, isatty: isatty(2) },
+      stdin: ctx.stdin,
+      stdout: ctx.stdout,
+      stderr: ctx.stderr,
     },
   });
 
@@ -87,6 +83,11 @@ function runChildSync(args: string[], ctx: CommandContext): number {
   }
 }
 
+// Host terminal streams — fallback when child inherits parent's stdio
+const hostStdinStream = new InputStream(new NodeStdinHandler());
+const hostStdoutStream = new OutputStream(new NodeStdoutHandler());
+const hostStderrStream = new OutputStream(new NodeStderrHandler());
+
 /** Create the mithic:process import object with a custom spawn that handles 'sh'.
  * Intercepts 'sh' at every level to run child shells synchronously, ensuring
  * that Process.wait() returns the exit code before the WASM component resumes. */
@@ -98,7 +99,6 @@ function createShellProcessImports() {
     const name = file.includes('/') ? file.split('/').pop()! : file;
     if (name === 'sh') {
       const pid = spawnIdCounter++;
-      // The env arrives from the WASM component as [[key, val], ...] pairs (WIT list<tuple>).
       const rawEnv = options?.env as unknown;
       const env: Record<string, string> = Array.isArray(rawEnv)
         ? Object.fromEntries(rawEnv as [string, string][])
@@ -106,9 +106,9 @@ function createShellProcessImports() {
       const ctx: CommandContext = {
         cwd: options?.cwd ?? '/',
         env,
-        stdin: options?.stdin!,
-        stdout: options?.stdout!,
-        stderr: options?.stderr!,
+        stdin: options?.stdin ?? hostStdinStream,
+        stdout: options?.stdout ?? hostStdoutStream,
+        stderr: options?.stderr ?? hostStderrStream,
       };
       const exitCode = runChildSync(args, ctx);
       // Process.wait() returns the exit code as a number directly (not a Promise).
