@@ -127,6 +127,34 @@ pub(crate) fn exec_builtin<R: Runtime>(
         }
         "exec" => exec_exec(shell, args, stdin, stdout),
         "hash" => 0,
+        "history" => {
+            if args.first().map(|s| s.as_str()) == Some("-c") {
+                shell.history.clear();
+                return 0;
+            }
+            let entries: Vec<String> = shell.history
+                .iter()
+                .enumerate()
+                .map(|(i, cmd)| format!("  {}  {}\n", i + 1, cmd))
+                .collect();
+            for line in entries {
+                write_out(shell, &stdout, &line);
+            }
+            0
+        }
+        "fc" => {
+            if args.first().map(|s| s.as_str()) == Some("-l") {
+                let entries: Vec<String> = shell.history
+                    .iter()
+                    .enumerate()
+                    .map(|(i, cmd)| format!("  {}  {}\n", i + 1, cmd))
+                    .collect();
+                for line in entries {
+                    write_out(shell, &stdout, &line);
+                }
+            }
+            0
+        }
         _ => {
             shell.rt.write_stderr(&format!("{}: {}: not handled in flow builtin\n", shell.shell_name, name));
             127

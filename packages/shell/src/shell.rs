@@ -38,10 +38,13 @@ pub struct Shell<R: Runtime> {
     /// Persistent stdout redirect set by `exec > file`. None means use default stdout.
     pub(crate) exec_stdout_path: Option<String>,
     pub(crate) shell_name: String,
+    pub(crate) history: Vec<String>,
 }
 
 impl<R: Runtime> Shell<R> {
-    pub fn new(rt: R, env: HashMap<String, ShellValue>, cwd: String, is_interactive: bool) -> Self {
+    pub fn new(rt: R, mut env: HashMap<String, ShellValue>, cwd: String, is_interactive: bool) -> Self {
+        env.entry("PS1".to_string()).or_insert(ShellValue::Scalar("\\w\\$ ".to_string()));
+        env.entry("PS2".to_string()).or_insert(ShellValue::Scalar("> ".to_string()));
         Shell {
             rt,
             env,
@@ -69,6 +72,7 @@ impl<R: Runtime> Shell<R> {
             current_line: 0,
             exec_stdout_path: None,
             shell_name: "sh".to_string(),
+            history: Vec::new(),
         }
     }
 
@@ -82,9 +86,11 @@ impl<R: Runtime> Shell<R> {
         loop {
             if self.is_interactive {
                 let prompt = if input_buf.is_empty() {
-                    format!("{}$ ", self.cwd)
+                    let ps1 = self.env.get("PS1").map(|v| v.as_scalar().to_string()).unwrap_or_else(|| "$ ".to_string());
+                    self.expand_prompt(&ps1)
                 } else {
-                    "> ".to_string()
+                    let ps2 = self.env.get("PS2").map(|v| v.as_scalar().to_string()).unwrap_or_else(|| "> ".to_string());
+                    self.expand_prompt(&ps2)
                 };
                 self.rt.write_stdout(&prompt);
             }
@@ -131,7 +137,7 @@ impl<R: Runtime> Shell<R> {
                 continue;
             }
 
-            let trimmed = input_buf.trim().to_string();
+            let mut trimmed = input_buf.trim().to_string();
             if trimmed.is_empty() {
                 input_buf.clear();
                 continue;
@@ -143,6 +149,22 @@ impl<R: Runtime> Shell<R> {
                 input_buf = without_backslash;
                 input_buf.push(' ');
                 continue;
+            }
+
+            // History expansion (bash mode only)
+            if let Some(expanded) = self.expand_history(&trimmed) {
+                trimmed = expanded;
+            }
+
+            // Record in history
+            {
+                let histsize: usize = self.env.get("HISTSIZE")
+                    .and_then(|v| v.as_scalar().parse().ok())
+                    .unwrap_or(500);
+                if self.history.len() >= histsize {
+                    self.history.remove(0);
+                }
+                self.history.push(trimmed.clone());
             }
 
             if self.options.verbose {
@@ -654,6 +676,83 @@ impl<R: Runtime> Shell<R> {
         let exit = if let Some(p) = last_proc { self.rt.wait(&p) }
                    else { last_builtin_exit.unwrap_or(self.last_exit) };
         if pipeline.negate { if exit == 0 { 1 } else { 0 } } else { exit }
+    }
+
+    fn expand_history(&self, input: &str) -> Option<String> {
+        if self.options.posix || self.history.is_empty() {
+            return None;
+        }
+        let trimmed = input.trim();
+        if trimmed == "!!" {
+            return self.history.last().cloned();
+        }
+        if trimmed.starts_with("!-") {
+            if let Ok(n) = trimmed[2..].parse::<usize>() {
+                if n > 0 && n <= self.history.len() {
+                    return Some(self.history[self.history.len() - n].clone());
+                }
+            }
+        }
+        if trimmed.starts_with('!') && trimmed.len() > 1 && !trimmed.starts_with("!=") {
+            let prefix = &trimmed[1..];
+            for cmd in self.history.iter().rev() {
+                if cmd.starts_with(prefix) {
+                    return Some(cmd.clone());
+                }
+            }
+        }
+        None
+    }
+
+    fn expand_prompt(&self, ps: &str) -> String {
+        if self.options.posix {
+            return ps.to_string();
+        }
+        let mut result = String::new();
+        let mut chars = ps.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('w') => {
+                        let home = self.env.get("HOME").map(|v| v.as_scalar().to_string()).unwrap_or_default();
+                        if !home.is_empty() && self.cwd.starts_with(home.as_str()) {
+                            result.push('~');
+                            result.push_str(&self.cwd[home.len()..]);
+                        } else {
+                            result.push_str(&self.cwd);
+                        }
+                    }
+                    Some('W') => {
+                        let base = self.cwd.rsplit('/').next().unwrap_or(&self.cwd);
+                        result.push_str(if base.is_empty() { "/" } else { base });
+                    }
+                    Some('u') => {
+                        let user = self.env.get("USER").map(|v| v.as_scalar().to_string()).unwrap_or_else(|| "user".to_string());
+                        result.push_str(&user);
+                    }
+                    Some('h') => {
+                        let host = self.env.get("HOSTNAME").map(|v| v.as_scalar().to_string()).unwrap_or_else(|| "localhost".to_string());
+                        let short = host.split('.').next().unwrap_or(&host).to_string();
+                        result.push_str(&short);
+                    }
+                    Some('H') => {
+                        let host = self.env.get("HOSTNAME").map(|v| v.as_scalar().to_string()).unwrap_or_else(|| "localhost".to_string());
+                        result.push_str(&host);
+                    }
+                    Some('$') => result.push('$'),
+                    Some('n') => result.push('\n'),
+                    Some('\\') => result.push('\\'),
+                    Some('e') => result.push('\x1b'),
+                    Some('[') | Some(']') => {}
+                    Some('t') => result.push_str("00:00:00"),
+                    Some(other) => { result.push('\\'); result.push(other); }
+                    None => result.push('\\'),
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        result
     }
 
     pub(crate) fn run_trap(&mut self, signal: &str) {
