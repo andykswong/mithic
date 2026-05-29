@@ -5,6 +5,7 @@ pub(crate) struct ShellOptions {
     pub pipefail: bool, // -o pipefail: pipeline fails if any command fails
     pub xtrace: bool,   // -x: print commands before execution
     pub verbose: bool,  // -v: print input lines to stderr
+    pub posix: bool,    // --posix / set -o posix / POSIXLY_CORRECT: disable bash extensions
 }
 
 impl ShellOptions {
@@ -25,6 +26,7 @@ impl ShellOptions {
             "pipefail" => { self.pipefail = enable; true }
             "xtrace" => { self.xtrace = enable; true }
             "verbose" => { self.verbose = enable; true }
+            "posix" => { self.posix = enable; true }
             _ => false,
         }
     }

@@ -22,6 +22,10 @@ pub(crate) fn exec_builtin<R: Runtime>(
             };
             if shell.eval_test(test_args) { 0 } else { 1 }
         }
+        "[[" if shell.options.posix => {
+            shell.rt.write_stderr(&format!("{}: [[: not available in POSIX mode\n", shell.shell_name));
+            2
+        }
         "[[" => {
             if shell.eval_extended_test(args) { 0 } else { 1 }
         }

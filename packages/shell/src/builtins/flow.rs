@@ -38,6 +38,10 @@ pub(crate) fn exec_builtin<R: Runtime>(
             shell.return_requested = true;
             code
         }
+        "source" if shell.options.posix => {
+            shell.rt.write_stderr(&format!("{}: source: not found (POSIX mode: use '.' instead)\n", shell.shell_name));
+            127
+        }
         "source" | "." => {
             let file = match args.first() {
                 Some(f) => f.clone(),

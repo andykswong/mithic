@@ -51,6 +51,11 @@ fn main() {
     let mut shell = shell::Shell::new(rt, env, cwd, is_interactive);
     shell.shell_name = shell_name.clone();
 
+    // Activate POSIX mode when POSIXLY_CORRECT is set in the environment
+    if shell.env.contains_key("POSIXLY_CORRECT") {
+        shell.options.posix = true;
+    }
+
     // Store $0 in env
     shell.env.insert("0".to_string(), ShellValue::Scalar(shell_name));
 
@@ -101,9 +106,14 @@ fn parse_and_run<R: crate::runtime::Runtime>(shell: &mut crate::shell::Shell<R>,
                 shell.rt.write_stdout("  -u          error on unset variable\n");
                 shell.rt.write_stdout("  -x          trace commands\n");
                 shell.rt.write_stdout("  -v          verbose (print input lines)\n");
+                shell.rt.write_stdout("  --posix     enable POSIX mode (disable bash extensions)\n");
                 shell.rt.write_stdout("  --version   print version\n");
                 shell.rt.write_stdout("  --help      print this help\n");
                 return 0;
+            }
+            "--posix" => {
+                shell.options.posix = true;
+                i += 1;
             }
             "-c" => {
                 i += 1;

@@ -32,7 +32,7 @@ impl<R: Runtime> Shell<R> {
             matches!(p, WordPart::Literal(s) if has_glob(s))
         });
 
-        let brace_results = if has_unquoted_braces {
+        let brace_results = if has_unquoted_braces && !self.options.posix {
             expand_braces(&expanded)
         } else {
             vec![expanded]

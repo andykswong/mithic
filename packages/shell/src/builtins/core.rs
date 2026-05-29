@@ -19,6 +19,14 @@ pub(crate) fn exec_builtin<R: Runtime>(
             code
         }
         "echo" => {
+            if shell.options.posix {
+                // POSIX echo: no flag processing, output all args verbatim
+                let output = args.join(" ");
+                write_out(shell, &stdout, &output);
+                write_out(shell, &stdout, "\n");
+                return 0;
+            }
+
             let mut no_newline = false;
             let mut interpret_escapes = false;
             let mut arg_start = 0;
