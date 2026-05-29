@@ -127,7 +127,7 @@ shell = new MithicShell({
   wasi: {
     sandbox: {
       preopens: { '/': rootDescriptor },
-      args: ['msh'],
+      args: ['sh'],
       env: { HOME: '/home', PATH: '/bin', USER: 'user', TERM: 'xterm-256color', PWD: '/home' },
       cwd: '/home',
       stdin: {
