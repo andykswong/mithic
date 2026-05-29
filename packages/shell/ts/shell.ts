@@ -1,6 +1,6 @@
 import { WASIShim, type WASIShimConfig } from '@mithic/wasip2';
 import { WASIProcess, type WASIProcessConfig } from '@mithic/process/instantiation';
-import type { Process, ProcessManager, Signal, SpawnOptions } from '@mithic/process/types';
+import type { ProcessManager, Signal } from '@mithic/process/types';
 
 export interface ShellComponent {
   instantiate(
@@ -20,7 +20,6 @@ export class MithicShell {
   readonly #wasiShim: WASIShim;
   readonly #wasiProcess: WASIProcess;
   readonly #component?: ShellComponent | (() => Promise<ShellComponent>);
-  readonly #foreground: Set<Process> = new Set();
 
   constructor(config?: MithicShellConfig) {
     this.#wasiShim = new WASIShim(config?.wasi);
@@ -29,40 +28,20 @@ export class MithicShell {
   }
 
   getImportObject(): Record<string, object> {
-    const base = {
+    return {
       ...this.#wasiShim.getImportObject(),
       ...this.#wasiProcess.getImportObject(),
     };
-
-    const mgr = base['mithic:process/manager'] as Record<string, Function>;
-    const originalSpawn = mgr.spawn;
-    const fg = this.#foreground;
-
-    mgr.spawn = (file: string, args: string[], options?: SpawnOptions) => {
-      const proc: Process = originalSpawn(file, args, options);
-      const originalWait = proc.wait.bind(proc);
-      proc.wait = async () => {
-        fg.add(proc);
-        const code = await originalWait();
-        fg.delete(proc);
-        return code;
-      };
-      return proc;
-    };
-
-    return base;
   }
 
   get processManager(): ProcessManager { return this.#wasiProcess.manager; }
 
   signal(sig: Signal): void {
-    for (const proc of this.#foreground) {
-      proc.kill(sig);
-    }
+    this.processManager.signal(sig);
   }
 
   get hasForeground(): boolean {
-    return this.#foreground.size > 0;
+    return this.processManager.hasForeground;
   }
 
   async run(): Promise<number> {
