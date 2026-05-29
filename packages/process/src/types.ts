@@ -110,4 +110,6 @@ export interface ProcessManager {
   spawn(file: string, args: string[], options?: SpawnOptions): Process;
   createPipe(options?: PipeOptions): { input: InputStream; output: OutputStream };
   dupOutputStream(stream: OutputStream): OutputStream;
+  signal(sig: Signal): void;
+  get hasForeground(): boolean;
 }

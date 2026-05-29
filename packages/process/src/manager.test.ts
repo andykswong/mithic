@@ -74,6 +74,8 @@ describe('manager (global WIT-level functions)', () => {
       dupOutputStream(stream: OutputStream) {
         return stream.dup();
       },
+      signal() {},
+      get hasForeground() { return false; },
     };
     _setProcessManager(custom);
     const proc = spawn('anything', []);

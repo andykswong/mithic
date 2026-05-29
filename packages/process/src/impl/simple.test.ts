@@ -221,6 +221,41 @@ describe('SimpleProcessManager', () => {
   });
 });
 
+describe('foreground tracking', () => {
+  it('hasForeground is false when no processes are waiting', () => {
+    const mgr = new SimpleProcessManager({ commandResolver: () => async () => 0 });
+    assert.strictEqual(mgr.hasForeground, false);
+  });
+
+  it('hasForeground is true while a process is being waited on', async () => {
+    let resolveCmd: ((code: number) => void) | null = null;
+    const handler: CommandHandler = () => new Promise(r => { resolveCmd = r; });
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('test', []);
+    const waitPromise = proc.wait();
+    assert.strictEqual(mgr.hasForeground, true);
+    resolveCmd!(0);
+    await waitPromise;
+    assert.strictEqual(mgr.hasForeground, false);
+  });
+
+  it('signal delivers to all foreground processes', async () => {
+    let resolveCmd: ((code: number) => void) | null = null;
+    const handler: CommandHandler = () => new Promise(r => { resolveCmd = r; });
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('test', []);
+    const waitPromise = proc.wait();
+    mgr.signal('sigint');
+    const code = await waitPromise;
+    assert.strictEqual(code, 130); // 128 + 2 (SIGINT)
+  });
+
+  it('signal is no-op when no foreground processes', () => {
+    const mgr = new SimpleProcessManager({ commandResolver: () => async () => 0 });
+    mgr.signal('sigint'); // should not throw
+  });
+});
+
 describe('spawnWithPipes', () => {
   it('creates pipes and returns caller ends', async () => {
     const handler: CommandHandler = async (_args, ctx) => {
@@ -275,6 +310,8 @@ describe('WASIProcess', () => {
       dupOutputStream(stream: OutputStream) {
         return stream.dup();
       },
+      signal() {},
+      get hasForeground() { return false; },
     };
     const wp = new WASIProcess({ manager: customManager });
     const { spawn } = wp.getImportObject()['mithic:process/manager'];

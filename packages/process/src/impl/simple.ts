@@ -83,6 +83,7 @@ export class SimpleProcessManager implements ProcessManager {
   readonly table: ProcessTable;
   #resolver: CommandResolver;
   readonly #hostStreams: HostStreams;
+  readonly #foreground = new Set<Process>();
 
   constructor(config?: SimpleProcessManagerConfig) {
     this.table = config?.processTable ?? new ProcessTable();
@@ -116,6 +117,7 @@ export class SimpleProcessManager implements ProcessManager {
     let resolveWait: ((exitCode: number) => void) | null = null;
     const waitPromise = new Promise<number>(r => { resolveWait = r; });
 
+    const foreground = this.#foreground;
     const processHandler: ProcessHandler = {
       onKill(signal: Signal) {
         if (signal === 'signull') {
@@ -127,7 +129,14 @@ export class SimpleProcessManager implements ProcessManager {
         exitCode = 128 + sigNum;
         resolveWait?.(exitCode);
       },
-      wait() { return waitPromise; },
+      wait: async () => {
+        foreground.add(proc);
+        try {
+          return await waitPromise;
+        } finally {
+          foreground.delete(proc);
+        }
+      },
       tryWait() { return exitCode; },
     };
 
@@ -174,5 +183,15 @@ export class SimpleProcessManager implements ProcessManager {
 
   dupOutputStream(stream: OutputStream): OutputStream {
     return stream.dup();
+  }
+
+  signal(sig: Signal): void {
+    for (const proc of this.#foreground) {
+      proc.kill(sig);
+    }
+  }
+
+  get hasForeground(): boolean {
+    return this.#foreground.size > 0;
   }
 }
