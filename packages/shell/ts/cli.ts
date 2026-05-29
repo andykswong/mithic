@@ -45,19 +45,26 @@ function syncInstantiator(module: WebAssembly.Module, imports: object): WebAssem
 
 let spawnIdCounter = 1_000_000;
 
+// Host terminal handlers — used as fallback when child inherits parent's stdio
+const hostStdin = new NodeStdinHandler();
+const hostStdout = new NodeStdoutHandler();
+const hostStderr = new NodeStderrHandler();
+
 /** Run a child shell synchronously and return its exit code.
  * Uses synchronous WASM instantiation so the exit code is available before
  * returning, enabling Process.wait() to return a numeric value immediately. */
 function runChildSync(args: string[], ctx: CommandContext): number {
+  // When stdin/stdout/stderr are undefined (not piped), inherit the host terminal.
+  // This enables interactive child shells (bare `sh` invocation).
   const childShim = new WASIShim({
     sandbox: {
       preopens: { '/': rootDescriptor },
       env: ctx.env,
       args: ['sh', ...args],
       cwd: '/',
-      stdin: ctx.stdin,
-      stdout: ctx.stdout,
-      stderr: ctx.stderr,
+      stdin: ctx.stdin ?? { handler: hostStdin, isatty: isatty(0) },
+      stdout: ctx.stdout ?? { handler: hostStdout, isatty: isatty(1) },
+      stderr: ctx.stderr ?? { handler: hostStderr, isatty: isatty(2) },
     },
   });
 
