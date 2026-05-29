@@ -57,7 +57,7 @@ fn read_input<R: Runtime>(
             let path = shell.resolve_path(arg);
             let data = shell.rt.read_file(&path);
             if data.is_empty() && !shell.rt.file_exists(&path) {
-                shell.rt.write_stderr(&format!("msh: {}: No such file or directory\n", arg));
+                shell.rt.write_stderr(&format!("{}: {}: No such file or directory\n", shell.shell_name, arg));
                 errors = 1;
             } else {
                 out.extend_from_slice(&data);

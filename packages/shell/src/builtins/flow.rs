@@ -13,7 +13,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
     match name {
         "break" => {
             if shell.in_loop_depth == 0 {
-                shell.rt.write_stderr("msh: break: only meaningful in a loop\n");
+                shell.rt.write_stderr(&format!("{}: break: only meaningful in a loop\n", shell.shell_name));
                 return 1;
             }
             let n: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(1);
@@ -22,7 +22,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
         }
         "continue" => {
             if shell.in_loop_depth == 0 {
-                shell.rt.write_stderr("msh: continue: only meaningful in a loop\n");
+                shell.rt.write_stderr(&format!("{}: continue: only meaningful in a loop\n", shell.shell_name));
                 return 1;
             }
             let n: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(1);
@@ -31,7 +31,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
         }
         "return" => {
             if shell.in_function_depth == 0 {
-                shell.rt.write_stderr("msh: return: can only return from a function or sourced script\n");
+                shell.rt.write_stderr(&format!("{}: return: can only return from a function or sourced script\n", shell.shell_name));
                 return 1;
             }
             let code: u8 = args.first().and_then(|s| s.parse().ok()).unwrap_or(shell.last_exit);
@@ -42,7 +42,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
             let file = match args.first() {
                 Some(f) => f.clone(),
                 None => {
-                    shell.rt.write_stderr("msh: source: filename argument required\n");
+                    shell.rt.write_stderr(&format!("{}: source: filename argument required\n", shell.shell_name));
                     return 2;
                 }
             };
@@ -57,7 +57,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
             if let Some(list) = parser.parse() {
                 shell.exec_list(list)
             } else {
-                shell.rt.write_stderr("msh: eval: parse error\n");
+                shell.rt.write_stderr(&format!("{}: eval: parse error\n", shell.shell_name));
                 1
             }
         }
@@ -114,7 +114,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
                     match shell.rt.spawn(&name, &args[1..], opts) {
                         Ok(proc) => shell.rt.wait(&proc),
                         Err(_) => {
-                            shell.rt.write_stderr(&format!("msh: {}: command not found\n", name));
+                            shell.rt.write_stderr(&format!("{}: {}: command not found\n", shell.shell_name, name));
                             127
                         }
                     }
@@ -124,7 +124,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
         "exec" => exec_exec(shell, args, stdin, stdout),
         "hash" => 0,
         _ => {
-            shell.rt.write_stderr(&format!("msh: {}: not handled in flow builtin\n", name));
+            shell.rt.write_stderr(&format!("{}: {}: not handled in flow builtin\n", shell.shell_name, name));
             127
         }
     }
@@ -161,7 +161,7 @@ fn exec_exec<R: Runtime>(
             exit
         }
         Err(_) => {
-            shell.rt.write_stderr(&format!("msh: exec: {}: command not found\n", cmd));
+            shell.rt.write_stderr(&format!("{}: exec: {}: command not found\n", shell.shell_name, cmd));
             127
         }
     }
@@ -171,7 +171,7 @@ fn exec_source<R: Runtime>(shell: &mut Shell<R>, file: &str) -> u8 {
     let path = shell.resolve_path(file);
     let contents = shell.rt.read_file(&path);
     if contents.is_empty() {
-        shell.rt.write_stderr(&format!("msh: source: {}: No such file or directory\n", file));
+        shell.rt.write_stderr(&format!("{}: source: {}: No such file or directory\n", shell.shell_name, file));
         return 1;
     }
 

@@ -18,7 +18,7 @@ const shim = new WASIShim({
   sandbox: {
     preopens: { '/': rootDescriptor },
     env: Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] != null)),
-    args: ['msh'],
+    args: ['sh', ...process.argv.slice(2)],
     cwd: '/',
     stdin: { handler: new NodeStdinHandler(), isatty: isatty(0) },
     stdout: { handler: new NodeStdoutHandler(), isatty: isatty(1) },

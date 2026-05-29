@@ -125,11 +125,15 @@ impl<R: Runtime> Shell<R> {
             }
             "LINENO" => self.current_line.to_string(),
             _ => {
+                if name == "0" {
+                    return self.env.get("0").map(|v| v.as_scalar().to_string())
+                        .unwrap_or_else(|| self.shell_name.clone());
+                }
                 if let Ok(n) = name.parse::<usize>() {
                     return self.params.get(n).unwrap_or("").to_string();
                 }
                 if check_nounset && self.options.nounset && !self.env.contains_key(name) {
-                    self.rt.write_stderr(&format!("msh: {}: unbound variable\n", name));
+                    self.rt.write_stderr(&format!("{}: {}: unbound variable\n", self.shell_name, name));
                     self.last_exit = 1;
                     self.exit_requested = true;
                     return String::new();
@@ -421,7 +425,7 @@ impl<R: Runtime> Shell<R> {
     }
 
     pub(crate) fn exec_proc_sub_out(&mut self, _raw: &str) -> String {
-        self.rt.write_stderr("msh: >(cmd) process substitution not yet supported\n");
+        self.rt.write_stderr(&format!("{}: >(cmd) process substitution not yet supported\n", self.shell_name));
         String::new()
     }
 

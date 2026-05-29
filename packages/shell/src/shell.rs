@@ -37,6 +37,7 @@ pub struct Shell<R: Runtime> {
     pub(crate) current_line: u32,
     /// Persistent stdout redirect set by `exec > file`. None means use default stdout.
     pub(crate) exec_stdout_path: Option<String>,
+    pub(crate) shell_name: String,
 }
 
 impl<R: Runtime> Shell<R> {
@@ -67,6 +68,7 @@ impl<R: Runtime> Shell<R> {
             random_state: 12345678901234567u64,
             current_line: 0,
             exec_stdout_path: None,
+            shell_name: "sh".to_string(),
         }
     }
 
@@ -94,12 +96,15 @@ impl<R: Runtime> Shell<R> {
                     if !input_buf.is_empty() {
                         let trimmed = input_buf.trim().to_string();
                         if !trimmed.is_empty() {
+                            if self.options.verbose {
+                                self.rt.write_stderr(&format!("{}\n", trimmed));
+                            }
                             let mut parser = Parser::new(&trimmed);
                             let result = parser.parse();
                             for err in parser.errors() {
                                 self.rt.write_stderr(&format!(
-                                    "msh: syntax error at line {}, col {}: {}\n",
-                                    err.span.line, err.span.col, err.message
+                                    "{}: syntax error at line {}, col {}: {}\n",
+                                    self.shell_name, err.span.line, err.span.col, err.message
                                 ));
                             }
                             if let Some(list) = result {
@@ -140,6 +145,10 @@ impl<R: Runtime> Shell<R> {
                 continue;
             }
 
+            if self.options.verbose {
+                self.rt.write_stderr(&format!("{}\n", trimmed));
+            }
+
             let mut parser = Parser::new(&trimmed);
             let result = parser.parse();
 
@@ -150,8 +159,8 @@ impl<R: Runtime> Shell<R> {
 
             for err in parser.errors() {
                 self.rt.write_stderr(&format!(
-                    "msh: syntax error at line {}, col {}: {}\n",
-                    err.span.line, err.span.col, err.message
+                    "{}: syntax error at line {}, col {}: {}\n",
+                    self.shell_name, err.span.line, err.span.col, err.message
                 ));
             }
 
@@ -171,6 +180,44 @@ impl<R: Runtime> Shell<R> {
         self.run_trap("EXIT");
         self.cleanup_procsub_files();
         self.last_exit
+    }
+
+    pub fn run_string(&mut self, input: &str) -> u8 {
+        if input.trim().is_empty() {
+            return 0;
+        }
+        if self.options.verbose {
+            self.rt.write_stderr(&format!("{}\n", input.trim()));
+        }
+        let mut parser = Parser::new(input);
+        if let Some(list) = parser.parse() {
+            self.last_exit = self.exec_list(list);
+        } else {
+            for err in parser.errors() {
+                self.rt.write_stderr(&format!(
+                    "{}: syntax error: {}\n",
+                    self.shell_name, err.message
+                ));
+            }
+            self.last_exit = 2;
+        }
+        self.run_trap("EXIT");
+        self.cleanup_procsub_files();
+        self.last_exit
+    }
+
+    pub fn run_file(&mut self, path: &str) -> u8 {
+        let resolved = self.resolve_path(path);
+        let bytes = self.rt.read_file(&resolved);
+        if bytes.is_empty() {
+            self.rt.write_stderr(&format!(
+                "{}: {}: No such file or directory\n",
+                self.shell_name, path
+            ));
+            return 127;
+        }
+        let content = String::from_utf8_lossy(&bytes).to_string();
+        self.run_string(&content)
     }
 
     pub(crate) fn exec_list(&mut self, list: List) -> u8 {
@@ -378,7 +425,7 @@ impl<R: Runtime> Shell<R> {
                     exit
                 }
                 Err(_) => {
-                    self.rt.write_stderr(&format!("msh: {}: command not found\n", name));
+                    self.rt.write_stderr(&format!("{}: {}: command not found\n", self.shell_name, name));
                     127
                 }
             }
@@ -396,7 +443,7 @@ impl<R: Runtime> Shell<R> {
                 if arr_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
                     if let Ok(idx) = subscript.parse::<usize>() {
                         if self.readonly_vars.contains(arr_name) {
-                            self.rt.write_stderr(&format!("msh: {}: readonly variable\n", arr_name));
+                            self.rt.write_stderr(&format!("{}: {}: readonly variable\n", self.shell_name, arr_name));
                             self.last_exit = 1;
                             return Some(1);
                         }
@@ -425,7 +472,7 @@ impl<R: Runtime> Shell<R> {
             // `VAR=value` — plain scalar assignment
             if lhs.chars().all(|c| c.is_alphanumeric() || c == '_') && !lhs.is_empty() {
                 if self.readonly_vars.contains(lhs) {
-                    self.rt.write_stderr(&format!("msh: {}: readonly variable\n", lhs));
+                    self.rt.write_stderr(&format!("{}: {}: readonly variable\n", self.shell_name, lhs));
                     self.last_exit = 1;
                     return Some(1);
                 }
@@ -495,7 +542,7 @@ impl<R: Runtime> Shell<R> {
         }
         // Plain scalar assignment.
         if self.readonly_vars.contains(lhs) {
-            self.rt.write_stderr(&format!("msh: {}: readonly variable\n", lhs));
+            self.rt.write_stderr(&format!("{}: {}: readonly variable\n", self.shell_name, lhs));
             self.last_exit = 1;
             return Some(1);
         }
@@ -590,7 +637,7 @@ impl<R: Runtime> Shell<R> {
                 match self.rt.spawn(&name, &args[1..], opts) {
                     Ok(proc) => processes.push(proc),
                     Err(_) => {
-                        self.rt.write_stderr(&format!("msh: {}: command not found\n", name));
+                        self.rt.write_stderr(&format!("{}: {}: command not found\n", self.shell_name, name));
                         for p in processes {
                             let _ = self.rt.wait(&p);
                         }

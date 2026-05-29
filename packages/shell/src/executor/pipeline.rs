@@ -67,7 +67,7 @@ impl<R: Runtime> Shell<R> {
             match self.rt.spawn(&name, &args[1..], opts) {
                 Ok(proc) => StageResult::Spawned(proc),
                 Err(_) => {
-                    self.rt.write_stderr(&format!("msh: {}: command not found\n", name));
+                    self.rt.write_stderr(&format!("{}: {}: command not found\n", self.shell_name, name));
                     StageResult::SpawnFailed
                 }
             }
@@ -117,7 +117,7 @@ impl<R: Runtime> Shell<R> {
                             self.env.insert("!".to_string(), ShellValue::Scalar(pid.to_string()));
                         }
                         Err(_) => {
-                            self.rt.write_stderr(&format!("msh: {}: command not found\n", name));
+                            self.rt.write_stderr(&format!("{}: {}: command not found\n", self.shell_name, name));
                         }
                     }
                 }
@@ -161,7 +161,7 @@ impl<R: Runtime> Shell<R> {
                         processes.push(proc);
                     }
                     Err(_) => {
-                        self.rt.write_stderr(&format!("msh: {}: command not found\n", name));
+                        self.rt.write_stderr(&format!("{}: {}: command not found\n", self.shell_name, name));
                     }
                 }
             }

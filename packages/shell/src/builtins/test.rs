@@ -14,7 +14,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
                 if args.last().map(|s| s.as_str()) == Some("]") {
                     &args[..args.len() - 1]
                 } else {
-                    shell.rt.write_stderr("msh: [: missing `]'\n");
+                    shell.rt.write_stderr(&format!("{}: [: missing `]'\n", shell.shell_name));
                     return 2;
                 }
             } else {
@@ -26,7 +26,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
             if shell.eval_extended_test(args) { 0 } else { 1 }
         }
         _ => {
-            shell.rt.write_stderr(&format!("msh: {}: not handled in test builtin\n", name));
+            shell.rt.write_stderr(&format!("{}: {}: not handled in test builtin\n", shell.shell_name, name));
             127
         }
     }

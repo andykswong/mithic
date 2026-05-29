@@ -14,7 +14,11 @@ export class ComponentExit extends Error {
 }
 
 export function exit(status: { tag: 'ok' } | { tag: 'err'; val?: unknown }): void {
-  throw new ComponentExit(status.tag === 'err' ? 1 : 0);
+  if (status.tag === 'err') {
+    const code = typeof status.val === 'number' ? status.val : 1;
+    throw new ComponentExit(code);
+  }
+  throw new ComponentExit(0);
 }
 
 export function exitWithCode(statusCode: number): void {

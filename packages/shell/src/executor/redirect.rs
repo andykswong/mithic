@@ -20,7 +20,7 @@ impl<R: Runtime> Shell<R> {
                     match self.rt.open_file_write(&path, false) {
                         Some(h) => *stdout = Some(h),
                         None => {
-                            self.rt.write_stderr(&format!("msh: {}: cannot open for writing\n", expanded));
+                            self.rt.write_stderr(&format!("{}: {}: cannot open for writing\n", self.shell_name, expanded));
                             return false;
                         }
                     }
@@ -31,7 +31,7 @@ impl<R: Runtime> Shell<R> {
                     match self.rt.open_file_write(&path, true) {
                         Some(h) => *stdout = Some(h),
                         None => {
-                            self.rt.write_stderr(&format!("msh: {}: cannot open for appending\n", expanded));
+                            self.rt.write_stderr(&format!("{}: {}: cannot open for appending\n", self.shell_name, expanded));
                             return false;
                         }
                     }
@@ -42,7 +42,7 @@ impl<R: Runtime> Shell<R> {
                     match self.rt.open_file_read(&path) {
                         Some(h) => *stdin = Some(h),
                         None => {
-                            self.rt.write_stderr(&format!("msh: {}: No such file or directory\n", expanded));
+                            self.rt.write_stderr(&format!("{}: {}: No such file or directory\n", self.shell_name, expanded));
                             return false;
                         }
                     }
@@ -53,7 +53,7 @@ impl<R: Runtime> Shell<R> {
                     match self.rt.open_file_write(&path, false) {
                         Some(h) => *stderr = Some(h),
                         None => {
-                            self.rt.write_stderr(&format!("msh: {}: cannot open for writing\n", expanded));
+                            self.rt.write_stderr(&format!("{}: {}: cannot open for writing\n", self.shell_name, expanded));
                             return false;
                         }
                     }
@@ -64,7 +64,7 @@ impl<R: Runtime> Shell<R> {
                     match self.rt.open_file_write(&path, true) {
                         Some(h) => *stderr = Some(h),
                         None => {
-                            self.rt.write_stderr(&format!("msh: {}: cannot open for appending\n", expanded));
+                            self.rt.write_stderr(&format!("{}: {}: cannot open for appending\n", self.shell_name, expanded));
                             return false;
                         }
                     }
@@ -85,7 +85,7 @@ impl<R: Runtime> Shell<R> {
                             *stderr = Some(dup);
                         }
                         None => {
-                            self.rt.write_stderr(&format!("msh: {}: cannot open for writing\n", expanded));
+                            self.rt.write_stderr(&format!("{}: {}: cannot open for writing\n", self.shell_name, expanded));
                             return false;
                         }
                     }

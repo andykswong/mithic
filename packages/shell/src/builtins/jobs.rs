@@ -38,7 +38,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
             let job = match shell.jobs.get(job_id) {
                 Some(j) => j,
                 None => {
-                    shell.rt.write_stderr(&format!("msh: fg: %{}: no such job\n", job_id));
+                    shell.rt.write_stderr(&format!("{}: fg: %{}: no such job\n", shell.shell_name, job_id));
                     return 1;
                 }
             };
@@ -79,7 +79,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
             let job = match shell.jobs.get_mut(job_id) {
                 Some(j) => j,
                 None => {
-                    shell.rt.write_stderr(&format!("msh: bg: %{}: no such job\n", job_id));
+                    shell.rt.write_stderr(&format!("{}: bg: %{}: no such job\n", shell.shell_name, job_id));
                     return 1;
                 }
             };
@@ -124,7 +124,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
                     }
                     if let Some(p) = last { shell.rt.wait(&p) } else { 0 }
                 } else {
-                    shell.rt.write_stderr(&format!("msh: wait: %{}: no such job\n", job_id));
+                    shell.rt.write_stderr(&format!("{}: wait: %{}: no such job\n", shell.shell_name, job_id));
                     127
                 }
             }
@@ -135,7 +135,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
                 Err(msg) => { shell.rt.write_stderr(&msg); return 1; }
             };
             if shell.jobs.remove(job_id).is_none() {
-                shell.rt.write_stderr(&format!("msh: disown: %{}: no such job\n", job_id));
+                shell.rt.write_stderr(&format!("{}: disown: %{}: no such job\n", shell.shell_name, job_id));
                 return 1;
             }
             0
@@ -153,7 +153,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
             }
 
             if targets.is_empty() {
-                shell.rt.write_stderr("msh: kill: usage: kill [-signal] pid|%job ...\n");
+                shell.rt.write_stderr(&format!("{}: kill: usage: kill [-signal] pid|%job ...\n", shell.shell_name));
                 return 1;
             }
 
@@ -168,7 +168,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
                                 let _ = shell.rt.kill(proc, signal);
                             }
                         } else {
-                            shell.rt.write_stderr(&format!("msh: kill: %{}: no such job\n", id));
+                            shell.rt.write_stderr(&format!("{}: kill: %{}: no such job\n", shell.shell_name, id));
                             exit = 1;
                         }
                     }
@@ -188,7 +188,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
                             }
                         }
                     } else {
-                        shell.rt.write_stderr(&format!("msh: kill: ({}) - No such process\n", _pid));
+                        shell.rt.write_stderr(&format!("{}: kill: ({}) - No such process\n", shell.shell_name, _pid));
                         exit = 1;
                     }
                 }
@@ -212,7 +212,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
             }
 
             if args.len() < 2 {
-                shell.rt.write_stderr("msh: trap: usage: trap 'command' signal ...\n");
+                shell.rt.write_stderr(&format!("{}: trap: usage: trap 'command' signal ...\n", shell.shell_name));
                 return 2;
             }
 
@@ -225,7 +225,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
                     upper.strip_prefix("SIG").unwrap_or(&upper).to_string()
                 };
                 if normalized.is_empty() {
-                    shell.rt.write_stderr(&format!("msh: trap: {}: invalid signal\n", sig_name));
+                    shell.rt.write_stderr(&format!("{}: trap: {}: invalid signal\n", shell.shell_name, sig_name));
                     continue;
                 }
                 if handler == "-" {
@@ -237,7 +237,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
             0
         }
         _ => {
-            shell.rt.write_stderr(&format!("msh: {}: not handled in jobs builtin\n", name));
+            shell.rt.write_stderr(&format!("{}: {}: not handled in jobs builtin\n", shell.shell_name, name));
             127
         }
     }
@@ -248,12 +248,12 @@ fn resolve_job_id<R: Runtime>(shell: &Shell<R>, args: &[String]) -> Result<usize
         let id_str = arg.strip_prefix('%').unwrap_or(arg);
         match id_str.parse::<usize>() {
             Ok(id) => Ok(id),
-            Err(_) => Err(format!("msh: {}: no such job\n", arg)),
+            Err(_) => Err(format!("{}: {}: no such job\n", shell.shell_name, arg)),
         }
     } else {
         match shell.jobs.current_id() {
             Some(id) => Ok(id),
-            None => Err("msh: no current job\n".to_string()),
+            None => Err(format!("{}: no current job\n", shell.shell_name)),
         }
     }
 }

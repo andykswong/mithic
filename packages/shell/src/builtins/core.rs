@@ -84,7 +84,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
         "true" => 0,
         "false" => 1,
         _ => {
-            shell.rt.write_stderr(&format!("msh: {}: not handled in core builtin\n", name));
+            shell.rt.write_stderr(&format!("{}: {}: not handled in core builtin\n", shell.shell_name, name));
             127
         }
     }

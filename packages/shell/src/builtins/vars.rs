@@ -27,7 +27,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
                     if !shell.readonly_vars.contains(key) {
                         shell.env.insert(key.to_string(), ShellValue::Scalar(value.to_string()));
                     } else {
-                        shell.rt.write_stderr(&format!("msh: {}: readonly variable\n", key));
+                        shell.rt.write_stderr(&format!("{}: {}: readonly variable\n", shell.shell_name, key));
                         return 1;
                     }
                     shell.readonly_vars.insert(key.to_string());
@@ -75,7 +75,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
         "read" => exec_read(shell, args, stdin),
         "set" => exec_set(shell, args),
         _ => {
-            shell.rt.write_stderr(&format!("msh: {}: not handled in vars builtin\n", name));
+            shell.rt.write_stderr(&format!("{}: {}: not handled in vars builtin\n", shell.shell_name, name));
             127
         }
     }
@@ -258,7 +258,7 @@ fn exec_set<R: Runtime>(shell: &mut Shell<R>, args: &[String]) -> u8 {
 
 fn exec_getopts<R: Runtime>(shell: &mut Shell<R>, args: &[String]) -> u8 {
     if args.len() < 2 {
-        shell.rt.write_stderr("msh: getopts: usage: getopts optstring name\n");
+        shell.rt.write_stderr(&format!("{}: getopts: usage: getopts optstring name\n", shell.shell_name));
         return 2;
     }
     let optstring = &args[0];
