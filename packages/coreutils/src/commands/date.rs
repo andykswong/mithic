@@ -1,0 +1,125 @@
+use super::write_stdout;
+
+pub fn run(args: &[&str]) -> u8 {
+    let format_arg = args.iter().find(|a| a.starts_with('+'));
+    let format = format_arg.map(|a| &a[1..]).unwrap_or("%a %b %e %H:%M:%S UTC %Y");
+
+    let datetime = get_datetime();
+    let output = format_datetime(format, &datetime);
+    write_stdout(&output);
+    write_stdout("\n");
+    0
+}
+
+struct DateTime {
+    year: u32,
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
+    weekday: u8, // 0 = Sunday
+}
+
+fn get_datetime() -> DateTime {
+    let now = crate::bindings::wasi::clocks::wall_clock::now();
+    let secs = now.seconds;
+    epoch_to_datetime(secs)
+}
+
+fn epoch_to_datetime(secs: u64) -> DateTime {
+    // Days since Unix epoch (1970-01-01)
+    let days = (secs / 86400) as u32;
+    let time_of_day = (secs % 86400) as u32;
+
+    let hour = (time_of_day / 3600) as u8;
+    let minute = ((time_of_day % 3600) / 60) as u8;
+    let second = (time_of_day % 60) as u8;
+
+    // Weekday: 1970-01-01 was Thursday (4)
+    let weekday = ((days + 4) % 7) as u8;
+
+    // Gregorian calendar conversion
+    let (year, month, day) = days_to_ymd(days);
+
+    DateTime { year, month, day, hour, minute, second, weekday }
+}
+
+fn days_to_ymd(days: u32) -> (u32, u8, u8) {
+    // Use the civil date algorithm
+    let z = days as i64 + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y } as u32;
+    (year, m as u8, d as u8)
+}
+
+fn format_datetime(fmt: &str, dt: &DateTime) -> String {
+    let months_abbr = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    let days_abbr = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+    let mut result = String::new();
+    let chars: Vec<char> = fmt.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '%' && i + 1 < chars.len() {
+            i += 1;
+            match chars[i] {
+                'Y' => result.push_str(&format!("{:04}", dt.year)),
+                'y' => result.push_str(&format!("{:02}", dt.year % 100)),
+                'm' => result.push_str(&format!("{:02}", dt.month)),
+                'd' => result.push_str(&format!("{:02}", dt.day)),
+                'e' => result.push_str(&format!("{:2}", dt.day)),
+                'H' => result.push_str(&format!("{:02}", dt.hour)),
+                'M' => result.push_str(&format!("{:02}", dt.minute)),
+                'S' => result.push_str(&format!("{:02}", dt.second)),
+                'j' => {
+                    let doy = day_of_year(dt.year, dt.month, dt.day);
+                    result.push_str(&format!("{:03}", doy));
+                }
+                'b' | 'h' => {
+                    if dt.month >= 1 && dt.month <= 12 {
+                        result.push_str(months_abbr[(dt.month - 1) as usize]);
+                    }
+                }
+                'a' => {
+                    result.push_str(days_abbr[(dt.weekday % 7) as usize]);
+                }
+                'u' => result.push_str(&format!("{}", if dt.weekday == 0 { 7 } else { dt.weekday })),
+                'w' => result.push_str(&format!("{}", dt.weekday)),
+                'n' => result.push('\n'),
+                't' => result.push('\t'),
+                '%' => result.push('%'),
+                other => {
+                    result.push('%');
+                    result.push(other);
+                }
+            }
+        } else {
+            result.push(chars[i]);
+        }
+        i += 1;
+    }
+    result
+}
+
+fn day_of_year(year: u32, month: u8, day: u8) -> u32 {
+    let days_in_month = [31u32, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let leap = is_leap(year);
+    let mut doy = day as u32;
+    for m in 0..(month as usize - 1) {
+        doy += days_in_month[m];
+        if m == 1 && leap { doy += 1; }
+    }
+    doy
+}
+
+fn is_leap(year: u32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}

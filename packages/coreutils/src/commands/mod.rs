@@ -18,6 +18,18 @@ mod rm;
 mod cp;
 mod mv;
 mod ls;
+mod rmdir;
+mod touch;
+mod ln;
+mod sed;
+mod find;
+mod date;
+mod diff;
+mod chmod;
+mod readlink;
+mod yes;
+mod rev;
+mod paste;
 
 pub fn dispatch(name: &str, args: &[&str]) -> u8 {
     match name {
@@ -41,6 +53,18 @@ pub fn dispatch(name: &str, args: &[&str]) -> u8 {
         "cp" => cp::run(args),
         "mv" => mv::run(args),
         "ls" => ls::run(args),
+        "rmdir" => rmdir::run(args),
+        "touch" => touch::run(args),
+        "ln" => ln::run(args),
+        "sed" => sed::run(args),
+        "find" => find::run(args),
+        "date" => date::run(args),
+        "diff" => diff::run(args),
+        "chmod" => chmod::run(args),
+        "readlink" => readlink::run(args),
+        "yes" => yes::run(args),
+        "rev" => rev::run(args),
+        "paste" => paste::run(args),
         _ => {
             write_stderr(&format!("{}: command not found\n", name));
             127
