@@ -3,6 +3,7 @@ pub mod vars;
 pub mod flow;
 pub mod test;
 pub mod jobs;
+mod coreutils;
 
 use crate::runtime::{InputHandle, OutputHandle, Runtime};
 use crate::shell::Shell;
@@ -27,10 +28,12 @@ impl<R: Runtime> Shell<R> {
             "exit" | "echo" | "printf" | "pwd" | "cd" | "env" | "true" | "false" => {
                 core::exec_builtin(self, name, args, stdin, stdout)
             }
-            "export" | "unset" | "declare" | "local" | "read" | "set" => {
+            "export" | "unset" | "declare" | "local" | "read" | "set" |
+            "readonly" | "let" | "getopts" | "mapfile" | "readarray" => {
                 vars::exec_builtin(self, name, args, stdin, stdout)
             }
-            "break" | "continue" | "return" | "source" | "." | "eval" | "shift" | "type" | "command" => {
+            "break" | "continue" | "return" | "source" | "." | "eval" | "shift" | "type" | "command" |
+            "exec" | "hash" => {
                 flow::exec_builtin(self, name, args, stdin, stdout)
             }
             "test" | "[" | "[[" => {
@@ -38,6 +41,11 @@ impl<R: Runtime> Shell<R> {
             }
             "jobs" | "fg" | "bg" | "wait" | "disown" | "kill" | "trap" => {
                 jobs::exec_builtin(self, name, args, stdin, stdout)
+            }
+            "cat" | "head" | "tail" | "wc" | "grep" | "seq" | "sort" | "uniq" |
+            "tr" | "cut" | "tee" | "xargs" | "sleep" | "basename" | "dirname" |
+            "mkdir" | "rm" | "cp" | "mv" | "ls" => {
+                coreutils::exec_builtin(self, name, args, stdin, stdout)
             }
             _ => 127,
         }

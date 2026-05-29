@@ -1,9 +1,13 @@
 #[cfg(test)]
 use crate::runtime::*;
+#[cfg(test)]
 use std::cell::RefCell;
+#[cfg(test)]
 use std::collections::HashMap;
 
 /// Test runtime with output capture and mock filesystem.
+#[cfg(test)]
+#[allow(dead_code)]
 pub(crate) struct TestRuntime {
     pub stdout: RefCell<String>,
     pub stderr: RefCell<String>,
@@ -12,7 +16,9 @@ pub(crate) struct TestRuntime {
     pub fs_files: HashMap<String, Vec<u8>>,
 }
 
+#[cfg(test)]
 impl TestRuntime {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             stdout: RefCell::new(String::new()),
@@ -24,6 +30,7 @@ impl TestRuntime {
     }
 }
 
+#[cfg(test)]
 impl Io for TestRuntime {
     fn write_stdout(&self, data: &str) {
         self.stdout.borrow_mut().push_str(data);
@@ -43,6 +50,7 @@ impl Io for TestRuntime {
     }
 }
 
+#[cfg(test)]
 impl Filesystem for TestRuntime {
     fn open_file_write(&mut self, _path: &str, _append: bool) -> Option<OutputHandle> {
         None
@@ -81,6 +89,7 @@ impl Filesystem for TestRuntime {
     }
 }
 
+#[cfg(test)]
 impl ProcessMgr for TestRuntime {
     fn create_pipe(&mut self) -> (InputHandle, OutputHandle) {
         (InputHandle(0), OutputHandle(0))

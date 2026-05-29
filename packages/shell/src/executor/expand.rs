@@ -116,6 +116,14 @@ impl<R: Runtime> Shell<R> {
                 self.params.all().join(&ifs_sep.to_string())
             }
             "!" => self.env.get("!").map(|v| v.as_scalar().to_string()).unwrap_or_default(),
+            "RANDOM" => {
+                // Simple LCG pseudo-random number generator (16-bit, 0..32767)
+                self.random_state = self.random_state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                ((self.random_state >> 33) % 32768).to_string()
+            }
+            "LINENO" => self.current_line.to_string(),
             _ => {
                 if let Ok(n) = name.parse::<usize>() {
                     return self.params.get(n).unwrap_or("").to_string();

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::executor::expansion::{
     expand_tilde, literal_text, normalize_path, parse_array_subscript,
@@ -32,6 +32,11 @@ pub struct Shell<R: Runtime> {
     pub(crate) options: ShellOptions,
     pub(crate) in_condition: usize,
     pub(crate) local_scopes: Vec<HashMap<String, Option<ShellValue>>>,
+    pub(crate) readonly_vars: HashSet<String>,
+    pub(crate) random_state: u64,
+    pub(crate) current_line: u32,
+    /// Persistent stdout redirect set by `exec > file`. None means use default stdout.
+    pub(crate) exec_stdout_path: Option<String>,
 }
 
 impl<R: Runtime> Shell<R> {
@@ -58,6 +63,10 @@ impl<R: Runtime> Shell<R> {
             options: ShellOptions::default(),
             in_condition: 0,
             local_scopes: Vec::new(),
+            readonly_vars: HashSet::new(),
+            random_state: 12345678901234567u64,
+            current_line: 0,
+            exec_stdout_path: None,
         }
     }
 
@@ -147,6 +156,7 @@ impl<R: Runtime> Shell<R> {
             }
 
             if let Some(list) = result {
+                self.current_line += 1;
                 self.last_exit = self.exec_list(list);
             }
 
@@ -223,6 +233,80 @@ impl<R: Runtime> Shell<R> {
             }
         }
 
+        // Prefix assignments: leading `VAR=val` words followed by a command name.
+        // E.g. `MY_VAR=hello cmd arg` — temporarily set vars for the duration of the call.
+        if cmd.words.len() > 1 {
+            let mut prefix_assignments: Vec<(String, String)> = Vec::new();
+            let mut cmd_start = 0usize;
+            for (i, word) in cmd.words.iter().enumerate() {
+                if let Some(raw) = literal_text(word) {
+                    if let Some(eq_pos) = raw.find('=') {
+                        let lhs = &raw[..eq_pos];
+                        if !lhs.is_empty() && lhs.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                            prefix_assignments.push((lhs.to_string(), raw[eq_pos + 1..].to_string()));
+                            cmd_start = i + 1;
+                            continue;
+                        }
+                    }
+                }
+                break;
+            }
+            if !prefix_assignments.is_empty() && cmd_start < cmd.words.len() {
+                let saved: Vec<(String, Option<ShellValue>)> = prefix_assignments.iter()
+                    .map(|(k, _)| (k.clone(), self.env.get(k).cloned()))
+                    .collect();
+                for (k, v) in &prefix_assignments {
+                    self.env.insert(k.clone(), ShellValue::Scalar(v.clone()));
+                }
+                let remaining = SimpleCommand {
+                    words: cmd.words[cmd_start..].to_vec(),
+                    redirects: cmd.redirects,
+                };
+                let exit = self.dispatch_simple(remaining, stdin, stdout, env_list);
+                for (k, prev) in saved {
+                    match prev {
+                        Some(v) => { self.env.insert(k, v); }
+                        None => { self.env.remove(&k); }
+                    }
+                }
+                return exit;
+            }
+        }
+
+        // Special handling for `exec > file` (redirect only, no command): persist the redirect.
+        // We must do this before apply_redirects opens the file handle.
+        if cmd.words.len() == 1 {
+            if let Some(raw) = literal_text(&cmd.words[0]) {
+                if raw == "exec" && !cmd.redirects.is_empty() {
+                    // Check if this is a pure redirect exec (no additional args)
+                    // Extract stdout redirect target to persist in exec_stdout_path
+                    use crate::parser::Redirect;
+                    let mut new_path: Option<String> = None;
+                    let mut clear_path = false;
+                    for redirect in &cmd.redirects {
+                        match redirect {
+                            Redirect::Out(w) => {
+                                let expanded = self.expand_word(w);
+                                let path = self.resolve_path(&expanded);
+                                if path == "/dev/stdout" {
+                                    clear_path = true;
+                                } else {
+                                    new_path = Some(path);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if clear_path {
+                        self.exec_stdout_path = None;
+                    } else if let Some(path) = new_path {
+                        self.exec_stdout_path = Some(path);
+                    }
+                    return 0;
+                }
+            }
+        }
+
         let args: Vec<String> = cmd.words.iter()
             .flat_map(|w| self.expand_word_to_args(w))
             .collect();
@@ -235,6 +319,13 @@ impl<R: Runtime> Shell<R> {
         let mut stderr_opt: Option<OutputHandle> = None;
         if !self.apply_redirects(&cmd.redirects, &mut stdin, &mut stdout, &mut stderr_opt) {
             return 1;
+        }
+
+        // Apply persistent exec stdout redirect when no explicit stdout was provided.
+        if stdout.is_none() {
+            if let Some(ref path) = self.exec_stdout_path.clone() {
+                stdout = self.rt.open_file_write(path, true);
+            }
         }
 
         if args.is_empty() {
@@ -304,6 +395,11 @@ impl<R: Runtime> Shell<R> {
             if let Some((arr_name, subscript)) = parse_array_subscript(lhs) {
                 if arr_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
                     if let Ok(idx) = subscript.parse::<usize>() {
+                        if self.readonly_vars.contains(arr_name) {
+                            self.rt.write_stderr(&format!("msh: {}: readonly variable\n", arr_name));
+                            self.last_exit = 1;
+                            return Some(1);
+                        }
                         let val = rhs.to_string();
                         let arr_name = arr_name.to_string();
                         let entry = self.env.entry(arr_name).or_insert_with(|| ShellValue::Array(Vec::new()));
@@ -328,6 +424,11 @@ impl<R: Runtime> Shell<R> {
             }
             // `VAR=value` — plain scalar assignment
             if lhs.chars().all(|c| c.is_alphanumeric() || c == '_') && !lhs.is_empty() {
+                if self.readonly_vars.contains(lhs) {
+                    self.rt.write_stderr(&format!("msh: {}: readonly variable\n", lhs));
+                    self.last_exit = 1;
+                    return Some(1);
+                }
                 self.env.insert(lhs.to_string(), ShellValue::Scalar(rhs.to_string()));
                 return Some(0);
             }
@@ -393,6 +494,11 @@ impl<R: Runtime> Shell<R> {
             }
         }
         // Plain scalar assignment.
+        if self.readonly_vars.contains(lhs) {
+            self.rt.write_stderr(&format!("msh: {}: readonly variable\n", lhs));
+            self.last_exit = 1;
+            return Some(1);
+        }
         let lhs = lhs.to_string();
         self.env.insert(lhs, ShellValue::Scalar(rhs));
         Some(0)
@@ -405,7 +511,11 @@ impl<R: Runtime> Shell<R> {
             "return" | "source" | "." | "read" | "test" | "[" | "[[" |
             "declare" | "local" | "set" |
             "jobs" | "fg" | "bg" | "wait" | "disown" | "kill" | "trap" |
-            "eval" | "shift" | "type" | "command"
+            "eval" | "shift" | "type" | "command" |
+            "readonly" | "let" | "exec" | "getopts" | "mapfile" | "readarray" | "hash" |
+            "cat" | "head" | "tail" | "wc" | "grep" | "seq" | "sort" | "uniq" |
+            "tr" | "cut" | "tee" | "xargs" | "sleep" | "basename" | "dirname" |
+            "mkdir" | "rm" | "cp" | "mv" | "ls"
         )
     }
 

@@ -1,7 +1,6 @@
 import { WASIShim, type WASIShimConfig } from '@mithic/wasip2';
 import { WASIProcess, type WASIProcessConfig } from '@mithic/process/instantiation';
-import type { ProcessManager, Signal, SpawnOptions } from '@mithic/process/types';
-import { Process } from '@mithic/process/types';
+import type { Process, ProcessManager, Signal, SpawnOptions } from '@mithic/process/types';
 
 export interface ShellComponent {
   instantiate(
@@ -42,12 +41,11 @@ export class MithicShell {
     mgr.spawn = (file: string, args: string[], options?: SpawnOptions) => {
       const proc: Process = originalSpawn(file, args, options);
       const originalWait = proc.wait.bind(proc);
-      proc.wait = () => {
+      proc.wait = async () => {
         fg.add(proc);
-        return originalWait().then((code: number) => {
-          fg.delete(proc);
-          return code;
-        });
+        const code = await originalWait();
+        fg.delete(proc);
+        return code;
       };
       return proc;
     };

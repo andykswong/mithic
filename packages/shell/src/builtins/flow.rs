@@ -121,8 +121,47 @@ pub(super) fn exec_builtin<R: Runtime>(
                 }
             }
         }
+        "exec" => exec_exec(shell, args, stdin, stdout),
+        "hash" => 0,
         _ => {
             shell.rt.write_stderr(&format!("msh: {}: not handled in flow builtin\n", name));
+            127
+        }
+    }
+}
+
+fn exec_exec<R: Runtime>(
+    shell: &mut Shell<R>,
+    args: &[String],
+    stdin: Option<InputHandle>,
+    stdout: Option<OutputHandle>,
+) -> u8 {
+    // `exec` with no args and redirects: redirects are applied by the caller already via
+    // apply_redirects. With no command, we just honour the side-effects (stdout replacement).
+    if args.is_empty() {
+        // Redirects were applied before dispatch; nothing more to do.
+        return 0;
+    }
+
+    // `exec cmd [args...]` — replace the shell with cmd.
+    // In WASM there is no true exec(2), so we spawn and wait, then exit.
+    let cmd = &args[0];
+    let cmd_args = &args[1..];
+    let env = shell.env_list();
+    let opts = SpawnOpts {
+        env: Some(env),
+        stdin,
+        stdout,
+        stderr: None,
+    };
+    match shell.rt.spawn(cmd, cmd_args, opts) {
+        Ok(proc) => {
+            let exit = shell.rt.wait(&proc);
+            shell.exit_requested = true;
+            exit
+        }
+        Err(_) => {
+            shell.rt.write_stderr(&format!("msh: exec: {}: command not found\n", cmd));
             127
         }
     }

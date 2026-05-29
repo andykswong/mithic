@@ -16,9 +16,40 @@ pub(super) fn exec_builtin<R: Runtime>(
                 if let Some((key, value)) = arg.split_once('=') {
                     shell.env.insert(key.to_string(), ShellValue::Scalar(value.to_string()));
                 }
+                // export VAR (no =): variable already in env is accessible to child processes
+                // since env_list() exports all shell.env entries — no action needed
             }
             0
         }
+        "readonly" => {
+            for arg in args {
+                if let Some((key, value)) = arg.split_once('=') {
+                    if !shell.readonly_vars.contains(key) {
+                        shell.env.insert(key.to_string(), ShellValue::Scalar(value.to_string()));
+                    } else {
+                        shell.rt.write_stderr(&format!("msh: {}: readonly variable\n", key));
+                        return 1;
+                    }
+                    shell.readonly_vars.insert(key.to_string());
+                } else {
+                    shell.readonly_vars.insert(arg.to_string());
+                }
+            }
+            0
+        }
+        "let" => {
+            if args.is_empty() {
+                return 1;
+            }
+            let mut last_result: i64 = 0;
+            for arg in args {
+                let result_str = shell.eval_arithmetic(arg);
+                last_result = result_str.parse().unwrap_or(0);
+            }
+            if last_result != 0 { 0 } else { 1 }
+        }
+        "getopts" => exec_getopts(shell, args),
+        "mapfile" | "readarray" => exec_mapfile(shell, args, stdin),
         "unset" => {
             for arg in args {
                 if let Some((name, subscript)) = parse_array_subscript(arg) {
@@ -222,5 +253,120 @@ fn exec_set<R: Runtime>(shell: &mut Shell<R>, args: &[String]) -> u8 {
         }
         i += 1;
     }
+    0
+}
+
+fn exec_getopts<R: Runtime>(shell: &mut Shell<R>, args: &[String]) -> u8 {
+    if args.len() < 2 {
+        shell.rt.write_stderr("msh: getopts: usage: getopts optstring name\n");
+        return 2;
+    }
+    let optstring = &args[0];
+    let varname = &args[1];
+
+    let optind: usize = shell.env.get("OPTIND")
+        .and_then(|v| v.as_scalar().parse::<usize>().ok())
+        .unwrap_or(1);
+
+    let positional = shell.params.current().to_vec();
+    if optind == 0 || optind > positional.len() {
+        shell.env.insert("OPTIND".to_string(), ShellValue::Scalar("1".to_string()));
+        return 1;
+    }
+
+    let arg = &positional[optind - 1];
+    if !arg.starts_with('-') || arg == "-" || arg == "--" {
+        return 1;
+    }
+
+    // Each flag character in the arg (e.g. -abc handles 'a' then 'b' then 'c')
+    // We track position within the current arg via a sub-index stored in OPTARG_IDX (internal)
+    // For simplicity: consume one flag per call, advance optind when arg is exhausted.
+    // We store the current char offset in "OPTARG_IDX" (not POSIX but functional).
+    let char_idx: usize = shell.env.get("OPTARG_IDX")
+        .and_then(|v| v.as_scalar().parse::<usize>().ok())
+        .unwrap_or(1); // offset within arg (1 = first flag char after '-')
+
+    let flag_chars: Vec<char> = arg[1..].chars().collect();
+    if char_idx > flag_chars.len() {
+        // exhausted this arg — advance to next
+        shell.env.insert("OPTIND".to_string(), ShellValue::Scalar((optind + 1).to_string()));
+        shell.env.insert("OPTARG_IDX".to_string(), ShellValue::Scalar("1".to_string()));
+        return exec_getopts(shell, args);
+    }
+
+    let opt_char = flag_chars[char_idx - 1];
+    let opt_str = opt_char.to_string();
+
+    let opt_pos = optstring.find(opt_char);
+    if let Some(pos) = opt_pos {
+        let takes_arg = optstring.chars().nth(pos + 1) == Some(':');
+        if takes_arg {
+            // Argument is rest of this flag-cluster, or next positional
+            let rest_of_arg: String = flag_chars[char_idx..].iter().collect();
+            if !rest_of_arg.is_empty() {
+                shell.env.insert("OPTARG".to_string(), ShellValue::Scalar(rest_of_arg));
+                shell.env.insert("OPTIND".to_string(), ShellValue::Scalar((optind + 1).to_string()));
+                shell.env.insert("OPTARG_IDX".to_string(), ShellValue::Scalar("1".to_string()));
+            } else if optind < positional.len() {
+                shell.env.insert("OPTARG".to_string(), ShellValue::Scalar(positional[optind].clone()));
+                shell.env.insert("OPTIND".to_string(), ShellValue::Scalar((optind + 2).to_string()));
+                shell.env.insert("OPTARG_IDX".to_string(), ShellValue::Scalar("1".to_string()));
+            } else {
+                shell.env.insert("OPTARG".to_string(), ShellValue::Scalar(String::new()));
+                shell.env.insert("OPTIND".to_string(), ShellValue::Scalar((optind + 1).to_string()));
+                shell.env.insert("OPTARG_IDX".to_string(), ShellValue::Scalar("1".to_string()));
+            }
+        } else {
+            shell.env.insert("OPTARG".to_string(), ShellValue::Scalar(String::new()));
+            // Advance char_idx; advance optind when all flags in this arg consumed
+            let next_char_idx = char_idx + 1;
+            if next_char_idx > flag_chars.len() {
+                shell.env.insert("OPTIND".to_string(), ShellValue::Scalar((optind + 1).to_string()));
+                shell.env.insert("OPTARG_IDX".to_string(), ShellValue::Scalar("1".to_string()));
+            } else {
+                shell.env.insert("OPTARG_IDX".to_string(), ShellValue::Scalar(next_char_idx.to_string()));
+            }
+        }
+        shell.env.insert(varname.to_string(), ShellValue::Scalar(opt_str));
+    } else {
+        shell.env.insert(varname.to_string(), ShellValue::Scalar("?".to_string()));
+        shell.env.insert("OPTARG".to_string(), ShellValue::Scalar(opt_str));
+        let next_char_idx = char_idx + 1;
+        if next_char_idx > flag_chars.len() {
+            shell.env.insert("OPTIND".to_string(), ShellValue::Scalar((optind + 1).to_string()));
+            shell.env.insert("OPTARG_IDX".to_string(), ShellValue::Scalar("1".to_string()));
+        } else {
+            shell.env.insert("OPTARG_IDX".to_string(), ShellValue::Scalar(next_char_idx.to_string()));
+        }
+    }
+    0
+}
+
+fn exec_mapfile<R: Runtime>(shell: &mut Shell<R>, args: &[String], stdin: Option<InputHandle>) -> u8 {
+    let mut strip_trailing = false;
+    let mut arr_name = "MAPFILE".to_string();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-t" => strip_trailing = true,
+            name if !name.starts_with('-') => arr_name = name.to_string(),
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let data = if let Some(inp) = stdin {
+        let bytes = shell.rt.pipe_read_all(inp);
+        String::from_utf8_lossy(&bytes).into_owned()
+    } else {
+        String::new()
+    };
+
+    let lines: Vec<String> = data.lines()
+        .map(|l| if strip_trailing { l.to_string() } else { format!("{}\n", l) })
+        .collect();
+
+    shell.env.insert(arr_name, ShellValue::Array(lines));
     0
 }
