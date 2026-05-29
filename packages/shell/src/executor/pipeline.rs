@@ -55,8 +55,8 @@ impl<R: Runtime> Shell<R> {
         let name = args[0].clone();
         if let Some(body) = self.functions.get(&name).cloned() {
             StageResult::Builtin(self.exec_function_call(&args[1..], body))
-        } else if Self::is_builtin(&name) {
-            StageResult::Builtin(self.exec_builtin(&name, &args[1..], stdin_opt, stdout_opt))
+        } else if let Some(builtin_fn) = crate::builtins::lookup_builtin::<R>(&name) {
+            StageResult::Builtin(builtin_fn(self, &name, &args[1..], stdin_opt, stdout_opt))
         } else {
             let opts = SpawnOpts {
                 env: Some(env_list.to_vec()),
@@ -90,7 +90,7 @@ impl<R: Runtime> Shell<R> {
                     let name = args[0].clone();
                     let display = args.join(" ");
 
-                    if Self::is_builtin(&name) || self.functions.contains_key(&name) {
+                    if crate::builtins::lookup_builtin::<R>(&name).is_some() || self.functions.contains_key(&name) {
                         self.dispatch_simple(sc, None, None, None);
                         return;
                     }

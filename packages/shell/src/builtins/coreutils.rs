@@ -2,7 +2,7 @@ use crate::runtime::{FileType, InputHandle, OutputHandle, Runtime};
 use crate::shell::Shell;
 use super::write_out;
 
-pub(super) fn exec_builtin<R: Runtime>(
+pub(crate) fn exec_builtin<R: Runtime>(
     shell: &mut Shell<R>,
     name: &str,
     args: &[String],
@@ -727,8 +727,8 @@ fn exec_xargs<R: Runtime>(
     all_args.extend(words);
 
     // Dispatch the command
-    if Shell::<R>::is_builtin(cmd) {
-        shell.exec_builtin(cmd, &all_args, None, stdout)
+    if let Some(f) = crate::builtins::lookup_builtin::<R>(cmd) {
+        f(shell, cmd, &all_args, None, stdout)
     } else {
         use crate::runtime::SpawnOpts;
         let env = shell.env_list();

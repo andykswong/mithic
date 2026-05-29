@@ -8,6 +8,8 @@ mod coreutils;
 use crate::runtime::{InputHandle, OutputHandle, Runtime};
 use crate::shell::Shell;
 
+pub(crate) type BuiltinFn<R> = fn(&mut Shell<R>, &str, &[String], Option<InputHandle>, Option<OutputHandle>) -> u8;
+
 pub(crate) fn write_out<R: Runtime>(shell: &mut Shell<R>, stdout: &Option<OutputHandle>, s: &str) {
     if let Some(out) = stdout {
         shell.rt.pipe_write(out, s.as_bytes());
@@ -16,38 +18,18 @@ pub(crate) fn write_out<R: Runtime>(shell: &mut Shell<R>, stdout: &Option<Output
     }
 }
 
-impl<R: Runtime> Shell<R> {
-    pub(crate) fn exec_builtin(
-        &mut self,
-        name: &str,
-        args: &[String],
-        stdin: Option<InputHandle>,
-        stdout: Option<OutputHandle>,
-    ) -> u8 {
-        match name {
-            "exit" | "echo" | "printf" | "pwd" | "cd" | "env" | "true" | "false" => {
-                core::exec_builtin(self, name, args, stdin, stdout)
-            }
-            "export" | "unset" | "declare" | "local" | "read" | "set" |
-            "readonly" | "let" | "getopts" | "mapfile" | "readarray" => {
-                vars::exec_builtin(self, name, args, stdin, stdout)
-            }
-            "break" | "continue" | "return" | "source" | "." | "eval" | "shift" | "type" | "command" |
-            "exec" | "hash" => {
-                flow::exec_builtin(self, name, args, stdin, stdout)
-            }
-            "test" | "[" | "[[" => {
-                test::exec_builtin(self, name, args, stdin, stdout)
-            }
-            "jobs" | "fg" | "bg" | "wait" | "disown" | "kill" | "trap" => {
-                jobs::exec_builtin(self, name, args, stdin, stdout)
-            }
-            "cat" | "head" | "tail" | "wc" | "grep" | "seq" | "sort" | "uniq" |
-            "tr" | "cut" | "tee" | "xargs" | "sleep" | "basename" | "dirname" |
-            "mkdir" | "rm" | "cp" | "mv" | "ls" => {
-                coreutils::exec_builtin(self, name, args, stdin, stdout)
-            }
-            _ => 127,
-        }
+pub(crate) fn lookup_builtin<R: Runtime>(name: &str) -> Option<BuiltinFn<R>> {
+    match name {
+        "exit" | "echo" | "printf" | "pwd" | "cd" | "env" | "true" | "false" => Some(core::exec_builtin),
+        "export" | "unset" | "declare" | "local" | "read" | "set" |
+        "readonly" | "let" | "getopts" | "mapfile" | "readarray" => Some(vars::exec_builtin),
+        "break" | "continue" | "return" | "source" | "." | "eval" | "shift" | "type" | "command" |
+        "exec" | "hash" => Some(flow::exec_builtin),
+        "test" | "[" | "[[" => Some(test::exec_builtin),
+        "jobs" | "fg" | "bg" | "wait" | "disown" | "kill" | "trap" => Some(jobs::exec_builtin),
+        "cat" | "head" | "tail" | "wc" | "grep" | "seq" | "sort" | "uniq" |
+        "tr" | "cut" | "tee" | "xargs" | "sleep" | "basename" | "dirname" |
+        "mkdir" | "rm" | "cp" | "mv" | "ls" => Some(coreutils::exec_builtin),
+        _ => None,
     }
 }

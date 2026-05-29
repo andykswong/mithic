@@ -3,7 +3,7 @@ use crate::shell::Shell;
 use crate::parser::Parser;
 use super::write_out;
 
-pub(super) fn exec_builtin<R: Runtime>(
+pub(crate) fn exec_builtin<R: Runtime>(
     shell: &mut Shell<R>,
     name: &str,
     args: &[String],
@@ -71,7 +71,7 @@ pub(super) fn exec_builtin<R: Runtime>(
         "type" => {
             let mut exit = 0u8;
             for arg in args {
-                if Shell::<R>::is_builtin(arg) {
+                if crate::builtins::lookup_builtin::<R>(arg).is_some() {
                     let msg = format!("{} is a shell builtin\n", arg);
                     write_out(shell, &stdout, &msg);
                 } else if shell.functions.contains_key(arg) {
@@ -91,7 +91,7 @@ pub(super) fn exec_builtin<R: Runtime>(
             if args[0] == "-v" {
                 let mut exit = 0u8;
                 for arg in &args[1..] {
-                    if Shell::<R>::is_builtin(arg) || shell.functions.contains_key(arg) {
+                    if crate::builtins::lookup_builtin::<R>(arg).is_some() || shell.functions.contains_key(arg) {
                         let msg = format!("{}\n", arg);
                         write_out(shell, &stdout, &msg);
                     } else {
@@ -101,8 +101,8 @@ pub(super) fn exec_builtin<R: Runtime>(
                 exit
             } else {
                 let name = args[0].clone();
-                if Shell::<R>::is_builtin(&name) {
-                    shell.exec_builtin(&name, &args[1..], stdin, stdout)
+                if let Some(f) = crate::builtins::lookup_builtin::<R>(&name) {
+                    f(shell, &name, &args[1..], stdin, stdout)
                 } else {
                     let env = shell.env_list();
                     let opts = SpawnOpts {

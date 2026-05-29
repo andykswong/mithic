@@ -1,7 +1,7 @@
 use crate::runtime::{InputHandle, OutputHandle, Runtime};
 use crate::shell::Shell;
 
-pub(super) fn exec_builtin<R: Runtime>(
+pub(crate) fn exec_builtin<R: Runtime>(
     shell: &mut Shell<R>,
     name: &str,
     args: &[String],

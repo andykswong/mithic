@@ -3,7 +3,7 @@ use crate::shell::Shell;
 use crate::value::ShellValue;
 use super::write_out;
 
-pub(super) fn exec_builtin<R: Runtime>(
+pub(crate) fn exec_builtin<R: Runtime>(
     shell: &mut Shell<R>,
     name: &str,
     args: &[String],

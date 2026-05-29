@@ -350,8 +350,8 @@ impl<R: Runtime> Shell<R> {
         let name = args[0].clone();
         if let Some(body) = self.functions.get(&name).cloned() {
             self.exec_function_call(&args[1..], body)
-        } else if Self::is_builtin(&name) {
-            self.exec_builtin(&name, &args[1..], stdin, stdout)
+        } else if let Some(builtin_fn) = crate::builtins::lookup_builtin::<R>(&name) {
+            builtin_fn(self, &name, &args[1..], stdin, stdout)
         } else {
             let env = match env_list {
                 Some(list) => list.to_vec(),
@@ -504,21 +504,6 @@ impl<R: Runtime> Shell<R> {
         Some(0)
     }
 
-    pub(crate) fn is_builtin(name: &str) -> bool {
-        matches!(name,
-            "exit" | "echo" | "printf" | "pwd" | "cd" | "export" | "unset" |
-            "env" | "true" | "false" | "break" | "continue" |
-            "return" | "source" | "." | "read" | "test" | "[" | "[[" |
-            "declare" | "local" | "set" |
-            "jobs" | "fg" | "bg" | "wait" | "disown" | "kill" | "trap" |
-            "eval" | "shift" | "type" | "command" |
-            "readonly" | "let" | "exec" | "getopts" | "mapfile" | "readarray" | "hash" |
-            "cat" | "head" | "tail" | "wc" | "grep" | "seq" | "sort" | "uniq" |
-            "tr" | "cut" | "tee" | "xargs" | "sleep" | "basename" | "dirname" |
-            "mkdir" | "rm" | "cp" | "mv" | "ls"
-        )
-    }
-
     pub(crate) fn exec_pipeline_with_stdout(&mut self, pipeline: Pipeline, stdout: OutputHandle) -> u8 {
         let cmds = pipeline.commands;
         let n = cmds.len();
@@ -586,8 +571,8 @@ impl<R: Runtime> Shell<R> {
             if let Some(body) = self.functions.get(&name).cloned() {
                 let exit = self.exec_function_call(&args[1..], body);
                 if i == n - 1 { last_builtin_exit = Some(exit); }
-            } else if Self::is_builtin(&name) {
-                let exit = self.exec_builtin(&name, &args[1..], stdin_opt, stdout_opt);
+            } else if let Some(builtin_fn) = crate::builtins::lookup_builtin::<R>(&name) {
+                let exit = builtin_fn(self, &name, &args[1..], stdin_opt, stdout_opt);
                 if self.exit_requested {
                     for p in processes {
                         let _ = self.rt.wait(&p);
