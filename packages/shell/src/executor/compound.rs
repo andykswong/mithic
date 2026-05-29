@@ -55,6 +55,7 @@ impl<R: Runtime> Shell<R> {
             Command::While(wc) => self.exec_while(wc),
             Command::Until(wc) => self.exec_until(wc),
             Command::For(fc) => self.exec_for(fc),
+            Command::CFor(cf) => self.exec_cfor(cf),
             Command::Case(cc) => self.exec_case(cc),
             Command::FunctionDef(fd) => {
                 self.functions.insert(fd.name, *fd.body);
@@ -259,6 +260,69 @@ impl<R: Runtime> Shell<R> {
                 self.continue_depth -= 1;
             }
         }
+        self.in_loop_depth -= 1;
+        exit
+    }
+
+    fn exec_cfor(&mut self, cf: crate::parser::CForCommand) -> u8 {
+        // Open redirect streams once before the loop.
+        let loop_stdout = if !cf.redirects.is_empty() {
+            let mut stdin_opt = None;
+            let mut stdout_opt = None;
+            let mut stderr_opt = None;
+            if !self.apply_redirects(&cf.redirects, &mut stdin_opt, &mut stdout_opt, &mut stderr_opt) {
+                return 1;
+            }
+            stdout_opt
+        } else {
+            None
+        };
+
+        // Execute init expression
+        if !cf.init.is_empty() {
+            self.eval_arithmetic(&cf.init);
+        }
+
+        self.in_loop_depth += 1;
+        let mut exit = 0u8;
+
+        loop {
+            // Evaluate condition (empty = infinite loop)
+            if !cf.cond.is_empty() {
+                let result: i64 = self.eval_arithmetic(&cf.cond).parse().unwrap_or(0);
+                if result == 0 {
+                    break;
+                }
+            }
+
+            // Execute body
+            exit = match &loop_stdout {
+                Some(out) => {
+                    let duped = self.rt.dup_output(out);
+                    self.exec_list_with_stdout(cf.body.clone(), duped)
+                }
+                None => self.exec_list(cf.body.clone()),
+            };
+            self.last_exit = exit;
+
+            if self.exit_requested || self.return_requested {
+                break;
+            }
+            if self.break_depth > 0 {
+                self.break_depth -= 1;
+                break;
+            }
+            if self.continue_depth > 0 {
+                self.continue_depth -= 1;
+                // fall through to step
+            }
+
+            // Execute step expression
+            if !cf.step.is_empty() {
+                self.eval_arithmetic(&cf.step);
+            }
+        }
+
         self.in_loop_depth -= 1;
         exit
     }

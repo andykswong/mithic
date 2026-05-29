@@ -76,6 +76,7 @@ pub enum Command {
     While(WhileCommand),
     Until(WhileCommand),
     For(ForCommand),
+    CFor(CForCommand),
     Case(CaseCommand),
     FunctionDef(FunctionDef),
     Group(List),
@@ -114,6 +115,15 @@ pub struct WhileCommand {
 pub struct ForCommand {
     pub var: String,
     pub words: Option<Vec<Word>>,
+    pub body: List,
+    pub redirects: Vec<Redirect>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CForCommand {
+    pub init: String,
+    pub cond: String,
+    pub step: String,
     pub body: List,
     pub redirects: Vec<Redirect>,
 }

@@ -570,27 +570,91 @@ pub(crate) fn signal_name_from_num(num: u8) -> &'static str {
     }
 }
 
-/// Returns true when `input` has an unclosed single or double quote, meaning
-/// the shell needs to read more lines before it can parse the command.
+/// Returns true when `input` has an unclosed single or double quote, unclosed `$(`,
+/// or a pending heredoc (`<<DELIM`) that has not been terminated.
 /// A trailing backslash (line continuation outside quotes) is NOT checked here
 /// because that is handled separately in the REPL loop after trimming.
 pub(crate) fn input_needs_continuation(input: &str) -> bool {
+    let chars: Vec<char> = input.chars().collect();
+    let n = chars.len();
+    let mut i = 0;
     let mut in_single = false;
     let mut in_double = false;
     let mut escaped = false;
+    // Track depth of $( ... ) — each `$(` increments, each `)` decrements (outside quotes)
+    let mut dollar_paren_depth: i32 = 0;
 
-    for c in input.chars() {
+    while i < n {
+        let c = chars[i];
+
         if escaped {
             escaped = false;
+            i += 1;
             continue;
         }
+
         match c {
-            '\\' if !in_single => escaped = true,
-            '\'' if !in_double => in_single = !in_single,
-            '"' if !in_single => in_double = !in_double,
-            _ => {}
+            '\\' if !in_single => { escaped = true; i += 1; }
+            '\'' if !in_double => { in_single = !in_single; i += 1; }
+            '"' if !in_single => { in_double = !in_double; i += 1; }
+            '$' if !in_single && !in_double && i + 1 < n && chars[i + 1] == '(' => {
+                dollar_paren_depth += 1;
+                i += 2; // skip $(
+            }
+            ')' if !in_single && !in_double && dollar_paren_depth > 0 => {
+                dollar_paren_depth -= 1;
+                i += 1;
+            }
+            '<' if !in_single && !in_double && i + 1 < n && chars[i + 1] == '<' => {
+                // Check it's << not <<<
+                if i + 2 < n && chars[i + 2] == '<' {
+                    i += 3; // skip <<<
+                    continue;
+                }
+                // We found <<; skip past it
+                i += 2;
+                // Skip optional - for <<-
+                if i < n && chars[i] == '-' { i += 1; }
+                // Skip whitespace before delimiter
+                while i < n && (chars[i] == ' ' || chars[i] == '\t') { i += 1; }
+                // Read the delimiter (may be quoted)
+                let mut delim = String::new();
+                if i < n && chars[i] == '\'' {
+                    i += 1; // skip opening '
+                    while i < n && chars[i] != '\'' { delim.push(chars[i]); i += 1; }
+                    if i < n { i += 1; } // skip closing '
+                } else if i < n && chars[i] == '"' {
+                    i += 1; // skip opening "
+                    while i < n && chars[i] != '"' { delim.push(chars[i]); i += 1; }
+                    if i < n { i += 1; } // skip closing "
+                } else {
+                    while i < n && !matches!(chars[i], '\n' | ' ' | '\t' | ';') {
+                        delim.push(chars[i]); i += 1;
+                    }
+                }
+                if delim.is_empty() { continue; }
+                // Skip rest of current line (until newline)
+                while i < n && chars[i] != '\n' { i += 1; }
+                if i < n && chars[i] == '\n' { i += 1; }
+                // Now scan subsequent lines for a line that is exactly `delim`
+                let mut found = false;
+                while i < n {
+                    let line_start = i;
+                    while i < n && chars[i] != '\n' { i += 1; }
+                    let line: String = chars[line_start..i].iter().collect();
+                    if i < n && chars[i] == '\n' { i += 1; }
+                    if line == delim {
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    return true; // heredoc not terminated — needs more input
+                }
+            }
+            _ => { i += 1; }
         }
     }
 
-    in_single || in_double
+    in_single || in_double || dollar_paren_depth > 0
 }

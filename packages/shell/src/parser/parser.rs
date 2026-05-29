@@ -1,5 +1,5 @@
 use crate::parser::ast::*;
-use crate::parser::lexer::{Lexer, Token};
+use crate::parser::lexer::{parse_heredoc_content, Lexer, Token};
 
 pub struct ParseError {
     pub message: String,
@@ -154,7 +154,7 @@ impl Parser {
             Some("if") => Command::If(self.parse_if()),
             Some("while") => Command::While(self.parse_while()),
             Some("until") => Command::Until(self.parse_until()),
-            Some("for") => Command::For(self.parse_for()),
+            Some("for") => self.parse_for(),
             Some("case") => Command::Case(self.parse_case()),
             Some("{") => Command::Group(self.parse_group()),
             _ => self.parse_maybe_function_def(),
@@ -242,9 +242,27 @@ impl Parser {
         WhileCommand { condition, body, redirects }
     }
 
-    fn parse_for(&mut self) -> ForCommand {
+    fn parse_for(&mut self) -> Command {
         self.advance(); // consume "for"
         self.skip_newlines();
+
+        // Check for C-style: for (( init; cond; step ))
+        if let Token::ArithCommand(expr) = self.peek().clone() {
+            self.advance(); // consume the ArithCommand token
+            let parts: Vec<&str> = expr.splitn(3, ';').collect();
+            let init = parts.get(0).unwrap_or(&"").trim().to_string();
+            let cond = parts.get(1).unwrap_or(&"").trim().to_string();
+            let step = parts.get(2).unwrap_or(&"").trim().to_string();
+
+            self.skip_terminators();
+            self.expect_keyword("do");
+            self.skip_terminators();
+            let body = self.parse_compound_list_until(&["done"]);
+            self.expect_keyword("done");
+            let redirects = self.parse_redirects();
+
+            return Command::CFor(CForCommand { init, cond, step, body, redirects });
+        }
 
         let var = match self.advance() {
             Token::Word(parts) if parts.len() == 1 => {
@@ -282,7 +300,7 @@ impl Parser {
         let body = self.parse_compound_list_until(&["done"]);
         self.expect_keyword("done");
         let redirects = self.parse_redirects();
-        ForCommand { var, words, body, redirects }
+        Command::For(ForCommand { var, words, body, redirects })
     }
 
     fn parse_case(&mut self) -> CaseCommand {
@@ -585,6 +603,16 @@ impl Parser {
                     let w = self.parse_word_required();
                     redirects.push(Redirect::HereString(w));
                 }
+                Token::HereDoc(_, _) => {
+                    if let Token::HereDoc(content, expand) = self.advance() {
+                        let parts = if expand {
+                            parse_heredoc_content(&content)
+                        } else {
+                            vec![WordPart::Quoted(content)]
+                        };
+                        redirects.push(Redirect::HereString(Word(parts)));
+                    }
+                }
                 _ => {
                     if let Some(w) = self.parse_word() {
                         words.push(w);
@@ -641,6 +669,16 @@ impl Parser {
                     self.advance();
                     let w = self.parse_word_required();
                     redirects.push(Redirect::HereString(w));
+                }
+                Token::HereDoc(_, _) => {
+                    if let Token::HereDoc(content, expand) = self.advance() {
+                        let parts = if expand {
+                            parse_heredoc_content(&content)
+                        } else {
+                            vec![WordPart::Quoted(content)]
+                        };
+                        redirects.push(Redirect::HereString(Word(parts)));
+                    }
                 }
                 _ => break,
             }
@@ -734,6 +772,7 @@ fn token_to_text(tok: &Token) -> String {
         Token::Fd2GtAmp1 => "2>&1".to_string(),
         Token::AmpGt => "&>".to_string(),
         Token::HereString => "<<<".to_string(),
+        Token::HereDoc(content, _) => content.clone(),
         Token::ArithCommand(raw) => format!("(({raw}))"),
         Token::DoubleBracketOpen => "[[".to_string(),
         Token::DoubleBracketClose => "]]".to_string(),

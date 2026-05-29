@@ -322,16 +322,25 @@ impl<R: Runtime> Shell<R> {
                 .map(|(k, v)| (k.clone(), v.as_scalar().parse::<i64>().unwrap_or(0)))
                 .collect()
         );
+        // Track every variable that was explicitly assigned so we always write it back,
+        // even if its new value equals the default 0 (e.g. `i=0` on an unset variable).
+        let assigned: RefCell<std::collections::HashSet<String>> = RefCell::new(
+            std::collections::HashSet::new()
+        );
 
         let lookup = |name: &str| -> i64 { *working.borrow().get(name).unwrap_or(&0) };
-        let mut assign = |name: &str, val: i64| { working.borrow_mut().insert(name.to_string(), val); };
+        let mut assign = |name: &str, val: i64| {
+            working.borrow_mut().insert(name.to_string(), val);
+            assigned.borrow_mut().insert(name.to_string());
+        };
         let result = crate::arith::eval(&expanded_expr, &lookup, &mut assign);
 
+        let assigned_set = assigned.into_inner();
         for (k, v) in working.into_inner() {
             let orig = self.env.get(&k)
                 .map(|sv| sv.as_scalar().parse::<i64>().unwrap_or(0))
                 .unwrap_or(0);
-            if v != orig {
+            if v != orig || assigned_set.contains(&k) {
                 self.env.insert(k, ShellValue::Scalar(v.to_string()));
             }
         }

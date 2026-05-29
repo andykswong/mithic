@@ -36,6 +36,8 @@ pub enum Token {
     AmpGt,
     /// `<<<`
     HereString,
+    /// `<<DELIM` ... `DELIM` — heredoc content. Bool is true if variable expansion should occur.
+    HereDoc(String, bool),
     /// `(`
     LParen,
     /// `)`
@@ -151,10 +153,16 @@ impl Lexer {
                     let raw = self.read_until_close_paren();
                     Token::Word(vec![WordPart::ProcSubIn(raw)])
                 } else {
-                    self.advance();
-                    if self.peek() == Some('<') && self.peek2() == Some('<') {
-                        self.advance(); self.advance();
-                        Token::HereString
+                    self.advance(); // consume first '<'
+                    if self.peek() == Some('<') {
+                        self.advance(); // consume second '<'
+                        if self.peek() == Some('<') {
+                            self.advance(); // consume third '<'
+                            Token::HereString
+                        } else {
+                            // heredoc: <<
+                            self.read_heredoc()
+                        }
                     } else {
                         Token::Lt
                     }
@@ -202,6 +210,93 @@ impl Lexer {
             // Adjacent quoting ('foo'"bar"baz) is merged inside read_word.
             _ => self.read_word(),
         }
+    }
+
+    fn read_heredoc(&mut self) -> Token {
+        let strip_tabs = self.peek() == Some('-');
+        if strip_tabs { self.advance(); }
+
+        // Skip optional whitespace (but not newline) before delimiter
+        while matches!(self.peek(), Some(' ') | Some('\t')) {
+            self.advance();
+        }
+
+        // Read delimiter (may be quoted)
+        let mut expand = true;
+        let delim = match self.peek() {
+            Some('\'') => {
+                expand = false;
+                self.advance();
+                let mut d = String::new();
+                while let Some(c) = self.peek() {
+                    if c == '\'' { self.advance(); break; }
+                    d.push(c);
+                    self.advance();
+                }
+                d
+            }
+            Some('"') => {
+                expand = false;
+                self.advance();
+                let mut d = String::new();
+                while let Some(c) = self.peek() {
+                    if c == '"' { self.advance(); break; }
+                    d.push(c);
+                    self.advance();
+                }
+                d
+            }
+            _ => {
+                let mut d = String::new();
+                while let Some(c) = self.peek() {
+                    if matches!(c, '\n' | ' ' | '\t' | ';') { break; }
+                    d.push(c);
+                    self.advance();
+                }
+                d
+            }
+        };
+
+        // Skip rest of current line (consume until newline)
+        while self.peek() != Some('\n') && self.peek().is_some() {
+            self.advance();
+        }
+        if self.peek() == Some('\n') {
+            self.advance(); // consume the newline
+        }
+
+        // Read content lines until a line matches the delimiter exactly
+        let mut content = String::new();
+        loop {
+            let mut line = String::new();
+            loop {
+                match self.peek() {
+                    None => break,
+                    Some('\n') => { self.advance(); break; }
+                    Some(c) => { line.push(c); self.advance(); }
+                }
+            }
+
+            let check_line = if strip_tabs {
+                line.trim_start_matches('\t').to_string()
+            } else {
+                line.clone()
+            };
+
+            if check_line == delim {
+                break;
+            }
+
+            let content_line = if strip_tabs { check_line } else { line };
+            content.push_str(&content_line);
+            content.push('\n');
+
+            if self.peek().is_none() {
+                break; // EOF before delimiter found
+            }
+        }
+
+        Token::HereDoc(content, expand)
     }
 
     fn read_word(&mut self) -> Token {
@@ -318,7 +413,7 @@ impl Lexer {
     }
 
     /// Like the former `read_parts_until` but emits `Quoted` for literal segments (used inside double quotes).
-    fn read_dq_parts_until(&mut self, end_pred: impl Fn(char) -> bool) -> Vec<WordPart> {
+    pub(crate) fn read_dq_parts_until(&mut self, end_pred: impl Fn(char) -> bool) -> Vec<WordPart> {
         let mut parts: Vec<WordPart> = Vec::new();
         let mut buf = String::new();
 
@@ -487,6 +582,13 @@ impl Lexer {
         }
         name
     }
+}
+
+/// Parse a heredoc content string into `WordPart`s with variable/command expansion.
+/// This is used when the heredoc delimiter is unquoted (expand=true).
+pub fn parse_heredoc_content(content: &str) -> Vec<WordPart> {
+    let mut lexer = Lexer::new(content);
+    lexer.read_dq_parts_until(|_| false)
 }
 
 #[cfg(test)]
@@ -771,5 +873,43 @@ mod tests {
     fn test_redirect_gt_still_works() {
         assert_eq!(lex(">"), vec![Token::Gt]);
         assert_eq!(lex(">> file"), vec![Token::GtGt, word(vec![lit("file")])]);
+    }
+
+    #[test]
+    fn test_heredoc_basic() {
+        let tokens = lex("<<EOF\nhello\nworld\nEOF\n");
+        assert_eq!(tokens, vec![
+            Token::HereDoc("hello\nworld\n".into(), true),
+        ]);
+    }
+
+    #[test]
+    fn test_heredoc_quoted_delimiter_no_expand() {
+        let tokens = lex("<<'EOF'\nhello $name\nEOF\n");
+        assert_eq!(tokens, vec![
+            Token::HereDoc("hello $name\n".into(), false),
+        ]);
+    }
+
+    #[test]
+    fn test_heredoc_double_quoted_delimiter_no_expand() {
+        let tokens = lex("<<\"EOF\"\nhello\nEOF\n");
+        assert_eq!(tokens, vec![
+            Token::HereDoc("hello\n".into(), false),
+        ]);
+    }
+
+    #[test]
+    fn test_heredoc_strip_tabs() {
+        let tokens = lex("<<-EOF\n\thello\n\tworld\nEOF\n");
+        assert_eq!(tokens, vec![
+            Token::HereDoc("hello\nworld\n".into(), true),
+        ]);
+    }
+
+    #[test]
+    fn test_herestring_still_works() {
+        assert_eq!(lex("<<<"), vec![Token::HereString]);
+        assert_eq!(lex("<<< word"), vec![Token::HereString, word(vec![lit("word")])]);
     }
 }

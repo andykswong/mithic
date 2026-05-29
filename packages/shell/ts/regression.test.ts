@@ -285,17 +285,17 @@ describe('P1: type/command builtins', () => {
 
 describe('P1: heredoc', () => {
   it('basic heredoc', async () => {
-    const { stdout } = await runShell('x=$(cat <<EOF\nhello\nworld\nEOF\n)\necho "$x"\n');
+    const { stdout } = await runShell('x=$(<<EOF\nhello\nworld\nEOF\n)\necho "$x"\n');
     assert.strictEqual(stdout.trim(), 'hello\nworld');
   });
 
   it('heredoc with variable expansion', async () => {
-    const { stdout } = await runShell('name=Alice\nx=$(cat <<EOF\nhello $name\nEOF\n)\necho "$x"\n');
+    const { stdout } = await runShell('name=Alice\nx=$(<<EOF\nhello $name\nEOF\n)\necho "$x"\n');
     assert.strictEqual(stdout.trim(), 'hello Alice');
   });
 
   it('heredoc with quoted delimiter suppresses expansion', async () => {
-    const { stdout } = await runShell('name=Alice\nx=$(cat <<\'EOF\'\nhello $name\nEOF\n)\necho "$x"\n');
+    const { stdout } = await runShell('name=Alice\nx=$(<<\'EOF\'\nhello $name\nEOF\n)\necho "$x"\n');
     assert.strictEqual(stdout.trim(), 'hello $name');
   });
 });
@@ -357,7 +357,7 @@ describe('P2: multiline quoted strings (Bug H)', () => {
   });
 
   it('single-quoted string with literal newline', async () => {
-    const { stdout } = await runShell("echo 'line1\nline2'\n");
+    const { stdout } = await runShell('echo \'line1\nline2\'\n');
     assert.strictEqual(stdout, 'line1\nline2\n');
   });
 
