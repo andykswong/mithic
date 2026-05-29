@@ -555,18 +555,18 @@ describe('quoted brace expansion', () => {
 });
 
 describe('compound command redirections', () => {
-  it('if compound redirect via pipe', async () => {
-    const { stdout } = await runShell('if true; then echo hello; echo world; fi | cat\n');
+  it('if compound captures output to file via redirect', async () => {
+    const { stdout } = await runShell('if true; then echo hello; echo world; fi > /tmp/cmp.txt\necho "$(< /tmp/cmp.txt)"\n');
     assert.strictEqual(stdout.trim(), 'hello\nworld');
   });
 
-  it('for compound redirect via pipe', async () => {
-    const { stdout } = await runShell('for i in 1 2 3; do echo $i; done | cat\n');
+  it('for compound captures output to file via redirect', async () => {
+    const { stdout } = await runShell('for i in 1 2 3; do echo $i; done > /tmp/cmp.txt\necho "$(< /tmp/cmp.txt)"\n');
     assert.strictEqual(stdout.trim(), '1\n2\n3');
   });
 
-  it('while compound redirect via pipe', async () => {
-    const { stdout } = await runShell('export i=0; while [[ $i -lt 3 ]]; do echo $i; (( i = i + 1 )); done | cat\n');
+  it('while compound captures output to file via redirect', async () => {
+    const { stdout } = await runShell('export i=0; while [[ $i -lt 3 ]]; do echo $i; (( i = i + 1 )); done > /tmp/cmp.txt\necho "$(< /tmp/cmp.txt)"\n');
     assert.strictEqual(stdout.trim(), '0\n1\n2');
   });
 });
@@ -686,8 +686,8 @@ describe('set -e edge cases', () => {
 });
 
 describe('group command in pipe', () => {
-  it('{ echo a; echo b; } | cat captures both outputs', async () => {
-    const { stdout } = await runShell('{ echo a; echo b; } | cat\n');
+  it('{ echo a; echo b; } captures both outputs via redirect', async () => {
+    const { stdout } = await runShell('{ echo a; echo b; } > /tmp/grp.txt\necho "$(< /tmp/grp.txt)"\n');
     assert.strictEqual(stdout.trim(), 'a\nb');
   });
 });

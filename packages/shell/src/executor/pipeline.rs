@@ -1,7 +1,15 @@
 use crate::runtime::{InputHandle, OutputHandle, ProcessHandle, Runtime, SpawnOpts};
-use crate::parser::{Command, Pipeline};
+use crate::parser::{Command, Pipeline, SimpleCommand};
 use crate::shell::{Shell, signal_name_from_num};
 use crate::value::ShellValue;
+
+enum StageResult {
+    Builtin(u8),
+    Spawned(ProcessHandle),
+    Empty,
+    RedirectFailed,
+    SpawnFailed,
+}
 
 /// Creates N-1 internal pipes for a pipeline of `n` stages.
 ///
@@ -24,6 +32,48 @@ fn create_pipeline_pipes<R: Runtime>(shell: &mut Shell<R>, n: usize) -> (Vec<Opt
 }
 
 impl<R: Runtime> Shell<R> {
+    /// Resolve and execute a simple command in a pipeline stage context.
+    /// Returns a StageResult indicating whether it ran as a builtin/function
+    /// (with exit code) or spawned an external process (with handle).
+    fn exec_pipeline_stage(
+        &mut self,
+        cmd: SimpleCommand,
+        mut stdin_opt: Option<InputHandle>,
+        mut stdout_opt: Option<OutputHandle>,
+        env_list: &[(String, String)],
+    ) -> StageResult {
+        let args: Vec<String> = cmd.words.iter()
+            .flat_map(|w| self.expand_word_to_args(w))
+            .collect();
+        let mut stderr_opt: Option<OutputHandle> = None;
+        if !self.apply_redirects(&cmd.redirects, &mut stdin_opt, &mut stdout_opt, &mut stderr_opt) {
+            return StageResult::RedirectFailed;
+        }
+        if args.is_empty() {
+            return StageResult::Empty;
+        }
+        let name = args[0].clone();
+        if let Some(body) = self.functions.get(&name).cloned() {
+            StageResult::Builtin(self.exec_function_call(&args[1..], body))
+        } else if Self::is_builtin(&name) {
+            StageResult::Builtin(self.exec_builtin(&name, &args[1..], stdin_opt, stdout_opt))
+        } else {
+            let opts = SpawnOpts {
+                env: Some(env_list.to_vec()),
+                stdin: stdin_opt,
+                stdout: stdout_opt,
+                stderr: stderr_opt,
+            };
+            match self.rt.spawn(&name, &args[1..], opts) {
+                Ok(proc) => StageResult::Spawned(proc),
+                Err(_) => {
+                    self.rt.write_stderr(&format!("msh: {}: command not found\n", name));
+                    StageResult::SpawnFailed
+                }
+            }
+        }
+    }
+
     pub(crate) fn exec_pipeline_background(&mut self, pipeline: Pipeline) {
         let cmds = pipeline.commands;
         let n = cmds.len();
@@ -164,60 +214,38 @@ impl<R: Runtime> Shell<R> {
                     continue;
                 }
             };
-            let mut stdin_opt = pipe_read_ends[i].take();
-            let mut stdout_opt = pipe_write_ends[i].take();
+            let stdin_opt = pipe_read_ends[i].take();
+            let stdout_opt = pipe_write_ends[i].take();
 
-            let args: Vec<String> = cmd.words.iter()
-                .flat_map(|w| self.expand_word_to_args(w))
-                .collect();
-            let mut stderr_opt: Option<OutputHandle> = None;
-            if !self.apply_redirects(&cmd.redirects, &mut stdin_opt, &mut stdout_opt, &mut stderr_opt) {
-                for p in processes {
-                    let _ = self.rt.wait(&p);
-                }
-                return if pipeline.negate { 0 } else { 1 };
-            }
-
-            if args.is_empty() {
-                continue;
-            }
-
-            let name = args[0].clone();
-            if let Some(body) = self.functions.get(&name).cloned() {
-                let exit = self.exec_function_call(&args[1..], body);
-                builtin_exits.push(exit);
-                if i == n - 1 {
-                    last_builtin_exit = Some(exit);
-                }
-            } else if Self::is_builtin(&name) {
-                let exit = self.exec_builtin(&name, &args[1..], stdin_opt, stdout_opt);
-                builtin_exits.push(exit);
-                if self.exit_requested {
-                    for p in processes {
-                        let _ = self.rt.wait(&p);
-                    }
-                    return exit;
-                }
-                if i == n - 1 {
-                    last_builtin_exit = Some(exit);
-                }
-            } else {
-                let opts = SpawnOpts {
-                    env: Some(env_list.clone()),
-                    stdin: stdin_opt,
-                    stdout: stdout_opt,
-                    stderr: stderr_opt,
-                };
-                match self.rt.spawn(&name, &args[1..], opts) {
-                    Ok(proc) => processes.push(proc),
-                    Err(_) => {
-                        self.rt.write_stderr(&format!("msh: {}: command not found\n", name));
+            match self.exec_pipeline_stage(cmd, stdin_opt, stdout_opt, &env_list) {
+                StageResult::Builtin(exit) => {
+                    builtin_exits.push(exit);
+                    if self.exit_requested {
                         for p in processes {
                             let _ = self.rt.wait(&p);
                         }
-                        return if pipeline.negate { 0 } else { 127 };
+                        return exit;
+                    }
+                    if i == n - 1 {
+                        last_builtin_exit = Some(exit);
                     }
                 }
+                StageResult::Spawned(proc) => {
+                    processes.push(proc);
+                }
+                StageResult::RedirectFailed => {
+                    for p in processes {
+                        let _ = self.rt.wait(&p);
+                    }
+                    return if pipeline.negate { 0 } else { 1 };
+                }
+                StageResult::SpawnFailed => {
+                    for p in processes {
+                        let _ = self.rt.wait(&p);
+                    }
+                    return if pipeline.negate { 0 } else { 127 };
+                }
+                StageResult::Empty => continue,
             }
         }
 
