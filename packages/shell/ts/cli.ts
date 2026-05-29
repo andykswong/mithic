@@ -46,6 +46,11 @@ function syncInstantiator(module: WebAssembly.Module, imports: object): WebAssem
 
 let spawnIdCounter = 1_000_000;
 
+// Shared host terminal streams (ref-counted via dup).
+// Created once; each consumer calls .dup() to get its own handle.
+const hostStdin = new InputStream(new NodeStdinHandler(), undefined, isatty(0));
+const hostStdout = new OutputStream(new NodeStdoutHandler(), undefined, isatty(1));
+const hostStderr = new OutputStream(new NodeStderrHandler(), undefined, isatty(2));
 
 /** Run a child shell synchronously and return its exit code.
  * Uses synchronous WASM instantiation so the exit code is available before
@@ -64,15 +69,12 @@ function runChildSync(args: string[], ctx: CommandContext): number {
     },
   });
 
-  // Use a custom process import that also intercepts sh synchronously at this level,
-  // ensuring nested self-invocations run synchronously rather than via microtasks.
   const childImports = {
     ...childShim.getImportObject(),
     ...createShellProcessImports(),
   };
 
   try {
-    // instantiate() returns synchronously when loader and instantiator are synchronous.
     const { run } = instantiate(syncLoader, childImports, syncInstantiator) as { run: { run: () => number } };
     return run.run() ?? 0;
   } catch (e: unknown) {
@@ -82,11 +84,6 @@ function runChildSync(args: string[], ctx: CommandContext): number {
     childShim[Symbol.dispose]();
   }
 }
-
-// Host terminal streams — fallback when child inherits parent's stdio
-const hostStdinStream = new InputStream(new NodeStdinHandler());
-const hostStdoutStream = new OutputStream(new NodeStdoutHandler());
-const hostStderrStream = new OutputStream(new NodeStderrHandler());
 
 /** Create the mithic:process import object with a custom spawn that handles 'sh'.
  * Intercepts 'sh' at every level to run child shells synchronously, ensuring
@@ -106,21 +103,16 @@ function createShellProcessImports() {
       const ctx: CommandContext = {
         cwd: options?.cwd ?? '/',
         env,
-        stdin: options?.stdin ?? hostStdinStream,
-        stdout: options?.stdout ?? hostStdoutStream,
-        stderr: options?.stderr ?? hostStderrStream,
+        stdin: options?.stdin ?? hostStdin.dup(),
+        stdout: options?.stdout ?? hostStdout.dup(),
+        stderr: options?.stderr ?? hostStderr.dup(),
       };
       const exitCode = runChildSync(args, ctx);
-      // Process.wait() returns the exit code as a number directly (not a Promise).
-      // JCO's generated code calls proc.wait() synchronously and uses the return value
-      // as a raw integer: `h(proc.wait())` = `result >>> 0 & 0xFF`. Returning a number
-      // gives the correct exit code; returning a Promise would always yield 0.
       return new Process(pid, {
         wait: (): Promise<number> => exitCode as unknown as Promise<number>,
         tryWait: () => exitCode,
       });
     }
-    // For non-sh commands, fall back to the default (currently none are supported).
     throw Object.assign(new Error(`command not found: ${file}`), {
       payload: { tag: 'not-found' as const },
     });
@@ -141,9 +133,9 @@ const shim = new WASIShim({
     },
     args: ['sh', ...process.argv.slice(2)],
     cwd: '/',
-    stdin: { handler: new NodeStdinHandler(), isatty: isatty(0) },
-    stdout: { handler: new NodeStdoutHandler(), isatty: isatty(1) },
-    stderr: { handler: new NodeStderrHandler(), isatty: isatty(2) },
+    stdin: hostStdin.dup(),
+    stdout: hostStdout.dup(),
+    stderr: hostStderr.dup(),
   },
 });
 
