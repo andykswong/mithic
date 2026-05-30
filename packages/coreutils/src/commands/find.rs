@@ -1,4 +1,5 @@
 use super::{write_stdout, file_kind, read_dir, dispatch, FileKind};
+use regex::Regex;
 
 pub fn run(args: &[&str]) -> u8 {
     let mut start_path = ".";
@@ -44,39 +45,43 @@ pub fn run(args: &[&str]) -> u8 {
     0
 }
 
+fn glob_to_regex(pattern: &str) -> String {
+    let mut regex = String::from("^");
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '*' => regex.push_str(".*"),
+            '?' => regex.push('.'),
+            '[' => {
+                regex.push('[');
+                i += 1;
+                while i < chars.len() && chars[i] != ']' {
+                    regex.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() {
+                    regex.push(']');
+                }
+            }
+            c @ ('.' | '+' | '(' | ')' | '{' | '}' | '^' | '$' | '|' | '\\') => {
+                regex.push('\\');
+                regex.push(c);
+            }
+            c => regex.push(c),
+        }
+        i += 1;
+    }
+    regex.push('$');
+    regex
+}
+
 fn matches_glob(name: &str, pattern: &str) -> bool {
-    if pattern == "*" {
-        return true;
+    let regex_str = glob_to_regex(pattern);
+    match Regex::new(&regex_str) {
+        Ok(re) => re.is_match(name),
+        Err(_) => name == pattern,
     }
-    if !pattern.contains('*') {
-        return name == pattern;
-    }
-    let parts: Vec<&str> = pattern.split('*').collect();
-    let mut pos = 0usize;
-    let name_bytes = name.as_bytes();
-    for (idx, part) in parts.iter().enumerate() {
-        if part.is_empty() {
-            continue;
-        }
-        let part_bytes = part.as_bytes();
-        if idx == 0 {
-            if !name_bytes.starts_with(part_bytes) {
-                return false;
-            }
-            pos = part.len();
-        } else if idx == parts.len() - 1 {
-            if pos > name_bytes.len() {
-                return false;
-            }
-            return name_bytes[pos..].ends_with(part_bytes);
-        } else {
-            match name[pos..].find(part) {
-                Some(found) => pos += found + part.len(),
-                None => return false,
-            }
-        }
-    }
-    true
 }
 
 #[cfg(test)]
@@ -123,6 +128,34 @@ mod tests {
     fn glob_double_star_extension() {
         assert!(matches_glob("test.rs", "test.*"));
         assert!(!matches_glob("other.rs", "test.*"));
+    }
+
+    #[test]
+    fn glob_question_mark() {
+        assert!(matches_glob("a.rs", "?.rs"));
+        assert!(!matches_glob("ab.rs", "?.rs"));
+        assert!(matches_glob("foo", "f?o"));
+        assert!(!matches_glob("fo", "f?o"));
+    }
+
+    #[test]
+    fn glob_char_class() {
+        assert!(matches_glob("cat", "[abc]at"));
+        assert!(matches_glob("bat", "[abc]at"));
+        assert!(!matches_glob("dat", "[abc]at"));
+    }
+
+    #[test]
+    fn glob_combined() {
+        assert!(matches_glob("file1.txt", "file[0-9].*"));
+        assert!(!matches_glob("fileA.txt", "file[0-9].*"));
+        assert!(matches_glob("a_b.rs", "?_?.*"));
+    }
+
+    #[test]
+    fn glob_escapes_regex_metachar() {
+        assert!(matches_glob("foo.bar", "foo.bar"));
+        assert!(!matches_glob("fooxbar", "foo.bar"));
     }
 }
 
