@@ -1,23 +1,6 @@
 import type { FileHandle, OpenFlags, DirEntry, FileSystemProvider, FileStat } from './provider.ts';
 import { FileSystemError } from './provider.ts';
-
-/** Normalizes a path by resolving `.`, `..`, removing trailing slashes, and collapsing double slashes. */
-function normalizePath(path: string): string {
-  if (!path.startsWith('/')) {
-    path = '/' + path;
-  }
-  const parts = path.split('/');
-  const resolved: string[] = [];
-  for (const part of parts) {
-    if (part === '' || part === '.') continue;
-    if (part === '..') {
-      resolved.pop();
-    } else {
-      resolved.push(part);
-    }
-  }
-  return '/' + resolved.join('/');
-}
+import { normalizePath } from './path-utils.ts';
 
 /** Result of resolving a path against mount points. */
 export interface ResolveResult {

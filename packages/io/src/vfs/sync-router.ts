@@ -1,17 +1,6 @@
 import type { FileHandle, OpenFlags, DirEntry, FileStat, SyncFileSystemProvider } from './provider.ts';
 import { FileSystemError } from './provider.ts';
-
-function normalizePath(path: string): string {
-  if (!path.startsWith('/')) path = '/' + path;
-  const parts = path.split('/');
-  const resolved: string[] = [];
-  for (const part of parts) {
-    if (part === '' || part === '.') continue;
-    if (part === '..') { resolved.pop(); }
-    else { resolved.push(part); }
-  }
-  return '/' + resolved.join('/');
-}
+import { normalizePath } from './path-utils.ts';
 
 interface MountEntry {
   mountPoint: string;
