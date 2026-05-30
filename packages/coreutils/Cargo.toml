@@ -5,6 +5,7 @@ publish = false
 
 [dependencies]
 wit-bindgen = { version = "0.57" }
+regex = { version = "1", default-features = false, features = ["std", "unicode-perl"] }
 
 [package.metadata.component]
 package = "mithic:coreutils"

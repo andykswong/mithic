@@ -1,3 +1,5 @@
+use regex::RegexBuilder;
+
 pub struct RegexOpts {
     pub dot_matches_newline: bool,
 }
@@ -18,156 +20,54 @@ pub fn regex_find(text: &str, pattern: &str) -> Option<(usize, usize)> {
 }
 
 pub fn regex_find_opts(text: &str, pattern: &str, opts: &RegexOpts) -> Option<(usize, usize)> {
-    let alternatives = split_alternatives(pattern);
-    if alternatives.len() > 1 {
-        let chars: Vec<char> = text.chars().collect();
-        let mut best: Option<(usize, usize)> = None;
-        for alt in &alternatives {
-            if let Some((s, e)) = regex_find_at(&chars, 0, alt, opts) {
-                match best {
-                    None => best = Some((s, e)),
-                    Some((bs, _)) if s < bs => best = Some((s, e)),
-                    _ => {}
-                }
-            }
-        }
-        return best;
-    }
-    let chars: Vec<char> = text.chars().collect();
-    regex_find_at(&chars, 0, pattern, opts)
+    let re = RegexBuilder::new(pattern)
+        .dot_matches_new_line(opts.dot_matches_newline)
+        .build()
+        .ok()?;
+
+    let m = re.find(text)?;
+    let start_chars = text[..m.start()].chars().count();
+    let match_chars = m.as_str().chars().count();
+    Some((start_chars, start_chars + match_chars))
 }
 
 pub fn regex_find_at(chars: &[char], from: usize, pattern: &str, opts: &RegexOpts) -> Option<(usize, usize)> {
-    let pat: Vec<char> = pattern.chars().collect();
-    if pat.first() == Some(&'^') {
-        return regex_match_here(chars, from, &pat, 1, opts).map(|end| (from, end));
-    }
-    for start in from..=chars.len() {
-        if let Some(end) = regex_match_here(chars, start, &pat, 0, opts) {
-            return Some((start, end));
-        }
-    }
-    None
+    let text: String = chars[from..].iter().collect();
+
+    let re = RegexBuilder::new(pattern)
+        .dot_matches_new_line(opts.dot_matches_newline)
+        .build()
+        .ok()?;
+
+    let m = re.find(&text)?;
+    let start_chars = text[..m.start()].chars().count();
+    let match_chars = m.as_str().chars().count();
+    Some((from + start_chars, from + start_chars + match_chars))
 }
 
-fn split_alternatives(pattern: &str) -> Vec<String> {
-    let chars: Vec<char> = pattern.chars().collect();
-    let mut alts: Vec<String> = Vec::new();
-    let mut current = String::new();
-    let mut i = 0;
-    let mut depth = 0i32;
-    while i < chars.len() {
-        match chars[i] {
-            '\\' if i + 1 < chars.len() => {
-                current.push('\\');
-                current.push(chars[i + 1]);
-                i += 2;
-                continue;
-            }
-            '[' => { depth += 1; current.push('['); }
-            ']' => {
-                if depth > 0 { depth -= 1; }
-                current.push(']');
-            }
-            '|' if depth == 0 => {
-                alts.push(current.clone());
-                current.clear();
-            }
-            c => current.push(c),
-        }
-        i += 1;
-    }
-    alts.push(current);
-    alts
+pub fn char_matches(c: char, pat: &[char]) -> bool {
+    let opts = RegexOpts::default();
+    char_matches_impl(c, pat, &opts)
 }
 
-pub fn regex_match_here(h: &[char], hi: usize, p: &[char], pi: usize, opts: &RegexOpts) -> Option<usize> {
-    let mut hi = hi;
-    let mut pi = pi;
-    loop {
-        if pi >= p.len() {
-            return Some(hi);
-        }
-        if p[pi] == '$' && pi == p.len() - 1 {
-            return if hi == h.len() { Some(hi) } else { None };
-        }
-
-        let next_is_star = pi + 1 < p.len() && p[pi + 1] == '*';
-        let next_is_plus = pi + 1 < p.len() && p[pi + 1] == '+';
-        let next_is_quest = pi + 1 < p.len() && p[pi + 1] == '?';
-
-        if next_is_star {
-            let rest_pi = pi + 2;
-            let start_hi = hi;
-            while hi < h.len() && char_matches_impl(h[hi], p, pi, opts) {
-                hi += 1;
-            }
-            loop {
-                if let Some(r) = regex_match_here(h, hi, p, rest_pi, opts) {
-                    return Some(r);
-                }
-                if hi == start_hi { break; }
-                hi -= 1;
-            }
-            return None;
-        }
-
-        if next_is_plus {
-            if hi >= h.len() || !char_matches_impl(h[hi], p, pi, opts) {
-                return None;
-            }
-            hi += 1;
-            let rest_pi = pi + 2;
-            let start_hi = hi;
-            while hi < h.len() && char_matches_impl(h[hi], p, pi, opts) {
-                hi += 1;
-            }
-            loop {
-                if let Some(r) = regex_match_here(h, hi, p, rest_pi, opts) {
-                    return Some(r);
-                }
-                if hi == start_hi { break; }
-                hi -= 1;
-            }
-            return None;
-        }
-
-        if next_is_quest {
-            let rest_pi = pi + 2;
-            if hi < h.len() && char_matches_impl(h[hi], p, pi, opts) {
-                if let Some(r) = regex_match_here(h, hi + 1, p, rest_pi, opts) {
-                    return Some(r);
-                }
-            }
-            return regex_match_here(h, hi, p, rest_pi, opts);
-        }
-
-        if hi >= h.len() {
-            return None;
-        }
-        if !char_matches_impl(h[hi], p, pi, opts) {
-            return None;
-        }
-        hi += 1;
-        pi = advance_pattern(p, pi);
+fn char_matches_impl(c: char, pat: &[char], opts: &RegexOpts) -> bool {
+    if pat.is_empty() {
+        return false;
     }
-}
-
-fn char_matches_impl(c: char, pat: &[char], pi: usize, opts: &RegexOpts) -> bool {
-    match pat[pi] {
+    match pat[0] {
         '.' => {
             if opts.dot_matches_newline { true } else { c != '\n' }
         }
         '[' => {
-            let end = pat[pi..].iter().position(|&x| x == ']').unwrap_or(pat.len() - pi - 1);
-            let class = &pat[pi + 1..pi + end];
+            let end = pat[1..].iter().position(|&x| x == ']').unwrap_or(pat.len() - 1);
+            let class = &pat[1..1 + end];
             if class.first() == Some(&'^') {
                 !class_contains(&class[1..], c)
             } else {
                 class_contains(class, c)
             }
         }
-        '\\' if pi + 1 < pat.len() => match pat[pi + 1] {
+        '\\' if pat.len() > 1 => match pat[1] {
             'd' => c.is_ascii_digit(),
             'w' => c.is_alphanumeric() || c == '_',
             's' => c.is_whitespace(),
@@ -178,11 +78,6 @@ fn char_matches_impl(c: char, pat: &[char], pi: usize, opts: &RegexOpts) -> bool
         },
         literal => c == literal,
     }
-}
-
-pub fn char_matches(c: char, pat: &[char]) -> bool {
-    let opts = RegexOpts::default();
-    char_matches_impl(c, pat, 0, &opts)
 }
 
 pub fn class_contains(class: &[char], c: char) -> bool {
