@@ -11,13 +11,18 @@ pub struct Parser {
     spans: Vec<Span>,
     pos: usize,
     errors: Vec<ParseError>,
+    posix: bool,
 }
 
 impl Parser {
     pub fn new(input: &str) -> Self {
+        Self::new_with_mode(input, false)
+    }
+
+    pub fn new_with_mode(input: &str, posix: bool) -> Self {
         let mut lexer = Lexer::new(input);
         let (tokens, spans) = lexer.tokenize_with_spans();
-        Parser { tokens, spans, pos: 0, errors: Vec::new() }
+        Parser { tokens, spans, pos: 0, errors: Vec::new(), posix }
     }
 
     pub fn errors(&self) -> &[ParseError] {
@@ -141,7 +146,19 @@ impl Parser {
 
     fn parse_command(&mut self) -> Command {
         if matches!(self.peek(), Token::DoubleBracketOpen) {
+            if self.posix {
+                self.push_error("[[ ]] is not supported in POSIX mode");
+                self.advance();
+                return Command::Simple(SimpleCommand { words: vec![], redirects: vec![] });
+            }
             return self.parse_double_bracket();
+        }
+        if let Token::ArithCommand(_) = self.peek().clone() {
+            if self.posix {
+                self.push_error("(( )) arithmetic command is not supported in POSIX mode");
+                self.advance();
+                return Command::Simple(SimpleCommand { words: vec![], redirects: vec![] });
+            }
         }
         if let Token::ArithCommand(expr) = self.peek().clone() {
             self.advance();
@@ -599,6 +616,12 @@ impl Parser {
                     redirects.push(Redirect::Both(w));
                 }
                 Token::HereString => {
+                    if self.posix {
+                        self.push_error("<<< here-string is not supported in POSIX mode");
+                        self.advance();
+                        self.parse_word();
+                        break;
+                    }
                     self.advance();
                     let w = self.parse_word_required();
                     redirects.push(Redirect::HereString(w));

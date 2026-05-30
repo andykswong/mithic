@@ -1,12 +1,35 @@
 /**
  * Implements wasi:io/poll - pollable resource and poll function.
+ *
+ * Uses Atomics.wait as a sync bridge for blocking: instead of busy-spinning,
+ * the thread truly sleeps (yields to the OS scheduler) between readiness checks.
+ *
+ * Pollables may provide a `blockReady` function for optimal blocking (e.g.,
+ * clock pollables sleep for the exact duration in one Atomics.wait call).
+ * Without `blockReady`, block() falls back to polling with 1ms sleep intervals.
  */
+
+let globalBlockTimeout = 60_000;
+let sleepBuffer: Int32Array | undefined;
+
+function getSleepBuffer(): Int32Array {
+  if (!sleepBuffer) {
+    sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+  }
+  return sleepBuffer;
+}
+
+export function setBlockTimeout(ms: number): void {
+  globalBlockTimeout = ms;
+}
 
 export class Pollable {
   #pollReady: () => boolean;
+  #blockReady?: () => void;
 
-  constructor(pollReady?: () => boolean) {
+  constructor(pollReady?: () => boolean, blockReady?: () => void) {
     this.#pollReady = pollReady ?? (() => true);
+    this.#blockReady = blockReady;
   }
 
   ready(): boolean {
@@ -14,18 +37,20 @@ export class Pollable {
   }
 
   block(): void {
-    // In sync mode, spin until ready or return immediately if always-ready.
-    // For in-memory providers this should resolve immediately.
-    if (!this.#pollReady()) {
-      // Spin — in sync mode the pollable should become ready immediately
-      // since underlying providers are synchronous.
-      let attempts = 0;
-      while (!this.#pollReady()) {
-        attempts++;
-        if (attempts > 1_000_000) {
-          throw new Error('Pollable.block() timed out — async provider cannot be used in sync mode');
-        }
+    if (this.#pollReady()) return;
+
+    if (this.#blockReady) {
+      this.#blockReady();
+      return;
+    }
+
+    const deadline = performance.now() + globalBlockTimeout;
+    const buf = getSleepBuffer();
+    while (!this.#pollReady()) {
+      if (performance.now() > deadline) {
+        throw new Error(`Pollable.block() timed out after ${globalBlockTimeout}ms`);
       }
+      Atomics.wait(buf, 0, 0, 1);
     }
   }
 }
@@ -51,7 +76,6 @@ export function poll(pollables: Pollable[]): Uint32Array {
   }
 
   if (ready.length === 0) {
-    // In sync mode, block on first pollable and sweep
     for (let i = 0; i < pollables.length; i++) {
       pollables[i].block();
       if (pollables[i].ready()) {
@@ -59,7 +83,6 @@ export function poll(pollables: Pollable[]): Uint32Array {
         break;
       }
     }
-    // Sweep for others that became ready
     for (let i = 0; i < pollables.length; i++) {
       if (!ready.includes(i) && pollables[i].ready()) {
         ready.push(i);

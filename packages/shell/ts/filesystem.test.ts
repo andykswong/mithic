@@ -204,10 +204,109 @@ describe('cd and relative paths', () => {
   });
 });
 
+describe('chmod host command (numeric mode)', () => {
+  it('chmod 755 sets executable bits', async () => {
+    const { exit } = await runShell(
+      'echo "echo hi" > /tmp/chmod755.sh\nchmod 755 /tmp/chmod755.sh\n[ -x /tmp/chmod755.sh ]\n'
+    );
+    assert.strictEqual(exit, 0);
+  });
+
+  it('chmod 644 clears executable bits (verified by running file)', async () => {
+    const { exit } = await runShell(
+      'echo "echo hi" > /tmp/chmod644.sh\nchmod 755 /tmp/chmod644.sh\nchmod 644 /tmp/chmod644.sh\n/tmp/chmod644.sh\n'
+    );
+    assert.notStrictEqual(exit, 0);
+  });
+
+  it('chmod with no args exits non-zero', async () => {
+    const { exit } = await runShell('chmod\n');
+    assert.strictEqual(exit, 1);
+  });
+
+  it('chmod +x adds executable bit', async () => {
+    const { exit } = await runShell(
+      'echo "echo hi" > /tmp/chmodx.sh\nchmod 644 /tmp/chmodx.sh\nchmod +x /tmp/chmodx.sh\n[ -x /tmp/chmodx.sh ]\n'
+    );
+    assert.strictEqual(exit, 0);
+  });
+
+  it('chmod -x removes executable bit (verified by running file)', async () => {
+    const { exit } = await runShell(
+      'echo "echo hi" > /tmp/chmodnoex.sh\nchmod 755 /tmp/chmodnoex.sh\nchmod -x /tmp/chmodnoex.sh\n/tmp/chmodnoex.sh\n'
+    );
+    assert.notStrictEqual(exit, 0);
+  });
+});
+
+describe('script execution with shebang', () => {
+  it('executes a script with #!/bin/sh shebang', async () => {
+    const { stdout } = await runShell(
+      'printf "#!/bin/sh\\necho shebang_ok\\n" > /tmp/shebang.sh\nchmod 755 /tmp/shebang.sh\n/tmp/shebang.sh\n'
+    );
+    assert.strictEqual(stdout.trim(), 'shebang_ok');
+  });
+
+  it('executes a script without shebang as sh', async () => {
+    const { stdout } = await runShell(
+      'echo "echo no_shebang" > /tmp/noshebang.sh\nchmod 755 /tmp/noshebang.sh\n/tmp/noshebang.sh\n'
+    );
+    assert.strictEqual(stdout.trim(), 'no_shebang');
+  });
+
+  it('passes arguments to the script', async () => {
+    const { stdout } = await runShell(
+      'printf "#!/bin/sh\\necho \\$1\\n" > /tmp/args.sh\nchmod 755 /tmp/args.sh\n/tmp/args.sh hello\n'
+    );
+    assert.strictEqual(stdout.trim(), 'hello');
+  });
+
+  it('returns non-zero for non-executable file', async () => {
+    const { exit } = await runShell(
+      'echo "echo hi" > /tmp/noexec.sh\nchmod 644 /tmp/noexec.sh\n/tmp/noexec.sh\n'
+    );
+    assert.notStrictEqual(exit, 0);
+  });
+
+  it('returns non-zero for unknown interpreter', async () => {
+    const { exit, stderr } = await runShell(
+      'printf "#!/usr/bin/python\\nprint(hello)\\n" > /tmp/shebang_py.py\nchmod 755 /tmp/shebang_py.py\n/tmp/shebang_py.py\n'
+    );
+    assert.notStrictEqual(exit, 0);
+    assert.ok(stderr.includes('interpreter not found'));
+  });
+});
+
+describe('PATH lookup for executable scripts', () => {
+  it('finds and runs a script in /usr/bin via PATH', async () => {
+    const { stdout } = await runShell(
+      'mkdir -p /usr/bin\nprintf "#!/bin/sh\\necho path_ok\\n" > /usr/bin/myscript\nchmod 755 /usr/bin/myscript\nmyscript\n'
+    );
+    assert.strictEqual(stdout.trim(), 'path_ok');
+  });
+
+  it('finds scripts in /bin via PATH', async () => {
+    const { stdout } = await runShell(
+      'mkdir -p /bin\nprintf "#!/bin/sh\\necho bin_ok\\n" > /bin/binscript\nchmod 755 /bin/binscript\nbinscript\n'
+    );
+    assert.strictEqual(stdout.trim(), 'bin_ok');
+  });
+
+  it('returns command not found for unknown command', async () => {
+    const { exit } = await runShell('__totally_unknown_cmd_xyz123\n');
+    assert.notStrictEqual(exit, 0);
+  });
+
+  it('non-executable file in PATH is skipped', async () => {
+    const { exit } = await runShell(
+      'mkdir -p /usr/bin\necho "echo hi" > /usr/bin/noexecpathscript\nchmod 644 /usr/bin/noexecpathscript\nnoexecpathscript\n'
+    );
+    assert.notStrictEqual(exit, 0);
+  });
+});
+
 // NOT COVERED (no builtins/features available in this environment):
 // - here-documents (<<): syntax parser does not support heredoc redirection in this WASM shell
 // - exec fd redirection (exec 3< file): exec builtin not implemented
 // - stderr redirect to file (2>file): stderr is wired to host stderr, not VFS
-// - mkdir/rmdir: not implemented as builtins
-// - touch: not implemented as a builtin
 // - -s file test (non-empty file): appears to return incorrect results

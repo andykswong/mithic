@@ -1,5 +1,6 @@
 pub mod commands;
 
+#[cfg(not(test))]
 mod bindings {
     wit_bindgen::generate!({
         world: "coreutils",
@@ -8,6 +9,7 @@ mod bindings {
     });
 }
 
+#[cfg(not(test))]
 fn main() {
     use bindings::wasi::cli::environment;
 

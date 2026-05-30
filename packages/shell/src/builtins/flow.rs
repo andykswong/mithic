@@ -57,7 +57,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
             if input.is_empty() {
                 return 0;
             }
-            let mut parser = Parser::new(&input);
+            let mut parser = Parser::new_with_mode(&input, shell.options.posix);
             if let Some(list) = parser.parse() {
                 shell.exec_list(list)
             } else {
@@ -208,7 +208,7 @@ fn exec_source<R: Runtime>(shell: &mut Shell<R>, file: &str) -> u8 {
     }
 
     let script = String::from_utf8_lossy(&contents);
-    let mut parser = Parser::new(&script);
+    let mut parser = Parser::new_with_mode(&script, shell.options.posix);
     if let Some(list) = parser.parse() {
         shell.in_function_depth += 1;
         let result = shell.exec_list(list);

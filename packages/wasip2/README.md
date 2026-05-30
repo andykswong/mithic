@@ -85,7 +85,7 @@ jco transpile my-component.wasm -o ./out --map 'wasi:*=@mithic/wasip2/*'
 
 | WASI Package | Interfaces | Status |
 |---|---|---|
-| `wasi:io@0.2.x` | error, poll, streams | Implemented |
+| `wasi:io@0.2.x` | error, poll, streams | Implemented (poll uses `Atomics.wait` sync bridge) |
 | `wasi:cli@0.2.x` | environment, exit, stdin, stdout, stderr, terminal | Implemented |
 | `wasi:clocks@0.2.x` | monotonic-clock, wall-clock | Implemented |
 | `wasi:filesystem@0.2.x` | types (Descriptor), preopens | Implemented |

@@ -14,7 +14,7 @@ pub fn run(args: &[&str]) -> u8 {
 }
 
 fn try_write(s: &str) -> bool {
-    use crate::bindings::wasi::cli::stdout::get_stdout;
-    let out = get_stdout();
-    out.blocking_write_and_flush(s.as_bytes()).is_ok()
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    out.write_all(s.as_bytes()).is_ok() && out.flush().is_ok()
 }

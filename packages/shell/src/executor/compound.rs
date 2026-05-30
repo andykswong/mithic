@@ -112,6 +112,10 @@ impl<R: Runtime> Shell<R> {
     }
 
     fn exec_array_assign(&mut self, aa: ArrayAssign) -> u8 {
+        if self.options.posix {
+            self.rt.write_stderr(&format!("{}: arrays not supported in POSIX mode\n", self.shell_name));
+            return 2;
+        }
         let elements: Vec<String> = aa.elements.iter()
             .flat_map(|w| self.expand_word_to_args(w))
             .collect();

@@ -51,8 +51,7 @@ fn main() {
     let mut shell = shell::Shell::new(rt, env, cwd, is_interactive);
     shell.shell_name = shell_name.clone();
 
-    // Activate POSIX mode when POSIXLY_CORRECT is set in the environment
-    if shell.env.contains_key("POSIXLY_CORRECT") {
+    if shell_name == "sh" || shell.env.contains_key("POSIXLY_CORRECT") {
         shell.options.posix = true;
     }
 

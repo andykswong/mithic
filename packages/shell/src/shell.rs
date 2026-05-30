@@ -105,7 +105,7 @@ impl<R: Runtime> Shell<R> {
                             if self.options.verbose {
                                 self.rt.write_stderr(&format!("{}\n", trimmed));
                             }
-                            let mut parser = Parser::new(&trimmed);
+                            let mut parser = Parser::new_with_mode(&trimmed, self.options.posix);
                             let result = parser.parse();
                             for err in parser.errors() {
                                 self.rt.write_stderr(&format!(
@@ -171,7 +171,7 @@ impl<R: Runtime> Shell<R> {
                 self.rt.write_stderr(&format!("{}\n", trimmed));
             }
 
-            let mut parser = Parser::new(&trimmed);
+            let mut parser = Parser::new_with_mode(&trimmed, self.options.posix);
             let result = parser.parse();
 
             if parser.is_incomplete() {
@@ -211,17 +211,19 @@ impl<R: Runtime> Shell<R> {
         if self.options.verbose {
             self.rt.write_stderr(&format!("{}\n", input.trim()));
         }
-        let mut parser = Parser::new(input);
-        if let Some(list) = parser.parse() {
-            self.last_exit = self.exec_list(list);
-        } else {
-            for err in parser.errors() {
-                self.rt.write_stderr(&format!(
-                    "{}: syntax error: {}\n",
-                    self.shell_name, err.message
-                ));
-            }
+        let mut parser = Parser::new_with_mode(input, self.options.posix);
+        let result = parser.parse();
+        let has_errors = !parser.errors().is_empty();
+        for err in parser.errors() {
+            self.rt.write_stderr(&format!(
+                "{}: syntax error: {}\n",
+                self.shell_name, err.message
+            ));
+        }
+        if has_errors {
             self.last_exit = 2;
+        } else if let Some(list) = result {
+            self.last_exit = self.exec_list(list);
         }
         self.run_trap("EXIT");
         self.cleanup_procsub_files();
@@ -694,9 +696,14 @@ impl<R: Runtime> Shell<R> {
             }
         }
         if trimmed.starts_with('!') && trimmed.len() > 1 && !trimmed.starts_with("!=") {
-            let prefix = &trimmed[1..];
+            let rest = &trimmed[1..];
+            if let Ok(n) = rest.parse::<usize>() {
+                if n > 0 && n <= self.history.len() {
+                    return Some(self.history[n - 1].clone());
+                }
+            }
             for cmd in self.history.iter().rev() {
-                if cmd.starts_with(prefix) {
+                if cmd.starts_with(rest) {
                     return Some(cmd.clone());
                 }
             }
@@ -739,12 +746,25 @@ impl<R: Runtime> Shell<R> {
                         let host = self.env.get("HOSTNAME").map(|v| v.as_scalar().to_string()).unwrap_or_else(|| "localhost".to_string());
                         result.push_str(&host);
                     }
-                    Some('$') => result.push('$'),
+                    Some('$') => {
+                        let user = self.env.get("USER").map(|v| v.as_scalar()).unwrap_or("");
+                        result.push(if user == "root" { '#' } else { '$' });
+                    }
                     Some('n') => result.push('\n'),
                     Some('\\') => result.push('\\'),
                     Some('e') => result.push('\x1b'),
                     Some('[') | Some(']') => {}
-                    Some('t') => result.push_str("00:00:00"),
+                    Some('t') => {
+                        use std::time::SystemTime;
+                        let secs = SystemTime::now()
+                            .duration_since(SystemTime::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        let h = (secs % 86400) / 3600;
+                        let m = (secs % 3600) / 60;
+                        let s = secs % 60;
+                        result.push_str(&format!("{:02}:{:02}:{:02}", h, m, s));
+                    }
                     Some(other) => { result.push('\\'); result.push(other); }
                     None => result.push('\\'),
                 }
@@ -758,7 +778,7 @@ impl<R: Runtime> Shell<R> {
     pub(crate) fn run_trap(&mut self, signal: &str) {
         if let Some(handler) = self.traps.get(signal).cloned() {
             if !handler.is_empty() {
-                let mut parser = Parser::new(&handler);
+                let mut parser = Parser::new_with_mode(&handler, self.options.posix);
                 if let Some(list) = parser.parse() {
                     self.exec_list(list);
                 }

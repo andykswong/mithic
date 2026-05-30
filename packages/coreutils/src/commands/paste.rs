@@ -16,7 +16,7 @@ pub fn run(args: &[&str]) -> u8 {
             a if a.starts_with("-d") && a.len() > 2 => {
                 delim_owned = Some(a[2..].to_string());
             }
-            a if a.starts_with('-') && a.len() > 1 => {
+            a if a.starts_with('-') && a.len() > 1 && a != "-" => {
                 // Unknown flag — ignore
             }
             _ => file_args.push(args[i]),
@@ -31,22 +31,62 @@ pub fn run(args: &[&str]) -> u8 {
         return 1;
     }
 
-    // Read all files into line arrays
+    // Read stdin once if any argument is "-"
+    let stdin_data = if file_args.contains(&"-") {
+        Some(read_stdin_all())
+    } else {
+        None
+    };
+    let stdin_lines: Vec<&str> = stdin_data.as_deref()
+        .map(|d| lines_of(d))
+        .unwrap_or_default();
+
+    // Each "-" gets its own cursor into stdin lines, cycling through them serially.
+    // When multiple "-" appear, they share the same stdin stream sequentially.
+    // We pre-split stdin lines across the "-" slots.
+    let dash_count = file_args.iter().filter(|&&a| a == "-").count();
+
+    // Build per-column line arrays
     let mut all_lines: Vec<Vec<String>> = Vec::new();
-    for &path in &file_args {
-        let data = if path == "-" {
-            read_stdin_all()
-        } else {
-            match read_file(path) {
+
+    if dash_count > 0 {
+        // Distribute stdin lines across dash slots: lines go to slots round-robin
+        // Actually GNU paste distributes: first line to first -, second to second -, etc.
+        // cycling through dashes, then next round.
+        let mut dash_buckets: Vec<Vec<String>> = vec![Vec::new(); dash_count];
+        for (idx, line) in stdin_lines.iter().enumerate() {
+            dash_buckets[idx % dash_count].push(line.to_string());
+        }
+        let mut dash_iter = dash_buckets.into_iter();
+
+        for &path in &file_args {
+            if path == "-" {
+                all_lines.push(dash_iter.next().unwrap_or_default());
+            } else {
+                match read_file(path) {
+                    Some(d) => {
+                        let lines: Vec<String> = lines_of(&d).iter().map(|s| s.to_string()).collect();
+                        all_lines.push(lines);
+                    }
+                    None => {
+                        write_stderr(&format!("paste: {}: No such file or directory\n", path));
+                        return 1;
+                    }
+                }
+            }
+        }
+    } else {
+        for &path in &file_args {
+            let data = match read_file(path) {
                 Some(d) => d,
                 None => {
                     write_stderr(&format!("paste: {}: No such file or directory\n", path));
                     return 1;
                 }
-            }
-        };
-        let lines: Vec<String> = lines_of(&data).iter().map(|s| s.to_string()).collect();
-        all_lines.push(lines);
+            };
+            let lines: Vec<String> = lines_of(&data).iter().map(|s| s.to_string()).collect();
+            all_lines.push(lines);
+        }
     }
 
     let max_lines = all_lines.iter().map(|v| v.len()).max().unwrap_or(0);

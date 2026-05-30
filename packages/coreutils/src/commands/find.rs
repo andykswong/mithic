@@ -1,12 +1,12 @@
-use super::{write_stdout, file_kind, read_dir, FileKind};
+use super::{write_stdout, file_kind, read_dir, dispatch, FileKind};
 
 pub fn run(args: &[&str]) -> u8 {
     let mut start_path = ".";
     let mut name_pattern: Option<&str> = None;
     let mut type_filter: Option<char> = None;
+    let mut exec_cmd: Option<Vec<&str>> = None;
 
     let mut i = 0;
-    // First non-flag arg before any predicates is the search path
     if i < args.len() && !args[i].starts_with('-') {
         start_path = args[i];
         i += 1;
@@ -26,17 +26,25 @@ pub fn run(args: &[&str]) -> u8 {
                     type_filter = args[i].chars().next();
                 }
             }
+            "-exec" => {
+                i += 1;
+                let mut cmd_parts: Vec<&str> = Vec::new();
+                while i < args.len() && args[i] != "\\;" && args[i] != ";" {
+                    cmd_parts.push(args[i]);
+                    i += 1;
+                }
+                exec_cmd = Some(cmd_parts);
+            }
             _ => {}
         }
         i += 1;
     }
 
-    find_recursive(start_path, start_path, name_pattern, type_filter);
+    find_recursive(start_path, start_path, name_pattern, type_filter, exec_cmd.as_deref());
     0
 }
 
 fn matches_glob(name: &str, pattern: &str) -> bool {
-    // Simple glob: support * wildcard
     if pattern == "*" {
         return true;
     }
@@ -52,19 +60,16 @@ fn matches_glob(name: &str, pattern: &str) -> bool {
         }
         let part_bytes = part.as_bytes();
         if idx == 0 {
-            // Must match at start
             if !name_bytes.starts_with(part_bytes) {
                 return false;
             }
             pos = part.len();
         } else if idx == parts.len() - 1 {
-            // Must match at end
             if pos > name_bytes.len() {
                 return false;
             }
             return name_bytes[pos..].ends_with(part_bytes);
         } else {
-            // Find anywhere from pos
             match name[pos..].find(part) {
                 Some(found) => pos += found + part.len(),
                 None => return false,
@@ -74,9 +79,56 @@ fn matches_glob(name: &str, pattern: &str) -> bool {
     true
 }
 
-fn find_recursive(base: &str, path: &str, name_pattern: Option<&str>, type_filter: Option<char>) {
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn glob_star_matches_everything() {
+        assert!(matches_glob("anything", "*"));
+        assert!(matches_glob("", "*"));
+    }
+
+    #[test]
+    fn glob_exact_match_without_wildcard() {
+        assert!(matches_glob("foo.rs", "foo.rs"));
+        assert!(!matches_glob("bar.rs", "foo.rs"));
+    }
+
+    #[test]
+    fn glob_star_suffix() {
+        assert!(matches_glob("main.rs", "*.rs"));
+        assert!(!matches_glob("main.go", "*.rs"));
+    }
+
+    #[test]
+    fn glob_star_prefix() {
+        assert!(matches_glob("libfoo.a", "lib*"));
+        assert!(!matches_glob("foo.a", "lib*"));
+    }
+
+    #[test]
+    fn glob_star_middle() {
+        assert!(matches_glob("foo_bar_baz", "foo*baz"));
+        assert!(!matches_glob("foo_bar_qux", "foo*baz"));
+    }
+
+    #[test]
+    fn glob_multiple_stars() {
+        assert!(matches_glob("a_b_c", "*_*_*"));
+        assert!(!matches_glob("abc", "*_*_*"));
+    }
+
+    #[test]
+    fn glob_double_star_extension() {
+        assert!(matches_glob("test.rs", "test.*"));
+        assert!(!matches_glob("other.rs", "test.*"));
+    }
+}
+
+fn find_recursive(base: &str, path: &str, name_pattern: Option<&str>, type_filter: Option<char>, exec_cmd: Option<&[&str]>) {
     let kind = file_kind(path);
-    let display = if path == "." { ".".to_string() } else { path.to_string() };
+    let display = path.to_string();
 
     let name = std::path::Path::new(path)
         .file_name()
@@ -89,21 +141,31 @@ fn find_recursive(base: &str, path: &str, name_pattern: Option<&str>, type_filte
         _ => true,
     };
 
-    let name_ok = match name_pattern {
-        Some(pat) => matches_glob(&name, pat),
-        None => true,
-    };
-
-    // Print the root path itself if it matches (but skip "." name check — use actual path)
     let effective_name = if path == base && path == "." { "." } else { &name };
-    let name_ok_for_print = match name_pattern {
+    let name_ok = match name_pattern {
         Some(pat) => matches_glob(effective_name, pat),
         None => true,
     };
 
-    if type_ok && name_ok_for_print {
-        write_stdout(&display);
-        write_stdout("\n");
+    if type_ok && name_ok {
+        if let Some(cmd_parts) = exec_cmd {
+            if !cmd_parts.is_empty() {
+                let cmd = cmd_parts[0];
+                let substituted: Vec<String> = cmd_parts[1..].iter()
+                    .map(|&a| if a == "{}" { display.clone() } else { a.to_string() })
+                    .collect();
+                let refs: Vec<&str> = substituted.iter().map(|s| s.as_str()).collect();
+                if cmd == "echo" {
+                    write_stdout(&refs.join(" "));
+                    write_stdout("\n");
+                } else {
+                    dispatch(cmd, &refs);
+                }
+            }
+        } else {
+            write_stdout(&display);
+            write_stdout("\n");
+        }
     }
 
     if matches!(kind, FileKind::Directory) {
@@ -111,9 +173,7 @@ fn find_recursive(base: &str, path: &str, name_pattern: Option<&str>, type_filte
         entries.sort();
         for entry in entries {
             let child = format!("{}/{}", path.trim_end_matches('/'), entry);
-            find_recursive(base, &child, name_pattern, type_filter);
+            find_recursive(base, &child, name_pattern, type_filter, exec_cmd);
         }
     }
-
-    let _ = name_ok; // suppress unused warning (name_ok_for_print used instead)
 }

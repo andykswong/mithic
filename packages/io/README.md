@@ -45,19 +45,21 @@ This enables:
 | Provider | Interface | Use Case |
 |----------|-----------|----------|
 | `MemoryFsProvider` | `SyncFileSystemProvider` | Testing, browser default |
+| `DeviceFsProvider` | `SyncFileSystemProvider` | Synthetic `/dev` devices (null, zero, stdin, stdout, stderr) |
 | `OPFSProvider` | `FileSystemProvider` | Browser persistent storage |
 | `NodeFsProvider` | `FileSystemProvider` | Native server/desktop |
 | `SyncBridgeFsProvider` | `SyncFileSystemProvider` | Cross-thread via WorkerIo |
 
 #### File System Router
 
-`FileSystemRouter` implements `FileSystemProvider` (base) and delegates to mounted providers via longest-prefix path matching:
+`FileSystemRouter` (async) and `SyncFileSystemRouter` (sync) delegate to mounted providers via longest-prefix path matching:
 
 ```typescript
-import { FileSystemRouter, MemoryFsProvider } from '@mithic/io/vfs';
+import { SyncFileSystemRouter, MemoryFsProvider, DeviceFsProvider } from '@mithic/io/vfs';
 
-const router = new FileSystemRouter();
-await router.mount('/', new MemoryFsProvider());
+const router = new SyncFileSystemRouter();
+router.mount('/', new MemoryFsProvider());
+router.mount('/dev', new DeviceFsProvider());
 ```
 
 ### Network Providers

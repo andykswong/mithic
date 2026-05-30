@@ -12,6 +12,7 @@
     "./component": "./dist/wasm/index.js"
   },
   "scripts": {
+    "test": "node --experimental-strip-types --test ts/*.test.ts",
     "clean": "rimraf dist",
     "prebuild": "mkdir -p dist/wasm dist/ts",
     "build": "npm run build:rust && npm run build:ts",

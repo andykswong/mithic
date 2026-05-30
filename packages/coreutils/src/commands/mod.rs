@@ -1,3 +1,4 @@
+pub mod regex;
 mod cat;
 mod head;
 mod tail;
@@ -73,193 +74,54 @@ pub fn dispatch(name: &str, args: &[&str]) -> u8 {
 }
 
 pub fn write_stdout(s: &str) {
-    use crate::bindings::wasi::cli::stdout::get_stdout;
-    let out = get_stdout();
-    out.blocking_write_and_flush(s.as_bytes()).ok();
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    out.write_all(s.as_bytes()).ok();
+    out.flush().ok();
 }
 
 pub fn write_stderr(s: &str) {
-    use crate::bindings::wasi::cli::stderr::get_stderr;
-    let err = get_stderr();
-    err.blocking_write_and_flush(s.as_bytes()).ok();
+    use std::io::Write;
+    let mut err = std::io::stderr();
+    err.write_all(s.as_bytes()).ok();
+    err.flush().ok();
 }
 
 pub fn read_stdin_all() -> Vec<u8> {
-    use crate::bindings::wasi::cli::stdin::get_stdin;
-    let inp = get_stdin();
+    use std::io::Read;
     let mut buf = Vec::new();
-    loop {
-        match inp.blocking_read(65536) {
-            Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => buf.extend_from_slice(&chunk),
-            Err(_) => break,
-        }
-    }
+    std::io::stdin().read_to_end(&mut buf).ok();
     buf
 }
 
 pub fn read_file(path: &str) -> Option<Vec<u8>> {
-    use crate::bindings::wasi::filesystem::{preopens, types as fs};
-    let dirs = preopens::get_directories();
-    for (descriptor, _mount) in &dirs {
-        let flags = fs::PathFlags::SYMLINK_FOLLOW;
-        let open_flags = fs::OpenFlags::empty();
-        let desc_flags = fs::DescriptorFlags::READ;
-        match descriptor.open_at(flags, path, open_flags, desc_flags) {
-            Ok(file) => {
-                let mut buf = Vec::new();
-                let mut offset = 0u64;
-                loop {
-                    match file.read(65536, offset) {
-                        Ok((chunk, _done)) if chunk.is_empty() => break,
-                        Ok((chunk, done)) => {
-                            offset += chunk.len() as u64;
-                            buf.extend_from_slice(&chunk);
-                            if done { break; }
-                        }
-                        Err(_) => break,
-                    }
-                }
-                return Some(buf);
-            }
-            Err(_) => continue,
-        }
-    }
-    None
+    std::fs::read(path).ok()
 }
 
 pub fn write_file(path: &str, data: &[u8]) -> bool {
-    use crate::bindings::wasi::filesystem::{preopens, types as fs};
-    let dirs = preopens::get_directories();
-    for (descriptor, _mount) in &dirs {
-        let flags = fs::PathFlags::SYMLINK_FOLLOW;
-        let open_flags = fs::OpenFlags::CREATE | fs::OpenFlags::TRUNCATE;
-        let desc_flags = fs::DescriptorFlags::WRITE;
-        match descriptor.open_at(flags, path, open_flags, desc_flags) {
-            Ok(file) => {
-                file.write(data, 0).ok();
-                return true;
-            }
-            Err(_) => continue,
-        }
-    }
-    false
+    std::fs::write(path, data).is_ok()
 }
 
 pub fn append_file(path: &str, data: &[u8]) -> bool {
-    use crate::bindings::wasi::filesystem::{preopens, types as fs};
-    let dirs = preopens::get_directories();
-    for (descriptor, _mount) in &dirs {
-        let flags = fs::PathFlags::SYMLINK_FOLLOW;
-        let open_flags = fs::OpenFlags::CREATE;
-        let desc_flags = fs::DescriptorFlags::WRITE | fs::DescriptorFlags::MUTATE_DIRECTORY;
-        // Try to open for append by reading existing and rewriting
-        let open_flags_read = fs::OpenFlags::empty();
-        let desc_flags_read = fs::DescriptorFlags::READ;
-        let existing = match descriptor.open_at(flags, path, open_flags_read, desc_flags_read) {
-            Ok(file) => {
-                let mut buf = Vec::new();
-                let mut offset = 0u64;
-                loop {
-                    match file.read(65536, offset) {
-                        Ok((chunk, _done)) if chunk.is_empty() => break,
-                        Ok((chunk, done)) => {
-                            offset += chunk.len() as u64;
-                            buf.extend_from_slice(&chunk);
-                            if done { break; }
-                        }
-                        Err(_) => break,
-                    }
-                }
-                buf
-            }
-            Err(_) => Vec::new(),
-        };
-        let _ = desc_flags;
-        let _ = open_flags;
-        let truncate_flags = fs::OpenFlags::CREATE | fs::OpenFlags::TRUNCATE;
-        let write_flags = fs::DescriptorFlags::WRITE;
-        match descriptor.open_at(flags, path, truncate_flags, write_flags) {
-            Ok(file) => {
-                let mut combined = existing;
-                combined.extend_from_slice(data);
-                file.write(&combined, 0).ok();
-                return true;
-            }
-            Err(_) => continue,
-        }
-    }
-    false
+    use std::io::Write;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut f| f.write_all(data))
+        .is_ok()
 }
 
 pub fn remove_file(path: &str) -> bool {
-    use crate::bindings::wasi::filesystem::{preopens, types as fs};
-    let dirs = preopens::get_directories();
-    for (descriptor, _mount) in &dirs {
-        if descriptor.unlink_file_at(path).is_ok() {
-            return true;
-        }
-        // Try parent directory approach for paths with components
-        if let Some(slash) = path.rfind('/') {
-            let parent = &path[..slash];
-            let name = &path[slash + 1..];
-            let open_flags = fs::OpenFlags::DIRECTORY;
-            let desc_flags = fs::DescriptorFlags::MUTATE_DIRECTORY;
-            let p_flags = fs::PathFlags::empty();
-            if let Ok(parent_dir) = descriptor.open_at(p_flags, parent, open_flags, desc_flags) {
-                if parent_dir.unlink_file_at(name).is_ok() {
-                    return true;
-                }
-            }
-        }
-    }
-    false
+    std::fs::remove_file(path).is_ok()
 }
 
 pub fn remove_dir(path: &str) -> bool {
-    use crate::bindings::wasi::filesystem::{preopens, types as fs};
-    let dirs = preopens::get_directories();
-    for (descriptor, _mount) in &dirs {
-        if descriptor.remove_directory_at(path).is_ok() {
-            return true;
-        }
-        if let Some(slash) = path.rfind('/') {
-            let parent = &path[..slash];
-            let name = &path[slash + 1..];
-            let open_flags = fs::OpenFlags::DIRECTORY;
-            let desc_flags = fs::DescriptorFlags::MUTATE_DIRECTORY;
-            let p_flags = fs::PathFlags::empty();
-            if let Ok(parent_dir) = descriptor.open_at(p_flags, parent, open_flags, desc_flags) {
-                if parent_dir.remove_directory_at(name).is_ok() {
-                    return true;
-                }
-            }
-        }
-    }
-    false
+    std::fs::remove_dir(path).is_ok()
 }
 
 pub fn create_dir(path: &str) -> bool {
-    use crate::bindings::wasi::filesystem::{preopens, types as fs};
-    let dirs = preopens::get_directories();
-    for (descriptor, _mount) in &dirs {
-        if descriptor.create_directory_at(path).is_ok() {
-            return true;
-        }
-        if let Some(slash) = path.rfind('/') {
-            let parent = &path[..slash];
-            let name = &path[slash + 1..];
-            let open_flags = fs::OpenFlags::DIRECTORY;
-            let desc_flags = fs::DescriptorFlags::MUTATE_DIRECTORY;
-            let p_flags = fs::PathFlags::empty();
-            if let Ok(parent_dir) = descriptor.open_at(p_flags, parent, open_flags, desc_flags) {
-                if parent_dir.create_directory_at(name).is_ok() {
-                    return true;
-                }
-            }
-        }
-    }
-    false
+    std::fs::create_dir(path).is_ok()
 }
 
 pub enum FileKind {
@@ -270,42 +132,22 @@ pub enum FileKind {
 }
 
 pub fn file_kind(path: &str) -> FileKind {
-    use crate::bindings::wasi::filesystem::{preopens, types as fs};
-    let dirs = preopens::get_directories();
-    for (descriptor, _mount) in &dirs {
-        let flags = fs::PathFlags::SYMLINK_FOLLOW;
-        if let Ok(stat) = descriptor.stat_at(flags, path) {
-            return match stat.type_ {
-                fs::DescriptorType::RegularFile => FileKind::Regular,
-                fs::DescriptorType::Directory => FileKind::Directory,
-                _ => FileKind::Other,
-            };
-        }
+    match std::fs::metadata(path) {
+        Ok(m) if m.is_dir() => FileKind::Directory,
+        Ok(m) if m.is_file() => FileKind::Regular,
+        Ok(_) => FileKind::Other,
+        Err(_) => FileKind::NotFound,
     }
-    FileKind::NotFound
 }
 
 pub fn read_dir(path: &str) -> Vec<String> {
-    use crate::bindings::wasi::filesystem::{preopens, types as fs};
-    let dirs = preopens::get_directories();
-    let mut entries = Vec::new();
-    for (descriptor, _mount) in &dirs {
-        let flags = fs::PathFlags::SYMLINK_FOLLOW;
-        let open_flags = fs::OpenFlags::DIRECTORY;
-        let desc_flags = fs::DescriptorFlags::READ;
-        if let Ok(dir) = descriptor.open_at(flags, path, open_flags, desc_flags) {
-            if let Ok(stream) = dir.read_directory() {
-                loop {
-                    match stream.read_directory_entry() {
-                        Ok(Some(entry)) => entries.push(entry.name),
-                        _ => break,
-                    }
-                }
-            }
-            return entries;
-        }
-    }
-    entries
+    std::fs::read_dir(path)
+        .map(|iter| {
+            iter.filter_map(|e| e.ok())
+                .filter_map(|e| e.file_name().into_string().ok())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Read input: from file args if provided, otherwise from stdin.
@@ -338,26 +180,138 @@ pub fn lines_of(data: &[u8]) -> Vec<&str> {
     lines
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- lines_of ---
+
+    #[test]
+    fn lines_of_trailing_newline_stripped() {
+        let data = b"a\nb\nc\n";
+        assert_eq!(lines_of(data), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn lines_of_no_trailing_newline() {
+        let data = b"a\nb\nc";
+        assert_eq!(lines_of(data), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn lines_of_empty_input() {
+        assert_eq!(lines_of(b""), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn lines_of_single_line() {
+        assert_eq!(lines_of(b"hello\n"), vec!["hello"]);
+    }
+
+    // --- expand_char_set ---
+
+    #[test]
+    fn expand_literal_chars() {
+        assert_eq!(expand_char_set("abc"), vec!['a', 'b', 'c']);
+    }
+
+    #[test]
+    fn expand_range() {
+        let r = expand_char_set("a-e");
+        assert_eq!(r, vec!['a', 'b', 'c', 'd', 'e']);
+    }
+
+    #[test]
+    fn expand_digit_range() {
+        let r = expand_char_set("0-9");
+        assert_eq!(r.len(), 10);
+        assert!(r.contains(&'0'));
+        assert!(r.contains(&'9'));
+    }
+
+    #[test]
+    fn expand_posix_class_upper() {
+        let r = expand_char_set("[:upper:]");
+        assert_eq!(r.len(), 26);
+        assert!(r.contains(&'A'));
+        assert!(r.contains(&'Z'));
+    }
+
+    #[test]
+    fn expand_posix_class_lower() {
+        let r = expand_char_set("[:lower:]");
+        assert_eq!(r.len(), 26);
+        assert!(r.contains(&'a'));
+        assert!(r.contains(&'z'));
+    }
+
+    #[test]
+    fn expand_posix_class_digit() {
+        let r = expand_char_set("[:digit:]");
+        assert_eq!(r.len(), 10);
+        assert!(r.contains(&'5'));
+    }
+
+    #[test]
+    fn expand_posix_class_alpha() {
+        let r = expand_char_set("[:alpha:]");
+        assert_eq!(r.len(), 52);
+    }
+
+    #[test]
+    fn expand_posix_class_space() {
+        let r = expand_char_set("[:space:]");
+        assert!(r.contains(&' '));
+        assert!(r.contains(&'\t'));
+        assert!(r.contains(&'\n'));
+    }
+}
+
 pub fn expand_char_set(set: &str) -> Vec<char> {
-    let chars: Vec<char> = set.chars().collect();
     let mut result = Vec::new();
-    let mut i = 0;
-    while i < chars.len() {
-        if i + 2 < chars.len() && chars[i + 1] == '-' {
-            let start = chars[i] as u32;
-            let end = chars[i + 2] as u32;
+    let mut s = set;
+    while !s.is_empty() {
+        if s.starts_with("[:") {
+            if let Some(end) = s.find(":]") {
+                let class = &s[2..end];
+                match class {
+                    "upper" => result.extend('A'..='Z'),
+                    "lower" => result.extend('a'..='z'),
+                    "digit" => result.extend('0'..='9'),
+                    "alpha" => { result.extend('A'..='Z'); result.extend('a'..='z'); }
+                    "alnum" => { result.extend('A'..='Z'); result.extend('a'..='z'); result.extend('0'..='9'); }
+                    "space" => result.extend([' ', '\t', '\n', '\r', '\x0c', '\x0b']),
+                    "blank" => result.extend([' ', '\t']),
+                    "punct" => {
+                        result.extend((33u8..=47u8).map(|b| b as char));
+                        result.extend((58u8..=64u8).map(|b| b as char));
+                        result.extend((91u8..=96u8).map(|b| b as char));
+                        result.extend((123u8..=126u8).map(|b| b as char));
+                    }
+                    _ => {}
+                }
+                s = &s[end + 2..];
+                continue;
+            }
+        }
+        let chars: Vec<char> = s.chars().collect();
+        if chars.len() >= 3 && chars[1] == '-' {
+            let start = chars[0] as u32;
+            let end = chars[2] as u32;
             if start <= end {
                 for c in start..=end {
                     if let Some(ch) = char::from_u32(c) {
                         result.push(ch);
                     }
                 }
-                i += 3;
+                let skip: usize = chars[0].len_utf8() + 1 + chars[2].len_utf8();
+                s = &s[skip..];
                 continue;
             }
         }
-        result.push(chars[i]);
-        i += 1;
+        let c = chars[0];
+        result.push(c);
+        s = &s[c.len_utf8()..];
     }
     result
 }

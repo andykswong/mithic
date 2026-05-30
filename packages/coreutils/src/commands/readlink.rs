@@ -1,4 +1,4 @@
-use super::{write_stdout, write_stderr, file_kind, FileKind};
+use super::{write_stdout, write_stderr};
 
 pub fn run(args: &[&str]) -> u8 {
     let mut canonicalize = false;
@@ -29,20 +29,17 @@ pub fn run(args: &[&str]) -> u8 {
     let mut errors = 0u8;
     for &path in &path_args {
         if !canonicalize {
-            // Without -f: print the symlink target. Since WASI VFS has no real symlinks,
-            // check that the path exists and print it.
-            match file_kind(path) {
-                FileKind::NotFound => {
-                    write_stderr(&format!("readlink: {}: No such file or directory\n", path));
-                    errors = 1;
-                }
-                _ => {
-                    write_stdout(path);
+            match std::fs::read_link(path) {
+                Ok(target) => {
+                    write_stdout(&target.to_string_lossy());
                     write_stdout("\n");
+                }
+                Err(_) => {
+                    write_stderr(&format!("readlink: {}: Invalid argument\n", path));
+                    errors = 1;
                 }
             }
         } else {
-            // -f: canonicalize the path by normalizing . and ..
             let normalized = normalize_path(path);
             write_stdout(&normalized);
             write_stdout("\n");

@@ -24,6 +24,9 @@
 - **Process substitution** — `<(cmd)`
 - **Glob expansion** — `*`, `?`, `[...]`
 - **Builtins** — `cd`, `echo`, `export`, `unset`, `read`, `test`/`[`/`[[`, `declare`/`local`, `source`, `true`, `false`
+- **POSIX mode** — Auto-activates when invoked as `sh`; disables `[[`, `(( ))`, `<<<`, arrays, brace expansion
+- **Script execution** — Shebang (`#!/bin/sh`) support, PATH lookup with executable permission checks
+- **Command resolution** — `SimpleProcessManager` with `CommandResolver` dispatching to shell, coreutils WASM, host-side commands (chmod), and PATH-based scripts
 
 ## Usage
 
@@ -92,7 +95,8 @@ src/
 ts/
 ├── index.ts          Package exports
 ├── shell.ts          MithicShell instantiation class
-└── cli.ts            Node.js CLI runner (for testing)
+├── cli.ts            Node.js CLI runner (for testing)
+└── commands.ts       CommandResolver: sh, coreutils, chmod, PATH lookup, shebang scripts
 ```
 
 The shell compiles to a WASI Preview 2 component (`wasm32-wasip2`), transpiled to JavaScript via `jco`. The TypeScript host-side (`MithicShell`) configures WASI imports and process management, then instantiates and runs the component.

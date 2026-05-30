@@ -1,72 +1,116 @@
 import assert from 'node:assert/strict';
 import { describe, it, beforeEach } from 'node:test';
-import { DeviceProvider } from './device.ts';
+import { DeviceFsProvider } from './device.ts';
 import { FileSystemError } from '../provider.ts';
+import type { SyncOutputStreamHandler } from '../../io/streams.ts';
 
-describe('DeviceProvider', () => {
-  let dev: DeviceProvider;
+describe('DeviceFsProvider', () => {
+  let dev: DeviceFsProvider;
   let stdoutBuffer: Uint8Array[];
 
   beforeEach(() => {
     stdoutBuffer = [];
-    dev = new DeviceProvider({
-      stdout: async (data) => { stdoutBuffer.push(data); },
-      stderr: async () => {},
+    const stdoutHandler: SyncOutputStreamHandler = {
+      write(data: Uint8Array) { stdoutBuffer.push(data); },
+    };
+    const stderrHandler: SyncOutputStreamHandler = {
+      write() {},
+    };
+    dev = new DeviceFsProvider({
+      stdout: stdoutHandler,
+      stderr: stderrHandler,
     });
   });
 
   describe('/dev/null', () => {
-    it('should return empty on read', async () => {
-      const handle = await dev.open('/null', { read: true });
-      const data = await dev.read(handle, 0, 1024);
+    it('should return empty on read', () => {
+      const handle = dev.open('/null', { read: true });
+      const data = dev.read(handle, 0, 1024);
       assert.strictEqual(data.length, 0);
-      await dev.close(handle);
+      dev.close(handle);
     });
 
-    it('should accept writes silently', async () => {
-      const handle = await dev.open('/null', { write: true });
-      const written = await dev.write(handle, new Uint8Array([1, 2, 3]), 0);
+    it('should accept writes silently', () => {
+      const handle = dev.open('/null', { write: true });
+      const written = dev.write(handle, new Uint8Array([1, 2, 3]), 0);
       assert.strictEqual(written, 3);
-      await dev.close(handle);
+      dev.close(handle);
     });
   });
 
   describe('/dev/zero', () => {
-    it('should return zeroed bytes of requested length', async () => {
-      const handle = await dev.open('/zero', { read: true });
-      const data = await dev.read(handle, 0, 16);
+    it('should return zeroed bytes of requested length', () => {
+      const handle = dev.open('/zero', { read: true });
+      const data = dev.read(handle, 0, 16);
       assert.strictEqual(data.length, 16);
       assert(data.every(b => b === 0));
-      await dev.close(handle);
+      dev.close(handle);
+    });
+
+    it('should accept writes silently', () => {
+      const handle = dev.open('/zero', { write: true });
+      const written = dev.write(handle, new Uint8Array([1, 2]), 0);
+      assert.strictEqual(written, 2);
+      dev.close(handle);
     });
   });
 
   describe('/dev/stdout', () => {
-    it('should delegate write to handler', async () => {
-      const handle = await dev.open('/stdout', { write: true });
+    it('should delegate write to handler', () => {
+      const handle = dev.open('/stdout', { write: true });
       const payload = new TextEncoder().encode('hello stdout');
-      await dev.write(handle, payload, 0);
+      dev.write(handle, payload, 0);
       assert.strictEqual(stdoutBuffer.length, 1);
       assert.deepStrictEqual(stdoutBuffer[0], payload);
-      await dev.close(handle);
+      dev.close(handle);
+    });
+  });
+
+  describe('/dev/stdin', () => {
+    it('should read from stdin handler', () => {
+      const input = new TextEncoder().encode('hello');
+      const devWithStdin = new DeviceFsProvider({
+        stdin: { blockingRead: () => input },
+      });
+      const handle = devWithStdin.open('/stdin', { read: true });
+      const data = devWithStdin.read(handle, 0, 1024);
+      assert.deepStrictEqual(data, input);
+      devWithStdin.close(handle);
+    });
+
+    it('should throw on write', () => {
+      const handle = dev.open('/stdin', { write: true });
+      assert.throws(
+        () => dev.write(handle, new Uint8Array([1]), 0),
+        (err: unknown) => err instanceof FileSystemError && err.code === 'not-permitted',
+      );
+      dev.close(handle);
     });
   });
 
   describe('stat', () => {
-    it('should return character-device type for devices', async () => {
-      const stat = await dev.stat('/null');
+    it('should return character-device type for devices', () => {
+      const stat = dev.stat('/null');
       assert.strictEqual(stat.type, 'character-device');
+      assert.strictEqual(stat.mode, 0o666);
     });
 
-    it('should return directory type for root', async () => {
-      const stat = await dev.stat('/');
+    it('should return directory type for root', () => {
+      const stat = dev.stat('/');
       assert.strictEqual(stat.type, 'directory');
+    });
+
+    it('should throw no-entry for unknown device', () => {
+      assert.throws(
+        () => dev.stat('/unknown'),
+        (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry',
+      );
     });
   });
 
   describe('readdir', () => {
-    it('should return device names', async () => {
-      const entries = await dev.readdir('/');
+    it('should return device names', () => {
+      const entries = dev.readdir('/');
       const names = entries.map(e => e.name);
       assert(names.includes('null'));
       assert(names.includes('zero'));
@@ -78,24 +122,24 @@ describe('DeviceProvider', () => {
   });
 
   describe('permission-denied operations', () => {
-    it('should throw permission-denied on mkdir', async () => {
-      await assert.rejects(
+    it('should throw not-permitted on mkdir', () => {
+      assert.throws(
         () => dev.mkdir('/newdir'),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'not-permitted'
+        (err: unknown) => err instanceof FileSystemError && err.code === 'not-permitted',
       );
     });
 
-    it('should throw permission-denied on chmod', async () => {
-      await assert.rejects(
-        () => dev.chmod('/null', 0o777),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'not-permitted'
-      );
-    });
-
-    it('should throw permission-denied on unlink', async () => {
-      await assert.rejects(
+    it('should throw not-permitted on unlink', () => {
+      assert.throws(
         () => dev.unlink('/null'),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'not-permitted'
+        (err: unknown) => err instanceof FileSystemError && err.code === 'not-permitted',
+      );
+    });
+
+    it('should throw not-permitted on rmdir', () => {
+      assert.throws(
+        () => dev.rmdir('/'),
+        (err: unknown) => err instanceof FileSystemError && err.code === 'not-permitted',
       );
     });
   });

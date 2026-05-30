@@ -6,27 +6,38 @@ pub fn run(args: &[&str]) -> u8 {
         write_stderr("mv: missing destination\n");
         return 1;
     }
-    let src = file_args[file_args.len() - 2];
+
     let dst_arg = file_args[file_args.len() - 1];
-    let mut dst = dst_arg.to_string();
+    let srcs = &file_args[..file_args.len() - 1];
+    let dst_is_dir = matches!(file_kind(dst_arg), FileKind::Directory);
 
-    if matches!(file_kind(dst_arg), FileKind::Directory) {
-        let basename = std::path::Path::new(src)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        dst = format!("{}/{}", dst_arg.trim_end_matches('/'), basename);
+    if srcs.len() > 1 && !dst_is_dir {
+        write_stderr("mv: target must be a directory when moving multiple files\n");
+        return 1;
     }
 
-    match read_file(src) {
-        Some(data) => {
-            write_file(&dst, &data);
-            remove_file(src);
-            0
-        }
-        None => {
-            write_stderr(&format!("mv: cannot stat '{}': No such file or directory\n", src));
-            1
+    let mut errors = 0u8;
+    for &src in srcs {
+        let dst = if dst_is_dir {
+            let basename = std::path::Path::new(src)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            format!("{}/{}", dst_arg.trim_end_matches('/'), basename)
+        } else {
+            dst_arg.to_string()
+        };
+
+        match read_file(src) {
+            Some(data) => {
+                write_file(&dst, &data);
+                remove_file(src);
+            }
+            None => {
+                write_stderr(&format!("mv: cannot stat '{}': No such file or directory\n", src));
+                errors = 1;
+            }
         }
     }
+    errors
 }

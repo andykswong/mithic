@@ -1,2 +1,2 @@
 export { MemoryFsProvider, type MemoryProviderOptions } from './memory.ts';
-export { DeviceProvider, type DeviceProviderOptions } from './device.ts';
+export { DeviceFsProvider, type DeviceFsProviderOptions } from './device.ts';

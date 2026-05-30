@@ -32,9 +32,9 @@ export class ProcessTable {
 
 /**
  * A command handler receives pre-wired streams and runs to completion.
- * Returns the exit code.
+ * Returns the exit code synchronously or via Promise.
  */
-export type CommandHandler = (args: string[], ctx: CommandContext) => Promise<number>;
+export type CommandHandler = (args: string[], ctx: CommandContext) => number | Promise<number>;
 
 export interface CommandContext {
   cwd: string;
@@ -105,7 +105,10 @@ export class SimpleProcessManager implements ProcessManager {
 
     const pid = this.table.allocPid();
     const cwd = options?.cwd ?? '/';
-    const env = options?.env ?? {};
+    const rawEnv = options?.env as unknown;
+    const env: Record<string, string> = Array.isArray(rawEnv)
+      ? Object.fromEntries(rawEnv as [string, string][])
+      : (rawEnv as Record<string, string> | undefined) ?? {};
 
     const childStdin = options?.stdin ?? new InputStream(this.#hostStreams.stdin);
     const childStdout = options?.stdout ?? new OutputStream(this.#hostStreams.stdout);
@@ -114,7 +117,7 @@ export class SimpleProcessManager implements ProcessManager {
     let killed = false;
     let done = false;
     let exitCode: number | undefined;
-    let resolveWait: ((exitCode: number) => void) | null = null;
+    let resolveWait!: (exitCode: number) => void;
     const waitPromise = new Promise<number>(r => { resolveWait = r; });
 
     const foreground = this.#foreground;
@@ -127,7 +130,7 @@ export class SimpleProcessManager implements ProcessManager {
         killed = true;
         const sigNum = SIGNAL_NUMBER[signal];
         exitCode = 128 + sigNum;
-        resolveWait?.(exitCode);
+        resolveWait(exitCode);
       },
       wait: async () => {
         foreground.add(proc);
@@ -151,28 +154,40 @@ export class SimpleProcessManager implements ProcessManager {
       stderr: childStderr,
     };
 
-    handler(args, ctx).then(
-      (code) => {
-        done = true;
-        if (!killed) {
-          exitCode = code;
-          resolveWait?.(exitCode);
-          this.table.remove(pid);
-        }
-      },
-      (err) => {
-        done = true;
-        if (!killed) {
-          try {
-            const msg = new TextEncoder().encode(String(err));
-            childStderr.write(msg);
-          } catch { /* stderr may be closed */ }
-          exitCode = 1;
-          resolveWait?.(exitCode);
-          this.table.remove(pid);
-        }
-      },
-    );
+    const result = handler(args, ctx);
+
+    if (typeof result === 'number') {
+      done = true;
+      exitCode = result;
+      resolveWait(result);
+      this.table.remove(pid);
+      // Override wait() to return the value directly for sync callers
+      // that can't await Promises (e.g., WASM sync bridge)
+      (processHandler as { wait: () => unknown }).wait = () => result as unknown as Promise<number>;
+    } else {
+      result.then(
+        (code: number) => {
+          done = true;
+          if (!killed) {
+            exitCode = code;
+            resolveWait(code);
+            this.table.remove(pid);
+          }
+        },
+        (err: unknown) => {
+          done = true;
+          if (!killed) {
+            try {
+              const msg = new TextEncoder().encode(String(err));
+              childStderr.write(msg);
+            } catch { /* stderr may be closed */ }
+            exitCode = 1;
+            resolveWait(1);
+            this.table.remove(pid);
+          }
+        },
+      );
+    }
 
     return proc;
   }

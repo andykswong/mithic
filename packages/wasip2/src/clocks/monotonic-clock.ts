@@ -14,7 +14,14 @@ export function now(): bigint {
 /** Create a Pollable which will resolve once the specified instant in nanoseconds has occurred. */
 export function subscribeInstant(when: bigint): Pollable {
   const whenMs = Number(when / 1000n) / 1000;
-  return new Pollable(() => nowMs() >= whenMs);
+  const buf = new Int32Array(new SharedArrayBuffer(4));
+  return new Pollable(
+    () => nowMs() >= whenMs,
+    () => {
+      const remaining = whenMs - nowMs();
+      if (remaining > 0) Atomics.wait(buf, 0, 0, remaining);
+    },
+  );
 }
 
 /** Create a Pollable which will resolve after the specified duration in nanoseconds has elapsed. */

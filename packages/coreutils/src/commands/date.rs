@@ -22,8 +22,10 @@ struct DateTime {
 }
 
 fn get_datetime() -> DateTime {
-    let now = crate::bindings::wasi::clocks::wall_clock::now();
-    let secs = now.seconds;
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     epoch_to_datetime(secs)
 }
 
@@ -122,4 +124,117 @@ fn day_of_year(year: u32, month: u8, day: u8) -> u32 {
 
 fn is_leap(year: u32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- epoch_to_datetime ---
+
+    #[test]
+    fn epoch_zero_is_unix_epoch() {
+        let dt = epoch_to_datetime(0);
+        assert_eq!(dt.year, 1970);
+        assert_eq!(dt.month, 1);
+        assert_eq!(dt.day, 1);
+        assert_eq!(dt.hour, 0);
+        assert_eq!(dt.minute, 0);
+        assert_eq!(dt.second, 0);
+        assert_eq!(dt.weekday, 4); // Thursday
+    }
+
+    #[test]
+    fn epoch_one_day_later() {
+        let dt = epoch_to_datetime(86400);
+        assert_eq!(dt.year, 1970);
+        assert_eq!(dt.month, 1);
+        assert_eq!(dt.day, 2);
+        assert_eq!(dt.weekday, 5); // Friday
+    }
+
+    #[test]
+    fn epoch_known_date() {
+        // 2000-01-01 00:00:00 UTC = 946684800
+        let dt = epoch_to_datetime(946684800);
+        assert_eq!(dt.year, 2000);
+        assert_eq!(dt.month, 1);
+        assert_eq!(dt.day, 1);
+    }
+
+    #[test]
+    fn epoch_time_components() {
+        // 3661 seconds = 1h 1m 1s
+        let dt = epoch_to_datetime(3661);
+        assert_eq!(dt.hour, 1);
+        assert_eq!(dt.minute, 1);
+        assert_eq!(dt.second, 1);
+    }
+
+    // --- is_leap ---
+
+    #[test]
+    fn leap_year_divisible_by_4() {
+        assert!(is_leap(2024));
+    }
+
+    #[test]
+    fn leap_year_century_not_leap() {
+        assert!(!is_leap(1900));
+    }
+
+    #[test]
+    fn leap_year_400_is_leap() {
+        assert!(is_leap(2000));
+    }
+
+    #[test]
+    fn non_leap_year() {
+        assert!(!is_leap(2023));
+    }
+
+    // --- format_datetime ---
+
+    #[test]
+    fn format_year() {
+        let dt = epoch_to_datetime(0);
+        assert_eq!(format_datetime("%Y", &dt), "1970");
+    }
+
+    #[test]
+    fn format_month_day() {
+        let dt = epoch_to_datetime(0);
+        assert_eq!(format_datetime("%m/%d", &dt), "01/01");
+    }
+
+    #[test]
+    fn format_abbrev_month() {
+        let dt = epoch_to_datetime(0); // January
+        assert_eq!(format_datetime("%b", &dt), "Jan");
+    }
+
+    #[test]
+    fn format_abbrev_weekday() {
+        let dt = epoch_to_datetime(0); // Thursday
+        assert_eq!(format_datetime("%a", &dt), "Thu");
+    }
+
+    #[test]
+    fn format_percent_literal() {
+        let dt = epoch_to_datetime(0);
+        assert_eq!(format_datetime("100%%", &dt), "100%");
+    }
+
+    #[test]
+    fn format_day_of_year_jan1() {
+        let dt = epoch_to_datetime(0);
+        assert_eq!(format_datetime("%j", &dt), "001");
+    }
+
+    #[test]
+    fn format_day_of_year_dec31_non_leap() {
+        // 1970-12-31 = day 365
+        let dt = epoch_to_datetime(86400 * 364);
+        assert_eq!(format_datetime("%j", &dt), "365");
+    }
 }

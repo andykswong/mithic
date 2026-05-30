@@ -10,8 +10,8 @@ pub fn run(args: &[&str]) -> u8 {
         return 1;
     }
 
-    // In a WASM context there is no blocking sleep available; for non-zero
-    // durations we simply return immediately (best-effort approximation).
-    let _ = secs;
+    if secs > 0.0 {
+        std::thread::sleep(std::time::Duration::from_secs_f64(secs));
+    }
     0
 }

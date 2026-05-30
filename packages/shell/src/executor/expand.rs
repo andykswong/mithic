@@ -402,7 +402,7 @@ impl<R: Runtime> Shell<R> {
 
     pub(crate) fn exec_capturing(&mut self, raw: &str) -> String {
         let (inp, out) = self.rt.create_pipe();
-        let mut parser = Parser::new(raw);
+        let mut parser = Parser::new_with_mode(raw, self.options.posix);
         if let Some(list) = parser.parse() {
             self.exec_list_with_stdout(list, out);
         } else {

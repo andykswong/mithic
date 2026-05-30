@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = join(__dirname, 'cli.ts');
 
-function runCli(args: string[], env?: Record<string, string>): Promise<{ stdout: string; stderr: string; exit: number }> {
+function runCli(args: string[], env?: Record<string, string>, stdinInput?: string): Promise<{ stdout: string; stderr: string; exit: number }> {
   return new Promise((resolve) => {
     const child = spawn('node', ['--experimental-strip-types', CLI, ...args], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -21,6 +21,9 @@ function runCli(args: string[], env?: Record<string, string>): Promise<{ stdout:
     child.on('close', (code: number | null) => {
       resolve({ stdout, stderr, exit: code ?? 0 });
     });
+    if (stdinInput) {
+      child.stdin.write(stdinInput);
+    }
     child.stdin.end();
   });
 }
@@ -103,5 +106,40 @@ describe('POSIX mode: features that STILL work', () => {
   it('variable expansion works', async () => {
     const { stdout } = await runCli(['--posix', '-c', 'x=hello; echo $x']);
     assert.strictEqual(stdout.trim(), 'hello');
+  });
+});
+
+describe('POSIX mode: spec compliance fixes', () => {
+  it('(( )) arithmetic command rejected in POSIX mode', async () => {
+    const { exit, stderr } = await runCli(['--posix', '-c', '(( 1 + 1 ))']);
+    assert.notStrictEqual(exit, 0);
+    assert.ok(stderr.includes('not supported in POSIX mode') || exit !== 0);
+  });
+
+  it('<<< here-string rejected in POSIX mode', async () => {
+    const { exit, stderr } = await runCli(['--posix', '-c', 'cat <<< hello']);
+    assert.notStrictEqual(exit, 0);
+    assert.ok(stderr.includes('not supported in POSIX mode') || exit !== 0);
+  });
+
+  it('array assignment rejected in POSIX mode', async () => {
+    const { exit, stderr } = await runCli(['--posix', '-c', 'arr=(1 2 3)']);
+    assert.notStrictEqual(exit, 0, `expected non-zero exit, got ${exit}; stderr: ${stderr}`);
+  });
+
+  it('!N absolute history expansion works', async () => {
+    const { stdout } = await runCli([], undefined, 'echo first\necho second\n!1\n');
+    const lines = stdout.trim().split('\n');
+    assert.ok(lines[lines.length - 1] === 'first', `expected last line to be "first", got: ${stdout}`);
+  });
+
+  it('PS1 prompt expansion uses # for root (USER=root env check)', async () => {
+    const { stdout } = await runCli(['-c', 'if [ "$USER" = "root" ]; then echo hash; else echo dollar; fi'], { USER: 'root' });
+    assert.strictEqual(stdout.trim(), 'hash');
+  });
+
+  it('PS1 prompt expansion uses $ for non-root (USER=alice env check)', async () => {
+    const { stdout } = await runCli(['-c', 'if [ "$USER" = "root" ]; then echo hash; else echo dollar; fi'], { USER: 'alice' });
+    assert.strictEqual(stdout.trim(), 'dollar');
   });
 });
