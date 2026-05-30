@@ -206,8 +206,10 @@ function createSharedPipe(bufferSize: number): { input: InputStream; output: Out
   function readFromRing(len: number): Uint8Array {
     const rp = Atomics.load(control, READ_POS);
     const result = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      result[i] = data[(rp + i) % bufferSize]!;
+    const firstChunk = Math.min(len, bufferSize - rp);
+    result.set(data.subarray(rp, rp + firstChunk));
+    if (len > firstChunk) {
+      result.set(data.subarray(0, len - firstChunk), firstChunk);
     }
     Atomics.store(control, READ_POS, (rp + len) % bufferSize);
     Atomics.notify(control, READ_POS);
@@ -216,8 +218,10 @@ function createSharedPipe(bufferSize: number): { input: InputStream; output: Out
 
   function writeToRing(bytes: Uint8Array): void {
     const wp = Atomics.load(control, WRITE_POS);
-    for (let i = 0; i < bytes.byteLength; i++) {
-      data[(wp + i) % bufferSize] = bytes[i]!;
+    const firstChunk = Math.min(bytes.byteLength, bufferSize - wp);
+    data.set(bytes.subarray(0, firstChunk), wp);
+    if (bytes.byteLength > firstChunk) {
+      data.set(bytes.subarray(firstChunk), 0);
     }
     Atomics.store(control, WRITE_POS, (wp + bytes.byteLength) % bufferSize);
     Atomics.notify(control, WRITE_POS);

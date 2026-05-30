@@ -144,7 +144,7 @@ describe('createPipe (SharedPipe)', () => {
   });
 
   it('write exceeding free space throws last-operation-failed', () => {
-    const { input, output } = createPipe({ shared: true, bufferSize: 16 });
+    const { output } = createPipe({ shared: true, bufferSize: 16 });
     // Fill the buffer (bufferSize - 1 = 15 usable bytes)
     output.write(new Uint8Array(15));
     // Attempt to write 1 more byte — should throw
@@ -158,5 +158,27 @@ describe('createPipe (SharedPipe)', () => {
     const { output } = createPipe({ shared: true, bufferSize: 16 });
     output.write(new Uint8Array(15));
     assert.equal(output.checkWrite(), 0n);
+  });
+});
+
+describe('createPipe (SharedPipe) bulk operations', () => {
+  it('handles wrap-around writes correctly', () => {
+    const { input, output } = createPipe({ shared: true, bufferSize: 16 });
+    // Write 10 bytes, read 10 bytes (move read pointer to 10)
+    output.write(new Uint8Array([1,2,3,4,5,6,7,8,9,10]));
+    input.blockingRead(10n);
+    // Write 10 bytes starting at position 10 — wraps around at 16
+    output.write(new Uint8Array([11,12,13,14,15,16,17,18,19,20]));
+    const result = input.blockingRead(10n);
+    assert.deepEqual(result, new Uint8Array([11,12,13,14,15,16,17,18,19,20]));
+  });
+
+  it('large write fills entire buffer correctly', () => {
+    const { input, output } = createPipe({ shared: true, bufferSize: 64 });
+    const big = new Uint8Array(63); // max usable = bufferSize - 1
+    for (let i = 0; i < 63; i++) big[i] = i;
+    output.write(big);
+    const result = input.blockingRead(63n);
+    assert.deepEqual(result, big);
   });
 });
