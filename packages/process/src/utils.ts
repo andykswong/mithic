@@ -189,6 +189,9 @@ function createSharedPipe(bufferSize: number): { input: InputStream; output: Out
         throw { tag: 'last-operation-failed', val: { toDebugString: () => 'broken-pipe' } } as StreamError;
       }
       if (buf.byteLength === 0) return;
+      if (buf.byteLength > freeSpace()) {
+        throw { tag: 'last-operation-failed', val: { toDebugString: () => 'buffer-overflow' } } as StreamError;
+      }
       writeToRing(buf);
     },
 

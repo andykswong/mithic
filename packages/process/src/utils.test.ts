@@ -142,4 +142,21 @@ describe('createPipe (SharedPipe)', () => {
     output.write(new Uint8Array([1]));
     assert.equal(pollable.ready(), true);
   });
+
+  it('write exceeding free space throws last-operation-failed', () => {
+    const { input, output } = createPipe({ shared: true, bufferSize: 16 });
+    // Fill the buffer (bufferSize - 1 = 15 usable bytes)
+    output.write(new Uint8Array(15));
+    // Attempt to write 1 more byte — should throw
+    assert.throws(
+      () => output.write(new Uint8Array([99])),
+      (err: StreamError) => err.tag === 'last-operation-failed',
+    );
+  });
+
+  it('checkWrite returns 0 when buffer is full', () => {
+    const { output } = createPipe({ shared: true, bufferSize: 16 });
+    output.write(new Uint8Array(15));
+    assert.equal(output.checkWrite(), 0n);
+  });
 });
