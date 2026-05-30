@@ -182,3 +182,40 @@ describe('createPipe (SharedPipe) bulk operations', () => {
     assert.deepEqual(result, big);
   });
 });
+
+describe('SharedPipe stress', () => {
+  it('survives rapid alternating read/write cycles', () => {
+    const { input, output } = createPipe({ shared: true, bufferSize: 256 });
+    const written: number[] = [];
+    const read: number[] = [];
+
+    for (let i = 0; i < 1000; i++) {
+      const chunk = new Uint8Array([i & 0xff]);
+      output.write(chunk);
+      written.push(i & 0xff);
+      const result = input.read(1n);
+      if (result.byteLength > 0) read.push(result[0]!);
+    }
+    // Drain remaining
+    output[Symbol.dispose]();
+    try {
+      while (true) {
+        const result = input.blockingRead(256n);
+        for (const b of result) read.push(b);
+      }
+    } catch { /* closed */ }
+
+    assert.deepEqual(read, written);
+  });
+
+  it('handles full buffer -> drain -> refill cycle', () => {
+    const { input, output } = createPipe({ shared: true, bufferSize: 32 });
+    for (let cycle = 0; cycle < 10; cycle++) {
+      const data = new Uint8Array(31); // max fill
+      data.fill(cycle);
+      output.write(data);
+      const result = input.blockingRead(31n);
+      assert.deepEqual(result, data);
+    }
+  });
+});
