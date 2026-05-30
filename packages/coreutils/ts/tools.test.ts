@@ -157,6 +157,41 @@ describe('sed', () => {
   });
 });
 
+describe('sed hold space and branching', () => {
+  it('h and g: copy to hold and get back', async () => {
+    const { stdout } = await runShell('printf "first\\nsecond\\n" | sed -n -e "1h" -e "2g" -e "2p"\n');
+    assert.strictEqual(stdout.trim(), 'first');
+  });
+
+  it('H and G: append to/from hold', async () => {
+    const { stdout } = await runShell('printf "a\\nb\\n" | sed -n -e "H" -e "2g" -e "2p"\n');
+    assert.ok(stdout.includes('a'));
+    assert.ok(stdout.includes('b'));
+  });
+
+  it('x: exchange pattern and hold', async () => {
+    const { stdout } = await runShell('printf "one\\ntwo\\n" | sed -n -e "1h" -e "1d" -e "2x" -e "2p" -e "2x" -e "2p"\n');
+    const lines = stdout.trim().split('\n');
+    assert.strictEqual(lines[0], 'one');
+    assert.strictEqual(lines[1], 'two');
+  });
+
+  it('b: branch to end skips remaining commands', async () => {
+    const { stdout } = await runShell('printf "a\\nb\\nc\\n" | sed "/b/b; s/$/_end/"\n');
+    assert.ok(stdout.includes('a_end'));
+    assert.ok(stdout.includes('b'));
+    assert.ok(!stdout.includes('b_end'));
+    assert.ok(stdout.includes('c_end'));
+  });
+
+  it(':label and b label: branch to label', async () => {
+    const { stdout } = await runShell('printf "a\\nb\\nc\\n" | sed "/b/b skip; s/$/_ok/; :skip"\n');
+    assert.ok(stdout.includes('a_ok'));
+    assert.ok(!stdout.includes('b_ok'));
+    assert.ok(stdout.includes('c_ok'));
+  });
+});
+
 // =============================================================================
 // find
 // =============================================================================
@@ -218,6 +253,25 @@ describe('find', () => {
     assert.ok(stdout.includes('file1.txt'));
     assert.ok(stdout.includes('file2.txt'));
     assert.ok(stdout.includes('sub'));
+  });
+});
+
+describe('find glob patterns', () => {
+  it('find -name with ? single-char glob', async () => {
+    const { stdout } = await runShell(
+      'mkdir -p /tmp/fg && echo x > /tmp/fg/ab && echo x > /tmp/fg/abc\nfind /tmp/fg -name "?b"\n'
+    );
+    assert.ok(stdout.includes('ab'));
+    assert.ok(!stdout.includes('abc'));
+  });
+
+  it('find -name with [...] character class', async () => {
+    const { stdout } = await runShell(
+      'mkdir -p /tmp/fc && echo x > /tmp/fc/cat && echo x > /tmp/fc/bat && echo x > /tmp/fc/rat\nfind /tmp/fc -name "[cb]at"\n'
+    );
+    assert.ok(stdout.includes('cat'));
+    assert.ok(stdout.includes('bat'));
+    assert.ok(!stdout.includes('rat'));
   });
 });
 

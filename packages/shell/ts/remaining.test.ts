@@ -76,6 +76,11 @@ describe('builtin: mapfile/readarray', () => {
 });
 
 describe('builtin: hash', () => {
+  it('hash with no args prints empty table', async () => {
+    const { stdout, exit } = await runShell('hash\n');
+    assert.strictEqual(exit, 0);
+  });
+
   it('hash -r clears without error', async () => {
     const { exit } = await runShell('hash -r\n');
     assert.strictEqual(exit, 0);
