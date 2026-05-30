@@ -265,8 +265,7 @@ describe('foreground tracking', () => {
   });
 
   it('signal delivers to all foreground processes', async () => {
-    let resolveCmd: ((code: number) => void) | null = null;
-    const handler: CommandHandler = () => new Promise(r => { resolveCmd = r; });
+    const handler: CommandHandler = () => new Promise(() => {});
     const mgr = new SimpleProcessManager({ commandResolver: () => handler });
     const proc = mgr.spawn('test', []);
     const waitPromise = proc.wait();
