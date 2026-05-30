@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import { strictEqual, ok } from 'node:assert';
+import assert from 'node:assert';
 
 import { createCallHandler } from './call-handler.ts';
 import { MemoryFsProvider } from '../vfs/providers/memory.ts';
@@ -7,7 +8,7 @@ import {
   FILE, STDIN, STDOUT,
   FS_OPEN, FS_STAT, FS_READ, FS_WRITE, FS_CLOSE, FS_MKDIR, FS_READDIR,
   FS_UNLINK, FS_RMDIR, FS_RENAME, FS_SYMLINK, FS_READLINK,
-  HTTP_SEND,
+  HTTP_SEND, SOCKET_CREATE,
   INPUT_STREAM_READ, OUTPUT_STREAM_WRITE,
 } from './calls.ts';
 
@@ -126,5 +127,31 @@ describe('createCallHandler - stdio', () => {
     const outData = new TextEncoder().encode('hello');
     await handler(OUTPUT_STREAM_WRITE | STDOUT, null, { data: outData });
     strictEqual(received.length, 1);
+  });
+});
+
+describe('createCallHandler without providers', () => {
+  it('FS call throws descriptive error when no fs provider', async () => {
+    const handler = createCallHandler({});
+    await assert.rejects(
+      () => handler(FS_OPEN, null, { path: '/foo', flags: {} }),
+      (err: Error) => err.message.includes('No filesystem provider configured'),
+    );
+  });
+
+  it('HTTP call throws descriptive error when no http provider', async () => {
+    const handler = createCallHandler({});
+    await assert.rejects(
+      () => handler(HTTP_SEND, null, { method: 'GET', url: 'http://x' }),
+      (err: Error) => err.message.includes('No HTTP provider configured'),
+    );
+  });
+
+  it('Socket call throws descriptive error when no socket provider', async () => {
+    const handler = createCallHandler({});
+    await assert.rejects(
+      () => handler(SOCKET_CREATE, null, {}),
+      (err: Error) => err.message.includes('No socket provider configured'),
+    );
   });
 });

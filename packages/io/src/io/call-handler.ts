@@ -49,6 +49,21 @@ export function createCallHandler(options: CallHandlerOptions): CallHandler {
   const socketHandles = new Map<number, TcpSocket>();
   let nextHandleId = 1;
 
+  function requireFs(): FileSystemProvider {
+    if (!fs) throw new Error('No filesystem provider configured');
+    return fs;
+  }
+
+  function requireHttp(): HttpClient {
+    if (!http) throw new Error('No HTTP provider configured');
+    return http;
+  }
+
+  function requireSockets(): SocketProvider {
+    if (!sockets) throw new Error('No socket provider configured');
+    return sockets;
+  }
+
   function allocId(): number {
     return nextHandleId++;
   }
@@ -102,7 +117,7 @@ export function createCallHandler(options: CallHandlerOptions): CallHandler {
       // ─── Filesystem calls ───────────────────────────────────────────
       case FS_OPEN: {
         const { path, flags } = payload as { path: string; flags: OpenFlags };
-        const handle = await fs!.open(path, flags);
+        const handle = await requireFs().open(path, flags);
         const handleId = allocId();
         fileHandles.set(handleId, handle);
         return handleId;
@@ -111,7 +126,7 @@ export function createCallHandler(options: CallHandlerOptions): CallHandler {
       case FS_CLOSE: {
         const handle = fileHandles.get(id!);
         if (handle) {
-          await fs!.close(handle);
+          await requireFs().close(handle);
           fileHandles.delete(id!);
         }
         return;
@@ -119,74 +134,76 @@ export function createCallHandler(options: CallHandlerOptions): CallHandler {
 
       case FS_READ: {
         const { offset, len } = payload as { offset: number; len: number };
-        return fs!.read(getFileHandle(id), offset, len);
+        return requireFs().read(getFileHandle(id), offset, len);
       }
 
       case FS_WRITE: {
         const { data, offset } = payload as { data: Uint8Array; offset: number };
-        return fs!.write(getFileHandle(id), data, offset);
+        return requireFs().write(getFileHandle(id), data, offset);
       }
 
       case FS_TRUNCATE: {
         const { size } = payload as { size: number };
-        return fs!.truncate(getFileHandle(id), size);
+        return requireFs().truncate(getFileHandle(id), size);
       }
 
       case FS_STAT: {
         const { path, options: statOpts } = payload as { path: string; options?: { followSymlinks?: boolean } };
-        return fs!.stat(path, statOpts);
+        return requireFs().stat(path, statOpts);
       }
 
       case FS_READDIR:
-        return fs!.readdir((payload as { path: string }).path);
+        return requireFs().readdir((payload as { path: string }).path);
 
       case FS_MKDIR:
-        return fs!.mkdir((payload as { path: string }).path);
+        return requireFs().mkdir((payload as { path: string }).path);
 
       case FS_UNLINK:
-        return fs!.unlink((payload as { path: string }).path);
+        return requireFs().unlink((payload as { path: string }).path);
 
       case FS_RMDIR:
-        return fs!.rmdir((payload as { path: string }).path);
+        return requireFs().rmdir((payload as { path: string }).path);
 
       case FS_RENAME: {
         const { oldPath, newPath } = payload as { oldPath: string; newPath: string };
-        return fs!.rename(oldPath, newPath);
+        return requireFs().rename(oldPath, newPath);
       }
 
       case FS_SYMLINK: {
         const { target, linkPath } = payload as { target: string; linkPath: string };
-        return fs!.symlink(target, linkPath);
+        return requireFs().symlink(target, linkPath);
       }
 
       case FS_READLINK:
-        return fs!.readlink((payload as { path: string }).path);
+        return requireFs().readlink((payload as { path: string }).path);
 
       case FS_CHMOD: {
         const { path, mode } = payload as { path: string; mode: number };
-        return fs!.chmod(path, mode);
+        return requireFs().chmod(path, mode);
       }
 
       case FS_UTIMES: {
         const { path, atime, mtime } = payload as { path: string; atime: number; mtime: number };
-        return fs!.utimes(path, new Date(atime), new Date(mtime));
+        return requireFs().utimes(path, new Date(atime), new Date(mtime));
       }
 
       case FS_LINK: {
         const { existingPath, newPath } = payload as { existingPath: string; newPath: string };
-        return fs!.link(existingPath, newPath);
+        return requireFs().link(existingPath, newPath);
       }
 
-      case FS_REALPATH:
-        return fs!.realpath ? fs!.realpath((payload as { path: string }).path) : (payload as { path: string }).path;
+      case FS_REALPATH: {
+        const fsp = requireFs();
+        return fsp.realpath ? fsp.realpath((payload as { path: string }).path) : (payload as { path: string }).path;
+      }
 
       // ─── HTTP calls ─────────────────────────────────────────────────
       case HTTP_SEND:
-        return http!.send(payload as HttpRequest);
+        return requireHttp().send(payload as HttpRequest);
 
       // ─── Socket calls ───────────────────────────────────────────────
       case SOCKET_CREATE: {
-        const socket = await sockets!.createTcpSocket();
+        const socket = await requireSockets().createTcpSocket();
         const socketId = allocId();
         socketHandles.set(socketId, socket);
         return socketId;
@@ -227,7 +244,7 @@ export function createCallHandler(options: CallHandlerOptions): CallHandler {
       }
 
       case SOCKET_RESOLVE:
-        return sockets!.resolveName((payload as { name: string }).name);
+        return requireSockets().resolveName((payload as { name: string }).name);
 
       default:
         throw new Error(`unknown call: method=0x${method.toString(16)}, type=0x${resourceType.toString(16)}`);
