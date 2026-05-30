@@ -99,6 +99,26 @@ impl WasiRuntime {
         ProcessHandle(id)
     }
 
+    fn get_input(&self, handle: &InputHandle) -> Option<&InputStream> {
+        self.inputs.get(handle.0 as usize).and_then(|o| o.as_ref())
+    }
+
+    fn take_input(&mut self, handle: &InputHandle) -> Option<InputStream> {
+        self.inputs.get_mut(handle.0 as usize).and_then(|o| o.take())
+    }
+
+    fn get_output(&self, handle: &OutputHandle) -> Option<&OutputStream> {
+        self.outputs.get(handle.0 as usize).and_then(|o| o.as_ref())
+    }
+
+    fn take_output(&mut self, handle: &OutputHandle) -> Option<OutputStream> {
+        self.outputs.get_mut(handle.0 as usize).and_then(|o| o.take())
+    }
+
+    fn get_process(&self, handle: &ProcessHandle) -> Option<&Process> {
+        self.processes.get(handle.0 as usize).and_then(|o| o.as_ref())
+    }
+
     fn get_root_descriptor() -> Option<Descriptor> {
         preopens::get_directories()
             .into_iter()
@@ -230,7 +250,7 @@ impl ProcessMgr for WasiRuntime {
     }
 
     fn dup_output(&mut self, handle: &OutputHandle) -> OutputHandle {
-        let out = self.outputs[handle.0 as usize].as_ref().expect("invalid output handle");
+        let out = self.get_output(handle).expect("invalid output handle");
         let dup = proc_manager::dup_output_stream(out);
         self.store_output(dup)
     }
@@ -243,13 +263,13 @@ impl ProcessMgr for WasiRuntime {
     ) -> Result<ProcessHandle, SpawnError> {
         let stdin = opts
             .stdin
-            .and_then(|h| self.inputs[h.0 as usize].take());
+            .and_then(|h| self.take_input(&h));
         let stdout = opts
             .stdout
-            .and_then(|h| self.outputs[h.0 as usize].take());
+            .and_then(|h| self.take_output(&h));
         let stderr = opts
             .stderr
-            .and_then(|h| self.outputs[h.0 as usize].take());
+            .and_then(|h| self.take_output(&h));
 
         let env_list: Option<Vec<(String, String)>> = opts.env;
         let spawn_opts = SpawnOptions {
@@ -267,7 +287,7 @@ impl ProcessMgr for WasiRuntime {
     }
 
     fn pipe_read_all(&mut self, handle: InputHandle) -> Vec<u8> {
-        let stream = match self.inputs[handle.0 as usize].take() {
+        let stream = match self.take_input(&handle) {
             Some(s) => s,
             None => return Vec::new(),
         };
@@ -283,7 +303,7 @@ impl ProcessMgr for WasiRuntime {
     }
 
     fn pipe_read_line(&mut self, handle: &InputHandle) -> Option<String> {
-        let stream = self.inputs[handle.0 as usize].as_ref()?;
+        let stream = self.get_input(handle)?;
         let mut buf = Vec::new();
         loop {
             match stream.blocking_read(1) {
@@ -305,17 +325,17 @@ impl ProcessMgr for WasiRuntime {
     }
 
     fn pipe_write(&mut self, handle: &OutputHandle, data: &[u8]) {
-        if let Some(stream) = self.outputs[handle.0 as usize].as_ref() {
+        if let Some(stream) = self.get_output(handle) {
             let _ = stream.blocking_write_and_flush(data);
         }
     }
 
     fn pipe_close_write(&mut self, handle: OutputHandle) {
-        self.outputs[handle.0 as usize].take();
+        self.take_output(&handle);
     }
 
     fn wait(&mut self, handle: &ProcessHandle) -> u8 {
-        if let Some(proc) = self.processes[handle.0 as usize].as_ref() {
+        if let Some(proc) = self.get_process(handle) {
             proc.wait()
         } else {
             0
@@ -323,21 +343,19 @@ impl ProcessMgr for WasiRuntime {
     }
 
     fn try_wait(&self, handle: &ProcessHandle) -> Option<u8> {
-        self.processes[handle.0 as usize]
-            .as_ref()
+        self.get_process(handle)
             .and_then(|p| p.try_wait())
     }
 
     fn kill(&self, handle: &ProcessHandle, signal: Signal) -> Result<(), ()> {
-        match self.processes[handle.0 as usize].as_ref() {
+        match self.get_process(handle) {
             Some(proc) => proc.kill(map_signal(signal)).map_err(|_| ()),
             None => Err(()),
         }
     }
 
     fn pid(&self, handle: &ProcessHandle) -> u32 {
-        self.processes[handle.0 as usize]
-            .as_ref()
+        self.get_process(handle)
             .map(|p| p.pid())
             .unwrap_or(0)
     }
