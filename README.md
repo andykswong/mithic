@@ -4,18 +4,75 @@
 [![license: MIT](https://img.shields.io/badge/License-MIT-red.svg?style=flat-square)](./LICENSE)
 [![build](https://img.shields.io/github/actions/workflow/status/andykswong/mithic/build.yaml?style=flat-square)](https://github.com/andykswong/mithic/actions/workflows/build.yaml)
 
-> Isomorphic virtual process runtime for JavaScript and WebAssembly
+> A virtual OS for the agent era.
 
-## Overview
+Sandboxed shell that runs WebAssembly components as processes — with a pluggable filesystem and capability-scoped access. Runs anywhere JavaScript runs.
 
-Mithic provides a virtual process runtime that runs identically in the browser (via [jco](https://github.com/bytecodealliance/jco) / WebAssembly Component Model) and on native systems (Node.js, wasmtime). It bridges Unix-style terminal workflows with modern web applications through a pluggable virtual filesystem and WASI Preview 2 runtime.
+## Why Mithic?
 
-### Core Pillars
+| | Mithic | WebContainers | Docker | WasmEdge |
+|---|---|---|---|---|
+| Runs in browser | Yes | Yes | No | No |
+| Sandboxing | WASM capability model | Node.js sandbox | Linux namespaces | WASM |
+| Pluggable filesystem | Any provider (memory, cloud, custom) | Fixed | Host bind mounts | WASI only |
+| POSIX shell | Full bash-compatible | Node.js-based | Real bash | None |
+| Component model | WASI Preview 2 | Proprietary | N/A | WASI P1 |
+| Agent-safe | Capability-scoped, no escape | Partial | Full but heavy | Partial |
+| Startup time | Instant (in-process) | ~1s | Seconds | Milliseconds |
 
-- **Isomorphic** — Code runs in the browser via `jco` and on native systems using compatible WASM runtimes, backed by the same provider implementations.
-- **Everything is a File** — A unified VFS interface backs local storage, cloud resources, synthetic devices, and collaborative sync layers. Process I/O uses POSIX-style pipes and signals.
-- **Composable** — Only foundational I/O primitives (filesystem, HTTP, sockets). Higher-level services compose on top via standard protocols over virtualized connections.
-- **Scalable** — Each WASM component runs in an isolated worker with scoped permissions. The sync bridge (`SharedArrayBuffer` + `Atomics`) allows many concurrent processes without blocking the I/O loop.
+## Core Pillars
+
+1. **Security** — WASM capability-based sandboxing. Each process runs in isolation; only explicitly mounted resources are accessible.
+2. **Agent Harness** — Designed for AI agent tool execution. Pluggable VFS means agents see only the resources they need.
+3. **Virtualization** — Mount any storage provider at any path. Cloud storage, browser OPFS, or custom backends all plug in via the same interface.
+4. **Isomorphic** — Same code runs in the browser (local-first, no server required) and on Node.js servers. Future: native Rust host.
+
+## Composable Layers
+
+> Each package works independently — pick the abstraction level you need.
+
+## Packages
+
+| Package | Description |
+|---------|-------------|
+| [`@mithic/io`](./packages/io) | I/O layer: virtual file system, HTTP/socket providers, sync-bridge |
+| [`@mithic/wasip2`](./packages/wasip2) | WASI Preview 2 shim for WASM components |
+| [`@mithic/process`](./packages/process) | Process manager: spawn WASM processes with piped I/O |
+| [`@mithic/shell`](./packages/shell) | Rust WASM shell: bash-compatible interpreter (30+ builtins) |
+| [`@mithic/coreutils`](./packages/coreutils) | BusyBox-style Unix coreutils (30+ commands) as a single WASM component |
+
+### Examples
+
+| Example | Description |
+|---------|-------------|
+| [`examples/simple`](./packages/examples/simple) | JS WebAssembly component built with ComponentizeJS |
+| [`examples/rust-cli`](./packages/examples/rust-cli) | Rust WebAssembly component |
+| [`examples/shell`](./packages/examples/shell) | xterm.js browser terminal with MithicShell |
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Browser / Node.js                      │
+├────────────────────────┬────────────────────────────────┤
+│      Main Thread       │         Web Worker             │
+│                        │                                │
+│  ┌──────────────────┐  │  ┌──────────────────────────┐  │
+│  │     IoLoop       │  │  │    WASM Component        │  │
+│  │  ┌────────────┐  │  │  │    (Shell / Coreutils)   │  │
+│  │  │ VFS Router │  │◄─┼──│  blocking_read/write     │  │
+│  │  │  ├ MemFS   │  │  │  │  (Atomics.wait)          │  │
+│  │  │  ├ OPFS    │  │  │  └──────────────────────────┘  │
+│  │  │  └ NodeFS  │  │  │                                │
+│  │  ├────────────┤  │  │                                │
+│  │  │ HTTP/Sock  │  │  │                                │
+│  │  └────────────┘  │  │                                │
+│  └──────────────────┘  │                                │
+│           ▲             │                                │
+│           │ SharedArrayBuffer + Atomics.notify           │
+│           └─────────────┴────────────────────────────────┘
+└─────────────────────────────────────────────────────────┘
+```
 
 ## Getting Started
 
@@ -51,24 +108,6 @@ The [shell example](./packages/examples/shell/) demonstrates an xterm.js termina
 cd packages/examples/shell
 npm run dev
 ```
-
-## Packages
-
-| Package | Description |
-|---------|-------------|
-| [`@mithic/io`](./packages/io) | I/O layer: virtual file system, HTTP/socket providers, sync-bridge |
-| [`@mithic/wasip2`](./packages/wasip2) | WASI Preview 2 shim for WASM components |
-| [`@mithic/process`](./packages/process) | Process manager: spawn WASM processes with piped I/O |
-| [`@mithic/shell`](./packages/shell) | Rust WASM shell: bash-like interpreter as a WASI P2 component |
-| [`@mithic/just-bash`](./packages/just-bash) | Shell integration: adapts [just-bash](https://github.com/nicholasgasior/just-bash) to mithic VFS and process manager |
-
-### Examples
-
-| Example | Description |
-|---------|-------------|
-| [`examples/simple`](./packages/examples/simple) | JS WebAssembly component built with ComponentizeJS |
-| [`examples/rust-cli`](./packages/examples/rust-cli) | Rust WebAssembly component |
-| [`examples/shell`](./packages/examples/shell) | xterm.js browser terminal with JustBashShell |
 
 ## Development
 
