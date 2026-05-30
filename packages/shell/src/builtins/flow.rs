@@ -126,7 +126,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
             }
         }
         "exec" => exec_exec(shell, args, stdin, stdout),
-        "hash" => 0,
+        "hash" => exec_hash(shell, args, stdout),
         "history" => {
             if args.first().map(|s| s.as_str()) == Some("-c") {
                 shell.history.clear();
@@ -197,6 +197,59 @@ fn exec_exec<R: Runtime>(
             127
         }
     }
+}
+
+fn exec_hash<R: Runtime>(
+    shell: &mut Shell<R>,
+    args: &[String],
+    stdout: Option<OutputHandle>,
+) -> u8 {
+    if args.is_empty() {
+        let mut entries: Vec<(String, String)> = shell.hash_table.iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+        for (name, path) in entries {
+            let msg = format!("{}={}\n", name, path);
+            write_out(shell, &stdout, &msg);
+        }
+        return 0;
+    }
+
+    if args.len() == 1 && args[0] == "-r" {
+        shell.hash_table.clear();
+        return 0;
+    }
+
+    let path_var = shell.env.get("PATH")
+        .map(|v| v.as_scalar().to_string())
+        .unwrap_or_default();
+    let dirs: Vec<&str> = path_var.split(':').collect();
+
+    let mut exit = 0u8;
+    for name in args {
+        if name == "-r" {
+            continue;
+        }
+        let mut found = false;
+        for dir in &dirs {
+            let candidate = if dir.is_empty() {
+                name.clone()
+            } else {
+                format!("{}/{}", dir, name)
+            };
+            if shell.rt.file_exists(&candidate) {
+                shell.hash_table.insert(name.clone(), candidate);
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            shell.rt.write_stderr(&format!("{}: hash: {}: not found\n", shell.shell_name, name));
+            exit = 1;
+        }
+    }
+    exit
 }
 
 fn exec_source<R: Runtime>(shell: &mut Shell<R>, file: &str) -> u8 {

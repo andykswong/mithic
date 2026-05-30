@@ -39,6 +39,7 @@ pub struct Shell<R: Runtime> {
     pub(crate) exec_stdout_path: Option<String>,
     pub(crate) shell_name: String,
     pub(crate) history: Vec<String>,
+    pub(crate) hash_table: HashMap<String, String>,
 }
 
 impl<R: Runtime> Shell<R> {
@@ -73,6 +74,7 @@ impl<R: Runtime> Shell<R> {
             exec_stdout_path: None,
             shell_name: "sh".to_string(),
             history: Vec::new(),
+            hash_table: HashMap::new(),
         }
     }
 
