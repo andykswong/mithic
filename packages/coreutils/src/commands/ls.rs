@@ -69,13 +69,45 @@ pub fn run(args: &[&str]) -> u8 {
     errors
 }
 
-fn print_long(path: &str, name: &str) {
-    let (type_char, size) = match std::fs::metadata(path) {
-        Ok(m) => {
-            let t = if m.is_dir() { 'd' } else { '-' };
-            (t, m.len())
-        }
-        Err(_) => ('-', 0),
+fn format_mode_bits(mode: u32) -> String {
+    let mut s = String::with_capacity(10);
+    s.push(if mode & 0o40000 != 0 { 'd' } else { '-' });
+    s.push(if mode & 0o400 != 0 { 'r' } else { '-' });
+    s.push(if mode & 0o200 != 0 { 'w' } else { '-' });
+    s.push(if mode & 0o100 != 0 { 'x' } else { '-' });
+    s.push(if mode & 0o040 != 0 { 'r' } else { '-' });
+    s.push(if mode & 0o020 != 0 { 'w' } else { '-' });
+    s.push(if mode & 0o010 != 0 { 'x' } else { '-' });
+    s.push(if mode & 0o004 != 0 { 'r' } else { '-' });
+    s.push(if mode & 0o002 != 0 { 'w' } else { '-' });
+    s.push(if mode & 0o001 != 0 { 'x' } else { '-' });
+    s
+}
+
+#[cfg(target_family = "wasm")]
+fn get_mode(metadata: &std::fs::Metadata) -> u32 {
+    let dir_bit = if metadata.is_dir() { 0o40000 } else { 0 };
+    let perm_bits = if metadata.permissions().readonly() {
+        0o555
+    } else {
+        0o755
     };
-    write_stdout(&format!("{}{} {:>8} {}\n", type_char, "rwxr-xr-x", size, name));
+    dir_bit | perm_bits
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn get_mode(metadata: &std::fs::Metadata) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode()
+}
+
+fn print_long(path: &str, name: &str) {
+    let (mode_str, size) = match std::fs::metadata(path) {
+        Ok(m) => {
+            let mode = get_mode(&m);
+            (format_mode_bits(mode), m.len())
+        }
+        Err(_) => (String::from("-rwxr-xr-x"), 0),
+    };
+    write_stdout(&format!("{} {:>8} {}\n", mode_str, size, name));
 }
