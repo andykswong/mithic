@@ -52,6 +52,31 @@ describe('SimpleProcessManager', () => {
     assert.deepEqual(capturedEnv, { FOO: 'bar' });
   });
 
+  it('spawn inherits manager env when options.env is undefined', async () => {
+    let capturedEnv: Record<string, string> = {};
+    const handler: CommandHandler = async (_args, ctx) => {
+      capturedEnv = ctx.env;
+      return 0;
+    };
+    const hostEnv = { HOME: '/root', PATH: '/usr/bin:/bin' };
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler, env: hostEnv });
+    const proc = mgr.spawn('test', []);
+    await proc.wait();
+    assert.deepEqual(capturedEnv, hostEnv);
+  });
+
+  it('spawn uses empty env when manager has no env and options.env is undefined', async () => {
+    let capturedEnv: Record<string, string> = {};
+    const handler: CommandHandler = async (_args, ctx) => {
+      capturedEnv = ctx.env;
+      return 0;
+    };
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('test', []);
+    await proc.wait();
+    assert.deepEqual(capturedEnv, {});
+  });
+
   it('kill(sigterm) resolves wait with 128+15', async () => {
     const handler: CommandHandler = async () => {
       await new Promise(r => setTimeout(r, 10000));

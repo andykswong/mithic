@@ -73,6 +73,8 @@ export interface SimpleProcessManagerConfig {
   commandResolver?: CommandResolver;
   processTable?: ProcessTable;
   hostStreams?: HostStreams;
+  /** Default environment variables inherited by spawned processes when no env is given. */
+  env?: Record<string, string>;
 }
 
 /**
@@ -83,12 +85,14 @@ export class SimpleProcessManager implements ProcessManager {
   readonly table: ProcessTable;
   #resolver: CommandResolver;
   readonly #hostStreams: HostStreams;
+  readonly #hostEnv: Record<string, string>;
   readonly #foreground = new Set<Process>();
 
   constructor(config?: SimpleProcessManagerConfig) {
     this.table = config?.processTable ?? new ProcessTable();
     this.#resolver = config?.commandResolver ?? (() => undefined);
     this.#hostStreams = config?.hostStreams ?? DEFAULT_HOST_STREAMS;
+    this.#hostEnv = config?.env ?? {};
   }
 
   /** Get the current command resolver. */
@@ -106,9 +110,11 @@ export class SimpleProcessManager implements ProcessManager {
     const pid = this.table.allocPid();
     const cwd = options?.cwd ?? '/';
     const rawEnv = options?.env as unknown;
-    const env: Record<string, string> = Array.isArray(rawEnv)
-      ? Object.fromEntries(rawEnv as [string, string][])
-      : (rawEnv as Record<string, string> | undefined) ?? {};
+    const env: Record<string, string> = rawEnv === undefined
+      ? this.#hostEnv
+      : Array.isArray(rawEnv)
+        ? Object.fromEntries(rawEnv as [string, string][])
+        : (rawEnv as Record<string, string>);
 
     const childStdin = options?.stdin ?? new InputStream(this.#hostStreams.stdin);
     const childStdout = options?.stdout ?? new OutputStream(this.#hostStreams.stdout);
