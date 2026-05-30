@@ -322,6 +322,36 @@ describe('tr', () => {
     const { stdout } = await runShell('echo "HELLO" | tr "[:upper:]" "[:lower:]"\n');
     assert.strictEqual(stdout.trim(), 'hello');
   });
+
+  it('character class [:lower:] to [:upper:]', async () => {
+    const { stdout } = await runShell('echo "hello" | tr "[:lower:]" "[:upper:]"\n');
+    assert.strictEqual(stdout.trim(), 'HELLO');
+  });
+
+  it('character class [:alpha:] replaces all letters', async () => {
+    const { stdout } = await runShell('echo "abc123" | tr "[:alpha:]" "X"\n');
+    assert.strictEqual(stdout.trim(), 'XXX123');
+  });
+
+  it('character class [:digit:] deletes digits', async () => {
+    const { stdout } = await runShell('echo "abc123def" | tr -d "[:digit:]"\n');
+    assert.strictEqual(stdout.trim(), 'abcdef');
+  });
+
+  it('character class [:space:] squeezes whitespace', async () => {
+    const { stdout } = await runShell('printf "hello   world" | tr -s "[:space:]"\n');
+    assert.strictEqual(stdout.trim(), 'hello world');
+  });
+
+  it('range a-z to A-Z translates lowercase to uppercase', async () => {
+    const { stdout } = await runShell('echo "hello" | tr "a-z" "A-Z"\n');
+    assert.strictEqual(stdout.trim(), 'HELLO');
+  });
+
+  it('range A-Z to a-z translates uppercase to lowercase', async () => {
+    const { stdout } = await runShell('echo "WORLD" | tr "A-Z" "a-z"\n');
+    assert.strictEqual(stdout.trim(), 'world');
+  });
 });
 
 // =============================================================================
@@ -385,5 +415,121 @@ describe('rev', () => {
   it('reverses a number string', async () => {
     const { stdout } = await runShell('echo "12345" | rev\n');
     assert.strictEqual(stdout.trim(), '54321');
+  });
+});
+
+// =============================================================================
+// grep (extended features)
+// =============================================================================
+
+describe('grep extended', () => {
+  it('-r recursively searches directories', async () => {
+    const { stdout } = await runShell(
+      'mkdir -p /tmp/grep_r/sub\necho "needle here" > /tmp/grep_r/a.txt\necho "nothing" > /tmp/grep_r/sub/b.txt\necho "needle again" > /tmp/grep_r/sub/c.txt\ngrep -r "needle" /tmp/grep_r\n'
+    );
+    assert.ok(stdout.includes('needle here'));
+    assert.ok(stdout.includes('needle again'));
+    assert.ok(!stdout.includes('nothing'));
+  });
+
+  it('-r prints filenames in output', async () => {
+    const { stdout } = await runShell(
+      'mkdir -p /tmp/grep_r2\necho "match" > /tmp/grep_r2/x.txt\necho "match" > /tmp/grep_r2/y.txt\ngrep -r "match" /tmp/grep_r2\n'
+    );
+    assert.ok(stdout.includes('/tmp/grep_r2/'));
+  });
+
+  it('-A 2 shows 2 lines after match', async () => {
+    const { stdout } = await runShell(
+      'printf "one\\ntwo\\nthree\\nfour\\nfive\\n" > /tmp/grep_a.txt\ngrep -A 2 "two" /tmp/grep_a.txt\n'
+    );
+    const lines = stdout.trim().split('\n');
+    assert.strictEqual(lines[0], 'two');
+    assert.strictEqual(lines[1], 'three');
+    assert.strictEqual(lines[2], 'four');
+    assert.strictEqual(lines.length, 3);
+  });
+
+  it('-B 2 shows 2 lines before match', async () => {
+    const { stdout } = await runShell(
+      'printf "one\\ntwo\\nthree\\nfour\\nfive\\n" > /tmp/grep_b.txt\ngrep -B 2 "four" /tmp/grep_b.txt\n'
+    );
+    const lines = stdout.trim().split('\n');
+    assert.strictEqual(lines[0], 'two');
+    assert.strictEqual(lines[1], 'three');
+    assert.strictEqual(lines[2], 'four');
+    assert.strictEqual(lines.length, 3);
+  });
+
+  it('-C 1 shows 1 line before and after match', async () => {
+    const { stdout } = await runShell(
+      'printf "one\\ntwo\\nthree\\nfour\\nfive\\n" > /tmp/grep_c.txt\ngrep -C 1 "three" /tmp/grep_c.txt\n'
+    );
+    const lines = stdout.trim().split('\n');
+    assert.strictEqual(lines[0], 'two');
+    assert.strictEqual(lines[1], 'three');
+    assert.strictEqual(lines[2], 'four');
+    assert.strictEqual(lines.length, 3);
+  });
+
+  it('context prints -- separator between non-contiguous groups', async () => {
+    const { stdout } = await runShell(
+      'printf "a\\nb\\nc\\nd\\ne\\nf\\ng\\n" > /tmp/grep_sep.txt\ngrep -C 0 -e "b" -e "f" /tmp/grep_sep.txt\n'
+    );
+    const lines = stdout.trim().split('\n');
+    assert.strictEqual(lines[0], 'b');
+    assert.strictEqual(lines[1], '--');
+    assert.strictEqual(lines[2], 'f');
+  });
+
+  it('-E extended regex with alternation', async () => {
+    const { stdout } = await runShell(
+      'printf "cat\\ndog\\nbird\\nfish\\n" | grep -E "cat|fish"\n'
+    );
+    assert.strictEqual(stdout.trim(), 'cat\nfish');
+  });
+
+  it('-E extended regex with + quantifier', async () => {
+    const { stdout } = await runShell(
+      'printf "ac\\nabc\\nabbc\\n" | grep -E "ab+c"\n'
+    );
+    assert.strictEqual(stdout.trim(), 'abc\nabbc');
+  });
+});
+
+// =============================================================================
+// sed (N/P/D multi-line)
+// =============================================================================
+
+describe('sed multi-line', () => {
+  it('N joins two lines with substitution', async () => {
+    const { stdout } = await runShell(
+      'printf "hello\\nworld\\nfoo\\nbar\\n" | sed "N;s/\\\\n/ /"\n'
+    );
+    const lines = stdout.trim().split('\n');
+    assert.strictEqual(lines[0], 'hello world');
+    assert.strictEqual(lines[1], 'foo bar');
+  });
+
+  it('P prints up to first embedded newline', async () => {
+    const { stdout } = await runShell(
+      'printf "first\\nsecond\\nthird\\n" | sed "N;P"\n'
+    );
+    assert.ok(stdout.includes('first'));
+  });
+
+  it('D deletes first line of pattern space', async () => {
+    const { stdout } = await runShell(
+      'printf "aaa\\nbbb\\nccc\\n" | sed "N;D"\n'
+    );
+    assert.ok(stdout.includes('ccc'));
+  });
+
+  it('$ address matches last line', async () => {
+    const { stdout } = await runShell(
+      'printf "one\\ntwo\\nthree\\n" | sed "\\$s/three/LAST/"\n'
+    );
+    assert.ok(stdout.includes('LAST'));
+    assert.ok(!stdout.includes('three'));
   });
 });

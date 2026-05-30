@@ -4,8 +4,8 @@ use crate::executor::expansion::{
     remove_shortest_prefix, remove_longest_prefix, remove_shortest_suffix, remove_longest_suffix,
     shell_substring, split_var_and_op, parse_array_subscript,
 };
-use crate::parser::{Parser, Word, WordPart};
-use crate::runtime::Runtime;
+use crate::parser::{List, ListItem, ListOp, Parser, Word, WordPart};
+use crate::runtime::{InputHandle, Runtime};
 use crate::shell::Shell;
 use crate::value::ShellValue;
 
@@ -64,6 +64,7 @@ impl<R: Runtime> Shell<R> {
                 let elements = match self.env.get(name) {
                     Some(ShellValue::Array(elements)) => elements.clone(),
                     Some(ShellValue::Scalar(s)) => vec![s.clone()],
+                    Some(ShellValue::AssocArray(map)) => map.values().cloned().collect(),
                     None => return Some(Vec::new()),
                 };
                 if subscript == "*" {
@@ -116,6 +117,14 @@ impl<R: Runtime> Shell<R> {
                 self.params.all().join(&ifs_sep.to_string())
             }
             "!" => self.env.get("!").map(|v| v.as_scalar().to_string()).unwrap_or_default(),
+            "$" => {
+                // $$ expands to the shell's PID. In WASM there is no real PID; use 1.
+                "1".to_string()
+            }
+            "BASHPID" => {
+                // $BASHPID expands to the current process PID (same as $$ for non-subshells).
+                "1".to_string()
+            }
             "RANDOM" => {
                 // Simple LCG pseudo-random number generator (16-bit, 0..32767)
                 self.random_state = self.random_state
@@ -144,6 +153,24 @@ impl<R: Runtime> Shell<R> {
     }
 
     pub(crate) fn expand_brace_var(&mut self, raw: &str) -> String {
+        // ${!name[@]} or ${!name[*]} — list keys of array/assoc array
+        if let Some(inner) = raw.strip_prefix('!') {
+            if let Some((arr_name, subscript)) = parse_array_subscript(inner) {
+                if subscript == "@" || subscript == "*" {
+                    return match self.env.get(arr_name) {
+                        Some(v) => v.assoc_keys().join(" "),
+                        None => String::new(),
+                    };
+                }
+            }
+            // ${!VAR} — indirect expansion (expand the value of $VAR as a variable name)
+            let var_val = self.expand_var(inner, false);
+            if !var_val.is_empty() {
+                return self.expand_var(&var_val, false);
+            }
+            return String::new();
+        }
+
         // ${#arr[@]} or ${#arr[*]} — array length
         if let Some(inner) = raw.strip_prefix('#') {
             if let Some((arr_name, subscript)) = parse_array_subscript(inner) {
@@ -167,6 +194,11 @@ impl<R: Runtime> Shell<R> {
                         None => "0".to_string(),
                     };
                 }
+                // ${#arr[key]} — length of element for assoc array key
+                return match self.env.get(arr_name) {
+                    Some(v) => v.assoc_get(subscript).len().to_string(),
+                    None => "0".to_string(),
+                };
             }
             // ${#VAR} — length of scalar variable
             return self.expand_var(inner, true).len().to_string();
@@ -174,20 +206,27 @@ impl<R: Runtime> Shell<R> {
 
         // ${arr[@]} or ${arr[*]} — all elements space-joined
         // ${arr[n]} — single element at index n
+        // ${arr[key]} — assoc array element by key
         if let Some((arr_name, subscript)) = parse_array_subscript(raw) {
             return match self.env.get(arr_name) {
                 Some(v) => {
                     if subscript == "@" || subscript == "*" {
                         v.all_elements()
                     } else if let Ok(idx) = subscript.parse::<i64>() {
-                        let actual_idx = if idx < 0 {
-                            (v.len() as i64 + idx).max(0) as usize
-                        } else {
-                            idx as usize
-                        };
-                        v.index(actual_idx).to_string()
+                        match v {
+                            ShellValue::AssocArray(_) => v.assoc_get(subscript).to_string(),
+                            _ => {
+                                let actual_idx = if idx < 0 {
+                                    (v.len() as i64 + idx).max(0) as usize
+                                } else {
+                                    idx as usize
+                                };
+                                v.index(actual_idx).to_string()
+                            }
+                        }
                     } else {
-                        String::new()
+                        // Non-numeric subscript: try assoc array lookup
+                        v.assoc_get(subscript).to_string()
                     }
                 }
                 None => String::new(),
@@ -345,7 +384,7 @@ impl<R: Runtime> Shell<R> {
             working.borrow_mut().insert(name.to_string(), val);
             assigned.borrow_mut().insert(name.to_string());
         };
-        let result = crate::arith::eval(&expanded_expr, &lookup, &mut assign);
+        let arith_result = crate::arith::eval(&expanded_expr, &lookup, &mut assign);
 
         let assigned_set = assigned.into_inner();
         for (k, v) in working.into_inner() {
@@ -357,7 +396,14 @@ impl<R: Runtime> Shell<R> {
             }
         }
 
-        result.to_string()
+        match arith_result {
+            Ok(val) => val.to_string(),
+            Err(msg) => {
+                self.rt.write_stderr(&format!("{}: {}\n", self.shell_name, msg));
+                self.last_exit = 1;
+                String::new()
+            }
+        }
     }
 
     pub(crate) fn expand_glob(&self, pattern: &str) -> Vec<String> {
@@ -424,9 +470,13 @@ impl<R: Runtime> Shell<R> {
         tmp_path
     }
 
-    pub(crate) fn exec_proc_sub_out(&mut self, _raw: &str) -> String {
-        self.rt.write_stderr(&format!("{}: >(cmd) process substitution not yet supported\n", self.shell_name));
-        String::new()
+    pub(crate) fn exec_proc_sub_out(&mut self, raw: &str) -> String {
+        let tmp_path = format!("/tmp/.procsub_{}", self.next_id());
+        self.rt.mkdir("/tmp");
+        self.rt.write_file(&tmp_path, &[]);
+        self.procsub_out_pending.push((tmp_path.clone(), raw.to_string()));
+        self.procsub_paths.push(tmp_path.clone());
+        tmp_path
     }
 
     pub(crate) fn next_id(&mut self) -> u64 {
@@ -438,5 +488,61 @@ impl<R: Runtime> Shell<R> {
         for path in &self.procsub_paths {
             self.rt.unlink(path);
         }
+    }
+
+    pub(crate) fn flush_procsub_out(&mut self) {
+        let pending: Vec<_> = self.procsub_out_pending.drain(..).collect();
+        for (path, raw) in pending {
+            let data = self.rt.read_file(&path);
+            if !data.is_empty() {
+                let (inp, out) = self.rt.create_pipe();
+                self.rt.pipe_write(&out, &data);
+                self.rt.pipe_close_write(out);
+                let mut parser = crate::parser::Parser::new_with_mode(&raw, self.options.posix);
+                if let Some(list) = parser.parse() {
+                    self.exec_list_with_stdin(list, inp);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn exec_list_with_stdin(&mut self, list: List, stdin: InputHandle) -> u8 {
+        let mut exit = 0u8;
+        let mut skip_next = false;
+        let mut stdin_opt = Some(stdin);
+
+        for ListItem { pipeline, op } in list.items {
+            if !skip_next {
+                if let Some(inp) = stdin_opt.take() {
+                    let negate = pipeline.negate;
+                    let cmds = pipeline.commands;
+                    if cmds.len() == 1 {
+                        let cmd = cmds.into_iter().next().unwrap();
+                        exit = match cmd {
+                            crate::parser::Command::Simple(sc) => {
+                                self.dispatch_simple(sc, Some(inp), None, None)
+                            }
+                            other => self.exec_compound(other),
+                        };
+                        if negate {
+                            exit = if exit == 0 { 1 } else { 0 };
+                        }
+                    } else {
+                        // Multi-command pipeline: stdin cannot be threaded through;
+                        // exec_pipeline handles negate internally.
+                        exit = self.exec_pipeline(crate::parser::Pipeline { commands: cmds, negate });
+                    }
+                } else {
+                    exit = self.exec_pipeline(pipeline);
+                }
+                if self.exit_requested { break; }
+            }
+            skip_next = match op {
+                Some(ListOp::And) => exit != 0,
+                Some(ListOp::Or) => exit == 0,
+                _ => false,
+            };
+        }
+        exit
     }
 }

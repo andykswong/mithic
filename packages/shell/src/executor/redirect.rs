@@ -17,6 +17,21 @@ impl<R: Runtime> Shell<R> {
                 Redirect::Out(w) => {
                     let expanded = self.expand_word(w);
                     let path = self.resolve_path(&expanded);
+                    if self.options.noclobber && self.rt.file_exists(&path) {
+                        self.rt.write_stderr(&format!("{}: {}: cannot overwrite existing file\n", self.shell_name, expanded));
+                        return false;
+                    }
+                    match self.rt.open_file_write(&path, false) {
+                        Some(h) => *stdout = Some(h),
+                        None => {
+                            self.rt.write_stderr(&format!("{}: {}: cannot open for writing\n", self.shell_name, expanded));
+                            return false;
+                        }
+                    }
+                }
+                Redirect::OutClobber(w) => {
+                    let expanded = self.expand_word(w);
+                    let path = self.resolve_path(&expanded);
                     match self.rt.open_file_write(&path, false) {
                         Some(h) => *stdout = Some(h),
                         None => {

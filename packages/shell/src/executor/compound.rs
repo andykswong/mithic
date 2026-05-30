@@ -57,6 +57,7 @@ impl<R: Runtime> Shell<R> {
             Command::For(fc) => self.exec_for(fc),
             Command::CFor(cf) => self.exec_cfor(cf),
             Command::Case(cc) => self.exec_case(cc),
+            Command::Select(sc) => self.exec_select(sc),
             Command::FunctionDef(fd) => {
                 self.functions.insert(fd.name, *fd.body);
                 0
@@ -346,7 +347,86 @@ impl<R: Runtime> Shell<R> {
         0
     }
 
+    fn exec_select(&mut self, cmd: crate::parser::SelectCommand) -> u8 {
+        let items: Vec<String> = cmd.words.iter()
+            .flat_map(|w| self.expand_word_to_args(w))
+            .collect();
+
+        if items.is_empty() {
+            return 0;
+        }
+
+        // Display the menu
+        let menu: String = items.iter()
+            .enumerate()
+            .map(|(i, item)| format!("{}) {}", i + 1, item))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        self.in_loop_depth += 1;
+        let mut exit = 0u8;
+
+        let ps3 = self.env.get("PS3")
+            .map(|v| v.as_scalar().to_string())
+            .unwrap_or_else(|| "#? ".to_string());
+
+        loop {
+            // Print menu to stderr (like bash does)
+            self.rt.write_stderr(&format!("{}\n", menu));
+            // Print PS3 prompt
+            self.rt.write_stderr(&ps3);
+
+            // Read user input
+            let input = match self.rt.read_line() {
+                Some(line) => line.trim().to_string(),
+                None => break, // EOF
+            };
+
+            // Set REPLY to the raw input
+            self.env.insert("REPLY".to_string(), ShellValue::Scalar(input.clone()));
+
+            // Determine the selected value
+            let selected = if let Ok(n) = input.parse::<usize>() {
+                if n >= 1 && n <= items.len() {
+                    items[n - 1].clone()
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+
+            self.env.insert(cmd.var.clone(), ShellValue::Scalar(selected));
+
+            // Execute body
+            exit = self.exec_list(cmd.body.clone());
+            self.last_exit = exit;
+
+            if self.exit_requested || self.return_requested { break; }
+            if self.break_depth > 0 {
+                self.break_depth -= 1;
+                break;
+            }
+            if self.continue_depth > 0 {
+                self.continue_depth -= 1;
+            }
+        }
+
+        self.in_loop_depth -= 1;
+        exit
+    }
+
     pub(crate) fn exec_function_call(&mut self, args: &[String], body: Command) -> u8 {
+        let funcnest: usize = self.env.get("FUNCNEST")
+            .and_then(|v| v.as_scalar().parse().ok())
+            .unwrap_or(1000);
+        if funcnest > 0 && self.in_function_depth >= funcnest {
+            self.rt.write_stderr(&format!(
+                "{}: maximum function nesting level exceeded ({})\n",
+                self.shell_name, funcnest
+            ));
+            return 1;
+        }
         self.params.push_frame(args.to_vec());
         self.in_function_depth += 1;
         self.local_scopes.push(std::collections::HashMap::new());

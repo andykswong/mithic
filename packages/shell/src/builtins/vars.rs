@@ -53,17 +53,23 @@ pub(crate) fn exec_builtin<R: Runtime>(
         "unset" => {
             for arg in args {
                 if let Some((name, subscript)) = parse_array_subscript(arg) {
-                    if let Some(ShellValue::Array(v)) = shell.env.get_mut(name) {
-                        if let Ok(idx) = subscript.parse::<i64>() {
-                            let actual = if idx < 0 {
-                                (v.len() as i64 + idx).max(0) as usize
-                            } else {
-                                idx as usize
-                            };
-                            if actual < v.len() {
-                                v[actual] = String::new();
+                    match shell.env.get_mut(name) {
+                        Some(ShellValue::Array(v)) => {
+                            if let Ok(idx) = subscript.parse::<i64>() {
+                                let actual = if idx < 0 {
+                                    (v.len() as i64 + idx).max(0) as usize
+                                } else {
+                                    idx as usize
+                                };
+                                if actual < v.len() {
+                                    v[actual] = String::new();
+                                }
                             }
                         }
+                        Some(ShellValue::AssocArray(map)) => {
+                            map.remove(subscript);
+                        }
+                        _ => {}
                     }
                 } else {
                     shell.env.remove(arg.as_str());
@@ -84,6 +90,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
 fn exec_declare<R: Runtime>(shell: &mut Shell<R>, builtin_name: &str, args: &[String]) -> u8 {
     let is_local = builtin_name == "local";
     let mut is_array = false;
+    let mut is_assoc = false;
     let mut print_mode = false;
     let mut remaining_args: Vec<&str> = Vec::new();
 
@@ -91,6 +98,13 @@ fn exec_declare<R: Runtime>(shell: &mut Shell<R>, builtin_name: &str, args: &[St
     while i < args.len() {
         match args[i].as_str() {
             "-a" => is_array = true,
+            "-A" => {
+                if shell.options.posix {
+                    shell.rt.write_stderr(&format!("{}: declare: -A: not supported in POSIX mode\n", shell.shell_name));
+                    return 2;
+                }
+                is_assoc = true;
+            }
             "-p" => print_mode = true,
             arg if arg.starts_with('-') => {
                 // Unknown flag — ignore for now
@@ -111,6 +125,11 @@ fn exec_declare<R: Runtime>(shell: &mut Shell<R>, builtin_name: &str, args: &[St
                 Some(ShellValue::Array(v)) => {
                     let elements: Vec<String> = v.iter().map(|e| format!("\"{}\"", e)).collect();
                     let line = format!("declare -a {}=({})\n", var_name, elements.join(" "));
+                    shell.rt.write_stdout(&line);
+                }
+                Some(ShellValue::AssocArray(map)) => {
+                    let elements: Vec<String> = map.iter().map(|(k, v)| format!("[{}]=\"{}\"", k, v)).collect();
+                    let line = format!("declare -A {}=({})\n", var_name, elements.join(" "));
                     shell.rt.write_stdout(&line);
                 }
                 None => {
@@ -140,11 +159,15 @@ fn exec_declare<R: Runtime>(shell: &mut Shell<R>, builtin_name: &str, args: &[St
         }
 
         if let Some((name, value)) = arg.split_once('=') {
-            if is_array {
+            if is_assoc {
+                shell.env.insert(name.to_string(), ShellValue::AssocArray(std::collections::HashMap::new()));
+            } else if is_array {
                 shell.env.insert(name.to_string(), ShellValue::Array(vec![value.to_string()]));
             } else {
                 shell.env.insert(name.to_string(), ShellValue::Scalar(value.to_string()));
             }
+        } else if is_assoc {
+            shell.env.insert(arg.to_string(), ShellValue::AssocArray(std::collections::HashMap::new()));
         } else if is_array {
             shell.env.insert(arg.to_string(), ShellValue::Array(Vec::new()));
         }

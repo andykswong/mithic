@@ -1,11 +1,12 @@
 #[derive(Clone, Default)]
 pub(crate) struct ShellOptions {
-    pub errexit: bool,  // -e: exit on non-zero status
-    pub nounset: bool,  // -u: error on unset variable expansion
-    pub pipefail: bool, // -o pipefail: pipeline fails if any command fails
-    pub xtrace: bool,   // -x: print commands before execution
-    pub verbose: bool,  // -v: print input lines to stderr
-    pub posix: bool,    // --posix / set -o posix / POSIXLY_CORRECT: disable bash extensions
+    pub errexit: bool,   // -e: exit on non-zero status
+    pub nounset: bool,   // -u: error on unset variable expansion
+    pub pipefail: bool,  // -o pipefail: pipeline fails if any command fails
+    pub xtrace: bool,    // -x: print commands before execution
+    pub verbose: bool,   // -v: print input lines to stderr
+    pub noclobber: bool, // -C: prevent > from overwriting existing files
+    pub posix: bool,     // --posix / set -o posix / POSIXLY_CORRECT: disable bash extensions
 }
 
 impl ShellOptions {
@@ -15,6 +16,7 @@ impl ShellOptions {
             'u' => { self.nounset = enable; true }
             'x' => { self.xtrace = enable; true }
             'v' => { self.verbose = enable; true }
+            'C' => { self.noclobber = enable; true }
             _ => false,
         }
     }
@@ -26,6 +28,7 @@ impl ShellOptions {
             "pipefail" => { self.pipefail = enable; true }
             "xtrace" => { self.xtrace = enable; true }
             "verbose" => { self.verbose = enable; true }
+            "noclobber" => { self.noclobber = enable; true }
             "posix" => { self.posix = enable; true }
             _ => false,
         }

@@ -86,9 +86,11 @@ pub fn run(args: &[&str]) -> u8 {
     0
 }
 
+#[derive(Debug, PartialEq)]
 enum Address {
     Line(usize),
-    Range(usize, usize),
+    LastLine,
+    Range(Box<Address>, Box<Address>),
     Pattern(String),
 }
 
@@ -96,6 +98,9 @@ enum SedCmd {
     Substitute { pattern: String, replacement: String, global: bool },
     Delete,
     Print,
+    Next,
+    PrintFirst,
+    DeleteFirst,
     HoldCopy,
     HoldAppend,
     GetCopy,
@@ -229,6 +234,12 @@ fn parse_single_command(expr: &str) -> Option<SedExpr> {
         Some(SedExpr { address, cmd: SedCmd::Delete })
     } else if rest.starts_with('p') {
         Some(SedExpr { address, cmd: SedCmd::Print })
+    } else if rest.starts_with('N') {
+        Some(SedExpr { address, cmd: SedCmd::Next })
+    } else if rest.starts_with('P') {
+        Some(SedExpr { address, cmd: SedCmd::PrintFirst })
+    } else if rest.starts_with('D') {
+        Some(SedExpr { address, cmd: SedCmd::DeleteFirst })
     } else if rest.starts_with('h') {
         Some(SedExpr { address, cmd: SedCmd::HoldCopy })
     } else if rest.starts_with('H') {
@@ -283,29 +294,44 @@ fn parse_address(expr: &str) -> Option<(Option<Address>, &str)> {
     let chars: Vec<char> = expr.chars().collect();
     if chars.is_empty() { return None; }
 
+    // Parse first address component
+    let (first_addr, after_first) = parse_single_address(expr)?;
+
+    // Check for range (comma-separated)
+    if let Some(addr1) = first_addr {
+        if after_first.starts_with(',') {
+            let rest2 = &after_first[1..];
+            let (second_addr, after_second) = parse_single_address(rest2)?;
+            if let Some(addr2) = second_addr {
+                return Some((Some(Address::Range(Box::new(addr1), Box::new(addr2))), after_second));
+            }
+        }
+        return Some((Some(addr1), after_first));
+    }
+
+    Some((None, expr))
+}
+
+fn parse_single_address(expr: &str) -> Option<(Option<Address>, &str)> {
+    let chars: Vec<char> = expr.chars().collect();
+    if chars.is_empty() { return Some((None, expr)); }
+
+    if chars[0] == '$' {
+        return Some((Some(Address::LastLine), &expr[1..]));
+    }
+
     if chars[0].is_ascii_digit() {
         let end = chars.iter().position(|c| !c.is_ascii_digit()).unwrap_or(chars.len());
         let n: usize = expr[..end].parse().ok()?;
-        let rest = &expr[end..];
-        if rest.starts_with(',') {
-            let rest2 = &rest[1..];
-            let chars2: Vec<char> = rest2.chars().collect();
-            let end2 = chars2.iter().position(|c| !c.is_ascii_digit()).unwrap_or(chars2.len());
-            if end2 > 0 {
-                let m: usize = rest2[..end2].parse().ok()?;
-                return Some((Some(Address::Range(n, m)), &rest2[end2..]));
-            }
-        }
-        return Some((Some(Address::Line(n)), rest));
+        return Some((Some(Address::Line(n)), &expr[end..]));
     }
 
     if chars[0] == '/' {
-        let delim = '/';
         let mut end = None;
         let mut k = 1;
         while k < chars.len() {
             if chars[k] == '\\' { k += 2; continue; }
-            if chars[k] == delim { end = Some(k); break; }
+            if chars[k] == '/' { end = Some(k); break; }
             k += 1;
         }
         let end = end?;
@@ -321,14 +347,28 @@ fn sed_opts() -> RegexOpts {
     RegexOpts { dot_matches_newline: false }
 }
 
-fn address_matches(addr: &Address, lineno: usize, line: &str) -> bool {
+fn address_matches(addr: &Address, lineno: usize, line: &str, line_count: usize) -> bool {
     match addr {
         Address::Line(n) => lineno == *n,
-        Address::Range(a, b) => lineno >= *a && lineno <= *b,
+        Address::LastLine => lineno == line_count,
+        Address::Range(a, b) => {
+            let s = addr_line_num(a, line_count);
+            let e = addr_line_num(b, line_count);
+            lineno >= s && lineno <= e
+        }
         Address::Pattern(pat) => {
             let chars: Vec<char> = line.chars().collect();
             regex_find_at(&chars, 0, pat, &sed_opts()).is_some()
         }
+    }
+}
+
+fn addr_line_num(addr: &Address, line_count: usize) -> usize {
+    match addr {
+        Address::Line(n) => *n,
+        Address::LastLine => line_count,
+        Address::Pattern(_) => 0,
+        Address::Range(_, _) => 0,
     }
 }
 
@@ -353,16 +393,16 @@ fn apply_script(text: &str, exprs: &[SedExpr], suppress: bool) -> String {
     let mut result = String::new();
     let mut hold_space = String::new();
 
-    for (idx, &line) in raw_lines.iter().enumerate() {
+    let mut idx = 0;
+    while idx < line_count {
         let lineno = idx + 1;
-        if has_trailing_newline && idx == raw_lines.len() - 1 && line.is_empty() {
-            break;
-        }
+        let mut s = raw_lines[idx].to_string();
+        idx += 1;
 
-        let mut s = line.to_string();
         let mut deleted = false;
         let mut explicitly_printed = false;
         let mut sub_made = false;
+        let mut restart_cycle = false;
 
         let mut ip = 0;
         while ip < exprs.len() {
@@ -375,7 +415,7 @@ fn apply_script(text: &str, exprs: &[SedExpr], suppress: bool) -> String {
 
             let active = match &expr.address {
                 None => true,
-                Some(addr) => address_matches(addr, lineno, &s),
+                Some(addr) => address_matches(addr, lineno, &s, line_count),
             };
             if !active { ip += 1; continue; }
 
@@ -385,6 +425,35 @@ fn apply_script(text: &str, exprs: &[SedExpr], suppress: bool) -> String {
                     result.push_str(&s);
                     result.push('\n');
                     explicitly_printed = true;
+                }
+                SedCmd::Next => {
+                    // N: append next line to pattern space
+                    if idx < line_count {
+                        s.push('\n');
+                        s.push_str(raw_lines[idx]);
+                        idx += 1;
+                    }
+                }
+                SedCmd::PrintFirst => {
+                    // P: print up to first embedded newline
+                    if let Some(pos) = s.find('\n') {
+                        result.push_str(&s[..pos]);
+                    } else {
+                        result.push_str(&s);
+                    }
+                    result.push('\n');
+                    explicitly_printed = true;
+                }
+                SedCmd::DeleteFirst => {
+                    // D: delete up to first embedded newline, restart cycle with remainder
+                    if let Some(pos) = s.find('\n') {
+                        s = s[pos + 1..].to_string();
+                        restart_cycle = true;
+                        break;
+                    } else {
+                        deleted = true;
+                        break;
+                    }
                 }
                 SedCmd::Substitute { pattern, replacement, global } => {
                     let new_s = apply_substitute(&s, pattern, replacement, *global);
@@ -417,10 +486,10 @@ fn apply_script(text: &str, exprs: &[SedExpr], suppress: bool) -> String {
                         Some(label) => {
                             match find_label(exprs, label) {
                                 Some(pos) => { ip = pos; continue; }
-                                None => break, // non-existent label: skip to end
+                                None => break,
                             }
                         }
-                        None => break, // branch to end
+                        None => break,
                     }
                 }
                 SedCmd::BranchIfSub(target) => {
@@ -439,18 +508,101 @@ fn apply_script(text: &str, exprs: &[SedExpr], suppress: bool) -> String {
                         sub_made = false;
                     }
                 }
-                SedCmd::Label(_) => {} // already handled above
+                SedCmd::Label(_) => {}
             }
             ip += 1;
         }
 
+        if restart_cycle {
+            // D restarts: re-run the script on the remainder without reading a new line
+            // We need to process `s` again from the top of the script
+            let mut inner_deleted = false;
+            let mut inner_printed = false;
+            let mut inner_sub_made = false;
+            let mut iip = 0;
+            while iip < exprs.len() {
+                let expr = &exprs[iip];
+                if let SedCmd::Label(_) = &expr.cmd { iip += 1; continue; }
+                let active = match &expr.address {
+                    None => true,
+                    Some(addr) => address_matches(addr, lineno, &s, line_count),
+                };
+                if !active { iip += 1; continue; }
+                match &expr.cmd {
+                    SedCmd::Delete => { inner_deleted = true; break; }
+                    SedCmd::Print => {
+                        result.push_str(&s);
+                        result.push('\n');
+                        inner_printed = true;
+                    }
+                    SedCmd::PrintFirst => {
+                        if let Some(pos) = s.find('\n') {
+                            result.push_str(&s[..pos]);
+                        } else {
+                            result.push_str(&s);
+                        }
+                        result.push('\n');
+                        inner_printed = true;
+                    }
+                    SedCmd::DeleteFirst => {
+                        if let Some(pos) = s.find('\n') {
+                            s = s[pos + 1..].to_string();
+                            // Would need another restart, but keep it simple for now
+                        } else {
+                            inner_deleted = true;
+                        }
+                        break;
+                    }
+                    SedCmd::Substitute { pattern, replacement, global } => {
+                        let new_s = apply_substitute(&s, pattern, replacement, *global);
+                        if new_s != s { inner_sub_made = true; }
+                        s = new_s;
+                    }
+                    SedCmd::Next => {
+                        if idx < line_count {
+                            s.push('\n');
+                            s.push_str(raw_lines[idx]);
+                            idx += 1;
+                        }
+                    }
+                    SedCmd::HoldCopy => { hold_space = s.clone(); }
+                    SedCmd::HoldAppend => { hold_space.push('\n'); hold_space.push_str(&s); }
+                    SedCmd::GetCopy => { s = hold_space.clone(); }
+                    SedCmd::GetAppend => { s.push('\n'); s.push_str(&hold_space); }
+                    SedCmd::Exchange => { let tmp = s.clone(); s = hold_space.clone(); hold_space = tmp; }
+                    SedCmd::Branch(target) => {
+                        match target {
+                            Some(label) => { match find_label(exprs, label) { Some(pos) => { iip = pos; continue; } None => break, } }
+                            None => break,
+                        }
+                    }
+                    SedCmd::BranchIfSub(target) => {
+                        if inner_sub_made {
+                            inner_sub_made = false;
+                            match target {
+                                Some(label) => { match find_label(exprs, label) { Some(pos) => { iip = pos; continue; } None => break, } }
+                                None => break,
+                            }
+                        } else { inner_sub_made = false; }
+                    }
+                    SedCmd::Label(_) => {}
+                }
+                iip += 1;
+            }
+            if !inner_deleted && !suppress {
+                result.push_str(&s);
+                result.push('\n');
+            } else if !inner_deleted && suppress && inner_printed {
+                // already printed
+            }
+            continue;
+        }
+
         if !deleted && (!suppress || explicitly_printed) && !explicitly_printed {
             result.push_str(&s);
-            if lineno < line_count || has_trailing_newline {
+            if lineno <= line_count {
                 result.push('\n');
             }
-        } else if !deleted && suppress && !explicitly_printed {
-            // suppressed, don't print
         }
     }
     result
@@ -644,7 +796,7 @@ mod tests {
     fn parse_expr_range_address() {
         let expr = parse_expr("1,3s/a/b/").unwrap();
         match expr.address {
-            Some(Address::Range(a, b)) => { assert_eq!(a, 1); assert_eq!(b, 3); }
+            Some(Address::Range(a, b)) => { assert_eq!(*a, Address::Line(1)); assert_eq!(*b, Address::Line(3)); }
             _ => panic!("expected Range address"),
         }
     }

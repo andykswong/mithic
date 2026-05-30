@@ -1,5 +1,9 @@
 # @mithic/coreutils
 
+[![mithic](https://img.shields.io/badge/project-mithic-blueviolet.svg?style=flat-square&logo=github)](https://github.com/andykswong/mithic)
+[![npm](https://img.shields.io/npm/v/@mithic/coreutils?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/coreutils)
+[![license: MIT](https://img.shields.io/badge/License-MIT-red.svg?style=flat-square)](./LICENSE)
+
 BusyBox-style Unix coreutils as a single WASI Preview 2 component.
 
 ## Commands (32)

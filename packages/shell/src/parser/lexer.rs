@@ -22,6 +22,8 @@ pub enum Token {
     Newline,
     /// `>`
     Gt,
+    /// `>|`
+    GtPipe,
     /// `>>`
     GtGt,
     /// `<`
@@ -143,6 +145,7 @@ impl Lexer {
                 } else {
                     self.advance();
                     if self.peek() == Some('>') { self.advance(); Token::GtGt }
+                    else if self.peek() == Some('|') { self.advance(); Token::GtPipe }
                     else { Token::Gt }
                 }
             }
@@ -401,7 +404,7 @@ impl Lexer {
                 let name = self.read_var_name();
                 parts.push(WordPart::Var(name));
             }
-            Some(c) if matches!(c, '?' | '#' | '@' | '*' | '!' | '0'..='9') => {
+            Some(c) if matches!(c, '?' | '#' | '@' | '*' | '!' | '$' | '0'..='9') => {
                 if !buf.is_empty() {
                     parts.push(WordPart::Literal(std::mem::take(buf)));
                 }

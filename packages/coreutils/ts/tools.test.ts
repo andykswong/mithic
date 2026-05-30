@@ -276,6 +276,105 @@ describe('find glob patterns', () => {
 });
 
 // =============================================================================
+// find -path
+// =============================================================================
+
+describe('find -path', () => {
+  it('matches full path with glob', async () => {
+    const { stdout } = await runShell(
+      'mkdir -p /tmp/fp/sub\necho x > /tmp/fp/sub/file.txt\necho y > /tmp/fp/top.txt\nfind /tmp/fp -path "*/sub/*"\n'
+    );
+    assert.ok(stdout.includes('sub/file.txt'));
+    assert.ok(!stdout.includes('top.txt'));
+  });
+
+  it('matches path with wildcard prefix', async () => {
+    const { stdout } = await runShell(
+      'mkdir -p /tmp/fp2/deep/nested\necho a > /tmp/fp2/deep/nested/data.log\necho b > /tmp/fp2/other.log\nfind /tmp/fp2 -path "*nested*"\n'
+    );
+    assert.ok(stdout.includes('nested'));
+    assert.ok(!stdout.includes('other.log'));
+  });
+});
+
+// =============================================================================
+// find -maxdepth
+// =============================================================================
+
+describe('find -maxdepth', () => {
+  it('-maxdepth 0 returns only starting point', async () => {
+    const { stdout } = await runShell(
+      'mkdir -p /tmp/fmd/child\necho x > /tmp/fmd/child/file.txt\nfind /tmp/fmd -maxdepth 0\n'
+    );
+    assert.strictEqual(stdout.trim(), '/tmp/fmd');
+  });
+
+  it('-maxdepth 1 returns starting point and direct children', async () => {
+    const { stdout } = await runShell(
+      'mkdir -p /tmp/fmd1/sub\necho x > /tmp/fmd1/top.txt\necho y > /tmp/fmd1/sub/deep.txt\nfind /tmp/fmd1 -maxdepth 1\n'
+    );
+    assert.ok(stdout.includes('/tmp/fmd1'));
+    assert.ok(stdout.includes('sub') || stdout.includes('top.txt'));
+    assert.ok(!stdout.includes('deep.txt'));
+  });
+
+  it('-maxdepth 1 with -type f only shows files at depth 1', async () => {
+    const { stdout } = await runShell(
+      'mkdir -p /tmp/fmd2/sub\necho a > /tmp/fmd2/a.txt\necho b > /tmp/fmd2/sub/b.txt\nfind /tmp/fmd2 -maxdepth 1 -type f\n'
+    );
+    assert.ok(stdout.includes('a.txt'));
+    assert.ok(!stdout.includes('b.txt'));
+  });
+});
+
+// =============================================================================
+// find -mtime
+// =============================================================================
+
+describe('find -mtime', () => {
+  it('-mtime flag is accepted without error', async () => {
+    const { exit } = await runShell(
+      'mkdir -p /tmp/fmt\necho x > /tmp/fmt/file.txt\nfind /tmp/fmt -mtime +7\n'
+    );
+    assert.strictEqual(exit, 0);
+  });
+});
+
+// =============================================================================
+// sort -k and -t (additional tests)
+// =============================================================================
+
+describe('sort -k field selection', () => {
+  it('-k 2 sorts by second field onwards', async () => {
+    const { stdout } = await runShell(
+      'printf "b 2 x\\na 1 z\\nc 3 y\\n" | sort -k 2\n'
+    );
+    assert.strictEqual(stdout.trim(), 'a 1 z\nb 2 x\nc 3 y');
+  });
+
+  it('-k 2,2 sorts by only the second field', async () => {
+    const { stdout } = await runShell(
+      'printf "c banana\\na cherry\\nb apple\\n" | sort -k 2,2\n'
+    );
+    assert.strictEqual(stdout.trim(), 'b apple\nc banana\na cherry');
+  });
+
+  it('-t: -k 2 sorts by second colon-delimited field', async () => {
+    const { stdout } = await runShell(
+      'printf "root:0:desc\\nuser:2:info\\nadmin:1:note\\n" | sort -t: -k 2\n'
+    );
+    assert.strictEqual(stdout.trim(), 'root:0:desc\nadmin:1:note\nuser:2:info');
+  });
+
+  it('-t, -k 2,2n numeric sort on second comma-delimited field', async () => {
+    const { stdout } = await runShell(
+      'printf "x,10\\ny,2\\nz,1\\n" | sort -t, -k 2,2n\n'
+    );
+    assert.strictEqual(stdout.trim(), 'z,1\ny,2\nx,10');
+  });
+});
+
+// =============================================================================
 // diff
 // =============================================================================
 
@@ -360,6 +459,40 @@ describe('date', () => {
   it('+%H:%M format outputs HH:MM', async () => {
     const { stdout } = await runShell('date "+%H:%M"\n');
     assert.match(stdout.trim(), /^\d{2}:\d{2}$/);
+  });
+
+  it('+%s outputs epoch seconds as a number', async () => {
+    const { stdout } = await runShell('date "+%s"\n');
+    assert.match(stdout.trim(), /^\d+$/);
+    const epoch = parseInt(stdout.trim());
+    assert.ok(epoch > 1000000000, `epoch ${epoch} should be > 1 billion`);
+  });
+
+  it('+%Y-%m-%d outputs combined date format', async () => {
+    const { stdout } = await runShell('date "+%Y-%m-%d"\n');
+    assert.match(stdout.trim(), /^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('+%% outputs literal percent', async () => {
+    const { stdout } = await runShell('date "+%%"\n');
+    assert.strictEqual(stdout.trim(), '%');
+  });
+
+  it('+%A outputs full weekday name', async () => {
+    const { stdout } = await runShell('date "+%A"\n');
+    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    assert.ok(days.includes(stdout.trim()), `"${stdout.trim()}" should be a weekday name`);
+  });
+
+  it('+%B outputs full month name', async () => {
+    const { stdout } = await runShell('date "+%B"\n');
+    const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    assert.ok(months.includes(stdout.trim()), `"${stdout.trim()}" should be a month name`);
+  });
+
+  it('+%Z outputs timezone abbreviation', async () => {
+    const { stdout } = await runShell('date "+%Z"\n');
+    assert.strictEqual(stdout.trim(), 'UTC');
   });
 });
 

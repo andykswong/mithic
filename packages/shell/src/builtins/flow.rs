@@ -155,6 +155,10 @@ pub(crate) fn exec_builtin<R: Runtime>(
             }
             0
         }
+        "coproc" => {
+            shell.rt.write_stderr(&format!("{}: coproc: not yet supported in WASM environment\n", shell.shell_name));
+            1
+        }
         _ => {
             shell.rt.write_stderr(&format!("{}: {}: not handled in flow builtin\n", shell.shell_name, name));
             127

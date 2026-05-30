@@ -1,12 +1,14 @@
 # mithic
 
 [![mithic](https://img.shields.io/badge/project-mithic-blueviolet.svg?style=flat-square&logo=github)](https://github.com/andykswong/mithic)
+[![npm](https://img.shields.io/npm/v/mithic?style=flat-square&logo=npm)](https://www.npmjs.com/package/mithic)
 [![license: MIT](https://img.shields.io/badge/License-MIT-red.svg?style=flat-square)](./LICENSE)
 [![build](https://img.shields.io/github/actions/workflow/status/andykswong/mithic/build.yaml?style=flat-square)](https://github.com/andykswong/mithic/actions/workflows/build.yaml)
+[![codecov](https://codecov.io/gh/andykswong/mithic/branch/main/graph/badge.svg?token=2OYVQSTDMC)](https://codecov.io/gh/andykswong/mithic)
 
-> A virtual OS for the agent era.
+> Virtual OS for the agent era.
 
-Sandboxed shell that runs WebAssembly components as processes — with a pluggable filesystem and capability-scoped access. Runs anywhere JavaScript runs.
+Sandboxed WebAssembly shell runtime with pluggable, capability-based filesystem and resource access. Runs anywhere JavaScript runs.
 
 ## Why Mithic?
 
@@ -22,10 +24,11 @@ Sandboxed shell that runs WebAssembly components as processes — with a pluggab
 
 ## Core Pillars
 
+> 2. **Agent Harness** — Designed for AI agent tool execution. Pluggable VFS means agents see only the resources they need.
+
 1. **Security** — WASM capability-based sandboxing. Each process runs in isolation; only explicitly mounted resources are accessible.
-2. **Agent Harness** — Designed for AI agent tool execution. Pluggable VFS means agents see only the resources they need.
-3. **Virtualization** — Mount any storage provider at any path. Cloud storage, browser OPFS, or custom backends all plug in via the same interface.
-4. **Isomorphic** — Same code runs in the browser (local-first, no server required) and on Node.js servers. Future: native Rust host.
+2. **Virtualization** — Mount any storage provider or resource at any path. Cloud storage, APIs, caches, local files, browser OPFS, or custom backends all pluggable via the same interfaces.
+3. **Isomorphic** — Same code runs in the browser (local-first, no server required), on Node.js servers, and native hosts.
 
 ## Composable Layers
 
@@ -53,25 +56,24 @@ Sandboxed shell that runs WebAssembly components as processes — with a pluggab
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Browser / Node.js                      │
+│                    Browser / Node.js                    │
 ├────────────────────────┬────────────────────────────────┤
 │      Main Thread       │         Web Worker             │
 │                        │                                │
 │  ┌──────────────────┐  │  ┌──────────────────────────┐  │
 │  │     IoLoop       │  │  │    WASM Component        │  │
 │  │  ┌────────────┐  │  │  │    (Shell / Coreutils)   │  │
-│  │  │ VFS Router │  │◄─┼──│  blocking_read/write     │  │
-│  │  │  ├ MemFS   │  │  │  │  (Atomics.wait)          │  │
+│  │  │ VFS Router │  │◄─┼──│    blocking_read/write   │  │
+│  │  │  ├ MemFS   │  │  │  │    (Atomics.wait)        │  │
 │  │  │  ├ OPFS    │  │  │  └──────────────────────────┘  │
 │  │  │  └ NodeFS  │  │  │                                │
 │  │  ├────────────┤  │  │                                │
 │  │  │ HTTP/Sock  │  │  │                                │
 │  │  └────────────┘  │  │                                │
 │  └──────────────────┘  │                                │
-│           ▲             │                                │
-│           │ SharedArrayBuffer + Atomics.notify           │
-│           └─────────────┴────────────────────────────────┘
-└─────────────────────────────────────────────────────────┘
+│           ▲            │                                │
+│           │ SharedArrayBuffer + Atomics.notify          │
+└───────────┴────────────┴────────────────────────────────┘
 ```
 
 ## Getting Started
@@ -100,7 +102,7 @@ const { run } = await instantiate(null, shim.getImportObject());
 run.run();
 ```
 
-### Browser Shell Example
+### Shell Example
 
 The [shell example](./packages/examples/shell/) demonstrates an xterm.js terminal connected to `MithicShell` (Rust WASM), running WASM programs in the browser.
 

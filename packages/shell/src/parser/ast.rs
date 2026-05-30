@@ -45,6 +45,8 @@ impl Word {
 pub enum Redirect {
     /// `> file`
     Out(Word),
+    /// `>| file` — force overwrite even with noclobber
+    OutClobber(Word),
     /// `>> file`
     OutAppend(Word),
     /// `< file`
@@ -78,6 +80,7 @@ pub enum Command {
     For(ForCommand),
     CFor(CForCommand),
     Case(CaseCommand),
+    Select(SelectCommand),
     FunctionDef(FunctionDef),
     Group(List),
     Subshell(List),
@@ -124,6 +127,14 @@ pub struct CForCommand {
     pub init: String,
     pub cond: String,
     pub step: String,
+    pub body: List,
+    pub redirects: Vec<Redirect>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectCommand {
+    pub var: String,
+    pub words: Vec<Word>,
     pub body: List,
     pub redirects: Vec<Redirect>,
 }

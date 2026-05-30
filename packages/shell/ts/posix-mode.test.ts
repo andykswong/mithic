@@ -49,6 +49,28 @@ describe('POSIX mode: disabled bash extensions', () => {
     assert.notStrictEqual(exit, 0);
   });
 
+  it('(( )) rejected in POSIX mode', async () => {
+    const { exit } = await runCli(['--posix', '-c', '((1+1))']);
+    assert.notStrictEqual(exit, 0);
+  });
+
+  it('select rejected in POSIX mode', async () => {
+    const { stderr, exit } = await runCli(['--posix', '-c', 'select x in a b; do break; done']);
+    assert.notStrictEqual(exit, 0);
+    assert.ok(stderr.includes('not supported in POSIX mode'));
+  });
+
+  it('declare -A rejected in POSIX mode', async () => {
+    const { stderr, exit } = await runCli(['--posix', '-c', 'declare -A mymap']);
+    assert.notStrictEqual(exit, 0);
+    assert.ok(stderr.includes('not supported in POSIX mode'));
+  });
+
+  it('coproc treated as regular command in POSIX mode', async () => {
+    const { exit } = await runCli(['--posix', '-c', 'coproc cat']);
+    assert.notStrictEqual(exit, 0);
+  });
+
   it('source rejected in POSIX mode (use . instead)', async () => {
     const { exit } = await runCli(['--posix', '-c', 'echo ok > /tmp/posix_dot.sh; source /tmp/posix_dot.sh']);
     assert.notStrictEqual(exit, 0);

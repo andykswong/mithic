@@ -118,6 +118,35 @@ describe('cp', () => {
     );
     assert.strictEqual(exit, 0);
   });
+
+  it('-r copies nested subdirectories', async () => {
+    const { stdout } = await runShell(
+      'mkdir -p /tmp/cp_nested/subdir\necho "deep" > /tmp/cp_nested/subdir/deep.txt\ncp -r /tmp/cp_nested /tmp/cp_nested_dest\ncat /tmp/cp_nested_dest/subdir/deep.txt\n'
+    );
+    assert.strictEqual(stdout.trim(), 'deep');
+  });
+
+  it('-R (capital) also copies recursively', async () => {
+    const { exit } = await runShell(
+      'mkdir /tmp/cp_R_dir\necho "R" > /tmp/cp_R_dir/r.txt\ncp -R /tmp/cp_R_dir /tmp/cp_R_dir2\ntest -f /tmp/cp_R_dir2/r.txt\n'
+    );
+    assert.strictEqual(exit, 0);
+  });
+
+  it('-r copies into existing destination directory', async () => {
+    const { stdout } = await runShell(
+      'mkdir /tmp/cp_into_src\necho "inside" > /tmp/cp_into_src/file.txt\nmkdir /tmp/cp_into_dst\ncp -r /tmp/cp_into_src /tmp/cp_into_dst\ncat /tmp/cp_into_dst/cp_into_src/file.txt\n'
+    );
+    assert.strictEqual(stdout.trim(), 'inside');
+  });
+
+  it('errors without -r when source is directory', async () => {
+    const { exit, stderr } = await runShell(
+      'mkdir /tmp/cp_no_r_dir\ncp /tmp/cp_no_r_dir /tmp/cp_no_r_dest\n'
+    );
+    assert.notStrictEqual(exit, 0);
+    assert.ok(stderr.includes('omitting directory') || stderr.includes('-r not specified'));
+  });
 });
 
 // =============================================================================
@@ -297,6 +326,33 @@ describe('ls', () => {
       'echo x > /tmp/ls_long.txt\nls -l /tmp/ls_long.txt\n'
     );
     assert.match(stdout, /^[-d]/m);
+  });
+
+  it('-l shows permissions and size', async () => {
+    const { stdout } = await runShell(
+      'echo "hello" > /tmp/ls_l_size.txt\nls -l /tmp/ls_l_size.txt\n'
+    );
+    assert.match(stdout, /^-/m);
+    assert.match(stdout, /\d+/);
+    assert.ok(stdout.includes('ls_l_size.txt'));
+  });
+
+  it('-R lists subdirectories recursively', async () => {
+    const { stdout } = await runShell(
+      'mkdir -p /tmp/ls_r_dir/sub\necho x > /tmp/ls_r_dir/a.txt\necho y > /tmp/ls_r_dir/sub/b.txt\nls -R /tmp/ls_r_dir\n'
+    );
+    assert.ok(stdout.includes('a.txt'));
+    assert.ok(stdout.includes('sub'));
+    assert.ok(stdout.includes('b.txt'));
+  });
+
+  it('-lt combines long format and time sort', async () => {
+    const { stdout } = await runShell(
+      'echo first > /tmp/ls_lt_old.txt\necho second > /tmp/ls_lt_new.txt\nls -lt /tmp/ls_lt_old.txt /tmp/ls_lt_new.txt\n'
+    );
+    assert.match(stdout, /^-/m);
+    assert.ok(stdout.includes('ls_lt_old.txt'));
+    assert.ok(stdout.includes('ls_lt_new.txt'));
   });
 });
 

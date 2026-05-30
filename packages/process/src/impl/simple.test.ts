@@ -146,6 +146,23 @@ describe('SimpleProcessManager', () => {
     assert.equal(mgr.table.size, 0);
   });
 
+  it('killed process is removed from table (no zombie)', async () => {
+    let resolveCmd: (() => void) | null = null;
+    const handler: CommandHandler = () => new Promise<number>(r => { resolveCmd = () => r(0); });
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('long', []);
+    assert.equal(mgr.table.size, 1);
+    proc.kill('sigterm');
+    await proc.wait();
+    // Allow microtask to flush the .then/.catch handler
+    await new Promise(r => setTimeout(r, 10));
+    // After kill, the handler promise may still be pending but table should be cleaned
+    // Resolve it to trigger the .then path with killed=true
+    resolveCmd!();
+    await new Promise(r => setTimeout(r, 10));
+    assert.equal(mgr.table.size, 0);
+  });
+
   it('inherits host default streams when not pre-wired', async () => {
     const written: Uint8Array[] = [];
     const hostStreams = {

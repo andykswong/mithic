@@ -19,6 +19,7 @@ struct DateTime {
     minute: u8,
     second: u8,
     weekday: u8, // 0 = Sunday
+    epoch_secs: u64,
 }
 
 fn get_datetime() -> DateTime {
@@ -26,7 +27,9 @@ fn get_datetime() -> DateTime {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    epoch_to_datetime(secs)
+    let mut dt = epoch_to_datetime(secs);
+    dt.epoch_secs = secs;
+    dt
 }
 
 fn epoch_to_datetime(secs: u64) -> DateTime {
@@ -44,7 +47,7 @@ fn epoch_to_datetime(secs: u64) -> DateTime {
     // Gregorian calendar conversion
     let (year, month, day) = days_to_ymd(days);
 
-    DateTime { year, month, day, hour, minute, second, weekday }
+    DateTime { year, month, day, hour, minute, second, weekday, epoch_secs: secs }
 }
 
 fn days_to_ymd(days: u32) -> (u32, u8, u8) {
@@ -64,7 +67,9 @@ fn days_to_ymd(days: u32) -> (u32, u8, u8) {
 
 fn format_datetime(fmt: &str, dt: &DateTime) -> String {
     let months_abbr = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    let months_full = ["January","February","March","April","May","June","July","August","September","October","November","December"];
     let days_abbr = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    let days_full = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
     let mut result = String::new();
     let chars: Vec<char> = fmt.chars().collect();
@@ -81,6 +86,7 @@ fn format_datetime(fmt: &str, dt: &DateTime) -> String {
                 'H' => result.push_str(&format!("{:02}", dt.hour)),
                 'M' => result.push_str(&format!("{:02}", dt.minute)),
                 'S' => result.push_str(&format!("{:02}", dt.second)),
+                's' => result.push_str(&format!("{}", dt.epoch_secs)),
                 'j' => {
                     let doy = day_of_year(dt.year, dt.month, dt.day);
                     result.push_str(&format!("{:03}", doy));
@@ -90,9 +96,18 @@ fn format_datetime(fmt: &str, dt: &DateTime) -> String {
                         result.push_str(months_abbr[(dt.month - 1) as usize]);
                     }
                 }
+                'B' => {
+                    if dt.month >= 1 && dt.month <= 12 {
+                        result.push_str(months_full[(dt.month - 1) as usize]);
+                    }
+                }
                 'a' => {
                     result.push_str(days_abbr[(dt.weekday % 7) as usize]);
                 }
+                'A' => {
+                    result.push_str(days_full[(dt.weekday % 7) as usize]);
+                }
+                'Z' => result.push_str("UTC"),
                 'u' => result.push_str(&format!("{}", if dt.weekday == 0 { 7 } else { dt.weekday })),
                 'w' => result.push_str(&format!("{}", dt.weekday)),
                 'n' => result.push('\n'),

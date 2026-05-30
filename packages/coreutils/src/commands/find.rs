@@ -4,8 +4,11 @@ use regex::Regex;
 pub fn run(args: &[&str]) -> u8 {
     let mut start_path = ".";
     let mut name_pattern: Option<&str> = None;
+    let mut path_pattern: Option<&str> = None;
     let mut type_filter: Option<char> = None;
     let mut exec_cmd: Option<Vec<&str>> = None;
+    let mut max_depth: Option<usize> = None;
+    let mut _mtime: Option<i64> = None;
 
     let mut i = 0;
     if i < args.len() && !args[i].starts_with('-') {
@@ -21,10 +24,28 @@ pub fn run(args: &[&str]) -> u8 {
                     name_pattern = Some(args[i]);
                 }
             }
+            "-path" => {
+                i += 1;
+                if i < args.len() {
+                    path_pattern = Some(args[i]);
+                }
+            }
             "-type" => {
                 i += 1;
                 if i < args.len() {
                     type_filter = args[i].chars().next();
+                }
+            }
+            "-maxdepth" => {
+                i += 1;
+                if i < args.len() {
+                    max_depth = args[i].parse::<usize>().ok();
+                }
+            }
+            "-mtime" => {
+                i += 1;
+                if i < args.len() {
+                    _mtime = args[i].parse::<i64>().ok();
                 }
             }
             "-exec" => {
@@ -41,7 +62,7 @@ pub fn run(args: &[&str]) -> u8 {
         i += 1;
     }
 
-    find_recursive(start_path, start_path, name_pattern, type_filter, exec_cmd.as_deref());
+    find_recursive(start_path, start_path, name_pattern, path_pattern, type_filter, exec_cmd.as_deref(), max_depth, 0);
     0
 }
 
@@ -159,7 +180,13 @@ mod tests {
     }
 }
 
-fn find_recursive(base: &str, path: &str, name_pattern: Option<&str>, type_filter: Option<char>, exec_cmd: Option<&[&str]>) {
+fn find_recursive(base: &str, path: &str, name_pattern: Option<&str>, path_pattern: Option<&str>, type_filter: Option<char>, exec_cmd: Option<&[&str]>, max_depth: Option<usize>, current_depth: usize) {
+    if let Some(max) = max_depth {
+        if current_depth > max {
+            return;
+        }
+    }
+
     let kind = file_kind(path);
     let display = path.to_string();
 
@@ -180,7 +207,12 @@ fn find_recursive(base: &str, path: &str, name_pattern: Option<&str>, type_filte
         None => true,
     };
 
-    if type_ok && name_ok {
+    let path_ok = match path_pattern {
+        Some(pat) => matches_glob(&display, pat),
+        None => true,
+    };
+
+    if type_ok && name_ok && path_ok {
         if let Some(cmd_parts) = exec_cmd {
             if !cmd_parts.is_empty() {
                 let cmd = cmd_parts[0];
@@ -206,7 +238,7 @@ fn find_recursive(base: &str, path: &str, name_pattern: Option<&str>, type_filte
         entries.sort();
         for entry in entries {
             let child = format!("{}/{}", path.trim_end_matches('/'), entry);
-            find_recursive(base, &child, name_pattern, type_filter, exec_cmd);
+            find_recursive(base, &child, name_pattern, path_pattern, type_filter, exec_cmd, max_depth, current_depth + 1);
         }
     }
 }

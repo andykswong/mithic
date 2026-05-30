@@ -52,7 +52,13 @@ pub(crate) fn exec_builtin<R: Runtime>(
                 }
             }
 
-            let mut job = shell.jobs.remove(job_id).unwrap();
+            let mut job = match shell.jobs.remove(job_id) {
+                Some(j) => j,
+                None => {
+                    shell.rt.write_stderr(&format!("{}: fg: %{}: no such job\n", shell.shell_name, job_id));
+                    return 1;
+                }
+            };
             shell.foreground_pids = job.pids.clone();
 
             let last = job.processes.pop();
@@ -97,7 +103,40 @@ pub(crate) fn exec_builtin<R: Runtime>(
             0
         }
         "wait" => {
-            if args.is_empty() {
+            // Check for -n flag: wait for any ONE job to complete
+            if args.len() == 1 && args[0] == "-n" {
+                // Try to find a job that's already done
+                let done_id = shell.jobs.iter()
+                    .find(|j| matches!(j.status, JobStatus::Done(_)))
+                    .map(|j| j.id);
+                if let Some(id) = done_id {
+                    if let Some(job) = shell.jobs.remove(id) {
+                        if let JobStatus::Done(code) = job.status {
+                            return code;
+                        }
+                    }
+                    return 0;
+                }
+                // No job already done — wait for the first one to finish
+                let ids: Vec<usize> = shell.jobs.iter()
+                    .filter(|j| j.status == JobStatus::Running)
+                    .map(|j| j.id)
+                    .collect();
+                if ids.is_empty() {
+                    return 127; // no jobs to wait for
+                }
+                // Wait for the first job (in table order)
+                let first_id = ids[0];
+                if let Some(mut job) = shell.jobs.remove(first_id) {
+                    let last = job.processes.pop();
+                    for p in job.processes {
+                        let _ = shell.rt.wait(&p);
+                    }
+                    if let Some(p) = last { shell.rt.wait(&p) } else { 0 }
+                } else {
+                    127
+                }
+            } else if args.is_empty() {
                 let ids: Vec<usize> = shell.jobs.iter().map(|j| j.id).collect();
                 let mut last_exit = 0u8;
                 for id in ids {

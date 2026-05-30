@@ -177,8 +177,8 @@ export class SimpleProcessManager implements ProcessManager {
           if (!killed) {
             exitCode = code;
             resolveWait(code);
-            this.table.remove(pid);
           }
+          this.table.remove(pid);
         },
         (err: unknown) => {
           done = true;
@@ -189,8 +189,8 @@ export class SimpleProcessManager implements ProcessManager {
             } catch { /* stderr may be closed */ }
             exitCode = 1;
             resolveWait(1);
-            this.table.remove(pid);
           }
+          this.table.remove(pid);
         },
       );
     }

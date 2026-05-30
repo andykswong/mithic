@@ -106,6 +106,15 @@ describe('createPipe (QueuePipe)', () => {
       input.read(1n);
       assert.equal(pollable.ready(), true);
     });
+
+    it('write exceeding buffer throws last-operation-failed (buffer-overflow)', () => {
+      const { output } = createPipe({ bufferSize: 10 });
+      output.write(new Uint8Array(10));
+      assert.throws(
+        () => output.write(new Uint8Array(1)),
+        (err: StreamError) => err.tag === 'last-operation-failed',
+      );
+    });
   });
 });
 

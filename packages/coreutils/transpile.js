@@ -38,10 +38,18 @@ const indexFile = `
 `;
 await writeFile(join(outputDir, 'index.js'), indexFile);
 
-const dtsFile = `export declare function instantiate(
+const dtsFile = `export type WasmComponent = { run: { run: () => number } };
+
+export declare function instantiate(
   compileCore: (path: string) => Promise<WebAssembly.Module>,
   imports: Record<string, object>,
-): Promise<{ run: { run: () => number } }>;
+): Promise<WasmComponent>;
+
+export declare function instantiate(
+  compileCore: (path: string) => WebAssembly.Module,
+  imports: Record<string, object>,
+  instantiateCore: (module: WebAssembly.Module, imports: WebAssembly.Imports) => WebAssembly.Instance,
+): WasmComponent;
 
 export declare const modules: Record<string, string>;
 `;

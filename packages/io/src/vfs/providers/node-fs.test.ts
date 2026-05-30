@@ -150,4 +150,27 @@ describe('NodeFsProvider', () => {
     assert.deepStrictEqual(content, new TextEncoder().encode('AABB'));
     await provider.close(handle);
   });
+
+  it('should reject symlink with relative target that escapes root', async () => {
+    await assert.rejects(
+      () => provider.symlink('../../etc/passwd', '/escape-relative-link'),
+      (err: unknown) => err instanceof FileSystemError && err.code === 'access'
+    );
+  });
+
+  it('should allow symlink with VFS-absolute target (stays within root)', async () => {
+    // VFS-absolute paths like /etc/passwd are resolved relative to root, not host
+    const handle = await provider.open('/symlink-target-file.txt', { create: true, write: true });
+    await provider.close(handle);
+    await provider.symlink('/symlink-target-file.txt', '/vfs-absolute-link');
+    const target = await provider.readlink('/vfs-absolute-link');
+    assert.strictEqual(target, '/symlink-target-file.txt');
+  });
+
+  it('realpath rejects resolved path outside root', async () => {
+    await assert.rejects(
+      () => provider.realpath('/nonexistent-for-realpath'),
+      (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
+    );
+  });
 });

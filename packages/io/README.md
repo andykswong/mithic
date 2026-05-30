@@ -96,6 +96,32 @@ const fs = new SyncBridgeFsProvider(io);       // implements SyncFileSystemProvi
 const http = new SyncBridgeHttpClient(io);     // implements SyncHttpClient
 ```
 
+## Cross-Platform Requirements
+
+### Browser: SharedArrayBuffer and Cross-Origin Isolation
+
+The sync-bridge relies on `SharedArrayBuffer` and `Atomics` for synchronous cross-thread communication. Browsers require **Cross-Origin Isolation** headers for `SharedArrayBuffer` to be available:
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+Without these headers, `SharedArrayBuffer` is undefined and the sync-bridge will not function.
+
+### Browser: Atomics.wait() and the Main Thread
+
+`Atomics.wait()` **cannot be called on the browser main thread** — it throws a `TypeError`. All synchronous blocking I/O (which uses `Atomics.wait()` internally) must run inside a **Web Worker**. The typical architecture is:
+
+- **Main thread**: Runs the `IoLoop` with async providers (e.g., OPFS, fetch-based HTTP)
+- **Worker thread**: Runs WASM code with `SyncBridge*` providers that block via `Atomics.wait()`
+
+### Node.js: Worker Threads for Sync Bridge
+
+On Node.js, the sync-bridge requires `worker_threads` for blocking I/O. The worker uses `Atomics.wait()` to block until the main thread (or another worker running the `IoLoop`) services the request and signals completion via `Atomics.notify()`.
+
+Node.js does allow `Atomics.wait()` on the main thread, but using it there would block the event loop and prevent the `IoLoop` from servicing requests — so a dedicated worker thread is still required for WASM workloads that use synchronous I/O.
+
 ## Exports
 
 | Entry Point | Contents |

@@ -8,8 +8,9 @@ import {
   FILE, STDIN, STDOUT,
   FS_OPEN, FS_STAT, FS_READ, FS_WRITE, FS_CLOSE, FS_MKDIR, FS_READDIR,
   FS_UNLINK, FS_RMDIR, FS_RENAME, FS_SYMLINK, FS_READLINK,
-  HTTP_SEND, SOCKET_CREATE,
-  INPUT_STREAM_READ, OUTPUT_STREAM_WRITE,
+  HTTP_SEND, SOCKET_CREATE, SOCKET_CLOSE,
+  INPUT_STREAM_READ, OUTPUT_STREAM_WRITE, OUTPUT_STREAM_FLUSH,
+  INPUT_STREAM_DISPOSE, OUTPUT_STREAM_DISPOSE,
 } from './calls.ts';
 
 describe('createCallHandler - filesystem', () => {
@@ -127,6 +128,64 @@ describe('createCallHandler - stdio', () => {
     const outData = new TextEncoder().encode('hello');
     await handler(OUTPUT_STREAM_WRITE | STDOUT, null, { data: outData });
     strictEqual(received.length, 1);
+  });
+});
+
+describe('createCallHandler - null id errors', () => {
+  it('throws descriptive error when stream id is null for INPUT_STREAM_READ', async () => {
+    const handler = createCallHandler({ fs: new MemoryFsProvider() });
+    await assert.rejects(
+      () => handler(INPUT_STREAM_READ | FILE, null, { len: 10 }),
+      (err: Error) => err.message.includes('missing resource handle id'),
+    );
+  });
+
+  it('throws descriptive error when stream id is null for OUTPUT_STREAM_WRITE', async () => {
+    const handler = createCallHandler({ fs: new MemoryFsProvider() });
+    await assert.rejects(
+      () => handler(OUTPUT_STREAM_WRITE | FILE, null, { data: new Uint8Array(0) }),
+      (err: Error) => err.message.includes('missing resource handle id'),
+    );
+  });
+
+  it('throws descriptive error when stream id is null for OUTPUT_STREAM_FLUSH', async () => {
+    const handler = createCallHandler({ fs: new MemoryFsProvider() });
+    await assert.rejects(
+      () => handler(OUTPUT_STREAM_FLUSH | FILE, null, null),
+      (err: Error) => err.message.includes('missing resource handle id'),
+    );
+  });
+
+  it('throws descriptive error when stream id is null for INPUT_STREAM_DISPOSE', async () => {
+    const handler = createCallHandler({ fs: new MemoryFsProvider() });
+    await assert.rejects(
+      () => handler(INPUT_STREAM_DISPOSE | FILE, null, null),
+      (err: Error) => err.message.includes('missing resource handle id'),
+    );
+  });
+
+  it('throws descriptive error when stream id is null for OUTPUT_STREAM_DISPOSE', async () => {
+    const handler = createCallHandler({ fs: new MemoryFsProvider() });
+    await assert.rejects(
+      () => handler(OUTPUT_STREAM_DISPOSE | FILE, null, null),
+      (err: Error) => err.message.includes('missing resource handle id'),
+    );
+  });
+
+  it('throws descriptive error when file id is null for FS_CLOSE', async () => {
+    const handler = createCallHandler({ fs: new MemoryFsProvider() });
+    await assert.rejects(
+      () => handler(FS_CLOSE | FILE, null, null),
+      (err: Error) => err.message.includes('missing resource handle id'),
+    );
+  });
+
+  it('throws descriptive error when socket id is null for SOCKET_CLOSE', async () => {
+    const handler = createCallHandler({});
+    await assert.rejects(
+      () => handler(SOCKET_CLOSE, null, null),
+      (err: Error) => err.message.includes('missing resource handle id'),
+    );
   });
 });
 

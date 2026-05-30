@@ -68,14 +68,19 @@ export function createCallHandler(options: CallHandlerOptions): CallHandler {
     return nextHandleId++;
   }
 
+  function requireId(id: number | null): number {
+    if (id === null || id === undefined) throw new Error('missing resource handle id');
+    return id;
+  }
+
   function getSocket(id: number | null): TcpSocket {
-    const socket = socketHandles.get(id!);
+    const socket = socketHandles.get(requireId(id));
     if (!socket) throw new Error('invalid socket handle');
     return socket;
   }
 
   function getFileHandle(id: number | null): FileHandle {
-    const handle = fileHandles.get(id!);
+    const handle = fileHandles.get(requireId(id));
     if (!handle) throw new Error('invalid file handle');
     return handle;
   }
@@ -90,7 +95,7 @@ export function createCallHandler(options: CallHandlerOptions): CallHandler {
       case INPUT_STREAM_BLOCKING_READ: {
         const { len } = payload as { len: number };
         if (resourceType === STDIN && options.stdin) return options.stdin.blockingRead(len);
-        const stream = streamHandles.get(id!);
+        const stream = streamHandles.get(requireId(id));
         return stream?.read ? stream.read(len) : new Uint8Array(0);
       }
 
@@ -98,20 +103,20 @@ export function createCallHandler(options: CallHandlerOptions): CallHandler {
         const { data } = payload as { data: Uint8Array };
         if (resourceType === STDOUT && options.stdout) return options.stdout.write(data);
         if (resourceType === STDERR && options.stderr) return options.stderr.write(data);
-        const stream = streamHandles.get(id!);
+        const stream = streamHandles.get(requireId(id));
         if (stream?.write) await stream.write(data);
         return;
       }
 
       case OUTPUT_STREAM_FLUSH: {
-        const stream = streamHandles.get(id!);
+        const stream = streamHandles.get(requireId(id));
         if (stream?.flush) await stream.flush();
         return;
       }
 
       case INPUT_STREAM_DISPOSE:
       case OUTPUT_STREAM_DISPOSE:
-        streamHandles.delete(id!);
+        streamHandles.delete(requireId(id));
         return;
 
       // ─── Filesystem calls ───────────────────────────────────────────
@@ -124,10 +129,10 @@ export function createCallHandler(options: CallHandlerOptions): CallHandler {
       }
 
       case FS_CLOSE: {
-        const handle = fileHandles.get(id!);
+        const handle = fileHandles.get(requireId(id));
         if (handle) {
           await requireFs().close(handle);
-          fileHandles.delete(id!);
+          fileHandles.delete(requireId(id));
         }
         return;
       }
@@ -235,10 +240,10 @@ export function createCallHandler(options: CallHandlerOptions): CallHandler {
         return getSocket(id).receive((payload as { len: number }).len);
 
       case SOCKET_CLOSE: {
-        const socket = socketHandles.get(id!);
+        const socket = socketHandles.get(requireId(id));
         if (socket) {
           await socket.close();
-          socketHandles.delete(id!);
+          socketHandles.delete(requireId(id));
         }
         return;
       }

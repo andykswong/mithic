@@ -26,6 +26,7 @@ pub struct Shell<R: Runtime> {
     pub(crate) in_function_depth: usize,
     pub(crate) procsub_counter: u64,
     pub(crate) procsub_paths: Vec<String>,
+    pub(crate) procsub_out_pending: Vec<(String, String)>,
     pub(crate) jobs: JobTable,
     pub(crate) traps: HashMap<String, String>,
     pub(crate) foreground_pids: Vec<u32>,
@@ -46,6 +47,14 @@ impl<R: Runtime> Shell<R> {
     pub fn new(rt: R, mut env: HashMap<String, ShellValue>, cwd: String, is_interactive: bool) -> Self {
         env.entry("PS1".to_string()).or_insert(ShellValue::Scalar("\\w\\$ ".to_string()));
         env.entry("PS2".to_string()).or_insert(ShellValue::Scalar("> ".to_string()));
+        let random_state = {
+            let mut buf = [0u8; 8];
+            if getrandom::fill(&mut buf).is_ok() {
+                u64::from_le_bytes(buf)
+            } else {
+                12345678901234567u64
+            }
+        };
         Shell {
             rt,
             env,
@@ -62,6 +71,7 @@ impl<R: Runtime> Shell<R> {
             in_function_depth: 0,
             procsub_counter: 0,
             procsub_paths: Vec::new(),
+            procsub_out_pending: Vec::new(),
             jobs: JobTable::new(),
             traps: HashMap::new(),
             foreground_pids: Vec::new(),
@@ -69,7 +79,7 @@ impl<R: Runtime> Shell<R> {
             in_condition: 0,
             local_scopes: Vec::new(),
             readonly_vars: HashSet::new(),
-            random_state: 12345678901234567u64,
+            random_state,
             current_line: 0,
             exec_stdout_path: None,
             shell_name: "sh".to_string(),
@@ -97,9 +107,19 @@ impl<R: Runtime> Shell<R> {
                 self.rt.write_stdout(&prompt);
             }
 
+            // TMOUT: if set to a positive integer, the shell exits on read timeout/EOF.
+            // Since WASM read_line() may not support real timeouts, we check after EOF.
+            let tmout: u64 = self.env.get("TMOUT")
+                .and_then(|v| v.as_scalar().parse().ok())
+                .unwrap_or(0);
+
             let line = match self.rt.read_line() {
                 Some(l) => l,
                 None => {
+                    // EOF or timeout: if TMOUT is set, exit immediately
+                    if tmout > 0 {
+                        break;
+                    }
                     // EOF: try to parse whatever is buffered
                     if !input_buf.is_empty() {
                         let trimmed = input_buf.trim().to_string();
@@ -259,9 +279,16 @@ impl<R: Runtime> Shell<R> {
                 } else {
                     exit = self.exec_pipeline(pipeline);
                     self.last_exit = exit;
+                    if !self.procsub_out_pending.is_empty() {
+                        self.flush_procsub_out();
+                    }
                 }
                 if self.exit_requested || self.return_requested || self.break_depth > 0 || self.continue_depth > 0 {
                     break;
+                }
+                // ERR trap: run after any command fails, but not in condition contexts
+                if exit != 0 && self.in_condition == 0 {
+                    self.run_trap("ERR");
                 }
                 // set -e: exit on non-zero status, but not in condition contexts or && / || chains
                 if self.options.errexit && exit != 0 && self.in_condition == 0 {
@@ -358,7 +385,7 @@ impl<R: Runtime> Shell<R> {
                     let mut clear_path = false;
                     for redirect in &cmd.redirects {
                         match redirect {
-                            Redirect::Out(w) => {
+                            Redirect::Out(w) | Redirect::OutClobber(w) => {
                                 let expanded = self.expand_word(w);
                                 let path = self.resolve_path(&expanded);
                                 if path == "/dev/stdout" {
@@ -436,7 +463,8 @@ impl<R: Runtime> Shell<R> {
                 stdout,
                 stderr: stderr_opt,
             };
-            match self.rt.spawn(&name, &args[1..], opts) {
+            let resolved_name = self.hash_table.get(&name).cloned().unwrap_or(name.clone());
+            match self.rt.spawn(&resolved_name, &args[1..], opts) {
                 Ok(proc) => {
                     let pid = self.rt.pid(&proc);
                     self.foreground_pids = vec![pid];
@@ -467,15 +495,22 @@ impl<R: Runtime> Shell<R> {
             let rhs = &word[eq_pos + 1..];
             if let Some((arr_name, subscript)) = parse_array_subscript(lhs) {
                 if arr_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    if self.readonly_vars.contains(arr_name) {
+                        self.rt.write_stderr(&format!("{}: {}: readonly variable\n", self.shell_name, arr_name));
+                        self.last_exit = 1;
+                        return Some(1);
+                    }
+                    let val = rhs.to_string();
+                    let arr_name_str = arr_name.to_string();
+                    // Check if this is an associative array
+                    if matches!(self.env.get(arr_name), Some(ShellValue::AssocArray(_))) {
+                        let entry = self.env.get_mut(&arr_name_str).unwrap();
+                        entry.assoc_set(subscript.to_string(), val);
+                        return Some(0);
+                    }
+                    // Numeric index for regular arrays
                     if let Ok(idx) = subscript.parse::<usize>() {
-                        if self.readonly_vars.contains(arr_name) {
-                            self.rt.write_stderr(&format!("{}: {}: readonly variable\n", self.shell_name, arr_name));
-                            self.last_exit = 1;
-                            return Some(1);
-                        }
-                        let val = rhs.to_string();
-                        let arr_name = arr_name.to_string();
-                        let entry = self.env.entry(arr_name).or_insert_with(|| ShellValue::Array(Vec::new()));
+                        let entry = self.env.entry(arr_name_str).or_insert_with(|| ShellValue::Array(Vec::new()));
                         match entry {
                             ShellValue::Array(v) => {
                                 if idx >= v.len() {
@@ -490,9 +525,11 @@ impl<R: Runtime> Shell<R> {
                                     v
                                 });
                             }
+                            ShellValue::AssocArray(_) => unreachable!(),
                         }
                         return Some(0);
                     }
+                    return None;
                 }
             }
             // `VAR=value` — plain scalar assignment
@@ -529,7 +566,7 @@ impl<R: Runtime> Shell<R> {
         // Validate: LHS must be a valid variable name or `arr[idx]`.
         let is_valid_lhs = if let Some((arr_name, subscript)) = parse_array_subscript(lhs) {
             arr_name.chars().all(|c| c.is_alphanumeric() || c == '_')
-                && subscript.parse::<usize>().is_ok()
+                && (subscript.parse::<usize>().is_ok() || matches!(self.env.get(arr_name), Some(ShellValue::AssocArray(_))))
         } else {
             !lhs.is_empty() && lhs.chars().all(|c| c.is_alphanumeric() || c == '_')
         };
@@ -545,6 +582,13 @@ impl<R: Runtime> Shell<R> {
 
         // Perform the assignment.
         if let Some((arr_name, subscript)) = parse_array_subscript(lhs) {
+            // Associative array assignment
+            if matches!(self.env.get(arr_name), Some(ShellValue::AssocArray(_))) {
+                let arr_name = arr_name.to_string();
+                let entry = self.env.get_mut(&arr_name).unwrap();
+                entry.assoc_set(subscript.to_string(), rhs);
+                return Some(0);
+            }
             if let Ok(idx) = subscript.parse::<usize>() {
                 let arr_name = arr_name.to_string();
                 let entry = self.env.entry(arr_name).or_insert_with(|| ShellValue::Array(Vec::new()));
@@ -562,6 +606,7 @@ impl<R: Runtime> Shell<R> {
                             v
                         });
                     }
+                    ShellValue::AssocArray(_) => unreachable!(),
                 }
                 return Some(0);
             }
@@ -595,7 +640,22 @@ impl<R: Runtime> Shell<R> {
                     let saved_options = self.options.clone();
                     let saved_params = self.params.clone();
                     let saved_exit_requested = self.exit_requested;
+                    let saved_in_condition = self.in_condition;
+                    let saved_in_loop_depth = self.in_loop_depth;
+                    let saved_in_function_depth = self.in_function_depth;
+                    let saved_break_depth = self.break_depth;
+                    let saved_continue_depth = self.continue_depth;
+                    let saved_return_requested = self.return_requested;
+
+                    self.in_loop_depth = 0;
+                    self.in_function_depth = 0;
+                    self.in_condition = 0;
+                    self.break_depth = 0;
+                    self.continue_depth = 0;
+                    self.return_requested = false;
+
                     let exit = self.exec_list_with_stdout(list, stdout);
+
                     self.env = saved_env;
                     self.cwd = saved_cwd;
                     self.functions = saved_functions;
@@ -603,6 +663,12 @@ impl<R: Runtime> Shell<R> {
                     self.options = saved_options;
                     self.params = saved_params;
                     self.exit_requested = saved_exit_requested;
+                    self.in_condition = saved_in_condition;
+                    self.in_loop_depth = saved_in_loop_depth;
+                    self.in_function_depth = saved_in_function_depth;
+                    self.break_depth = saved_break_depth;
+                    self.continue_depth = saved_continue_depth;
+                    self.return_requested = saved_return_requested;
                     exit
                 }
                 other => { self.rt.pipe_close_write(stdout); self.exec_compound(other) }
@@ -660,7 +726,8 @@ impl<R: Runtime> Shell<R> {
                     stdout: stdout_opt,
                     stderr: None,
                 };
-                match self.rt.spawn(&name, &args[1..], opts) {
+                let resolved_name = self.hash_table.get(&name).cloned().unwrap_or(name.clone());
+                match self.rt.spawn(&resolved_name, &args[1..], opts) {
                     Ok(proc) => processes.push(proc),
                     Err(_) => {
                         self.rt.write_stderr(&format!("{}: {}: command not found\n", self.shell_name, name));
@@ -824,6 +891,7 @@ impl<R: Runtime> Shell<R> {
 
 pub(crate) fn signal_name_from_num(num: u8) -> &'static str {
     match num {
+        0 => "EXIT",
         2 => "INT",
         9 => "KILL",
         15 => "TERM",

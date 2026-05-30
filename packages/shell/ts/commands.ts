@@ -4,20 +4,19 @@ import type { Descriptor } from '@mithic/wasip2/filesystem/types';
 import type { CommandContext, CommandResolver } from '@mithic/process/impl/simple';
 import type { SyncFileSystemProvider } from '@mithic/io/vfs';
 
-export type WasmInstantiateFn = (
-  loader: (path: string) => WebAssembly.Module,
+export type SyncInstantiateFn = (
+  compileCore: (path: string) => WebAssembly.Module,
   imports: object,
-  instantiator: (module: WebAssembly.Module, imports: object) => WebAssembly.Instance,
+  instantiateCore: (module: WebAssembly.Module, imports: WebAssembly.Imports) => WebAssembly.Instance,
 ) => { run: { run: () => number } };
 
 export interface CommandsConfig {
   memFs: SyncFileSystemProvider;
   rootDescriptor: Descriptor;
-  shellInstantiate: WasmInstantiateFn;
-  shellSyncLoader: (path: string) => WebAssembly.Module;
-  coreutilsInstantiate: WasmInstantiateFn;
-  coreutilsSyncLoader: (path: string) => WebAssembly.Module;
-  syncInstantiator: (module: WebAssembly.Module, imports: object) => WebAssembly.Instance;
+  shellInstantiate: SyncInstantiateFn;
+  shellCompileCore: (path: string) => WebAssembly.Module;
+  coreutilsInstantiate: SyncInstantiateFn;
+  coreutilsCompileCore: (path: string) => WebAssembly.Module;
   createProcessImports: () => Record<string, unknown>;
 }
 
@@ -30,6 +29,10 @@ const COREUTILS_COMMANDS = new Set([
 ]);
 
 const enc = new TextEncoder();
+
+function syncInstantiateCore(module: WebAssembly.Module, imports: WebAssembly.Imports): WebAssembly.Instance {
+  return new WebAssembly.Instance(module, imports);
+}
 
 export function createCommandResolver(config: CommandsConfig): CommandResolver {
   const { memFs } = config;
@@ -51,7 +54,7 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
       ...config.createProcessImports(),
     };
     try {
-      const { run } = config.shellInstantiate(config.shellSyncLoader, childImports, config.syncInstantiator);
+      const { run } = config.shellInstantiate(config.shellCompileCore, childImports, syncInstantiateCore);
       return run.run() ?? 0;
     } catch (e: unknown) {
       if (e instanceof ComponentExit) return e.code;
@@ -74,7 +77,7 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
       },
     });
     try {
-      const { run } = config.coreutilsInstantiate(config.coreutilsSyncLoader, childShim.getImportObject(), config.syncInstantiator);
+      const { run } = config.coreutilsInstantiate(config.coreutilsCompileCore, childShim.getImportObject(), syncInstantiateCore);
       return run.run() ?? 0;
     } catch (e: unknown) {
       if (e instanceof ComponentExit) return e.code;

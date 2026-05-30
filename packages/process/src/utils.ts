@@ -93,6 +93,9 @@ function createQueuePipe(bufferSize: number): { input: InputStream; output: Outp
         throw { tag: 'last-operation-failed', val: { toDebugString: () => 'broken-pipe' } } as StreamError;
       }
       if (data.byteLength === 0) return;
+      if (buffered + data.byteLength > bufferSize) {
+        throw { tag: 'last-operation-failed', val: { toDebugString: () => 'buffer-overflow' } } as StreamError;
+      }
       queue.push(new Uint8Array(data));
       buffered += data.byteLength;
     },

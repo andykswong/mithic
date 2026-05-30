@@ -64,7 +64,8 @@ impl<R: Runtime> Shell<R> {
                 stdout: stdout_opt,
                 stderr: stderr_opt,
             };
-            match self.rt.spawn(&name, &args[1..], opts) {
+            let resolved_name = self.hash_table.get(&name).cloned().unwrap_or(name.clone());
+            match self.rt.spawn(&resolved_name, &args[1..], opts) {
                 Ok(proc) => StageResult::Spawned(proc),
                 Err(_) => {
                     self.rt.write_stderr(&format!("{}: {}: command not found\n", self.shell_name, name));
@@ -109,7 +110,8 @@ impl<R: Runtime> Shell<R> {
                         stdout: stdout_opt,
                         stderr: stderr_opt,
                     };
-                    match self.rt.spawn(&name, &args[1..], opts) {
+                    let resolved_name = self.hash_table.get(&name).cloned().unwrap_or(name.clone());
+                    match self.rt.spawn(&resolved_name, &args[1..], opts) {
                         Ok(proc) => {
                             let pid = self.rt.pid(&proc);
                             let job_id = self.jobs.add(vec![proc], vec![pid], display);
@@ -154,7 +156,8 @@ impl<R: Runtime> Shell<R> {
                     stdout: stdout_opt,
                     stderr: stderr_opt,
                 };
-                match self.rt.spawn(&name, &args[1..], opts) {
+                let resolved_name = self.hash_table.get(&name).cloned().unwrap_or(name.clone());
+                match self.rt.spawn(&resolved_name, &args[1..], opts) {
                     Ok(proc) => {
                         let pid = self.rt.pid(&proc);
                         pids.push(pid);
@@ -190,6 +193,8 @@ impl<R: Runtime> Shell<R> {
                 Command::Simple(sc) => self.dispatch_simple(sc, None, None, None),
                 other => self.exec_compound(other),
             };
+            // Set PIPESTATUS for single-command pipelines
+            self.env.insert("PIPESTATUS".to_string(), ShellValue::Array(vec![exit.to_string()]));
             return if pipeline.negate { if exit == 0 { 1 } else { 0 } } else { exit };
         }
 
@@ -203,6 +208,9 @@ impl<R: Runtime> Shell<R> {
         let mut last_builtin_exit: Option<u8> = None;
         // Track builtin/function exits for pipefail
         let mut builtin_exits: Vec<u8> = Vec::new();
+        // Track per-stage exit codes for PIPESTATUS.
+        // For spawned processes we store None and fill in after wait.
+        let mut stage_exits: Vec<Option<u8>> = Vec::with_capacity(n);
 
         for (i, command) in cmds.into_iter().enumerate() {
             let cmd = match command {
@@ -210,6 +218,7 @@ impl<R: Runtime> Shell<R> {
                 other => {
                     let exit = self.exec_compound(other);
                     builtin_exits.push(exit);
+                    stage_exits.push(Some(exit));
                     if i == n - 1 { last_builtin_exit = Some(exit); }
                     continue;
                 }
@@ -220,6 +229,7 @@ impl<R: Runtime> Shell<R> {
             match self.exec_pipeline_stage(cmd, stdin_opt, stdout_opt, &env_list) {
                 StageResult::Builtin(exit) => {
                     builtin_exits.push(exit);
+                    stage_exits.push(Some(exit));
                     if self.exit_requested {
                         for p in processes {
                             let _ = self.rt.wait(&p);
@@ -232,6 +242,7 @@ impl<R: Runtime> Shell<R> {
                 }
                 StageResult::Spawned(proc) => {
                     processes.push(proc);
+                    stage_exits.push(None); // filled after wait
                 }
                 StageResult::RedirectFailed => {
                     for p in processes {
@@ -245,7 +256,10 @@ impl<R: Runtime> Shell<R> {
                     }
                     return if pipeline.negate { 0 } else { 127 };
                 }
-                StageResult::Empty => continue,
+                StageResult::Empty => {
+                    stage_exits.push(Some(0));
+                    continue;
+                }
             }
         }
 
@@ -260,6 +274,23 @@ impl<R: Runtime> Shell<R> {
         } else {
             last_builtin_exit.unwrap_or(self.last_exit)
         };
+
+        // Fill in spawned process exit codes into stage_exits
+        let mut proc_idx = 0;
+        for slot in stage_exits.iter_mut() {
+            if slot.is_none() {
+                if proc_idx < intermediate_exits.len() {
+                    *slot = Some(intermediate_exits[proc_idx]);
+                } else {
+                    *slot = Some(last_exit);
+                }
+                proc_idx += 1;
+            }
+        }
+
+        // Set PIPESTATUS array
+        let pipestatus: Vec<String> = stage_exits.iter().map(|e| e.unwrap_or(0).to_string()).collect();
+        self.env.insert("PIPESTATUS".to_string(), ShellValue::Array(pipestatus));
 
         let exit = if self.options.pipefail {
             // Combine all exits: builtin/function exits + intermediate process exits + last exit

@@ -159,6 +159,12 @@ export class NodeFsProvider implements FileSystemProvider {
 
   async symlink(target: string, linkPath: string): Promise<void> {
     const resolvedLink = this.#resolvePath(linkPath);
+    const resolvedTarget = target.startsWith('/')
+      ? this.#resolvePath(target)
+      : nodePath.resolve(nodePath.dirname(resolvedLink), target);
+    if (!resolvedTarget.startsWith(this.#root + nodePath.sep) && resolvedTarget !== this.#root) {
+      throw new FileSystemError('access', `Symlink target escapes root: ${target}`);
+    }
     try {
       await fs.symlink(target, resolvedLink);
     } catch (e: unknown) {
@@ -207,13 +213,12 @@ export class NodeFsProvider implements FileSystemProvider {
     const resolved = this.#resolvePath(path);
     try {
       const real = await fs.realpath(resolved);
-      // Return path relative to root
-      if (real.startsWith(this.#root)) {
-        const relative = real.slice(this.#root.length);
-        return relative.startsWith('/') ? relative : '/' + relative;
+      if (!real.startsWith(this.#root + nodePath.sep) && real !== this.#root) {
+        throw new FileSystemError('access', `Resolved path escapes root: ${path}`);
       }
-      return real;
+      return '/' + nodePath.relative(this.#root, real);
     } catch (e: unknown) {
+      if (e instanceof FileSystemError) throw e;
       throw this.#mapError(e, path);
     }
   }

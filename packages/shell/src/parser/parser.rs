@@ -172,8 +172,14 @@ impl Parser {
             Some("while") => Command::While(self.parse_while()),
             Some("until") => Command::Until(self.parse_until()),
             Some("for") => self.parse_for(),
+            Some("select") if !self.posix => Command::Select(self.parse_select()),
+            Some("select") => {
+                self.push_error("select is not supported in POSIX mode");
+                self.parse_maybe_function_def()
+            }
             Some("case") => Command::Case(self.parse_case()),
             Some("{") => Command::Group(self.parse_group()),
+            Some("coproc") if !self.posix => self.parse_coproc(),
             _ => self.parse_maybe_function_def(),
         }
     }
@@ -320,6 +326,49 @@ impl Parser {
         Command::For(ForCommand { var, words, body, redirects })
     }
 
+    fn parse_select(&mut self) -> SelectCommand {
+        self.advance(); // consume "select"
+        self.skip_newlines();
+
+        let var = match self.advance() {
+            Token::Word(parts) if parts.len() == 1 => {
+                if let WordPart::Literal(s) = &parts[0] { s.clone() } else { String::new() }
+            }
+            _ => String::new(),
+        };
+
+        self.skip_terminators();
+
+        let words = if self.at_keyword("in") {
+            self.advance();
+            let mut words = Vec::new();
+            loop {
+                match self.peek() {
+                    Token::Semi | Token::Newline | Token::Eof => break,
+                    _ => {
+                        if self.at_keyword("do") { break; }
+                        if let Some(w) = self.parse_word() {
+                            words.push(w);
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            words
+        } else {
+            Vec::new()
+        };
+
+        self.skip_terminators();
+        self.expect_keyword("do");
+        self.skip_terminators();
+        let body = self.parse_compound_list_until(&["done"]);
+        self.expect_keyword("done");
+        let redirects = self.parse_redirects();
+        SelectCommand { var, words, body, redirects }
+    }
+
     fn parse_case(&mut self) -> CaseCommand {
         self.advance(); // consume "case"
         let word = self.parse_word_required();
@@ -428,6 +477,26 @@ impl Parser {
         }
         if matches!(self.peek(), Token::RParen) { self.advance(); }
         List { items }
+    }
+
+    fn parse_coproc(&mut self) -> Command {
+        self.advance(); // consume "coproc"
+        // Collect remaining words on this line as the coproc command
+        let mut words = vec![Word::literal("coproc")];
+        loop {
+            match self.peek() {
+                Token::Semi | Token::Newline | Token::Eof | Token::Amp => break,
+                Token::Pipe | Token::AmpAmp | Token::PipePipe => break,
+                _ => {
+                    if let Some(w) = self.parse_word() {
+                        words.push(w);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        Command::Simple(SimpleCommand { words, redirects: vec![] })
     }
 
     fn parse_maybe_function_def(&mut self) -> Command {
@@ -586,6 +655,11 @@ impl Parser {
                     let w = self.parse_word_required();
                     redirects.push(Redirect::Out(w));
                 }
+                Token::GtPipe => {
+                    self.advance();
+                    let w = self.parse_word_required();
+                    redirects.push(Redirect::OutClobber(w));
+                }
                 Token::GtGt => {
                     self.advance();
                     let w = self.parse_word_required();
@@ -658,6 +732,11 @@ impl Parser {
                     self.advance();
                     let w = self.parse_word_required();
                     redirects.push(Redirect::Out(w));
+                }
+                Token::GtPipe => {
+                    self.advance();
+                    let w = self.parse_word_required();
+                    redirects.push(Redirect::OutClobber(w));
                 }
                 Token::GtGt => {
                     self.advance();
@@ -739,7 +818,7 @@ impl Parser {
                             "if" => if_depth += 1,
                             "fi" => if_depth -= 1,
                             "while" | "until" => while_depth += 1,
-                            "for" => for_depth += 1,
+                            "for" | "select" => for_depth += 1,
                             "done" => { while_depth -= 1; for_depth -= 1; }
                             "case" => case_depth += 1,
                             "esac" => case_depth -= 1,
@@ -788,6 +867,7 @@ fn token_to_text(tok: &Token) -> String {
         Token::Semi => ";".to_string(),
         Token::Newline => "\n".to_string(),
         Token::Gt => ">".to_string(),
+        Token::GtPipe => ">|".to_string(),
         Token::GtGt => ">>".to_string(),
         Token::Lt => "<".to_string(),
         Token::Fd2Gt => "2>".to_string(),

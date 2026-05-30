@@ -24,7 +24,7 @@
     "target": "wasm32-wasip2"
   },
   "scripts": {
-    "preinstall": "rustup target add $npm_package_config_target",
+    "prepare": "rustup target add $npm_package_config_target",
     "clean": "rimraf dist *.tsbuildinfo",
     "prebuild": "mkdir -p dist/wasm dist/ts",
     "build": "npm run build:rust && npm run build:ts",

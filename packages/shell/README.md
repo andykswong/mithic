@@ -24,7 +24,7 @@
 - **Process substitution** — `<(cmd)`
 - **Glob expansion** — `*`, `?`, `[...]`
 - **Builtins** — `cd`, `echo`, `export`, `unset`, `read`, `test`/`[`/`[[`, `declare`/`local`, `source`, `true`, `false`
-- **POSIX mode** — Auto-activates when invoked as `sh`; disables `[[`, `(( ))`, `<<<`, arrays, brace expansion
+- **POSIX mode** — Auto-activates when invoked as `sh`; non-standard extensions, including `[[`, `(( ))`, `<<<`, arrays, brace expansion
 - **Script execution** — Shebang (`#!/bin/sh`) support, PATH lookup with executable permission checks
 - **Command resolution** — `SimpleProcessManager` with `CommandResolver` dispatching to shell, coreutils WASM, host-side commands (chmod), and PATH-based scripts
 
