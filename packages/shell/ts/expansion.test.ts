@@ -177,6 +177,29 @@ describe('arithmetic expansion', () => {
   });
 });
 
+describe('arithmetic expansion: edge cases', () => {
+  it('division by zero returns non-zero exit code', async () => {
+    const { exit } = await runShell('echo $((1 / 0))\n');
+    assert.notStrictEqual(exit, 0);
+  });
+
+  it('modulo by zero returns non-zero exit code', async () => {
+    const { exit } = await runShell('echo $((5 % 0))\n');
+    assert.notStrictEqual(exit, 0);
+  });
+
+  it('large numbers do not panic (overflow wraps or returns a value)', async () => {
+    const { exit } = await runShell('echo $((9223372036854775807 + 1))\n');
+    // Should complete without crash (exit 0 or any defined exit code, not a signal kill)
+    assert.ok(exit !== null);
+  });
+
+  it('nested arithmetic $((( 2+3 ) * ( 4-1 ))) evaluates to 15', async () => {
+    const { stdout } = await runShell('echo $(( (2+3) * (4-1) ))\n');
+    assert.strictEqual(stdout.trim(), '15');
+  });
+});
+
 describe('command substitution', () => {
   it('$(echo hello) captures output', async () => {
     const { stdout } = await runShell('export result=$(echo hello)\necho "$result"\n');
