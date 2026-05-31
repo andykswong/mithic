@@ -137,3 +137,117 @@ describe('export without value', () => {
     assert.strictEqual(stdout.trim(), 'y=world');
   });
 });
+
+describe('builtin: alias/unalias', () => {
+  it('alias defines a command shortcut', async () => {
+    const { stdout } = await runShell('alias greet="echo hello"\ngreet\n');
+    assert.strictEqual(stdout.trim(), 'hello');
+  });
+
+  it('alias with no args lists all aliases', async () => {
+    const { stdout } = await runShell('alias foo="bar"\nalias baz="qux"\nalias\n');
+    assert.ok(stdout.includes("alias baz='qux'"));
+    assert.ok(stdout.includes("alias foo='bar'"));
+  });
+
+  it('alias name prints that alias', async () => {
+    const { stdout } = await runShell('alias x="echo hi"\nalias x\n');
+    assert.ok(stdout.includes("alias x='echo hi'"));
+  });
+
+  it('unalias removes an alias', async () => {
+    const { stdout } = await runShell('alias greet="echo hello"\nunalias greet\ngreet 2>/dev/null || echo gone\n');
+    assert.strictEqual(stdout.trim(), 'gone');
+  });
+
+  it('unalias -a clears all aliases', async () => {
+    const { stdout } = await runShell('alias a="echo 1"\nalias b="echo 2"\nunalias -a\nalias\n');
+    assert.strictEqual(stdout.trim(), '');
+  });
+
+  it('alias expansion passes arguments', async () => {
+    const { stdout } = await runShell('alias say="echo"\nsay world\n');
+    assert.strictEqual(stdout.trim(), 'world');
+  });
+});
+
+describe('builtin: time', () => {
+  it('time prints elapsed time to stderr', async () => {
+    const { stderr } = await runShell('time echo hello\n');
+    assert.ok(stderr.includes('real'));
+    assert.match(stderr, /\d+m[\d.]+s/);
+  });
+
+  it('time with no command prints zero time', async () => {
+    const { stderr } = await runShell('time\n');
+    assert.ok(stderr.includes('real'));
+  });
+
+  it('time returns exit code of timed command', async () => {
+    const { exit } = await runShell('time false\n');
+    assert.strictEqual(exit, 1);
+  });
+});
+
+describe('builtin: builtin', () => {
+  it('builtin invokes a shell builtin directly', async () => {
+    const { stdout } = await runShell('builtin echo hello\n');
+    assert.strictEqual(stdout.trim(), 'hello');
+  });
+
+  it('builtin bypasses functions', async () => {
+    const { stdout } = await runShell('echo() { printf "FUNC %s" "$1"; }\nbuiltin echo real\n');
+    assert.strictEqual(stdout.trim(), 'real');
+  });
+
+  it('builtin returns error for non-builtins', async () => {
+    const { stderr, exit } = await runShell('builtin nonexistent_xyz\n');
+    assert.ok(stderr.includes('not a shell builtin'));
+    assert.strictEqual(exit, 1);
+  });
+});
+
+describe('builtin: type and command -v (PATH resolution)', () => {
+  it('type finds scripts in PATH', async () => {
+    const { stdout } = await runShell('mkdir -p /usr/bin\necho "#!/bin/sh" > /usr/bin/myscript\nchmod +x /usr/bin/myscript\ntype myscript\n');
+    assert.ok(stdout.includes('myscript is'), `expected 'myscript is' in: ${stdout}`);
+  });
+
+  it('command -v finds scripts in PATH', async () => {
+    const { stdout } = await runShell('mkdir -p /usr/bin\necho "#!/bin/sh" > /usr/bin/myscript2\nchmod +x /usr/bin/myscript2\ncommand -v myscript2\n');
+    assert.ok(stdout.trim().includes('/usr/bin/myscript2'));
+  });
+
+  it('type identifies functions', async () => {
+    const { stdout } = await runShell('myfn() { echo x; }\ntype myfn\n');
+    assert.ok(stdout.includes('function'));
+  });
+
+  it('command -v finds functions', async () => {
+    const { stdout } = await runShell('myfn() { echo x; }\ncommand -v myfn\n');
+    assert.strictEqual(stdout.trim(), 'myfn');
+  });
+
+  it('command executes external commands directly', async () => {
+    const { stdout } = await runShell('command date "+%Y"\n');
+    assert.match(stdout.trim(), /^\d{4}$/);
+  });
+});
+
+describe('/dev/random and /dev/urandom', () => {
+  it('/dev/random exists as a device', async () => {
+    const { stdout } = await runShell('test -e /dev/random && echo yes || echo no\n');
+    assert.strictEqual(stdout.trim(), 'yes');
+  });
+
+  it('/dev/urandom exists as a device', async () => {
+    const { stdout } = await runShell('test -e /dev/urandom && echo yes || echo no\n');
+    assert.strictEqual(stdout.trim(), 'yes');
+  });
+
+  it('/dev/random listed in ls /dev', async () => {
+    const { stdout } = await runShell('ls /dev\n');
+    assert.ok(stdout.includes('random'));
+    assert.ok(stdout.includes('urandom'));
+  });
+});
