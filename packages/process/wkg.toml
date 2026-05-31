@@ -1,0 +1,6 @@
+[metadata]
+authors = "Andy K.S. Wong <andykswong@outlook.com>"
+description = "mithic process management interface"
+license = "MIT"
+homepage = "https://github.com/andykswong/mithic/tree/main/packages/process"
+repository = "https://github.com/andykswong/mithic"

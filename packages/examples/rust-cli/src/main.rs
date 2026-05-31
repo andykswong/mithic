@@ -1,11 +1,3 @@
-mod bindings {
-    wit_bindgen::generate!({
-        world: "rust-cli",
-        path: "../wit",
-        generate_all
-    });
-}
-
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 

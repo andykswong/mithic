@@ -337,6 +337,33 @@ describe('ls', () => {
     assert.ok(stdout.includes('ls_l_size.txt'));
   });
 
+  it('-l shows owner and group columns', async () => {
+    const { stdout } = await runShell(
+      'echo x > /tmp/ls_l_owner.txt\nls -l /tmp/ls_l_owner.txt\n'
+    );
+    assert.ok(stdout.includes('root'), `expected "root" in ls -l output, got: ${stdout}`);
+  });
+
+  it('-l has at least 7 space-separated fields', async () => {
+    const { stdout } = await runShell(
+      'echo x > /tmp/ls_l_cols.txt\nls -l /tmp/ls_l_cols.txt\n'
+    );
+    const line = stdout.trim().split('\n').find(l => l.includes('ls_l_cols.txt'));
+    assert.ok(line);
+    const fields = line!.split(/\s+/);
+    assert.ok(fields.length >= 7, `expected >=7 fields, got ${fields.length}: ${line}`);
+  });
+
+  it('-l shows nlinks column', async () => {
+    const { stdout } = await runShell(
+      'echo x > /tmp/ls_l_nlinks.txt\nls -l /tmp/ls_l_nlinks.txt\n'
+    );
+    const line = stdout.trim().split('\n').find(l => l.includes('ls_l_nlinks.txt'));
+    assert.ok(line);
+    const fields = line!.split(/\s+/);
+    assert.strictEqual(fields[1].trim(), '1');
+  });
+
   it('-R lists subdirectories recursively', async () => {
     const { stdout } = await runShell(
       'mkdir -p /tmp/ls_r_dir/sub\necho x > /tmp/ls_r_dir/a.txt\necho y > /tmp/ls_r_dir/sub/b.txt\nls -R /tmp/ls_r_dir\n'

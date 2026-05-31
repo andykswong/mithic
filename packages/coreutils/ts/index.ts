@@ -1,1 +1,1 @@
-export { instantiate, modules } from '../dist/wasm/index.js';
+export { instantiate, modules } from '@mithic/coreutils/component';

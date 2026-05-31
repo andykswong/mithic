@@ -37,7 +37,8 @@
     "start": "node --experimental-strip-types ts/cli.ts",
     "test:rust": "cargo test -p $npm_package_config_crate --config \"build.target=\\\"$(rustc -vV | sed -n 's/host: //p')\\\"\"",
     "test:ts": "node --experimental-strip-types --test \"ts/**/*.test.ts\"",
-    "test": "npm run test:rust && npm run test:ts"
+    "test": "npm run test:rust && npm run test:ts",
+    "wit-fetch": "wkg wit fetch"
   },
   "repository": {
     "type": "git",

@@ -16,7 +16,8 @@
     "postbuild": "node ./transpile.js",
     "clean": "rimraf dist",
     "start": "node .",
-    "test": "npm start"
+    "test": "npm start",
+    "wit-fetch": "wkg wit fetch"
   },
   "repository": {
     "type": "git",

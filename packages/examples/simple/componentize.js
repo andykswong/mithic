@@ -6,7 +6,7 @@ const jsSource = await readFile('src/index.js', 'utf8');
 const outputDir = './dist';
 
 const { component } = await componentize(jsSource, {
-  witPath: '../wit',
+  witPath: './wit',
   worldName: 'simple',
   disableFeatures: ['http', 'fetch-event'],
 });

@@ -15,7 +15,7 @@
     "target": "wasm32-wasip2"
   },
   "scripts": {
-    "preinstall": "rustup target add $npm_package_config_target",
+    "prepare": "rustup target add $npm_package_config_target",
     "prebuild": "eslint && mkdir -p dist",
     "build": "cargo build -p $npm_package_config_crate -r --target $npm_package_config_target",
     "postbuild": "cp ../../../target/${npm_package_config_target}/release/${npm_package_config_crate}.wasm ./dist/component.wasm && npm run transpile",

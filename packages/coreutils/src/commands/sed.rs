@@ -109,6 +109,7 @@ enum SedCmd {
     Label(String),
     Branch(Option<String>),
     BranchIfSub(Option<String>),
+    Group(Vec<SedExpr>),
 }
 
 struct SedExpr {
@@ -132,17 +133,27 @@ fn split_commands(script: &str) -> Vec<String> {
     let mut current = String::new();
     let chars: Vec<char> = script.chars().collect();
     let mut i = 0;
+    let mut brace_depth = 0;
 
     while i < chars.len() {
-        if chars[i] == ';' || chars[i] == '\n' {
+        if chars[i] == '{' {
+            brace_depth += 1;
+            current.push(chars[i]);
+        } else if chars[i] == '}' {
+            if brace_depth > 0 {
+                brace_depth -= 1;
+            }
+            current.push(chars[i]);
+            if brace_depth == 0 {
+                commands.push(current.clone());
+                current.clear();
+            }
+        } else if brace_depth > 0 {
+            current.push(chars[i]);
+        } else if chars[i] == ';' || chars[i] == '\n' {
             commands.push(current.clone());
             current.clear();
         } else if chars[i] == 's' && current.trim().is_empty() || (chars[i] == 's' && !current.is_empty() && is_address_prefix(&current)) {
-            // We might be at the start of a substitution command — need to handle delimiters
-            // But actually the simpler approach: if current is empty or just an address,
-            // check if this is an 's' command. For correctness, let's just handle the
-            // substitution delimiter case by not splitting on ';' inside s commands.
-            // Re-approach: scan forward to find end of substitution.
             let prefix = current.clone();
             current.push(chars[i]);
             i += 1;
@@ -150,7 +161,6 @@ fn split_commands(script: &str) -> Vec<String> {
                 let delim = chars[i];
                 current.push(delim);
                 i += 1;
-                // Find closing: pattern/replacement/flags
                 let mut field_count = 0;
                 while i < chars.len() && field_count < 2 {
                     if chars[i] == '\\' && i + 1 < chars.len() {
@@ -165,12 +175,11 @@ fn split_commands(script: &str) -> Vec<String> {
                     current.push(chars[i]);
                     i += 1;
                 }
-                // Consume flags
                 while i < chars.len() && chars[i] != ';' && chars[i] != '\n' {
                     current.push(chars[i]);
                     i += 1;
                 }
-                let _ = prefix; // prefix already in current from before the 's'
+                let _ = prefix;
                 commands.push(current.clone());
                 current.clear();
             }
@@ -218,6 +227,15 @@ fn parse_single_command(expr: &str) -> Option<SedExpr> {
 
     // Parse optional address
     let (address, rest) = parse_address(expr)?;
+
+    // Parse group command
+    if rest.starts_with('{') {
+        let inner = rest.strip_prefix('{')
+            .and_then(|s| s.strip_suffix('}'))
+            .unwrap_or(&rest[1..]);
+        let inner_exprs = parse_script(inner)?;
+        return Some(SedExpr { address, cmd: SedCmd::Group(inner_exprs) });
+    }
 
     // Parse command
     if rest.starts_with('s') {
@@ -381,6 +399,43 @@ fn find_label(exprs: &[SedExpr], label: &str) -> Option<usize> {
     None
 }
 
+enum GroupResult {
+    Continue,
+    Deleted,
+    Printed,
+}
+
+fn execute_group(inner_exprs: &[SedExpr], s: &mut String, hold_space: &mut String, sub_made: &mut bool) -> GroupResult {
+    let mut result = GroupResult::Continue;
+    for inner_expr in inner_exprs {
+        match &inner_expr.cmd {
+            SedCmd::Delete => { return GroupResult::Deleted; }
+            SedCmd::Print => { return GroupResult::Printed; }
+            SedCmd::Substitute { pattern, replacement, global } => {
+                let new_s = apply_substitute(s, pattern, replacement, *global);
+                if new_s != *s {
+                    *sub_made = true;
+                }
+                *s = new_s;
+            }
+            SedCmd::HoldCopy => { *hold_space = s.clone(); }
+            SedCmd::HoldAppend => { hold_space.push('\n'); hold_space.push_str(s); }
+            SedCmd::GetCopy => { *s = hold_space.clone(); }
+            SedCmd::GetAppend => { s.push('\n'); s.push_str(hold_space); }
+            SedCmd::Exchange => { let tmp = s.clone(); *s = hold_space.clone(); *hold_space = tmp; }
+            SedCmd::Group(nested) => {
+                result = execute_group(nested, s, hold_space, sub_made);
+                match result {
+                    GroupResult::Deleted | GroupResult::Printed => return result,
+                    GroupResult::Continue => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    result
+}
+
 fn apply_script(text: &str, exprs: &[SedExpr], suppress: bool) -> String {
     let raw_lines: Vec<&str> = text.split('\n').collect();
     let has_trailing_newline = text.ends_with('\n');
@@ -508,6 +563,14 @@ fn apply_script(text: &str, exprs: &[SedExpr], suppress: bool) -> String {
                         sub_made = false;
                     }
                 }
+                SedCmd::Group(inner_exprs) => {
+                    let group_result = execute_group(inner_exprs, &mut s, &mut hold_space, &mut sub_made);
+                    match group_result {
+                        GroupResult::Continue => {}
+                        GroupResult::Deleted => { deleted = true; break; }
+                        GroupResult::Printed => { explicitly_printed = true; result.push_str(&s); result.push('\n'); }
+                    }
+                }
                 SedCmd::Label(_) => {}
             }
             ip += 1;
@@ -584,6 +647,14 @@ fn apply_script(text: &str, exprs: &[SedExpr], suppress: bool) -> String {
                                 None => break,
                             }
                         } else { inner_sub_made = false; }
+                    }
+                    SedCmd::Group(inner_group_exprs) => {
+                        let group_result = execute_group(inner_group_exprs, &mut s, &mut hold_space, &mut inner_sub_made);
+                        match group_result {
+                            GroupResult::Continue => {}
+                            GroupResult::Deleted => { inner_deleted = true; break; }
+                            GroupResult::Printed => { inner_printed = true; result.push_str(&s); result.push('\n'); }
+                        }
                     }
                     SedCmd::Label(_) => {}
                 }
@@ -974,5 +1045,27 @@ mod tests {
         let (start, end) = super::regex_find_at(&chars, 0, "bc", &opts).unwrap();
         assert_eq!(start, 1);
         assert_eq!(end, 3);
+    }
+
+    // --- brace grouping ---
+
+    #[test]
+    fn brace_group_substitute_and_delete_on_addressed_line() {
+        let exprs = parse_script("2{s/a/b/;d}").unwrap();
+        // Line 2 gets substitution then delete; lines 1 and 3 are unaffected
+        assert_eq!(apply_script("aaa\naaa\naaa\n", &exprs, false), "aaa\naaa\n");
+    }
+
+    #[test]
+    fn brace_group_does_not_affect_other_lines() {
+        let exprs = parse_script("1{s/x/y/;d}").unwrap();
+        // Only line 1 is deleted
+        assert_eq!(apply_script("xoo\nbar\n", &exprs, false), "bar\n");
+    }
+
+    #[test]
+    fn brace_group_with_range_address() {
+        let exprs = parse_script("2,3{s/a/X/g}").unwrap();
+        assert_eq!(apply_script("aaa\naaa\naaa\naaa\n", &exprs, false), "aaa\nXXX\nXXX\naaa\n");
     }
 }

@@ -193,6 +193,32 @@ describe('sed hold space and branching', () => {
 });
 
 // =============================================================================
+// sed brace grouping
+// =============================================================================
+
+describe('sed brace grouping', () => {
+  it('line-address brace group with substitution and delete', async () => {
+    const { stdout } = await runShell('printf "a\\nb\\nc\\n" | sed \'2{s/b/B/;d}\'\n');
+    assert.strictEqual(stdout.trim(), 'a\nc');
+  });
+
+  it('range-address brace group substitution', async () => {
+    const { stdout } = await runShell('printf "x1\\nx2\\nx3\\n" | sed \'1,2{s/x/y/}\'\n');
+    assert.strictEqual(stdout.trim(), 'y1\ny2\nx3');
+  });
+
+  it('pattern-address brace group', async () => {
+    const { stdout } = await runShell('printf "one\\ntwo\\nthree\\n" | sed \'/two/{s/two/TWO/;d}\'\n');
+    assert.strictEqual(stdout.trim(), 'one\nthree');
+  });
+
+  it('nested commands in brace group', async () => {
+    const { stdout } = await runShell('printf "hello\\nworld\\nfoo\\n" | sed \'2{s/world/WORLD/;p}\'\n');
+    assert.ok(stdout.includes('WORLD'));
+  });
+});
+
+// =============================================================================
 // find
 // =============================================================================
 
@@ -337,6 +363,27 @@ describe('find -mtime', () => {
       'mkdir -p /tmp/fmt\necho x > /tmp/fmt/file.txt\nfind /tmp/fmt -mtime +7\n'
     );
     assert.strictEqual(exit, 0);
+  });
+
+  it('-mtime -1 matches newly created files', async () => {
+    const { stdout } = await runShell(
+      'mkdir -p /tmp/mtime1\necho x > /tmp/mtime1/new.txt\nfind /tmp/mtime1 -name "new.txt" -mtime -1\n'
+    );
+    assert.ok(stdout.includes('new.txt'));
+  });
+
+  it('-mtime +1000 does not match newly created files', async () => {
+    const { stdout } = await runShell(
+      'mkdir -p /tmp/mtime2\necho x > /tmp/mtime2/new.txt\nfind /tmp/mtime2 -name "new.txt" -mtime +1000\n'
+    );
+    assert.ok(!stdout.includes('new.txt'));
+  });
+
+  it('-mtime 0 matches files created today', async () => {
+    const { stdout } = await runShell(
+      'mkdir -p /tmp/mtime3\necho x > /tmp/mtime3/today.txt\nfind /tmp/mtime3 -name "today.txt" -mtime 0\n'
+    );
+    assert.ok(stdout.includes('today.txt'));
   });
 });
 

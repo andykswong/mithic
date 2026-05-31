@@ -229,10 +229,10 @@ fn print_long(path: &str, name: &str) {
             let mode_str = format_mode_bits(mode);
             let size = m.len();
             let mtime_str = format_mtime(&m);
-            write_stdout(&format!("{} {:>8} {} {}\n", mode_str, size, mtime_str, name));
+            write_stdout(&format!("{} {:>3} {:<8} {:<8} {:>8} {} {}\n", mode_str, 1, "root", "root", size, mtime_str, name));
         }
         Err(_) => {
-            write_stdout(&format!("?????????? {:>8} {} {}\n", 0, "            ", name));
+            write_stdout(&format!("?????????? {:>3} {:<8} {:<8} {:>8} {} {}\n", 1, "root", "root", 0, "            ", name));
         }
     }
 }

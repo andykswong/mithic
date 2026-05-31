@@ -1,6 +1,39 @@
 use super::{write_stdout, file_kind, read_dir, dispatch, FileKind};
 use regex::Regex;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum MtimeOp {
+    MoreThan,
+    LessThan,
+    Exactly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct MtimeFilter {
+    days: u64,
+    op: MtimeOp,
+}
+
+impl MtimeFilter {
+    fn parse(s: &str) -> Option<MtimeFilter> {
+        if s.starts_with('+') {
+            s[1..].parse::<u64>().ok().map(|days| MtimeFilter { days, op: MtimeOp::MoreThan })
+        } else if s.starts_with('-') {
+            s[1..].parse::<u64>().ok().map(|days| MtimeFilter { days, op: MtimeOp::LessThan })
+        } else {
+            s.parse::<u64>().ok().map(|days| MtimeFilter { days, op: MtimeOp::Exactly })
+        }
+    }
+
+    fn matches(&self, age_days: u64) -> bool {
+        match self.op {
+            MtimeOp::MoreThan => age_days > self.days,
+            MtimeOp::LessThan => age_days < self.days,
+            MtimeOp::Exactly => age_days == self.days,
+        }
+    }
+}
+
 pub fn run(args: &[&str]) -> u8 {
     let mut start_path = ".";
     let mut name_pattern: Option<&str> = None;
@@ -8,7 +41,7 @@ pub fn run(args: &[&str]) -> u8 {
     let mut type_filter: Option<char> = None;
     let mut exec_cmd: Option<Vec<&str>> = None;
     let mut max_depth: Option<usize> = None;
-    let mut _mtime: Option<i64> = None;
+    let mut mtime: Option<MtimeFilter> = None;
 
     let mut i = 0;
     if i < args.len() && !args[i].starts_with('-') {
@@ -45,7 +78,7 @@ pub fn run(args: &[&str]) -> u8 {
             "-mtime" => {
                 i += 1;
                 if i < args.len() {
-                    _mtime = args[i].parse::<i64>().ok();
+                    mtime = MtimeFilter::parse(args[i]);
                 }
             }
             "-exec" => {
@@ -62,7 +95,7 @@ pub fn run(args: &[&str]) -> u8 {
         i += 1;
     }
 
-    find_recursive(start_path, start_path, name_pattern, path_pattern, type_filter, exec_cmd.as_deref(), max_depth, 0);
+    find_recursive(start_path, start_path, name_pattern, path_pattern, type_filter, exec_cmd.as_deref(), max_depth, mtime, 0);
     0
 }
 
@@ -178,9 +211,72 @@ mod tests {
         assert!(matches_glob("foo.bar", "foo.bar"));
         assert!(!matches_glob("fooxbar", "foo.bar"));
     }
+
+    #[test]
+    fn mtime_parse_more_than() {
+        let f = MtimeFilter::parse("+5").unwrap();
+        assert_eq!(f.days, 5);
+        assert_eq!(f.op, MtimeOp::MoreThan);
+    }
+
+    #[test]
+    fn mtime_parse_less_than() {
+        let f = MtimeFilter::parse("-3").unwrap();
+        assert_eq!(f.days, 3);
+        assert_eq!(f.op, MtimeOp::LessThan);
+    }
+
+    #[test]
+    fn mtime_parse_exactly() {
+        let f = MtimeFilter::parse("7").unwrap();
+        assert_eq!(f.days, 7);
+        assert_eq!(f.op, MtimeOp::Exactly);
+    }
+
+    #[test]
+    fn mtime_parse_invalid() {
+        assert_eq!(MtimeFilter::parse("abc"), None);
+        assert_eq!(MtimeFilter::parse("+abc"), None);
+        assert_eq!(MtimeFilter::parse("-xyz"), None);
+    }
+
+    #[test]
+    fn mtime_matches_more_than() {
+        let f = MtimeFilter { days: 5, op: MtimeOp::MoreThan };
+        assert!(!f.matches(4));
+        assert!(!f.matches(5));
+        assert!(f.matches(6));
+        assert!(f.matches(100));
+    }
+
+    #[test]
+    fn mtime_matches_less_than() {
+        let f = MtimeFilter { days: 5, op: MtimeOp::LessThan };
+        assert!(f.matches(0));
+        assert!(f.matches(4));
+        assert!(!f.matches(5));
+        assert!(!f.matches(6));
+    }
+
+    #[test]
+    fn mtime_matches_exactly() {
+        let f = MtimeFilter { days: 5, op: MtimeOp::Exactly };
+        assert!(!f.matches(4));
+        assert!(f.matches(5));
+        assert!(!f.matches(6));
+    }
+
+    #[test]
+    fn mtime_parse_zero() {
+        let f = MtimeFilter::parse("0").unwrap();
+        assert_eq!(f.days, 0);
+        assert_eq!(f.op, MtimeOp::Exactly);
+        assert!(f.matches(0));
+        assert!(!f.matches(1));
+    }
 }
 
-fn find_recursive(base: &str, path: &str, name_pattern: Option<&str>, path_pattern: Option<&str>, type_filter: Option<char>, exec_cmd: Option<&[&str]>, max_depth: Option<usize>, current_depth: usize) {
+fn find_recursive(base: &str, path: &str, name_pattern: Option<&str>, path_pattern: Option<&str>, type_filter: Option<char>, exec_cmd: Option<&[&str]>, max_depth: Option<usize>, mtime: Option<MtimeFilter>, current_depth: usize) {
     if let Some(max) = max_depth {
         if current_depth > max {
             return;
@@ -212,7 +308,24 @@ fn find_recursive(base: &str, path: &str, name_pattern: Option<&str>, path_patte
         None => true,
     };
 
-    if type_ok && name_ok && path_ok {
+    let mtime_ok = match mtime {
+        Some(filter) => {
+            match std::fs::metadata(path).and_then(|m| m.modified()) {
+                Ok(modified) => {
+                    let age_secs = std::time::SystemTime::now()
+                        .duration_since(modified)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let age_days = age_secs / 86400;
+                    filter.matches(age_days)
+                }
+                Err(_) => true,
+            }
+        }
+        None => true,
+    };
+
+    if type_ok && name_ok && path_ok && mtime_ok {
         if let Some(cmd_parts) = exec_cmd {
             if !cmd_parts.is_empty() {
                 let cmd = cmd_parts[0];
@@ -238,7 +351,7 @@ fn find_recursive(base: &str, path: &str, name_pattern: Option<&str>, path_patte
         entries.sort();
         for entry in entries {
             let child = format!("{}/{}", path.trim_end_matches('/'), entry);
-            find_recursive(base, &child, name_pattern, path_pattern, type_filter, exec_cmd, max_depth, current_depth + 1);
+            find_recursive(base, &child, name_pattern, path_pattern, type_filter, exec_cmd, max_depth, mtime, current_depth + 1);
         }
     }
 }

@@ -130,6 +130,10 @@ npm run typecheck    # type-check all packages
 
 Tests use `node --test` (Node.js built-in test runner) with `--experimental-strip-types` for direct TypeScript execution.
 
+## API Documentation
+
+TypeDoc-generated API reference is available at [`docs/api/`](./docs/api/).
+
 ## License
 
 This repository and the code inside it is licensed under the MIT License. Read [LICENSE](./LICENSE) for more information.

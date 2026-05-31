@@ -13,10 +13,12 @@
     "./imports": "./dist/imports.js",
     "./instantiation": "./dist/instantiation.js",
     "./utils": "./dist/utils.js",
-    "./impl/simple": "./dist/impl/simple.js"
+    "./impl/simple": "./dist/impl/simple.js",
+    "./wit/*": "./wit/*"
   },
   "files": [
-    "/dist"
+    "/dist",
+    "/wit"
   ],
   "scripts": {
     "prepublishOnly": "npm run clean && npm run build && npm test",
@@ -25,7 +27,8 @@
     "build": "vite build",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --experimental-test-coverage --test-coverage-include=\"src/**/*.ts\" --test-coverage-exclude=\"**/*.test.ts\" --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage.lcov --test \"**/*.test.ts\""
+    "test": "node --experimental-strip-types --experimental-test-coverage --test-coverage-include=\"src/**/*.ts\" --test-coverage-exclude=\"**/*.test.ts\" --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage.lcov --test \"**/*.test.ts\"",
+    "wit-fetch": "wkg wit fetch"
   },
   "repository": {
     "type": "git",

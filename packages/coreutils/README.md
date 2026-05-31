@@ -26,9 +26,9 @@ Single `wasm32-wasip2` binary. Command is determined by `argv[0]` (BusyBox patte
 ## Build & Test
 
 ```bash
-npm run build          # cargo build + wasm-tools strip + jco transpile + vite
-npm test               # integration tests (189 tests via shell CLI)
-cargo test --target $(rustc -vV | grep host | cut -d' ' -f2)  # 162 unit tests
+npm run build        # cargo build + wasm-tools strip + jco transpile + vite
+npm run typecheck    # tsc --noEmit
+npm test             # cargo test + node --test integration tests
 ```
 
 ## Usage from Shell
