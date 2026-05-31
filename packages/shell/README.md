@@ -12,21 +12,23 @@
 
 ### Features
 
-- **Streaming I/O** — Uses WASI `blocking-read`/`blocking-write-and-flush` backed by `SharedArrayBuffer` + `Atomics.wait` for true blocking semantics in a Web Worker
-- **Pipelines** — `cmd1 | cmd2 | cmd3` via `mithic:process/manager` pipe creation
-- **Redirections** — `>`, `>>`, `<`, `2>`, `2>&1`, `&>`, `<<<`
-- **Control flow** — `if/elif/else/fi`, `while/until/do/done`, `for/in/do/done`, `case/esac`
-- **Functions** — `name() { body; }` with positional parameters, `return`
-- **Arrays** — `arr=(a b c)`, `${arr[0]}`, `${arr[@]}`, `${#arr[@]}`, negative indices, sparse arrays
-- **Arithmetic** — `$((expr))` and `(( expr ))` with full C-like operator set
-- **Parameter expansion** — `${VAR:-default}`, `${VAR:+alt}`, `${VAR#pat}`, `${VAR%pat}`, `${VAR//pat/rep}`, `${VAR:offset:length}`
-- **Brace expansion** — `{a,b,c}`, `{1..10..2}`, `{a..z}`, nesting
-- **Process substitution** — `<(cmd)`
-- **Glob expansion** — `*`, `?`, `[...]`
-- **Builtins** — `cd`, `echo`, `export`, `unset`, `read`, `test`/`[`/`[[`, `declare`/`local`, `source`, `true`, `false`
-- **POSIX mode** — Auto-activates when invoked as `sh`; non-standard extensions, including `[[`, `(( ))`, `<<<`, arrays, brace expansion
-- **Script execution** — Shebang (`#!/bin/sh`) support, PATH lookup with executable permission checks
+- **Bash compatible** - Implements full bash syntax and semantics, including:
+  - **Redirections** — `>`, `>>`, `<`, `2>`, `2>&1`, `&>`, `<<<`
+  - **Control flow** — `if/elif/else/fi`, `while/until/do/done`, `for/in/do/done`, `case/esac`, `select`
+  - **Functions** — `name() { body; }` with positional parameters, `return`
+  - **Arrays** — `arr=(a b c)`, `${arr[0]}`, `${arr[@]}`, `${#arr[@]}`, negative indices, sparse arrays
+  - **Arithmetic** — `$((expr))` and `(( expr ))` with full C-like operator set
+  - **Parameter expansion** — `${VAR:-default}`, `${VAR:+alt}`, `${VAR#pat}`, `${VAR%pat}`, `${VAR//pat/rep}`, `${VAR:offset:length}`
+  - **Brace expansion** — `{a,b,c}`, `{1..10..2}`, `{a..z}`, nesting
+  - **Process substitution** — `<(cmd)`
+  - **Glob expansion** — `*`, `?`, `[...]`
+  - **Builtins** — `cd`, `echo`, `export`, `unset`, `read`, `test`/`[`/`[[`, `declare`/`local`, `source`, `true`, `false`
+  - **Error handling** — Arithmetic expansion errors abort the containing command; proper exit codes propagate through pipes, assignments, for/case/select
 - **Command resolution** — `SimpleProcessManager` with `CommandResolver` dispatching to shell, coreutils WASM, host-side commands (chmod), and PATH-based scripts
+- **POSIX mode** — Auto-activates when invoked as `sh`; disables non-standard extensions, including `[[`, `(( ))`, `<<<`, arrays, brace expansion
+- **Pipelines** — `cmd1 | cmd2 | cmd3` via `mithic:process/manager` pipe creation
+- **Script execution** — Shebang (`#!/bin/sh`) support, PATH lookup with executable permission checks
+- **Streaming I/O** — Uses WASI `blocking-read`/`blocking-write-and-flush` backed by `SharedArrayBuffer` + `Atomics.wait` for true blocking semantics in a Web Worker
 
 ## Usage
 
@@ -51,7 +53,7 @@ const shell = new MithicShell({
 const exitCode = await shell.run();
 ```
 
-## Build
+## Build & Test
 
 ```shell
 npm install
@@ -69,34 +71,37 @@ rustup target add wasm32-wasip2
 ## Architecture
 
 ```
-src/
-├── main.rs            Entry point (constructs WasiRuntime, Shell::run)
+src/                   (~10k lines Rust)
+├── main.rs            Entry point (argv parsing, POSIX auto-activation)
 ├── runtime.rs         Io, Filesystem, ProcessMgr traits + Runtime supertrait
 ├── runtime_wasi.rs    WasiRuntime: real WASM impl (only file importing bindings)
 ├── runtime_test.rs    TestRuntime: mocks for cargo test
-├── shell.rs           Shell<R>, REPL loop, exec_list, dispatch (~476 lines)
+├── shell.rs           Shell<R>, REPL loop, exec_list, dispatch
 ├── executor/
 │   ├── expansion.rs   Free string utils: glob, tilde, normalize, etc.
-│   ├── expand.rs      Shell methods: expand_word, expand_var, expand_brace_var
-│   ├── compound.rs    exec_compound, exec_if/while/for/case, subshell
+│   ├── expand.rs      Shell methods: expand_word, expand_var, try_expand_words_to_args
+│   ├── compound.rs    exec_compound, exec_if/while/for/case/select, subshell
 │   ├── test_eval.rs   eval_test, eval_extended_test, test_file
 │   ├── redirect.rs    apply_redirects
 │   └── pipeline.rs    exec_pipeline, exec_pipeline_background
 ├── builtins/
 │   ├── mod.rs         dispatch + write_out helper
-│   ├── core.rs        echo, pwd, cd, exit, env, true, false
+│   ├── core.rs        echo, pwd, cd, exit, env, true, false, hash
 │   ├── vars.rs        export, unset, declare, local, read, set
 │   ├── flow.rs        break, continue, return, source
 │   ├── test.rs        [, [[, test
 │   └── jobs.rs        jobs, fg, bg, wait, disown, kill, trap
-├── parser/            lexer, AST, recursive descent parser
+├── parser/
+│   ├── lexer.rs       Tokenizer (heredocs, here-strings, (( )), [[ ]])
+│   ├── parser.rs      Recursive descent (posix-mode aware)
+│   └── ast.rs         AST node types
 └── arith.rs, brace.rs, regex.rs, value.rs, options.rs, params.rs, jobs.rs
 
 ts/
-├── index.ts          Package exports
+├── index.ts          Package exports (MithicShell)
 ├── shell.ts          MithicShell instantiation class
-├── cli.ts            Node.js CLI runner (for testing)
-└── commands.ts       CommandResolver: sh, coreutils, chmod, PATH lookup, shebang scripts
+├── cli.ts            Node.js CLI runner (VFS + ProcessManager setup)
+└── commands.ts       CommandResolver: sh/bash, coreutils, chmod, PATH, shebang
 ```
 
 The shell compiles to a WASI Preview 2 component (`wasm32-wasip2`), transpiled to JavaScript via `jco`. The TypeScript host-side (`MithicShell`) configures WASI imports and process management, then instantiates and runs the component.
@@ -115,13 +120,25 @@ Shell logic is decoupled from WASM bindings via three ISP-compliant traits compo
 
 ### Shell Implementation
 
-- **Parser** (`src/parser/`) — Lexer + recursive descent producing AST
-- **Shell** (`src/shell.rs`) — REPL loop, exec_list, builtin dispatch (`Shell<R: Runtime>`)
-- **Executor** (`src/executor/`) — Pipelines, redirections, compound commands, expansion
+- **Parser** (`src/parser/`) — Lexer + recursive descent producing AST. POSIX-mode-aware: rejects `[[`, `(( ))`, `<<<` when `posix=true`
+- **Shell** (`src/shell.rs`) — REPL loop, exec_list, builtin dispatch (`Shell<R: Runtime>`), history expansion (`!!`, `!N`, `!-N`, `!prefix`)
+- **Executor** (`src/executor/`) — Pipelines, redirections, compound commands, expansion. Uses `try_expand_words_to_args` for fallible expansion (aborts command on arithmetic errors)
 - **Builtins** (`src/builtins/`) — All shell builtins, organized by category
-- **Arithmetic** (`src/arith.rs`) — Expression evaluator for `$((expr))`
+- **Arithmetic** (`src/arith.rs`) — Expression evaluator for `$((expr))`, returns `Result` (division-by-zero → Err)
 - **Brace** (`src/brace.rs`) — Brace expansion `{a,b}`, `{1..10}`
-- **Value** (`src/value.rs`) — `ShellValue` enum (Scalar | Array)
+- **Value** (`src/value.rs`) — `ShellValue` enum (Scalar | Array | AssocArray)
+
+### Host-Side Command Resolution
+
+The TypeScript `commands.ts` implements a `CommandResolver` that resolves command names to synchronous handlers:
+
+1. **`sh`/`bash`** → Instantiate child shell WASM component (POSIX mode for `sh`)
+2. **`chmod`** → Host-side handler with VFS access (numeric + symbolic modes)
+3. **Coreutils** → Instantiate coreutils WASM component with `argv[0]`
+4. **Absolute/relative paths** → Script execution (shebang + permission check)
+5. **Bare commands** → PATH lookup at invocation time
+
+The resolver is passed to `SimpleProcessManager` which handles sync/async dispatch (sync handlers return `number` directly, enabling synchronous `tryWait()` in WASM context).
 
 ## WIT World
 

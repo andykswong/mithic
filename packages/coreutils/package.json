@@ -14,7 +14,9 @@
   "scripts": {
     "prepare": "rustup target add $npm_package_config_target",
     "prepublishOnly": "npm run clean && npm run build && npm test",
-    "test": "node --experimental-strip-types --test ts/*.test.ts",
+    "test:rust": "cargo test -p $npm_package_config_crate --config \"build.target=\\\"$(rustc -vV | sed -n 's/host: //p')\\\"\"",
+    "test:ts": "node --experimental-strip-types --test ts/*.test.ts",
+    "test": "npm run test:rust && npm run test:ts",
     "clean": "rimraf dist",
     "prebuild": "mkdir -p dist/wasm dist/ts",
     "build": "npm run build:rust && npm run build:ts",

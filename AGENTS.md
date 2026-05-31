@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Mithic is an isomorphic virtual process runtime for JavaScript and WebAssembly. It provides a virtual file system (VFS), process management with piped I/O, a shell execution layer, and a WASI Preview 2 runtime — running identically in the browser and on native platforms.
+Mithic is an isomorphic sandboxed WebAssembly shell runtime. It provides a shell execution layer, process management with piped I/O, and WASI Preview 2 runtime with virtual file system (VFS) and resource adapters — running identically in the browser and on native platforms.
 
 ## Monorepo Structure
 
@@ -17,7 +17,6 @@ packages/
 └── examples/
     ├── simple/   — ComponentizeJS WASM component
     ├── rust-cli/ — Rust WASM component
-    ├── browser/  — Browser WASM component
     └── shell/    — xterm.js + MithicShell
 ```
 
@@ -46,7 +45,7 @@ Tests use Node.js built-in test runner (`node --test`) with `--experimental-stri
 
 - **Pluggable components** — VFS, HTTP, sockets, and process management are all defined as interfaces with injectable implementations, configured via WASI instantiation helpers. This follows SOLID principles for loose coupling and testability.
 - **Isomorphic by design** — Exposes both standard Web APIs for JavaScript consumers (Web File System API) and WASI interfaces for WebAssembly components, backed by the same underlying providers.
-- **Standards-based** — Implements WASI Preview 2 interfaces faithfully. Process management mirrors POSIX semantics (spawn, pipes, signals). Follows the Unix "everything is a file" philosophy — cloud storage, devices, and IPC are all VFS mounts.
+- **Standards-based** — Implements WASI Preview 2 interfaces faithfully. Process management mirrors POSIX semantics (spawn, pipes, signals). Shell mirrors Bash shell behavior with POSIX mode support. Follows the Unix "everything is a file" philosophy — cloud storage, devices, and IPC are all VFS mounts.
 
 ## When Editing
 

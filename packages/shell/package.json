@@ -36,7 +36,8 @@
     "typecheck": "tsc --noEmit",
     "start": "node --experimental-strip-types ts/cli.ts",
     "test:rust": "cargo test -p $npm_package_config_crate --config \"build.target=\\\"$(rustc -vV | sed -n 's/host: //p')\\\"\"",
-    "test": "npm run test:rust && node --experimental-strip-types --test \"ts/**/*.test.ts\""
+    "test:ts": "node --experimental-strip-types --test \"ts/**/*.test.ts\"",
+    "test": "npm run test:rust && npm run test:ts"
   },
   "repository": {
     "type": "git",
