@@ -1,7 +1,7 @@
-import { parentPort } from 'node:worker_threads';
-import { handleBlockingCalls, type CallHandler } from '@mithic/io/io';
+import type { CallHandler } from '@mithic/io/io';
 
-const CALL_COMPILE = 1;
+export const CALL_COMPILE = 1;
+
 const moduleCache = new Map<string, Record<string, Uint8Array>>();
 
 function contentHash(bytes: Uint8Array): string {
@@ -13,7 +13,7 @@ function contentHash(bytes: Uint8Array): string {
   return (h >>> 0).toString(36);
 }
 
-const handler: CallHandler = async (call, _id, payload) => {
+export const compilerHandler: CallHandler = async (call, _id, payload) => {
   if (call !== CALL_COMPILE) throw new Error(`Unknown call: ${call}`);
 
   const raw = payload as { bytes: Uint8Array };
@@ -60,9 +60,3 @@ const handler: CallHandler = async (call, _id, payload) => {
   moduleCache.set(key, modules);
   return { modules, jsFiles, cached: false };
 };
-
-parentPort?.on('message', (msg) => {
-  if (msg?.type === '__compilerPort') {
-    handleBlockingCalls(handler, msg.port);
-  }
-});
