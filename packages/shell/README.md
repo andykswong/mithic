@@ -176,6 +176,7 @@ The shell has no readline library or terminal raw-mode support. This means:
 ### Process Model
 
 All processes run as in-process JavaScript functions on the same thread:
+- Pipelines with infinite producers hang (`cat /dev/zero | head -c 4`) — stages run sequentially, so the writer never receives broken-pipe from the reader
 - Background commands (`cmd &`) are dispatched but may execute synchronously depending on the handler
 - No true process groups or `setpgid` — `kill(-pgid, sig)` not supported
 - `coproc` is parsed but returns an error (requires concurrent bidirectional I/O)
@@ -203,5 +204,5 @@ All processes run as in-process JavaScript functions on the same thread:
 - No startup file sourcing (`~/.bashrc`, `/etc/profile`) — source explicitly
 - No `GLOBIGNORE`, `nocaseglob`, or `BASH_VERSINFO`
 - History expansion limited to `!!`, `!N`, `!-N`, `!prefix` (no modifiers like `:p`, `:h`)
-- `read` builtin supports `-p`, `-r`, `-a`, `-d`, `-N`, `-u` (no `-t` — timeout not feasible in WASM single-threaded context)
+- `read -t` (timeout) not supported — needs WASI poll-based timer
 - `fc` only supports `-l` (listing) — no re-edit mode

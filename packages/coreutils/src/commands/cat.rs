@@ -1,4 +1,4 @@
-use super::{write_stdout, write_stderr, read_stdin_all, read_file};
+use super::{write_stdout, write_stdout_bytes, write_stderr, read_stdin_all};
 
 pub fn run(args: &[&str]) -> u8 {
     let mut number_lines = false;
@@ -24,19 +24,53 @@ pub fn run(args: &[&str]) -> u8 {
     }
 
     let mut errors = 0u8;
-    for &arg in &file_args {
-        match read_file(arg) {
-            Some(data) => {
-                let s = String::from_utf8_lossy(&data);
-                output_data(&s, number_lines);
+    for &path in &file_args {
+        if number_lines {
+            match cat_file_numbered(path) {
+                Ok(()) => {}
+                Err(_) => {
+                    write_stderr(&format!("cat: {}: No such file or directory\n", path));
+                    errors = 1;
+                }
             }
-            None => {
-                write_stderr(&format!("cat: {}: No such file or directory\n", arg));
-                errors = 1;
+        } else {
+            match cat_file_stream(path) {
+                Ok(()) => {}
+                Err(_) => {
+                    write_stderr(&format!("cat: {}: No such file or directory\n", path));
+                    errors = 1;
+                }
             }
         }
     }
     errors
+}
+
+fn cat_file_stream(path: &str) -> std::io::Result<()> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut buf = [0u8; 4096];
+    loop {
+        match file.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => write_stdout_bytes(&buf[..n]),
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+fn cat_file_numbered(path: &str) -> std::io::Result<()> {
+    use std::io::{BufRead, BufReader};
+    let file = std::fs::File::open(path)?;
+    let reader = BufReader::new(file);
+    let mut line_num = 1usize;
+    for line in reader.lines() {
+        let line = line?;
+        write_stdout(&format!("{:>6}\t{}\n", line_num, line));
+        line_num += 1;
+    }
+    Ok(())
 }
 
 fn output_data(s: &str, number_lines: bool) {
@@ -50,7 +84,7 @@ fn output_data(s: &str, number_lines: bool) {
         write_stdout(&format!("{:>6}\t{}\n", i + 1, line));
     }
     if lines.last() == Some(&"") {
-        // trailing newline already consumed — no extra blank line
+        // trailing newline already consumed
     } else if let Some(&last_line) = lines.last() {
         write_stdout(&format!("{:>6}\t{}", last_line.len(), last_line));
     }

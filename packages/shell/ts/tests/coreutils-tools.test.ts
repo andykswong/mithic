@@ -566,3 +566,59 @@ describe('sleep', () => {
     assert.ok(elapsed >= 250, `sleep took ${elapsed}ms, expected >= 250ms`);
   });
 });
+
+// =============================================================================
+// base64
+// =============================================================================
+
+describe('base64', () => {
+  it('encodes string', async () => {
+    const { stdout } = await runShell('echo -n "Hello" | base64\n');
+    assert.strictEqual(stdout.trim(), 'SGVsbG8=');
+  });
+
+  it('decodes string', async () => {
+    const { stdout } = await runShell('echo "SGVsbG8=" | base64 -d\n');
+    assert.strictEqual(stdout, 'Hello');
+  });
+
+  it('round-trip', async () => {
+    const { stdout } = await runShell('echo -n "test data" | base64 | base64 -d\n');
+    assert.strictEqual(stdout, 'test data');
+  });
+
+  it('wraps at 76 columns by default', async () => {
+    const { stdout } = await runShell('seq 1 100 | base64\n');
+    const lines = stdout.split('\n').filter((l: string) => l.length > 0);
+    for (const line of lines.slice(0, -1)) {
+      assert.strictEqual(line.length, 76);
+    }
+  });
+
+  it('-w 0 disables wrapping', async () => {
+    const { stdout } = await runShell('seq 1 100 | base64 -w 0\n');
+    const lines = stdout.split('\n').filter((l: string) => l.length > 0);
+    assert.strictEqual(lines.length, 1);
+  });
+});
+
+// =============================================================================
+// base32
+// =============================================================================
+
+describe('base32', () => {
+  it('encodes string', async () => {
+    const { stdout } = await runShell('echo -n "Hello" | base32\n');
+    assert.strictEqual(stdout.trim(), 'JBSWY3DP');
+  });
+
+  it('decodes string', async () => {
+    const { stdout } = await runShell('echo "JBSWY3DP" | base32 -d\n');
+    assert.strictEqual(stdout, 'Hello');
+  });
+
+  it('round-trip', async () => {
+    const { stdout } = await runShell('echo -n "test data" | base32 | base32 -d\n');
+    assert.strictEqual(stdout, 'test data');
+  });
+});

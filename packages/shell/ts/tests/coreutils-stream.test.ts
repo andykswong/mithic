@@ -67,6 +67,13 @@ describe('tee', () => {
     );
     assert.strictEqual(stdout.trim(), 'replaced');
   });
+
+  it('tee in pipeline passes data through correctly', async () => {
+    const { stdout } = await runShell(
+      'seq 1 5 | tee /tmp/tee_pipe.txt | wc -l\ncat /tmp/tee_pipe.txt | wc -l\n'
+    );
+    assert.strictEqual(stdout.trim(), '5\n5');
+  });
 });
 
 // =============================================================================
@@ -164,5 +171,90 @@ describe('paste', () => {
   it('merges stdin lines serially with - placeholder', async () => {
     const { stdout } = await runShell('printf "a\\nb\\nc\\nd\\n" | paste - -\n');
     assert.strictEqual(stdout.trim(), 'a\tb\nc\td');
+  });
+});
+
+// =============================================================================
+// cat streaming from devices
+// =============================================================================
+
+describe('cat streaming from devices', () => {
+  it('cat /dev/null produces empty output', async () => {
+    const { stdout } = await runShell('cat /dev/null; echo done\n');
+    assert.strictEqual(stdout.trim(), 'done');
+  });
+
+  it('cat regular file still works', async () => {
+    const { stdout } = await runShell('echo hello > /tmp/cat_stream.txt; cat /tmp/cat_stream.txt\n');
+    assert.strictEqual(stdout.trim(), 'hello');
+  });
+
+  it('cat multiple files concatenates', async () => {
+    const { stdout } = await runShell(
+      'echo aaa > /tmp/cat_a.txt; echo bbb > /tmp/cat_b.txt; cat /tmp/cat_a.txt /tmp/cat_b.txt\n'
+    );
+    assert.strictEqual(stdout.trim(), 'aaa\nbbb');
+  });
+
+  it('cat -n numbers lines', async () => {
+    const { stdout } = await runShell(
+      'printf "line1\\nline2\\nline3\\n" > /tmp/cat_n.txt; cat -n /tmp/cat_n.txt\n'
+    );
+    assert.ok(stdout.includes('1\tline1'));
+    assert.ok(stdout.includes('2\tline2'));
+    assert.ok(stdout.includes('3\tline3'));
+  });
+
+  it('cat nonexistent file prints error and returns 1', async () => {
+    const { stderr, exit } = await runShell('cat /tmp/no_such_file_xyz\n');
+    assert.ok(stderr.includes('No such file or directory'));
+    assert.strictEqual(exit, 1);
+  });
+});
+
+// =============================================================================
+// head streaming
+// =============================================================================
+
+describe('head streaming', () => {
+  it('head -c N from file reads only N bytes', async () => {
+    const { stdout } = await runShell(
+      'printf "abcdefghij" > /tmp/head_bytes.txt; head -c 5 /tmp/head_bytes.txt\n'
+    );
+    assert.strictEqual(stdout, 'abcde');
+  });
+
+  it('head -n N from file reads only N lines', async () => {
+    const { stdout } = await runShell(
+      'printf "a\\nb\\nc\\nd\\ne\\n" > /tmp/head_lines.txt; head -n 3 /tmp/head_lines.txt\n'
+    );
+    assert.strictEqual(stdout.trim(), 'a\nb\nc');
+  });
+
+  it('head defaults to 10 lines', async () => {
+    const { stdout } = await runShell(
+      'seq 1 20 > /tmp/head_default.txt; head /tmp/head_default.txt\n'
+    );
+    const lines = stdout.trim().split('\n');
+    assert.strictEqual(lines.length, 10);
+    assert.strictEqual(lines[0], '1');
+    assert.strictEqual(lines[9], '10');
+  });
+
+  it('head nonexistent file prints error', async () => {
+    const { stderr, exit } = await runShell('head /tmp/no_such_head_file\n');
+    assert.ok(stderr.includes('No such file or directory'));
+    assert.strictEqual(exit, 1);
+  });
+
+  it('head -c N from /dev/random reads exactly N bytes (infinite device)', async () => {
+    const { stdout } = await runShell('head -c 16 /dev/random | base64\n');
+    assert.ok(stdout.trim().length > 0, 'should produce base64 output');
+    assert.match(stdout.trim(), /^[A-Za-z0-9+/]+=*$/);
+  });
+
+  it('head -c N from /dev/zero reads N zero bytes', async () => {
+    const { stdout } = await runShell('head -c 4 /dev/zero | base64\n');
+    assert.strictEqual(stdout.trim(), 'AAAAAA==');
   });
 });

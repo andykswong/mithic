@@ -31,6 +31,8 @@ mod readlink;
 mod yes;
 mod rev;
 mod paste;
+mod base64;
+mod base32;
 
 pub fn dispatch(name: &str, args: &[&str]) -> u8 {
     match name {
@@ -66,6 +68,8 @@ pub fn dispatch(name: &str, args: &[&str]) -> u8 {
         "yes" => yes::run(args),
         "rev" => rev::run(args),
         "paste" => paste::run(args),
+        "base64" => base64::run(args),
+        "base32" => base32::run(args),
         _ => {
             write_stderr(&format!("{}: command not found\n", name));
             127
@@ -77,6 +81,13 @@ pub fn write_stdout(s: &str) {
     use std::io::Write;
     let mut out = std::io::stdout();
     out.write_all(s.as_bytes()).ok();
+    out.flush().ok();
+}
+
+pub fn write_stdout_bytes(data: &[u8]) {
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    out.write_all(data).ok();
     out.flush().ok();
 }
 
