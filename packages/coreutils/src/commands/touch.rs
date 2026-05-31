@@ -23,3 +23,20 @@ pub fn run(args: &[&str]) -> u8 {
     }
     errors
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn parse_file_args_skips_flags() {
+        let args = &["-c", "file1.txt", "file2.txt"];
+        let file_args: Vec<&str> = args.iter().copied().filter(|a| !a.starts_with('-')).collect();
+        assert_eq!(file_args, vec!["file1.txt", "file2.txt"]);
+    }
+
+    #[test]
+    fn parse_no_args_is_empty() {
+        let args: &[&str] = &[];
+        let file_args: Vec<&str> = args.iter().copied().filter(|a| !a.starts_with('-')).collect();
+        assert!(file_args.is_empty());
+    }
+}

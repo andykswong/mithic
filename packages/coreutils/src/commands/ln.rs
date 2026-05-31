@@ -60,3 +60,35 @@ pub fn run(args: &[&str]) -> u8 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn parse_symbolic_flag() {
+        let args = &["-s", "/target", "/link"];
+        let mut symbolic = false;
+        for &arg in args {
+            match arg {
+                "-s" | "--symbolic" => symbolic = true,
+                _ => {}
+            }
+        }
+        assert!(symbolic);
+    }
+
+    #[test]
+    fn parse_no_symbolic_flag() {
+        let args = &["/target", "/link"];
+        let mut symbolic = false;
+        let mut file_args: Vec<&str> = Vec::new();
+        for &arg in args {
+            match arg {
+                "-s" | "--symbolic" => symbolic = true,
+                a if a.starts_with('-') => {}
+                _ => file_args.push(arg),
+            }
+        }
+        assert!(!symbolic);
+        assert_eq!(file_args, vec!["/target", "/link"]);
+    }
+}

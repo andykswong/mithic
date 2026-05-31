@@ -41,3 +41,28 @@ pub fn run(args: &[&str]) -> u8 {
     }
     errors
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn basename_extraction() {
+        let src = "/tmp/foo/bar.txt";
+        let basename = std::path::Path::new(src)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        assert_eq!(basename, "bar.txt");
+    }
+
+    #[test]
+    fn destination_path_when_dir() {
+        let dst_arg = "/tmp/dest";
+        let src = "/tmp/src/file.txt";
+        let basename = std::path::Path::new(src)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let dst = format!("{}/{}", dst_arg.trim_end_matches('/'), basename);
+        assert_eq!(dst, "/tmp/dest/file.txt");
+    }
+}

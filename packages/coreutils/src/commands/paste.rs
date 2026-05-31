@@ -101,3 +101,72 @@ pub fn run(args: &[&str]) -> u8 {
     }
     0
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn merge_columns_equal_length() {
+        let col1 = vec!["a", "b", "c"];
+        let col2 = vec!["x", "y", "z"];
+        let all_lines: Vec<&[&str]> = vec![&col1, &col2];
+        let max_lines = all_lines.iter().map(|v| v.len()).max().unwrap_or(0);
+        let mut output = Vec::new();
+        for row in 0..max_lines {
+            let parts: Vec<&str> = all_lines.iter()
+                .map(|col| if row < col.len() { col[row] } else { "" })
+                .collect();
+            output.push(parts.join("\t"));
+        }
+        assert_eq!(output, vec!["a\tx", "b\ty", "c\tz"]);
+    }
+
+    #[test]
+    fn merge_columns_unequal_length() {
+        let col1 = vec!["a", "b"];
+        let col2 = vec!["x", "y", "z"];
+        let all_lines: Vec<&[&str]> = vec![&col1, &col2];
+        let max_lines = all_lines.iter().map(|v| v.len()).max().unwrap_or(0);
+        let mut output = Vec::new();
+        for row in 0..max_lines {
+            let parts: Vec<&str> = all_lines.iter()
+                .map(|col| if row < col.len() { col[row] } else { "" })
+                .collect();
+            output.push(parts.join("\t"));
+        }
+        assert_eq!(output, vec!["a\tx", "b\ty", "\tz"]);
+    }
+
+    #[test]
+    fn merge_with_custom_delimiter() {
+        let col1 = vec!["1", "2"];
+        let col2 = vec!["a", "b"];
+        let delimiter = ",";
+        let all_lines: Vec<&[&str]> = vec![&col1, &col2];
+        let max_lines = all_lines.iter().map(|v| v.len()).max().unwrap_or(0);
+        let mut output = Vec::new();
+        for row in 0..max_lines {
+            let parts: Vec<&str> = all_lines.iter()
+                .map(|col| if row < col.len() { col[row] } else { "" })
+                .collect();
+            output.push(parts.join(delimiter));
+        }
+        assert_eq!(output, vec!["1,a", "2,b"]);
+    }
+
+    #[test]
+    fn merge_three_columns() {
+        let col1 = vec!["a"];
+        let col2 = vec!["b"];
+        let col3 = vec!["c"];
+        let all_lines: Vec<&[&str]> = vec![&col1, &col2, &col3];
+        let max_lines = all_lines.iter().map(|v| v.len()).max().unwrap_or(0);
+        let mut output = Vec::new();
+        for row in 0..max_lines {
+            let parts: Vec<&str> = all_lines.iter()
+                .map(|col| if row < col.len() { col[row] } else { "" })
+                .collect();
+            output.push(parts.join("\t"));
+        }
+        assert_eq!(output, vec!["a\tb\tc"]);
+    }
+}

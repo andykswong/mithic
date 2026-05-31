@@ -2,64 +2,32 @@ use crate::bindings::mithic::process::manager as proc_manager;
 use crate::bindings::mithic::process::types::{
     InputStream, OutputStream, Process, SpawnOptions, Signal as WasiSignal,
 };
-use crate::bindings::wasi::cli::{stdin, stdout, stderr};
 use crate::bindings::wasi::filesystem::types::{
     Descriptor, DescriptorFlags, OpenFlags, PathFlags,
 };
 use crate::bindings::wasi::filesystem::preopens;
-use crate::bindings::wasi::io::streams::StreamError;
 use crate::runtime::{
     FileType, InputHandle, Io, Filesystem, OutputHandle, ProcessHandle,
     ProcessMgr, Signal, SpawnError, SpawnOpts,
 };
 
-const READ_CHUNK: u64 = 1024;
+use std::io::{self, BufRead, BufReader, Stdin};
 
 struct LineReader {
-    buf: Vec<u8>,
-    closed: bool,
+    reader: BufReader<Stdin>,
 }
 
 impl LineReader {
     fn new() -> Self {
-        LineReader { buf: Vec::new(), closed: false }
+        LineReader { reader: BufReader::new(io::stdin()) }
     }
 
     fn read_line(&mut self) -> Option<String> {
-        if self.closed && self.buf.is_empty() {
-            return None;
-        }
-
-        let stream = stdin::get_stdin();
-
-        loop {
-            if let Some(pos) = self.buf.iter().position(|&b| b == b'\n') {
-                let line = self.buf.drain(..=pos).collect::<Vec<u8>>();
-                return Some(String::from_utf8_lossy(&line).into_owned());
-            }
-
-            if self.closed {
-                if self.buf.is_empty() {
-                    return None;
-                }
-                let line = std::mem::take(&mut self.buf);
-                return Some(String::from_utf8_lossy(&line).into_owned());
-            }
-
-            match stream.blocking_read(READ_CHUNK) {
-                Ok(bytes) if bytes.is_empty() => {
-                    self.closed = true;
-                }
-                Ok(bytes) => {
-                    self.buf.extend_from_slice(&bytes);
-                }
-                Err(StreamError::Closed) => {
-                    self.closed = true;
-                }
-                Err(_) => {
-                    self.closed = true;
-                }
-            }
+        let mut line = String::new();
+        match self.reader.read_line(&mut line) {
+            Ok(0) => None,
+            Ok(_) => Some(line),
+            Err(_) => None,
         }
     }
 }
@@ -140,19 +108,15 @@ fn map_signal(s: Signal) -> WasiSignal {
 
 impl Io for WasiRuntime {
     fn write_stdout(&self, data: &str) {
-        let stream = stdout::get_stdout();
-        let bytes = data.as_bytes();
-        if !bytes.is_empty() {
-            let _ = stream.blocking_write_and_flush(bytes);
-        }
+        use std::io::Write;
+        let _ = io::stdout().write_all(data.as_bytes());
+        let _ = io::stdout().flush();
     }
 
     fn write_stderr(&self, data: &str) {
-        let stream = stderr::get_stderr();
-        let bytes = data.as_bytes();
-        if !bytes.is_empty() {
-            let _ = stream.blocking_write_and_flush(bytes);
-        }
+        use std::io::Write;
+        let _ = io::stderr().write_all(data.as_bytes());
+        let _ = io::stderr().flush();
     }
 
     fn read_line(&mut self) -> Option<String> {

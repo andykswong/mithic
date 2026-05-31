@@ -166,9 +166,9 @@ describe('SimpleProcessManager', () => {
   it('inherits host default streams when not pre-wired', async () => {
     const written: Uint8Array[] = [];
     const hostStreams = {
-      stdin: { read() { return undefined; }, blockingRead() { throw { tag: 'closed' }; } },
-      stdout: { write(data: Uint8Array) { written.push(new Uint8Array(data)); }, checkWrite() { return 1_000_000; } },
-      stderr: { write() {}, checkWrite() { return 1_000_000; } },
+      stdin: new InputStream({ read() { return undefined; }, blockingRead() { throw { tag: 'closed' }; } }),
+      stdout: new OutputStream({ write(data: Uint8Array) { written.push(new Uint8Array(data)); }, checkWrite() { return 1_000_000; } }),
+      stderr: new OutputStream({ write() {}, checkWrite() { return 1_000_000; } }),
     };
     const handler: CommandHandler = async (_args, ctx) => {
       ctx.stdout.write(new Uint8Array([42]));
@@ -179,6 +179,29 @@ describe('SimpleProcessManager', () => {
     await proc.wait();
     assert.equal(written.length, 1);
     assert.deepEqual(written[0], new Uint8Array([42]));
+  });
+
+  it('inherited streams preserve isatty from host streams', async () => {
+    const hostStreams = {
+      stdin: new InputStream({ read() { return undefined; }, blockingRead() { throw { tag: 'closed' }; } }, undefined, true),
+      stdout: new OutputStream({ write() {}, checkWrite() { return 1_000_000; } }, undefined, true),
+      stderr: new OutputStream({ write() {}, checkWrite() { return 1_000_000; } }),
+    };
+    let childStdinIsatty = false;
+    let childStdoutIsatty = false;
+    let childStderrIsatty = false;
+    const handler: CommandHandler = (_args, ctx) => {
+      childStdinIsatty = ctx.stdin.isatty;
+      childStdoutIsatty = ctx.stdout.isatty;
+      childStderrIsatty = ctx.stderr.isatty;
+      return 0;
+    };
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler, hostStreams });
+    const proc = mgr.spawn('test', []);
+    await proc.wait();
+    assert.equal(childStdinIsatty, true);
+    assert.equal(childStdoutIsatty, true);
+    assert.equal(childStderrIsatty, false);
   });
 
   it('createPipe returns linked InputStream and OutputStream', () => {

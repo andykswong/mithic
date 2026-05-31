@@ -3,6 +3,7 @@ import { ComponentExit } from '@mithic/wasip2/cli/exit';
 import type { Descriptor } from '@mithic/wasip2/filesystem/types';
 import type { CommandContext, CommandResolver } from '@mithic/process/impl/simple';
 import type { SyncFileSystemProvider } from '@mithic/io/vfs';
+import { COREUTILS_COMMANDS } from '@mithic/coreutils';
 
 export type SyncInstantiateFn = (
   compileCore: (path: string) => WebAssembly.Module,
@@ -20,13 +21,6 @@ export interface CommandsConfig {
   createProcessImports: () => Record<string, unknown>;
 }
 
-const COREUTILS_COMMANDS = new Set([
-  'cat', 'head', 'tail', 'wc', 'grep', 'seq', 'sort', 'uniq',
-  'tr', 'cut', 'tee', 'xargs', 'sleep', 'basename', 'dirname',
-  'mkdir', 'rm', 'cp', 'mv', 'ls', 'rmdir', 'touch', 'ln',
-  'sed', 'find', 'date', 'diff', 'readlink', 'yes',
-  'rev', 'paste',
-]);
 
 const enc = new TextEncoder();
 

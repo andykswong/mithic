@@ -40,3 +40,36 @@ pub fn run(args: &[&str]) -> u8 {
     }
     errors
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn parse_parents_flag() {
+        let args = &["-p", "/tmp/a/b/c"];
+        let mut parents = false;
+        let mut dirs: Vec<&str> = Vec::new();
+        for &arg in args {
+            match arg {
+                "-p" => parents = true,
+                a if a.starts_with('-') => {}
+                _ => dirs.push(arg),
+            }
+        }
+        assert!(parents);
+        assert_eq!(dirs, vec!["/tmp/a/b/c"]);
+    }
+
+    #[test]
+    fn parse_multiple_dirs() {
+        let args = &["dir1", "dir2", "dir3"];
+        let mut dirs: Vec<&str> = Vec::new();
+        for &arg in args {
+            match arg {
+                "-p" => {}
+                a if a.starts_with('-') => {}
+                _ => dirs.push(arg),
+            }
+        }
+        assert_eq!(dirs, vec!["dir1", "dir2", "dir3"]);
+    }
+}

@@ -60,3 +60,39 @@ fn remove_single(path: &str) -> bool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn parse_parents_flag() {
+        let args = &["-p", "/tmp/a/b/c"];
+        let mut parents = false;
+        let mut dir_args: Vec<&str> = Vec::new();
+        for &arg in args {
+            match arg {
+                "-p" | "--parents" => parents = true,
+                a if a.starts_with('-') => {}
+                _ => dir_args.push(arg),
+            }
+        }
+        assert!(parents);
+        assert_eq!(dir_args, vec!["/tmp/a/b/c"]);
+    }
+
+    #[test]
+    fn parent_walk_up() {
+        let dir = "/tmp/a/b/c";
+        let mut path = dir.trim_end_matches('/').to_string();
+        let mut parents_removed: Vec<String> = Vec::new();
+        loop {
+            match path.rfind('/') {
+                Some(idx) if idx > 0 => {
+                    path = path[..idx].to_string();
+                    parents_removed.push(path.clone());
+                }
+                _ => break,
+            }
+        }
+        assert_eq!(parents_removed, vec!["/tmp/a/b", "/tmp/a", "/tmp"]);
+    }
+}

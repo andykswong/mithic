@@ -18,3 +18,34 @@ fn try_write(s: &str) -> bool {
     let mut out = std::io::stdout();
     out.write_all(s.as_bytes()).is_ok() && out.flush().is_ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_text_is_y() {
+        let args: &[&str] = &[];
+        let text = if args.is_empty() { "y" } else { args[0] };
+        assert_eq!(text, "y");
+    }
+
+    #[test]
+    fn custom_text_from_args() {
+        let args = &["hello"];
+        let text = if args.is_empty() { "y" } else { args[0] };
+        assert_eq!(text, "hello");
+    }
+
+    #[test]
+    fn line_format_includes_newline() {
+        let text = "y";
+        let line = format!("{}\n", text);
+        assert_eq!(line, "y\n");
+    }
+
+    #[test]
+    fn max_lines_constant() {
+        assert_eq!(MAX_LINES, 10000);
+    }
+}

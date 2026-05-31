@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const CLI = join(__dirname, 'cli.ts');
+const CLI = join(__dirname, '../cli.ts');
 
 async function runShell(script: string): Promise<{ stdout: string; stderr: string; exit: number }> {
   return new Promise((resolve) => {
@@ -86,10 +86,3 @@ describe('HISTSIZE', () => {
   });
 });
 
-describe('PS1/PS2 prompt', () => {
-  it('PS1 default includes cwd', async () => {
-    // Check that PS1 var is set by default
-    const { stdout } = await runShell('echo "$PS1"\n');
-    assert.ok(stdout.trim().length > 0);
-  });
-});

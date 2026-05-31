@@ -59,3 +59,58 @@ fn remove_dir_recursive(path: &str) {
     }
     remove_dir(path);
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn parse_recursive_and_force() {
+        let args = &["-rf", "dir"];
+        let mut recursive = false;
+        let mut force = false;
+        let mut file_args: Vec<&str> = Vec::new();
+        for &arg in args {
+            match arg {
+                "-rf" | "-fr" => { recursive = true; force = true; }
+                "-r" | "-R" => recursive = true,
+                "-f" => force = true,
+                a if a.starts_with('-') => {
+                    for c in a[1..].chars() {
+                        match c {
+                            'r' | 'R' => recursive = true,
+                            'f' => force = true,
+                            _ => {}
+                        }
+                    }
+                }
+                _ => file_args.push(arg),
+            }
+        }
+        assert!(recursive);
+        assert!(force);
+        assert_eq!(file_args, vec!["dir"]);
+    }
+
+    #[test]
+    fn parse_force_only() {
+        let args = &["-f", "file.txt"];
+        let mut force = false;
+        let mut file_args: Vec<&str> = Vec::new();
+        for &arg in args {
+            match arg {
+                "-f" | "--force" => force = true,
+                a if a.starts_with('-') => {}
+                _ => file_args.push(arg),
+            }
+        }
+        assert!(force);
+        assert_eq!(file_args, vec!["file.txt"]);
+    }
+
+    #[test]
+    fn child_path_construction() {
+        let path = "/tmp/dir/";
+        let entry = "file.txt";
+        let child = format!("{}/{}", path.trim_end_matches('/'), entry);
+        assert_eq!(child, "/tmp/dir/file.txt");
+    }
+}

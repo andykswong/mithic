@@ -62,9 +62,9 @@ function createShellProcessImports(): Record<string, unknown> {
       createProcessImports: createShellProcessImports,
     }),
     hostStreams: {
-      stdin: new NodeStdinHandler(),
-      stdout: new NodeStdoutHandler(),
-      stderr: new NodeStderrHandler(),
+      stdin: hostStdin.dup(),
+      stdout: hostStdout.dup(),
+      stderr: hostStderr.dup(),
     },
   });
 

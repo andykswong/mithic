@@ -69,3 +69,48 @@ fn normalize_path(path: &str) -> String {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_absolute_path() {
+        assert_eq!(normalize_path("/usr/local/bin"), "/usr/local/bin");
+    }
+
+    #[test]
+    fn normalize_removes_dot() {
+        assert_eq!(normalize_path("/usr/./local"), "/usr/local");
+    }
+
+    #[test]
+    fn normalize_resolves_dotdot() {
+        assert_eq!(normalize_path("/usr/local/../bin"), "/usr/bin");
+    }
+
+    #[test]
+    fn normalize_removes_trailing_slash() {
+        assert_eq!(normalize_path("/usr/local/"), "/usr/local");
+    }
+
+    #[test]
+    fn normalize_double_slash() {
+        assert_eq!(normalize_path("/usr//local"), "/usr/local");
+    }
+
+    #[test]
+    fn normalize_relative_path() {
+        assert_eq!(normalize_path("foo/bar"), "foo/bar");
+    }
+
+    #[test]
+    fn normalize_empty_relative_becomes_dot() {
+        assert_eq!(normalize_path("."), ".");
+    }
+
+    #[test]
+    fn normalize_complex_dotdot() {
+        assert_eq!(normalize_path("/a/b/c/../../d"), "/a/d");
+    }
+}

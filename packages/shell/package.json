@@ -25,6 +25,7 @@
   },
   "scripts": {
     "prepare": "rustup target add $npm_package_config_target",
+    "prepublishOnly": "npm run clean && npm run build && npm test",
     "clean": "rimraf dist *.tsbuildinfo",
     "prebuild": "mkdir -p dist/wasm dist/ts",
     "build": "npm run build:rust && npm run build:ts",

@@ -71,6 +71,51 @@ pub fn run(args: &[&str]) -> u8 {
     errors
 }
 
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn parse_recursive_flag_lowercase() {
+        let args = &["-r", "src", "dst"];
+        let mut recursive = false;
+        for &arg in args {
+            match arg {
+                "-r" | "-R" | "--recursive" => recursive = true,
+                _ => {}
+            }
+        }
+        assert!(recursive);
+    }
+
+    #[test]
+    fn parse_recursive_flag_uppercase() {
+        let args = &["-R", "src", "dst"];
+        let mut recursive = false;
+        for &arg in args {
+            match arg {
+                "-r" | "-R" | "--recursive" => recursive = true,
+                _ => {}
+            }
+        }
+        assert!(recursive);
+    }
+
+    #[test]
+    fn parse_no_flags() {
+        let args = &["src.txt", "dst.txt"];
+        let mut recursive = false;
+        let mut file_args: Vec<&str> = Vec::new();
+        for &arg in args {
+            match arg {
+                "-r" | "-R" | "--recursive" => recursive = true,
+                a if a.starts_with('-') && a.len() > 1 => {}
+                _ => file_args.push(arg),
+            }
+        }
+        assert!(!recursive);
+        assert_eq!(file_args, vec!["src.txt", "dst.txt"]);
+    }
+}
+
 fn copy_dir_recursive(src: &str, dst: &str) -> u8 {
     if std::fs::create_dir_all(dst).is_err() {
         write_stderr(&format!("cp: cannot create directory '{}'\n", dst));

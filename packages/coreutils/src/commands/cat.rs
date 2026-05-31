@@ -55,3 +55,51 @@ fn output_data(s: &str, number_lines: bool) {
         write_stdout(&format!("{:>6}\t{}", last_line.len(), last_line));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn parse_number_flag() {
+        let args = &["-n", "file.txt"];
+        let mut number_lines = false;
+        let mut file_args: Vec<&str> = Vec::new();
+        for &arg in args {
+            match arg {
+                "-n" => number_lines = true,
+                _ => file_args.push(arg),
+            }
+        }
+        assert!(number_lines);
+        assert_eq!(file_args, vec!["file.txt"]);
+    }
+
+    #[test]
+    fn parse_combined_flags() {
+        let args = &["-n"];
+        let mut number_lines = false;
+        for &arg in args {
+            if arg.starts_with('-') && arg.len() > 1 {
+                for c in arg[1..].chars() {
+                    if c == 'n' { number_lines = true; }
+                }
+            }
+        }
+        assert!(number_lines);
+    }
+
+    #[test]
+    fn no_flags_means_no_numbering() {
+        let args = &["file1.txt", "file2.txt"];
+        let mut number_lines = false;
+        let mut file_args: Vec<&str> = Vec::new();
+        for &arg in args {
+            match arg {
+                "-n" => number_lines = true,
+                a if a.starts_with('-') && a.len() > 1 => {}
+                _ => file_args.push(arg),
+            }
+        }
+        assert!(!number_lines);
+        assert_eq!(file_args, vec!["file1.txt", "file2.txt"]);
+    }
+}

@@ -11,12 +11,10 @@ pub mod runtime;
 pub mod shell;
 pub mod value;
 
-#[cfg(not(test))]
 pub mod runtime_wasi;
 #[cfg(test)]
 pub mod runtime_test;
 
-#[cfg(not(test))]
 mod bindings {
     wit_bindgen::generate!({
         world: "shell",
@@ -25,23 +23,23 @@ mod bindings {
     });
 }
 
-#[cfg(not(test))]
 fn main() {
-    use crate::bindings::wasi::cli::{environment, terminal_stdin};
+    use std::io::IsTerminal;
     use crate::runtime_wasi::WasiRuntime;
     use crate::value::ShellValue;
 
-    let env: std::collections::HashMap<String, ShellValue> = environment::get_environment()
-        .into_iter()
+    let env: std::collections::HashMap<String, ShellValue> = std::env::vars()
         .map(|(k, v)| (k, ShellValue::Scalar(v)))
         .collect();
 
-    let cwd = environment::initial_cwd()
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|| "/".to_string());
 
-    let is_interactive = terminal_stdin::get_terminal_stdin().is_some();
+    let is_interactive = std::io::stdin().is_terminal();
 
-    let argv = environment::get_arguments();
+    let argv: Vec<String> = std::env::args().collect();
 
     // Extract shell name from argv[0] (basename only)
     let argv0 = argv.first().map(|s| s.as_str()).unwrap_or("sh");
@@ -66,7 +64,6 @@ fn main() {
     }
 }
 
-#[cfg(not(test))]
 fn parse_and_run<R: crate::runtime::Runtime>(shell: &mut crate::shell::Shell<R>, args: &[String]) -> u8 {
     use crate::value::ShellValue;
 

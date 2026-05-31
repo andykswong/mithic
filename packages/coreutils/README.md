@@ -28,15 +28,17 @@ Single `wasm32-wasip2` binary. Command is determined by `argv[0]` (BusyBox patte
 ```bash
 npm run build        # cargo build + wasm-tools strip + jco transpile + vite
 npm run typecheck    # tsc --noEmit
-npm test             # cargo test + node --test integration tests
+npm test             # cargo test
 ```
 
 ## Usage from Shell
 
-Commands are registered via `SimpleProcessManager`'s `commandResolver`. The resolver maps command names to synchronous handlers that instantiate the coreutils WASM component with the appropriate `argv[0]`.
+Commands are registered via `ProcessManager`. The resolver maps command names to synchronous handlers that instantiate the coreutils WASM component with the appropriate `argv[0]`.
+
+`@mithic/shell` package contains extensive integration tests for all commands.
 
 ## Adding a New Command
 
 1. Create `src/commands/yourcommand.rs` with `pub fn run(args: &[&str]) -> u8`
 2. Add `mod yourcommand;` and a match arm in `src/commands/mod.rs`
-3. Add the command name to `COREUTILS_COMMANDS` in `packages/shell/ts/commands.ts`
+3. Add the command name to `COREUTILS_COMMANDS` in `packages/shell/ts/commands.ts` (`@mithic/shell` package)

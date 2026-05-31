@@ -45,9 +45,7 @@ pub struct Shell<R: Runtime> {
 }
 
 impl<R: Runtime> Shell<R> {
-    pub fn new(rt: R, mut env: HashMap<String, ShellValue>, cwd: String, is_interactive: bool) -> Self {
-        env.entry("PS1".to_string()).or_insert(ShellValue::Scalar("\\w\\$ ".to_string()));
-        env.entry("PS2".to_string()).or_insert(ShellValue::Scalar("> ".to_string()));
+    pub fn new(rt: R, env: HashMap<String, ShellValue>, cwd: String, is_interactive: bool) -> Self {
         let random_state = {
             let mut buf = [0u8; 8];
             if getrandom::fill(&mut buf).is_ok() {
@@ -100,7 +98,8 @@ impl<R: Runtime> Shell<R> {
         loop {
             if self.is_interactive {
                 let prompt = if input_buf.is_empty() {
-                    let ps1 = self.env.get("PS1").map(|v| v.as_scalar().to_string()).unwrap_or_else(|| "$ ".to_string());
+                    let ps1 = self.env.get("PS1").map(|v| v.as_scalar().to_string())
+                        .unwrap_or_else(|| (if !self.options.posix { "\\w\\$ " } else { "$ " }).to_string());
                     self.expand_prompt(&ps1)
                 } else {
                     let ps2 = self.env.get("PS2").map(|v| v.as_scalar().to_string()).unwrap_or_else(|| "> ".to_string());

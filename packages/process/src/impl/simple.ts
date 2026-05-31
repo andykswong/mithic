@@ -48,9 +48,9 @@ export type CommandResolver = (file: string) => CommandHandler | undefined;
 
 /** Default host streams (terminal/null). */
 export interface HostStreams {
-  stdin: InputStreamHandler;
-  stdout: OutputStreamHandler;
-  stderr: OutputStreamHandler;
+  stdin: InputStream;
+  stdout: OutputStream;
+  stderr: OutputStream;
 }
 
 const NULL_INPUT: InputStreamHandler = {
@@ -64,9 +64,9 @@ const NULL_OUTPUT: OutputStreamHandler = {
 };
 
 const DEFAULT_HOST_STREAMS: HostStreams = {
-  stdin: NULL_INPUT,
-  stdout: NULL_OUTPUT,
-  stderr: NULL_OUTPUT,
+  stdin: new InputStream(NULL_INPUT),
+  stdout: new OutputStream(NULL_OUTPUT),
+  stderr: new OutputStream(NULL_OUTPUT),
 };
 
 export interface SimpleProcessManagerConfig {
@@ -116,9 +116,9 @@ export class SimpleProcessManager implements ProcessManager {
         ? Object.fromEntries(rawEnv as [string, string][])
         : (rawEnv as Record<string, string>);
 
-    const childStdin = options?.stdin ?? new InputStream(this.#hostStreams.stdin);
-    const childStdout = options?.stdout ?? new OutputStream(this.#hostStreams.stdout);
-    const childStderr = options?.stderr ?? new OutputStream(this.#hostStreams.stderr);
+    const childStdin = options?.stdin ?? this.#hostStreams.stdin.dup();
+    const childStdout = options?.stdout ?? this.#hostStreams.stdout.dup();
+    const childStderr = options?.stderr ?? this.#hostStreams.stderr.dup();
 
     let killed = false;
     let done = false;
