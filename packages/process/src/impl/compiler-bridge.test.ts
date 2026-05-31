@@ -10,7 +10,7 @@ describe('CompilerBridge', () => {
     const bridge = createCompilerBridge(factory);
 
     // Use coreutils component as test fixture (already built)
-    const componentPath = new URL('../../../../coreutils/dist/wasm/component.wasm', import.meta.url);
+    const componentPath = new URL('../../../coreutils/dist/wasm/component.wasm', import.meta.url);
     let wasmBytes: Uint8Array;
     try {
       wasmBytes = await readFile(componentPath);
@@ -41,7 +41,7 @@ describe('CompilerBridge', () => {
     const factory = createDefaultWorkerFactory();
     const bridge = createCompilerBridge(factory);
 
-    const componentPath = new URL('../../../../coreutils/dist/wasm/component.wasm', import.meta.url);
+    const componentPath = new URL('../../../coreutils/dist/wasm/component.wasm', import.meta.url);
     let wasmBytes: Uint8Array;
     try {
       wasmBytes = await readFile(componentPath);
@@ -64,7 +64,7 @@ describe('CompilerBridge', () => {
     const factory = createDefaultWorkerFactory();
     const bridge = createCompilerBridge(factory);
 
-    const componentPath = new URL('../../../../coreutils/dist/wasm/component.wasm', import.meta.url);
+    const componentPath = new URL('../../../coreutils/dist/wasm/component.wasm', import.meta.url);
     let wasmBytes: Uint8Array;
     try {
       wasmBytes = await readFile(componentPath);

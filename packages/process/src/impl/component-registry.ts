@@ -82,8 +82,11 @@ export class ComponentRegistry implements Disposable {
   #evalInstantiate(jsSource: string): SyncInstantiateFn {
     const stripped = jsSource
       .replace(/^export\s+/gm, '')
-      .replace(/^import\s+.*$/gm, '');
-    const fn = new Function(`${stripped}\nreturn instantiate;`)();
+      .replace(/^import\s+.*$/gm, '')
+      .replace(/import\.meta/g, '__importMeta');
+    // Provide a mock import.meta since jco references import.meta.url for module resolution.
+    // In our case compileCore handles resolution, so import.meta.url is unused at runtime.
+    const fn = new Function('__importMeta', `${stripped}\nreturn instantiate;`)({ url: 'file:///dynamic' });
     return fn as SyncInstantiateFn;
   }
 

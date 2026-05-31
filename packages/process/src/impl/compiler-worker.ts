@@ -16,8 +16,11 @@ function contentHash(bytes: Uint8Array): string {
 const handler: CallHandler = async (call, _id, payload) => {
   if (call !== CALL_COMPILE) throw new Error(`Unknown call: ${call}`);
 
-  const { bytes } = payload as { bytes: Uint8Array };
+  const raw = payload as { bytes: Uint8Array };
+  // sync-bridge may deliver bytes with SAB backing. Ensure regular ArrayBuffer for jco.
+  const bytes = new Uint8Array(raw.bytes);
   const key = contentHash(bytes);
+  if (bytes.length === 0) throw new Error('Empty bytes received');
 
   if (moduleCache.has(key)) {
     return { modules: moduleCache.get(key)!, cached: true };
@@ -40,9 +43,9 @@ const handler: CallHandler = async (call, _id, payload) => {
 
   for (const [path, content] of Object.entries(transpiled.files)) {
     if (path.endsWith('.wasm')) {
-      modules[path] = new Uint8Array(content as ArrayBuffer);
+      modules[path] = content as Uint8Array;
     } else if (path.endsWith('.js')) {
-      jsFiles[path] = new TextDecoder().decode(content as ArrayBuffer);
+      jsFiles[path] = content as string;
     }
   }
 
