@@ -9,6 +9,9 @@
   "exports": {
     ".": "./dist/index.js",
     "./io": "./dist/io/index.js",
+    "./io/worker-factory": "./dist/io/worker-factory.js",
+    "./io/worker-factory.node": "./dist/io/worker-factory.node.js",
+    "./io/worker-factory.browser": "./dist/io/worker-factory.browser.js",
     "./io/providers/node-stdio": "./dist/io/providers/node-stdio.js",
     "./io/providers/sync-bridge": "./dist/io/providers/sync-bridge.js",
     "./net": "./dist/net/index.js",
