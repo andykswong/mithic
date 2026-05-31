@@ -26,7 +26,7 @@
   - **Error handling** — Arithmetic expansion errors abort the containing command; proper exit codes propagate through pipes, assignments, for/case/select
 - **Command resolution** — `SimpleProcessManager` with `CommandResolver` dispatching to shell, coreutils WASM, host-side commands (chmod), and PATH-based scripts
 - **POSIX mode** — Auto-activates when invoked as `sh`; disables non-standard extensions, including `[[`, `(( ))`, `<<<`, arrays, brace expansion
-- **Pipelines** — `cmd1 | cmd2 | cmd3` via `mithic:process/manager` pipe creation
+- **Pipelines** — `cmd1 | cmd2 | cmd3` and `cmd1 |& cmd2` (pipe stderr+stdout) via `mithic:process/manager` pipe creation
 - **Script execution** — Shebang (`#!/bin/sh`) support, PATH lookup with executable permission checks
 - **Streaming I/O** — Uses WASI `blocking-read`/`blocking-write-and-flush` backed by `SharedArrayBuffer` + `Atomics.wait` for true blocking semantics in a Web Worker
 
@@ -197,7 +197,6 @@ All processes run as in-process JavaScript functions on the same thread:
 
 - File descriptors > 2 not fully supported (no general `N>&M` for N > 2)
 - No `/dev/tcp` or `/dev/udp` network redirects
-- No `|&` (pipe stderr+stdout together) — use `2>&1 |` instead
 
 ### Other
 

@@ -2,6 +2,7 @@ use std::time::Instant;
 use crate::runtime::{InputHandle, OutputHandle, Runtime, SpawnOpts};
 use crate::shell::Shell;
 use crate::parser::Parser;
+use crate::value::ShellValue;
 use super::write_out;
 
 pub(crate) fn exec_builtin<R: Runtime>(
@@ -247,6 +248,72 @@ pub(crate) fn exec_builtin<R: Runtime>(
                 }
             }
             exit
+        }
+        "pushd" => {
+            if args.is_empty() {
+                if shell.dir_stack.is_empty() {
+                    shell.rt.write_stderr(&format!("{}: pushd: no other directory\n", shell.shell_name));
+                    return 1;
+                }
+                let top = shell.dir_stack.last().unwrap().clone();
+                let old_cwd = shell.cwd.clone();
+                *shell.dir_stack.last_mut().unwrap() = old_cwd.clone();
+                let resolved = shell.resolve_path(&top);
+                let prev_cwd = shell.cwd.clone();
+                shell.cwd = resolved;
+                shell.env.insert("OLDPWD".to_string(), ShellValue::Scalar(prev_cwd));
+                shell.env.insert("PWD".to_string(), ShellValue::Scalar(shell.cwd.clone()));
+            } else {
+                let dir = &args[0];
+                let resolved = shell.resolve_path(dir);
+                let old_cwd = shell.cwd.clone();
+                shell.dir_stack.push(old_cwd.clone());
+                let prev_cwd = shell.cwd.clone();
+                shell.cwd = resolved;
+                shell.env.insert("OLDPWD".to_string(), ShellValue::Scalar(prev_cwd));
+                shell.env.insert("PWD".to_string(), ShellValue::Scalar(shell.cwd.clone()));
+            }
+            let mut stack_str = shell.cwd.clone();
+            for entry in shell.dir_stack.iter().rev() {
+                stack_str.push(' ');
+                stack_str.push_str(entry);
+            }
+            stack_str.push('\n');
+            write_out(shell, &stdout, &stack_str);
+            0
+        }
+        "popd" => {
+            if shell.dir_stack.is_empty() {
+                shell.rt.write_stderr(&format!("{}: popd: directory stack empty\n", shell.shell_name));
+                return 1;
+            }
+            let dir = shell.dir_stack.pop().unwrap();
+            let prev_cwd = shell.cwd.clone();
+            shell.cwd = dir;
+            shell.env.insert("OLDPWD".to_string(), ShellValue::Scalar(prev_cwd));
+            shell.env.insert("PWD".to_string(), ShellValue::Scalar(shell.cwd.clone()));
+            let mut stack_str = shell.cwd.clone();
+            for entry in shell.dir_stack.iter().rev() {
+                stack_str.push(' ');
+                stack_str.push_str(entry);
+            }
+            stack_str.push('\n');
+            write_out(shell, &stdout, &stack_str);
+            0
+        }
+        "dirs" => {
+            if args.first().map(|s| s.as_str()) == Some("-c") {
+                shell.dir_stack.clear();
+                return 0;
+            }
+            let mut stack_str = shell.cwd.clone();
+            for entry in shell.dir_stack.iter().rev() {
+                stack_str.push(' ');
+                stack_str.push_str(entry);
+            }
+            stack_str.push('\n');
+            write_out(shell, &stdout, &stack_str);
+            0
         }
         _ => {
             shell.rt.write_stderr(&format!("{}: {}: not handled in flow builtin\n", shell.shell_name, name));

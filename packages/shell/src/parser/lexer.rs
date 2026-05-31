@@ -14,6 +14,8 @@ pub enum Token {
     Amp,
     /// `&&`
     AmpAmp,
+    /// `|&`
+    PipeAmp,
     /// `||`
     PipePipe,
     /// `;`
@@ -128,6 +130,7 @@ impl Lexer {
             Some('|') => {
                 self.advance();
                 if self.peek() == Some('|') { self.advance(); Token::PipePipe }
+                else if self.peek() == Some('&') { self.advance(); Token::PipeAmp }
                 else { Token::Pipe }
             }
             Some('&') => {
@@ -622,6 +625,23 @@ mod tests {
     fn test_pipe() {
         assert_eq!(lex("a | b"), vec![
             word(vec![lit("a")]), Token::Pipe, word(vec![lit("b")]),
+        ]);
+    }
+
+
+    #[test]
+    fn test_pipe_amp() {
+        assert_eq!(lex("a |& b"), vec![
+            word(vec![lit("a")]), Token::PipeAmp, word(vec![lit("b")]),
+        ]);
+    }
+
+    #[test]
+    fn test_pipe_amp_vs_pipe_pipe() {
+        assert_eq!(lex("a |& b || c"), vec![
+            word(vec![lit("a")]), Token::PipeAmp,
+            word(vec![lit("b")]), Token::PipePipe,
+            word(vec![lit("c")]),
         ]);
     }
 

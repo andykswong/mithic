@@ -119,3 +119,27 @@ describe('combined && and ||', () => {
     assert.strictEqual(stdout.trim(), 'second');
   });
 });
+
+describe('|& pipe stderr', () => {
+  it('pipes stderr to next command stdin', async () => {
+    // Child shell writes "command not found" to stderr; |& pipes it to cat's stdin
+    const { stdout } = await runShell('sh -c "nonexistent_xyz" |& cat\n');
+    assert.ok(stdout.includes('command not found'));
+  });
+
+  it('also pipes stdout', async () => {
+    const { stdout } = await runShell('echo both |& cat\n');
+    assert.strictEqual(stdout.trim(), 'both');
+  });
+
+  it('in POSIX mode produces error', async () => {
+    const { stderr, exit } = await runShell('set -o posix\necho x |& cat\n');
+    assert.ok(stderr.includes('not supported in POSIX mode') || exit !== 0);
+  });
+
+  it('regular | does not pipe stderr', async () => {
+    // With regular |, child shell stderr does NOT go to cat's stdin
+    const { stdout } = await runShell('sh -c "nonexistent_xyz" | cat\n');
+    assert.strictEqual(stdout.trim(), '');
+  });
+});

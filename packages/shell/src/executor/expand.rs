@@ -545,7 +545,7 @@ impl<R: Runtime> Shell<R> {
                     } else {
                         // Multi-command pipeline: stdin cannot be threaded through;
                         // exec_pipeline handles negate internally.
-                        exit = self.exec_pipeline(crate::parser::Pipeline { commands: cmds, negate });
+                        exit = self.exec_pipeline(crate::parser::Pipeline { commands: cmds, negate, pipe_stderr: vec![] });
                     }
                 } else {
                     exit = self.exec_pipeline(pipeline);

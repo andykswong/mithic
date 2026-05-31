@@ -40,13 +40,14 @@ impl<R: Runtime> Shell<R> {
         cmd: SimpleCommand,
         mut stdin_opt: Option<InputHandle>,
         mut stdout_opt: Option<OutputHandle>,
+        pipe_stderr_opt: Option<OutputHandle>,
         env_list: &[(String, String)],
     ) -> StageResult {
         let args = match self.try_expand_words_to_args(&cmd.words) {
             Ok(a) => a,
             Err(code) => return StageResult::Builtin(code),
         };
-        let mut stderr_opt: Option<OutputHandle> = None;
+        let mut stderr_opt: Option<OutputHandle> = pipe_stderr_opt;
         if !self.apply_redirects(&cmd.redirects, &mut stdin_opt, &mut stdout_opt, &mut stderr_opt) {
             return StageResult::RedirectFailed;
         }
@@ -78,6 +79,7 @@ impl<R: Runtime> Shell<R> {
 
     pub(crate) fn exec_pipeline_background(&mut self, pipeline: Pipeline) {
         let cmds = pipeline.commands;
+        let pipe_stderr_flags = pipeline.pipe_stderr;
         let n = cmds.len();
         if n == 0 { return; }
 
@@ -149,7 +151,11 @@ impl<R: Runtime> Shell<R> {
                 if args.is_empty() { continue; }
                 let name = args[0].clone();
                 display_parts.push(args.join(" "));
-                let mut stderr_opt: Option<OutputHandle> = None;
+                let mut stderr_opt: Option<OutputHandle> = if pipe_stderr_flags.get(i).copied().unwrap_or(false) {
+                    stdout_opt.as_ref().map(|h| self.rt.dup_output(h))
+                } else {
+                    None
+                };
                 if !self.apply_redirects(&cmd.redirects, &mut stdin_opt, &mut stdout_opt, &mut stderr_opt) {
                     continue;
                 }
@@ -184,6 +190,7 @@ impl<R: Runtime> Shell<R> {
 
     pub(crate) fn exec_pipeline(&mut self, pipeline: Pipeline) -> u8 {
         let cmds = pipeline.commands;
+        let pipe_stderr_flags = pipeline.pipe_stderr;
         let n = cmds.len();
 
         if n == 0 {
@@ -229,7 +236,14 @@ impl<R: Runtime> Shell<R> {
             let stdin_opt = pipe_read_ends[i].take();
             let stdout_opt = pipe_write_ends[i].take();
 
-            match self.exec_pipeline_stage(cmd, stdin_opt, stdout_opt, &env_list) {
+            // If |& was used for this stage, duplicate stdout pipe for stderr
+            let stderr_dup = if pipe_stderr_flags.get(i).copied().unwrap_or(false) {
+                stdout_opt.as_ref().map(|h| self.rt.dup_output(h))
+            } else {
+                None
+            };
+
+            match self.exec_pipeline_stage(cmd, stdin_opt, stdout_opt, stderr_dup, &env_list) {
                 StageResult::Builtin(exit) => {
                     builtin_exits.push(exit);
                     stage_exits.push(Some(exit));

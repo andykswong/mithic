@@ -43,6 +43,7 @@ pub struct Shell<R: Runtime> {
     pub(crate) hash_table: HashMap<String, String>,
     pub(crate) aliases: HashMap<String, String>,
     pub(crate) expansion_error: bool,
+    pub(crate) dir_stack: Vec<String>,
 }
 
 impl<R: Runtime> Shell<R> {
@@ -87,6 +88,7 @@ impl<R: Runtime> Shell<R> {
             hash_table: HashMap::new(),
             aliases: HashMap::new(),
             expansion_error: false,
+            dir_stack: Vec::new(),
         }
     }
 
@@ -654,6 +656,7 @@ impl<R: Runtime> Shell<R> {
 
     pub(crate) fn exec_pipeline_with_stdout(&mut self, pipeline: Pipeline, stdout: OutputHandle) -> u8 {
         let cmds = pipeline.commands;
+        let pipe_stderr_flags = pipeline.pipe_stderr;
         let n = cmds.len();
         if n == 0 { return 0; }
 
@@ -732,6 +735,11 @@ impl<R: Runtime> Shell<R> {
             };
             let stdin_opt = pipe_read_ends[i].take();
             let stdout_opt = pipe_write_ends[i].take();
+            let stderr_opt: Option<OutputHandle> = if pipe_stderr_flags.get(i).copied().unwrap_or(false) {
+                stdout_opt.as_ref().map(|h| self.rt.dup_output(h))
+            } else {
+                None
+            };
             let args = match self.try_expand_words_to_args(&cmd.words) {
                 Ok(a) => a,
                 Err(code) => {
@@ -758,7 +766,7 @@ impl<R: Runtime> Shell<R> {
                     env: Some(env_list.clone()),
                     stdin: stdin_opt,
                     stdout: stdout_opt,
-                    stderr: None,
+                    stderr: stderr_opt,
                 };
                 let resolved_name = self.hash_table.get(&name).cloned().unwrap_or(name.clone());
                 match self.rt.spawn(&resolved_name, &args[1..], opts) {

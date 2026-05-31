@@ -135,13 +135,19 @@ impl Parser {
         if negate { self.advance(); }
 
         let mut commands = Vec::new();
+        let mut pipe_stderr = Vec::new();
         commands.push(self.parse_command());
-        while matches!(self.peek(), Token::Pipe) {
+        while matches!(self.peek(), Token::Pipe | Token::PipeAmp) {
+            let is_pipe_amp = matches!(self.peek(), Token::PipeAmp);
+            if is_pipe_amp && self.posix {
+                self.push_error("|& is not supported in POSIX mode");
+            }
+            pipe_stderr.push(is_pipe_amp);
             self.advance();
             self.skip_newlines();
             commands.push(self.parse_command());
         }
-        Pipeline { commands, negate }
+        Pipeline { commands, negate, pipe_stderr }
     }
 
     fn parse_command(&mut self) -> Command {
@@ -486,7 +492,7 @@ impl Parser {
         loop {
             match self.peek() {
                 Token::Semi | Token::Newline | Token::Eof | Token::Amp => break,
-                Token::Pipe | Token::AmpAmp | Token::PipePipe => break,
+                Token::Pipe | Token::PipeAmp | Token::AmpAmp | Token::PipePipe => break,
                 _ => {
                     if let Some(w) = self.parse_word() {
                         words.push(w);
@@ -644,6 +650,7 @@ impl Parser {
             match self.peek() {
                 Token::Eof
                 | Token::Pipe
+                | Token::PipeAmp
                 | Token::AmpAmp
                 | Token::PipePipe
                 | Token::Semi
@@ -861,6 +868,7 @@ fn token_to_text(tok: &Token) -> String {
         Token::LParen => "(".to_string(),
         Token::RParen => ")".to_string(),
         Token::Pipe => "|".to_string(),
+        Token::PipeAmp => "|&".to_string(),
         Token::Amp => "&".to_string(),
         Token::AmpAmp => "&&".to_string(),
         Token::PipePipe => "||".to_string(),
@@ -898,6 +906,7 @@ mod tests {
                 words: words.iter().map(|s| Word::literal(*s)).collect(),
                 redirects: vec![],
             })],
+            pipe_stderr: vec![],
         }
     }
 

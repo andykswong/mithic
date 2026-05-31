@@ -256,3 +256,51 @@ describe('/dev/random and /dev/urandom', () => {
     assert.ok(stdout.includes('urandom'));
   });
 });
+
+describe('builtin: pushd/popd/dirs', () => {
+  it('pushd changes directory and prints stack', async () => {
+    const { stdout } = await runShell('mkdir -p /tmp/a\npushd /tmp/a\n');
+    assert.ok(stdout.includes('/tmp/a'));
+  });
+
+  it('pushd adds previous dir to stack', async () => {
+    const { stdout } = await runShell('mkdir -p /tmp/a\npushd /tmp/a\npwd\n');
+    const lines = stdout.trim().split('\n');
+    assert.ok(lines.some(l => l.trim() === '/tmp/a'));
+  });
+
+  it('popd returns to previous directory', async () => {
+    const { stdout } = await runShell('mkdir -p /tmp/a\npushd /tmp/a\npopd\npwd\n');
+    const lines = stdout.trim().split('\n');
+    assert.strictEqual(lines[lines.length - 1].trim(), '/');
+  });
+
+  it('popd on empty stack prints error', async () => {
+    const { stderr, exit } = await runShell('popd\n');
+    assert.ok(stderr.includes('directory stack empty'));
+    assert.strictEqual(exit, 1);
+  });
+
+  it('dirs lists the stack', async () => {
+    const { stdout } = await runShell('mkdir -p /tmp/a\nmkdir -p /tmp/b\npushd /tmp/a\npushd /tmp/b\ndirs\n');
+    const lines = stdout.trim().split('\n');
+    const dirsLine = lines[lines.length - 1];
+    assert.ok(dirsLine.includes('/tmp/b'));
+    assert.ok(dirsLine.includes('/tmp/a'));
+  });
+
+  it('dirs -c clears the stack', async () => {
+    const { stdout } = await runShell('mkdir -p /tmp/a\nmkdir -p /tmp/b\npushd /tmp/a\npushd /tmp/b\ndirs -c\ndirs\n');
+    const lines = stdout.trim().split('\n');
+    const dirsLine = lines[lines.length - 1];
+    // After dirs -c, only cwd (/tmp/b) should remain, no stack entries
+    assert.ok(!dirsLine.includes('/tmp/a'));
+    assert.ok(!dirsLine.includes(' /'));
+  });
+
+  it('pushd with no arg swaps top and cwd', async () => {
+    const { stdout } = await runShell('mkdir -p /tmp/a\npushd /tmp/a\npushd\npwd\n');
+    const lines = stdout.trim().split('\n');
+    assert.strictEqual(lines[lines.length - 1].trim(), '/');
+  });
+});

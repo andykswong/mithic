@@ -164,6 +164,7 @@ pub struct FunctionDef {
 pub struct Pipeline {
     pub commands: Vec<Command>,
     pub negate: bool,
+    pub pipe_stderr: Vec<bool>,
 }
 
 /// A list of pipelines joined by `&&`, `||`, or `;`/newline.

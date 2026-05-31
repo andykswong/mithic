@@ -23,7 +23,8 @@ pub(crate) fn lookup_builtin<R: Runtime>(name: &str) -> Option<BuiltinFn<R>> {
         "export" | "unset" | "declare" | "local" | "read" | "set" |
         "readonly" | "let" | "getopts" | "mapfile" | "readarray" => Some(vars::exec_builtin),
         "break" | "continue" | "return" | "source" | "." | "eval" | "shift" | "type" | "command" |
-        "exec" | "hash" | "history" | "fc" | "coproc" | "time" | "builtin" | "alias" | "unalias" => Some(flow::exec_builtin),
+        "exec" | "hash" | "history" | "fc" | "coproc" | "time" | "builtin" | "alias" | "unalias" |
+        "pushd" | "popd" | "dirs" => Some(flow::exec_builtin),
         "test" | "[" | "[[" => Some(test::exec_builtin),
         "jobs" | "fg" | "bg" | "wait" | "disown" | "kill" | "trap" => Some(jobs::exec_builtin),
         _ => None,
