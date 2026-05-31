@@ -2,7 +2,7 @@ import type { FileHandle, OpenFlags, DirEntry, FileStat, SyncFileSystemProvider 
 import type { SyncInputStreamHandler, SyncOutputStreamHandler } from '../../io/streams.ts';
 import { FileSystemError } from '../provider.ts';
 
-const DEVICE_NAMES = ['null', 'zero', 'stdin', 'stdout', 'stderr'] as const;
+const DEVICE_NAMES = ['null', 'zero', 'random', 'urandom', 'stdin', 'stdout', 'stderr'] as const;
 type DeviceName = typeof DEVICE_NAMES[number];
 
 export interface DeviceFsProviderOptions {
@@ -45,6 +45,12 @@ export class DeviceFsProvider implements SyncFileSystemProvider {
     switch (device) {
       case 'null': return new Uint8Array(0);
       case 'zero': return new Uint8Array(len);
+      case 'random':
+      case 'urandom': {
+        const buf = new Uint8Array(len);
+        crypto.getRandomValues(buf);
+        return buf;
+      }
       case 'stdin': return this.#stdin.blockingRead(len);
       default: return new Uint8Array(0);
     }
@@ -56,6 +62,8 @@ export class DeviceFsProvider implements SyncFileSystemProvider {
     switch (device) {
       case 'null':
       case 'zero':
+      case 'random':
+      case 'urandom':
         return data.byteLength;
       case 'stdout':
         this.#stdout.write(data);

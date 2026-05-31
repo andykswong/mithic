@@ -88,6 +88,56 @@ describe('DeviceFsProvider', () => {
     });
   });
 
+  describe('/dev/random', () => {
+    it('should return requested number of bytes on read', () => {
+      const handle = dev.open('/random', { read: true });
+      const data = dev.read(handle, 0, 32);
+      assert.strictEqual(data.length, 32);
+      dev.close(handle);
+    });
+
+    it('should accept writes silently', () => {
+      const handle = dev.open('/random', { write: true });
+      const written = dev.write(handle, new Uint8Array([1, 2, 3, 4]), 0);
+      assert.strictEqual(written, 4);
+      dev.close(handle);
+    });
+
+    it('should produce different output on consecutive reads', () => {
+      const handle = dev.open('/random', { read: true });
+      const a = dev.read(handle, 0, 32);
+      const b = dev.read(handle, 0, 32);
+      const same = a.every((v, i) => v === b[i]);
+      assert.strictEqual(same, false, 'consecutive reads should differ');
+      dev.close(handle);
+    });
+  });
+
+  describe('/dev/urandom', () => {
+    it('should return requested number of bytes on read', () => {
+      const handle = dev.open('/urandom', { read: true });
+      const data = dev.read(handle, 0, 64);
+      assert.strictEqual(data.length, 64);
+      dev.close(handle);
+    });
+
+    it('should accept writes silently', () => {
+      const handle = dev.open('/urandom', { write: true });
+      const written = dev.write(handle, new Uint8Array([5, 6]), 0);
+      assert.strictEqual(written, 2);
+      dev.close(handle);
+    });
+
+    it('should produce different output on consecutive reads', () => {
+      const handle = dev.open('/urandom', { read: true });
+      const a = dev.read(handle, 0, 32);
+      const b = dev.read(handle, 0, 32);
+      const same = a.every((v, i) => v === b[i]);
+      assert.strictEqual(same, false, 'consecutive reads should differ');
+      dev.close(handle);
+    });
+  });
+
   describe('stat', () => {
     it('should return character-device type for devices', () => {
       const stat = dev.stat('/null');
@@ -114,10 +164,12 @@ describe('DeviceFsProvider', () => {
       const names = entries.map(e => e.name);
       assert(names.includes('null'));
       assert(names.includes('zero'));
+      assert(names.includes('random'));
+      assert(names.includes('urandom'));
       assert(names.includes('stdin'));
       assert(names.includes('stdout'));
       assert(names.includes('stderr'));
-      assert.strictEqual(entries.length, 5);
+      assert.strictEqual(entries.length, 7);
     });
   });
 

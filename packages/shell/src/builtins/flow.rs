@@ -1,3 +1,4 @@
+use std::time::Instant;
 use crate::runtime::{InputHandle, OutputHandle, Runtime, SpawnOpts};
 use crate::shell::Shell;
 use crate::parser::Parser;
@@ -81,6 +82,9 @@ pub(crate) fn exec_builtin<R: Runtime>(
                 } else if shell.functions.contains_key(arg) {
                     let msg = format!("{} is a function\n", arg);
                     write_out(shell, &stdout, &msg);
+                } else if let Some(path) = resolve_command_path(shell, arg) {
+                    let msg = format!("{} is {}\n", arg, path);
+                    write_out(shell, &stdout, &msg);
                 } else {
                     shell.rt.write_stderr(&format!("type: {}: not found\n", arg));
                     exit = 1;
@@ -97,6 +101,9 @@ pub(crate) fn exec_builtin<R: Runtime>(
                 for arg in &args[1..] {
                     if crate::builtins::lookup_builtin::<R>(arg).is_some() || shell.functions.contains_key(arg) {
                         let msg = format!("{}\n", arg);
+                        write_out(shell, &stdout, &msg);
+                    } else if let Some(path) = resolve_command_path(shell, arg) {
+                        let msg = format!("{}\n", path);
                         write_out(shell, &stdout, &msg);
                     } else {
                         exit = 1;
@@ -158,6 +165,88 @@ pub(crate) fn exec_builtin<R: Runtime>(
         "coproc" => {
             shell.rt.write_stderr(&format!("{}: coproc: not yet supported in WASM environment\n", shell.shell_name));
             1
+        }
+        "time" => {
+            let start = Instant::now();
+            let exit = if args.is_empty() {
+                0
+            } else {
+                let input = args.join(" ");
+                let mut parser = Parser::new_with_mode(&input, shell.options.posix);
+                if let Some(list) = parser.parse() {
+                    shell.exec_list(list)
+                } else {
+                    0
+                }
+            };
+            let elapsed = start.elapsed();
+            let total_secs = elapsed.as_secs_f64();
+            let mins = total_secs as u64 / 60;
+            let secs = total_secs - (mins as f64 * 60.0);
+            shell.rt.write_stderr(&format!("\nreal\t{}m{:.3}s\n", mins, secs));
+            exit
+        }
+        "builtin" => {
+            if args.is_empty() {
+                return 0;
+            }
+            let builtin_name = &args[0];
+            if let Some(f) = crate::builtins::lookup_builtin::<R>(builtin_name) {
+                f(shell, builtin_name, &args[1..], stdin, stdout)
+            } else {
+                shell.rt.write_stderr(&format!("{}: builtin: {}: not a shell builtin\n", shell.shell_name, builtin_name));
+                1
+            }
+        }
+        "alias" => {
+            if args.is_empty() {
+                let mut entries: Vec<(String, String)> = shell.aliases.iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+                for (name, value) in entries {
+                    let msg = format!("alias {}='{}'\n", name, value);
+                    write_out(shell, &stdout, &msg);
+                }
+                return 0;
+            }
+            let mut exit = 0u8;
+            for arg in args {
+                if let Some(eq_pos) = arg.find('=') {
+                    let alias_name = &arg[..eq_pos];
+                    let alias_value = &arg[eq_pos + 1..];
+                    shell.aliases.insert(alias_name.to_string(), alias_value.to_string());
+                } else {
+                    if let Some(value) = shell.aliases.get(arg) {
+                        let msg = format!("alias {}='{}'\n", arg, value);
+                        write_out(shell, &stdout, &msg);
+                    } else {
+                        shell.rt.write_stderr(&format!("{}: alias: {}: not found\n", shell.shell_name, arg));
+                        exit = 1;
+                    }
+                }
+            }
+            exit
+        }
+        "unalias" => {
+            if args.is_empty() {
+                shell.rt.write_stderr(&format!("{}: unalias: usage: unalias [-a] name [name ...]\n", shell.shell_name));
+                return 2;
+            }
+            if args.len() == 1 && args[0] == "-a" {
+                shell.aliases.clear();
+                return 0;
+            }
+            let mut exit = 0u8;
+            for arg in args {
+                if arg == "-a" {
+                    shell.aliases.clear();
+                } else if shell.aliases.remove(arg).is_none() {
+                    shell.rt.write_stderr(&format!("{}: unalias: {}: not found\n", shell.shell_name, arg));
+                    exit = 1;
+                }
+            }
+            exit
         }
         _ => {
             shell.rt.write_stderr(&format!("{}: {}: not handled in flow builtin\n", shell.shell_name, name));
@@ -254,6 +343,26 @@ fn exec_hash<R: Runtime>(
         }
     }
     exit
+}
+
+fn resolve_command_path<R: Runtime>(shell: &Shell<R>, name: &str) -> Option<String> {
+    if let Some(path) = shell.hash_table.get(name) {
+        return Some(path.clone());
+    }
+    let path_var = shell.env.get("PATH")
+        .map(|v| v.as_scalar().to_string())
+        .unwrap_or_default();
+    for dir in path_var.split(':') {
+        let candidate = if dir.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}/{}", dir, name)
+        };
+        if shell.rt.file_exists(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 fn exec_source<R: Runtime>(shell: &mut Shell<R>, file: &str) -> u8 {
