@@ -26,7 +26,15 @@ const handler: CallHandler = async (call, _id, payload) => {
     return { modules: moduleCache.get(key)!, cached: true };
   }
 
-  const { transpile } = await import('@bytecodealliance/jco');
+  let transpile: (bytes: Uint8Array, opts?: unknown) => Promise<{ files: Record<string, unknown> }>;
+  try {
+    ({ transpile } = await import('@bytecodealliance/jco') as { transpile: typeof transpile });
+  } catch {
+    throw new Error(
+      '@bytecodealliance/jco is required for dynamic WASM component execution. '
+      + 'Install it: npm install @bytecodealliance/jco',
+    );
+  }
   const transpiled = await transpile(bytes, {
     name: 'component',
     instantiation: 'async',

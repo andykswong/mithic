@@ -79,13 +79,14 @@ export class ComponentRegistry implements Disposable {
     return resolved;
   }
 
+  // TODO: This is coupled to @bytecodealliance/jco's output format.
+  // Currently assumes: single `export function instantiate(...)`, no import statements,
+  // only `import.meta.url` reference (mocked). If jco output format changes, this breaks.
   #evalInstantiate(jsSource: string): SyncInstantiateFn {
     const stripped = jsSource
       .replace(/^export\s+/gm, '')
       .replace(/^import\s+.*$/gm, '')
       .replace(/import\.meta/g, '__importMeta');
-    // Provide a mock import.meta since jco references import.meta.url for module resolution.
-    // In our case compileCore handles resolution, so import.meta.url is unused at runtime.
     const fn = new Function('__importMeta', `${stripped}\nreturn instantiate;`)({ url: 'file:///dynamic' });
     return fn as SyncInstantiateFn;
   }

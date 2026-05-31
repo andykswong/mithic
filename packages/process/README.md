@@ -82,6 +82,42 @@ interface manager {
 }
 ```
 
+## Dynamic WASM Component Execution
+
+The `ComponentRegistry` + `CompilerBridge` enable executing arbitrary WASM components at runtime via jco transpilation.
+
+### Optional Dependency: `@bytecodealliance/jco`
+
+Dynamic WASM execution requires `@bytecodealliance/jco` as an optional peer dependency. Without it, only pre-compiled components (shell, coreutils) can be executed.
+
+```shell
+npm install @bytecodealliance/jco@1
+```
+
+**Version coupling:** The `ComponentRegistry` evaluates jco's transpiled JavaScript output at runtime using `new Function()`. This is coupled to jco's specific output format — currently a single `export function instantiate(...)` with no ES module imports, referencing only `import.meta.url` (which is mocked). If jco changes its output format in future versions, dynamic execution may break. Pin to a tested jco version.
+
+### Usage
+
+```typescript
+import { createDefaultWorkerFactory } from '@mithic/process/impl/worker-factory';
+import { createCompilerBridge } from '@mithic/process/impl/compiler-bridge';
+import { ComponentRegistry } from '@mithic/process/impl/component-registry';
+
+const factory = createDefaultWorkerFactory();
+const compiler = createCompilerBridge(factory);
+const registry = new ComponentRegistry({ precompiled: new Map(), compiler });
+
+// Resolve WASM bytes to a runnable component
+const resolved = registry.resolveBytes(wasmBytes, '/path/to/component');
+if (resolved) {
+  const { run } = resolved.instantiate(resolved.compileCore, wasiImports, syncInstantiateCore);
+  run.run();
+}
+
+// Cleanup (terminates compiler Worker)
+registry[Symbol.dispose]();
+```
+
 ## Exports
 
 | Entry Point | Contents |
@@ -94,3 +130,6 @@ interface manager {
 | `@mithic/process/shell` | Shell interface contract |
 | `@mithic/process/utils` | Utility functions |
 | `@mithic/process/impl/simple` | Simple in-process implementation |
+| `@mithic/process/impl/component-registry` | ComponentRegistry for dynamic WASM |
+| `@mithic/process/impl/compiler-bridge` | Sync-bridge client for compiler Worker |
+| `@mithic/process/impl/worker-factory` | Isomorphic Worker creation |
