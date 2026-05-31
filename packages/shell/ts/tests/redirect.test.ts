@@ -104,6 +104,23 @@ describe('FD > 2 redirects', () => {
   });
 });
 
+describe('/dev device redirects', () => {
+  it('echo > /dev/stdout prints to stdout', async () => {
+    const { stdout } = await runShell('echo hello > /dev/stdout\n');
+    assert.strictEqual(stdout.trim(), 'hello');
+  });
+
+  it('echo > /dev/stderr prints to stderr', async () => {
+    const { stderr } = await runShell('echo oops > /dev/stderr\n');
+    assert.strictEqual(stderr.trim(), 'oops');
+  });
+
+  it('echo > /dev/null discards output', async () => {
+    const { stdout } = await runShell('echo gone > /dev/null\necho visible\n');
+    assert.strictEqual(stdout.trim(), 'visible');
+  });
+});
+
 describe('exec N< file (input fd redirects)', () => {
   it('exec 3< file opens fd for reading', async () => {
     const { stdout } = await runShell(

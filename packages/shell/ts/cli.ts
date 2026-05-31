@@ -12,13 +12,6 @@ import { createCommandResolver, type SyncInstantiateFn } from './commands.ts';
 import { instantiate as shellInstantiate, modules as shellModules } from '@mithic/shell/component';
 import { instantiate as coreutilsInstantiate, modules as coreutilsModules } from '@mithic/coreutils/component';
 
-const memFs = new MemoryFsProvider();
-memFs.mkdir('/tmp');
-const vfs = new SyncFileSystemRouter();
-vfs.mount('/', memFs);
-vfs.mount('/dev', new DeviceFsProvider());
-const rootDescriptor = new Descriptor(new SyncFsDescriptorHandler(vfs, '/'));
-
 async function compileModules(dataUris: Record<string, string>): Promise<Map<string, WebAssembly.Module>> {
   const compiled = new Map<string, WebAssembly.Module>();
   await Promise.all(
@@ -45,6 +38,17 @@ function coreutilsCompileCore(path: string): WebAssembly.Module {
   if (!mod) throw new Error(`Coreutils module not found: ${path}`);
   return mod;
 }
+
+const memFs = new MemoryFsProvider();
+memFs.mkdir('/tmp');
+const vfs = new SyncFileSystemRouter();
+vfs.mount('/', memFs);
+vfs.mount('/dev', new DeviceFsProvider({
+  stdin: new NodeStdinHandler(),
+  stdout: new NodeStdoutHandler(),
+  stderr: new NodeStderrHandler(),
+}));
+const rootDescriptor = new Descriptor(new SyncFsDescriptorHandler(vfs, '/'));
 
 const hostStdin = new InputStream(new NodeStdinHandler(), undefined, isatty(0));
 const hostStdout = new OutputStream(new NodeStdoutHandler(), undefined, isatty(1));
