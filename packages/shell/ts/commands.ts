@@ -4,6 +4,7 @@ import type { Descriptor } from '@mithic/wasip2/filesystem/types';
 import type { CommandContext, CommandResolver } from '@mithic/process/impl/simple';
 import type { SyncFileSystemProvider } from '@mithic/io/vfs';
 import { COREUTILS_COMMANDS } from '@mithic/coreutils';
+import { ComponentRegistry, type ResolvedComponent } from '@mithic/process/impl/component-registry';
 
 export type SyncInstantiateFn = (
   compileCore: (path: string) => WebAssembly.Module,
@@ -19,6 +20,7 @@ export interface CommandsConfig {
   coreutilsInstantiate: SyncInstantiateFn;
   coreutilsCompileCore: (path: string) => WebAssembly.Module;
   createProcessImports: () => Record<string, unknown>;
+  registry?: ComponentRegistry;
 }
 
 
@@ -90,6 +92,37 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
     }
   }
 
+  function runWasmComponent(component: ResolvedComponent, path: string, args: string[], ctx: CommandContext): number {
+    const childShim = new WASIShim({
+      sandbox: {
+        preopens: { '/': config.rootDescriptor },
+        env: ctx.env,
+        args: [path, ...args],
+        cwd: '/',
+        stdin: ctx.stdin,
+        stdout: ctx.stdout,
+        stderr: ctx.stderr,
+      },
+    });
+    const childImports = {
+      ...childShim.getImportObject(),
+      ...config.createProcessImports(),
+    };
+    try {
+      const { run } = component.instantiate(
+        component.compileCore,
+        childImports,
+        syncInstantiateCore,
+      );
+      return run.run() ?? 0;
+    } catch (e: unknown) {
+      if (e instanceof ComponentExit) return e.code;
+      return 1;
+    } finally {
+      childShim[Symbol.dispose]();
+    }
+  }
+
   function runScriptSync(path: string, scriptArgs: string[], ctx: CommandContext): number {
     const stat = memFs.stat(path);
     if (!(stat.mode & 0o111)) {
@@ -97,9 +130,17 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
       return 126;
     }
     const bytes = readMemFile(path, stat.size);
-    if (bytes[0] === 0x00 && bytes[1] === 0x61 && bytes[2] === 0x73 && bytes[3] === 0x6d) {
-      ctx.stderr.blockingWriteAndFlush(enc.encode(`${path}: cannot execute WASM component synchronously\n`));
-      return 126;
+    if (ComponentRegistry.isWasmComponent(bytes)) {
+      if (!config.registry) {
+        ctx.stderr.blockingWriteAndFlush(enc.encode(`${path}: WASM execution not available (no compiler configured)\n`));
+        return 126;
+      }
+      const component = config.registry.resolveBytes(bytes, path);
+      if (!component) {
+        ctx.stderr.blockingWriteAndFlush(enc.encode(`${path}: failed to compile WASM component\n`));
+        return 126;
+      }
+      return runWasmComponent(component, path, scriptArgs, ctx);
     }
     const text = new TextDecoder().decode(bytes);
     let interpreter = 'sh';
@@ -125,9 +166,18 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
         const stat = memFs.stat(p);
         if (!(stat.mode & 0o111)) continue;
         const bytes = readMemFile(p, stat.size < 4n ? stat.size : 4n);
-        if (bytes[0] === 0x00 && bytes[1] === 0x61 && bytes[2] === 0x73 && bytes[3] === 0x6d) {
-          ctx.stderr.blockingWriteAndFlush(enc.encode(`${p}: cannot execute WASM component synchronously\n`));
-          return 126;
+        if (ComponentRegistry.isWasmComponent(bytes)) {
+          if (!config.registry) {
+            ctx.stderr.blockingWriteAndFlush(enc.encode(`${p}: WASM execution not available (no compiler configured)\n`));
+            return 126;
+          }
+          const fullBytes = readMemFile(p, stat.size);
+          const component = config.registry.resolveBytes(fullBytes, p);
+          if (!component) {
+            ctx.stderr.blockingWriteAndFlush(enc.encode(`${p}: failed to compile WASM component\n`));
+            return 126;
+          }
+          return runWasmComponent(component, p, args, ctx);
         }
         return runScriptSync(p, args, ctx);
       } catch {

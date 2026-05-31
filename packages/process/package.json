@@ -14,6 +14,7 @@
     "./instantiation": "./dist/instantiation.js",
     "./utils": "./dist/utils.js",
     "./impl/simple": "./dist/impl/simple.js",
+    "./impl/component-registry": "./dist/impl/component-registry.js",
     "./wit/*": "./wit/*"
   },
   "files": [
