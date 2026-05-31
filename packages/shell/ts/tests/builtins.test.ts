@@ -139,8 +139,8 @@ describe('export without value', () => {
 });
 
 describe('builtin: alias/unalias', () => {
-  it('alias defines a command shortcut', async () => {
-    const { stdout } = await runShell('alias greet="echo hello"\ngreet\n');
+  it('alias defines a command shortcut (posix mode expands in scripts)', async () => {
+    const { stdout } = await runShell('set -o posix\nalias greet="echo hello"\ngreet\n');
     assert.strictEqual(stdout.trim(), 'hello');
   });
 
@@ -165,9 +165,14 @@ describe('builtin: alias/unalias', () => {
     assert.strictEqual(stdout.trim(), '');
   });
 
-  it('alias expansion passes arguments', async () => {
-    const { stdout } = await runShell('alias say="echo"\nsay world\n');
+  it('alias expansion passes arguments (posix mode)', async () => {
+    const { stdout } = await runShell('set -o posix\nalias say="echo"\nsay world\n');
     assert.strictEqual(stdout.trim(), 'world');
+  });
+
+  it('alias not expanded in non-interactive bash mode', async () => {
+    const { stdout } = await runShell('alias greet="echo hello"\ngreet 2>/dev/null || echo not_found\n');
+    assert.strictEqual(stdout.trim(), 'not_found');
   });
 });
 
