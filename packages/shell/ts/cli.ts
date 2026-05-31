@@ -11,6 +11,11 @@ import { MemoryFsProvider, DeviceFsProvider, SyncFileSystemRouter } from '@mithi
 import { createCommandResolver, type SyncInstantiateFn } from './commands.ts';
 import { instantiate as shellInstantiate, modules as shellModules } from '@mithic/shell/component';
 import { instantiate as coreutilsInstantiate, modules as coreutilsModules } from '@mithic/coreutils/component';
+import { COREUTILS_COMMANDS } from '@mithic/coreutils';
+import { createDefaultWorkerFactory } from '@mithic/process/impl/worker-factory';
+import { createCompilerBridge } from '@mithic/process/impl/compiler-bridge';
+import { ComponentRegistry } from '@mithic/process/impl/component-registry';
+import type { SyncInstantiateFn as RegistrySyncInstantiateFn } from '@mithic/process/impl/component-registry';
 
 async function compileModules(dataUris: Record<string, string>): Promise<Map<string, WebAssembly.Module>> {
   const compiled = new Map<string, WebAssembly.Module>();
@@ -39,6 +44,24 @@ function coreutilsCompileCore(path: string): WebAssembly.Module {
   return mod;
 }
 
+const workerFactory = createDefaultWorkerFactory();
+const compilerBridge = createCompilerBridge(workerFactory);
+const registry = new ComponentRegistry({
+  precompiled: new Map([
+    ['shell', {
+      commands: new Set(['sh', 'bash']),
+      compileCore: shellCompileCore,
+      instantiate: shellInstantiate as unknown as RegistrySyncInstantiateFn,
+    }],
+    ['coreutils', {
+      commands: COREUTILS_COMMANDS,
+      compileCore: coreutilsCompileCore,
+      instantiate: coreutilsInstantiate as unknown as RegistrySyncInstantiateFn,
+    }],
+  ]),
+  compiler: compilerBridge,
+});
+
 const memFs = new MemoryFsProvider();
 memFs.mkdir('/tmp');
 const vfs = new SyncFileSystemRouter();
@@ -64,6 +87,7 @@ function createShellProcessImports(): Record<string, unknown> {
       coreutilsInstantiate: coreutilsInstantiate as unknown as SyncInstantiateFn,
       coreutilsCompileCore,
       createProcessImports: createShellProcessImports,
+      registry,
     }),
     hostStreams: {
       stdin: hostStdin.dup(),
@@ -110,4 +134,5 @@ try {
   throw e;
 } finally {
   shim[Symbol.dispose]();
+  registry[Symbol.dispose]();
 }

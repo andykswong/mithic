@@ -15,6 +15,8 @@
     "./utils": "./dist/utils.js",
     "./impl/simple": "./dist/impl/simple.js",
     "./impl/component-registry": "./dist/impl/component-registry.js",
+    "./impl/worker-factory": "./dist/impl/worker-factory.js",
+    "./impl/compiler-bridge": "./dist/impl/compiler-bridge.js",
     "./wit/*": "./wit/*"
   },
   "files": [
