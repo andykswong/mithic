@@ -44,6 +44,11 @@ pub struct Shell<R: Runtime> {
     pub(crate) aliases: HashMap<String, String>,
     pub(crate) expansion_error: bool,
     pub(crate) dir_stack: Vec<String>,
+    /// General file descriptor table for FDs > 2 (e.g., `exec 3> file`).
+    pub(crate) extra_fds: HashMap<u32, OutputHandle>,
+    /// Aliases for FDs that point to default stdout(1) or stderr(2) without explicit handles.
+    /// e.g., `exec 3>&1` stores fd_aliases[3] = 1, meaning fd 3 writes to default stdout.
+    pub(crate) fd_aliases: HashMap<u32, u32>,
 }
 
 impl<R: Runtime> Shell<R> {
@@ -89,6 +94,8 @@ impl<R: Runtime> Shell<R> {
             aliases: HashMap::new(),
             expansion_error: false,
             dir_stack: Vec::new(),
+            extra_fds: HashMap::new(),
+            fd_aliases: HashMap::new(),
         }
     }
 
@@ -385,9 +392,11 @@ impl<R: Runtime> Shell<R> {
                 if raw == "exec" && !cmd.redirects.is_empty() {
                     // Check if this is a pure redirect exec (no additional args)
                     // Extract stdout redirect target to persist in exec_stdout_path
+                    // Also handle N> file to persist in extra_fds
                     use crate::parser::Redirect;
                     let mut new_path: Option<String> = None;
                     let mut clear_path = false;
+                    let mut handled_all = true;
                     for redirect in &cmd.redirects {
                         match redirect {
                             Redirect::Out(w) | Redirect::OutClobber(w) => {
@@ -399,8 +408,93 @@ impl<R: Runtime> Shell<R> {
                                     new_path = Some(path);
                                 }
                             }
-                            _ => {}
+                            Redirect::FdOut(fd, w) | Redirect::FdOutAppend(fd, w) => {
+                                let expanded = self.expand_word(w);
+                                let path = self.resolve_path(&expanded);
+                                if self.is_network_redirect(&path) {
+                                    return 1;
+                                }
+                                let append = matches!(redirect, Redirect::FdOutAppend(_, _));
+                                match self.rt.open_file_write(&path, append) {
+                                    Some(h) => {
+                                        match *fd {
+                                            1 => {
+                                                self.exec_stdout_path = Some(path);
+                                            }
+                                            _ => { self.extra_fds.insert(*fd, h); }
+                                        }
+                                    }
+                                    None => {
+                                        self.rt.write_stderr(&format!("{}: {}: cannot open for writing\n", self.shell_name, expanded));
+                                        return 1;
+                                    }
+                                }
+                            }
+                            Redirect::FdClose(fd) => {
+                                match *fd {
+                                    1 => { self.exec_stdout_path = None; }
+                                    _ => { self.extra_fds.remove(fd); }
+                                }
+                            }
+                            Redirect::FdDup(fd, target) => {
+                                // exec 3>&1 — dup stdout to fd 3
+                                let duped = match *target {
+                                    1 | 2 => {
+                                        // For exec N>&1 or N>&2, if there's no explicit handle,
+                                        // store an alias so writes to fd N go to default stdout/stderr
+                                        None
+                                    }
+                                    other => {
+                                        if let Some(h) = self.extra_fds.get(&other) {
+                                            Some(self.rt.dup_output(h))
+                                        } else if let Some(&aliased) = self.fd_aliases.get(&other) {
+                                            // Target is itself aliased to stdout/stderr
+                                            self.fd_aliases.insert(*fd, aliased);
+                                            None
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                };
+                                if let Some(h) = duped {
+                                    match *fd {
+                                        1 => { /* stdout dup — handled by exec_stdout_path */ }
+                                        2 => { /* stderr — no persistent stderr redirect */ }
+                                        _ => {
+                                            self.extra_fds.insert(*fd, h);
+                                            self.fd_aliases.remove(fd);
+                                        }
+                                    }
+                                } else if *target == 1 || *target == 2 {
+                                    // Store alias: fd N writes to default stdout/stderr
+                                    self.fd_aliases.insert(*fd, *target);
+                                }
+                            }
+                            Redirect::FdIn(fd, w) => {
+                                let expanded = self.expand_word(w);
+                                let path = self.resolve_path(&expanded);
+                                if self.is_network_redirect(&path) {
+                                    return 1;
+                                }
+                                if *fd == 0 {
+                                    // exec 0< file — we don't have persistent stdin redirect,
+                                    // but we validate the file exists
+                                    if self.rt.open_file_read(&path).is_none() {
+                                        self.rt.write_stderr(&format!("{}: {}: No such file or directory\n", self.shell_name, expanded));
+                                        return 1;
+                                    }
+                                }
+                            }
+                            _ => { handled_all = false; }
                         }
+                    }
+                    if handled_all {
+                        if clear_path {
+                            self.exec_stdout_path = None;
+                        } else if let Some(path) = new_path {
+                            self.exec_stdout_path = Some(path);
+                        }
+                        return 0;
                     }
                     if clear_path {
                         self.exec_stdout_path = None;

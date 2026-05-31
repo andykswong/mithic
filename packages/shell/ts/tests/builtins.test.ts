@@ -304,3 +304,36 @@ describe('builtin: pushd/popd/dirs', () => {
     assert.strictEqual(lines[lines.length - 1].trim(), '/');
   });
 });
+
+describe('builtin: read flags (-d, -N, -u)', () => {
+  it('read -d : splits on delimiter', async () => {
+    const { stdout } = await runShell('echo "foo:bar" | read -d : x; echo $x\n');
+    assert.strictEqual(stdout.trim(), 'foo');
+  });
+
+  it('read -N 3 reads exactly 3 chars', async () => {
+    const { stdout } = await runShell('echo "hello" | read -N 3 x; echo $x\n');
+    assert.strictEqual(stdout.trim(), 'hel');
+  });
+
+  it('read -N does not split on IFS', async () => {
+    const { stdout } = await runShell('echo "a b c" | read -N 5 x; echo $x\n');
+    assert.strictEqual(stdout.trim(), 'a b c');
+  });
+
+  it('read -u 0 reads from stdin (default)', async () => {
+    const { stdout } = await runShell('echo hello | read -u 0 x; echo $x\n');
+    assert.strictEqual(stdout.trim(), 'hello');
+  });
+
+  it('read -u with non-zero fd returns error', async () => {
+    const { stderr, exit } = await runShell('echo hello | read -u 3 x\n');
+    assert.ok(stderr.includes('invalid file descriptor'));
+    assert.notStrictEqual(exit, 0);
+  });
+
+  it('read -d with delimiter not found uses whole line', async () => {
+    const { stdout } = await runShell('echo "abcdef" | read -d Z x; echo $x\n');
+    assert.strictEqual(stdout.trim(), 'abcdef');
+  });
+});

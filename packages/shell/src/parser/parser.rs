@@ -717,6 +717,35 @@ impl Parser {
                         redirects.push(Redirect::HereString(Word(parts)));
                     }
                 }
+                Token::FdNGt(fd) => {
+                    let fd = *fd;
+                    self.advance();
+                    let w = self.parse_word_required();
+                    redirects.push(Redirect::FdOut(fd, w));
+                }
+                Token::FdNGtGt(fd) => {
+                    let fd = *fd;
+                    self.advance();
+                    let w = self.parse_word_required();
+                    redirects.push(Redirect::FdOutAppend(fd, w));
+                }
+                Token::FdNGtAmp(fd, target) => {
+                    let fd = *fd;
+                    let target = *target;
+                    self.advance();
+                    redirects.push(Redirect::FdDup(fd, target));
+                }
+                Token::FdNGtClose(fd) => {
+                    let fd = *fd;
+                    self.advance();
+                    redirects.push(Redirect::FdClose(fd));
+                }
+                Token::FdNLt(fd) => {
+                    let fd = *fd;
+                    self.advance();
+                    let w = self.parse_word_required();
+                    redirects.push(Redirect::FdIn(fd, w));
+                }
                 _ => {
                     if let Some(w) = self.parse_word() {
                         words.push(w);
@@ -788,6 +817,35 @@ impl Parser {
                         };
                         redirects.push(Redirect::HereString(Word(parts)));
                     }
+                }
+                Token::FdNGt(fd) => {
+                    let fd = *fd;
+                    self.advance();
+                    let w = self.parse_word_required();
+                    redirects.push(Redirect::FdOut(fd, w));
+                }
+                Token::FdNGtGt(fd) => {
+                    let fd = *fd;
+                    self.advance();
+                    let w = self.parse_word_required();
+                    redirects.push(Redirect::FdOutAppend(fd, w));
+                }
+                Token::FdNGtAmp(fd, target) => {
+                    let fd = *fd;
+                    let target = *target;
+                    self.advance();
+                    redirects.push(Redirect::FdDup(fd, target));
+                }
+                Token::FdNGtClose(fd) => {
+                    let fd = *fd;
+                    self.advance();
+                    redirects.push(Redirect::FdClose(fd));
+                }
+                Token::FdNLt(fd) => {
+                    let fd = *fd;
+                    self.advance();
+                    let w = self.parse_word_required();
+                    redirects.push(Redirect::FdIn(fd, w));
                 }
                 _ => break,
             }
@@ -887,6 +945,11 @@ fn token_to_text(tok: &Token) -> String {
         Token::ArithCommand(raw) => format!("(({raw}))"),
         Token::DoubleBracketOpen => "[[".to_string(),
         Token::DoubleBracketClose => "]]".to_string(),
+        Token::FdNGt(fd) => format!("{}>", fd),
+        Token::FdNGtGt(fd) => format!("{}>>", fd),
+        Token::FdNGtAmp(fd, target) => format!("{}>&{}", fd, target),
+        Token::FdNGtClose(fd) => format!("{}>&-", fd),
+        Token::FdNLt(fd) => format!("{}<", fd),
         Token::Eof => String::new(),
     }
 }
@@ -1308,5 +1371,74 @@ mod tests {
         assert_eq!(list.items.len(), 1);
         assert_eq!(list.items[0].op, Some(ListOp::Background));
         assert_eq!(list.items[0].pipeline.commands.len(), 2);
+    }
+
+    #[test]
+    fn test_fd_out_redirect() {
+        let list = parse("echo hi 3> /tmp/fd3.txt").unwrap();
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => {
+                assert_eq!(cmd.words, vec![Word::literal("echo"), Word::literal("hi")]);
+                assert_eq!(cmd.redirects, vec![Redirect::FdOut(3, Word::literal("/tmp/fd3.txt"))]);
+            }
+            _ => panic!("expected Simple command"),
+        }
+    }
+
+    #[test]
+    fn test_fd_out_append_redirect() {
+        let list = parse("echo hi 4>> /tmp/fd4.txt").unwrap();
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => {
+                assert_eq!(cmd.redirects, vec![Redirect::FdOutAppend(4, Word::literal("/tmp/fd4.txt"))]);
+            }
+            _ => panic!("expected Simple command"),
+        }
+    }
+
+    #[test]
+    fn test_fd_dup_redirect() {
+        let list = parse("echo hi 3>&1").unwrap();
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => {
+                assert_eq!(cmd.redirects, vec![Redirect::FdDup(3, 1)]);
+            }
+            _ => panic!("expected Simple command"),
+        }
+    }
+
+    #[test]
+    fn test_fd_close_redirect() {
+        let list = parse("exec 3>&-").unwrap();
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => {
+                assert_eq!(cmd.words, vec![Word::literal("exec")]);
+                assert_eq!(cmd.redirects, vec![Redirect::FdClose(3)]);
+            }
+            _ => panic!("expected Simple command"),
+        }
+    }
+
+    #[test]
+    fn test_stdout_dup_to_fd() {
+        // >&3 means redirect stdout (fd 1) to fd 3
+        let list = parse("echo hi >&3").unwrap();
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => {
+                assert_eq!(cmd.redirects, vec![Redirect::FdDup(1, 3)]);
+            }
+            _ => panic!("expected Simple command"),
+        }
+    }
+
+    #[test]
+    fn test_fd_in_redirect() {
+        let list = parse("cat 0< input.txt").unwrap();
+        match &list.items[0].pipeline.commands[0] {
+            Command::Simple(cmd) => {
+                assert_eq!(cmd.redirects, vec![Redirect::FdIn(0, Word::literal("input.txt"))]);
+            }
+            _ => panic!("expected Simple command"),
+        }
     }
 }

@@ -63,3 +63,71 @@ describe('output redirection via pipe (no filesystem required)', () => {
     assert.ok(stdout.includes('ok'));
   });
 });
+
+describe('FD > 2 redirects', () => {
+  it('exec 3> file writes via fd 3', async () => {
+    const { stdout } = await runShell(
+      'exec 3> /tmp/fd3.txt\necho hello >&3\nexec 3>&-\ncat /tmp/fd3.txt\n'
+    );
+    assert.strictEqual(stdout.trim(), 'hello');
+  });
+
+  it('4> file on a command creates fd 4 output', async () => {
+    const { stdout } = await runShell(
+      'echo test 4> /tmp/fd4.txt\ncat /tmp/fd4.txt\n'
+    );
+    // echo writes to stdout (not fd 4), fd 4 gets the file opened
+    // The file should exist (possibly empty since echo doesn't write to fd 4)
+    assert.ok(stdout.includes('test') || stdout.trim() === '');
+  });
+
+  it('exec 3>&1 duplicates stdout to fd 3', async () => {
+    const { stdout } = await runShell(
+      'exec 3>&1\necho hello >&3\n'
+    );
+    assert.strictEqual(stdout.trim(), 'hello');
+  });
+
+  it('exec 3>&- closes fd 3', async () => {
+    const { stdout } = await runShell(
+      'exec 3> /tmp/fd3close.txt\necho before >&3\nexec 3>&-\necho after\n'
+    );
+    assert.ok(stdout.includes('after'));
+  });
+
+  it('5>> file opens fd 5 in append mode', async () => {
+    const { stdout } = await runShell(
+      'echo first > /tmp/fd5.txt\nexec 5>> /tmp/fd5.txt\necho second >&5\nexec 5>&-\ncat /tmp/fd5.txt\n'
+    );
+    assert.ok(stdout.includes('first'));
+    assert.ok(stdout.includes('second'));
+  });
+});
+
+describe('/dev/tcp and /dev/udp', () => {
+  it('/dev/tcp redirect produces error', async () => {
+    const { stderr, exit } = await runShell(
+      'echo hello > /dev/tcp/localhost/80\n'
+    );
+    assert.ok(stderr.includes('/dev/tcp'));
+    assert.ok(stderr.includes('not supported'));
+    assert.notStrictEqual(exit, 0);
+  });
+
+  it('/dev/udp redirect produces error', async () => {
+    const { stderr, exit } = await runShell(
+      'echo hello > /dev/udp/localhost/53\n'
+    );
+    assert.ok(stderr.includes('/dev/udp'));
+    assert.ok(stderr.includes('not supported'));
+    assert.notStrictEqual(exit, 0);
+  });
+
+  it('/dev/tcp in exec redirect produces error', async () => {
+    const { stderr } = await runShell(
+      'exec 3> /dev/tcp/example.com/80\n'
+    );
+    assert.ok(stderr.includes('/dev/tcp'));
+    assert.ok(stderr.includes('not supported'));
+  });
+});

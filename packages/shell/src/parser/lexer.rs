@@ -52,6 +52,16 @@ pub enum Token {
     DoubleBracketOpen,
     /// `]]`
     DoubleBracketClose,
+    /// `N>` where N is a file descriptor number (> 2)
+    FdNGt(u32),
+    /// `N>>` where N is a file descriptor number (> 2)
+    FdNGtGt(u32),
+    /// `N>&M` — duplicate fd M to fd N
+    FdNGtAmp(u32, u32),
+    /// `N>&-` — close fd N
+    FdNGtClose(u32),
+    /// `N<` where N is a file descriptor number (> 0)
+    FdNLt(u32),
     /// End of input
     Eof,
 }
@@ -149,6 +159,26 @@ impl Lexer {
                     self.advance();
                     if self.peek() == Some('>') { self.advance(); Token::GtGt }
                     else if self.peek() == Some('|') { self.advance(); Token::GtPipe }
+                    else if self.peek() == Some('&') {
+                        // >&N (dup fd N to stdout) or >&- (close stdout)
+                        let after_amp = self.chars.get(self.pos + 1).copied();
+                        if after_amp == Some('-') {
+                            self.advance(); // consume '&'
+                            self.advance(); // consume '-'
+                            Token::FdNGtClose(1)
+                        } else if after_amp.map_or(false, |c| c.is_ascii_digit()) {
+                            self.advance(); // consume '&'
+                            let mut target = String::new();
+                            while let Some(c) = self.peek() {
+                                if c.is_ascii_digit() { target.push(c); self.advance(); }
+                                else { break; }
+                            }
+                            let target_fd: u32 = target.parse().unwrap_or(1);
+                            Token::FdNGtAmp(1, target_fd)
+                        } else {
+                            Token::Gt
+                        }
+                    }
                     else { Token::Gt }
                 }
             }
@@ -174,18 +204,50 @@ impl Lexer {
                     }
                 }
             }
-            Some('2') if self.peek2() == Some('>') => {
-                self.advance(); // '2'
+            Some(d @ '0'..='9') if self.peek2() == Some('>') => {
+                let fd = (d as u32) - ('0' as u32);
+                self.advance(); // digit
                 self.advance(); // '>'
                 if self.peek() == Some('>') {
                     self.advance();
-                    Token::Fd2GtGt
-                } else if self.peek() == Some('&') && self.chars.get(self.pos + 1) == Some(&'1') {
-                    self.advance(); self.advance();
-                    Token::Fd2GtAmp1
+                    if fd == 2 { Token::Fd2GtGt } else { Token::FdNGtGt(fd) }
+                } else if self.peek() == Some('&') {
+                    self.advance(); // consume '&'
+                    if self.peek() == Some('-') {
+                        self.advance(); // consume '-'
+                        if fd == 2 {
+                            // 2>&- treat as close; use FdNGtClose
+                            Token::FdNGtClose(2)
+                        } else {
+                            Token::FdNGtClose(fd)
+                        }
+                    } else {
+                        // Read the target fd number
+                        let mut target = String::new();
+                        while let Some(c) = self.peek() {
+                            if c.is_ascii_digit() { target.push(c); self.advance(); }
+                            else { break; }
+                        }
+                        let target_fd: u32 = target.parse().unwrap_or(1);
+                        if fd == 2 && target_fd == 1 {
+                            Token::Fd2GtAmp1
+                        } else {
+                            Token::FdNGtAmp(fd, target_fd)
+                        }
+                    }
                 } else {
-                    Token::Fd2Gt
+                    if fd == 2 { Token::Fd2Gt } else { Token::FdNGt(fd) }
                 }
+            }
+            Some(d @ '0'..='9') if self.peek2() == Some('<') && {
+                // Only match N< if not followed by ( which would be process substitution
+                let after = self.chars.get(self.pos + 2).copied();
+                after != Some('(')
+            } => {
+                let fd = (d as u32) - ('0' as u32);
+                self.advance(); // digit
+                self.advance(); // '<'
+                Token::FdNLt(fd)
             }
             Some('(') => {
                 if self.peek2() == Some('(') {
@@ -314,11 +376,11 @@ impl Lexer {
                 None => break,
                 // Hard delimiters — end word
                 Some(c) if matches!(c, ' ' | '\t' | '\n' | '|' | '&' | ';' | '(' | ')') => break,
-                // Redirect operators — end word (special: '2' followed by '>' is handled in next_token,
-                // so here we only stop if the word is empty or the buf is just '2')
+                // Redirect operators — end word (special: digit followed by '>' or '<' is handled
+                // in next_token, so here we stop if the buf is a single digit and parts is empty)
                 Some('>') | Some('<') => {
                     if buf.is_empty() && parts.is_empty() { break; }
-                    if buf == "2" && parts.is_empty() { break; }
+                    if buf.len() == 1 && buf.as_bytes()[0].is_ascii_digit() && parts.is_empty() { break; }
                     break;
                 }
                 Some('#') if buf.is_empty() && parts.is_empty() => break,

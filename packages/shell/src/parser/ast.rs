@@ -61,6 +61,16 @@ pub enum Redirect {
     Both(Word),
     /// `<<< word`
     HereString(Word),
+    /// `N> file` — redirect fd N to file (N > 2)
+    FdOut(u32, Word),
+    /// `N>> file` — redirect fd N to file in append mode (N > 2)
+    FdOutAppend(u32, Word),
+    /// `N>&M` — duplicate fd M to fd N
+    FdDup(u32, u32),
+    /// `N< file` — redirect fd N from file (N > 0)
+    FdIn(u32, Word),
+    /// `N>&-` — close fd N
+    FdClose(u32),
 }
 
 /// A single simple command: name + args + redirections.

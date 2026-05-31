@@ -180,6 +180,9 @@ fn exec_read<R: Runtime>(shell: &mut Shell<R>, args: &[String], stdin: Option<In
     let mut prompt = None;
     let mut raw = false;
     let mut array_mode = false;
+    let mut delimiter: u8 = b'\n';
+    let mut nchars: Option<usize> = None;
+    let mut fd: Option<u32> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -189,6 +192,20 @@ fn exec_read<R: Runtime>(shell: &mut Shell<R>, args: &[String], stdin: Option<In
             }
             "-r" => { raw = true; }
             "-a" => { array_mode = true; }
+            "-d" => {
+                i += 1;
+                if i < args.len() {
+                    delimiter = args[i].as_bytes().first().copied().unwrap_or(b'\n');
+                }
+            }
+            "-N" => {
+                i += 1;
+                if i < args.len() { nchars = args[i].parse().ok(); }
+            }
+            "-u" => {
+                i += 1;
+                if i < args.len() { fd = args[i].parse().ok(); }
+            }
             flag if flag.starts_with('-') && flag.len() > 1 => {
                 for ch in flag[1..].chars() {
                     match ch {
@@ -201,6 +218,13 @@ fn exec_read<R: Runtime>(shell: &mut Shell<R>, args: &[String], stdin: Option<In
             _ => { var_names.push(&args[i]); }
         }
         i += 1;
+    }
+
+    if let Some(f) = fd {
+        if f != 0 {
+            shell.rt.write_stderr(&format!("{}: read: {}: invalid file descriptor\n", shell.shell_name, f));
+            return 1;
+        }
     }
 
     if var_names.is_empty() {
@@ -228,8 +252,22 @@ fn exec_read<R: Runtime>(shell: &mut Shell<R>, args: &[String], stdin: Option<In
 
     let line = if raw { line } else { line.replace("\\\n", "") };
 
+    let line = if let Some(n) = nchars {
+        if n < line.len() { line[..n].to_string() } else { line }
+    } else if delimiter != b'\n' {
+        if let Some(pos) = line.as_bytes().iter().position(|&b| b == delimiter) {
+            line[..pos].to_string()
+        } else {
+            line
+        }
+    } else {
+        line
+    };
+
+    let skip_ifs_split = nchars.is_some();
+
     let ifs = shell.env.get("IFS").map(|v| v.as_scalar().to_string()).unwrap_or_else(|| " \t\n".to_string());
-    let fields: Vec<&str> = if ifs.is_empty() {
+    let fields: Vec<&str> = if skip_ifs_split || ifs.is_empty() {
         vec![&line]
     } else {
         line.split(|c: char| ifs.contains(c))

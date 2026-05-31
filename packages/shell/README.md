@@ -13,7 +13,7 @@
 ### Features
 
 - **Bash compatible** - Implements full bash syntax and semantics, including:
-  - **Redirections** — `>`, `>>`, `<`, `2>`, `2>&1`, `&>`, `<<<`
+  - **Redirections** — `>`, `>>`, `<`, `2>`, `2>&1`, `&>`, `<<<`, `N>`, `N>>`, `N>&M`, `N>&-`
   - **Control flow** — `if/elif/else/fi`, `while/until/do/done`, `for/in/do/done`, `case/esac`, `select`
   - **Functions** — `name() { body; }` with positional parameters, `return`
   - **Arrays** — `arr=(a b c)`, `${arr[0]}`, `${arr[@]}`, `${#arr[@]}`, negative indices, sparse arrays
@@ -184,7 +184,7 @@ All processes run as in-process JavaScript functions on the same thread:
 
 ### Missing Builtins
 
-`ulimit`, `umask`, `shopt`, `pushd`/`popd`/`dirs`, `compgen`/`complete`, `enable`, `suspend`, `caller`
+`ulimit`, `umask`, `shopt`, `compgen`/`complete`, `enable`, `suspend`, `caller`
 
 ### Glob & Expansion
 
@@ -195,13 +195,13 @@ All processes run as in-process JavaScript functions on the same thread:
 
 ### I/O & Redirection
 
-- File descriptors > 2 not fully supported (no general `N>&M` for N > 2)
-- No `/dev/tcp` or `/dev/udp` network redirects
+- `/dev/tcp` and `/dev/udp` network redirects produce an informative error (no real networking in WASM)
+- Extra FDs (3+) are shell-local only (not passed to child WASM processes via WASI spawn)
 
 ### Other
 
 - No startup file sourcing (`~/.bashrc`, `/etc/profile`) — source explicitly
 - No `GLOBIGNORE`, `nocaseglob`, or `BASH_VERSINFO`
 - History expansion limited to `!!`, `!N`, `!-N`, `!prefix` (no modifiers like `:p`, `:h`)
-- `read` builtin supports `-p`, `-r`, `-a` only (no `-t`, `-d`, `-N`, `-u`)
+- `read` builtin supports `-p`, `-r`, `-a`, `-d`, `-N`, `-u` (no `-t` — timeout not feasible in WASM single-threaded context)
 - `fc` only supports `-l` (listing) — no re-edit mode
