@@ -1,9 +1,23 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { MessageChannel } from 'node:worker_threads';
+import { NodeWorkerFactory } from '@mithic/io/io/worker-factory.node';
 import { ComponentRegistry } from './component-registry.ts';
 import { createCompilerBridge } from './compiler-bridge.ts';
-import { createDefaultWorkerFactory } from './worker-factory.ts';
+import type { ManagedWorker } from '@mithic/io/io';
+
+function createTestBridge(): { bridge: ReturnType<typeof createCompilerBridge>; worker: ManagedWorker } {
+  const factory = new NodeWorkerFactory();
+  const { port1, port2 } = new MessageChannel();
+  const worker = factory.create(
+    new URL('./compiler-worker.node.ts', import.meta.url),
+    { name: 'test-compiler' },
+  );
+  worker.postMessage({ type: '__port', port: port2 }, [port2 as unknown as Transferable]);
+  const bridge = createCompilerBridge(port1 as unknown as MessagePort);
+  return { bridge, worker };
+}
 
 describe('ComponentRegistry integration (real jco)', () => {
   it('should compile, resolve, and instantiate a real WASM component', async () => {
@@ -15,9 +29,8 @@ describe('ComponentRegistry integration (real jco)', () => {
       return; // Skip if coreutils not built
     }
 
-    const factory = createDefaultWorkerFactory();
-    const compiler = createCompilerBridge(factory);
-    const registry = new ComponentRegistry({ precompiled: new Map(), compiler });
+    const { bridge, worker } = createTestBridge();
+    const registry = new ComponentRegistry({ precompiled: new Map(), compiler: bridge });
 
     const resolved = registry.resolveBytes(wasmBytes, '/bin/coreutils');
     assert.ok(resolved, 'Should resolve WASM component');
@@ -45,6 +58,7 @@ describe('ComponentRegistry integration (real jco)', () => {
     assert.ok(moduleNames.every(n => n.endsWith('.wasm')), 'All module names should be .wasm paths');
 
     registry[Symbol.dispose]();
+    await worker.terminate();
   });
 
   it('should cache resolved component (second call returns same object)', async () => {
@@ -56,15 +70,15 @@ describe('ComponentRegistry integration (real jco)', () => {
       return;
     }
 
-    const factory = createDefaultWorkerFactory();
-    const compiler = createCompilerBridge(factory);
-    const registry = new ComponentRegistry({ precompiled: new Map(), compiler });
+    const { bridge, worker } = createTestBridge();
+    const registry = new ComponentRegistry({ precompiled: new Map(), compiler: bridge });
 
     const resolved1 = registry.resolveBytes(wasmBytes, '/bin/app');
     const resolved2 = registry.resolveBytes(wasmBytes, '/bin/app');
     assert.strictEqual(resolved1, resolved2, 'Cache should return same object');
 
     registry[Symbol.dispose]();
+    await worker.terminate();
   });
 
   it('should handle jco unavailable with clear error', async () => {
@@ -72,10 +86,10 @@ describe('ComponentRegistry integration (real jco)', () => {
     // We can't easily remove jco from node_modules mid-test, so this just
     // verifies the error path exists by checking the compiler-worker source.
     const { readFile: rf } = await import('node:fs/promises');
-    const workerSource = await rf(new URL('./compiler-worker.ts', import.meta.url), 'utf8');
+    const handlerSource = await rf(new URL('./compiler-handler.ts', import.meta.url), 'utf8');
     assert.ok(
-      workerSource.includes('@bytecodealliance/jco is required'),
-      'Compiler worker should have a clear error message when jco is unavailable',
+      handlerSource.includes('@bytecodealliance/jco is required'),
+      'Compiler handler should have a clear error message when jco is unavailable',
     );
   });
 });

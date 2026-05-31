@@ -1,22 +1,36 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { MessageChannel } from 'node:worker_threads';
+import { NodeWorkerFactory } from '@mithic/io/io/worker-factory.node';
 import { createCompilerBridge } from './compiler-bridge.ts';
-import { createDefaultWorkerFactory } from './worker-factory.ts';
+import type { ManagedWorker } from '@mithic/io/io';
+
+function createTestBridge(): { bridge: ReturnType<typeof createCompilerBridge>; worker: ManagedWorker } {
+  const factory = new NodeWorkerFactory();
+  const { port1, port2 } = new MessageChannel();
+  const worker = factory.create(
+    new URL('./compiler-worker.node.ts', import.meta.url),
+    { name: 'test-compiler' },
+  );
+  // Transfer port2 to compiler Worker — note the message type is now '__port'
+  worker.postMessage({ type: '__port', port: port2 }, [port2 as unknown as Transferable]);
+  const bridge = createCompilerBridge(port1 as unknown as MessagePort);
+  return { bridge, worker };
+}
 
 describe('CompilerBridge', () => {
   it('should compile a WASM component and return module bytes', async () => {
-    const factory = createDefaultWorkerFactory();
-    const bridge = createCompilerBridge(factory);
+    const { bridge, worker } = createTestBridge();
 
-    // Use coreutils component as test fixture (already built)
     const componentPath = new URL('../../../coreutils/dist/wasm/component.wasm', import.meta.url);
     let wasmBytes: Uint8Array;
     try {
       wasmBytes = await readFile(componentPath);
     } catch {
       bridge[Symbol.dispose]();
-      return; // Skip if coreutils not built
+      await worker.terminate();
+      return;
     }
 
     const result = bridge.compile(wasmBytes);
@@ -35,11 +49,11 @@ describe('CompilerBridge', () => {
     assert.equal(result.cached, false, 'First call should not be cached');
 
     bridge[Symbol.dispose]();
+    await worker.terminate();
   });
 
   it('should return cached result on second compile of same bytes', async () => {
-    const factory = createDefaultWorkerFactory();
-    const bridge = createCompilerBridge(factory);
+    const { bridge, worker } = createTestBridge();
 
     const componentPath = new URL('../../../coreutils/dist/wasm/component.wasm', import.meta.url);
     let wasmBytes: Uint8Array;
@@ -47,6 +61,7 @@ describe('CompilerBridge', () => {
       wasmBytes = await readFile(componentPath);
     } catch {
       bridge[Symbol.dispose]();
+      await worker.terminate();
       return;
     }
 
@@ -58,11 +73,11 @@ describe('CompilerBridge', () => {
     assert.deepEqual(Object.keys(result1.modules), Object.keys(result2.modules));
 
     bridge[Symbol.dispose]();
+    await worker.terminate();
   });
 
   it('should include jsFiles in result', async () => {
-    const factory = createDefaultWorkerFactory();
-    const bridge = createCompilerBridge(factory);
+    const { bridge, worker } = createTestBridge();
 
     const componentPath = new URL('../../../coreutils/dist/wasm/component.wasm', import.meta.url);
     let wasmBytes: Uint8Array;
@@ -70,6 +85,7 @@ describe('CompilerBridge', () => {
       wasmBytes = await readFile(componentPath);
     } catch {
       bridge[Symbol.dispose]();
+      await worker.terminate();
       return;
     }
 
@@ -78,5 +94,6 @@ describe('CompilerBridge', () => {
     assert.ok(Object.keys(result.jsFiles).length > 0, 'Should have at least one JS file');
 
     bridge[Symbol.dispose]();
+    await worker.terminate();
   });
 });
