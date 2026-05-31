@@ -155,6 +155,11 @@ export class FileSystemRouter implements FileSystemProvider {
     return provider.utimes(relativePath, atime, mtime);
   }
 
+  async mkfifo(path: string): Promise<void> {
+    const { provider, relativePath } = this.resolve(path);
+    return provider.mkfifo(relativePath);
+  }
+
   async realpath(path: string): Promise<string> {
     const { provider, relativePath, mountPoint } = this.resolve(path);
     if (provider.realpath) {

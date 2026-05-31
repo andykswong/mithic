@@ -31,7 +31,17 @@ interface MemSymlinkEntry {
   ctime: Date;
 }
 
-type MemEntry = MemFileEntry | MemDirectoryEntry | MemSymlinkEntry;
+/** In-memory FIFO (named pipe) entry. */
+interface MemFifoEntry {
+  type: 'fifo';
+  buffer: Uint8Array[];
+  mode: number;
+  mtime: Date;
+  atime: Date;
+  ctime: Date;
+}
+
+type MemEntry = MemFileEntry | MemDirectoryEntry | MemSymlinkEntry | MemFifoEntry;
 
 /** Options for constructing a MemoryFsProvider. */
 export interface MemoryProviderOptions {
@@ -39,7 +49,7 @@ export interface MemoryProviderOptions {
 }
 
 interface OpenFileHandle {
-  entry: MemFileEntry;
+  entry: MemFileEntry | MemFifoEntry;
   path: string;
   flags: OpenFlags;
 }
@@ -137,11 +147,11 @@ export class MemoryFsProvider implements SyncFileSystemProvider {
       throw new FileSystemError('is-directory', `Is a directory: ${path}`);
     }
 
-    if (entry.type !== 'file') {
+    if (entry.type !== 'file' && entry.type !== 'fifo') {
       throw new FileSystemError('invalid', `Cannot open non-file: ${path}`);
     }
 
-    if (flags.truncate) {
+    if (flags.truncate && entry.type === 'file') {
       entry.source = new Uint8Array(0);
       entry.mtime = new Date();
       entry.ctime = new Date();
@@ -166,6 +176,14 @@ export class MemoryFsProvider implements SyncFileSystemProvider {
     }
     const { entry } = openHandle;
     entry.atime = new Date();
+
+    if (entry.type === 'fifo') {
+      if (entry.buffer.length === 0) {
+        return new Uint8Array(0);
+      }
+      return entry.buffer.shift()!;
+    }
+
     const start = Math.min(offset, entry.source.length);
     const end = Math.min(start + len, entry.source.length);
     return entry.source.slice(start, end);
@@ -177,6 +195,15 @@ export class MemoryFsProvider implements SyncFileSystemProvider {
       throw new FileSystemError('invalid', `Invalid file descriptor: ${handle.fd}`);
     }
     const { entry, flags } = openHandle;
+
+    if (entry.type === 'fifo') {
+      entry.buffer.push(new Uint8Array(data));
+      const now = new Date();
+      entry.mtime = now;
+      entry.ctime = now;
+      return data.length;
+    }
+
     const writeOffset = flags.append ? entry.source.length : offset;
     const needed = writeOffset + data.length;
     if (needed > entry.source.length) {
@@ -197,6 +224,11 @@ export class MemoryFsProvider implements SyncFileSystemProvider {
       throw new FileSystemError('invalid', `Invalid file descriptor: ${handle.fd}`);
     }
     const { entry } = openHandle;
+
+    if (entry.type === 'fifo') {
+      return; // no-op for FIFOs
+    }
+
     if (size < entry.source.length) {
       entry.source = entry.source.slice(0, size);
     } else if (size > entry.source.length) {
@@ -398,6 +430,28 @@ export class MemoryFsProvider implements SyncFileSystemProvider {
     }
     entry.atime = atime;
     entry.mtime = mtime;
+  }
+
+  mkfifo(path: string): void {
+    const normalized = this.normalizePath(path);
+    const { dir, base } = this.splitPath(normalized);
+    const parent = this.resolveEntry(dir, true);
+    if (!parent || parent.type !== 'directory') {
+      throw new FileSystemError('no-entry', `Parent directory not found: ${dir}`);
+    }
+    if (parent.children.has(base)) {
+      throw new FileSystemError('exist', `Already exists: ${path}`);
+    }
+    const now = new Date();
+    parent.children.set(base, {
+      type: 'fifo',
+      buffer: [],
+      mode: 0o644,
+      mtime: now,
+      atime: now,
+      ctime: now,
+    });
+    parent.mtime = now;
   }
 
   realpath(path: string): string {

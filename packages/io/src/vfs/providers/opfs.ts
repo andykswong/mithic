@@ -296,6 +296,10 @@ export class OPFSProvider implements FileSystemProvider {
     throw new FileSystemError('unsupported', 'OPFS does not support utimes');
   }
 
+  async mkfifo(_path: string): Promise<void> {
+    throw new FileSystemError('unsupported', 'OPFS does not support mkfifo');
+  }
+
   // --- Private helpers ---
 
   #ensureInit(): asserts this is { '#root': FileSystemDirectoryHandle } {

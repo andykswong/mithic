@@ -161,3 +161,49 @@ world shell {
   export wasi:cli/run@0.2.0;
 }
 ```
+
+## Known Limitations
+
+### Interactive/Terminal
+
+The shell has no readline library or terminal raw-mode support. This means:
+- No arrow key navigation, Ctrl+A/E cursor movement, or Ctrl+R history search
+- No tab completion
+- No `set -o vi` / `set -o emacs` editing modes
+- Input is strictly line-buffered (no character-at-a-time processing)
+- Ctrl+C / Ctrl+Z cannot be delivered from the terminal to running processes
+
+### Process Model
+
+All processes run as in-process JavaScript functions on the same thread:
+- Background commands (`cmd &`) are dispatched but may execute synchronously depending on the handler
+- No true process groups or `setpgid` — `kill(-pgid, sig)` not supported
+- `coproc` is parsed but returns an error (requires concurrent bidirectional I/O)
+- `$$` and `$BASHPID` expand to a fixed PID (`1`) since WASM has no real process IDs
+- `exec cmd` spawns and waits rather than replacing the shell process
+
+### Missing Builtins
+
+`alias`/`unalias`, `ulimit`, `umask`, `shopt`, `pushd`/`popd`/`dirs`, `time`, `compgen`/`complete`, `builtin`, `enable`, `suspend`, `caller`
+
+### Glob & Expansion
+
+- No extended glob (`extglob`): `?(pat)`, `*(pat)`, `+(pat)`, `@(pat)`, `!(pat)` not supported
+- No recursive glob (`**`)
+- No named POSIX character classes (`[[:digit:]]`)
+- `${!var}` variable indirection not supported
+
+### I/O & Redirection
+
+- File descriptors > 2 not fully supported (no general `N>&M` for N > 2)
+- No `/dev/tcp` or `/dev/udp` network redirects
+- No `/dev/random` or `/dev/urandom` device files
+- No `|&` (pipe stderr+stdout together) — use `2>&1 |` instead
+
+### Other
+
+- No startup file sourcing (`~/.bashrc`, `/etc/profile`) — source explicitly
+- No `GLOBIGNORE`, `nocaseglob`, or `BASH_VERSINFO`
+- History expansion limited to `!!`, `!N`, `!-N`, `!prefix` (no modifiers like `:p`, `:h`)
+- `read` builtin supports `-p`, `-r`, `-a` only (no `-t`, `-d`, `-N`, `-u`)
+- `fc` only supports `-l` (listing) — no re-edit mode

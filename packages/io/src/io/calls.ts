@@ -54,6 +54,7 @@ export const FS_UTIMES = 33 << 24;
 export const FS_TRUNCATE = 34 << 24;
 export const FS_LINK = 35 << 24;
 export const FS_REALPATH = 36 << 24;
+export const FS_MKFIFO = 37 << 24;
 
 // HTTP calls
 export const HTTP_SEND = 40 << 24;

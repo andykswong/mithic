@@ -64,6 +64,7 @@ export interface FileSystemProvider {
   link(existingPath: string, newPath: string): MaybePromise<void>;
   chmod(path: string, mode: number): MaybePromise<void>;
   utimes(path: string, atime: Date, mtime: Date): MaybePromise<void>;
+  mkfifo(path: string): MaybePromise<void>;
   watch?(path: string, callback: (event: WatchEvent) => void): () => void;
   sync?(): MaybePromise<void>;
   realpath?(path: string): MaybePromise<string>;
@@ -89,6 +90,7 @@ export interface SyncFileSystemProvider extends FileSystemProvider {
   link(existingPath: string, newPath: string): void;
   chmod(path: string, mode: number): void;
   utimes(path: string, atime: Date, mtime: Date): void;
+  mkfifo(path: string): void;
   sync?(): void;
   realpath?(path: string): string;
 }

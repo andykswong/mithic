@@ -18,7 +18,7 @@ import {
   HTTP_SEND,
   FS_OPEN, FS_CLOSE, FS_READ, FS_WRITE, FS_STAT, FS_READDIR,
   FS_MKDIR, FS_UNLINK, FS_RMDIR, FS_RENAME, FS_SYMLINK, FS_READLINK,
-  FS_CHMOD, FS_UTIMES, FS_TRUNCATE, FS_LINK, FS_REALPATH,
+  FS_CHMOD, FS_UTIMES, FS_TRUNCATE, FS_LINK, FS_REALPATH, FS_MKFIFO,
   SOCKET_CREATE, SOCKET_BIND, SOCKET_CONNECT, SOCKET_LISTEN,
   SOCKET_ACCEPT, SOCKET_SEND, SOCKET_RECV, SOCKET_CLOSE, SOCKET_RESOLVE,
 } from '../calls.ts';
@@ -274,6 +274,10 @@ export class SyncBridgeFsProvider implements SyncFileSystemProvider {
 
   utimes(path: string, atime: Date, mtime: Date): void {
     this.#io.ioCall(FS_UTIMES | FILE, null, { path, atime: atime.getTime(), mtime: mtime.getTime() });
+  }
+
+  mkfifo(path: string): void {
+    this.#io.ioCall(FS_MKFIFO | FILE, null, { path });
   }
 
   realpath(path: string): string {

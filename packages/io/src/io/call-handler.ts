@@ -18,7 +18,7 @@ import {
   OUTPUT_STREAM_WRITE, OUTPUT_STREAM_FLUSH, OUTPUT_STREAM_DISPOSE,
   FS_OPEN, FS_CLOSE, FS_READ, FS_WRITE, FS_STAT, FS_READDIR,
   FS_MKDIR, FS_UNLINK, FS_RMDIR, FS_RENAME, FS_SYMLINK, FS_READLINK,
-  FS_CHMOD, FS_UTIMES, FS_TRUNCATE, FS_LINK, FS_REALPATH,
+  FS_CHMOD, FS_UTIMES, FS_TRUNCATE, FS_LINK, FS_REALPATH, FS_MKFIFO,
   HTTP_SEND,
   SOCKET_CREATE, SOCKET_BIND, SOCKET_CONNECT, SOCKET_LISTEN,
   SOCKET_ACCEPT, SOCKET_SEND, SOCKET_RECV, SOCKET_CLOSE, SOCKET_RESOLVE,
@@ -200,6 +200,10 @@ export function createCallHandler(options: CallHandlerOptions): CallHandler {
       case FS_REALPATH: {
         const fsp = requireFs();
         return fsp.realpath ? fsp.realpath((payload as { path: string }).path) : (payload as { path: string }).path;
+      }
+
+      case FS_MKFIFO: {
+        return requireFs().mkfifo((payload as { path: string }).path);
       }
 
       // ─── HTTP calls ─────────────────────────────────────────────────

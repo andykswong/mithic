@@ -96,6 +96,7 @@ export class DeviceFsProvider implements SyncFileSystemProvider {
   link(_e: string, _n: string): void { throw new FileSystemError('not-permitted', 'Cannot link in /dev'); }
   chmod(_path: string, _mode: number): void {}
   utimes(_path: string, _atime: Date, _mtime: Date): void {}
+  mkfifo(_path: string): void { throw new FileSystemError('not-permitted', 'Cannot mkfifo in /dev'); }
 
   #resolveDevice(path: string): DeviceName {
     const name = path.replace(/^\/+/, '');

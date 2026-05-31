@@ -343,6 +343,74 @@ describe('MemoryFsProvider', () => {
     });
   });
 
+  describe('mkfifo', () => {
+    it('should create a fifo node and stat returns type fifo', () => {
+      fs.mkfifo('/myfifo');
+      const stat = fs.stat('/myfifo');
+      assert.strictEqual(stat.type, 'fifo');
+      assert.strictEqual(stat.size, 0n);
+      assert.strictEqual(stat.mode, 0o644);
+    });
+
+    it('should write to fifo and read dequeues data', () => {
+      fs.mkfifo('/pipe');
+      const handle = fs.open('/pipe', { write: true, read: true });
+      const data1 = new TextEncoder().encode('hello');
+      const data2 = new TextEncoder().encode('world');
+      fs.write(handle, data1, 0);
+      fs.write(handle, data2, 0);
+
+      const read1 = fs.read(handle, 0, 1024);
+      assert.deepStrictEqual(read1, data1);
+
+      const read2 = fs.read(handle, 0, 1024);
+      assert.deepStrictEqual(read2, data2);
+
+      fs.close(handle);
+    });
+
+    it('should return empty array when reading from empty fifo', () => {
+      fs.mkfifo('/empty-pipe');
+      const handle = fs.open('/empty-pipe', { read: true });
+      const data = fs.read(handle, 0, 1024);
+      assert.strictEqual(data.length, 0);
+      fs.close(handle);
+    });
+
+    it('should throw if path already exists', () => {
+      fs.mkfifo('/existing-fifo');
+      assert.throws(
+        () => fs.mkfifo('/existing-fifo'),
+        (err: unknown) => err instanceof FileSystemError && err.code === 'exist'
+      );
+    });
+
+    it('should throw if parent directory does not exist', () => {
+      assert.throws(
+        () => fs.mkfifo('/nonexistent/fifo'),
+        (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
+      );
+    });
+
+    it('should be removable with unlink', () => {
+      fs.mkfifo('/removable-fifo');
+      fs.unlink('/removable-fifo');
+      assert.throws(
+        () => fs.stat('/removable-fifo'),
+        (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
+      );
+    });
+
+    it('should appear in readdir listings', () => {
+      fs.mkdir('/fifodir');
+      fs.mkfifo('/fifodir/mypipe');
+      const entries = fs.readdir('/fifodir');
+      assert.strictEqual(entries.length, 1);
+      assert.strictEqual(entries[0].name, 'mypipe');
+      assert.strictEqual(entries[0].type, 'fifo');
+    });
+  });
+
   describe('truncate', () => {
     it('should truncate file to smaller size and verify content', async () => {
       const handle = await fs.open('/trunc.txt', { create: true, write: true, read: true });

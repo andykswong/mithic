@@ -131,4 +131,9 @@ export class SyncFileSystemRouter implements SyncFileSystemProvider {
     const { provider, relativePath } = this.#resolve(path);
     provider.utimes(relativePath, atime, mtime);
   }
+
+  mkfifo(path: string): void {
+    const { provider, relativePath } = this.#resolve(path);
+    provider.mkfifo(relativePath);
+  }
 }

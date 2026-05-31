@@ -209,6 +209,10 @@ export class NodeFsProvider implements FileSystemProvider {
     }
   }
 
+  async mkfifo(_path: string): Promise<void> {
+    throw new FileSystemError('unsupported', 'NodeFsProvider does not support mkfifo');
+  }
+
   async realpath(path: string): Promise<string> {
     const resolved = this.#resolvePath(path);
     try {
