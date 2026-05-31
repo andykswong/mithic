@@ -184,7 +184,7 @@ All processes run as in-process JavaScript functions on the same thread:
 
 ### Missing Builtins
 
-`alias`/`unalias`, `ulimit`, `umask`, `shopt`, `pushd`/`popd`/`dirs`, `time`, `compgen`/`complete`, `builtin`, `enable`, `suspend`, `caller`
+`ulimit`, `umask`, `shopt`, `pushd`/`popd`/`dirs`, `compgen`/`complete`, `enable`, `suspend`, `caller`
 
 ### Glob & Expansion
 
@@ -197,7 +197,6 @@ All processes run as in-process JavaScript functions on the same thread:
 
 - File descriptors > 2 not fully supported (no general `N>&M` for N > 2)
 - No `/dev/tcp` or `/dev/udp` network redirects
-- No `/dev/random` or `/dev/urandom` device files
 - No `|&` (pipe stderr+stdout together) — use `2>&1 |` instead
 
 ### Other

@@ -410,22 +410,22 @@ impl<R: Runtime> Shell<R> {
             }
         }
 
-        // Alias expansion: if the first word matches an alias, replace it with the alias value
-        // and re-parse/dispatch. Only expand once (no recursive expansion).
-        if let Some(first_lit) = crate::executor::expansion::literal_text(&cmd.words[0]) {
-            if !first_lit.contains('=') {
-                if let Some(alias_val) = self.aliases.get(&first_lit).cloned() {
-                    let rest_words: Vec<String> = cmd.words[1..].iter()
-                        .map(|w| self.expand_word(w))
-                        .collect();
-                    let mut new_input = alias_val;
-                    for w in &rest_words {
-                        new_input.push(' ');
-                        new_input.push_str(w);
-                    }
-                    let mut parser = crate::parser::Parser::new_with_mode(&new_input, self.options.posix);
-                    if let Some(list) = parser.parse() {
-                        return self.exec_list(list);
+        if !cmd.words.is_empty() {
+            if let Some(first_lit) = crate::executor::expansion::literal_text(&cmd.words[0]) {
+                if !first_lit.contains('=') {
+                    if let Some(alias_val) = self.aliases.get(&first_lit).cloned() {
+                        let rest_words: Vec<String> = cmd.words[1..].iter()
+                            .map(|w| self.expand_word(w))
+                            .collect();
+                        let mut new_input = alias_val;
+                        for w in &rest_words {
+                            new_input.push(' ');
+                            new_input.push_str(w);
+                        }
+                        let mut parser = crate::parser::Parser::new_with_mode(&new_input, self.options.posix);
+                        if let Some(list) = parser.parse() {
+                            return self.exec_list(list);
+                        }
                     }
                 }
             }
