@@ -16,6 +16,9 @@
     "./impl/simple": "./dist/impl/simple.js",
     "./impl/component-registry": "./dist/impl/component-registry.js",
 "./impl/compiler-bridge": "./dist/impl/compiler-bridge.js",
+    "./impl/compiler-handler": "./dist/impl/compiler-handler.js",
+    "./impl/compiler-worker.node": "./dist/impl/compiler-worker.node.js",
+    "./impl/compiler-worker.browser": "./dist/impl/compiler-worker.browser.js",
     "./wit/*": "./wit/*"
   },
   "files": [

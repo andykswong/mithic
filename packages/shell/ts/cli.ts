@@ -12,10 +12,9 @@ import { createCommandResolver, type SyncInstantiateFn } from './commands.ts';
 import { instantiate as shellInstantiate, modules as shellModules } from '@mithic/shell/component';
 import { instantiate as coreutilsInstantiate, modules as coreutilsModules } from '@mithic/coreutils/component';
 import { COREUTILS_COMMANDS } from '@mithic/coreutils';
-import { createDefaultWorkerFactory } from '@mithic/process/impl/worker-factory';
+import { NodeWorkerFactory } from '@mithic/io/io/worker-factory.node';
 import { createCompilerBridge } from '@mithic/process/impl/compiler-bridge';
 import { ComponentRegistry } from '@mithic/process/impl/component-registry';
-import type { SyncInstantiateFn as RegistrySyncInstantiateFn } from '@mithic/process/impl/component-registry';
 
 async function compileModules(dataUris: Record<string, string>): Promise<Map<string, WebAssembly.Module>> {
   const compiled = new Map<string, WebAssembly.Module>();
@@ -44,19 +43,25 @@ function coreutilsCompileCore(path: string): WebAssembly.Module {
   return mod;
 }
 
-const workerFactory = createDefaultWorkerFactory();
-const compilerBridge = createCompilerBridge(workerFactory);
+const workerFactory = new NodeWorkerFactory();
+const { port1: compilerPort1, port2: compilerPort2 } = new MessageChannel();
+const compilerWorker = workerFactory.create(
+  new URL(import.meta.resolve('@mithic/process/impl/compiler-worker.node')),
+  { name: 'mithic-compiler' },
+);
+compilerWorker.postMessage({ type: '__port', port: compilerPort2 }, [compilerPort2 as unknown as Transferable]);
+const compilerBridge = createCompilerBridge(compilerPort1 as unknown as MessagePort);
 const registry = new ComponentRegistry({
   precompiled: new Map([
     ['shell', {
       commands: new Set(['sh', 'bash']),
       compileCore: shellCompileCore,
-      instantiate: shellInstantiate as unknown as RegistrySyncInstantiateFn,
+      instantiate: shellInstantiate as unknown as SyncInstantiateFn,
     }],
     ['coreutils', {
       commands: COREUTILS_COMMANDS,
       compileCore: coreutilsCompileCore,
-      instantiate: coreutilsInstantiate as unknown as RegistrySyncInstantiateFn,
+      instantiate: coreutilsInstantiate as unknown as SyncInstantiateFn,
     }],
   ]),
   compiler: compilerBridge,
@@ -135,4 +140,5 @@ try {
 } finally {
   shim[Symbol.dispose]();
   registry[Symbol.dispose]();
+  compilerWorker.terminate();
 }

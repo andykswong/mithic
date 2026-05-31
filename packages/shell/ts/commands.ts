@@ -4,13 +4,9 @@ import type { Descriptor } from '@mithic/wasip2/filesystem/types';
 import type { CommandContext, CommandResolver } from '@mithic/process/impl/simple';
 import type { SyncFileSystemProvider } from '@mithic/io/vfs';
 import { COREUTILS_COMMANDS } from '@mithic/coreutils';
-import { ComponentRegistry, type ResolvedComponent } from '@mithic/process/impl/component-registry';
+import { ComponentRegistry, type ResolvedComponent, type SyncInstantiateFn } from '@mithic/process/impl/component-registry';
 
-export type SyncInstantiateFn = (
-  compileCore: (path: string) => WebAssembly.Module,
-  imports: object,
-  instantiateCore: (module: WebAssembly.Module, imports: WebAssembly.Imports) => WebAssembly.Instance,
-) => { run: { run: () => number } };
+export type { SyncInstantiateFn };
 
 export interface CommandsConfig {
   memFs: SyncFileSystemProvider;
@@ -135,7 +131,14 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
         ctx.stderr.blockingWriteAndFlush(enc.encode(`${path}: WASM execution not available (no compiler configured)\n`));
         return 126;
       }
-      const component = config.registry.resolveBytes(bytes, path);
+      let component;
+      try {
+        component = config.registry.resolveBytes(bytes, path);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : 'unknown error';
+        ctx.stderr.blockingWriteAndFlush(enc.encode(`${path}: ${msg}\n`));
+        return 126;
+      }
       if (!component) {
         ctx.stderr.blockingWriteAndFlush(enc.encode(`${path}: failed to compile WASM component\n`));
         return 126;
@@ -172,7 +175,14 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
             return 126;
           }
           const fullBytes = readMemFile(p, stat.size);
-          const component = config.registry.resolveBytes(fullBytes, p);
+          let component;
+          try {
+            component = config.registry.resolveBytes(fullBytes, p);
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : 'unknown error';
+            ctx.stderr.blockingWriteAndFlush(enc.encode(`${p}: ${msg}\n`));
+            return 126;
+          }
           if (!component) {
             ctx.stderr.blockingWriteAndFlush(enc.encode(`${p}: failed to compile WASM component\n`));
             return 126;
