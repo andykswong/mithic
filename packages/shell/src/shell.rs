@@ -46,6 +46,7 @@ pub struct Shell<R: Runtime> {
     pub(crate) dir_stack: Vec<String>,
     /// General file descriptor table for FDs > 2 (e.g., `exec 3> file`).
     pub(crate) extra_fds: HashMap<u32, OutputHandle>,
+    pub(crate) extra_input_fds: HashMap<u32, InputHandle>,
     /// Aliases for FDs that point to default stdout(1) or stderr(2) without explicit handles.
     /// e.g., `exec 3>&1` stores fd_aliases[3] = 1, meaning fd 3 writes to default stdout.
     pub(crate) fd_aliases: HashMap<u32, u32>,
@@ -95,6 +96,7 @@ impl<R: Runtime> Shell<R> {
             expansion_error: false,
             dir_stack: Vec::new(),
             extra_fds: HashMap::new(),
+            extra_input_fds: HashMap::new(),
             fd_aliases: HashMap::new(),
         }
     }
@@ -476,10 +478,13 @@ impl<R: Runtime> Shell<R> {
                                 if self.is_network_redirect(&path) {
                                     return 1;
                                 }
-                                if *fd == 0 {
-                                    // exec 0< file — we don't have persistent stdin redirect,
-                                    // but we validate the file exists
-                                    if self.rt.open_file_read(&path).is_none() {
+                                match self.rt.open_file_read(&path) {
+                                    Some(h) => {
+                                        if *fd != 0 {
+                                            self.extra_input_fds.insert(*fd, h);
+                                        }
+                                    }
+                                    None => {
                                         self.rt.write_stderr(&format!("{}: {}: No such file or directory\n", self.shell_name, expanded));
                                         return 1;
                                     }

@@ -242,9 +242,9 @@ impl<R: Runtime> Shell<R> {
                         Some(h) => {
                             if *fd == 0 {
                                 *stdin = Some(h);
+                            } else {
+                                self.extra_input_fds.insert(*fd, h);
                             }
-                            // For FDs > 0 used as input, we don't have an input fd table.
-                            // This is primarily useful for `exec 0< file` (redirects stdin).
                         }
                         None => {
                             self.rt.write_stderr(&format!("{}: {}: No such file or directory\n", self.shell_name, expanded));

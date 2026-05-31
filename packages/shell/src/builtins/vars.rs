@@ -220,12 +220,18 @@ fn exec_read<R: Runtime>(shell: &mut Shell<R>, args: &[String], stdin: Option<In
         i += 1;
     }
 
-    if let Some(f) = fd {
-        if f != 0 {
-            shell.rt.write_stderr(&format!("{}: read: {}: invalid file descriptor\n", shell.shell_name, f));
+    let fd_input: Option<InputHandle> = if let Some(f) = fd {
+        if f == 0 {
+            None
+        } else if let Some(h) = shell.extra_input_fds.get(&f) {
+            Some(InputHandle(h.0))
+        } else {
+            shell.rt.write_stderr(&format!("{}: read: {}: Bad file descriptor\n", shell.shell_name, f));
             return 1;
         }
-    }
+    } else {
+        None
+    };
 
     if var_names.is_empty() {
         var_names.push("REPLY");
@@ -235,17 +241,24 @@ fn exec_read<R: Runtime>(shell: &mut Shell<R>, args: &[String], stdin: Option<In
         shell.rt.write_stderr(p);
     }
 
-    let line = match &stdin {
-        Some(h) => {
-            match shell.rt.pipe_read_line(h) {
-                Some(l) => l,
-                None => return 1,
-            }
+    let line = if let Some(ref h) = fd_input {
+        match shell.rt.pipe_read_line(h) {
+            Some(l) => l,
+            None => return 1,
         }
-        None => {
-            match shell.rt.read_line() {
-                Some(l) => l.trim_end_matches('\n').to_string(),
-                None => return 1,
+    } else {
+        match &stdin {
+            Some(h) => {
+                match shell.rt.pipe_read_line(h) {
+                    Some(l) => l,
+                    None => return 1,
+                }
+            }
+            None => {
+                match shell.rt.read_line() {
+                    Some(l) => l.trim_end_matches('\n').to_string(),
+                    None => return 1,
+                }
             }
         }
     };

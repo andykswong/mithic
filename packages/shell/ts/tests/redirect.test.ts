@@ -104,6 +104,37 @@ describe('FD > 2 redirects', () => {
   });
 });
 
+describe('exec N< file (input fd redirects)', () => {
+  it('exec 3< file opens fd for reading', async () => {
+    const { stdout } = await runShell(
+      'echo "line1" > /tmp/fd_in.txt\nexec 3< /tmp/fd_in.txt\nread -u 3 x\necho $x\n'
+    );
+    assert.strictEqual(stdout.trim(), 'line1');
+  });
+
+  it('3< file on a command redirects input for that command', async () => {
+    const { stdout } = await runShell(
+      'echo "from_file" > /tmp/fd_in2.txt\ncat 3< /tmp/fd_in2.txt < /tmp/fd_in2.txt\n'
+    );
+    assert.ok(stdout.includes('from_file'));
+  });
+
+  it('exec N< nonexistent file produces error', async () => {
+    const { stderr, exit } = await runShell(
+      'exec 3< /tmp/no_such_file_xyz\n'
+    );
+    assert.ok(stderr.includes('No such file'));
+    assert.notStrictEqual(exit, 0);
+  });
+
+  it('read -u 3 from exec 3< reads multiple lines', async () => {
+    const { stdout } = await runShell(
+      'printf "aaa\\nbbb\\n" > /tmp/fd_multi.txt\nexec 3< /tmp/fd_multi.txt\nread -u 3 a\nread -u 3 b\necho "$a $b"\n'
+    );
+    assert.strictEqual(stdout.trim(), 'aaa bbb');
+  });
+});
+
 describe('/dev/tcp and /dev/udp', () => {
   it('/dev/tcp redirect produces error', async () => {
     const { stderr, exit } = await runShell(

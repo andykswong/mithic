@@ -146,13 +146,13 @@ describe('builtin: alias/unalias', () => {
 
   it('alias with no args lists all aliases', async () => {
     const { stdout } = await runShell('alias foo="bar"\nalias baz="qux"\nalias\n');
-    assert.ok(stdout.includes("alias baz='qux'"));
-    assert.ok(stdout.includes("alias foo='bar'"));
+    assert.ok(stdout.includes('alias baz=\'qux\''));
+    assert.ok(stdout.includes('alias foo=\'bar\''));
   });
 
   it('alias name prints that alias', async () => {
     const { stdout } = await runShell('alias x="echo hi"\nalias x\n');
-    assert.ok(stdout.includes("alias x='echo hi'"));
+    assert.ok(stdout.includes('alias x=\'echo hi\''));
   });
 
   it('unalias removes an alias', async () => {
@@ -326,10 +326,15 @@ describe('builtin: read flags (-d, -N, -u)', () => {
     assert.strictEqual(stdout.trim(), 'hello');
   });
 
-  it('read -u with non-zero fd returns error', async () => {
-    const { stderr, exit } = await runShell('echo hello | read -u 3 x\n');
-    assert.ok(stderr.includes('invalid file descriptor'));
+  it('read -u with unopened fd returns error', async () => {
+    const { stderr, exit } = await runShell('read -u 9 x\n');
+    assert.ok(stderr.includes('Bad file descriptor'));
     assert.notStrictEqual(exit, 0);
+  });
+
+  it('read -u N reads from opened fd', async () => {
+    const { stdout } = await runShell('echo "from-fd3" > /tmp/read_u_test.txt\nexec 3< /tmp/read_u_test.txt\nread -u 3 x\necho $x\n');
+    assert.strictEqual(stdout.trim(), 'from-fd3');
   });
 
   it('read -d with delimiter not found uses whole line', async () => {
