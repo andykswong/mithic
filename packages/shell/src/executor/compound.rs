@@ -117,9 +117,10 @@ impl<R: Runtime> Shell<R> {
             self.rt.write_stderr(&format!("{}: arrays not supported in POSIX mode\n", self.shell_name));
             return 2;
         }
-        let elements: Vec<String> = aa.elements.iter()
-            .flat_map(|w| self.expand_word_to_args(w))
-            .collect();
+        let elements = match self.try_expand_words_to_args(&aa.elements) {
+            Ok(e) => e,
+            Err(code) => return code,
+        };
 
         if aa.append {
             let existing = match self.env.get(&aa.name) {
@@ -215,9 +216,10 @@ impl<R: Runtime> Shell<R> {
 
     fn exec_for(&mut self, cmd: crate::parser::ForCommand) -> u8 {
         let items: Vec<String> = match cmd.words {
-            Some(words) => words.iter()
-                .flat_map(|w| self.expand_word_to_args(w))
-                .collect(),
+            Some(words) => match self.try_expand_words_to_args(&words) {
+                Ok(items) => items,
+                Err(code) => return code,
+            },
             None => self.params.all().to_vec(),
         };
 
@@ -333,7 +335,10 @@ impl<R: Runtime> Shell<R> {
     }
 
     fn exec_case(&mut self, cmd: crate::parser::CaseCommand) -> u8 {
-        let value = self.expand_word(&cmd.word);
+        let value = match self.try_expand_word(&cmd.word) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
 
         for arm in cmd.arms {
             let matched = arm.patterns.iter().any(|pat| {
@@ -348,9 +353,10 @@ impl<R: Runtime> Shell<R> {
     }
 
     fn exec_select(&mut self, cmd: crate::parser::SelectCommand) -> u8 {
-        let items: Vec<String> = cmd.words.iter()
-            .flat_map(|w| self.expand_word_to_args(w))
-            .collect();
+        let items = match self.try_expand_words_to_args(&cmd.words) {
+            Ok(items) => items,
+            Err(code) => return code,
+        };
 
         if items.is_empty() {
             return 0;

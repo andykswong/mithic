@@ -15,6 +15,20 @@ impl<R: Runtime> Shell<R> {
         parts.iter().map(|p| self.expand_part(p)).collect()
     }
 
+    pub(crate) fn try_expand_word(&mut self, word: &Word) -> Result<String, u8> {
+        self.expansion_error = false;
+        let result = self.expand_word(word);
+        if self.expansion_error { Err(self.last_exit) } else { Ok(result) }
+    }
+
+    pub(crate) fn try_expand_words_to_args(&mut self, words: &[Word]) -> Result<Vec<String>, u8> {
+        self.expansion_error = false;
+        let result: Vec<String> = words.iter()
+            .flat_map(|w| self.expand_word_to_args(w))
+            .collect();
+        if self.expansion_error { Err(self.last_exit) } else { Ok(result) }
+    }
+
     pub(crate) fn expand_word_to_args(&mut self, w: &Word) -> Vec<String> {
         // Special case: a word that is just ${arr[@]}, ${arr[*]}, $@, or $* should expand
         // to multiple words rather than a single space-joined string.
@@ -401,6 +415,7 @@ impl<R: Runtime> Shell<R> {
             Err(msg) => {
                 self.rt.write_stderr(&format!("{}: {}\n", self.shell_name, msg));
                 self.last_exit = 1;
+                self.expansion_error = true;
                 String::new()
             }
         }

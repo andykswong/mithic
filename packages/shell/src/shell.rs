@@ -41,6 +41,7 @@ pub struct Shell<R: Runtime> {
     pub(crate) shell_name: String,
     pub(crate) history: Vec<String>,
     pub(crate) hash_table: HashMap<String, String>,
+    pub(crate) expansion_error: bool,
 }
 
 impl<R: Runtime> Shell<R> {
@@ -85,6 +86,7 @@ impl<R: Runtime> Shell<R> {
             shell_name: "sh".to_string(),
             history: Vec::new(),
             hash_table: HashMap::new(),
+            expansion_error: false,
         }
     }
 
@@ -407,11 +409,11 @@ impl<R: Runtime> Shell<R> {
             }
         }
 
-        let args: Vec<String> = cmd.words.iter()
-            .flat_map(|w| self.expand_word_to_args(w))
-            .collect();
+        let args = match self.try_expand_words_to_args(&cmd.words) {
+            Ok(a) => a,
+            Err(code) => return code,
+        };
 
-        // If nounset triggered during expansion, bail out with error
         if self.exit_requested && self.options.nounset {
             return self.last_exit;
         }
@@ -575,9 +577,13 @@ impl<R: Runtime> Shell<R> {
         }
 
         // Expand the RHS: rhs_prefix (literal tail of first part) + remaining parts.
+        self.expansion_error = false;
         let mut rhs = rhs_prefix.to_string();
         for part in &parts[1..] {
             rhs.push_str(&self.expand_part(part));
+        }
+        if self.expansion_error {
+            return Some(self.last_exit);
         }
 
         // Perform the assignment.
@@ -702,9 +708,13 @@ impl<R: Runtime> Shell<R> {
             };
             let stdin_opt = pipe_read_ends[i].take();
             let stdout_opt = pipe_write_ends[i].take();
-            let args: Vec<String> = cmd.words.iter()
-                .flat_map(|w| self.expand_word_to_args(w))
-                .collect();
+            let args = match self.try_expand_words_to_args(&cmd.words) {
+                Ok(a) => a,
+                Err(code) => {
+                    if i == n - 1 { last_builtin_exit = Some(code); }
+                    continue;
+                }
+            };
             if args.is_empty() { continue; }
             let name = args[0].clone();
             if let Some(body) = self.functions.get(&name).cloned() {

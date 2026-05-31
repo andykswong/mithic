@@ -178,15 +178,16 @@ describe('arithmetic expansion', () => {
 });
 
 describe('arithmetic expansion: edge cases', () => {
-  // Known gap: shell currently returns 0 on div-by-zero instead of error (fix in arith.rs)
-  it('division by zero does not crash', async () => {
-    const { exit } = await runShell('echo $((1 / 0))\n');
-    assert.strictEqual(exit, 0);
+  it('division by zero returns error exit code', async () => {
+    const { exit, stderr } = await runShell('echo $((1 / 0))\n');
+    assert.strictEqual(exit, 1);
+    assert.ok(stderr.includes('division by 0'));
   });
 
-  it('modulo by zero does not crash', async () => {
-    const { exit } = await runShell('echo $((5 % 0))\n');
-    assert.strictEqual(exit, 0);
+  it('modulo by zero returns error exit code', async () => {
+    const { exit, stderr } = await runShell('echo $((5 % 0))\n');
+    assert.strictEqual(exit, 1);
+    assert.ok(stderr.includes('division by 0'));
   });
 
   it('large numbers do not panic (overflow wraps or returns a value)', async () => {
@@ -198,6 +199,65 @@ describe('arithmetic expansion: edge cases', () => {
   it('nested arithmetic $((( 2+3 ) * ( 4-1 ))) evaluates to 15', async () => {
     const { stdout } = await runShell('echo $(( (2+3) * (4-1) ))\n');
     assert.strictEqual(stdout.trim(), '15');
+  });
+
+  it('div-by-zero aborts the command (echo does not run)', async () => {
+    const { stdout, exit } = await runShell('echo $((1/0))\n');
+    assert.strictEqual(stdout.trim(), '');
+    assert.strictEqual(exit, 1);
+  });
+
+  it('div-by-zero in assignment returns exit 1', async () => {
+    const { exit } = await runShell('x=$((1/0))\n');
+    assert.strictEqual(exit, 1);
+  });
+
+  it('(( 1/0 )) standalone arithmetic command returns exit 1', async () => {
+    const { exit } = await runShell('(( 1/0 ))\n');
+    assert.strictEqual(exit, 1);
+  });
+
+  it('next line still executes after div-by-zero', async () => {
+    const { stdout } = await runShell('echo $((1/0))\necho after\n');
+    assert.strictEqual(stdout.trim(), 'after');
+  });
+
+  it('div-by-zero in for-in list aborts the for loop', async () => {
+    const { stdout, exit } = await runShell('for x in $((1/0)); do echo $x; done\n');
+    assert.strictEqual(stdout.trim(), '');
+    assert.notStrictEqual(exit, 0);
+  });
+
+  it('div-by-zero in pipe still allows pipeline to complete', async () => {
+    const { stdout } = await runShell('echo $((1/0)) | cat\necho after\n');
+    assert.ok(stdout.includes('after'));
+  });
+
+  it('div-by-zero in case value aborts the case', async () => {
+    const { stdout, exit } = await runShell('case $((1/0)) in *) echo matched;; esac\n');
+    assert.strictEqual(stdout.trim(), '');
+    assert.strictEqual(exit, 1);
+  });
+
+  it('div-by-zero in array assignment returns exit 1', async () => {
+    const { exit } = await runShell('arr=($((1/0)))\n');
+    assert.strictEqual(exit, 1);
+  });
+
+  it('div-by-zero in select list aborts the select', async () => {
+    const { stdout, exit } = await runShell('select x in $((1/0)); do echo $x; break; done\n');
+    assert.strictEqual(stdout.trim(), '');
+    assert.strictEqual(exit, 1);
+  });
+
+  it('div-by-zero in middle pipe stage fails that stage only', async () => {
+    const { stdout } = await runShell('echo hello | echo $((1/0)) | cat | echo after\n');
+    assert.ok(stdout.includes('after'));
+  });
+
+  it('div-by-zero in last pipe stage sets pipeline exit 1', async () => {
+    const { exit } = await runShell('echo ok | cat $((1/0))\n');
+    assert.notStrictEqual(exit, 0);
   });
 });
 

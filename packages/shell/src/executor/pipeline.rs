@@ -42,9 +42,10 @@ impl<R: Runtime> Shell<R> {
         mut stdout_opt: Option<OutputHandle>,
         env_list: &[(String, String)],
     ) -> StageResult {
-        let args: Vec<String> = cmd.words.iter()
-            .flat_map(|w| self.expand_word_to_args(w))
-            .collect();
+        let args = match self.try_expand_words_to_args(&cmd.words) {
+            Ok(a) => a,
+            Err(code) => return StageResult::Builtin(code),
+        };
         let mut stderr_opt: Option<OutputHandle> = None;
         if !self.apply_redirects(&cmd.redirects, &mut stdin_opt, &mut stdout_opt, &mut stderr_opt) {
             return StageResult::RedirectFailed;
@@ -84,9 +85,10 @@ impl<R: Runtime> Shell<R> {
             let cmd = cmds.into_iter().next().unwrap();
             match cmd {
                 Command::Simple(sc) => {
-                    let args: Vec<String> = sc.words.iter()
-                        .flat_map(|w| self.expand_word_to_args(w))
-                        .collect();
+                    let args = match self.try_expand_words_to_args(&sc.words) {
+                        Ok(a) => a,
+                        Err(_) => return,
+                    };
                     if args.is_empty() { return; }
                     let name = args[0].clone();
                     let display = args.join(" ");
@@ -140,9 +142,10 @@ impl<R: Runtime> Shell<R> {
                 };
                 let mut stdin_opt = pipe_read_ends[i].take();
                 let mut stdout_opt = pipe_write_ends[i].take();
-                let args: Vec<String> = cmd.words.iter()
-                    .flat_map(|w| self.expand_word_to_args(w))
-                    .collect();
+                let args = match self.try_expand_words_to_args(&cmd.words) {
+                    Ok(a) => a,
+                    Err(_) => continue,
+                };
                 if args.is_empty() { continue; }
                 let name = args[0].clone();
                 display_parts.push(args.join(" "));
