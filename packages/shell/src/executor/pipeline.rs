@@ -45,13 +45,21 @@ impl<R: Runtime> Shell<R> {
     ) -> StageResult {
         let args = match self.try_expand_words_to_args(&cmd.words) {
             Ok(a) => a,
-            Err(code) => return StageResult::Builtin(code),
+            Err(code) => {
+                if let Some(out) = stdout_opt { self.rt.pipe_close_write(out); }
+                if let Some(err) = pipe_stderr_opt { self.rt.pipe_close_write(err); }
+                return StageResult::Builtin(code);
+            }
         };
         let mut stderr_opt: Option<OutputHandle> = pipe_stderr_opt;
         if !self.apply_redirects(&cmd.redirects, &mut stdin_opt, &mut stdout_opt, &mut stderr_opt) {
+            if let Some(out) = stdout_opt { self.rt.pipe_close_write(out); }
+            if let Some(err) = stderr_opt { self.rt.pipe_close_write(err); }
             return StageResult::RedirectFailed;
         }
         if args.is_empty() {
+            if let Some(out) = stdout_opt { self.rt.pipe_close_write(out); }
+            if let Some(err) = stderr_opt { self.rt.pipe_close_write(err); }
             return StageResult::Empty;
         }
         let name = args[0].clone();
@@ -236,18 +244,27 @@ impl<R: Runtime> Shell<R> {
         let mut stage_exits: Vec<Option<u8>> = Vec::with_capacity(n);
 
         for (i, command) in cmds.into_iter().enumerate() {
+            let stdin_opt = pipe_read_ends[i].take();
+            let stdout_opt = pipe_write_ends[i].take();
             let cmd = match command {
                 Command::Simple(sc) => sc,
                 other => {
-                    let exit = self.exec_compound(other);
+                    // Non-simple commands (subshell, group, etc.) in pipeline:
+                    // redirect stdout to the pipe, then close it.
+                    let exit = if let Some(out) = stdout_opt {
+                        let e = self.exec_pipeline_with_stdout(Pipeline { commands: vec![other], negate: false, pipe_stderr: vec![] }, out);
+                        self.rt.pipe_close_write(out);
+                        e
+                    } else {
+                        self.exec_compound(other)
+                    };
+                    if let Some(inp) = stdin_opt { self.rt.pipe_close_read(inp); }
                     builtin_exits.push(exit);
                     stage_exits.push(Some(exit));
                     if i == n - 1 { last_builtin_exit = Some(exit); }
                     continue;
                 }
             };
-            let stdin_opt = pipe_read_ends[i].take();
-            let stdout_opt = pipe_write_ends[i].take();
 
             // If |& was used for this stage, duplicate stdout pipe for stderr
             let stderr_dup = if pipe_stderr_flags.get(i).copied().unwrap_or(false) {

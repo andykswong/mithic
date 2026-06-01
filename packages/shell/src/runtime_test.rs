@@ -114,6 +114,7 @@ impl ProcessMgr for TestRuntime {
     fn pipe_write(&mut self, _handle: &OutputHandle, _data: &[u8]) {}
 
     fn pipe_close_write(&mut self, _handle: OutputHandle) {}
+    fn pipe_close_read(&mut self, _handle: InputHandle) {}
 
     fn wait(&mut self, _handle: &ProcessHandle) -> u8 {
         0

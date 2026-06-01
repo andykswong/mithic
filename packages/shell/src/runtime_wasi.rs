@@ -298,6 +298,10 @@ impl ProcessMgr for WasiRuntime {
         self.take_output(&handle);
     }
 
+    fn pipe_close_read(&mut self, handle: InputHandle) {
+        self.take_input(&handle);
+    }
+
     fn wait(&mut self, handle: &ProcessHandle) -> u8 {
         if let Some(proc) = self.get_process(handle) {
             proc.wait()

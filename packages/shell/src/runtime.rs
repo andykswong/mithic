@@ -56,6 +56,7 @@ pub trait ProcessMgr {
     fn pipe_read_line(&mut self, handle: &InputHandle) -> Option<String>;
     fn pipe_write(&mut self, handle: &OutputHandle, data: &[u8]);
     fn pipe_close_write(&mut self, handle: OutputHandle);
+    fn pipe_close_read(&mut self, handle: InputHandle);
     fn wait(&mut self, handle: &ProcessHandle) -> u8;
     fn try_wait(&self, handle: &ProcessHandle) -> Option<u8>;
     fn kill(&self, handle: &ProcessHandle, signal: Signal) -> Result<(), ()>;
