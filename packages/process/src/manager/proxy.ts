@@ -111,9 +111,6 @@ export class ProxyProcessManager implements ProcessManager {
           while (Atomics.load(exitView, 0) === -1) {
             Atomics.wait(exitView, 0, -1);
           }
-          // After process exits, drain bridge pipes into the original streams.
-          // Use blockingRead — the Worker already exited so WRITER_CLOSED is set;
-          // blockingRead returns data until empty, then throws {tag:'closed'}.
           if (bridgeStdout && stdoutTarget) {
             const reader = inputFromSharedBuffer(bridgeStdout.buffer, bridgeStdout.bufferSize);
             try { while (true) { stdoutTarget.write(reader.blockingRead(BigInt(bufSize))); } } catch { /* closed */ }

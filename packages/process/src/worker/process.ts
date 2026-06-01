@@ -11,6 +11,8 @@ import { WorkerIo, createBlockingCall } from '@mithic/io/io';
 import { SyncBridgeFsProvider } from '@mithic/io/io/providers/sync-bridge';
 import { SyncFileSystemRouter } from '@mithic/io/vfs';
 import { ProxyProcessManager } from '../manager/proxy.ts';
+import { SimpleProcessManager } from '../manager/simple.ts';
+import type { ProcessManager } from '../types.ts';
 
 export interface RunMessage {
   type: 'run';
@@ -76,11 +78,13 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
       preopens = { '/': new Descriptor(new SyncFsDescriptorHandler(vfs, '/')) };
     }
 
-    // Process management: ProxyProcessManager when spawn port available, else no-op
-    let processManager;
+    // Process management: ProxyProcessManager when spawn port available, else graceful fallback
+    let processManager: ProcessManager;
     if (msg.spawnPort) {
       const blockingCall = createBlockingCall(msg.spawnPort);
-      processManager = new ProxyProcessManager(blockingCall);
+      processManager = new ProxyProcessManager(blockingCall, { hostStdout: stdout, hostStderr: stderr });
+    } else {
+      processManager = new SimpleProcessManager();
     }
 
     const shim = new WASIShim({
@@ -101,8 +105,17 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
     const { run } = await instantiate(compileCore, imports);
     const code = run.run() ?? 0;
     shim[Symbol.dispose]();
+    // Dispose raw streams directly to ensure WRITER_CLOSED/READER_CLOSED is set
+    // on the SharedPipe SABs. The signal wrappers and jco's dup may hold extra
+    // refcounts that prevent the handler.drop() from firing via OutputStream.dispose().
+    rawStdout[Symbol.dispose]();
+    rawStderr[Symbol.dispose]();
+    rawStdin[Symbol.dispose]();
     exitSlot.setExitCode(code);
   } catch (e: unknown) {
+    rawStdout[Symbol.dispose]();
+    rawStderr[Symbol.dispose]();
+    rawStdin[Symbol.dispose]();
     if (e instanceof ComponentExit) {
       exitSlot.setExitCode(e.code);
     } else if (e && typeof e === 'object' && 'code' in e && typeof (e as { code: unknown }).code === 'number') {
@@ -110,9 +123,5 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
     } else {
       exitSlot.setExitCode(1);
     }
-  } finally {
-    stdout[Symbol.dispose]();
-    stderr[Symbol.dispose]();
-    stdin[Symbol.dispose]();
   }
 }
