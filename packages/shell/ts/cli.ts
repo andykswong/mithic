@@ -1,20 +1,19 @@
 import { isatty } from 'node:tty';
-import { WASIShim } from '@mithic/wasip2';
-import { ComponentExit } from '@mithic/wasip2/cli/exit';
 import { Descriptor } from '@mithic/wasip2/filesystem/types';
 import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
-import { WASIProcess } from '@mithic/process/instantiation';
 import { SimpleProcessManager } from '@mithic/process/impl/simple';
+import { WASIProcess } from '@mithic/process/instantiation';
 import { NodeStdinHandler, NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
 import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 import { MemoryFsProvider, DeviceFsProvider, SyncFileSystemRouter } from '@mithic/io/vfs';
-import { createCommandResolver, type SyncInstantiateFn } from './commands.ts';
-import { instantiate as shellInstantiate, modules as shellModules } from '@mithic/shell/component';
-import { instantiate as coreutilsInstantiate, modules as coreutilsModules } from '@mithic/coreutils/component';
-import { COREUTILS_COMMANDS } from '@mithic/coreutils';
 import { NodeWorkerFactory } from '@mithic/io/io/worker-factory.node';
 import { createCompilerBridge } from '@mithic/process/impl/compiler-bridge';
 import { CommandRegistry } from '@mithic/process/impl/component-registry';
+import { createCommandResolver, type SyncInstantiateFn } from './commands.ts';
+import { COREUTILS_COMMANDS } from '@mithic/coreutils';
+import { instantiate as shellInstantiate, modules as shellModules } from '@mithic/shell/component';
+import { instantiate as coreutilsInstantiate, modules as coreutilsModules } from '@mithic/coreutils/component';
+import { MithicShell, type SyncShellComponent } from './shell.ts';
 
 async function compileModules(dataUris: Record<string, string>): Promise<Map<string, WebAssembly.Module>> {
   const compiled = new Map<string, WebAssembly.Module>();
@@ -100,45 +99,51 @@ function createShellProcessImports(): Record<string, unknown> {
       stderr: hostStderr.dup(),
     },
   });
-
   return new WASIProcess({ manager }).getImportObject();
 }
 
-const shim = new WASIShim({
-  sandbox: {
-    preopens: { '/': rootDescriptor },
-    env: {
-      ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] != null)),
-      PATH: '/usr/bin:/bin',
+const shell = new MithicShell({
+  wasi: {
+    sandbox: {
+      preopens: { '/': rootDescriptor },
+      env: {
+        ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] != null)),
+        PATH: '/usr/bin:/bin',
+      },
+      args: ['bash', ...process.argv.slice(2)],
+      cwd: '/',
+      stdin: hostStdin.dup(),
+      stdout: hostStdout.dup(),
+      stderr: hostStderr.dup(),
     },
-    args: ['bash', ...process.argv.slice(2)],
-    cwd: '/',
-    stdin: hostStdin.dup(),
-    stdout: hostStdout.dup(),
-    stderr: hostStderr.dup(),
+  },
+  process: {
+    commandResolver: createCommandResolver({
+      memFs: vfs,
+      rootDescriptor,
+      shellInstantiate: shellInstantiate as unknown as SyncInstantiateFn,
+      shellCompileCore,
+      coreutilsInstantiate: coreutilsInstantiate as unknown as SyncInstantiateFn,
+      coreutilsCompileCore,
+      createProcessImports: createShellProcessImports,
+      registry,
+    }),
+    hostStreams: {
+      stdin: hostStdin.dup(),
+      stdout: hostStdout.dup(),
+      stderr: hostStderr.dup(),
+    },
+  },
+  syncComponent: {
+    instantiate: shellInstantiate as unknown as SyncShellComponent['instantiate'],
+    compileCore: shellCompileCore,
   },
 });
 
-const importObject = {
-  ...shim.getImportObject(),
-  ...createShellProcessImports(),
-};
-
-const { run } = (shellInstantiate as unknown as SyncInstantiateFn)(
-  shellCompileCore,
-  importObject,
-  (mod, imports) => new WebAssembly.Instance(mod, imports),
-);
-
 try {
-  process.exit(run.run());
-} catch (e) {
-  if (e instanceof ComponentExit) {
-    process.exit(e.code);
-  }
-  throw e;
+  process.exit(shell.runSync());
 } finally {
-  shim[Symbol.dispose]();
+  shell[Symbol.dispose]();
   registry[Symbol.dispose]();
   compilerWorker.terminate();
 }

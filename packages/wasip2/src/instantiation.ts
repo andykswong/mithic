@@ -51,7 +51,7 @@ export interface WASIShimConfig {
 
 export type WASIImportObject = { [key: string]: object };
 
-export class WASIShim {
+export class WASIShim implements Disposable {
   #environment: WasiEnvironment | null = null;
   #preopens: WasiPreopens | null = null;
   #stdinStream: InputStream | null = null;
