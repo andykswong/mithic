@@ -295,6 +295,7 @@ export function inputFromSharedBuffer(buffer: SharedArrayBuffer, bufferSize: num
     drop(): void {
       Atomics.store(control, READER_CLOSED, 1);
       Atomics.notify(control, READER_CLOSED);
+      Atomics.notify(control, READ_POS);
     },
   };
 
@@ -324,8 +325,19 @@ export function outputFromSharedBuffer(buffer: SharedArrayBuffer, bufferSize: nu
 
   const outputHandler: OutputStreamHandler = {
     checkWrite(): number {
-      if (Atomics.load(control, READER_CLOSED)) return 0;
-      return freeSpace();
+      if (Atomics.load(control, READER_CLOSED)) {
+        throw { tag: 'last-operation-failed', val: { toDebugString: () => 'broken-pipe' } } as StreamError;
+      }
+      const free = freeSpace();
+      if (free === 0) {
+        // Buffer full — wait for reader to drain, checking READER_CLOSED
+        Atomics.wait(control, READ_POS, Atomics.load(control, READ_POS));
+        if (Atomics.load(control, READER_CLOSED)) {
+          throw { tag: 'last-operation-failed', val: { toDebugString: () => 'broken-pipe' } } as StreamError;
+        }
+        return freeSpace();
+      }
+      return free;
     },
     write(buf: Uint8Array): void {
       if (Atomics.load(control, READER_CLOSED)) {
