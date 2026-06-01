@@ -64,7 +64,7 @@ parentPort?.on('message', (msg: ShellWorkerInit) => {
   const hostStdout = new OutputStream(createStdoutHandler(workerIo), undefined, isattyStdout);
   const hostStderr = new OutputStream(createStderrHandler(workerIo), undefined, isattyStderr);
 
-  const proxyManager = new ProxyProcessManager(blockingCall, { hostStdout: hostStdout.dup(), hostStderr: hostStderr.dup() });
+  const proxyManager = new ProxyProcessManager(blockingCall);
 
   // Compile shell WASM modules synchronously
   const shellCompiled = new Map<string, WebAssembly.Module>();

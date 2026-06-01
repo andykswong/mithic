@@ -20,8 +20,6 @@ interface SpawnResult {
  */
 export interface ProxyProcessManagerConfig {
   pipeBufferSize?: number;
-  hostStdout?: OutputStream;
-  hostStderr?: OutputStream;
 }
 
 export class ProxyProcessManager implements ProcessManager {
@@ -29,14 +27,10 @@ export class ProxyProcessManager implements ProcessManager {
   readonly #foreground = new Set<Process>();
   readonly #pipeHandles = new WeakMap<object, SharedPipeHandle>();
   readonly #pipeBufferSize: number;
-  readonly #hostStdout?: OutputStream;
-  readonly #hostStderr?: OutputStream;
 
   constructor(bridge: BlockingCallFn, options?: ProxyProcessManagerConfig) {
     this.#bridge = bridge;
     this.#pipeBufferSize = options?.pipeBufferSize ?? 65536;
-    this.#hostStdout = options?.hostStdout;
-    this.#hostStderr = options?.hostStderr;
   }
 
   spawn(file: string, args: string[], options?: SpawnOptions): Process {
@@ -65,16 +59,17 @@ export class ProxyProcessManager implements ProcessManager {
       bridgeOut[Symbol.dispose]();
     }
 
-    // For non-pipe stdout/stderr (including inherited): create bridge SharedPipes.
+    // For non-pipe, non-inherited stdout/stderr: create bridge SharedPipes.
     // After wait() returns, drain the bridge into the target stream.
+    // When no stream is provided (inherit), the Worker uses IoLoop stdio directly — no bridge needed.
     let stdoutBridgeHandle: SharedPipeHandle | undefined;
     let stderrBridgeHandle: SharedPipeHandle | undefined;
-    const stdoutTarget = options?.stdout ?? this.#hostStdout;
-    const stderrTarget = options?.stderr ?? this.#hostStderr;
-    if (!stdoutHandle && stdoutTarget) {
+    const stdoutTarget = options?.stdout && !stdoutHandle ? options.stdout : undefined;
+    const stderrTarget = options?.stderr && !stderrHandle ? options.stderr : undefined;
+    if (stdoutTarget) {
       stdoutBridgeHandle = createSharedPipeRaw(this.#pipeBufferSize);
     }
-    if (!stderrHandle && stderrTarget) {
+    if (stderrTarget) {
       stderrBridgeHandle = createSharedPipeRaw(this.#pipeBufferSize);
     }
 

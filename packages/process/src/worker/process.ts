@@ -8,6 +8,7 @@ import { ComponentExit } from '@mithic/wasip2/cli/exit';
 import { Descriptor } from '@mithic/wasip2/filesystem/types';
 import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
 import { WorkerIo, createBlockingCall } from '@mithic/io/io';
+import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 import { SyncBridgeFsProvider } from '@mithic/io/io/providers/sync-bridge';
 import { SyncFileSystemRouter } from '@mithic/io/vfs';
 import { ProxyProcessManager } from '../manager/proxy.ts';
@@ -28,6 +29,9 @@ export interface RunMessage {
   stdoutBufSize: number;
   stderrBuf: SharedArrayBuffer;
   stderrBufSize: number;
+  inheritStdin?: boolean;
+  inheritStdout?: boolean;
+  inheritStderr?: boolean;
   ioPort?: MessagePort;
   spawnPort?: MessagePort;
 }
@@ -36,9 +40,30 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
   const exitSlot = exitSlotFromBuffer(msg.exitSlotBuf);
   const signalSlot = signalSlotFromBuffer(msg.signalSlotBuf);
 
-  const rawStdin = inputFromSharedBuffer(msg.stdinBuf, msg.stdinBufSize);
-  const rawStdout = outputFromSharedBuffer(msg.stdoutBuf, msg.stdoutBufSize);
-  const rawStderr = outputFromSharedBuffer(msg.stderrBuf, msg.stderrBufSize);
+  // Create IoLoop connection (shared for VFS + inherited stdio)
+  const workerIo = msg.ioPort ? new WorkerIo(msg.ioPort) : undefined;
+
+  // Use IoLoop sync-bridge for inherited stdio, SharedPipe SABs for piped stdio
+  let rawStdin: InstanceType<typeof InputStream>;
+  let rawStdout: InstanceType<typeof OutputStream>;
+  let rawStderr: InstanceType<typeof OutputStream>;
+
+  if (workerIo && (msg.inheritStdin || msg.inheritStdout || msg.inheritStderr)) {
+    const { createStdinHandler, createStdoutHandler, createStderrHandler } = await import('@mithic/io/io/providers/sync-bridge');
+    rawStdin = msg.inheritStdin
+      ? new InputStream(createStdinHandler(workerIo))
+      : inputFromSharedBuffer(msg.stdinBuf, msg.stdinBufSize);
+    rawStdout = msg.inheritStdout
+      ? new OutputStream(createStdoutHandler(workerIo))
+      : outputFromSharedBuffer(msg.stdoutBuf, msg.stdoutBufSize);
+    rawStderr = msg.inheritStderr
+      ? new OutputStream(createStderrHandler(workerIo))
+      : outputFromSharedBuffer(msg.stderrBuf, msg.stderrBufSize);
+  } else {
+    rawStdin = inputFromSharedBuffer(msg.stdinBuf, msg.stdinBufSize);
+    rawStdout = outputFromSharedBuffer(msg.stdoutBuf, msg.stdoutBufSize);
+    rawStderr = outputFromSharedBuffer(msg.stderrBuf, msg.stderrBufSize);
+  }
 
   const stdin = wrapInputWithSignalCheck(rawStdin, signalSlot);
   const stdout = wrapOutputWithSignalCheck(rawStdout, signalSlot);
@@ -74,8 +99,7 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
 
     // VFS via IoLoop sync-bridge (when available)
     let preopens: Record<string, Descriptor> | undefined;
-    if (msg.ioPort) {
-      const workerIo = new WorkerIo(msg.ioPort);
+    if (workerIo) {
       const syncFs = new SyncBridgeFsProvider(workerIo);
       const vfs = new SyncFileSystemRouter();
       vfs.mount('/', syncFs);
@@ -86,7 +110,7 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
     let processManager: ProcessManager;
     if (msg.spawnPort) {
       const blockingCall = createBlockingCall(msg.spawnPort);
-      processManager = new ProxyProcessManager(blockingCall, { hostStdout: stdout, hostStderr: stderr });
+      processManager = new ProxyProcessManager(blockingCall);
     } else {
       processManager = new SimpleProcessManager();
     }

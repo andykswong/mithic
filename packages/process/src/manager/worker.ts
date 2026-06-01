@@ -101,6 +101,9 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
       stdoutBufSize: stdoutHandle.bufferSize,
       stderrBuf: stderrHandle.buffer,
       stderrBufSize: stderrHandle.bufferSize,
+      inheritStdin: !stdinPipeHandle && !options?.stdin,
+      inheritStdout: !stdoutPipeHandle && !options?.stdout,
+      inheritStderr: !stderrPipeHandle && !options?.stderr,
       ioPort,
       spawnPort,
     };
