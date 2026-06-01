@@ -1,4 +1,5 @@
 import type { CompileResult } from '../component/compiler.ts';
+import type { Descriptor } from '@mithic/wasip2/filesystem/types';
 
 export interface RunMessage {
   type: 'run';
@@ -17,6 +18,7 @@ export interface RunMessage {
   inheritStdin?: boolean;
   inheritStdout?: boolean;
   inheritStderr?: boolean;
+  ioPort?: MessagePort;
 }
 
 export async function handleRunMessage(msg: RunMessage): Promise<void> {
@@ -83,6 +85,21 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
       return WebAssembly.compile(bytes.slice().buffer);
     };
 
+    let preopens: Record<string, Descriptor> | undefined;
+    if (msg.ioPort) {
+      const { WorkerIo } = await import('@mithic/io/io');
+      const { SyncBridgeFsProvider } = await import('@mithic/io/io/providers/sync-bridge');
+      const { SyncFileSystemRouter } = await import('@mithic/io/vfs');
+      const { Descriptor } = await import('@mithic/wasip2/filesystem/types');
+      const { SyncFsDescriptorHandler } = await import('@mithic/wasip2/filesystem/sync-fs-handler');
+
+      const workerIo = new WorkerIo(msg.ioPort);
+      const syncFs = new SyncBridgeFsProvider(workerIo);
+      const vfs = new SyncFileSystemRouter();
+      vfs.mount('/', syncFs);
+      preopens = { '/': new Descriptor(new SyncFsDescriptorHandler(vfs, '/')) };
+    }
+
     const shim = new WASIShim({
       sandbox: {
         args: msg.args,
@@ -91,6 +108,7 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
         stdin,
         stdout,
         stderr,
+        preopens,
       },
     });
 

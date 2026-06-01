@@ -213,7 +213,8 @@ export class SyncBridgeFsProvider implements SyncFileSystemProvider {
   }
 
   open(path: string, flags: OpenFlags): FileHandle {
-    return this.#io.ioCall(FS_OPEN | FILE, null, { path, flags }) as FileHandle;
+    const fd = this.#io.ioCall(FS_OPEN | FILE, null, { path, flags }) as number;
+    return { fd, path, flags };
   }
 
   close(handle: FileHandle): void {

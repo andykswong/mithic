@@ -7,7 +7,8 @@
  */
 
 import { parentPort, workerData } from 'node:worker_threads';
-import { createBlockingCall } from '@mithic/io/io';
+import { createBlockingCall, WorkerIo } from '@mithic/io/io';
+import { SyncBridgeFsProvider } from '@mithic/io/io/providers/sync-bridge';
 import { ProxyProcessManager } from '@mithic/process/manager/proxy';
 import { WASIShim } from '@mithic/wasip2';
 import { WASIProcess } from '@mithic/process/instantiation';
@@ -16,12 +17,13 @@ import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 import { NodeStdinHandler, NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
 import { Descriptor } from '@mithic/wasip2/filesystem/types';
 import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
-import { MemoryFsProvider, DeviceFsProvider, SyncFileSystemRouter } from '@mithic/io/vfs';
+import { DeviceFsProvider, SyncFileSystemRouter } from '@mithic/io/vfs';
 import type { SyncShellComponent } from './shell.ts';
 
 export interface ShellWorkerInit {
   type: '__shell_init';
   port: MessagePort;
+  ioPort: MessagePort;
   shellArgs: string[];
   env: Record<string, string>;
   shellModuleBytes: Record<string, Uint8Array>;
@@ -38,16 +40,16 @@ function syncInstantiateCore(module: WebAssembly.Module, imports: WebAssembly.Im
 parentPort?.on('message', (msg: ShellWorkerInit) => {
   if (msg?.type !== '__shell_init') return;
 
-  const { port, shellArgs, env, shellModuleBytes, shellJsSource, isattyStdin, isattyStdout, isattyStderr } = msg;
+  const { port, ioPort, shellArgs, env, shellModuleBytes, shellJsSource, isattyStdin, isattyStdout, isattyStderr } = msg;
 
   const blockingCall = createBlockingCall(port);
   const processManager = new ProxyProcessManager(blockingCall);
 
-  // Setup VFS
-  const memFs = new MemoryFsProvider();
-  memFs.mkdir('/tmp');
+  // Setup VFS via sync-bridge (backed by main thread's IoLoop)
+  const workerIo = new WorkerIo(ioPort);
+  const syncFs = new SyncBridgeFsProvider(workerIo);
   const vfs = new SyncFileSystemRouter();
-  vfs.mount('/', memFs);
+  vfs.mount('/', syncFs);
   vfs.mount('/dev', new DeviceFsProvider({
     stdin: new NodeStdinHandler(),
     stdout: new NodeStdoutHandler(),

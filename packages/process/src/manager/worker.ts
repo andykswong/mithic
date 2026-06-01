@@ -28,6 +28,7 @@ export interface WorkerProcessManagerConfig {
   processWorkerUrl: string | URL;
   maxWorkers?: number;
   pipeBufferSize?: number;
+  createIoPort?: () => MessagePort;
 }
 
 export const pipeHandleMap = new WeakMap<object, SharedPipeHandle>();
@@ -38,6 +39,7 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
   readonly #processWorkerUrl: string | URL;
   readonly #maxWorkers: number;
   readonly #pipeBufferSize: number;
+  readonly #createIoPort?: () => MessagePort;
   readonly #active = new Map<number, ProcessEntry>();
   readonly #foreground = new Set<Process>();
   #nextPid = 1;
@@ -48,6 +50,7 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
     this.#processWorkerUrl = config.processWorkerUrl;
     this.#maxWorkers = config.maxWorkers ?? 8;
     this.#pipeBufferSize = config.pipeBufferSize ?? 65536;
+    this.#createIoPort = config.createIoPort;
   }
 
   spawn(file: string, args: string[], options?: SpawnExternalOptions): Process {
@@ -104,6 +107,8 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
 
     const worker = this.#factory.create(this.#processWorkerUrl, { name: `process-${pid}` });
 
+    const ioPort = this.#createIoPort?.();
+
     const msg: RunMessage = {
       type: 'run',
       compileResult,
@@ -121,9 +126,10 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
       inheritStdin,
       inheritStdout,
       inheritStderr,
+      ioPort,
     };
 
-    worker.postMessage(msg);
+    worker.postMessage(msg, ioPort ? [ioPort as unknown as Transferable] : []);
 
     worker.on('error', () => {
       if (exitSlot.tryWait() === undefined) exitSlot.setExitCode(1);

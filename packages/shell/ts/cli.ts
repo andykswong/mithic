@@ -19,7 +19,9 @@ import { readFileSync } from 'node:fs';
 import { isatty } from 'node:tty';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { handleBlockingCalls, type CallHandler } from '@mithic/io/io';
+import { handleBlockingCalls, IoLoop, createCallHandler, type CallHandler } from '@mithic/io/io';
+import { MemoryFsProvider, DeviceFsProvider, SyncFileSystemRouter } from '@mithic/io/vfs';
+import { NodeStdinHandler, NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
 import { WorkerProcessManager, pipeHandleMap, type SpawnExternalOptions } from '@mithic/process/manager/worker';
 import { CALL_SPAWN } from '@mithic/process/manager/proxy';
 import type { CompileResult } from '@mithic/process/component/compiler';
@@ -91,6 +93,20 @@ function resolveCommand(file: string): CompileResult | undefined {
   return undefined;
 }
 
+// --- Shared VFS served via IoLoop ---
+
+const memFs = new MemoryFsProvider();
+memFs.mkdir('/tmp');
+const vfs = new SyncFileSystemRouter();
+vfs.mount('/', memFs);
+vfs.mount('/dev', new DeviceFsProvider({
+  stdin: new NodeStdinHandler(),
+  stdout: new NodeStdoutHandler(),
+  stderr: new NodeStderrHandler(),
+}));
+
+const ioLoop = new IoLoop({ onCall: createCallHandler({ fs: vfs }) });
+
 // --- WorkerProcessManager ---
 
 const workerManager = new WorkerProcessManager({
@@ -98,6 +114,7 @@ const workerManager = new WorkerProcessManager({
   workerFactory,
   processWorkerUrl: new URL(import.meta.resolve('@mithic/process/worker/process.node')),
   maxWorkers: 8,
+  createIoPort: () => ioLoop.addWorker(),
 });
 
 // --- Spawn handler: responds to CALL_SPAWN from shell Worker ---
@@ -154,6 +171,8 @@ const spawnHandler: CallHandler = async (call, _id, payload) => {
 const { port1: shellPort1, port2: shellPort2 } = new MessageChannel();
 handleBlockingCalls(spawnHandler, shellPort1);
 
+const shellIoPort = ioLoop.addWorker();
+
 const shellWorker = workerFactory.create(
   new URL('./shell-worker.node.ts', import.meta.url),
   { name: 'mithic-shell' },
@@ -162,6 +181,7 @@ const shellWorker = workerFactory.create(
 const initMsg: ShellWorkerInit = {
   type: '__shell_init',
   port: shellPort2 as unknown as MessagePort,
+  ioPort: shellIoPort,
   shellArgs: ['bash', ...process.argv.slice(2)],
   env: {
     ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] != null)),
@@ -174,11 +194,12 @@ const initMsg: ShellWorkerInit = {
   isattyStderr: isatty(2),
 };
 
-shellWorker.postMessage(initMsg, [shellPort2 as unknown as Transferable]);
+shellWorker.postMessage(initMsg, [shellPort2 as unknown as Transferable, shellIoPort as unknown as Transferable]);
 
 // --- Wait for shell Worker to exit ---
 
 shellWorker.on('exit', (code: number) => {
+  ioLoop.dispose();
   workerManager[Symbol.dispose]();
   registry[Symbol.dispose]();
   compilerWorker.terminate();
@@ -187,6 +208,7 @@ shellWorker.on('exit', (code: number) => {
 
 shellWorker.on('error', (err: Error) => {
   console.error('Shell worker error:', err);
+  ioLoop.dispose();
   workerManager[Symbol.dispose]();
   registry[Symbol.dispose]();
   compilerWorker.terminate();
