@@ -34,13 +34,39 @@ export class ProxyProcessManager implements ProcessManager {
     const stdoutHandle = options?.stdout ? this.#pipeHandles.get(options.stdout) : undefined;
     const stderrHandle = options?.stderr ? this.#pipeHandles.get(options.stderr) : undefined;
 
+    // For non-pipe stdin: pump data into a bridge SharedPipe synchronously
+    let stdinBridgeHandle: SharedPipeHandle | undefined;
+    if (options?.stdin && !stdinHandle) {
+      stdinBridgeHandle = createSharedPipeRaw(this.#pipeBufferSize);
+      const bridgeOut = outputFromSharedBuffer(stdinBridgeHandle.buffer, stdinBridgeHandle.bufferSize);
+      try {
+        while (true) {
+          const chunk = options.stdin.read(BigInt(this.#pipeBufferSize));
+          if (chunk.byteLength === 0) break;
+          bridgeOut.write(chunk);
+        }
+      } catch { /* stream closed */ }
+      bridgeOut[Symbol.dispose]();
+    }
+
+    // For non-pipe stdout/stderr: create bridge SharedPipes that the Worker writes to.
+    // After wait() returns, drain the bridge into the original stream.
+    let stdoutBridgeHandle: SharedPipeHandle | undefined;
+    let stderrBridgeHandle: SharedPipeHandle | undefined;
+    if (options?.stdout && !stdoutHandle) {
+      stdoutBridgeHandle = createSharedPipeRaw(this.#pipeBufferSize);
+    }
+    if (options?.stderr && !stderrHandle) {
+      stderrBridgeHandle = createSharedPipeRaw(this.#pipeBufferSize);
+    }
+
     // Create exit/signal slots locally — both threads share the same SAB
     const exitSlotBuf = new SharedArrayBuffer(4);
     const signalSlotBuf = new SharedArrayBuffer(4);
     const exitView = new Int32Array(exitSlotBuf);
     const signalView = new Int32Array(signalSlotBuf);
-    Atomics.store(exitView, 0, -1); // -1 = not exited
-    Atomics.store(signalView, 0, 0); // 0 = no signal
+    Atomics.store(exitView, 0, -1);
+    Atomics.store(signalView, 0, 0);
 
     const result = this.#bridge(CALL_SPAWN, null, {
       file,
@@ -49,15 +75,20 @@ export class ProxyProcessManager implements ProcessManager {
       cwd: options?.cwd,
       exitSlotBuf,
       signalSlotBuf,
-      stdinBuf: stdinHandle?.buffer,
-      stdinBufSize: stdinHandle?.bufferSize,
-      stdoutBuf: stdoutHandle?.buffer,
-      stdoutBufSize: stdoutHandle?.bufferSize,
-      stderrBuf: stderrHandle?.buffer,
-      stderrBufSize: stderrHandle?.bufferSize,
+      stdinBuf: (stdinHandle ?? stdinBridgeHandle)?.buffer,
+      stdinBufSize: (stdinHandle ?? stdinBridgeHandle)?.bufferSize,
+      stdoutBuf: (stdoutHandle ?? stdoutBridgeHandle)?.buffer,
+      stdoutBufSize: (stdoutHandle ?? stdoutBridgeHandle)?.bufferSize,
+      stderrBuf: (stderrHandle ?? stderrBridgeHandle)?.buffer,
+      stderrBufSize: (stderrHandle ?? stderrBridgeHandle)?.bufferSize,
     }) as SpawnResult;
 
     const foreground = this.#foreground;
+    const bridgeStdout = stdoutBridgeHandle;
+    const bridgeStderr = stderrBridgeHandle;
+    const stdoutStream = options?.stdout;
+    const stderrStream = options?.stderr;
+    const bufSize = this.#pipeBufferSize;
 
     const proc = new Process(result.pid, {
       onKill(signal: Signal) {
@@ -69,6 +100,19 @@ export class ProxyProcessManager implements ProcessManager {
         try {
           while (Atomics.load(exitView, 0) === -1) {
             Atomics.wait(exitView, 0, -1);
+          }
+          // After process exits, drain bridge pipes into the original streams.
+          // Use blockingRead — the Worker already exited so WRITER_CLOSED is set;
+          // blockingRead returns data until empty, then throws {tag:'closed'}.
+          if (bridgeStdout && stdoutStream) {
+            const reader = inputFromSharedBuffer(bridgeStdout.buffer, bridgeStdout.bufferSize);
+            try { while (true) { stdoutStream.write(reader.blockingRead(BigInt(bufSize))); } } catch { /* closed */ }
+            reader[Symbol.dispose]();
+          }
+          if (bridgeStderr && stderrStream) {
+            const reader = inputFromSharedBuffer(bridgeStderr.buffer, bridgeStderr.bufferSize);
+            try { while (true) { stderrStream.write(reader.blockingRead(BigInt(bufSize))); } } catch { /* closed */ }
+            reader[Symbol.dispose]();
           }
           return Atomics.load(exitView, 0);
         } finally {

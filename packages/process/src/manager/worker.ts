@@ -72,26 +72,7 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
     const stdoutPipeHandle = options?.stdout && pipeHandleMap.get(options.stdout);
     const stderrPipeHandle = options?.stderr && pipeHandleMap.get(options.stderr);
 
-    // For stdin: if a non-SharedPipe stream is provided, bridge it by pumping data
-    // into a new SharedPipe synchronously (works for finite sources like file redirects).
-    let stdinHandle: SharedPipeHandle;
-    if (stdinPipeHandle) {
-      stdinHandle = stdinPipeHandle;
-    } else if (options?.stdin) {
-      stdinHandle = createSharedPipeRaw(this.#pipeBufferSize);
-      const bridgeOut = outputFromSharedBuffer(stdinHandle.buffer, stdinHandle.bufferSize);
-      try {
-        while (true) {
-          const chunk = options.stdin.read(BigInt(this.#pipeBufferSize));
-          if (chunk.byteLength === 0) break;
-          bridgeOut.write(chunk);
-        }
-      } catch { /* stream closed or error — done pumping */ }
-      bridgeOut[Symbol.dispose]();
-    } else {
-      stdinHandle = createSharedPipeRaw(this.#pipeBufferSize);
-    }
-
+    const stdinHandle = stdinPipeHandle ?? createSharedPipeRaw(this.#pipeBufferSize);
     const stdoutHandle = stdoutPipeHandle ?? createSharedPipeRaw(this.#pipeBufferSize);
     const stderrHandle = stderrPipeHandle ?? createSharedPipeRaw(this.#pipeBufferSize);
 
