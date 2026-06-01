@@ -14,6 +14,7 @@ impl<R: Runtime> Shell<R> {
             if !skip_next {
                 let out = self.rt.dup_output(&stdout);
                 exit = self.exec_pipeline_with_stdout(pipeline, out);
+                self.rt.pipe_close_write(out);
                 if self.exit_requested { break; }
             }
             skip_next = match op {

@@ -1,6 +1,9 @@
 // Opaque handles — the runtime maps these to internal resources
+#[derive(Clone, Copy)]
 pub struct InputHandle(pub u32);
+#[derive(Clone, Copy)]
 pub struct OutputHandle(pub u32);
+#[derive(Clone, Copy)]
 pub struct ProcessHandle(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
