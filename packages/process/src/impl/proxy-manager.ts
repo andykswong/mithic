@@ -1,7 +1,7 @@
 import type { BlockingCallFn } from '@mithic/io/io';
 import { Process, type ProcessManager, type SpawnOptions, type Signal, type PipeOptions, SIGNAL_NUMBER } from '../types.ts';
 import { createPipe } from '../utils.ts';
-import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
+import type { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 
 export const CALL_SPAWN = 10;
 

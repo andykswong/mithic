@@ -19,6 +19,12 @@
     "./impl/compiler-handler": "./dist/impl/compiler-handler.js",
     "./impl/compiler-worker.node": "./dist/impl/compiler-worker.node.js",
     "./impl/compiler-worker.browser": "./dist/impl/compiler-worker.browser.js",
+    "./impl/slots": "./dist/impl/slots.js",
+    "./impl/worker-manager": "./dist/impl/worker-manager.js",
+    "./impl/proxy-manager": "./dist/impl/proxy-manager.js",
+    "./impl/process-worker": "./dist/impl/process-worker.js",
+    "./impl/process-worker.node": "./dist/impl/process-worker.node.js",
+    "./impl/process-worker.browser": "./dist/impl/process-worker.browser.js",
     "./wit/*": "./wit/*"
   },
   "files": [

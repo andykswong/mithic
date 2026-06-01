@@ -3,9 +3,8 @@ import { Process, ProcessError, type ProcessManager, type SpawnOptions, type Sig
 import { createExitSlot, createSignalSlot } from './slots.ts';
 import { createPipe, createSharedPipeRaw } from '../utils.ts';
 import type { CommandRegistry } from './component-registry.ts';
-import type { CompileResult } from './compiler-bridge.ts';
 import type { RunMessage } from './process-worker.ts';
-import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
+import type { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 
 interface ProcessEntry {
   pid: number;
