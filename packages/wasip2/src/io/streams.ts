@@ -21,6 +21,7 @@ export class InputStream {
   #subscribe?: () => Pollable;
   #isatty: boolean;
   #refs: { count: number };
+  #disposed = false;
 
   constructor(handler: SyncInputStreamHandler, subscribe?: () => Pollable, isatty = false, refs?: { count: number }) {
     this.#handler = handler;
@@ -83,6 +84,8 @@ export class InputStream {
   }
 
   [Symbol.dispose](): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
     if (--this.#refs.count === 0 && this.#handler.drop) {
       this.#handler.drop();
     }
@@ -94,6 +97,7 @@ export class OutputStream {
   #subscribe?: () => Pollable;
   #isatty: boolean;
   #open = true;
+  #disposed = false;
   #refs: { count: number };
 
   constructor(handler: SyncOutputStreamHandler, subscribe?: () => Pollable, isatty = false, refs?: { count: number }) {
@@ -183,6 +187,8 @@ export class OutputStream {
   }
 
   [Symbol.dispose](): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
     this.#open = false;
     if (--this.#refs.count === 0 && this.#handler.drop) {
       this.#handler.drop();
