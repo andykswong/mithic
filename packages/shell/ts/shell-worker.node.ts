@@ -10,6 +10,7 @@ import { parentPort } from 'node:worker_threads';
 import { createBlockingCall, WorkerIo } from '@mithic/io/io';
 import { SyncBridgeFsProvider } from '@mithic/io/io/providers/sync-bridge';
 import { ProxyProcessManager } from '@mithic/process/manager/proxy';
+import { SimpleProcessManager } from '@mithic/process/manager/simple';
 import { WASIShim } from '@mithic/wasip2';
 import { WASIProcess } from '@mithic/process/instantiation';
 import { ComponentExit } from '@mithic/wasip2/cli/exit';
@@ -18,7 +19,8 @@ import { NodeStdinHandler, NodeStdoutHandler, NodeStderrHandler } from '@mithic/
 import { Descriptor } from '@mithic/wasip2/filesystem/types';
 import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
 import { DeviceFsProvider, SyncFileSystemRouter } from '@mithic/io/vfs';
-import type { SyncShellComponent } from './shell.ts';
+import type { ProcessManager, SpawnOptions, Signal, PipeOptions } from '@mithic/process/types';
+import { createCommandResolver, type SyncInstantiateFn } from './commands.ts';
 
 export interface ShellWorkerInit {
   type: '__shell_init';
@@ -28,6 +30,8 @@ export interface ShellWorkerInit {
   env: Record<string, string>;
   shellModuleBytes: Record<string, Uint8Array>;
   shellJsSource: string;
+  coreutilsModuleBytes: Record<string, Uint8Array>;
+  coreutilsJsSource: string;
   isattyStdin: boolean;
   isattyStdout: boolean;
   isattyStderr: boolean;
@@ -40,7 +44,7 @@ function syncInstantiateCore(module: WebAssembly.Module, imports: WebAssembly.Im
 parentPort?.on('message', (msg: ShellWorkerInit) => {
   if (msg?.type !== '__shell_init') return;
 
-  const { port, ioPort, shellArgs, env, shellModuleBytes, shellJsSource, isattyStdin, isattyStdout, isattyStderr } = msg;
+  const { port, ioPort, shellArgs, env, shellModuleBytes, shellJsSource, coreutilsModuleBytes, coreutilsJsSource, isattyStdin, isattyStdout, isattyStderr } = msg;
 
   const blockingCall = createBlockingCall(port);
 
@@ -61,7 +65,66 @@ parentPort?.on('message', (msg: ShellWorkerInit) => {
   const hostStdout = new OutputStream(new NodeStdoutHandler(), undefined, isattyStdout);
   const hostStderr = new OutputStream(new NodeStderrHandler(), undefined, isattyStderr);
 
-  const processManager = new ProxyProcessManager(blockingCall, { hostStdout: hostStdout.dup(), hostStderr: hostStderr.dup() });
+  const proxyManager = new ProxyProcessManager(blockingCall, { hostStdout: hostStdout.dup(), hostStderr: hostStderr.dup() });
+
+  // Compile shell WASM modules synchronously
+  const shellCompiled = new Map<string, WebAssembly.Module>();
+  for (const [name, bytes] of Object.entries(shellModuleBytes)) {
+    shellCompiled.set(name, new WebAssembly.Module(bytes.slice().buffer));
+  }
+
+  const shellCompileCore = (path: string): WebAssembly.Module => {
+    const mod = shellCompiled.get(path);
+    if (!mod) throw new Error(`Shell module not found: ${path}`);
+    return mod;
+  };
+
+  // Eval shell jco JS source to get the synchronous instantiate function
+  const shellStripped = shellJsSource
+    .replace(/^export\s+/gm, '')
+    .replace(/^import\s+.*$/gm, '')
+    .replace(/import\.meta/g, '__importMeta');
+  const shellInstantiate = new Function('__importMeta', `${shellStripped}\nreturn instantiate;`)({ url: 'file:///shell-worker' }) as SyncInstantiateFn;
+
+  // Compile coreutils WASM modules synchronously
+  const coreutilsCompiled = new Map<string, WebAssembly.Module>();
+  for (const [name, bytes] of Object.entries(coreutilsModuleBytes)) {
+    coreutilsCompiled.set(name, new WebAssembly.Module(bytes.slice().buffer));
+  }
+
+  const coreutilsCompileCore = (path: string): WebAssembly.Module => {
+    const mod = coreutilsCompiled.get(path);
+    if (!mod) throw new Error(`Coreutils module not found: ${path}`);
+    return mod;
+  };
+
+  // Eval coreutils jco JS source to get the synchronous instantiate function
+  const coreutilsStripped = coreutilsJsSource
+    .replace(/^export\s+/gm, '')
+    .replace(/^import\s+.*$/gm, '')
+    .replace(/import\.meta/g, '__importMeta');
+  const coreutilsInstantiate = new Function('__importMeta', `${coreutilsStripped}\nreturn instantiate;`)({ url: 'file:///coreutils-worker' }) as SyncInstantiateFn;
+
+  // Composite ProcessManager: try proxy (Workers) first, fall back to local on "not-found"
+  let localManager: SimpleProcessManager;
+  const processManager: ProcessManager = {
+    spawn(file: string, args: string[], options?: SpawnOptions) {
+      try {
+        return proxyManager.spawn(file, args, options);
+      } catch (e: unknown) {
+        const isNotFound = (e && typeof e === 'object' && 'payload' in e &&
+          (e as { payload: { tag: string } }).payload?.tag === 'not-found');
+        if (isNotFound) {
+          return localManager.spawn(file, args, options);
+        }
+        throw e;
+      }
+    },
+    createPipe(options?: PipeOptions) { return proxyManager.createPipe(options); },
+    dupOutputStream(stream) { return proxyManager.dupOutputStream(stream); },
+    signal(sig: Signal) { proxyManager.signal(sig); },
+    get hasForeground() { return proxyManager.hasForeground; },
+  };
 
   const shim = new WASIShim({
     sandbox: {
@@ -78,27 +141,24 @@ parentPort?.on('message', (msg: ShellWorkerInit) => {
   const wasiProcess = new WASIProcess({ manager: processManager });
   const imports = { ...shim.getImportObject(), ...wasiProcess.getImportObject() };
 
-  // Compile WASM modules synchronously
-  const compiled = new Map<string, WebAssembly.Module>();
-  for (const [name, bytes] of Object.entries(shellModuleBytes)) {
-    compiled.set(name, new WebAssembly.Module(bytes.slice().buffer));
-  }
-
-  const compileCore = (path: string): WebAssembly.Module => {
-    const mod = compiled.get(path);
-    if (!mod) throw new Error(`Shell module not found: ${path}`);
-    return mod;
-  };
-
-  // Eval jco JS source to get the synchronous instantiate function
-  const stripped = shellJsSource
-    .replace(/^export\s+/gm, '')
-    .replace(/^import\s+.*$/gm, '')
-    .replace(/import\.meta/g, '__importMeta');
-  const instantiate = new Function('__importMeta', `${stripped}\nreturn instantiate;`)({ url: 'file:///shell-worker' }) as SyncShellComponent['instantiate'];
+  // Local command resolver handles chmod, scripts, PATH lookup, sh/bash, coreutils
+  // This is the fallback when the remote WPM returns "not-found"
+  const localResolver = createCommandResolver({
+    memFs: syncFs,
+    rootDescriptor,
+    shellInstantiate,
+    shellCompileCore,
+    coreutilsInstantiate,
+    coreutilsCompileCore,
+    createProcessImports: () => wasiProcess.getImportObject(),
+  });
+  localManager = new SimpleProcessManager({
+    commandResolver: localResolver,
+    hostStreams: { stdin: hostStdin.dup(), stdout: hostStdout.dup(), stderr: hostStderr.dup() },
+  });
 
   try {
-    const { run } = instantiate(compileCore, imports, syncInstantiateCore);
+    const { run } = shellInstantiate(shellCompileCore, imports, syncInstantiateCore);
     const code = run.run() ?? 0;
     shim[Symbol.dispose]();
     process.exit(code);

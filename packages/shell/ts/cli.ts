@@ -86,8 +86,12 @@ const registry = new CommandRegistry({ compiler: compilerBridge });
 
 // --- Command resolver ---
 
+// Commands handled locally in the shell Worker (not via process Workers)
+const LOCAL_COMMANDS = new Set(['chmod']);
+
 function resolveCommand(file: string): CompileResult | undefined {
   const name = file.includes('/') ? file.split('/').pop()! : file;
+  if (LOCAL_COMMANDS.has(name)) return undefined;
   if (name === 'sh' || name === 'bash') return shellCompileResult;
   if (COREUTILS_COMMANDS.has(name)) return coreutilsCompileResult;
   return undefined;
@@ -196,6 +200,8 @@ const initMsg: ShellWorkerInit = {
   },
   shellModuleBytes: shellRawModules,
   shellJsSource,
+  coreutilsModuleBytes: coreutilsRawModules,
+  coreutilsJsSource,
   isattyStdin: isatty(0),
   isattyStdout: isatty(1),
   isattyStderr: isatty(2),
