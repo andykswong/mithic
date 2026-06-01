@@ -44,7 +44,13 @@ export class ProxyProcessManager implements ProcessManager {
     const stdoutHandle = options?.stdout ? this.#pipeHandles.get(options.stdout) : undefined;
     const stderrHandle = options?.stderr ? this.#pipeHandles.get(options.stderr) : undefined;
 
-    // For non-pipe stdin: pump data into a bridge SharedPipe synchronously
+    // Non-pipe stdin (e.g. file redirect `cmd < file`): read all data into a bridge
+    // SharedPipe synchronously before spawning. This is correct because non-pipe stdin
+    // only arises from file redirects, which are always finite — pipeline pipes go through
+    // createPipe() and are already in #pipeHandles. The read() calls here go through the
+    // IoLoop (SyncBridgeFsProvider → main thread → MemoryFsProvider), so the data
+    // round-trips the same way regardless. The SharedPipe is then sent to the process
+    // Worker for consumption.
     let stdinBridgeHandle: SharedPipeHandle | undefined;
     if (options?.stdin && !stdinHandle) {
       stdinBridgeHandle = createSharedPipeRaw(this.#pipeBufferSize);
