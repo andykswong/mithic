@@ -20,8 +20,9 @@ import { isatty } from 'node:tty';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { handleBlockingCalls, IoLoop, createCallHandler, type CallHandler } from '@mithic/io/io';
+import type { InputStreamHandler } from '@mithic/io/io';
 import { MemoryFsProvider, DeviceFsProvider, SyncFileSystemRouter } from '@mithic/io/vfs';
-import { NodeStdinHandler, NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
+import { NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
 import { WorkerProcessManager, pipeHandleMap, type SpawnExternalOptions } from '@mithic/process/manager/worker';
 import { CALL_SPAWN } from '@mithic/process/manager/proxy';
 import type { CompileResult } from '@mithic/process/component/compiler';
@@ -97,6 +98,68 @@ function resolveCommand(file: string): CompileResult | undefined {
   return undefined;
 }
 
+// --- Async stdin handler for the main thread ---
+// Cannot use synchronous readSync(0) here — it blocks the event loop and prevents
+// the IoLoop from servicing VFS and other Worker requests.
+
+function createAsyncStdinHandler(): InputStreamHandler {
+  let buffer: Uint8Array = new Uint8Array(0);
+  let waiting: ((chunk: Uint8Array) => void) | null = null;
+  let ended = false;
+
+  process.stdin.on('data', (chunk: Buffer) => {
+    const data = new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+    if (waiting) {
+      const cb = waiting;
+      waiting = null;
+      cb(data);
+    } else {
+      const merged = new Uint8Array(buffer.length + data.length);
+      merged.set(buffer);
+      merged.set(data, buffer.length);
+      buffer = merged;
+    }
+  });
+  process.stdin.on('end', () => {
+    ended = true;
+    if (waiting) {
+      const cb = waiting;
+      waiting = null;
+      cb(new Uint8Array(0));
+    }
+  });
+  if (process.stdin.isPaused()) process.stdin.resume();
+
+  return {
+    read(len: number): Uint8Array | undefined {
+      if (buffer.length > 0) {
+        const chunk = buffer.subarray(0, len);
+        buffer = buffer.subarray(len);
+        return new Uint8Array(chunk);
+      }
+      if (ended) throw { tag: 'closed' };
+      return undefined;
+    },
+    blockingRead(len: number): Promise<Uint8Array> {
+      if (buffer.length > 0) {
+        const chunk = buffer.subarray(0, len);
+        buffer = buffer.subarray(len);
+        return Promise.resolve(new Uint8Array(chunk));
+      }
+      if (ended) return Promise.reject({ tag: 'closed' });
+      return new Promise((resolve, reject) => {
+        waiting = (chunk) => {
+          if (chunk.length === 0) { reject({ tag: 'closed' }); return; }
+          buffer = chunk;
+          const result = buffer.subarray(0, len);
+          buffer = buffer.subarray(len);
+          resolve(new Uint8Array(result));
+        };
+      });
+    },
+  };
+}
+
 // --- Shared VFS served via IoLoop ---
 
 const memFs = new MemoryFsProvider();
@@ -104,12 +167,16 @@ memFs.mkdir('/tmp');
 const vfs = new SyncFileSystemRouter();
 vfs.mount('/', memFs);
 vfs.mount('/dev', new DeviceFsProvider({
-  stdin: new NodeStdinHandler(),
   stdout: new NodeStdoutHandler(),
   stderr: new NodeStderrHandler(),
 }));
 
-const ioLoop = new IoLoop({ onCall: createCallHandler({ fs: vfs }) });
+const ioLoop = new IoLoop({ onCall: createCallHandler({
+  fs: vfs,
+  stdin: createAsyncStdinHandler(),
+  stdout: new NodeStdoutHandler(),
+  stderr: new NodeStderrHandler(),
+}) });
 
 // --- WorkerProcessManager ---
 

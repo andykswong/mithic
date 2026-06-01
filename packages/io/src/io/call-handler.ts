@@ -94,7 +94,13 @@ export function createCallHandler(options: CallHandlerOptions): CallHandler {
       case INPUT_STREAM_READ:
       case INPUT_STREAM_BLOCKING_READ: {
         const { len } = payload as { len: number };
-        if (resourceType === STDIN && options.stdin) return options.stdin.blockingRead(len);
+        if (resourceType === STDIN && options.stdin) {
+          if (method === INPUT_STREAM_READ && options.stdin.read) {
+            const data = await options.stdin.read(len);
+            return data ?? new Uint8Array(0);
+          }
+          return options.stdin.blockingRead(len);
+        }
         const stream = streamHandles.get(requireId(id));
         return stream?.read ? stream.read(len) : new Uint8Array(0);
       }
@@ -109,6 +115,7 @@ export function createCallHandler(options: CallHandlerOptions): CallHandler {
       }
 
       case OUTPUT_STREAM_FLUSH: {
+        if (resourceType === STDOUT || resourceType === STDERR) return;
         const stream = streamHandles.get(requireId(id));
         if (stream?.flush) await stream.flush();
         return;
@@ -116,6 +123,7 @@ export function createCallHandler(options: CallHandlerOptions): CallHandler {
 
       case INPUT_STREAM_DISPOSE:
       case OUTPUT_STREAM_DISPOSE:
+        if (resourceType === STDIN || resourceType === STDOUT || resourceType === STDERR) return;
         streamHandles.delete(requireId(id));
         return;
 

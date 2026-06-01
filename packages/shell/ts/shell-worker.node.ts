@@ -8,14 +8,13 @@
 
 import { parentPort } from 'node:worker_threads';
 import { createBlockingCall, WorkerIo } from '@mithic/io/io';
-import { SyncBridgeFsProvider } from '@mithic/io/io/providers/sync-bridge';
+import { SyncBridgeFsProvider, createStdinHandler, createStdoutHandler, createStderrHandler } from '@mithic/io/io/providers/sync-bridge';
 import { ProxyProcessManager } from '@mithic/process/manager/proxy';
 import { SimpleProcessManager } from '@mithic/process/manager/simple';
 import { WASIShim } from '@mithic/wasip2';
 import { WASIProcess } from '@mithic/process/instantiation';
 import { ComponentExit } from '@mithic/wasip2/cli/exit';
 import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
-import { NodeStdinHandler, NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
 import { Descriptor } from '@mithic/wasip2/filesystem/types';
 import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
 import { DeviceFsProvider, SyncFileSystemRouter } from '@mithic/io/vfs';
@@ -54,16 +53,16 @@ parentPort?.on('message', (msg: ShellWorkerInit) => {
   const vfs = new SyncFileSystemRouter();
   vfs.mount('/', syncFs);
   vfs.mount('/dev', new DeviceFsProvider({
-    stdin: new NodeStdinHandler(),
-    stdout: new NodeStdoutHandler(),
-    stderr: new NodeStderrHandler(),
+    stdin: createStdinHandler(workerIo),
+    stdout: createStdoutHandler(workerIo),
+    stderr: createStderrHandler(workerIo),
   }));
   const rootDescriptor = new Descriptor(new SyncFsDescriptorHandler(vfs, '/'));
 
-  // Host stdio (Worker inherits parent's stdio via worker_threads)
-  const hostStdin = new InputStream(new NodeStdinHandler(), undefined, isattyStdin);
-  const hostStdout = new OutputStream(new NodeStdoutHandler(), undefined, isattyStdout);
-  const hostStderr = new OutputStream(new NodeStderrHandler(), undefined, isattyStderr);
+  // Host stdio routed through sync-bridge to the main thread
+  const hostStdin = new InputStream(createStdinHandler(workerIo), undefined, isattyStdin);
+  const hostStdout = new OutputStream(createStdoutHandler(workerIo), undefined, isattyStdout);
+  const hostStderr = new OutputStream(createStderrHandler(workerIo), undefined, isattyStderr);
 
   const proxyManager = new ProxyProcessManager(blockingCall, { hostStdout: hostStdout.dup(), hostStderr: hostStderr.dup() });
 
