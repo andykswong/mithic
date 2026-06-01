@@ -13,7 +13,6 @@ packages/
 ├── process/      @mithic/process   — Process spawn, pipes, stream inversion
 ├── shell/        @mithic/shell     — Rust WASM shell: POSIX-compatible WASI P2 component
 ├── coreutils/    @mithic/coreutils — BusyBox-style Unix coreutils WASM component (30+ commands)
-├── just-bash/    @mithic/just-bash — Shell: just-bash + VFS + ProcessManager (legacy)
 └── examples/
     ├── simple/   — ComponentizeJS WASM component
     ├── rust-cli/ — Rust WASM component

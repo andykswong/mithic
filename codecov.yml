@@ -2,6 +2,9 @@ comment:
   layout: "header, diff, flags, components"
 component_management:
   individual_components:
+    - component_id: "@mithic/coreutils"
+      paths:
+        - "packages/coreutils"
     - component_id: "@mithic/io"
       paths:
         - "packages/io"
@@ -14,9 +17,6 @@ component_management:
     - component_id: "@mithic/wasip2"
       paths:
         - "packages/wasip2"
-    - component_id: "@mithic/just-bash"
-      paths:
-        - "packages/just-bash"
 coverage:
   status:
     project:
