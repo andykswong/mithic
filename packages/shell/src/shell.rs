@@ -850,9 +850,18 @@ impl<R: Runtime> Shell<R> {
             let name = args[0].clone();
             if let Some(body) = self.functions.get(&name).cloned() {
                 let exit = self.exec_function_call(&args[1..], body);
+                // Close pipe ends not consumed by spawn
+                if let Some(out) = stdout_opt { self.rt.pipe_close_write(out); }
+                if let Some(err) = stderr_opt { self.rt.pipe_close_write(err); }
                 if i == n - 1 { last_builtin_exit = Some(exit); }
             } else if let Some(builtin_fn) = crate::builtins::lookup_builtin::<R>(&name) {
+                let stdout_handle_id = stdout_opt.as_ref().map(|h| h.0);
                 let exit = builtin_fn(self, &name, &args[1..], stdin_opt, stdout_opt);
+                // Close pipe write ends — signals EOF to downstream readers
+                if let Some(id) = stdout_handle_id {
+                    self.rt.pipe_close_write(OutputHandle(id));
+                }
+                if let Some(err) = stderr_opt { self.rt.pipe_close_write(err); }
                 if self.exit_requested {
                     for p in processes {
                         let _ = self.rt.wait(&p);

@@ -56,9 +56,22 @@ impl<R: Runtime> Shell<R> {
         }
         let name = args[0].clone();
         if let Some(body) = self.functions.get(&name).cloned() {
-            StageResult::Builtin(self.exec_function_call(&args[1..], body))
+            let exit = self.exec_function_call(&args[1..], body);
+            // Close pipe ends not consumed by spawn — signals EOF to downstream readers
+            if let Some(out) = stdout_opt { self.rt.pipe_close_write(out); }
+            if let Some(err) = stderr_opt { self.rt.pipe_close_write(err); }
+            StageResult::Builtin(exit)
         } else if let Some(builtin_fn) = crate::builtins::lookup_builtin::<R>(&name) {
-            StageResult::Builtin(builtin_fn(self, &name, &args[1..], stdin_opt, stdout_opt))
+            // Save handle IDs before passing ownership to builtin
+            let stdout_handle_id = stdout_opt.as_ref().map(|h| h.0);
+            let exit = builtin_fn(self, &name, &args[1..], stdin_opt, stdout_opt);
+            // Close pipe write ends — signals EOF to downstream readers.
+            // The builtin consumed stdout_opt but doesn't close it; reconstruct and close.
+            if let Some(id) = stdout_handle_id {
+                self.rt.pipe_close_write(OutputHandle(id));
+            }
+            if let Some(err) = stderr_opt { self.rt.pipe_close_write(err); }
+            StageResult::Builtin(exit)
         } else {
             let opts = SpawnOpts {
                 env: Some(env_list.to_vec()),

@@ -1,34 +1,38 @@
+/**
+ * Main thread orchestrator for the shell-in-Worker architecture.
+ *
+ * Spawns a shell Worker that runs the WASM shell component. Handles CALL_SPAWN
+ * requests from the shell Worker via sync-bridge, delegating process creation
+ * to WorkerProcessManager which spawns each command in its own Process Worker.
+ *
+ * Architecture:
+ *   Main Thread (this file) ─── sync-bridge ──→ Shell Worker (shell-worker.node.ts)
+ *        │                                           │
+ *        │ WorkerProcessManager.spawn()              │ ProxyProcessManager (delegates here)
+ *        ▼                                           │
+ *   Process Workers (one per command)                │
+ *        │                                           │
+ *        └── SharedPipe SABs ◄───────────────────────┘
+ */
+
 import { readFileSync } from 'node:fs';
 import { isatty } from 'node:tty';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { Descriptor } from '@mithic/wasip2/filesystem/types';
-import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
-import { WorkerProcessManager } from '@mithic/process/manager/worker';
+import { handleBlockingCalls, type CallHandler } from '@mithic/io/io';
+import { WorkerProcessManager, pipeHandleMap, type SpawnExternalOptions } from '@mithic/process/manager/worker';
+import { CALL_SPAWN } from '@mithic/process/manager/proxy';
 import type { CompileResult } from '@mithic/process/component/compiler';
-import { NodeStdinHandler, NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
-import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
-import { MemoryFsProvider, DeviceFsProvider, SyncFileSystemRouter } from '@mithic/io/vfs';
 import { NodeWorkerFactory } from '@mithic/io/io/worker-factory.node';
 import { createComponentCompiler } from '@mithic/process/component/compiler';
 import { CommandRegistry } from '@mithic/process/component/registry';
-import type { SyncInstantiateFn } from './commands.ts';
 import { COREUTILS_COMMANDS } from '@mithic/coreutils';
-import { instantiate as shellInstantiate, modules as shellModules } from '@mithic/shell/component';
-import { instantiate as coreutilsInstantiate, modules as coreutilsModules } from '@mithic/coreutils/component';
-import { MithicShell, type SyncShellComponent } from './shell.ts';
+import { modules as shellModules } from '@mithic/shell/component';
+import { modules as coreutilsModules } from '@mithic/coreutils/component';
+import { inputFromSharedBuffer, outputFromSharedBuffer } from '@mithic/process/io';
+import type { ShellWorkerInit } from './shell-worker.node.ts';
 
-async function compileModules(dataUris: Record<string, string>): Promise<Map<string, WebAssembly.Module>> {
-  const compiled = new Map<string, WebAssembly.Module>();
-  await Promise.all(
-    Object.entries(dataUris).map(async ([name, uri]) => {
-      const response = await fetch(uri);
-      const bytes = await response.arrayBuffer();
-      compiled.set(name, await WebAssembly.compile(bytes));
-    }),
-  );
-  return compiled;
-}
+// --- Fetch raw module bytes ---
 
 async function fetchModuleBytes(dataUris: Record<string, string>): Promise<Record<string, Uint8Array>> {
   const modules: Record<string, Uint8Array> = {};
@@ -41,17 +45,19 @@ async function fetchModuleBytes(dataUris: Record<string, string>): Promise<Recor
   return modules;
 }
 
-const [shellPrecompiled, coreutilsPrecompiled, shellRawModules, coreutilsRawModules] = await Promise.all([
-  compileModules(shellModules),
-  compileModules(coreutilsModules),
+const [shellRawModules, coreutilsRawModules] = await Promise.all([
   fetchModuleBytes(shellModules),
   fetchModuleBytes(coreutilsModules),
 ]);
+
+// --- Read jco JS sources ---
 
 const shellComponentDir = dirname(fileURLToPath(import.meta.resolve('@mithic/shell/component')));
 const coreutilsComponentDir = dirname(fileURLToPath(import.meta.resolve('@mithic/coreutils/component')));
 const shellJsSource = readFileSync(join(shellComponentDir, 'component.js'), 'utf-8');
 const coreutilsJsSource = readFileSync(join(coreutilsComponentDir, 'component.js'), 'utf-8');
+
+// --- Build CompileResults for process Workers ---
 
 const shellCompileResult: CompileResult = {
   modules: shellRawModules,
@@ -64,17 +70,7 @@ const coreutilsCompileResult: CompileResult = {
   cached: true,
 };
 
-function shellCompileCore(path: string): WebAssembly.Module {
-  const mod = shellPrecompiled.get(path);
-  if (!mod) throw new Error(`Shell module not found: ${path}`);
-  return mod;
-}
-
-function coreutilsCompileCore(path: string): WebAssembly.Module {
-  const mod = coreutilsPrecompiled.get(path);
-  if (!mod) throw new Error(`Coreutils module not found: ${path}`);
-  return mod;
-}
+// --- Setup compiler for dynamic WASM ---
 
 const workerFactory = new NodeWorkerFactory();
 const { port1: compilerPort1, port2: compilerPort2 } = new MessageChannel();
@@ -84,59 +80,18 @@ const compilerWorker = workerFactory.create(
 );
 compilerWorker.postMessage({ type: '__port', port: compilerPort2 }, [compilerPort2 as unknown as Transferable]);
 const compilerBridge = createComponentCompiler(compilerPort1 as unknown as MessagePort);
-const registry = new CommandRegistry({
-  precompiled: new Map([
-    ['shell', {
-      commands: new Set(['sh', 'bash']),
-      compileCore: shellCompileCore,
-      instantiate: shellInstantiate as unknown as SyncInstantiateFn,
-    }],
-    ['coreutils', {
-      commands: COREUTILS_COMMANDS,
-      compileCore: coreutilsCompileCore,
-      instantiate: coreutilsInstantiate as unknown as SyncInstantiateFn,
-    }],
-  ]),
-  compiler: compilerBridge,
-});
+const registry = new CommandRegistry({ compiler: compilerBridge });
 
-const memFs = new MemoryFsProvider();
-memFs.mkdir('/tmp');
-const vfs = new SyncFileSystemRouter();
-vfs.mount('/', memFs);
-vfs.mount('/dev', new DeviceFsProvider({
-  stdin: new NodeStdinHandler(),
-  stdout: new NodeStdoutHandler(),
-  stderr: new NodeStderrHandler(),
-}));
-const rootDescriptor = new Descriptor(new SyncFsDescriptorHandler(vfs, '/'));
-
-const hostStdin = new InputStream(new NodeStdinHandler(), undefined, isatty(0));
-const hostStdout = new OutputStream(new NodeStdoutHandler(), undefined, isatty(1));
-const hostStderr = new OutputStream(new NodeStderrHandler(), undefined, isatty(2));
+// --- Command resolver ---
 
 function resolveCommand(file: string): CompileResult | undefined {
   const name = file.includes('/') ? file.split('/').pop()! : file;
   if (name === 'sh' || name === 'bash') return shellCompileResult;
   if (COREUTILS_COMMANDS.has(name)) return coreutilsCompileResult;
-  if (file.includes('/')) {
-    try {
-      const stat = vfs.stat(file);
-      if (stat.mode & 0o111) {
-        const handle = vfs.open(file, { read: true });
-        try {
-          const bytes = vfs.read(handle, 0, Number(stat.size));
-          if (CommandRegistry.isWasmComponent(bytes)) {
-            return registry.resolveBytes(bytes, file) ?? undefined;
-          }
-        } finally {
-          vfs.close(handle);
-        }
-      }
-    } catch { /* not found */ }
-  }
   return undefined;
 }
+
+// --- WorkerProcessManager ---
 
 const workerManager = new WorkerProcessManager({
   resolveCommand,
@@ -145,36 +100,95 @@ const workerManager = new WorkerProcessManager({
   maxWorkers: 8,
 });
 
+// --- Spawn handler: responds to CALL_SPAWN from shell Worker ---
 
-const shell = new MithicShell({
-  wasi: {
-    sandbox: {
-      preopens: { '/': rootDescriptor },
-      env: {
-        ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] != null)),
-        PATH: '/usr/bin:/bin',
-      },
-      args: ['bash', ...process.argv.slice(2)],
-      cwd: '/',
-      stdin: hostStdin.dup(),
-      stdout: hostStdout.dup(),
-      stderr: hostStderr.dup(),
-    },
-  },
-  process: {
-    manager: workerManager,
-  },
-  syncComponent: {
-    instantiate: shellInstantiate as unknown as SyncShellComponent['instantiate'],
-    compileCore: shellCompileCore,
-  },
-});
+const spawnHandler: CallHandler = async (call, _id, payload) => {
+  if (call === CALL_SPAWN) {
+    const p = payload as {
+      file: string;
+      args: string[];
+      env?: Record<string, string>;
+      cwd?: string;
+      exitSlotBuf?: SharedArrayBuffer;
+      signalSlotBuf?: SharedArrayBuffer;
+      stdinBuf?: SharedArrayBuffer;
+      stdinBufSize?: number;
+      stdoutBuf?: SharedArrayBuffer;
+      stdoutBufSize?: number;
+      stderrBuf?: SharedArrayBuffer;
+      stderrBufSize?: number;
+    };
 
-try {
-  process.exit(shell.runSync());
-} finally {
-  shell[Symbol.dispose]();
+    const options: SpawnExternalOptions = {
+      env: p.env,
+      cwd: p.cwd,
+      exitSlotBuf: p.exitSlotBuf,
+      signalSlotBuf: p.signalSlotBuf,
+    };
+
+    // Reconstruct pipe streams from SABs if provided by the shell Worker
+    if (p.stdinBuf && p.stdinBufSize) {
+      const input = inputFromSharedBuffer(p.stdinBuf, p.stdinBufSize);
+      pipeHandleMap.set(input, { buffer: p.stdinBuf, bufferSize: p.stdinBufSize });
+      options.stdin = input;
+    }
+    if (p.stdoutBuf && p.stdoutBufSize) {
+      const output = outputFromSharedBuffer(p.stdoutBuf, p.stdoutBufSize);
+      pipeHandleMap.set(output, { buffer: p.stdoutBuf, bufferSize: p.stdoutBufSize });
+      options.stdout = output;
+    }
+    if (p.stderrBuf && p.stderrBufSize) {
+      const stderr = outputFromSharedBuffer(p.stderrBuf, p.stderrBufSize);
+      pipeHandleMap.set(stderr, { buffer: p.stderrBuf, bufferSize: p.stderrBufSize });
+      options.stderr = stderr;
+    }
+
+    const proc = workerManager.spawn(p.file, p.args, options);
+    return { pid: proc.pid() };
+  }
+  throw new Error(`Unknown call: ${call}`);
+};
+
+// --- Create shell Worker ---
+
+const { port1: shellPort1, port2: shellPort2 } = new MessageChannel();
+handleBlockingCalls(spawnHandler, shellPort1);
+
+const shellWorker = workerFactory.create(
+  new URL('./shell-worker.node.ts', import.meta.url),
+  { name: 'mithic-shell' },
+);
+
+const initMsg: ShellWorkerInit = {
+  type: '__shell_init',
+  port: shellPort2 as unknown as MessagePort,
+  shellArgs: ['bash', ...process.argv.slice(2)],
+  env: {
+    ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] != null)),
+    PATH: '/usr/bin:/bin',
+  },
+  shellModuleBytes: shellRawModules,
+  shellJsSource,
+  isattyStdin: isatty(0),
+  isattyStdout: isatty(1),
+  isattyStderr: isatty(2),
+};
+
+shellWorker.postMessage(initMsg, [shellPort2 as unknown as Transferable]);
+
+// --- Wait for shell Worker to exit ---
+
+shellWorker.on('exit', (code: number) => {
   workerManager[Symbol.dispose]();
   registry[Symbol.dispose]();
   compilerWorker.terminate();
-}
+  process.exit(code);
+});
+
+shellWorker.on('error', (err: Error) => {
+  console.error('Shell worker error:', err);
+  workerManager[Symbol.dispose]();
+  registry[Symbol.dispose]();
+  compilerWorker.terminate();
+  process.exit(1);
+});

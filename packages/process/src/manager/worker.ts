@@ -1,6 +1,6 @@
 import type { WorkerFactory, ManagedWorker } from '@mithic/io/io/worker-factory';
 import { Process, ProcessError, type ProcessManager, type SpawnOptions, type Signal, type PipeOptions, SIGNAL_NUMBER } from '../types.ts';
-import { createExitSlot, createSignalSlot } from '../io/slots.ts';
+import { createExitSlot, createSignalSlot, exitSlotFromBuffer, signalSlotFromBuffer } from '../io/slots.ts';
 import { createSharedPipeRaw, inputFromSharedBuffer, outputFromSharedBuffer, type SharedPipeHandle } from '../io/pipes.ts';
 import type { CompileResult } from '../component/compiler.ts';
 import type { RunMessage } from '../worker/process.ts';
@@ -13,6 +13,13 @@ interface ProcessEntry {
   signalSlot: ReturnType<typeof createSignalSlot>;
 }
 
+export interface SpawnExternalOptions extends SpawnOptions {
+  /** Pre-created exit slot buffer (SharedArrayBuffer). If provided, used instead of creating a new one. */
+  exitSlotBuf?: SharedArrayBuffer;
+  /** Pre-created signal slot buffer (SharedArrayBuffer). If provided, used instead of creating a new one. */
+  signalSlotBuf?: SharedArrayBuffer;
+}
+
 export type CommandResolver = (file: string) => CompileResult | undefined;
 
 export interface WorkerProcessManagerConfig {
@@ -23,7 +30,7 @@ export interface WorkerProcessManagerConfig {
   pipeBufferSize?: number;
 }
 
-const pipeHandleMap = new WeakMap<object, SharedPipeHandle>();
+export const pipeHandleMap = new WeakMap<object, SharedPipeHandle>();
 
 export class WorkerProcessManager implements ProcessManager, Disposable {
   readonly #resolveCommand: CommandResolver;
@@ -43,7 +50,7 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
     this.#pipeBufferSize = config.pipeBufferSize ?? 65536;
   }
 
-  spawn(file: string, args: string[], options?: SpawnOptions): Process {
+  spawn(file: string, args: string[], options?: SpawnExternalOptions): Process {
     const compileResult = this.#resolveCommand(file);
     if (!compileResult) {
       throw new ProcessError('not-found', `command not found: ${file}`);
@@ -54,8 +61,8 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
     }
 
     const pid = this.#nextPid++;
-    const exitSlot = createExitSlot();
-    const signalSlot = createSignalSlot();
+    const exitSlot = options?.exitSlotBuf ? exitSlotFromBuffer(options.exitSlotBuf) : createExitSlot();
+    const signalSlot = options?.signalSlotBuf ? signalSlotFromBuffer(options.signalSlotBuf) : createSignalSlot();
 
     // Resolve stdio: use caller-provided pipe SABs if available, else inherit host
     const stdinPipeHandle = options?.stdin && pipeHandleMap.get(options.stdin);
@@ -177,6 +184,12 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
 
   get hasForeground(): boolean {
     return this.#foreground.size > 0;
+  }
+
+  getProcessSlots(pid: number): { exitSlotBuf: SharedArrayBuffer; signalSlotBuf: SharedArrayBuffer } | undefined {
+    const entry = this.#active.get(pid);
+    if (!entry) return undefined;
+    return { exitSlotBuf: entry.exitSlot.buffer, signalSlotBuf: entry.signalSlot.buffer };
   }
 
   [Symbol.dispose](): void {
