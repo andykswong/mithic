@@ -77,7 +77,7 @@ describe('CommandRegistry', () => {
     });
 
     it('should return undefined for non-WASM bytes', () => {
-      const bridge = mockBridge({ modules: {}, cached: false });
+      const bridge = mockBridge({ modules: {}, jsFiles: {}, cached: false });
       const registry = new CommandRegistry({ precompiled: new Map(), compiler: bridge });
       const text = new TextEncoder().encode('#!/bin/sh\necho hi');
       assert.equal(registry.resolveBytes(text), undefined);
@@ -137,7 +137,7 @@ describe('CommandRegistry', () => {
     it('should dispose compiler on Symbol.dispose', () => {
       let disposed = false;
       const bridge: CompilerBridge = {
-        compile: () => ({ modules: {}, cached: false }),
+        compile: () => ({ modules: {}, jsFiles: {}, cached: false }),
         [Symbol.dispose]() { disposed = true; },
       };
       const registry = new CommandRegistry({ precompiled: new Map(), compiler: bridge });

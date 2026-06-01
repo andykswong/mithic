@@ -2,7 +2,7 @@ import type { CallHandler } from '@mithic/io/io';
 
 export const CALL_COMPILE = 1;
 
-const moduleCache = new Map<string, Record<string, Uint8Array>>();
+const moduleCache = new Map<string, { modules: Record<string, Uint8Array>; jsFiles: Record<string, string> }>();
 
 function contentHash(bytes: Uint8Array): string {
   let h = 0x811c9dc5;
@@ -23,7 +23,7 @@ export const compilerHandler: CallHandler = async (call, _id, payload) => {
   if (bytes.length === 0) throw new Error('Empty bytes received');
 
   if (moduleCache.has(key)) {
-    return { modules: moduleCache.get(key)!, cached: true };
+    return { ...moduleCache.get(key)!, cached: true };
   }
 
   let transpile: (bytes: Uint8Array, opts?: unknown) => Promise<{ files: Record<string, unknown> }>;
@@ -57,6 +57,6 @@ export const compilerHandler: CallHandler = async (call, _id, payload) => {
     }
   }
 
-  moduleCache.set(key, modules);
+  moduleCache.set(key, { modules, jsFiles });
   return { modules, jsFiles, cached: false };
 };

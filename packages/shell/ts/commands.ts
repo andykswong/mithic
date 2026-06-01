@@ -29,12 +29,18 @@ function syncInstantiateCore(module: WebAssembly.Module, imports: WebAssembly.Im
 export function createCommandResolver(config: CommandsConfig): CommandResolver {
   const { memFs } = config;
 
-  function runChildSync(args: string[], ctx: CommandContext, shellName = 'bash'): number {
+  function runComponent(
+    instantiate: SyncInstantiateFn,
+    compileCore: (path: string) => WebAssembly.Module,
+    sandboxArgs: string[],
+    ctx: CommandContext,
+    extraImports?: Record<string, unknown>,
+  ): number {
     const childShim = new WASIShim({
       sandbox: {
         preopens: { '/': config.rootDescriptor },
         env: ctx.env,
-        args: [shellName, ...args],
+        args: sandboxArgs,
         cwd: '/',
         stdin: ctx.stdin,
         stdout: ctx.stdout,
@@ -43,10 +49,10 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
     });
     const childImports = {
       ...childShim.getImportObject(),
-      ...config.createProcessImports(),
+      ...(extraImports ?? config.createProcessImports()),
     };
     try {
-      const { run } = config.shellInstantiate(config.shellCompileCore, childImports, syncInstantiateCore);
+      const { run } = instantiate(compileCore, childImports, syncInstantiateCore);
       return run.run() ?? 0;
     } catch (e: unknown) {
       if (e instanceof ComponentExit) return e.code;
@@ -56,27 +62,12 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
     }
   }
 
+  function runChildSync(args: string[], ctx: CommandContext, shellName = 'bash'): number {
+    return runComponent(config.shellInstantiate, config.shellCompileCore, [shellName, ...args], ctx, config.createProcessImports());
+  }
+
   function runCoreutilSync(name: string, args: string[], ctx: CommandContext): number {
-    const childShim = new WASIShim({
-      sandbox: {
-        preopens: { '/': config.rootDescriptor },
-        env: ctx.env,
-        args: [name, ...args],
-        cwd: '/',
-        stdin: ctx.stdin,
-        stdout: ctx.stdout,
-        stderr: ctx.stderr,
-      },
-    });
-    try {
-      const { run } = config.coreutilsInstantiate(config.coreutilsCompileCore, childShim.getImportObject(), syncInstantiateCore);
-      return run.run() ?? 0;
-    } catch (e: unknown) {
-      if (e instanceof ComponentExit) return e.code;
-      return 1;
-    } finally {
-      childShim[Symbol.dispose]();
-    }
+    return runComponent(config.coreutilsInstantiate, config.coreutilsCompileCore, [name, ...args], ctx);
   }
 
   function readMemFile(path: string, size: bigint): Uint8Array {
@@ -113,30 +104,7 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
       return mod;
     };
 
-    const childShim = new WASIShim({
-      sandbox: {
-        preopens: { '/': config.rootDescriptor },
-        env: ctx.env,
-        args: [path, ...args],
-        cwd: '/',
-        stdin: ctx.stdin,
-        stdout: ctx.stdout,
-        stderr: ctx.stderr,
-      },
-    });
-    const childImports = {
-      ...childShim.getImportObject(),
-      ...config.createProcessImports(),
-    };
-    try {
-      const { run } = instantiate(compileCore, childImports, syncInstantiateCore);
-      return run.run() ?? 0;
-    } catch (e: unknown) {
-      if (e instanceof ComponentExit) return e.code;
-      return 1;
-    } finally {
-      childShim[Symbol.dispose]();
-    }
+    return runComponent(instantiate, compileCore, [path, ...args], ctx, config.createProcessImports());
   }
 
   function runScriptSync(path: string, scriptArgs: string[], ctx: CommandContext): number {

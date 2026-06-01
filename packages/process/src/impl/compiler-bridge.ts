@@ -3,7 +3,7 @@ import { CALL_COMPILE } from './compiler-handler.ts';
 
 export interface CompileResult {
   modules: Record<string, Uint8Array>;
-  jsFiles?: Record<string, string>;
+  jsFiles: Record<string, string>;
   cached: boolean;
 }
 

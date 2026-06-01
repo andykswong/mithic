@@ -71,6 +71,8 @@ describe('CompilerBridge', () => {
     const result2 = bridge.compile(wasmBytes);
     assert.equal(result2.cached, true);
     assert.deepEqual(Object.keys(result1.modules), Object.keys(result2.modules));
+    assert.ok(result2.jsFiles, 'Cache hit should include jsFiles');
+    assert.ok(Object.keys(result2.jsFiles).length > 0, 'Cached jsFiles should not be empty');
 
     bridge[Symbol.dispose]();
     await worker.terminate();
