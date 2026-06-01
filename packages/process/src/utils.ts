@@ -129,16 +129,16 @@ function createQueuePipe(bufferSize: number): { input: InputStream; output: Outp
 
 // --- SharedPipe: SharedArrayBuffer ring buffer for cross-thread use ---
 
+const HEADER_SIZE = 16;
+const READ_POS = 0;
+const WRITE_POS = 1;
+const WRITER_CLOSED = 2;
+const READER_CLOSED = 3;
+
 function createSharedPipe(bufferSize: number): { input: InputStream; output: OutputStream } {
-  const HEADER_SIZE = 16;
   const sab = new SharedArrayBuffer(HEADER_SIZE + bufferSize);
   const control = new Int32Array(sab, 0, 4);
   const data = new Uint8Array(sab, HEADER_SIZE);
-
-  const READ_POS = 0;
-  const WRITE_POS = 1;
-  const WRITER_CLOSED = 2;
-  const READER_CLOSED = 3;
 
   function available(): number {
     const rp = Atomics.load(control, READ_POS);
@@ -234,4 +234,115 @@ function createSharedPipe(bufferSize: number): { input: InputStream; output: Out
     input: new InputStream(inputHandler, () => new Pollable(() => available() > 0 || Atomics.load(control, WRITER_CLOSED) !== 0)),
     output: new OutputStream(outputHandler, () => new Pollable(() => Atomics.load(control, READER_CLOSED) !== 0 || freeSpace() > 0)),
   };
+}
+
+// --- SharedPipe reconstruction from raw SAB handles ---
+
+export interface SharedPipeHandle {
+  buffer: SharedArrayBuffer;
+  bufferSize: number;
+}
+
+export function createSharedPipeRaw(bufferSize: number): SharedPipeHandle {
+  const buffer = new SharedArrayBuffer(HEADER_SIZE + bufferSize);
+  return { buffer, bufferSize };
+}
+
+export function inputFromSharedBuffer(buffer: SharedArrayBuffer, bufferSize: number): InputStream {
+  const control = new Int32Array(buffer, 0, 4);
+  const data = new Uint8Array(buffer, HEADER_SIZE);
+
+  function available(): number {
+    const rp = Atomics.load(control, READ_POS);
+    const wp = Atomics.load(control, WRITE_POS);
+    return (wp - rp + bufferSize) % bufferSize;
+  }
+
+  function readFromRing(len: number): Uint8Array {
+    const rp = Atomics.load(control, READ_POS);
+    const result = new Uint8Array(len);
+    const firstChunk = Math.min(len, bufferSize - rp);
+    result.set(data.subarray(rp, rp + firstChunk));
+    if (len > firstChunk) {
+      result.set(data.subarray(0, len - firstChunk), firstChunk);
+    }
+    Atomics.store(control, READ_POS, (rp + len) % bufferSize);
+    Atomics.notify(control, READ_POS);
+    return result;
+  }
+
+  const inputHandler: InputStreamHandler = {
+    read(len: number): Uint8Array | undefined {
+      const avail = available();
+      if (avail === 0) {
+        if (Atomics.load(control, WRITER_CLOSED)) throw { tag: 'closed' } as StreamError;
+        return undefined;
+      }
+      return readFromRing(Math.min(len, avail));
+    },
+    blockingRead(len: number): Uint8Array {
+      let avail = available();
+      if (avail === 0) {
+        if (Atomics.load(control, WRITER_CLOSED)) throw { tag: 'closed' } as StreamError;
+        Atomics.wait(control, WRITE_POS, Atomics.load(control, WRITE_POS));
+        avail = available();
+        if (avail === 0 && Atomics.load(control, WRITER_CLOSED)) {
+          throw { tag: 'closed' } as StreamError;
+        }
+      }
+      return readFromRing(Math.min(len, avail));
+    },
+    drop(): void {
+      Atomics.store(control, READER_CLOSED, 1);
+      Atomics.notify(control, READER_CLOSED);
+    },
+  };
+
+  return new InputStream(inputHandler, () => new Pollable(() => available() > 0 || Atomics.load(control, WRITER_CLOSED) !== 0));
+}
+
+export function outputFromSharedBuffer(buffer: SharedArrayBuffer, bufferSize: number): OutputStream {
+  const control = new Int32Array(buffer, 0, 4);
+  const data = new Uint8Array(buffer, HEADER_SIZE);
+
+  function freeSpace(): number {
+    const rp = Atomics.load(control, READ_POS);
+    const wp = Atomics.load(control, WRITE_POS);
+    return bufferSize - 1 - ((wp - rp + bufferSize) % bufferSize);
+  }
+
+  function writeToRing(bytes: Uint8Array): void {
+    const wp = Atomics.load(control, WRITE_POS);
+    const firstChunk = Math.min(bytes.byteLength, bufferSize - wp);
+    data.set(bytes.subarray(0, firstChunk), wp);
+    if (bytes.byteLength > firstChunk) {
+      data.set(bytes.subarray(firstChunk), 0);
+    }
+    Atomics.store(control, WRITE_POS, (wp + bytes.byteLength) % bufferSize);
+    Atomics.notify(control, WRITE_POS);
+  }
+
+  const outputHandler: OutputStreamHandler = {
+    checkWrite(): number {
+      if (Atomics.load(control, READER_CLOSED)) return 0;
+      return freeSpace();
+    },
+    write(buf: Uint8Array): void {
+      if (Atomics.load(control, READER_CLOSED)) {
+        throw { tag: 'last-operation-failed', val: { toDebugString: () => 'broken-pipe' } } as StreamError;
+      }
+      if (buf.byteLength === 0) return;
+      if (buf.byteLength > freeSpace()) {
+        throw { tag: 'last-operation-failed', val: { toDebugString: () => 'buffer-overflow' } } as StreamError;
+      }
+      writeToRing(buf);
+    },
+    flush(): void {},
+    drop(): void {
+      Atomics.store(control, WRITER_CLOSED, 1);
+      Atomics.notify(control, WRITE_POS);
+    },
+  };
+
+  return new OutputStream(outputHandler, () => new Pollable(() => Atomics.load(control, READER_CLOSED) !== 0 || freeSpace() > 0));
 }

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createPipe } from './utils.ts';
+import { createPipe, createSharedPipeRaw, inputFromSharedBuffer, outputFromSharedBuffer } from './utils.ts';
 import type { StreamError } from '@mithic/wasip2/io/streams';
 
 describe('createPipe (QueuePipe)', () => {
@@ -226,5 +226,57 @@ describe('SharedPipe stress', () => {
       const result = input.blockingRead(31n);
       assert.deepEqual(result, data);
     }
+  });
+});
+
+describe('SharedPipe SAB reconstruction', () => {
+  it('inputFromSharedBuffer reads data written by outputFromSharedBuffer', () => {
+    const pipe = createSharedPipeRaw(1024);
+    const output = outputFromSharedBuffer(pipe.buffer, pipe.bufferSize);
+    const input = inputFromSharedBuffer(pipe.buffer, pipe.bufferSize);
+    output.write(new Uint8Array([1, 2, 3, 4]));
+    const data = input.read(4n);
+    assert.deepEqual(data, new Uint8Array([1, 2, 3, 4]));
+  });
+
+  it('writer close propagates across buffer reconstruction', () => {
+    const pipe = createSharedPipeRaw(1024);
+    const output = outputFromSharedBuffer(pipe.buffer, pipe.bufferSize);
+    const input = inputFromSharedBuffer(pipe.buffer, pipe.bufferSize);
+    output[Symbol.dispose]();
+    assert.throws(
+      () => input.blockingRead(1n),
+      (err: StreamError) => err.tag === 'closed',
+    );
+  });
+
+  it('reader close causes write to throw broken-pipe', () => {
+    const pipe = createSharedPipeRaw(1024);
+    const output = outputFromSharedBuffer(pipe.buffer, pipe.bufferSize);
+    const input = inputFromSharedBuffer(pipe.buffer, pipe.bufferSize);
+    input[Symbol.dispose]();
+    assert.throws(
+      () => output.write(new Uint8Array([1])),
+      (err: StreamError) => err.tag === 'closed' || err.tag === 'last-operation-failed',
+    );
+  });
+
+  it('wrap-around works with reconstructed streams', () => {
+    const pipe = createSharedPipeRaw(16);
+    const output = outputFromSharedBuffer(pipe.buffer, pipe.bufferSize);
+    const input = inputFromSharedBuffer(pipe.buffer, pipe.bufferSize);
+    // Write 10 bytes, read 10 (move read pointer to 10)
+    output.write(new Uint8Array([1,2,3,4,5,6,7,8,9,10]));
+    input.blockingRead(10n);
+    // Write 10 more starting at position 10 — wraps around at 16
+    output.write(new Uint8Array([11,12,13,14,15,16,17,18,19,20]));
+    const result = input.blockingRead(10n);
+    assert.deepEqual(result, new Uint8Array([11,12,13,14,15,16,17,18,19,20]));
+  });
+
+  it('createSharedPipeRaw creates correct size buffer', () => {
+    const pipe = createSharedPipeRaw(256);
+    assert.equal(pipe.buffer.byteLength, 16 + 256); // HEADER_SIZE + bufferSize
+    assert.equal(pipe.bufferSize, 256);
   });
 });
