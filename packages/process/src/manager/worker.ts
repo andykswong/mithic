@@ -71,12 +71,10 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
     const inheritStdout = !stdoutPipeHandle;
     const inheritStderr = !stderrPipeHandle;
 
-    // When a pipe is handed to a Worker, dup the caller's stream to prevent the
-    // caller's subsequent dispose from setting WRITER/READER_CLOSED on the SAB
-    // prematurely. The Worker owns the pipe now — only its dispose should close it.
-    if (stdinPipeHandle) options!.stdin!.dup();
-    if (stdoutPipeHandle) options!.stdout!.dup();
-    if (stderrPipeHandle) options!.stderr!.dup();
+    // Do NOT dup the caller's streams. The Worker creates its own independent
+    // stream from the SAB. When the caller (shell WASM) drops its stream handle,
+    // handler.drop() must fire to set WRITER_CLOSED/READER_CLOSED — this is how
+    // the reader/writer on the other end detects EOF/broken-pipe.
 
     const worker = this.#factory.create(this.#processWorkerUrl, { name: `process-${pid}` });
 
