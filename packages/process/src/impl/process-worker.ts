@@ -21,7 +21,7 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
   const { inputFromSharedBuffer, outputFromSharedBuffer } = await import('../utils.ts');
 
   const exitSlot = exitSlotFromBuffer(msg.exitSlotBuf);
-  const _signalSlot = signalSlotFromBuffer(msg.signalSlotBuf);
+  signalSlotFromBuffer(msg.signalSlotBuf);
 
   const stdin = inputFromSharedBuffer(msg.stdinBuf, msg.stdinBufSize);
   const stdout = outputFromSharedBuffer(msg.stdoutBuf, msg.stdoutBufSize);
@@ -56,7 +56,7 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
     const compileCore = async (path: string): Promise<WebAssembly.Module> => {
       const bytes = msg.compileResult.modules[path];
       if (!bytes) throw new Error(`Module not found: ${path}`);
-      return WebAssembly.compile(bytes.buffer);
+      return WebAssembly.compile(bytes.slice().buffer);
     };
 
     const shim = new WASIShim({

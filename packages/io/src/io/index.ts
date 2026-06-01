@@ -7,5 +7,3 @@ export { WorkerIo } from './worker-io.ts';
 export { createCallHandler } from './call-handler.ts';
 export type { CallHandlerOptions } from './call-handler.ts';
 export type { ManagedWorker, WorkerFactory } from './worker-factory.ts';
-export { NodeWorkerFactory } from './worker-factory.node.ts';
-export { BrowserWorkerFactory } from './worker-factory.browser.ts';
