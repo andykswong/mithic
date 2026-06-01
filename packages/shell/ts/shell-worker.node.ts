@@ -6,7 +6,7 @@
  * via the sync-bridge BlockingCallFn.
  */
 
-import { parentPort, workerData } from 'node:worker_threads';
+import { parentPort } from 'node:worker_threads';
 import { createBlockingCall, WorkerIo } from '@mithic/io/io';
 import { SyncBridgeFsProvider } from '@mithic/io/io/providers/sync-bridge';
 import { ProxyProcessManager } from '@mithic/process/manager/proxy';
