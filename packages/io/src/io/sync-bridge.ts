@@ -52,13 +52,16 @@ export function pack(value: unknown): Packed {
   const blobs: Uint8Array[] = [];
   let blobOffset = 0;
 
-  const json = JSON.stringify(value, (_key, val) => {
-    if (val instanceof Uint8Array) {
-      const ref = { __bytes: blobOffset, __len: val.byteLength };
-      blobs.push(val);
-      blobOffset += val.byteLength;
+  const json = JSON.stringify(value, function (_key, val) {
+    // Check the raw property on `this` since JSON.stringify calls .toJSON() before the replacer
+    const raw = _key ? (this as Record<string, unknown>)[_key] : val;
+    if (raw instanceof Uint8Array) {
+      const ref = { __bytes: blobOffset, __len: raw.byteLength };
+      blobs.push(raw);
+      blobOffset += raw.byteLength;
       return ref;
     }
+    if (raw instanceof Date) return { __date: raw.getTime() };
     if (typeof val === 'bigint') return { __bigint: val.toString() };
     return val;
   });
@@ -106,6 +109,7 @@ export function unpack(type: number, data: Uint8Array): unknown {
       if ('__bytes' in val && '__len' in val) {
         return blobBase.slice(val.__bytes, val.__bytes + val.__len);
       }
+      if ('__date' in val) return new Date(val.__date);
       if ('__bigint' in val) return BigInt(val.__bigint);
     }
     return val;
