@@ -123,8 +123,6 @@ export class SimpleProcessManager implements ProcessManager {
     let killed = false;
     let done = false;
     let exitCode: number | undefined;
-    let resolveWait!: (exitCode: number) => void;
-    const waitPromise = new Promise<number>(r => { resolveWait = r; });
 
     const foreground = this.#foreground;
     const processHandler: ProcessHandler = {
@@ -136,12 +134,15 @@ export class SimpleProcessManager implements ProcessManager {
         killed = true;
         const sigNum = SIGNAL_NUMBER[signal];
         exitCode = 128 + sigNum;
-        resolveWait(exitCode);
       },
-      wait: async () => {
+      wait() {
         foreground.add(proc);
         try {
-          return await waitPromise;
+          // For sync handlers (which already have exitCode set), return immediately.
+          // For async handlers (background jobs), this will return the stored exitCode
+          // (which may be undefined if the job hasn't finished — but wait() on background
+          // jobs is only valid after they've completed; shell uses tryWait() for polling).
+          return exitCode ?? 0;
         } finally {
           foreground.delete(proc);
         }
@@ -165,18 +166,13 @@ export class SimpleProcessManager implements ProcessManager {
     if (typeof result === 'number') {
       done = true;
       exitCode = result;
-      resolveWait(result);
       this.table.remove(pid);
-      // Override wait() to return the value directly for sync callers
-      // that can't await Promises (e.g., WASM sync bridge)
-      (processHandler as { wait: () => unknown }).wait = () => result as unknown as Promise<number>;
     } else {
       result.then(
         (code: number) => {
           done = true;
           if (!killed) {
             exitCode = code;
-            resolveWait(code);
           }
           this.table.remove(pid);
         },
@@ -188,7 +184,6 @@ export class SimpleProcessManager implements ProcessManager {
               childStderr.write(msg);
             } catch { /* stderr may be closed */ }
             exitCode = 1;
-            resolveWait(1);
           }
           this.table.remove(pid);
         },

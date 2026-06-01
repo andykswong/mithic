@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { MemoryFsProvider, SyncFileSystemRouter } from '@mithic/io/vfs';
 import { Descriptor } from '@mithic/wasip2/filesystem/types';
 import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
-import { ComponentRegistry } from '@mithic/process/impl/component-registry';
+import { CommandRegistry } from '@mithic/process/impl/component-registry';
 import { createCommandResolver, type SyncInstantiateFn } from '../commands.ts';
 import { createPipe } from '@mithic/process/utils';
 
@@ -17,7 +17,7 @@ function writeFile(fs: MemoryFsProvider, path: string, data: Uint8Array): void {
   }
 }
 
-function createMockConfig(options?: { registry?: ComponentRegistry }) {
+function createMockConfig(options?: { registry?: CommandRegistry }) {
   const memFs = new MemoryFsProvider();
   const vfs = new SyncFileSystemRouter();
   vfs.mount('/', memFs);
@@ -73,7 +73,7 @@ describe('WASM Execution in CommandResolver', () => {
   });
 
   it('should return 126 for non-executable WASM file', () => {
-    const registry = new ComponentRegistry({ precompiled: new Map() });
+    const registry = new CommandRegistry({ precompiled: new Map() });
     const config = createMockConfig({ registry });
     // Write WASM but DON'T chmod +x
     writeFile(config.rawFs, '/app.wasm', WASM_MAGIC);
@@ -98,7 +98,7 @@ describe('WASM Execution in CommandResolver', () => {
   });
 
   it('should still resolve builtins normally with registry present', () => {
-    const registry = new ComponentRegistry({
+    const registry = new CommandRegistry({
       precompiled: new Map([
         ['coreutils', {
           commands: new Set(['cat', 'echo', 'ls']),

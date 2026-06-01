@@ -66,7 +66,7 @@ describe('manager (global WIT-level functions)', () => {
     const custom: ProcessManager = {
       spawn() {
         called = true;
-        return new Process(50, { wait: () => Promise.resolve(0) });
+        return new Process(50, { wait: () => 0 });
       },
       createPipe() {
         return createPipe();

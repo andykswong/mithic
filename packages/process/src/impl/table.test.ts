@@ -5,7 +5,7 @@ import { Process, type ProcessHandler } from '../types.ts';
 
 function makeStubProcess(pid: number): Process {
   const handler: ProcessHandler = {
-    wait: () => Promise.resolve(0),
+    wait: () => 0,
   };
   return new Process(pid, handler);
 }

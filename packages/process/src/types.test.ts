@@ -7,7 +7,7 @@ describe('Process', () => {
     const handler = {
       killed: null as Signal | null,
       onKill(signal: Signal) { handler.killed = signal; },
-      wait() { return Promise.resolve(exitCode); },
+      wait() { return exitCode; },
     };
     return handler;
   }
@@ -18,10 +18,10 @@ describe('Process', () => {
     assert.equal(proc.pid(), 42);
   });
 
-  it('wait() resolves with exit code', async () => {
+  it('wait() returns exit code', () => {
     const handler = createMockHandler(7);
     const proc = new Process(1, handler);
-    const exitCode = await proc.wait();
+    const exitCode = proc.wait();
     assert.equal(exitCode, 7);
   });
 
@@ -54,7 +54,7 @@ describe('Process', () => {
 
   it('tryWait() returns value from handler.tryWait', () => {
     const handler: ProcessHandler = {
-      wait() { return Promise.resolve(0); },
+      wait() { return 0; },
       tryWait() { return 42; },
     };
     const proc = new Process(1, handler);

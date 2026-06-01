@@ -14,7 +14,7 @@ import { instantiate as coreutilsInstantiate, modules as coreutilsModules } from
 import { COREUTILS_COMMANDS } from '@mithic/coreutils';
 import { NodeWorkerFactory } from '@mithic/io/io/worker-factory.node';
 import { createCompilerBridge } from '@mithic/process/impl/compiler-bridge';
-import { ComponentRegistry } from '@mithic/process/impl/component-registry';
+import { CommandRegistry } from '@mithic/process/impl/component-registry';
 
 async function compileModules(dataUris: Record<string, string>): Promise<Map<string, WebAssembly.Module>> {
   const compiled = new Map<string, WebAssembly.Module>();
@@ -51,7 +51,7 @@ const compilerWorker = workerFactory.create(
 );
 compilerWorker.postMessage({ type: '__port', port: compilerPort2 }, [compilerPort2 as unknown as Transferable]);
 const compilerBridge = createCompilerBridge(compilerPort1 as unknown as MessagePort);
-const registry = new ComponentRegistry({
+const registry = new CommandRegistry({
   precompiled: new Map([
     ['shell', {
       commands: new Set(['sh', 'bash']),

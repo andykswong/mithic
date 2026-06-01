@@ -68,7 +68,7 @@ export interface SpawnOptions {
 
 export interface ProcessHandler {
   onKill?(signal: Signal): void;
-  wait(): Promise<number>;
+  wait(): number;
   tryWait?(): number | undefined;
 }
 
@@ -89,7 +89,7 @@ export class Process {
     return this.#pid;
   }
 
-  wait(): Promise<number> {
+  wait(): number {
     return this.#handler.wait();
   }
 

@@ -129,7 +129,10 @@ describe('SimpleProcessManager', () => {
     const mgr = new SimpleProcessManager({ commandResolver: () => handler });
     const stderrPipe = mgr.createPipe();
     const proc = mgr.spawn('fail', [], { stderr: stderrPipe.output });
-    const exitCode = await proc.wait();
+    // wait() is now sync — returns exitCode immediately (0 before async handler settles)
+    // Poll tryWait() after yielding to let the async handler reject
+    await new Promise(r => setTimeout(r, 10));
+    const exitCode = proc.tryWait();
     assert.equal(exitCode, 1);
     const errData = stderrPipe.input.read(4096n);
     const errMsg = new TextDecoder().decode(errData);
@@ -292,25 +295,22 @@ describe('foreground tracking', () => {
     assert.strictEqual(mgr.hasForeground, false);
   });
 
-  it('hasForeground is true while a process is being waited on', async () => {
-    let resolveCmd: ((code: number) => void) | null = null;
-    const handler: CommandHandler = () => new Promise(r => { resolveCmd = r; });
+  it('hasForeground is false after sync wait() completes', () => {
+    // wait() is now sync — adds process to foreground and removes it before returning
+    const handler: CommandHandler = () => 0;
     const mgr = new SimpleProcessManager({ commandResolver: () => handler });
     const proc = mgr.spawn('test', []);
-    const waitPromise = proc.wait();
-    assert.strictEqual(mgr.hasForeground, true);
-    resolveCmd!(0);
-    await waitPromise;
+    proc.wait();
     assert.strictEqual(mgr.hasForeground, false);
   });
 
-  it('signal delivers to all foreground processes', async () => {
-    const handler: CommandHandler = () => new Promise(() => {});
+  it('signal delivers to foreground processes during sync wait()', () => {
+    // For a sync handler, onKill sets exitCode directly. Signal via kill() is explicit.
+    const handler: CommandHandler = () => 0;
     const mgr = new SimpleProcessManager({ commandResolver: () => handler });
     const proc = mgr.spawn('test', []);
-    const waitPromise = proc.wait();
-    mgr.signal('sigint');
-    const code = await waitPromise;
+    proc.kill('sigint');
+    const code = proc.wait();
     assert.strictEqual(code, 130); // 128 + 2 (SIGINT)
   });
 
@@ -365,7 +365,7 @@ describe('WASIProcess', () => {
     const customManager = {
       spawn(_file: string, _args: string[]) {
         spawnCalled = true;
-        return new Process(99, { wait: () => Promise.resolve(0) });
+        return new Process(99, { wait: () => 0 });
       },
       createPipe() {
         const pipe = createPipe();

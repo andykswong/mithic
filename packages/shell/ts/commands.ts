@@ -4,7 +4,7 @@ import type { Descriptor } from '@mithic/wasip2/filesystem/types';
 import type { CommandContext, CommandResolver } from '@mithic/process/impl/simple';
 import type { SyncFileSystemProvider } from '@mithic/io/vfs';
 import { COREUTILS_COMMANDS } from '@mithic/coreutils';
-import { ComponentRegistry, type ResolvedComponent, type SyncInstantiateFn } from '@mithic/process/impl/component-registry';
+import { CommandRegistry, type CompileResult, type SyncInstantiateFn } from '@mithic/process/impl/component-registry';
 
 export type { SyncInstantiateFn };
 
@@ -16,7 +16,7 @@ export interface CommandsConfig {
   coreutilsInstantiate: SyncInstantiateFn;
   coreutilsCompileCore: (path: string) => WebAssembly.Module;
   createProcessImports: () => Record<string, unknown>;
-  registry?: ComponentRegistry;
+  registry?: CommandRegistry;
 }
 
 
@@ -88,7 +88,31 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
     }
   }
 
-  function runWasmComponent(component: ResolvedComponent, path: string, args: string[], ctx: CommandContext): number {
+  function runWasmComponent(result: CompileResult, path: string, args: string[], ctx: CommandContext): number {
+    const jsSource = result.jsFiles?.['component.js'];
+    if (!jsSource) {
+      ctx.stderr.blockingWriteAndFlush(enc.encode(`${path}: compiled component missing JS wrapper\n`));
+      return 126;
+    }
+
+    // Eval jco output to get instantiate function (coupled to jco ^1.20 output format)
+    const stripped = jsSource
+      .replace(/^export\s+/gm, '')
+      .replace(/^import\s+.*$/gm, '')
+      .replace(/import\.meta/g, '__importMeta');
+    const instantiate = new Function('__importMeta', `${stripped}\nreturn instantiate;`)({ url: 'file:///dynamic' }) as SyncInstantiateFn;
+
+    // Compile core WASM modules
+    const compiled = new Map<string, WebAssembly.Module>();
+    for (const [modPath, wasmBytes] of Object.entries(result.modules)) {
+      compiled.set(modPath, new WebAssembly.Module(wasmBytes.slice().buffer));
+    }
+    const compileCore = (modPath: string): WebAssembly.Module => {
+      const mod = compiled.get(modPath);
+      if (!mod) throw new Error(`Module not found: ${modPath}`);
+      return mod;
+    };
+
     const childShim = new WASIShim({
       sandbox: {
         preopens: { '/': config.rootDescriptor },
@@ -105,11 +129,7 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
       ...config.createProcessImports(),
     };
     try {
-      const { run } = component.instantiate(
-        component.compileCore,
-        childImports,
-        syncInstantiateCore,
-      );
+      const { run } = instantiate(compileCore, childImports, syncInstantiateCore);
       return run.run() ?? 0;
     } catch (e: unknown) {
       if (e instanceof ComponentExit) return e.code;
@@ -126,24 +146,24 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
       return 126;
     }
     const bytes = readMemFile(path, stat.size);
-    if (ComponentRegistry.isWasmComponent(bytes)) {
+    if (CommandRegistry.isWasmComponent(bytes)) {
       if (!config.registry) {
         ctx.stderr.blockingWriteAndFlush(enc.encode(`${path}: WASM execution not available (no compiler configured)\n`));
         return 126;
       }
-      let component;
+      let result;
       try {
-        component = config.registry.resolveBytes(bytes, path);
+        result = config.registry.resolveBytes(bytes, path);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : 'unknown error';
         ctx.stderr.blockingWriteAndFlush(enc.encode(`${path}: ${msg}\n`));
         return 126;
       }
-      if (!component) {
+      if (!result) {
         ctx.stderr.blockingWriteAndFlush(enc.encode(`${path}: failed to compile WASM component\n`));
         return 126;
       }
-      return runWasmComponent(component, path, scriptArgs, ctx);
+      return runWasmComponent(result, path, scriptArgs, ctx);
     }
     const text = new TextDecoder().decode(bytes);
     let interpreter = 'sh';
@@ -169,25 +189,25 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
         const stat = memFs.stat(p);
         if (!(stat.mode & 0o111)) continue;
         const bytes = readMemFile(p, stat.size < 4n ? stat.size : 4n);
-        if (ComponentRegistry.isWasmComponent(bytes)) {
+        if (CommandRegistry.isWasmComponent(bytes)) {
           if (!config.registry) {
             ctx.stderr.blockingWriteAndFlush(enc.encode(`${p}: WASM execution not available (no compiler configured)\n`));
             return 126;
           }
           const fullBytes = readMemFile(p, stat.size);
-          let component;
+          let result;
           try {
-            component = config.registry.resolveBytes(fullBytes, p);
+            result = config.registry.resolveBytes(fullBytes, p);
           } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : 'unknown error';
             ctx.stderr.blockingWriteAndFlush(enc.encode(`${p}: ${msg}\n`));
             return 126;
           }
-          if (!component) {
+          if (!result) {
             ctx.stderr.blockingWriteAndFlush(enc.encode(`${p}: failed to compile WASM component\n`));
             return 126;
           }
-          return runWasmComponent(component, p, args, ctx);
+          return runWasmComponent(result, p, args, ctx);
         }
         return runScriptSync(p, args, ctx);
       } catch {

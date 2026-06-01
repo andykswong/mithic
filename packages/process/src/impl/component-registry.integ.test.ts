@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { MessageChannel } from 'node:worker_threads';
 import { NodeWorkerFactory } from '@mithic/io/io/worker-factory.node';
-import { ComponentRegistry } from './component-registry.ts';
+import { CommandRegistry } from './component-registry.ts';
 import { createCompilerBridge } from './compiler-bridge.ts';
 import type { ManagedWorker } from '@mithic/io/io';
 
@@ -19,8 +19,8 @@ function createTestBridge(): { bridge: ReturnType<typeof createCompilerBridge>; 
   return { bridge, worker };
 }
 
-describe('ComponentRegistry integration (real jco)', () => {
-  it('should compile, resolve, and instantiate a real WASM component', async () => {
+describe('CommandRegistry integration (real jco)', () => {
+  it('should compile and return a CompileResult for a real WASM component', async () => {
     const componentPath = new URL('../../../coreutils/dist/wasm/component.wasm', import.meta.url);
     let wasmBytes: Uint8Array;
     try {
@@ -30,32 +30,20 @@ describe('ComponentRegistry integration (real jco)', () => {
     }
 
     const { bridge, worker } = createTestBridge();
-    const registry = new ComponentRegistry({ precompiled: new Map(), compiler: bridge });
+    const registry = new CommandRegistry({ precompiled: new Map(), compiler: bridge });
 
-    const resolved = registry.resolveBytes(wasmBytes, '/bin/coreutils');
-    assert.ok(resolved, 'Should resolve WASM component');
-    assert.equal(resolved.type, 'dynamic');
-    assert.equal(typeof resolved.compileCore, 'function');
-    assert.equal(typeof resolved.instantiate, 'function');
+    const result = registry.resolveBytes(wasmBytes, '/bin/coreutils');
+    assert.ok(result, 'Should resolve WASM component');
+    assert.ok('modules' in result, 'Result should have modules');
+    assert.ok(typeof result.modules === 'object', 'modules should be an object');
 
-    // Verify compileCore returns actual WebAssembly.Module instances
-    const moduleNames: string[] = [];
-    const wrappedCompile = (path: string) => {
-      moduleNames.push(path);
-      return resolved.compileCore(path);
-    };
+    // Verify modules contain actual WASM bytes
+    const moduleEntries = Object.entries(result.modules);
+    assert.ok(moduleEntries.length > 0, 'Should have at least one module');
+    assert.ok(moduleEntries.every(([name]) => name.endsWith('.wasm')), 'All module names should be .wasm paths');
 
-    // Verify instantiate produces a runnable component
-    // We can't fully run coreutils without WASI imports, but we can verify
-    // the instantiate function is callable and requests the right modules
-    try {
-      resolved.instantiate(wrappedCompile, {}, (mod, imports) => new WebAssembly.Instance(mod, imports));
-    } catch {
-      // Expected to fail without WASI imports — but it should have called compileCore
-    }
-
-    assert.ok(moduleNames.length > 0, 'instantiate should have called compileCore at least once');
-    assert.ok(moduleNames.every(n => n.endsWith('.wasm')), 'All module names should be .wasm paths');
+    // Verify jsFiles contains component.js
+    assert.ok(result.jsFiles?.['component.js'], 'Should have component.js in jsFiles');
 
     registry[Symbol.dispose]();
     await worker.terminate();
@@ -71,7 +59,7 @@ describe('ComponentRegistry integration (real jco)', () => {
     }
 
     const { bridge, worker } = createTestBridge();
-    const registry = new ComponentRegistry({ precompiled: new Map(), compiler: bridge });
+    const registry = new CommandRegistry({ precompiled: new Map(), compiler: bridge });
 
     const resolved1 = registry.resolveBytes(wasmBytes, '/bin/app');
     const resolved2 = registry.resolveBytes(wasmBytes, '/bin/app');
