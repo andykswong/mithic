@@ -83,7 +83,7 @@ export class ProxyProcessManager implements ProcessManager {
     const result = this.#bridge(CALL_SPAWN, null, {
       file,
       args,
-      env: options?.env,
+      env: Array.isArray(options?.env) ? Object.fromEntries(options.env) : options?.env,
       cwd: options?.cwd,
       exitSlotBuf,
       signalSlotBuf,

@@ -51,22 +51,26 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
       return;
     }
 
-    const encoded = typeof Buffer !== 'undefined'
-      ? Buffer.from(jsSource).toString('base64')
-      : btoa(jsSource);
-    const dataUrl = `data:text/javascript;base64,${encoded}`;
+    // Eval jco JS source to get sync instantiate function (same pattern as shell-worker)
+    const stripped = jsSource
+      .replace(/^export\s+/gm, '')
+      .replace(/^import\s+.*$/gm, '')
+      .replace(/import\.meta/g, '__importMeta');
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const instantiate = new Function('__importMeta', `${stripped}\nreturn instantiate;`)({ url: 'file:///process-worker' }) as (
+      compileCore: (path: string) => WebAssembly.Module,
+      imports: object,
+      instantiateCore: (module: WebAssembly.Module, imports: WebAssembly.Imports) => WebAssembly.Instance,
+    ) => { run: { run: () => number } };
 
-    const mod = await import(/* webpackIgnore: true */ dataUrl);
-    const instantiate: (
-      compileCore: (path: string) => Promise<WebAssembly.Module>,
-      imports: Record<string, object>,
-    ) => Promise<{ run: { run: () => number } }> = mod.instantiate;
-
-    const compileCore = async (path: string): Promise<WebAssembly.Module> => {
+    const compileCore = (path: string): WebAssembly.Module => {
       const bytes = msg.compileResult.modules[path];
       if (!bytes) throw new Error(`Module not found: ${path}`);
-      return WebAssembly.compile(bytes.slice().buffer);
+      return new WebAssembly.Module(bytes.slice().buffer);
     };
+
+    const syncInstantiateCore = (module: WebAssembly.Module, imports: WebAssembly.Imports): WebAssembly.Instance =>
+      new WebAssembly.Instance(module, imports);
 
     // VFS via IoLoop sync-bridge (when available)
     let preopens: Record<string, Descriptor> | undefined;
@@ -102,7 +106,7 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
     const wasiProcess = new WASIProcess({ manager: processManager });
     const imports = { ...shim.getImportObject(), ...wasiProcess.getImportObject() };
 
-    const { run } = await instantiate(compileCore, imports);
+    const { run } = instantiate(compileCore, imports, syncInstantiateCore);
     const code = run.run() ?? 0;
     shim[Symbol.dispose]();
     // Dispose raw streams directly to ensure WRITER_CLOSED/READER_CLOSED is set
