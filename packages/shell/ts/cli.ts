@@ -193,6 +193,9 @@ const workerManager = new WorkerProcessManager({
     handleBlockingCalls(spawnHandler, port1);
     return port2;
   },
+  isattyStdin: isatty(0),
+  isattyStdout: isatty(1),
+  isattyStderr: isatty(2),
 });
 
 // --- Spawn handler: responds to CALL_SPAWN from shell Worker ---

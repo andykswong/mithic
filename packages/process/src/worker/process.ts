@@ -32,6 +32,9 @@ export interface RunMessage {
   inheritStdin?: boolean;
   inheritStdout?: boolean;
   inheritStderr?: boolean;
+  isattyStdin?: boolean;
+  isattyStdout?: boolean;
+  isattyStderr?: boolean;
   ioPort?: MessagePort;
   spawnPort?: MessagePort;
 }
@@ -51,13 +54,13 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
   if (workerIo && (msg.inheritStdin || msg.inheritStdout || msg.inheritStderr)) {
     const { createStdinHandler, createStdoutHandler, createStderrHandler } = await import('@mithic/io/io/providers/sync-bridge');
     rawStdin = msg.inheritStdin
-      ? new InputStream(createStdinHandler(workerIo))
+      ? new InputStream(createStdinHandler(workerIo), undefined, msg.isattyStdin)
       : inputFromSharedBuffer(msg.stdinBuf, msg.stdinBufSize);
     rawStdout = msg.inheritStdout
-      ? new OutputStream(createStdoutHandler(workerIo))
+      ? new OutputStream(createStdoutHandler(workerIo), undefined, msg.isattyStdout)
       : outputFromSharedBuffer(msg.stdoutBuf, msg.stdoutBufSize);
     rawStderr = msg.inheritStderr
-      ? new OutputStream(createStderrHandler(workerIo))
+      ? new OutputStream(createStderrHandler(workerIo), undefined, msg.isattyStderr)
       : outputFromSharedBuffer(msg.stderrBuf, msg.stderrBufSize);
   } else {
     rawStdin = inputFromSharedBuffer(msg.stdinBuf, msg.stdinBufSize);

@@ -105,7 +105,7 @@ parentPort?.on('message', (msg: ShellWorkerInit) => {
   const coreutilsInstantiate = new Function('__importMeta', `${coreutilsStripped}\nreturn instantiate;`)({ url: 'file:///coreutils-worker' }) as SyncInstantiateFn;
 
   // Composite ProcessManager: try proxy (Workers) first, fall back to local on "not-found"
-  let localManager: SimpleProcessManager;
+  let localManager: SimpleProcessManager | undefined = undefined;
   const processManager: ProcessManager = {
     spawn(file: string, args: string[], options?: SpawnOptions) {
       try {
@@ -114,7 +114,7 @@ parentPort?.on('message', (msg: ShellWorkerInit) => {
         const isNotFound = (e && typeof e === 'object' && 'payload' in e &&
           (e as { payload: { tag: string } }).payload?.tag === 'not-found');
         if (isNotFound) {
-          return localManager.spawn(file, args, options);
+          return localManager!.spawn(file, args, options);
         }
         throw e;
       }

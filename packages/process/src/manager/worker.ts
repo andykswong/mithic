@@ -30,6 +30,9 @@ export interface WorkerProcessManagerConfig {
   pipeBufferSize?: number;
   createIoPort?: () => MessagePort;
   createSpawnPort?: () => MessagePort;
+  isattyStdin?: boolean;
+  isattyStdout?: boolean;
+  isattyStderr?: boolean;
 }
 
 export const pipeHandleMap = new WeakMap<object, SharedPipeHandle>();
@@ -42,6 +45,9 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
   readonly #pipeBufferSize: number;
   readonly #createIoPort?: () => MessagePort;
   readonly #createSpawnPort?: () => MessagePort;
+  readonly #isattyStdin: boolean = false;
+  readonly #isattyStdout: boolean = false;
+  readonly #isattyStderr: boolean = false;
   readonly #active = new Map<number, ProcessEntry>();
   readonly #foreground = new Set<Process>();
   #nextPid = 1;
@@ -54,6 +60,9 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
     this.#pipeBufferSize = config.pipeBufferSize ?? 65536;
     this.#createIoPort = config.createIoPort;
     this.#createSpawnPort = config.createSpawnPort;
+    this.#isattyStdin = config.isattyStdin ?? false;
+    this.#isattyStdout = config.isattyStdout ?? false;
+    this.#isattyStderr = config.isattyStderr ?? false;
   }
 
   spawn(file: string, args: string[], options?: SpawnExternalOptions): Process {
@@ -104,6 +113,9 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
       inheritStdin: !stdinPipeHandle && !options?.stdin,
       inheritStdout: !stdoutPipeHandle && !options?.stdout,
       inheritStderr: !stderrPipeHandle && !options?.stderr,
+      isattyStdin: this.#isattyStdin,
+      isattyStdout: this.#isattyStdout,
+      isattyStderr: this.#isattyStderr,
       ioPort,
       spawnPort,
     };
