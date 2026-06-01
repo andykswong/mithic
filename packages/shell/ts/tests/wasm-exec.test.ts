@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { MemoryFsProvider, SyncFileSystemRouter } from '@mithic/io/vfs';
 import { Descriptor } from '@mithic/wasip2/filesystem/types';
 import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
-import { CommandRegistry } from '@mithic/process/impl/component-registry';
+import { CommandRegistry } from '@mithic/process/component/registry';
 import { createCommandResolver, type SyncInstantiateFn } from '../commands.ts';
-import { createPipe } from '@mithic/process/utils';
+import { createPipe } from '@mithic/process/io';
 
 /** Write bytes to a MemoryFsProvider via open/write/close. */
 function writeFile(fs: MemoryFsProvider, path: string, data: Uint8Array): void {

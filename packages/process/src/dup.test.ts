@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import { deepStrictEqual } from 'node:assert';
-import { SimpleProcessManager } from './impl/simple.ts';
+import { SimpleProcessManager } from './manager/simple.ts';
 
 describe('dupOutputStream', () => {
   it('duplicate writes to the same pipe destination', () => {

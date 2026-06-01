@@ -1,6 +1,6 @@
-import type { CompilerBridge, CompileResult } from './compiler-bridge.ts';
+import type { ComponentCompiler, CompileResult } from './compiler.ts';
 
-export { type CompileResult } from './compiler-bridge.ts';
+export { type CompileResult } from './compiler.ts';
 
 export type SyncInstantiateFn = (
   compileCore: (path: string) => WebAssembly.Module,
@@ -16,12 +16,12 @@ export interface PrecompiledComponent {
 
 export interface CommandRegistryConfig {
   precompiled?: Map<string, PrecompiledComponent>;
-  compiler?: CompilerBridge;
+  compiler?: ComponentCompiler;
 }
 
 export class CommandRegistry implements Disposable {
   readonly #precompiled: Map<string, PrecompiledComponent>;
-  readonly #compiler?: CompilerBridge;
+  readonly #compiler?: ComponentCompiler;
   readonly #cache = new Map<string, CompileResult>();
 
   constructor(config: CommandRegistryConfig) {

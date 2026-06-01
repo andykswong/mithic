@@ -2,9 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { SimpleProcessManager, type CommandHandler } from './simple.ts';
 import { Process } from '../types.ts';
-import { spawnWithPipes } from '../utils.ts';
+import { spawnWithPipes } from '../io/pipes.ts';
 import { WASIProcess } from '../instantiation.ts';
-import { createPipe } from '../utils.ts';
+import { createPipe } from '../io/pipes.ts';
 import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 
 describe('SimpleProcessManager', () => {

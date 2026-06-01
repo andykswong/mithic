@@ -1,14 +1,14 @@
 import { isatty } from 'node:tty';
 import { Descriptor } from '@mithic/wasip2/filesystem/types';
 import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
-import { SimpleProcessManager } from '@mithic/process/impl/simple';
+import { SimpleProcessManager } from '@mithic/process/manager/simple';
 import { WASIProcess } from '@mithic/process/instantiation';
 import { NodeStdinHandler, NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
 import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 import { MemoryFsProvider, DeviceFsProvider, SyncFileSystemRouter } from '@mithic/io/vfs';
 import { NodeWorkerFactory } from '@mithic/io/io/worker-factory.node';
-import { createCompilerBridge } from '@mithic/process/impl/compiler-bridge';
-import { CommandRegistry } from '@mithic/process/impl/component-registry';
+import { createComponentCompiler } from '@mithic/process/component/compiler';
+import { CommandRegistry } from '@mithic/process/component/registry';
 import { createCommandResolver, type SyncInstantiateFn } from './commands.ts';
 import { COREUTILS_COMMANDS } from '@mithic/coreutils';
 import { instantiate as shellInstantiate, modules as shellModules } from '@mithic/shell/component';
@@ -45,11 +45,11 @@ function coreutilsCompileCore(path: string): WebAssembly.Module {
 const workerFactory = new NodeWorkerFactory();
 const { port1: compilerPort1, port2: compilerPort2 } = new MessageChannel();
 const compilerWorker = workerFactory.create(
-  new URL(import.meta.resolve('@mithic/process/impl/compiler-worker.node')),
+  new URL(import.meta.resolve('@mithic/process/worker/compiler.node')),
   { name: 'mithic-compiler' },
 );
 compilerWorker.postMessage({ type: '__port', port: compilerPort2 }, [compilerPort2 as unknown as Transferable]);
-const compilerBridge = createCompilerBridge(compilerPort1 as unknown as MessagePort);
+const compilerBridge = createComponentCompiler(compilerPort1 as unknown as MessagePort);
 const registry = new CommandRegistry({
   precompiled: new Map([
     ['shell', {

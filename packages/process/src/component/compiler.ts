@@ -1,5 +1,5 @@
 import { createBlockingCall, type BlockingCallFn } from '@mithic/io/io';
-import { CALL_COMPILE } from './compiler-handler.ts';
+import { CALL_COMPILE } from '../worker/compiler.ts';
 
 export interface CompileResult {
   modules: Record<string, Uint8Array>;
@@ -7,11 +7,11 @@ export interface CompileResult {
   cached: boolean;
 }
 
-export interface CompilerBridge extends Disposable {
+export interface ComponentCompiler extends Disposable {
   compile(bytes: Uint8Array): CompileResult;
 }
 
-export function createCompilerBridge(port: MessagePort): CompilerBridge {
+export function createComponentCompiler(port: MessagePort): ComponentCompiler {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const blockingCall: BlockingCallFn = createBlockingCall(port as any);
 

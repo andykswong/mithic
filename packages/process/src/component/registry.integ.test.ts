@@ -3,19 +3,19 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { MessageChannel } from 'node:worker_threads';
 import { NodeWorkerFactory } from '@mithic/io/io/worker-factory.node';
-import { CommandRegistry } from './component-registry.ts';
-import { createCompilerBridge } from './compiler-bridge.ts';
+import { CommandRegistry } from './registry.ts';
+import { createComponentCompiler } from './compiler.ts';
 import type { ManagedWorker } from '@mithic/io/io';
 
-function createTestBridge(): { bridge: ReturnType<typeof createCompilerBridge>; worker: ManagedWorker } {
+function createTestBridge(): { bridge: ReturnType<typeof createComponentCompiler>; worker: ManagedWorker } {
   const factory = new NodeWorkerFactory();
   const { port1, port2 } = new MessageChannel();
   const worker = factory.create(
-    new URL('./compiler-worker.node.ts', import.meta.url),
+    new URL('../worker/compiler.node.ts', import.meta.url),
     { name: 'test-compiler' },
   );
   worker.postMessage({ type: '__port', port: port2 }, [port2 as unknown as Transferable]);
-  const bridge = createCompilerBridge(port1 as unknown as MessagePort);
+  const bridge = createComponentCompiler(port1 as unknown as MessagePort);
   return { bridge, worker };
 }
 
@@ -74,7 +74,7 @@ describe('CommandRegistry integration (real jco)', () => {
     // We can't easily remove jco from node_modules mid-test, so this just
     // verifies the error path exists by checking the compiler-worker source.
     const { readFile: rf } = await import('node:fs/promises');
-    const handlerSource = await rf(new URL('./compiler-handler.ts', import.meta.url), 'utf8');
+    const handlerSource = await rf(new URL('../worker/compiler.ts', import.meta.url), 'utf8');
     assert.ok(
       handlerSource.includes('@bytecodealliance/jco is required'),
       'Compiler handler should have a clear error message when jco is unavailable',

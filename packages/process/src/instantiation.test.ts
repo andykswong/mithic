@@ -2,8 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { WASIProcess } from './instantiation.ts';
 import { Process } from './types.ts';
-import { SimpleProcessManager } from './impl/simple.ts';
-import type { CommandHandler } from './impl/simple.ts';
+import { SimpleProcessManager } from './manager/simple.ts';
+import type { CommandHandler } from './manager/simple.ts';
 
 describe('WASIProcess', () => {
   it('constructs with default config (uses SimpleProcessManager)', () => {

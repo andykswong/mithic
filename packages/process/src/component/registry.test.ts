@@ -1,9 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { CommandRegistry } from './component-registry.ts';
-import type { CompilerBridge, CompileResult } from './compiler-bridge.ts';
+import { CommandRegistry } from './registry.ts';
+import type { ComponentCompiler, CompileResult } from './compiler.ts';
 
-function mockBridge(result: CompileResult): CompilerBridge {
+function mockBridge(result: CompileResult): ComponentCompiler {
   return {
     compile: () => result,
     [Symbol.dispose]() {},
@@ -102,7 +102,7 @@ describe('CommandRegistry', () => {
 
     it('should cache resolved components by key', () => {
       let compileCalls = 0;
-      const bridge: CompilerBridge = {
+      const bridge: ComponentCompiler = {
         compile() {
           compileCalls++;
           return {
@@ -123,7 +123,7 @@ describe('CommandRegistry', () => {
     });
 
     it('should throw if compiler fails', () => {
-      const bridge: CompilerBridge = {
+      const bridge: ComponentCompiler = {
         compile() { throw new Error('jco failed'); },
         [Symbol.dispose]() {},
       };
@@ -136,7 +136,7 @@ describe('CommandRegistry', () => {
   describe('dispose', () => {
     it('should dispose compiler on Symbol.dispose', () => {
       let disposed = false;
-      const bridge: CompilerBridge = {
+      const bridge: ComponentCompiler = {
         compile: () => ({ modules: {}, jsFiles: {}, cached: false }),
         [Symbol.dispose]() { disposed = true; },
       };

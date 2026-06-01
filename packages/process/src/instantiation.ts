@@ -9,7 +9,7 @@
 
 import type { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 import { Process, type SpawnOptions, type ProcessManager, type PipeOptions } from './types.ts';
-import { SimpleProcessManager, type SimpleProcessManagerConfig } from './impl/simple.ts';
+import { SimpleProcessManager, type SimpleProcessManagerConfig } from './manager/simple.ts';
 
 export interface WASIProcessConfig {
   /** Provide a fully custom ProcessManager. Takes precedence over other options. */

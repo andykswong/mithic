@@ -1,4 +1,4 @@
-import { handleRunMessage, type RunMessage } from './process-worker.ts';
+import { handleRunMessage, type RunMessage } from './process.ts';
 
 self.onmessage = (e: MessageEvent<RunMessage>) => {
   if (e.data?.type === 'run') {

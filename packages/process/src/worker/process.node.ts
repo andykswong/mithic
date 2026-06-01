@@ -1,5 +1,5 @@
 import { parentPort } from 'node:worker_threads';
-import { handleRunMessage, type RunMessage } from './process-worker.ts';
+import { handleRunMessage, type RunMessage } from './process.ts';
 
 parentPort?.on('message', (msg: RunMessage) => {
   if (msg?.type === 'run') {

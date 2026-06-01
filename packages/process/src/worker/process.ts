@@ -1,4 +1,4 @@
-import type { CompileResult } from './compiler-bridge.ts';
+import type { CompileResult } from '../component/compiler.ts';
 
 export interface RunMessage {
   type: 'run';
@@ -17,20 +17,26 @@ export interface RunMessage {
 }
 
 export async function handleRunMessage(msg: RunMessage): Promise<void> {
-  const { exitSlotFromBuffer, signalSlotFromBuffer } = await import('./slots.ts');
-  const { inputFromSharedBuffer, outputFromSharedBuffer } = await import('../utils.ts');
+  const { exitSlotFromBuffer, signalSlotFromBuffer } = await import('../io/slots.ts');
+  const { inputFromSharedBuffer, outputFromSharedBuffer } = await import('../io/pipes.ts');
 
   const exitSlot = exitSlotFromBuffer(msg.exitSlotBuf);
-  signalSlotFromBuffer(msg.signalSlotBuf);
+  const signalSlot = signalSlotFromBuffer(msg.signalSlotBuf);
 
-  const stdin = inputFromSharedBuffer(msg.stdinBuf, msg.stdinBufSize);
-  const stdout = outputFromSharedBuffer(msg.stdoutBuf, msg.stdoutBufSize);
-  const stderr = outputFromSharedBuffer(msg.stderrBuf, msg.stderrBufSize);
+  const { wrapInputWithSignalCheck, wrapOutputWithSignalCheck } = await import('../io/signal-stream.ts');
+
+  const rawStdin = inputFromSharedBuffer(msg.stdinBuf, msg.stdinBufSize);
+  const rawStdout = outputFromSharedBuffer(msg.stdoutBuf, msg.stdoutBufSize);
+  const rawStderr = outputFromSharedBuffer(msg.stderrBuf, msg.stderrBufSize);
+
+  const stdin = wrapInputWithSignalCheck(rawStdin, signalSlot);
+  const stdout = wrapOutputWithSignalCheck(rawStdout, signalSlot);
+  const stderr = wrapOutputWithSignalCheck(rawStderr, signalSlot);
 
   try {
     const { WASIShim } = await import('@mithic/wasip2');
     const { WASIProcess } = await import('@mithic/process/instantiation');
-    const { SimpleProcessManager } = await import('./simple.ts');
+    const { SimpleProcessManager } = await import('../manager/simple.ts');
 
     const jsSource = msg.compileResult.jsFiles?.['component.js'];
     if (!jsSource) {
@@ -70,6 +76,9 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
       },
     });
 
+    // TODO: SimpleProcessManager suffices for leaf commands (cat, echo, etc.) that never spawn
+    // children. A nested shell (running scripts with pipelines) would need ProxyProcessManager
+    // delegating back to the orchestrating thread via sync-bridge.
     const processManager = new SimpleProcessManager();
     const wasiProcess = new WASIProcess({ manager: processManager });
     const imports = { ...shim.getImportObject(), ...wasiProcess.getImportObject() };

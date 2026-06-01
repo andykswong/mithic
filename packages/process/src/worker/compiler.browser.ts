@@ -1,5 +1,5 @@
 import { handleBlockingCalls } from '@mithic/io/io';
-import { compilerHandler } from './compiler-handler.ts';
+import { compilerHandler } from './compiler.ts';
 
 declare const self: { onmessage: ((e: MessageEvent) => void) | null };
 

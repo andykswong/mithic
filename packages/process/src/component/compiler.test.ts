@@ -3,23 +3,23 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { MessageChannel } from 'node:worker_threads';
 import { NodeWorkerFactory } from '@mithic/io/io/worker-factory.node';
-import { createCompilerBridge } from './compiler-bridge.ts';
+import { createComponentCompiler } from './compiler.ts';
 import type { ManagedWorker } from '@mithic/io/io';
 
-function createTestBridge(): { bridge: ReturnType<typeof createCompilerBridge>; worker: ManagedWorker } {
+function createTestBridge(): { bridge: ReturnType<typeof createComponentCompiler>; worker: ManagedWorker } {
   const factory = new NodeWorkerFactory();
   const { port1, port2 } = new MessageChannel();
   const worker = factory.create(
-    new URL('./compiler-worker.node.ts', import.meta.url),
+    new URL('../worker/compiler.node.ts', import.meta.url),
     { name: 'test-compiler' },
   );
   // Transfer port2 to compiler Worker — note the message type is now '__port'
   worker.postMessage({ type: '__port', port: port2 }, [port2 as unknown as Transferable]);
-  const bridge = createCompilerBridge(port1 as unknown as MessagePort);
+  const bridge = createComponentCompiler(port1 as unknown as MessagePort);
   return { bridge, worker };
 }
 
-describe('CompilerBridge', () => {
+describe('ComponentCompiler', () => {
   it('should compile a WASM component and return module bytes', async () => {
     const { bridge, worker } = createTestBridge();
 

@@ -5,7 +5,7 @@
 
 import type { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 import type { Process, SpawnOptions, ProcessManager, PipeOptions } from './types.ts';
-import { SimpleProcessManager } from './impl/simple.ts';
+import { SimpleProcessManager } from './manager/simple.ts';
 
 let _manager: ProcessManager | undefined;
 

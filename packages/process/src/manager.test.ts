@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 import { spawn, _setProcessManager, _getProcessManager } from './manager.ts';
 import { Process, type ProcessManager } from './types.ts';
-import { SimpleProcessManager, type CommandHandler } from './impl/simple.ts';
-import { createPipe } from './utils.ts';
+import { SimpleProcessManager, type CommandHandler } from './manager/simple.ts';
+import { createPipe } from './io/pipes.ts';
 
 describe('manager (global WIT-level functions)', () => {
   beforeEach(() => {

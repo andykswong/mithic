@@ -1,6 +1,6 @@
 import { MemoryFsProvider } from '@mithic/io/vfs';
-import { SimpleProcessManager } from '@mithic/process/impl/simple';
-import type { CommandHandler } from '@mithic/process/impl/simple';
+import { SimpleProcessManager } from '@mithic/process/manager/simple';
+import type { CommandHandler } from '@mithic/process/manager/simple';
 import { MithicShell } from '@mithic/shell';
 import { ComponentExit } from '@mithic/wasip2/cli/exit';
 import { Descriptor } from '@mithic/wasip2/filesystem/types';

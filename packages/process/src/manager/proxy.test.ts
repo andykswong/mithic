@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ProxyProcessManager, CALL_SPAWN } from './proxy-manager.ts';
+import { ProxyProcessManager, CALL_SPAWN } from './proxy.ts';
 import type { BlockingCallFn } from '@mithic/io/io';
-import { createExitSlot, createSignalSlot } from './slots.ts';
+import { createExitSlot, createSignalSlot } from '../io/slots.ts';
 import { SIGNAL_NUMBER } from '../types.ts';
 
 function createMockBridge(exitCode?: number): { bridge: BlockingCallFn; calls: unknown[][] } {

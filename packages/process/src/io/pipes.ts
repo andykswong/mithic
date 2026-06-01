@@ -5,7 +5,7 @@
 
 import { InputStream, OutputStream, type InputStreamHandler, type OutputStreamHandler, type StreamError } from '@mithic/wasip2/io/streams';
 import { Pollable } from '@mithic/wasip2/io/poll';
-import type { Process, PipeOptions, SpawnOptions, ProcessManager } from './types.ts';
+import type { Process, PipeOptions, SpawnOptions, ProcessManager } from '../types.ts';
 
 /**
  * Convenience helper: spawn a process with pipes pre-created for all three streams.

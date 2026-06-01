@@ -1,10 +1,10 @@
 import { WASIShim } from '@mithic/wasip2';
 import { ComponentExit } from '@mithic/wasip2/cli/exit';
 import type { Descriptor } from '@mithic/wasip2/filesystem/types';
-import type { CommandContext, CommandResolver } from '@mithic/process/impl/simple';
+import type { CommandContext, CommandResolver } from '@mithic/process/manager/simple';
 import type { SyncFileSystemProvider } from '@mithic/io/vfs';
 import { COREUTILS_COMMANDS } from '@mithic/coreutils';
-import { CommandRegistry, type CompileResult, type SyncInstantiateFn } from '@mithic/process/impl/component-registry';
+import { CommandRegistry, type CompileResult, type SyncInstantiateFn } from '@mithic/process/component/registry';
 
 export type { SyncInstantiateFn };
 

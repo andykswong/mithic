@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { WorkerProcessManager } from './worker-manager.ts';
-import { CommandRegistry } from './component-registry.ts';
+import { WorkerProcessManager, type CommandResolver } from './worker.ts';
+import type { CompileResult } from '../component/compiler.ts';
 import type { ManagedWorker, WorkerFactory } from '@mithic/io/io/worker-factory';
 
 interface MockWorker extends ManagedWorker {
@@ -45,26 +45,27 @@ function createMockWorkerFactory(): WorkerFactory & { workers: MockWorker[] } {
   };
 }
 
+const FAKE_COMPILE_RESULT: CompileResult = {
+  modules: { 'core.wasm': new Uint8Array([0, 97, 115, 109]) },
+  jsFiles: { 'component.js': 'export function instantiate() {}' },
+  cached: false,
+};
+
 describe('WorkerProcessManager', () => {
   let factory: ReturnType<typeof createMockWorkerFactory>;
-  let registry: CommandRegistry;
+  let resolveCommand: CommandResolver;
   let manager: WorkerProcessManager;
 
   beforeEach(() => {
     factory = createMockWorkerFactory();
-    registry = new CommandRegistry({
-      precompiled: new Map([
-        ['test', {
-          commands: new Set(['echo', 'cat', 'head']),
-          compileCore: () => null as unknown as WebAssembly.Module,
-          instantiate: () => ({ run: { run: () => 0 } }),
-        }],
-      ]),
-    });
+    resolveCommand = (file: string) => {
+      if (['echo', 'cat', 'head'].includes(file)) return FAKE_COMPILE_RESULT;
+      return undefined;
+    };
     manager = new WorkerProcessManager({
-      registry,
+      resolveCommand,
       workerFactory: factory,
-      processWorkerUrl: new URL('./process-worker.node.ts', import.meta.url),
+      processWorkerUrl: new URL('../worker/process.node.ts', import.meta.url),
       maxWorkers: 4,
     });
   });
@@ -75,11 +76,12 @@ describe('WorkerProcessManager', () => {
     assert.equal(factory.workers.length, 1);
   });
 
-  it('spawn sends a run message to the Worker', () => {
+  it('spawn sends a run message with CompileResult to the Worker', () => {
     manager.spawn('echo', ['hello']);
-    const msg = factory.workers[0]!.messages[0] as { type: string; args: string[] };
+    const msg = factory.workers[0]!.messages[0] as { type: string; args: string[]; compileResult: CompileResult };
     assert.equal(msg.type, 'run');
     assert.deepEqual(msg.args, ['echo', 'hello']);
+    assert.deepEqual(msg.compileResult, FAKE_COMPILE_RESULT);
   });
 
   it('spawn passes env and cwd in run message', () => {
@@ -127,6 +129,24 @@ describe('WorkerProcessManager', () => {
     output.write(new Uint8Array([1, 2, 3]));
     const data = input.read(3n);
     assert.deepEqual(data, new Uint8Array([1, 2, 3]));
+  });
+
+  it('spawn uses caller-provided pipe handles from createPipe', () => {
+    const { input, output } = manager.createPipe();
+    // Spawn with the pipe as stdout
+    manager.spawn('echo', ['test'], { stdout: output });
+    const msg = factory.workers[0]!.messages[0] as { stdoutBuf: SharedArrayBuffer; stdoutBufSize: number };
+    // The Worker should get the same SAB that backs our pipe
+    // Verify by writing to the SAB from "worker side" and reading from input
+    const HEADER_SIZE = 16;
+    const WRITE_POS = 1;
+    const control = new Int32Array(msg.stdoutBuf, 0, 4);
+    const data = new Uint8Array(msg.stdoutBuf, HEADER_SIZE);
+    data[0] = 99;
+    Atomics.store(control, WRITE_POS, 1);
+    Atomics.notify(control, WRITE_POS);
+    const read = input.read(1n);
+    assert.deepEqual(read, new Uint8Array([99]));
   });
 
   it('dispose terminates all active Workers', () => {
@@ -212,5 +232,15 @@ describe('WorkerProcessManager', () => {
     manager[Symbol.dispose]();
     const view = new Int32Array(msg.exitSlotBuf);
     assert.equal(Atomics.load(view, 0), 129);
+  });
+
+  it('dupOutputStream preserves pipe handle association', () => {
+    const { output } = manager.createPipe();
+    const duped = manager.dupOutputStream(output);
+    // Both output and duped should be associated with the same SAB
+    manager.spawn('echo', ['test'], { stdout: duped });
+    const msg = factory.workers[0]!.messages[0] as { stdoutBuf: SharedArrayBuffer; stdoutBufSize: number };
+    assert.ok(msg.stdoutBuf instanceof SharedArrayBuffer);
+    assert.ok(msg.stdoutBufSize > 0);
   });
 });

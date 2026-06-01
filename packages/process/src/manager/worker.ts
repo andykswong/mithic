@@ -1,9 +1,9 @@
 import type { WorkerFactory, ManagedWorker } from '@mithic/io/io/worker-factory';
 import { Process, ProcessError, type ProcessManager, type SpawnOptions, type Signal, type PipeOptions, SIGNAL_NUMBER } from '../types.ts';
-import { createExitSlot, createSignalSlot } from './slots.ts';
-import { createPipe, createSharedPipeRaw } from '../utils.ts';
-import type { CommandRegistry } from './component-registry.ts';
-import type { RunMessage } from './process-worker.ts';
+import { createExitSlot, createSignalSlot } from '../io/slots.ts';
+import { createSharedPipeRaw, inputFromSharedBuffer, outputFromSharedBuffer, type SharedPipeHandle } from '../io/pipes.ts';
+import type { CompileResult } from '../component/compiler.ts';
+import type { RunMessage } from '../worker/process.ts';
 import type { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 
 interface ProcessEntry {
@@ -13,16 +13,20 @@ interface ProcessEntry {
   signalSlot: ReturnType<typeof createSignalSlot>;
 }
 
+export type CommandResolver = (file: string) => CompileResult | undefined;
+
 export interface WorkerProcessManagerConfig {
-  registry: CommandRegistry;
+  resolveCommand: CommandResolver;
   workerFactory: WorkerFactory;
   processWorkerUrl: string | URL;
   maxWorkers?: number;
   pipeBufferSize?: number;
 }
 
+const pipeHandleMap = new WeakMap<object, SharedPipeHandle>();
+
 export class WorkerProcessManager implements ProcessManager, Disposable {
-  readonly #registry: CommandRegistry;
+  readonly #resolveCommand: CommandResolver;
   readonly #factory: WorkerFactory;
   readonly #processWorkerUrl: string | URL;
   readonly #maxWorkers: number;
@@ -32,7 +36,7 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
   #nextPid = 1;
 
   constructor(config: WorkerProcessManagerConfig) {
-    this.#registry = config.registry;
+    this.#resolveCommand = config.resolveCommand;
     this.#factory = config.workerFactory;
     this.#processWorkerUrl = config.processWorkerUrl;
     this.#maxWorkers = config.maxWorkers ?? 8;
@@ -40,8 +44,8 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
   }
 
   spawn(file: string, args: string[], options?: SpawnOptions): Process {
-    const precompiled = this.#registry.resolvePrecompiled(file);
-    if (!precompiled) {
+    const compileResult = this.#resolveCommand(file);
+    if (!compileResult) {
       throw new ProcessError('not-found', `command not found: ${file}`);
     }
 
@@ -53,26 +57,27 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
     const exitSlot = createExitSlot();
     const signalSlot = createSignalSlot();
 
-    const stdinPipe = createSharedPipeRaw(this.#pipeBufferSize);
-    const stdoutPipe = createSharedPipeRaw(this.#pipeBufferSize);
-    const stderrPipe = createSharedPipeRaw(this.#pipeBufferSize);
+    // Resolve stdio: use caller-provided pipe SABs if available, else create new
+    const stdinHandle = (options?.stdin && pipeHandleMap.get(options.stdin)) ?? createSharedPipeRaw(this.#pipeBufferSize);
+    const stdoutHandle = (options?.stdout && pipeHandleMap.get(options.stdout)) ?? createSharedPipeRaw(this.#pipeBufferSize);
+    const stderrHandle = (options?.stderr && pipeHandleMap.get(options.stderr)) ?? createSharedPipeRaw(this.#pipeBufferSize);
 
     const worker = this.#factory.create(this.#processWorkerUrl, { name: `process-${pid}` });
 
     const msg: RunMessage = {
       type: 'run',
-      compileResult: { modules: {}, jsFiles: {}, cached: false },
+      compileResult,
       args: [file, ...args],
       env: options?.env ?? {},
       cwd: options?.cwd ?? '/',
       exitSlotBuf: exitSlot.buffer,
       signalSlotBuf: signalSlot.buffer,
-      stdinBuf: stdinPipe.buffer,
-      stdinBufSize: stdinPipe.bufferSize,
-      stdoutBuf: stdoutPipe.buffer,
-      stdoutBufSize: stdoutPipe.bufferSize,
-      stderrBuf: stderrPipe.buffer,
-      stderrBufSize: stderrPipe.bufferSize,
+      stdinBuf: stdinHandle.buffer,
+      stdinBufSize: stdinHandle.bufferSize,
+      stdoutBuf: stdoutHandle.buffer,
+      stdoutBufSize: stdoutHandle.bufferSize,
+      stderrBuf: stderrHandle.buffer,
+      stderrBufSize: stderrHandle.bufferSize,
     };
 
     worker.postMessage(msg);
@@ -111,11 +116,21 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
   }
 
   createPipe(options?: PipeOptions): { input: InputStream; output: OutputStream } {
-    return createPipe({ ...options, shared: true, bufferSize: options?.bufferSize ?? this.#pipeBufferSize });
+    const bufferSize = options?.bufferSize ?? this.#pipeBufferSize;
+    const handle = createSharedPipeRaw(bufferSize);
+    const input = inputFromSharedBuffer(handle.buffer, handle.bufferSize);
+    const output = outputFromSharedBuffer(handle.buffer, handle.bufferSize);
+    // Associate streams with their backing SAB so spawn() can extract it
+    pipeHandleMap.set(input, handle);
+    pipeHandleMap.set(output, handle);
+    return { input, output };
   }
 
   dupOutputStream(stream: OutputStream): OutputStream {
-    return stream.dup();
+    const handle = pipeHandleMap.get(stream);
+    const dup = stream.dup();
+    if (handle) pipeHandleMap.set(dup, handle);
+    return dup;
   }
 
   signal(sig: Signal): void {

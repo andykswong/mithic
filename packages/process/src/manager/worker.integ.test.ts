@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { NodeWorkerFactory } from '@mithic/io/io/worker-factory.node';
-import { createExitSlot } from './slots.ts';
-import { createSharedPipeRaw, outputFromSharedBuffer, inputFromSharedBuffer } from '../utils.ts';
+import { createExitSlot } from '../io/slots.ts';
+import { createSharedPipeRaw, outputFromSharedBuffer, inputFromSharedBuffer } from '../io/pipes.ts';
 
 describe('WorkerProcessManager integration', () => {
   it('Worker can write exit code to ExitSlot SharedArrayBuffer', async () => {
@@ -10,7 +10,7 @@ describe('WorkerProcessManager integration', () => {
     const exitSlot = createExitSlot();
 
     const worker = factory.create(
-      new URL('./test-fixtures/exit-worker.ts', import.meta.url),
+      new URL('../worker/test-fixtures/exit-worker.ts', import.meta.url),
       { workerData: { exitCode: 42 } },
     );
 
@@ -53,7 +53,7 @@ describe('WorkerProcessManager integration', () => {
     const exitSlot = createExitSlot();
 
     const worker = factory.create(
-      new URL('./test-fixtures/pipe-writer-worker.ts', import.meta.url),
+      new URL('../worker/test-fixtures/pipe-writer-worker.ts', import.meta.url),
       { workerData: { pipeBuf: pipe.buffer, pipeBufSize: pipe.bufferSize, exitSlotBuf: exitSlot.buffer } },
     );
 

@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { handleRunMessage, type RunMessage } from './process-worker.ts';
-import { createExitSlot, createSignalSlot } from './slots.ts';
-import { createSharedPipeRaw } from '../utils.ts';
+import { handleRunMessage, type RunMessage } from './process.ts';
+import { createExitSlot, createSignalSlot } from '../io/slots.ts';
+import { createSharedPipeRaw } from '../io/pipes.ts';
 
 function createTestMessage(overrides?: Partial<RunMessage>): RunMessage {
   const exitSlot = createExitSlot();

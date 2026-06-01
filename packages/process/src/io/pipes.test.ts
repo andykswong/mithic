@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createPipe, createSharedPipeRaw, inputFromSharedBuffer, outputFromSharedBuffer } from './utils.ts';
+import { createPipe, createSharedPipeRaw, inputFromSharedBuffer, outputFromSharedBuffer } from './pipes.ts';
 import type { StreamError } from '@mithic/wasip2/io/streams';
 
 describe('createPipe (QueuePipe)', () => {
