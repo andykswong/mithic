@@ -4,17 +4,15 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Descriptor } from '@mithic/wasip2/filesystem/types';
 import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
-import { SimpleProcessManager } from '@mithic/process/manager/simple';
 import { WorkerProcessManager } from '@mithic/process/manager/worker';
 import type { CompileResult } from '@mithic/process/component/compiler';
-import { WASIProcess } from '@mithic/process/instantiation';
 import { NodeStdinHandler, NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
 import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 import { MemoryFsProvider, DeviceFsProvider, SyncFileSystemRouter } from '@mithic/io/vfs';
 import { NodeWorkerFactory } from '@mithic/io/io/worker-factory.node';
 import { createComponentCompiler } from '@mithic/process/component/compiler';
 import { CommandRegistry } from '@mithic/process/component/registry';
-import { createCommandResolver, type SyncInstantiateFn } from './commands.ts';
+import type { SyncInstantiateFn } from './commands.ts';
 import { COREUTILS_COMMANDS } from '@mithic/coreutils';
 import { instantiate as shellInstantiate, modules as shellModules } from '@mithic/shell/component';
 import { instantiate as coreutilsInstantiate, modules as coreutilsModules } from '@mithic/coreutils/component';
@@ -147,26 +145,6 @@ const workerManager = new WorkerProcessManager({
   maxWorkers: 8,
 });
 
-function createShellProcessImports(): Record<string, unknown> {
-  const manager = new SimpleProcessManager({
-    commandResolver: createCommandResolver({
-      memFs: vfs,
-      rootDescriptor,
-      shellInstantiate: shellInstantiate as unknown as SyncInstantiateFn,
-      shellCompileCore,
-      coreutilsInstantiate: coreutilsInstantiate as unknown as SyncInstantiateFn,
-      coreutilsCompileCore,
-      createProcessImports: createShellProcessImports,
-      registry,
-    }),
-    hostStreams: {
-      stdin: hostStdin.dup(),
-      stdout: hostStdout.dup(),
-      stderr: hostStderr.dup(),
-    },
-  });
-  return new WASIProcess({ manager }).getImportObject();
-}
 
 const shell = new MithicShell({
   wasi: {
@@ -184,21 +162,7 @@ const shell = new MithicShell({
     },
   },
   process: {
-    commandResolver: createCommandResolver({
-      memFs: vfs,
-      rootDescriptor,
-      shellInstantiate: shellInstantiate as unknown as SyncInstantiateFn,
-      shellCompileCore,
-      coreutilsInstantiate: coreutilsInstantiate as unknown as SyncInstantiateFn,
-      coreutilsCompileCore,
-      createProcessImports: createShellProcessImports,
-      registry,
-    }),
-    hostStreams: {
-      stdin: hostStdin.dup(),
-      stdout: hostStdout.dup(),
-      stderr: hostStderr.dup(),
-    },
+    manager: workerManager,
   },
   syncComponent: {
     instantiate: shellInstantiate as unknown as SyncShellComponent['instantiate'],
