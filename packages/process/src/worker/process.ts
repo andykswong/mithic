@@ -14,20 +14,41 @@ export interface RunMessage {
   stdoutBufSize: number;
   stderrBuf: SharedArrayBuffer;
   stderrBufSize: number;
+  inheritStdin?: boolean;
+  inheritStdout?: boolean;
+  inheritStderr?: boolean;
 }
 
 export async function handleRunMessage(msg: RunMessage): Promise<void> {
   const { exitSlotFromBuffer, signalSlotFromBuffer } = await import('../io/slots.ts');
   const { inputFromSharedBuffer, outputFromSharedBuffer } = await import('../io/pipes.ts');
+  const { InputStream, OutputStream } = await import('@mithic/wasip2/io/streams');
 
   const exitSlot = exitSlotFromBuffer(msg.exitSlotBuf);
   const signalSlot = signalSlotFromBuffer(msg.signalSlotBuf);
 
   const { wrapInputWithSignalCheck, wrapOutputWithSignalCheck } = await import('../io/signal-stream.ts');
 
-  const rawStdin = inputFromSharedBuffer(msg.stdinBuf, msg.stdinBufSize);
-  const rawStdout = outputFromSharedBuffer(msg.stdoutBuf, msg.stdoutBufSize);
-  const rawStderr = outputFromSharedBuffer(msg.stderrBuf, msg.stderrBufSize);
+  let rawStdin: InstanceType<typeof InputStream>;
+  let rawStdout: InstanceType<typeof OutputStream>;
+  let rawStderr: InstanceType<typeof OutputStream>;
+
+  if (msg.inheritStdin || msg.inheritStdout || msg.inheritStderr) {
+    const { NodeStdinHandler, NodeStdoutHandler, NodeStderrHandler } = await import('@mithic/io/io/providers/node-stdio');
+    rawStdin = msg.inheritStdin
+      ? new InputStream(new NodeStdinHandler())
+      : inputFromSharedBuffer(msg.stdinBuf, msg.stdinBufSize);
+    rawStdout = msg.inheritStdout
+      ? new OutputStream(new NodeStdoutHandler())
+      : outputFromSharedBuffer(msg.stdoutBuf, msg.stdoutBufSize);
+    rawStderr = msg.inheritStderr
+      ? new OutputStream(new NodeStderrHandler())
+      : outputFromSharedBuffer(msg.stderrBuf, msg.stderrBufSize);
+  } else {
+    rawStdin = inputFromSharedBuffer(msg.stdinBuf, msg.stdinBufSize);
+    rawStdout = outputFromSharedBuffer(msg.stdoutBuf, msg.stdoutBufSize);
+    rawStderr = outputFromSharedBuffer(msg.stderrBuf, msg.stderrBufSize);
+  }
 
   const stdin = wrapInputWithSignalCheck(rawStdin, signalSlot);
   const stdout = wrapOutputWithSignalCheck(rawStdout, signalSlot);
@@ -44,20 +65,17 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
       return;
     }
 
-    // Create blob URL from jco JS source and dynamically import it
-    const blob = new Blob([jsSource], { type: 'application/javascript' });
-    const blobUrl = URL.createObjectURL(blob);
-    let instantiate: (
+    // Import jco JS source via data URL (works in both Node.js workers and browsers)
+    const encoded = typeof Buffer !== 'undefined'
+      ? Buffer.from(jsSource).toString('base64')
+      : btoa(jsSource);
+    const dataUrl = `data:text/javascript;base64,${encoded}`;
+
+    const mod = await import(/* webpackIgnore: true */ dataUrl);
+    const instantiate: (
       compileCore: (path: string) => Promise<WebAssembly.Module>,
       imports: Record<string, object>,
-    ) => Promise<{ run: { run: () => number } }>;
-
-    try {
-      const mod = await import(/* webpackIgnore: true */ blobUrl);
-      instantiate = mod.instantiate;
-    } finally {
-      URL.revokeObjectURL(blobUrl);
-    }
+    ) => Promise<{ run: { run: () => number } }> = mod.instantiate;
 
     const compileCore = async (path: string): Promise<WebAssembly.Module> => {
       const bytes = msg.compileResult.modules[path];
@@ -85,6 +103,7 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
 
     const { run } = await instantiate(compileCore, imports);
     const code = run.run() ?? 0;
+    shim[Symbol.dispose]();
     exitSlot.setExitCode(code);
   } catch (e: unknown) {
     if (e && typeof e === 'object' && 'code' in e && typeof (e as { code: unknown }).code === 'number') {

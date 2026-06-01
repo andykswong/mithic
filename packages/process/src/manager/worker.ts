@@ -57,10 +57,26 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
     const exitSlot = createExitSlot();
     const signalSlot = createSignalSlot();
 
-    // Resolve stdio: use caller-provided pipe SABs if available, else create new
-    const stdinHandle = (options?.stdin && pipeHandleMap.get(options.stdin)) ?? createSharedPipeRaw(this.#pipeBufferSize);
-    const stdoutHandle = (options?.stdout && pipeHandleMap.get(options.stdout)) ?? createSharedPipeRaw(this.#pipeBufferSize);
-    const stderrHandle = (options?.stderr && pipeHandleMap.get(options.stderr)) ?? createSharedPipeRaw(this.#pipeBufferSize);
+    // Resolve stdio: use caller-provided pipe SABs if available, else inherit host stdio
+    const stdinPipeHandle = options?.stdin && pipeHandleMap.get(options.stdin);
+    const stdoutPipeHandle = options?.stdout && pipeHandleMap.get(options.stdout);
+    const stderrPipeHandle = options?.stderr && pipeHandleMap.get(options.stderr);
+
+    const stdinHandle = stdinPipeHandle ?? createSharedPipeRaw(this.#pipeBufferSize);
+    const stdoutHandle = stdoutPipeHandle ?? createSharedPipeRaw(this.#pipeBufferSize);
+    const stderrHandle = stderrPipeHandle ?? createSharedPipeRaw(this.#pipeBufferSize);
+
+    // Inherit host stdio when no SharedPipe is backing the stream
+    const inheritStdin = !stdinPipeHandle;
+    const inheritStdout = !stdoutPipeHandle;
+    const inheritStderr = !stderrPipeHandle;
+
+    // When a pipe is handed to a Worker, dup the caller's stream to prevent the
+    // caller's subsequent dispose from setting WRITER/READER_CLOSED on the SAB
+    // prematurely. The Worker owns the pipe now — only its dispose should close it.
+    if (stdinPipeHandle) options!.stdin!.dup();
+    if (stdoutPipeHandle) options!.stdout!.dup();
+    if (stderrPipeHandle) options!.stderr!.dup();
 
     const worker = this.#factory.create(this.#processWorkerUrl, { name: `process-${pid}` });
 
@@ -78,6 +94,9 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
       stdoutBufSize: stdoutHandle.bufferSize,
       stderrBuf: stderrHandle.buffer,
       stderrBufSize: stderrHandle.bufferSize,
+      inheritStdin,
+      inheritStdout,
+      inheritStderr,
     };
 
     worker.postMessage(msg);

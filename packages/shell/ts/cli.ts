@@ -1,7 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { isatty } from 'node:tty';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { Descriptor } from '@mithic/wasip2/filesystem/types';
 import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
 import { SimpleProcessManager } from '@mithic/process/manager/simple';
+import { WorkerProcessManager } from '@mithic/process/manager/worker';
+import type { CompileResult } from '@mithic/process/component/compiler';
 import { WASIProcess } from '@mithic/process/instantiation';
 import { NodeStdinHandler, NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
 import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
@@ -27,8 +32,39 @@ async function compileModules(dataUris: Record<string, string>): Promise<Map<str
   return compiled;
 }
 
-const shellPrecompiled = await compileModules(shellModules);
-const coreutilsPrecompiled = await compileModules(coreutilsModules);
+async function fetchModuleBytes(dataUris: Record<string, string>): Promise<Record<string, Uint8Array>> {
+  const modules: Record<string, Uint8Array> = {};
+  await Promise.all(
+    Object.entries(dataUris).map(async ([name, uri]) => {
+      const response = await fetch(uri);
+      modules[name] = new Uint8Array(await response.arrayBuffer());
+    }),
+  );
+  return modules;
+}
+
+const [shellPrecompiled, coreutilsPrecompiled, shellRawModules, coreutilsRawModules] = await Promise.all([
+  compileModules(shellModules),
+  compileModules(coreutilsModules),
+  fetchModuleBytes(shellModules),
+  fetchModuleBytes(coreutilsModules),
+]);
+
+const shellComponentDir = dirname(fileURLToPath(import.meta.resolve('@mithic/shell/component')));
+const coreutilsComponentDir = dirname(fileURLToPath(import.meta.resolve('@mithic/coreutils/component')));
+const shellJsSource = readFileSync(join(shellComponentDir, 'component.js'), 'utf-8');
+const coreutilsJsSource = readFileSync(join(coreutilsComponentDir, 'component.js'), 'utf-8');
+
+const shellCompileResult: CompileResult = {
+  modules: shellRawModules,
+  jsFiles: { 'component.js': shellJsSource },
+  cached: true,
+};
+const coreutilsCompileResult: CompileResult = {
+  modules: coreutilsRawModules,
+  jsFiles: { 'component.js': coreutilsJsSource },
+  cached: true,
+};
 
 function shellCompileCore(path: string): WebAssembly.Module {
   const mod = shellPrecompiled.get(path);
@@ -80,6 +116,36 @@ const rootDescriptor = new Descriptor(new SyncFsDescriptorHandler(vfs, '/'));
 const hostStdin = new InputStream(new NodeStdinHandler(), undefined, isatty(0));
 const hostStdout = new OutputStream(new NodeStdoutHandler(), undefined, isatty(1));
 const hostStderr = new OutputStream(new NodeStderrHandler(), undefined, isatty(2));
+
+function resolveCommand(file: string): CompileResult | undefined {
+  const name = file.includes('/') ? file.split('/').pop()! : file;
+  if (name === 'sh' || name === 'bash') return shellCompileResult;
+  if (COREUTILS_COMMANDS.has(name)) return coreutilsCompileResult;
+  if (file.includes('/')) {
+    try {
+      const stat = vfs.stat(file);
+      if (stat.mode & 0o111) {
+        const handle = vfs.open(file, { read: true });
+        try {
+          const bytes = vfs.read(handle, 0, Number(stat.size));
+          if (CommandRegistry.isWasmComponent(bytes)) {
+            return registry.resolveBytes(bytes, file) ?? undefined;
+          }
+        } finally {
+          vfs.close(handle);
+        }
+      }
+    } catch { /* not found */ }
+  }
+  return undefined;
+}
+
+const workerManager = new WorkerProcessManager({
+  resolveCommand,
+  workerFactory,
+  processWorkerUrl: new URL(import.meta.resolve('@mithic/process/worker/process.node')),
+  maxWorkers: 8,
+});
 
 function createShellProcessImports(): Record<string, unknown> {
   const manager = new SimpleProcessManager({
@@ -144,6 +210,7 @@ try {
   process.exit(shell.runSync());
 } finally {
   shell[Symbol.dispose]();
+  workerManager[Symbol.dispose]();
   registry[Symbol.dispose]();
   compilerWorker.terminate();
 }
