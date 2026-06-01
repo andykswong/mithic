@@ -18,15 +18,25 @@ interface SpawnResult {
  * Exit/signal slots are also created locally and sent with the spawn request so both
  * threads share the same atomic slots.
  */
+export interface ProxyProcessManagerConfig {
+  pipeBufferSize?: number;
+  hostStdout?: OutputStream;
+  hostStderr?: OutputStream;
+}
+
 export class ProxyProcessManager implements ProcessManager {
   readonly #bridge: BlockingCallFn;
   readonly #foreground = new Set<Process>();
   readonly #pipeHandles = new WeakMap<object, SharedPipeHandle>();
   readonly #pipeBufferSize: number;
+  readonly #hostStdout?: OutputStream;
+  readonly #hostStderr?: OutputStream;
 
-  constructor(bridge: BlockingCallFn, options?: { pipeBufferSize?: number }) {
+  constructor(bridge: BlockingCallFn, options?: ProxyProcessManagerConfig) {
     this.#bridge = bridge;
     this.#pipeBufferSize = options?.pipeBufferSize ?? 65536;
+    this.#hostStdout = options?.hostStdout;
+    this.#hostStderr = options?.hostStderr;
   }
 
   spawn(file: string, args: string[], options?: SpawnOptions): Process {
@@ -49,14 +59,16 @@ export class ProxyProcessManager implements ProcessManager {
       bridgeOut[Symbol.dispose]();
     }
 
-    // For non-pipe stdout/stderr: create bridge SharedPipes that the Worker writes to.
-    // After wait() returns, drain the bridge into the original stream.
+    // For non-pipe stdout/stderr (including inherited): create bridge SharedPipes.
+    // After wait() returns, drain the bridge into the target stream.
     let stdoutBridgeHandle: SharedPipeHandle | undefined;
     let stderrBridgeHandle: SharedPipeHandle | undefined;
-    if (options?.stdout && !stdoutHandle) {
+    const stdoutTarget = options?.stdout ?? this.#hostStdout;
+    const stderrTarget = options?.stderr ?? this.#hostStderr;
+    if (!stdoutHandle && stdoutTarget) {
       stdoutBridgeHandle = createSharedPipeRaw(this.#pipeBufferSize);
     }
-    if (options?.stderr && !stderrHandle) {
+    if (!stderrHandle && stderrTarget) {
       stderrBridgeHandle = createSharedPipeRaw(this.#pipeBufferSize);
     }
 
@@ -86,8 +98,6 @@ export class ProxyProcessManager implements ProcessManager {
     const foreground = this.#foreground;
     const bridgeStdout = stdoutBridgeHandle;
     const bridgeStderr = stderrBridgeHandle;
-    const stdoutStream = options?.stdout;
-    const stderrStream = options?.stderr;
     const bufSize = this.#pipeBufferSize;
 
     const proc = new Process(result.pid, {
@@ -104,14 +114,14 @@ export class ProxyProcessManager implements ProcessManager {
           // After process exits, drain bridge pipes into the original streams.
           // Use blockingRead — the Worker already exited so WRITER_CLOSED is set;
           // blockingRead returns data until empty, then throws {tag:'closed'}.
-          if (bridgeStdout && stdoutStream) {
+          if (bridgeStdout && stdoutTarget) {
             const reader = inputFromSharedBuffer(bridgeStdout.buffer, bridgeStdout.bufferSize);
-            try { while (true) { stdoutStream.write(reader.blockingRead(BigInt(bufSize))); } } catch { /* closed */ }
+            try { while (true) { stdoutTarget.write(reader.blockingRead(BigInt(bufSize))); } } catch { /* closed */ }
             reader[Symbol.dispose]();
           }
-          if (bridgeStderr && stderrStream) {
+          if (bridgeStderr && stderrTarget) {
             const reader = inputFromSharedBuffer(bridgeStderr.buffer, bridgeStderr.bufferSize);
-            try { while (true) { stderrStream.write(reader.blockingRead(BigInt(bufSize))); } } catch { /* closed */ }
+            try { while (true) { stderrTarget.write(reader.blockingRead(BigInt(bufSize))); } } catch { /* closed */ }
             reader[Symbol.dispose]();
           }
           return Atomics.load(exitView, 0);

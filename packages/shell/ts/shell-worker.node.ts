@@ -43,7 +43,6 @@ parentPort?.on('message', (msg: ShellWorkerInit) => {
   const { port, ioPort, shellArgs, env, shellModuleBytes, shellJsSource, isattyStdin, isattyStdout, isattyStderr } = msg;
 
   const blockingCall = createBlockingCall(port);
-  const processManager = new ProxyProcessManager(blockingCall);
 
   // Setup VFS via sync-bridge (backed by main thread's IoLoop)
   const workerIo = new WorkerIo(ioPort);
@@ -61,6 +60,8 @@ parentPort?.on('message', (msg: ShellWorkerInit) => {
   const hostStdin = new InputStream(new NodeStdinHandler(), undefined, isattyStdin);
   const hostStdout = new OutputStream(new NodeStdoutHandler(), undefined, isattyStdout);
   const hostStderr = new OutputStream(new NodeStderrHandler(), undefined, isattyStderr);
+
+  const processManager = new ProxyProcessManager(blockingCall, { hostStdout: hostStdout.dup(), hostStderr: hostStderr.dup() });
 
   const shim = new WASIShim({
     sandbox: {

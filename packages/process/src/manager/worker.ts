@@ -29,6 +29,7 @@ export interface WorkerProcessManagerConfig {
   maxWorkers?: number;
   pipeBufferSize?: number;
   createIoPort?: () => MessagePort;
+  createSpawnPort?: () => MessagePort;
 }
 
 export const pipeHandleMap = new WeakMap<object, SharedPipeHandle>();
@@ -40,6 +41,7 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
   readonly #maxWorkers: number;
   readonly #pipeBufferSize: number;
   readonly #createIoPort?: () => MessagePort;
+  readonly #createSpawnPort?: () => MessagePort;
   readonly #active = new Map<number, ProcessEntry>();
   readonly #foreground = new Set<Process>();
   #nextPid = 1;
@@ -51,6 +53,7 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
     this.#maxWorkers = config.maxWorkers ?? 8;
     this.#pipeBufferSize = config.pipeBufferSize ?? 65536;
     this.#createIoPort = config.createIoPort;
+    this.#createSpawnPort = config.createSpawnPort;
   }
 
   spawn(file: string, args: string[], options?: SpawnExternalOptions): Process {
@@ -76,19 +79,13 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
     const stdoutHandle = stdoutPipeHandle ?? createSharedPipeRaw(this.#pipeBufferSize);
     const stderrHandle = stderrPipeHandle ?? createSharedPipeRaw(this.#pipeBufferSize);
 
-    // Inherit host stdio only when no stream was provided at all
-    const inheritStdin = !options?.stdin;
-    const inheritStdout = !options?.stdout;
-    const inheritStderr = !options?.stderr;
-
-    // Do NOT dup the caller's streams. The Worker creates its own independent
-    // stream from the SAB. When the caller (shell WASM) drops its stream handle,
-    // handler.drop() must fire to set WRITER_CLOSED/READER_CLOSED — this is how
-    // the reader/writer on the other end detects EOF/broken-pipe.
-
     const worker = this.#factory.create(this.#processWorkerUrl, { name: `process-${pid}` });
 
     const ioPort = this.#createIoPort?.();
+    const spawnPort = this.#createSpawnPort?.();
+    const transferList: Transferable[] = [];
+    if (ioPort) transferList.push(ioPort as unknown as Transferable);
+    if (spawnPort) transferList.push(spawnPort as unknown as Transferable);
 
     const msg: RunMessage = {
       type: 'run',
@@ -104,13 +101,11 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
       stdoutBufSize: stdoutHandle.bufferSize,
       stderrBuf: stderrHandle.buffer,
       stderrBufSize: stderrHandle.bufferSize,
-      inheritStdin,
-      inheritStdout,
-      inheritStderr,
       ioPort,
+      spawnPort,
     };
 
-    worker.postMessage(msg, ioPort ? [ioPort as unknown as Transferable] : []);
+    worker.postMessage(msg, transferList);
 
     worker.on('error', () => {
       if (exitSlot.tryWait() === undefined) exitSlot.setExitCode(1);

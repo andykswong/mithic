@@ -1,5 +1,16 @@
 import type { CompileResult } from '../component/compiler.ts';
-import type { Descriptor } from '@mithic/wasip2/filesystem/types';
+import { exitSlotFromBuffer, signalSlotFromBuffer } from '../io/slots.ts';
+import { inputFromSharedBuffer, outputFromSharedBuffer } from '../io/pipes.ts';
+import { wrapInputWithSignalCheck, wrapOutputWithSignalCheck } from '../io/signal-stream.ts';
+import { WASIShim } from '@mithic/wasip2';
+import { WASIProcess } from '@mithic/process/instantiation';
+import { ComponentExit } from '@mithic/wasip2/cli/exit';
+import { Descriptor } from '@mithic/wasip2/filesystem/types';
+import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
+import { WorkerIo, createBlockingCall } from '@mithic/io/io';
+import { SyncBridgeFsProvider } from '@mithic/io/io/providers/sync-bridge';
+import { SyncFileSystemRouter } from '@mithic/io/vfs';
+import { ProxyProcessManager } from '../manager/proxy.ts';
 
 export interface RunMessage {
   type: 'run';
@@ -15,59 +26,29 @@ export interface RunMessage {
   stdoutBufSize: number;
   stderrBuf: SharedArrayBuffer;
   stderrBufSize: number;
-  inheritStdin?: boolean;
-  inheritStdout?: boolean;
-  inheritStderr?: boolean;
   ioPort?: MessagePort;
+  spawnPort?: MessagePort;
 }
 
 export async function handleRunMessage(msg: RunMessage): Promise<void> {
-  const { exitSlotFromBuffer, signalSlotFromBuffer } = await import('../io/slots.ts');
-  const { inputFromSharedBuffer, outputFromSharedBuffer } = await import('../io/pipes.ts');
-  const { InputStream, OutputStream } = await import('@mithic/wasip2/io/streams');
-
   const exitSlot = exitSlotFromBuffer(msg.exitSlotBuf);
   const signalSlot = signalSlotFromBuffer(msg.signalSlotBuf);
 
-  const { wrapInputWithSignalCheck, wrapOutputWithSignalCheck } = await import('../io/signal-stream.ts');
-
-  let rawStdin: InstanceType<typeof InputStream>;
-  let rawStdout: InstanceType<typeof OutputStream>;
-  let rawStderr: InstanceType<typeof OutputStream>;
-
-  if (msg.inheritStdin || msg.inheritStdout || msg.inheritStderr) {
-    const { NodeStdinHandler, NodeStdoutHandler, NodeStderrHandler } = await import('@mithic/io/io/providers/node-stdio');
-    rawStdin = msg.inheritStdin
-      ? new InputStream(new NodeStdinHandler())
-      : inputFromSharedBuffer(msg.stdinBuf, msg.stdinBufSize);
-    rawStdout = msg.inheritStdout
-      ? new OutputStream(new NodeStdoutHandler())
-      : outputFromSharedBuffer(msg.stdoutBuf, msg.stdoutBufSize);
-    rawStderr = msg.inheritStderr
-      ? new OutputStream(new NodeStderrHandler())
-      : outputFromSharedBuffer(msg.stderrBuf, msg.stderrBufSize);
-  } else {
-    rawStdin = inputFromSharedBuffer(msg.stdinBuf, msg.stdinBufSize);
-    rawStdout = outputFromSharedBuffer(msg.stdoutBuf, msg.stdoutBufSize);
-    rawStderr = outputFromSharedBuffer(msg.stderrBuf, msg.stderrBufSize);
-  }
+  const rawStdin = inputFromSharedBuffer(msg.stdinBuf, msg.stdinBufSize);
+  const rawStdout = outputFromSharedBuffer(msg.stdoutBuf, msg.stdoutBufSize);
+  const rawStderr = outputFromSharedBuffer(msg.stderrBuf, msg.stderrBufSize);
 
   const stdin = wrapInputWithSignalCheck(rawStdin, signalSlot);
   const stdout = wrapOutputWithSignalCheck(rawStdout, signalSlot);
   const stderr = wrapOutputWithSignalCheck(rawStderr, signalSlot);
 
   try {
-    const { WASIShim } = await import('@mithic/wasip2');
-    const { WASIProcess } = await import('@mithic/process/instantiation');
-    const { SimpleProcessManager } = await import('../manager/simple.ts');
-
     const jsSource = msg.compileResult.jsFiles?.['component.js'];
     if (!jsSource) {
       exitSlot.setExitCode(126);
       return;
     }
 
-    // Import jco JS source via data URL (works in both Node.js workers and browsers)
     const encoded = typeof Buffer !== 'undefined'
       ? Buffer.from(jsSource).toString('base64')
       : btoa(jsSource);
@@ -85,19 +66,21 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
       return WebAssembly.compile(bytes.slice().buffer);
     };
 
+    // VFS via IoLoop sync-bridge (when available)
     let preopens: Record<string, Descriptor> | undefined;
     if (msg.ioPort) {
-      const { WorkerIo } = await import('@mithic/io/io');
-      const { SyncBridgeFsProvider } = await import('@mithic/io/io/providers/sync-bridge');
-      const { SyncFileSystemRouter } = await import('@mithic/io/vfs');
-      const { Descriptor } = await import('@mithic/wasip2/filesystem/types');
-      const { SyncFsDescriptorHandler } = await import('@mithic/wasip2/filesystem/sync-fs-handler');
-
       const workerIo = new WorkerIo(msg.ioPort);
       const syncFs = new SyncBridgeFsProvider(workerIo);
       const vfs = new SyncFileSystemRouter();
       vfs.mount('/', syncFs);
       preopens = { '/': new Descriptor(new SyncFsDescriptorHandler(vfs, '/')) };
+    }
+
+    // Process management: ProxyProcessManager when spawn port available, else no-op
+    let processManager;
+    if (msg.spawnPort) {
+      const blockingCall = createBlockingCall(msg.spawnPort);
+      processManager = new ProxyProcessManager(blockingCall);
     }
 
     const shim = new WASIShim({
@@ -112,10 +95,6 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
       },
     });
 
-    // TODO: SimpleProcessManager suffices for leaf commands (cat, echo, etc.) that never spawn
-    // children. A nested shell (running scripts with pipelines) would need ProxyProcessManager
-    // delegating back to the orchestrating thread via sync-bridge.
-    const processManager = new SimpleProcessManager();
     const wasiProcess = new WASIProcess({ manager: processManager });
     const imports = { ...shim.getImportObject(), ...wasiProcess.getImportObject() };
 
@@ -124,7 +103,9 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
     shim[Symbol.dispose]();
     exitSlot.setExitCode(code);
   } catch (e: unknown) {
-    if (e && typeof e === 'object' && 'code' in e && typeof (e as { code: unknown }).code === 'number') {
+    if (e instanceof ComponentExit) {
+      exitSlot.setExitCode(e.code);
+    } else if (e && typeof e === 'object' && 'code' in e && typeof (e as { code: unknown }).code === 'number') {
       exitSlot.setExitCode((e as { code: number }).code);
     } else {
       exitSlot.setExitCode(1);
