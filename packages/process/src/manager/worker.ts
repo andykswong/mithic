@@ -57,19 +57,38 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
     const exitSlot = createExitSlot();
     const signalSlot = createSignalSlot();
 
-    // Resolve stdio: use caller-provided pipe SABs if available, else inherit host stdio
+    // Resolve stdio: use caller-provided pipe SABs if available, else inherit host
     const stdinPipeHandle = options?.stdin && pipeHandleMap.get(options.stdin);
     const stdoutPipeHandle = options?.stdout && pipeHandleMap.get(options.stdout);
     const stderrPipeHandle = options?.stderr && pipeHandleMap.get(options.stderr);
 
-    const stdinHandle = stdinPipeHandle ?? createSharedPipeRaw(this.#pipeBufferSize);
+    // For stdin: if a non-SharedPipe stream is provided, bridge it by pumping data
+    // into a new SharedPipe synchronously (works for finite sources like file redirects).
+    let stdinHandle: SharedPipeHandle;
+    if (stdinPipeHandle) {
+      stdinHandle = stdinPipeHandle;
+    } else if (options?.stdin) {
+      stdinHandle = createSharedPipeRaw(this.#pipeBufferSize);
+      const bridgeOut = outputFromSharedBuffer(stdinHandle.buffer, stdinHandle.bufferSize);
+      try {
+        while (true) {
+          const chunk = options.stdin.read(BigInt(this.#pipeBufferSize));
+          if (chunk.byteLength === 0) break;
+          bridgeOut.write(chunk);
+        }
+      } catch { /* stream closed or error — done pumping */ }
+      bridgeOut[Symbol.dispose]();
+    } else {
+      stdinHandle = createSharedPipeRaw(this.#pipeBufferSize);
+    }
+
     const stdoutHandle = stdoutPipeHandle ?? createSharedPipeRaw(this.#pipeBufferSize);
     const stderrHandle = stderrPipeHandle ?? createSharedPipeRaw(this.#pipeBufferSize);
 
-    // Inherit host stdio when no SharedPipe is backing the stream
-    const inheritStdin = !stdinPipeHandle;
-    const inheritStdout = !stdoutPipeHandle;
-    const inheritStderr = !stderrPipeHandle;
+    // Inherit host stdio only when no stream was provided at all
+    const inheritStdin = !options?.stdin;
+    const inheritStdout = !options?.stdout;
+    const inheritStderr = !options?.stderr;
 
     // Do NOT dup the caller's streams. The Worker creates its own independent
     // stream from the SAB. When the caller (shell WASM) drops its stream handle,
