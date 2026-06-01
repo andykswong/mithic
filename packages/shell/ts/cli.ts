@@ -109,17 +109,24 @@ const ioLoop = new IoLoop({ onCall: createCallHandler({ fs: vfs }) });
 
 // --- WorkerProcessManager ---
 
+let spawnHandler: CallHandler;
+
 const workerManager = new WorkerProcessManager({
   resolveCommand,
   workerFactory,
   processWorkerUrl: new URL(import.meta.resolve('@mithic/process/worker/process.node')),
   maxWorkers: 8,
   createIoPort: () => ioLoop.addWorker(),
+  createSpawnPort: () => {
+    const { port1, port2 } = new MessageChannel();
+    handleBlockingCalls(spawnHandler, port1);
+    return port2;
+  },
 });
 
 // --- Spawn handler: responds to CALL_SPAWN from shell Worker ---
 
-const spawnHandler: CallHandler = async (call, _id, payload) => {
+spawnHandler = async (call, _id, payload) => {
   if (call === CALL_SPAWN) {
     const p = payload as {
       file: string;
