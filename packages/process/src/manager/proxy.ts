@@ -52,7 +52,7 @@ export class ProxyProcessManager implements ProcessManager {
       try {
         while (true) {
           const chunk = options.stdin.read(BigInt(this.#pipeBufferSize));
-          if (chunk.byteLength === 0) break;
+          if (!chunk || chunk.byteLength === 0) break;
           bridgeOut.write(chunk);
         }
       } catch { /* stream closed */ }

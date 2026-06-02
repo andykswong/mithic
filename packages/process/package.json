@@ -18,6 +18,7 @@
     "./manager/simple": "./dist/manager/simple.js",
     "./manager/worker": "./dist/manager/worker.js",
     "./manager/proxy": "./dist/manager/proxy.js",
+    "./component/eval-jco": "./dist/component/eval-jco.js",
     "./component/registry": "./dist/component/registry.js",
     "./component/compiler": "./dist/component/compiler.js",
     "./worker/compiler": "./dist/worker/compiler.js",

@@ -5,6 +5,7 @@ import type { CommandContext, CommandResolver } from '@mithic/process/manager/si
 import type { SyncFileSystemProvider } from '@mithic/io/vfs';
 import { COREUTILS_COMMANDS } from '@mithic/coreutils';
 import { CommandRegistry, type CompileResult, type SyncInstantiateFn } from '@mithic/process/component/registry';
+import { evalJcoSource } from '@mithic/process/component/eval-jco';
 
 export type { SyncInstantiateFn };
 
@@ -86,12 +87,7 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
       return 126;
     }
 
-    // Eval jco output to get instantiate function (coupled to jco ^1.20 output format)
-    const stripped = jsSource
-      .replace(/^export\s+/gm, '')
-      .replace(/^import\s+.*$/gm, '')
-      .replace(/import\.meta/g, '__importMeta');
-    const instantiate = new Function('__importMeta', `${stripped}\nreturn instantiate;`)({ url: 'file:///dynamic' }) as SyncInstantiateFn;
+    const instantiate = evalJcoSource(jsSource);
 
     // Compile core WASM modules
     const compiled = new Map<string, WebAssembly.Module>();

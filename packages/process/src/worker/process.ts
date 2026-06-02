@@ -75,30 +75,29 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
   try {
     const jsSource = msg.compileResult.jsFiles?.['component.js'];
     if (!jsSource) {
+      rawStdout[Symbol.dispose]();
+      rawStderr[Symbol.dispose]();
+      rawStdin[Symbol.dispose]();
       exitSlot.setExitCode(126);
       return;
     }
 
-    // Eval jco JS source to get sync instantiate function (same pattern as shell-worker)
-    const stripped = jsSource
-      .replace(/^export\s+/gm, '')
-      .replace(/^import\s+.*$/gm, '')
-      .replace(/import\.meta/g, '__importMeta');
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    const instantiate = new Function('__importMeta', `${stripped}\nreturn instantiate;`)({ url: 'file:///process-worker' }) as (
-      compileCore: (path: string) => WebAssembly.Module,
-      imports: object,
-      instantiateCore: (module: WebAssembly.Module, imports: WebAssembly.Imports) => WebAssembly.Instance,
-    ) => { run: { run: () => number } };
+    // Use native ESM import via data URL (no eval needed in async context)
+    const encoded = typeof Buffer !== 'undefined'
+      ? Buffer.from(jsSource).toString('base64')
+      : btoa(jsSource);
+    const dataUrl = `data:text/javascript;base64,${encoded}`;
+    const mod = await import(/* webpackIgnore: true */ dataUrl);
+    const instantiate = mod.instantiate as (
+      compileCore: (path: string) => Promise<WebAssembly.Module>,
+      imports: Record<string, object>,
+    ) => Promise<{ run: { run: () => number } }>;
 
-    const compileCore = (path: string): WebAssembly.Module => {
+    const compileCore = async (path: string): Promise<WebAssembly.Module> => {
       const bytes = msg.compileResult.modules[path];
       if (!bytes) throw new Error(`Module not found: ${path}`);
-      return new WebAssembly.Module(bytes.slice().buffer);
+      return WebAssembly.compile(bytes.slice().buffer);
     };
-
-    const syncInstantiateCore = (module: WebAssembly.Module, imports: WebAssembly.Imports): WebAssembly.Instance =>
-      new WebAssembly.Instance(module, imports);
 
     // VFS via IoLoop sync-bridge (when available)
     let preopens: Record<string, Descriptor> | undefined;
@@ -133,7 +132,7 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
     const wasiProcess = new WASIProcess({ manager: processManager });
     const imports = { ...shim.getImportObject(), ...wasiProcess.getImportObject() };
 
-    const { run } = instantiate(compileCore, imports, syncInstantiateCore);
+    const { run } = await instantiate(compileCore, imports);
     const code = run.run() ?? 0;
     shim[Symbol.dispose]();
     // Dispose raw streams directly to ensure WRITER_CLOSED/READER_CLOSED is set

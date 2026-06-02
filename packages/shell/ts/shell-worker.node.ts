@@ -18,8 +18,9 @@ import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 import { Descriptor } from '@mithic/wasip2/filesystem/types';
 import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
 import { DeviceFsProvider, SyncFileSystemRouter } from '@mithic/io/vfs';
-import type { ProcessManager, SpawnOptions, Signal, PipeOptions } from '@mithic/process/types';
-import { createCommandResolver, type SyncInstantiateFn } from './commands.ts';
+import { type ProcessManager, type SpawnOptions, type Signal, type PipeOptions } from '@mithic/process/types';
+import { evalJcoSource } from '@mithic/process/component/eval-jco';
+import { createCommandResolver } from './commands.ts';
 
 export interface ShellWorkerInit {
   type: '__shell_init';
@@ -79,11 +80,7 @@ parentPort?.on('message', (msg: ShellWorkerInit) => {
   };
 
   // Eval shell jco JS source to get the synchronous instantiate function
-  const shellStripped = shellJsSource
-    .replace(/^export\s+/gm, '')
-    .replace(/^import\s+.*$/gm, '')
-    .replace(/import\.meta/g, '__importMeta');
-  const shellInstantiate = new Function('__importMeta', `${shellStripped}\nreturn instantiate;`)({ url: 'file:///shell-worker' }) as SyncInstantiateFn;
+  const shellInstantiate = evalJcoSource(shellJsSource);
 
   // Compile coreutils WASM modules synchronously
   const coreutilsCompiled = new Map<string, WebAssembly.Module>();
@@ -98,11 +95,7 @@ parentPort?.on('message', (msg: ShellWorkerInit) => {
   };
 
   // Eval coreutils jco JS source to get the synchronous instantiate function
-  const coreutilsStripped = coreutilsJsSource
-    .replace(/^export\s+/gm, '')
-    .replace(/^import\s+.*$/gm, '')
-    .replace(/import\.meta/g, '__importMeta');
-  const coreutilsInstantiate = new Function('__importMeta', `${coreutilsStripped}\nreturn instantiate;`)({ url: 'file:///coreutils-worker' }) as SyncInstantiateFn;
+  const coreutilsInstantiate = evalJcoSource(coreutilsJsSource);
 
   // Composite ProcessManager: try proxy (Workers) first, fall back to local on "not-found"
   let localManager: SimpleProcessManager | undefined = undefined;
@@ -111,9 +104,9 @@ parentPort?.on('message', (msg: ShellWorkerInit) => {
       try {
         return proxyManager.spawn(file, args, options);
       } catch (e: unknown) {
-        const isNotFound = (e && typeof e === 'object' && 'payload' in e &&
-          (e as { payload: { tag: string } }).payload?.tag === 'not-found');
-        if (isNotFound) {
+        const payload = e && typeof e === 'object' && 'payload' in e
+          ? (e as { payload: { tag?: string } }).payload : undefined;
+        if (payload?.tag === 'not-found') {
           return localManager!.spawn(file, args, options);
         }
         throw e;
