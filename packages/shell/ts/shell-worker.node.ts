@@ -18,7 +18,7 @@ import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 import { Descriptor } from '@mithic/wasip2/filesystem/types';
 import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
 import { DeviceFsProvider, SyncFileSystemRouter } from '@mithic/io/vfs';
-import { type ProcessManager, type SpawnOptions, type Signal, type PipeOptions } from '@mithic/process/types';
+import type { ProcessManager, SpawnOptions, Signal, PipeOptions } from '@mithic/process/types';
 import { evalJcoSource } from '@mithic/process/component/eval-jco';
 import { createCommandResolver } from './commands.ts';
 

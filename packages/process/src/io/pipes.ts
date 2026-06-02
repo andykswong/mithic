@@ -328,16 +328,7 @@ export function outputFromSharedBuffer(buffer: SharedArrayBuffer, bufferSize: nu
       if (Atomics.load(control, READER_CLOSED)) {
         throw { tag: 'last-operation-failed', val: { toDebugString: () => 'broken-pipe' } } as StreamError;
       }
-      const free = freeSpace();
-      if (free === 0) {
-        // Buffer full — wait for reader to drain, checking READER_CLOSED
-        Atomics.wait(control, READ_POS, Atomics.load(control, READ_POS));
-        if (Atomics.load(control, READER_CLOSED)) {
-          throw { tag: 'last-operation-failed', val: { toDebugString: () => 'broken-pipe' } } as StreamError;
-        }
-        return freeSpace();
-      }
-      return free;
+      return freeSpace();
     },
     write(buf: Uint8Array): void {
       if (Atomics.load(control, READER_CLOSED)) {
@@ -356,5 +347,9 @@ export function outputFromSharedBuffer(buffer: SharedArrayBuffer, bufferSize: nu
     },
   };
 
-  return new OutputStream(outputHandler, () => new Pollable(() => Atomics.load(control, READER_CLOSED) !== 0 || freeSpace() > 0));
+  const pollReady = () => Atomics.load(control, READER_CLOSED) !== 0 || freeSpace() > 0;
+  return new OutputStream(outputHandler, () => new Pollable(
+    pollReady,
+    () => { while (!pollReady()) { Atomics.wait(control, READ_POS, Atomics.load(control, READ_POS), 100); } },
+  ));
 }

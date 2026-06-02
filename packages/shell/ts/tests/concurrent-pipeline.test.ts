@@ -44,20 +44,16 @@ describe('concurrent pipeline execution (Phase B)', () => {
     assert.strictEqual(exit, 1);
   });
 
-  // Phase B requirement: these will ONLY pass with WorkerProcessManager
-  // Currently they timeout with SimpleProcessManager due to deadlock.
-  // TODO: Enable once WorkerProcessManager is integrated into cli.ts
-  //
-  // it('cat /dev/zero | head -c 4 does not deadlock', async () => {
-  //   const { stdout, exit } = await runShell('cat /dev/zero | head -c 4\n');
-  //   assert.strictEqual(stdout.length, 4);
-  //   assert.strictEqual(exit, 0);
-  // });
-  //
-  // it('yes | head -n 3 terminates with broken-pipe', async () => {
-  //   const { stdout, exit } = await runShell('yes | head -n 3\n');
-  //   const lines = stdout.trim().split('\n');
-  //   assert.strictEqual(lines.length, 3);
-  //   assert.strictEqual(exit, 0);
-  // });
+  it('yes | head -n 3 terminates with broken-pipe', async () => {
+    const { stdout, exit } = await runShell('yes | head -n 3\n');
+    const lines = stdout.trim().split('\n');
+    assert.strictEqual(lines.length, 3);
+    assert.strictEqual(exit, 0);
+  });
+
+  it('cat /dev/zero | head -c 4 does not deadlock', async () => {
+    const { stdout, exit } = await runShell('cat /dev/zero | head -c 4 | wc -c\n', 10000);
+    assert.strictEqual(exit, 0);
+    assert.strictEqual(stdout.trim(), '4');
+  });
 });
