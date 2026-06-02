@@ -136,10 +136,20 @@ export class OutputStream {
     if (!this.#open) {
       throw { tag: 'closed' } as StreamError;
     }
-    this.#handler.write(contents);
-    if (this.#handler.flush) {
-      this.#handler.flush();
+    // Per WASI spec: block until all data written, writing in chunks based on checkWrite capacity
+    let offset = 0;
+    while (offset < contents.byteLength) {
+      const capacity = Number(this.checkWrite());
+      if (capacity <= 0) {
+        const pollable = this.subscribe();
+        pollable.block();
+        continue;
+      }
+      const chunk = contents.subarray(offset, offset + Math.min(contents.byteLength - offset, capacity));
+      this.write(chunk);
+      offset += chunk.byteLength;
     }
+    this.flush();
   }
 
   flush(): void {

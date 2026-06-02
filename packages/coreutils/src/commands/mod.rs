@@ -89,7 +89,7 @@ pub fn write_stdout(s: &str) {
 pub fn write_stdout_bytes(data: &[u8]) {
     use std::io::Write;
     let mut out = std::io::stdout();
-    out.write_all(data).ok();
+    if out.write_all(data).is_err() { std::process::exit(141); }
     out.flush().ok();
 }
 
