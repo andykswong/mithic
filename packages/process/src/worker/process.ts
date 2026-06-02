@@ -82,7 +82,7 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
       return;
     }
 
-    // Use native ESM import via data URL (no eval needed in async context)
+    // Use native ESM import via data URL
     const encoded = typeof Buffer !== 'undefined'
       ? Buffer.from(jsSource).toString('base64')
       : btoa(jsSource);

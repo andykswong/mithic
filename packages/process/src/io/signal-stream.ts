@@ -15,7 +15,7 @@ export function wrapInputWithSignalCheck(stream: InputStream, signalSlot: Signal
     },
     drop() { stream[Symbol.dispose]?.(); },
   };
-  return new InputStream(handler, undefined, stream.isatty);
+  return new InputStream(handler, () => stream.subscribe(), stream.isatty);
 }
 
 export function wrapOutputWithSignalCheck(stream: OutputStream, signalSlot: SignalSlot): OutputStream {
@@ -33,5 +33,5 @@ export function wrapOutputWithSignalCheck(stream: OutputStream, signalSlot: Sign
     flush(): void { stream.flush(); },
     drop() { stream[Symbol.dispose]?.(); },
   };
-  return new OutputStream(handler, undefined, stream.isatty);
+  return new OutputStream(handler, () => stream.subscribe(), stream.isatty);
 }
