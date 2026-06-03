@@ -6,6 +6,7 @@ import type { SyncFileSystemProvider } from '@mithic/io/vfs';
 import { COREUTILS_COMMANDS } from '@mithic/coreutils';
 import { CommandRegistry, type CompileResult, type SyncInstantiateFn } from '@mithic/process/component/registry';
 import { evalJcoSource } from '@mithic/process/component/eval-jco';
+import { createChmodHandler } from './commands/chmod.ts';
 
 export type { SyncInstantiateFn };
 
@@ -22,6 +23,10 @@ export interface CommandsConfig {
 
 
 const enc = new TextEncoder();
+
+function writeError(ctx: CommandContext, msg: string): void {
+  ctx.stderr.blockingWriteAndFlush(enc.encode(msg));
+}
 
 function syncInstantiateCore(module: WebAssembly.Module, imports: WebAssembly.Imports): WebAssembly.Instance {
   return new WebAssembly.Instance(module, imports);
@@ -83,7 +88,7 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
   function runWasmComponent(result: CompileResult, path: string, args: string[], ctx: CommandContext): number {
     const jsSource = result.jsFiles?.['component.js'];
     if (!jsSource) {
-      ctx.stderr.blockingWriteAndFlush(enc.encode(`${path}: compiled component missing JS wrapper\n`));
+      writeError(ctx, `${path}: compiled component missing JS wrapper\n`);
       return 126;
     }
 
@@ -103,32 +108,35 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
     return runComponent(instantiate, compileCore, [path, ...args], ctx, config.createProcessImports());
   }
 
+  function tryRunWasm(bytes: Uint8Array, path: string, args: string[], ctx: CommandContext): number | null {
+    if (!CommandRegistry.isWasmComponent(bytes)) return null;
+    if (!config.registry) {
+      writeError(ctx, `${path}: WASM execution not available (no compiler configured)\n`);
+      return 126;
+    }
+    let result;
+    try {
+      result = config.registry.resolveBytes(bytes, path);
+    } catch (e: unknown) {
+      writeError(ctx, `${path}: ${e instanceof Error ? e.message : 'unknown error'}\n`);
+      return 126;
+    }
+    if (!result) {
+      writeError(ctx, `${path}: failed to compile WASM component\n`);
+      return 126;
+    }
+    return runWasmComponent(result, path, args, ctx);
+  }
+
   function runScriptSync(path: string, scriptArgs: string[], ctx: CommandContext): number {
     const stat = memFs.stat(path);
     if (!(stat.mode & 0o111)) {
-      ctx.stderr.blockingWriteAndFlush(enc.encode(`${path}: permission denied\n`));
+      writeError(ctx, `${path}: permission denied\n`);
       return 126;
     }
     const bytes = readMemFile(path, stat.size);
-    if (CommandRegistry.isWasmComponent(bytes)) {
-      if (!config.registry) {
-        ctx.stderr.blockingWriteAndFlush(enc.encode(`${path}: WASM execution not available (no compiler configured)\n`));
-        return 126;
-      }
-      let result;
-      try {
-        result = config.registry.resolveBytes(bytes, path);
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : 'unknown error';
-        ctx.stderr.blockingWriteAndFlush(enc.encode(`${path}: ${msg}\n`));
-        return 126;
-      }
-      if (!result) {
-        ctx.stderr.blockingWriteAndFlush(enc.encode(`${path}: failed to compile WASM component\n`));
-        return 126;
-      }
-      return runWasmComponent(result, path, scriptArgs, ctx);
-    }
+    const wasmResult = tryRunWasm(bytes, path, scriptArgs, ctx);
+    if (wasmResult !== null) return wasmResult;
     const text = new TextDecoder().decode(bytes);
     let interpreter = 'sh';
     let interpArgs: string[] = [];
@@ -142,7 +150,7 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
     if (interpName === 'sh' || interpName === 'bash') {
       return runChildSync([...interpArgs, path, ...scriptArgs], ctx, interpName);
     }
-    ctx.stderr.blockingWriteAndFlush(enc.encode(`${path}: ${interpreter}: interpreter not found\n`));
+    writeError(ctx, `${path}: ${interpreter}: interpreter not found\n`);
     return 127;
   }
 
@@ -154,24 +162,9 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
         if (!(stat.mode & 0o111)) continue;
         const bytes = readMemFile(p, stat.size < 4n ? stat.size : 4n);
         if (CommandRegistry.isWasmComponent(bytes)) {
-          if (!config.registry) {
-            ctx.stderr.blockingWriteAndFlush(enc.encode(`${p}: WASM execution not available (no compiler configured)\n`));
-            return 126;
-          }
           const fullBytes = readMemFile(p, stat.size);
-          let result;
-          try {
-            result = config.registry.resolveBytes(fullBytes, p);
-          } catch (e: unknown) {
-            const msg = e instanceof Error ? e.message : 'unknown error';
-            ctx.stderr.blockingWriteAndFlush(enc.encode(`${p}: ${msg}\n`));
-            return 126;
-          }
-          if (!result) {
-            ctx.stderr.blockingWriteAndFlush(enc.encode(`${p}: failed to compile WASM component\n`));
-            return 126;
-          }
-          return runWasmComponent(result, p, args, ctx);
+          const wasmResult = tryRunWasm(fullBytes, p, args, ctx);
+          if (wasmResult !== null) return wasmResult;
         }
         return runScriptSync(p, args, ctx);
       } catch {
@@ -181,57 +174,11 @@ export function createCommandResolver(config: CommandsConfig): CommandResolver {
     return null;
   }
 
-  function chmodHandler(args: string[], ctx: CommandContext): number {
-    const isSymbolicMode = (a: string) => /^[ugoa]*[+\-=][rwxXst]*$/.test(a);
-    const nonFlags = args.filter(a => !a.startsWith('-') || isSymbolicMode(a));
-    const modeStr = nonFlags[0];
-    const paths = nonFlags.slice(1);
-    let exitCode = 0;
-    if (!modeStr || paths.length === 0) {
-      ctx.stderr.blockingWriteAndFlush(enc.encode('chmod: missing operand\n'));
-      exitCode = 1;
-    } else if (/^[0-7]+$/.test(modeStr)) {
-      const mode = parseInt(modeStr, 8);
-      for (const p of paths) {
-        try { memFs.chmod(p, mode); } catch { exitCode = 1; }
-      }
-    } else {
-      const match = /^([ugoa]*)([+\-=])([rwxXst]*)$/.exec(modeStr);
-      if (!match) {
-        ctx.stderr.blockingWriteAndFlush(enc.encode(`chmod: invalid mode: '${modeStr}'\n`));
-        exitCode = 1;
-      } else {
-        const [, who, op, perms] = match;
-        const targets = who === '' ? 'ugo' : who.replace('a', 'ugo');
-        for (const p of paths) {
-          try {
-            const stat = memFs.stat(p);
-            let mode = stat.mode;
-            let bits = 0;
-            if (perms.includes('r')) bits |= 0o444;
-            if (perms.includes('w')) bits |= 0o222;
-            if (perms.includes('x') || perms.includes('X')) bits |= 0o111;
-            let mask = 0;
-            if (targets.includes('u')) mask |= 0o700;
-            if (targets.includes('g')) mask |= 0o070;
-            if (targets.includes('o')) mask |= 0o007;
-            bits &= mask;
-            if (op === '+') mode |= bits;
-            else if (op === '-') mode &= ~bits;
-            else mode = (mode & ~mask) | bits;
-            memFs.chmod(p, mode);
-          } catch { exitCode = 1; }
-        }
-      }
-    }
-    return exitCode;
-  }
-
   return (file: string) => {
     const name = file.includes('/') ? file.split('/').pop()! : file;
 
     if (name === 'sh' || name === 'bash') return (a: string[], c: CommandContext) => runChildSync(a, c, name);
-    if (name === 'chmod') return chmodHandler;
+    if (name === 'chmod') return createChmodHandler(memFs);
     if (COREUTILS_COMMANDS.has(name)) return (a: string[], c: CommandContext) => runCoreutilSync(name, a, c);
 
     if (file.includes('/')) {

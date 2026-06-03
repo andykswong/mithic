@@ -1,13 +1,24 @@
-import { parentPort, workerData } from 'node:worker_threads';
+import '@mithic/worker';
 
 const HEADER_SIZE = 16;
 const WRITE_POS = 1;
 
-parentPort?.on('message', (msg: { type: string; data?: number[] }) => {
-  if (msg?.type === 'write' && msg.data && workerData?.pipeBuf) {
-    const bufferSize: number = workerData.pipeBufSize;
-    const control = new Int32Array(workerData.pipeBuf, 0, 4);
-    const dataRegion = new Uint8Array(workerData.pipeBuf, HEADER_SIZE);
+let pipeBuf: SharedArrayBuffer | undefined;
+let pipeBufSize: number | undefined;
+let exitSlotBuf: SharedArrayBuffer | undefined;
+
+self.onmessage = (e: MessageEvent) => {
+  const msg = e.data;
+  if (msg?.type === 'init') {
+    pipeBuf = msg.pipeBuf;
+    pipeBufSize = msg.pipeBufSize;
+    exitSlotBuf = msg.exitSlotBuf;
+    return;
+  }
+  if (msg?.type === 'write' && msg.data && pipeBuf && pipeBufSize) {
+    const bufferSize = pipeBufSize;
+    const control = new Int32Array(pipeBuf, 0, 4);
+    const dataRegion = new Uint8Array(pipeBuf, HEADER_SIZE);
 
     const bytes = new Uint8Array(msg.data);
     const wp = Atomics.load(control, WRITE_POS);
@@ -19,10 +30,10 @@ parentPort?.on('message', (msg: { type: string; data?: number[] }) => {
     Atomics.store(control, WRITE_POS, (wp + bytes.byteLength) % bufferSize);
     Atomics.notify(control, WRITE_POS);
 
-    if (workerData.exitSlotBuf) {
-      const exitView = new Int32Array(workerData.exitSlotBuf);
+    if (exitSlotBuf) {
+      const exitView = new Int32Array(exitSlotBuf);
       Atomics.store(exitView, 0, 0);
       Atomics.notify(exitView, 0);
     }
   }
-});
+};

@@ -1,14 +1,11 @@
-import type { WorkerFactory, ManagedWorker } from '@mithic/io/io/worker-factory';
-import { Process, ProcessError, type ProcessManager, type SpawnOptions, type Signal, type PipeOptions, SIGNAL_NUMBER } from '../types.ts';
+import { Process, ProcessError, type ProcessManager, type ProcessWorker, type RunOptions, type SpawnOptions, type Signal, type PipeOptions, SIGNAL_NUMBER } from '../types.ts';
 import { createExitSlot, createSignalSlot, exitSlotFromBuffer, signalSlotFromBuffer } from '../io/slots.ts';
 import { createSharedPipeRaw, inputFromSharedBuffer, outputFromSharedBuffer, type SharedPipeHandle } from '../io/pipes.ts';
-import type { CompileResult } from '../component/compiler.ts';
-import type { RunMessage } from '../worker/process.ts';
 import type { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 
 interface ProcessEntry {
   pid: number;
-  worker: ManagedWorker;
+  processWorker: ProcessWorker;
   exitSlot: ReturnType<typeof createExitSlot>;
   signalSlot: ReturnType<typeof createSignalSlot>;
 }
@@ -20,12 +17,8 @@ export interface SpawnExternalOptions extends SpawnOptions {
   signalSlotBuf?: SharedArrayBuffer;
 }
 
-export type CommandResolver = (file: string) => CompileResult | undefined;
-
 export interface WorkerProcessManagerConfig {
-  resolveCommand: CommandResolver;
-  workerFactory: WorkerFactory;
-  processWorkerUrl: string | URL;
+  createWorker: (file: string, name?: string) => ProcessWorker | undefined;
   maxWorkers?: number;
   pipeBufferSize?: number;
   createIoPort?: () => MessagePort;
@@ -38,9 +31,7 @@ export interface WorkerProcessManagerConfig {
 export const pipeHandleMap = new WeakMap<object, SharedPipeHandle>();
 
 export class WorkerProcessManager implements ProcessManager, Disposable {
-  readonly #resolveCommand: CommandResolver;
-  readonly #factory: WorkerFactory;
-  readonly #processWorkerUrl: string | URL;
+  readonly #createWorker: (file: string, name?: string) => ProcessWorker | undefined;
   readonly #maxWorkers: number;
   readonly #pipeBufferSize: number;
   readonly #createIoPort?: () => MessagePort;
@@ -53,9 +44,7 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
   #nextPid = 1;
 
   constructor(config: WorkerProcessManagerConfig) {
-    this.#resolveCommand = config.resolveCommand;
-    this.#factory = config.workerFactory;
-    this.#processWorkerUrl = config.processWorkerUrl;
+    this.#createWorker = config.createWorker;
     this.#maxWorkers = config.maxWorkers ?? 8;
     this.#pipeBufferSize = config.pipeBufferSize ?? 65536;
     this.#createIoPort = config.createIoPort;
@@ -66,16 +55,16 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
   }
 
   spawn(file: string, args: string[], options?: SpawnExternalOptions): Process {
-    const compileResult = this.#resolveCommand(file);
-    if (!compileResult) {
-      throw new ProcessError('not-found', `command not found: ${file}`);
-    }
-
     if (this.#active.size >= this.#maxWorkers) {
       throw new ProcessError('resource-exhausted', `max processes (${this.#maxWorkers}) reached`);
     }
 
     const pid = this.#nextPid++;
+    const processWorker = this.#createWorker(file, `process-${pid}`);
+    if (!processWorker) {
+      throw new ProcessError('not-found', `command not found: ${file}`);
+    }
+
     const exitSlot = options?.exitSlotBuf ? exitSlotFromBuffer(options.exitSlotBuf) : createExitSlot();
     const signalSlot = options?.signalSlotBuf ? signalSlotFromBuffer(options.signalSlotBuf) : createSignalSlot();
 
@@ -88,17 +77,13 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
     const stdoutHandle = stdoutPipeHandle ?? createSharedPipeRaw(this.#pipeBufferSize);
     const stderrHandle = stderrPipeHandle ?? createSharedPipeRaw(this.#pipeBufferSize);
 
-    const worker = this.#factory.create(this.#processWorkerUrl, { name: `process-${pid}` });
-
     const ioPort = this.#createIoPort?.();
     const spawnPort = this.#createSpawnPort?.();
     const transferList: Transferable[] = [];
     if (ioPort) transferList.push(ioPort as unknown as Transferable);
     if (spawnPort) transferList.push(spawnPort as unknown as Transferable);
 
-    const msg: RunMessage = {
-      type: 'run',
-      compileResult,
+    const runOptions: RunOptions = {
       args: [file, ...args],
       env: options?.env ?? {},
       cwd: options?.cwd ?? '/',
@@ -120,24 +105,24 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
       spawnPort,
     };
 
-    worker.postMessage(msg, transferList);
+    processWorker.run(runOptions, transferList);
 
-    worker.on('error', () => {
+    processWorker.addEventListener('error', () => {
       if (exitSlot.tryWait() === undefined) exitSlot.setExitCode(1);
     });
-    worker.on('exit', () => {
+    processWorker.addEventListener('close', () => {
       if (exitSlot.tryWait() === undefined) exitSlot.setExitCode(137);
       this.#active.delete(pid);
     });
 
-    const entry: ProcessEntry = { pid, worker, exitSlot, signalSlot };
+    const entry: ProcessEntry = { pid, processWorker, exitSlot, signalSlot };
     this.#active.set(pid, entry);
 
     const foreground = this.#foreground;
     const proc = new Process(pid, {
       onKill(signal: Signal) {
         signalSlot.send(SIGNAL_NUMBER[signal]);
-        if (signal === 'sigkill') worker.terminate();
+        if (signal === 'sigkill') processWorker.terminate();
       },
       wait() {
         foreground.add(proc);
@@ -194,7 +179,7 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
       if (entry.exitSlot.tryWait() === undefined) {
         entry.exitSlot.setExitCode(129);
       }
-      entry.worker.terminate();
+      entry.processWorker.terminate();
     }
     this.#active.clear();
   }

@@ -17,16 +17,14 @@
     "./io/signal-stream": "./dist/io/signal-stream.js",
     "./manager/simple": "./dist/manager/simple.js",
     "./manager/worker": "./dist/manager/worker.js",
+    "./manager/component-worker": "./dist/manager/component-worker.js",
+    "./manager/inline-worker": "./dist/manager/inline-worker.js",
     "./manager/proxy": "./dist/manager/proxy.js",
     "./component/eval-jco": "./dist/component/eval-jco.js",
     "./component/registry": "./dist/component/registry.js",
     "./component/compiler": "./dist/component/compiler.js",
-    "./worker/compiler": "./dist/worker/compiler.js",
-    "./worker/compiler.node": "./dist/worker/compiler.node.js",
-    "./worker/compiler.browser": "./dist/worker/compiler.browser.js",
-    "./worker/process": "./dist/worker/process.js",
-    "./worker/process.node": "./dist/worker/process.node.js",
-    "./worker/process.browser": "./dist/worker/process.browser.js",
+    "./worker/compiler": "./dist/worker/compiler.worker.js",
+    "./worker/process": "./dist/worker/process.worker.js",
     "./wit/*": "./wit/*"
   },
   "files": [
@@ -73,5 +71,6 @@
     }
   },
   "devDependencies": {
+    "@mithic/worker": "^0.1"
   }
 }

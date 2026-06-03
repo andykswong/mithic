@@ -1,94 +1,73 @@
 import { describe, it, beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { WorkerProcessManager, type CommandResolver } from './worker.ts';
-import type { CompileResult } from '../component/compiler.ts';
-import type { ManagedWorker, WorkerFactory } from '@mithic/io/io/worker-factory';
+import { WorkerProcessManager } from './worker.ts';
+import type { ProcessWorker, RunOptions } from '../types.ts';
 
-interface MockWorker extends ManagedWorker {
-  handlers: Map<string, ((...args: unknown[]) => void)[]>;
-  messages: unknown[];
-  simulateExit(code: number): void;
-  simulateError(err: Error): void;
+interface MockProcessWorker extends ProcessWorker {
+  handlers: Map<string, (() => void)[]>;
+  runCalls: Array<{ options: RunOptions; transfer: Transferable[] }>;
+  simulateClose(): void;
+  simulateError(): void;
 }
 
-function createMockWorker(): MockWorker {
-  const handlers = new Map<string, ((...args: unknown[]) => void)[]>();
-  const messages: unknown[] = [];
-  const worker = {
+function createMockProcessWorker(): MockProcessWorker {
+  const handlers = new Map<string, (() => void)[]>();
+  const runCalls: Array<{ options: RunOptions; transfer: Transferable[] }> = [];
+  const worker: MockProcessWorker = {
     handlers,
-    messages,
-    postMessage(msg: unknown) { messages.push(msg); },
-    on(event: string, handler: (...args: unknown[]) => void) {
-      if (!handlers.has(event)) handlers.set(event, []);
-      handlers.get(event)!.push(handler);
+    runCalls,
+    run(options: RunOptions, transfer: Transferable[]) { runCalls.push({ options, transfer }); },
+    terminate: mock.fn(() => {}),
+    addEventListener(type: 'error' | 'close', handler: () => void) {
+      if (!handlers.has(type)) handlers.set(type, []);
+      handlers.get(type)!.push(handler);
     },
-    async terminate() { return 0; },
-    simulateExit(code: number) {
-      for (const h of handlers.get('exit') ?? []) h(code);
+    simulateClose() {
+      for (const h of handlers.get('close') ?? []) h();
     },
-    simulateError(err: Error) {
-      for (const h of handlers.get('error') ?? []) h(err);
-    },
-  };
-  return worker as unknown as MockWorker;
-}
-
-function createMockWorkerFactory(): WorkerFactory & { workers: MockWorker[] } {
-  const workers: MockWorker[] = [];
-  return {
-    workers,
-    create(): ManagedWorker {
-      const w = createMockWorker();
-      workers.push(w);
-      return w;
+    simulateError() {
+      for (const h of handlers.get('error') ?? []) h();
     },
   };
+  return worker;
 }
-
-const FAKE_COMPILE_RESULT: CompileResult = {
-  modules: { 'core.wasm': new Uint8Array([0, 97, 115, 109]) },
-  jsFiles: { 'component.js': 'export function instantiate() {}' },
-  cached: false,
-};
 
 describe('WorkerProcessManager', () => {
-  let factory: ReturnType<typeof createMockWorkerFactory>;
-  let resolveCommand: CommandResolver;
+  let workers: MockProcessWorker[];
   let manager: WorkerProcessManager;
 
   beforeEach(() => {
-    factory = createMockWorkerFactory();
-    resolveCommand = (file: string) => {
-      if (['echo', 'cat', 'head'].includes(file)) return FAKE_COMPILE_RESULT;
-      return undefined;
-    };
+    workers = [];
     manager = new WorkerProcessManager({
-      resolveCommand,
-      workerFactory: factory,
-      processWorkerUrl: new URL('../worker/process.node.ts', import.meta.url),
+      createWorker: (file: string, _name?: string) => {
+        if (['echo', 'cat', 'head'].includes(file)) {
+          const w = createMockProcessWorker();
+          workers.push(w);
+          return w;
+        }
+        return undefined;
+      },
       maxWorkers: 4,
     });
   });
 
-  it('spawn creates a Worker and returns a Process with a pid', () => {
+  it('spawn creates a ProcessWorker and returns a Process with a pid', () => {
     const proc = manager.spawn('echo', ['hello']);
     assert.ok(proc.pid() > 0);
-    assert.equal(factory.workers.length, 1);
+    assert.equal(workers.length, 1);
   });
 
-  it('spawn sends a run message with CompileResult to the Worker', () => {
+  it('spawn sends run options with args to the ProcessWorker', () => {
     manager.spawn('echo', ['hello']);
-    const msg = factory.workers[0]!.messages[0] as { type: string; args: string[]; compileResult: CompileResult };
-    assert.equal(msg.type, 'run');
-    assert.deepEqual(msg.args, ['echo', 'hello']);
-    assert.deepEqual(msg.compileResult, FAKE_COMPILE_RESULT);
+    const call = workers[0]!.runCalls[0]!;
+    assert.deepEqual(call.options.args, ['echo', 'hello']);
   });
 
-  it('spawn passes env and cwd in run message', () => {
+  it('spawn passes env and cwd in run options', () => {
     manager.spawn('echo', ['hi'], { env: { FOO: 'bar' }, cwd: '/tmp' });
-    const msg = factory.workers[0]!.messages[0] as { env: Record<string, string>; cwd: string };
-    assert.deepEqual(msg.env, { FOO: 'bar' });
-    assert.equal(msg.cwd, '/tmp');
+    const call = workers[0]!.runCalls[0]!;
+    assert.deepEqual(call.options.env, { FOO: 'bar' });
+    assert.equal(call.options.cwd, '/tmp');
   });
 
   it('spawn throws not-found for unknown commands', () => {
@@ -108,19 +87,17 @@ describe('WorkerProcessManager', () => {
     );
   });
 
-  it('kill with sigkill terminates the Worker', () => {
+  it('kill with sigkill terminates the ProcessWorker', () => {
     const proc = manager.spawn('echo', ['test']);
-    const terminateFn = mock.fn(async () => 0);
-    factory.workers[0]!.terminate = terminateFn;
     proc.kill('sigkill');
-    assert.equal(terminateFn.mock.calls.length, 1);
+    assert.equal((workers[0]!.terminate as unknown as ReturnType<typeof mock.fn>).mock.calls.length, 1);
   });
 
   it('kill with sigint sends signal number to signal slot', () => {
     const proc = manager.spawn('echo', ['test']);
     proc.kill('sigint');
-    const msg = factory.workers[0]!.messages[0] as { signalSlotBuf: SharedArrayBuffer };
-    const view = new Int32Array(msg.signalSlotBuf);
+    const call = workers[0]!.runCalls[0]!;
+    const view = new Int32Array(call.options.signalSlotBuf);
     assert.equal(Atomics.load(view, 0), 2);
   });
 
@@ -135,13 +112,13 @@ describe('WorkerProcessManager', () => {
     const { input, output } = manager.createPipe();
     // Spawn with the pipe as stdout
     manager.spawn('echo', ['test'], { stdout: output });
-    const msg = factory.workers[0]!.messages[0] as { stdoutBuf: SharedArrayBuffer; stdoutBufSize: number };
-    // The Worker should get the same SAB that backs our pipe
+    const call = workers[0]!.runCalls[0]!;
+    // The ProcessWorker should get the same SAB that backs our pipe
     // Verify by writing to the SAB from "worker side" and reading from input
     const HEADER_SIZE = 16;
     const WRITE_POS = 1;
-    const control = new Int32Array(msg.stdoutBuf, 0, 4);
-    const data = new Uint8Array(msg.stdoutBuf, HEADER_SIZE);
+    const control = new Int32Array(call.options.stdoutBuf, 0, 4);
+    const data = new Uint8Array(call.options.stdoutBuf, HEADER_SIZE);
     data[0] = 99;
     Atomics.store(control, WRITE_POS, 1);
     Atomics.notify(control, WRITE_POS);
@@ -149,24 +126,22 @@ describe('WorkerProcessManager', () => {
     assert.deepEqual(read, new Uint8Array([99]));
   });
 
-  it('dispose terminates all active Workers', () => {
-    const terminateFns = Array.from({ length: 3 }, () => mock.fn(async () => 0));
+  it('dispose terminates all active ProcessWorkers', () => {
     for (let i = 0; i < 3; i++) {
       manager.spawn('echo', [`${i}`]);
-      factory.workers[i]!.terminate = terminateFns[i]!;
     }
     manager[Symbol.dispose]();
-    for (const fn of terminateFns) {
-      assert.equal(fn.mock.calls.length, 1);
+    for (const w of workers) {
+      assert.equal((w.terminate as unknown as ReturnType<typeof mock.fn>).mock.calls.length, 1);
     }
   });
 
-  it('Worker exit frees up slot for new process', () => {
+  it('ProcessWorker close frees up slot for new process', () => {
     for (let i = 0; i < 4; i++) {
       manager.spawn('echo', [`${i}`]);
     }
     assert.throws(() => manager.spawn('echo', ['x']));
-    factory.workers[0]!.simulateExit(0);
+    workers[0]!.simulateClose();
     const proc = manager.spawn('echo', ['new']);
     assert.ok(proc.pid() > 0);
   });
@@ -176,38 +151,38 @@ describe('WorkerProcessManager', () => {
     assert.equal(proc.tryWait(), undefined);
   });
 
-  it('tryWait returns exit code after Worker exit sets it', () => {
+  it('tryWait returns exit code after exit slot is set', () => {
     const proc = manager.spawn('echo', ['test']);
-    const msg = factory.workers[0]!.messages[0] as { exitSlotBuf: SharedArrayBuffer };
-    const view = new Int32Array(msg.exitSlotBuf);
+    const call = workers[0]!.runCalls[0]!;
+    const view = new Int32Array(call.options.exitSlotBuf);
     Atomics.store(view, 0, 42);
     Atomics.notify(view, 0);
     assert.equal(proc.tryWait(), 42);
   });
 
-  it('Worker error handler sets exit code 1 when not already exited', () => {
+  it('ProcessWorker error handler sets exit code 1 when not already exited', () => {
     manager.spawn('echo', ['test']);
-    const msg = factory.workers[0]!.messages[0] as { exitSlotBuf: SharedArrayBuffer };
-    factory.workers[0]!.simulateError(new Error('boom'));
-    const view = new Int32Array(msg.exitSlotBuf);
+    const call = workers[0]!.runCalls[0]!;
+    workers[0]!.simulateError();
+    const view = new Int32Array(call.options.exitSlotBuf);
     assert.equal(Atomics.load(view, 0), 1);
   });
 
-  it('Worker exit handler sets exit code 137 when not already exited', () => {
+  it('ProcessWorker close handler sets exit code 137 when not already exited', () => {
     manager.spawn('echo', ['test']);
-    const msg = factory.workers[0]!.messages[0] as { exitSlotBuf: SharedArrayBuffer };
-    factory.workers[0]!.simulateExit(1);
-    const view = new Int32Array(msg.exitSlotBuf);
+    const call = workers[0]!.runCalls[0]!;
+    workers[0]!.simulateClose();
+    const view = new Int32Array(call.options.exitSlotBuf);
     assert.equal(Atomics.load(view, 0), 137);
   });
 
-  it('Worker exit handler does not overwrite exit code when already set', () => {
+  it('ProcessWorker close handler does not overwrite exit code when already set', () => {
     manager.spawn('echo', ['test']);
-    const msg = factory.workers[0]!.messages[0] as { exitSlotBuf: SharedArrayBuffer };
-    const view = new Int32Array(msg.exitSlotBuf);
+    const call = workers[0]!.runCalls[0]!;
+    const view = new Int32Array(call.options.exitSlotBuf);
     Atomics.store(view, 0, 42);
     Atomics.notify(view, 0);
-    factory.workers[0]!.simulateExit(1);
+    workers[0]!.simulateClose();
     assert.equal(Atomics.load(view, 0), 42);
   });
 
@@ -228,9 +203,9 @@ describe('WorkerProcessManager', () => {
 
   it('dispose sets exit code 129 for processes that have not exited', () => {
     manager.spawn('echo', ['test']);
-    const msg = factory.workers[0]!.messages[0] as { exitSlotBuf: SharedArrayBuffer };
+    const call = workers[0]!.runCalls[0]!;
     manager[Symbol.dispose]();
-    const view = new Int32Array(msg.exitSlotBuf);
+    const view = new Int32Array(call.options.exitSlotBuf);
     assert.equal(Atomics.load(view, 0), 129);
   });
 
@@ -239,8 +214,8 @@ describe('WorkerProcessManager', () => {
     const duped = manager.dupOutputStream(output);
     // Both output and duped should be associated with the same SAB
     manager.spawn('echo', ['test'], { stdout: duped });
-    const msg = factory.workers[0]!.messages[0] as { stdoutBuf: SharedArrayBuffer; stdoutBufSize: number };
-    assert.ok(msg.stdoutBuf instanceof SharedArrayBuffer);
-    assert.ok(msg.stdoutBufSize > 0);
+    const call = workers[0]!.runCalls[0]!;
+    assert.ok(call.options.stdoutBuf instanceof SharedArrayBuffer);
+    assert.ok(call.options.stdoutBufSize > 0);
   });
 });

@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["esnext", "dom"],
+    "types": ["node"],
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "emitDeclarationOnly": false,
+    "allowImportingTsExtensions": false,
+    "rewriteRelativeImportExtensions": true
+  },
+  "include": ["./src"],
+  "exclude": ["**/*.test.ts", "**/test-fixtures/**"]
+}

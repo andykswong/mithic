@@ -82,6 +82,27 @@ interface manager {
 }
 ```
 
+## ProcessWorker Interface
+
+The `ProcessWorker` interface abstracts how a process is executed. Implementations control Worker lifecycle:
+
+```typescript
+export interface ProcessWorker {
+  run(options: RunOptions, transfer: Transferable[]): void;
+  terminate(): void;
+  addEventListener(type: 'error' | 'close', handler: () => void): void;
+}
+```
+
+### Implementations
+
+| Class | Entry Point | Description |
+|-------|-------------|-------------|
+| `ComponentProcessWorker` | `@mithic/process/manager/component-worker` | Spawns a Web Worker that runs a dynamically compiled WASM component |
+| `InlineProcessWorker` | `@mithic/process/manager/inline-worker` | Runs a handler inline (same thread) — for sync builtins and tests |
+
+The `WorkerProcessManager` accepts a `createWorker` factory function that returns a `ProcessWorker` for each spawn call, enabling the host to control which implementation is used per command.
+
 ## Dynamic WASM Component Execution
 
 The `ComponentRegistry` + `CompilerBridge` enable executing arbitrary WASM components at runtime via jco transpilation.
@@ -99,12 +120,10 @@ npm install @bytecodealliance/jco@1
 ### Usage
 
 ```typescript
-import { createDefaultWorkerFactory } from '@mithic/process/impl/worker-factory';
-import { createCompilerBridge } from '@mithic/process/impl/compiler-bridge';
-import { ComponentRegistry } from '@mithic/process/impl/component-registry';
+import { ComponentRegistry } from '@mithic/process/component/registry';
+import { CompilerBridge } from '@mithic/process/component/compiler';
 
-const factory = createDefaultWorkerFactory();
-const compiler = createCompilerBridge(factory);
+const compiler = new CompilerBridge(new Worker(compilerWorkerUrl, { type: 'module' }));
 const registry = new ComponentRegistry({ precompiled: new Map(), compiler });
 
 // Resolve WASM bytes to a runnable component
@@ -124,12 +143,19 @@ registry[Symbol.dispose]();
 |-------------|----------|
 | `@mithic/process` | Main index (ProcessManager, types, pipe) |
 | `@mithic/process/manager` | ProcessManager implementation |
-| `@mithic/process/types` | Process, SpawnOptions, ErrorCode types |
+| `@mithic/process/types` | Process, SpawnOptions, ErrorCode, ProcessWorker, RunOptions types |
 | `@mithic/process/imports` | WASI import map for process interface |
 | `@mithic/process/instantiation` | WASIProcess integration |
-| `@mithic/process/shell` | Shell interface contract |
-| `@mithic/process/utils` | Utility functions |
-| `@mithic/process/impl/simple` | Simple in-process implementation |
-| `@mithic/process/impl/component-registry` | ComponentRegistry for dynamic WASM |
-| `@mithic/process/impl/compiler-bridge` | Sync-bridge client for compiler Worker |
-| `@mithic/process/impl/worker-factory` | Isomorphic Worker creation |
+| `@mithic/process/io` | Pipe primitives (QueuePipe, SharedPipe) |
+| `@mithic/process/io/slots` | Exit slot utilities |
+| `@mithic/process/io/signal-stream` | Signal-aware stream wrappers |
+| `@mithic/process/manager/simple` | SimpleProcessManager (single-thread) |
+| `@mithic/process/manager/worker` | WorkerProcessManager (Worker-per-process) |
+| `@mithic/process/manager/component-worker` | ComponentProcessWorker implementation |
+| `@mithic/process/manager/inline-worker` | InlineProcessWorker implementation |
+| `@mithic/process/manager/proxy` | Proxy manager for cross-thread |
+| `@mithic/process/component/eval-jco` | jco eval helper |
+| `@mithic/process/component/registry` | ComponentRegistry for dynamic WASM |
+| `@mithic/process/component/compiler` | CompilerBridge client |
+| `@mithic/process/worker/compiler` | Compiler Worker entry point |
+| `@mithic/process/worker/process` | Process Worker entry point |

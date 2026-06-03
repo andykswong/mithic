@@ -1,20 +1,18 @@
+import '@mithic/worker';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { MessageChannel } from 'node:worker_threads';
-import { NodeWorkerFactory } from '@mithic/io/io/worker-factory.node';
 import { createComponentCompiler, type CompileResult } from '@mithic/process/component/compiler';
 import { WASIShim } from '@mithic/wasip2';
 import { ComponentExit } from '@mithic/wasip2/cli/exit';
-import type { ManagedWorker } from '@mithic/io/io';
 import type { SyncInstantiateFn } from '@mithic/process/component/registry';
 
-function createTestBridge(): { bridge: ReturnType<typeof createComponentCompiler>; worker: ManagedWorker } {
-  const factory = new NodeWorkerFactory();
+function createTestBridge(): { bridge: ReturnType<typeof createComponentCompiler>; worker: Worker } {
   const { port1, port2 } = new MessageChannel();
-  const worker = factory.create(
-    new URL(import.meta.resolve('@mithic/process/worker/compiler.node')),
-    { name: 'test-compiler' },
+  const worker = new Worker(
+    new URL(import.meta.resolve('@mithic/process/worker/compiler')),
+    { type: 'module', name: 'test-compiler' },
   );
   worker.postMessage({ type: '__port', port: port2 }, [port2 as unknown as Transferable]);
   const bridge = createComponentCompiler(port1 as unknown as MessagePort);

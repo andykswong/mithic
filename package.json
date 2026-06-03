@@ -61,6 +61,7 @@
     "vite-plugin-dts": "^5.0"
   },
   "workspaces": [
+    "./packages/worker",
     "./packages/io",
     "./packages/wasip2",
     "./packages/process",

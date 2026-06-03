@@ -1,20 +1,19 @@
+import '@mithic/worker';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { NodeWorkerFactory } from '@mithic/io/io/worker-factory.node';
 import { createExitSlot } from '../io/slots.ts';
 import { createSharedPipeRaw, outputFromSharedBuffer, inputFromSharedBuffer } from '../io/pipes.ts';
 
 describe('WorkerProcessManager integration', () => {
   it('Worker can write exit code to ExitSlot SharedArrayBuffer', async () => {
-    const factory = new NodeWorkerFactory();
     const exitSlot = createExitSlot();
 
-    const worker = factory.create(
+    const worker = new Worker(
       new URL('../worker/test-fixtures/exit-worker.ts', import.meta.url),
-      { workerData: { exitCode: 42 } },
+      { type: 'module' },
     );
 
-    worker.postMessage({ type: 'run', exitSlotBuf: exitSlot.buffer });
+    worker.postMessage({ type: 'run', exitSlotBuf: exitSlot.buffer, exitCode: 42 });
 
     const code = await new Promise<number>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('timeout')), 5000);
@@ -31,7 +30,7 @@ describe('WorkerProcessManager integration', () => {
     });
 
     assert.equal(code, 42);
-    await worker.terminate();
+    worker.terminate();
   });
 
   it('SharedPipe data flows between main thread and Worker via SAB', () => {
@@ -48,15 +47,15 @@ describe('WorkerProcessManager integration', () => {
   });
 
   it('cross-thread pipe: Writer in Worker, Reader on main thread', async () => {
-    const factory = new NodeWorkerFactory();
     const pipe = createSharedPipeRaw(4096);
     const exitSlot = createExitSlot();
 
-    const worker = factory.create(
+    const worker = new Worker(
       new URL('../worker/test-fixtures/pipe-writer-worker.ts', import.meta.url),
-      { workerData: { pipeBuf: pipe.buffer, pipeBufSize: pipe.bufferSize, exitSlotBuf: exitSlot.buffer } },
+      { type: 'module' },
     );
 
+    worker.postMessage({ type: 'init', pipeBuf: pipe.buffer, pipeBufSize: pipe.bufferSize, exitSlotBuf: exitSlot.buffer });
     worker.postMessage({ type: 'write', data: [1, 2, 3, 4, 5] });
 
     const input = inputFromSharedBuffer(pipe.buffer, pipe.bufferSize);
@@ -77,6 +76,6 @@ describe('WorkerProcessManager integration', () => {
 
     assert.deepEqual(data, new Uint8Array([1, 2, 3, 4, 5]));
     input[Symbol.dispose]();
-    await worker.terminate();
+    worker.terminate();
   });
 });

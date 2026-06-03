@@ -113,3 +113,31 @@ export interface ProcessManager {
   signal(sig: Signal): void;
   get hasForeground(): boolean;
 }
+
+export interface RunOptions {
+  args: string[];
+  env: Record<string, string>;
+  cwd: string;
+  exitSlotBuf: SharedArrayBuffer;
+  signalSlotBuf: SharedArrayBuffer;
+  stdinBuf: SharedArrayBuffer;
+  stdinBufSize: number;
+  stdoutBuf: SharedArrayBuffer;
+  stdoutBufSize: number;
+  stderrBuf: SharedArrayBuffer;
+  stderrBufSize: number;
+  inheritStdin?: boolean;
+  inheritStdout?: boolean;
+  inheritStderr?: boolean;
+  isattyStdin?: boolean;
+  isattyStdout?: boolean;
+  isattyStderr?: boolean;
+  ioPort?: MessagePort;
+  spawnPort?: MessagePort;
+}
+
+export interface ProcessWorker {
+  run(options: RunOptions, transfer: Transferable[]): void;
+  terminate(): void;
+  addEventListener(type: 'error' | 'close', handler: () => void): void;
+}

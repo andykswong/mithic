@@ -6,7 +6,7 @@
  * to WorkerProcessManager which spawns each command in its own Process Worker.
  *
  * Architecture:
- *   Main Thread (this file) ─── sync-bridge ──→ Shell Worker (shell-worker.node.ts)
+ *   Main Thread (this file) ─── sync-bridge ──→ Shell Worker (worker/shell.worker.ts)
  *        │                                           │
  *        │ WorkerProcessManager.spawn()              │ ProxyProcessManager (delegates here)
  *        ▼                                           │
@@ -15,6 +15,7 @@
  *        └── SharedPipe SABs ◄───────────────────────┘
  */
 
+import '@mithic/worker';
 import { readFileSync } from 'node:fs';
 import { isatty } from 'node:tty';
 import { fileURLToPath } from 'node:url';
@@ -24,18 +25,19 @@ import type { InputStreamHandler } from '@mithic/io/io';
 import { MemoryFsProvider, DeviceFsProvider, SyncFileSystemRouter } from '@mithic/io/vfs';
 import { NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
 import { WorkerProcessManager, pipeHandleMap, type SpawnExternalOptions } from '@mithic/process/manager/worker';
+import { ComponentProcessWorker } from '@mithic/process/manager/component-worker';
 import { CALL_SPAWN } from '@mithic/process/manager/proxy';
 import type { CompileResult } from '@mithic/process/component/compiler';
-import { NodeWorkerFactory } from '@mithic/io/io/worker-factory.node';
 import { createComponentCompiler } from '@mithic/process/component/compiler';
 import { CommandRegistry } from '@mithic/process/component/registry';
+import type { ProcessWorker } from '@mithic/process/types';
 import { COREUTILS_COMMANDS } from '@mithic/coreutils';
 import { modules as shellModules } from '@mithic/shell/component';
 import { modules as coreutilsModules } from '@mithic/coreutils/component';
 import { inputFromSharedBuffer, outputFromSharedBuffer } from '@mithic/process/io';
-import type { ShellWorkerInit } from './shell-worker.node.ts';
+import type { ShellWorkerInit } from './worker/shell.ts';
 
-// --- Fetch raw module bytes ---
+// --- Fetch raw module bytes (needed for CompileResult sent to process Workers) ---
 
 async function fetchModuleBytes(dataUris: Record<string, string>): Promise<Record<string, Uint8Array>> {
   const modules: Record<string, Uint8Array> = {};
@@ -53,7 +55,7 @@ const [shellRawModules, coreutilsRawModules] = await Promise.all([
   fetchModuleBytes(coreutilsModules),
 ]);
 
-// --- Read jco JS sources ---
+// --- Read jco JS sources (needed for CompileResult sent to process Workers) ---
 
 const shellComponentDir = dirname(fileURLToPath(import.meta.resolve('@mithic/shell/component')));
 const coreutilsComponentDir = dirname(fileURLToPath(import.meta.resolve('@mithic/coreutils/component')));
@@ -75,13 +77,12 @@ const coreutilsCompileResult: CompileResult = {
 
 // --- Setup compiler for dynamic WASM ---
 
-const workerFactory = new NodeWorkerFactory();
 const { port1: compilerPort1, port2: compilerPort2 } = new MessageChannel();
-const compilerWorker = workerFactory.create(
-  new URL(import.meta.resolve('@mithic/process/worker/compiler.node')),
-  { name: 'mithic-compiler' },
+const compilerWorker = new Worker(
+  new URL(import.meta.resolve('@mithic/process/worker/compiler')),
+  { type: 'module', name: 'mithic-compiler' },
 );
-compilerWorker.postMessage({ type: '__port', port: compilerPort2 }, [compilerPort2 as unknown as Transferable]);
+compilerWorker.postMessage({ type: '__port', port: compilerPort2 }, [compilerPort2]);
 const compilerBridge = createComponentCompiler(compilerPort1 as unknown as MessagePort);
 const registry = new CommandRegistry({ compiler: compilerBridge });
 
@@ -90,12 +91,21 @@ const registry = new CommandRegistry({ compiler: compilerBridge });
 // Commands handled locally in the shell Worker (not via process Workers)
 const LOCAL_COMMANDS = new Set(['chmod']);
 
+const processWorkerUrl = new URL(import.meta.resolve('@mithic/process/worker/process'));
+
 function resolveCommand(file: string): CompileResult | undefined {
   const name = file.includes('/') ? file.split('/').pop()! : file;
   if (LOCAL_COMMANDS.has(name)) return undefined;
   if (name === 'sh' || name === 'bash') return shellCompileResult;
   if (COREUTILS_COMMANDS.has(name)) return coreutilsCompileResult;
   return undefined;
+}
+
+function createWorker(file: string, name?: string): ProcessWorker | undefined {
+  const compileResult = resolveCommand(file);
+  if (!compileResult) return undefined;
+  const worker = new Worker(processWorkerUrl, { type: 'module', name });
+  return new ComponentProcessWorker(worker, compileResult);
 }
 
 // --- Async stdin handler for the main thread ---
@@ -180,12 +190,8 @@ const ioLoop = new IoLoop({ onCall: createCallHandler({
 
 // --- WorkerProcessManager ---
 
-let spawnHandler: CallHandler;
-
 const workerManager = new WorkerProcessManager({
-  resolveCommand,
-  workerFactory,
-  processWorkerUrl: new URL(import.meta.resolve('@mithic/process/worker/process.node')),
+  createWorker,
   maxWorkers: 8,
   createIoPort: () => ioLoop.addWorker(),
   createSpawnPort: () => {
@@ -200,7 +206,7 @@ const workerManager = new WorkerProcessManager({
 
 // --- Spawn handler: responds to CALL_SPAWN from shell Worker ---
 
-spawnHandler = async (call, _id, payload) => {
+const spawnHandler: CallHandler = async (call, _id, payload) => {
   if (call === CALL_SPAWN) {
     const p = payload as {
       file: string;
@@ -254,9 +260,9 @@ handleBlockingCalls(spawnHandler, shellPort1);
 
 const shellIoPort = ioLoop.addWorker();
 
-const shellWorker = workerFactory.create(
-  new URL('./shell-worker.node.ts', import.meta.url),
-  { name: 'mithic-shell' },
+const shellWorker = new Worker(
+  new URL('./worker/shell.worker.ts', import.meta.url),
+  { type: 'module', name: 'mithic-shell' },
 );
 
 const initMsg: ShellWorkerInit = {
@@ -268,10 +274,6 @@ const initMsg: ShellWorkerInit = {
     ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] != null)),
     PATH: '/usr/bin:/bin',
   },
-  shellModuleBytes: shellRawModules,
-  shellJsSource,
-  coreutilsModuleBytes: coreutilsRawModules,
-  coreutilsJsSource,
   isattyStdin: isatty(0),
   isattyStdout: isatty(1),
   isattyStderr: isatty(2),
@@ -281,16 +283,22 @@ shellWorker.postMessage(initMsg, [shellPort2 as unknown as Transferable, shellIo
 
 // --- Wait for shell Worker to exit ---
 
-shellWorker.on('exit', (code: number) => {
+let shellExitCode = 0;
+shellWorker.onmessage = (e: MessageEvent) => {
+  if (e.data?.type === '__exit') {
+    shellExitCode = e.data.code ?? 0;
+  }
+};
+
+shellWorker.addEventListener('close', () => {
   ioLoop.dispose();
   workerManager[Symbol.dispose]();
   registry[Symbol.dispose]();
   compilerWorker.terminate();
-  process.exit(code);
+  process.exit(shellExitCode);
 });
 
-shellWorker.on('error', (err: Error) => {
-  console.error('Shell worker error:', err);
+shellWorker.addEventListener('error', () => {
   ioLoop.dispose();
   workerManager[Symbol.dispose]();
   registry[Symbol.dispose]();

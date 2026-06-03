@@ -140,7 +140,7 @@ The TypeScript `commands.ts` implements a `CommandResolver` that resolves comman
 4. **Absolute/relative paths** → Script execution (shebang + permission check)
 5. **Bare commands** → PATH lookup at invocation time
 
-The resolver is used by `WorkerProcessManager` (or `SimpleProcessManager` in test/single-thread mode). Sync handlers return `number` directly, enabling synchronous `tryWait()` in WASM context. Dynamic WASM components are resolved via `ComponentRegistry` and executed in process Workers.
+The resolver is used by `WorkerProcessManager` (or `SimpleProcessManager` in test/single-thread mode). Each resolved command returns a `ProcessWorker` — either a `ComponentProcessWorker` (spawns a Web Worker for WASM execution) or an `InlineProcessWorker` (runs synchronously for builtins). Dynamic WASM components are resolved via `ComponentRegistry` and executed in process Workers.
 
 ## WIT World
 

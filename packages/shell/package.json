@@ -7,14 +7,10 @@
   "main": "./dist/ts/index.js",
   "types": "./dist/ts/index.d.ts",
   "exports": {
-    ".": {
-      "types": "./dist/ts/index.d.ts",
-      "default": "./dist/ts/index.js"
-    },
-    "./component": {
-      "types": "./dist/wasm/index.d.ts",
-      "default": "./dist/wasm/index.js"
-    }
+    ".": "./dist/ts/index.ts",
+    "./component": "./dist/wasm/index.js",
+    "./worker/shell": "./dist/ts/worker/shell.js",
+    "./worker/shell.worker": "./dist/ts/worker/shell.worker.js"
   },
   "files": [
     "/dist"
@@ -61,9 +57,10 @@
   "dependencies": {
     "@mithic/wasip2": "^0.1",
     "@mithic/process": "^0.1",
-    "@mithic/coreutils": "*"
+    "@mithic/coreutils": "^0.1"
   },
   "devDependencies": {
-    "@bytecodealliance/jco": "^1.20"
+    "@bytecodealliance/jco": "^1.20",
+    "@mithic/worker": "^0.1"
   }
 }

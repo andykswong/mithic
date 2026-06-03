@@ -17,6 +17,9 @@ component_management:
     - component_id: "@mithic/wasip2"
       paths:
         - "packages/wasip2"
+    - component_id: "@mithic/worker"
+      paths:
+        - "packages/worker"
 coverage:
   status:
     project:

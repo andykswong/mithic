@@ -9,6 +9,7 @@ Mithic is an isomorphic sandboxed WebAssembly shell runtime. It provides a shell
 ```
 packages/
 ├── io/           @mithic/io        — VFS router, providers, HTTP/sockets, sync-bridge
+├── worker/       @mithic/worker    — Web Worker polyfill for Node.js (isomorphic new Worker())
 ├── wasip2/       @mithic/wasip2    — WASI P2 shim (thin adapter over @mithic/io)
 ├── process/      @mithic/process   — Process spawn, Worker-per-process execution, SharedPipe, CompilerBridge for dynamic WASM
 ├── shell/        @mithic/shell     — Rust WASM shell: POSIX-compatible WASI P2 component
