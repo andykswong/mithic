@@ -152,9 +152,14 @@ function createSharedPipe(bufferSize: number): { input: InputStream; output: Out
 
   const inputHandler: InputStreamHandler = {
     read(len: number): Uint8Array | undefined {
-      const avail = available();
+      let avail = available();
       if (avail === 0) {
-        if (Atomics.load(control, WRITER_CLOSED)) throw { tag: 'closed' } as StreamError;
+        if (Atomics.load(control, WRITER_CLOSED)) {
+          // Re-check: writer may have written data just before setting WRITER_CLOSED
+          avail = available();
+          if (avail === 0) throw { tag: 'closed' } as StreamError;
+          return readFromRing(Math.min(len, avail));
+        }
         return undefined;
       }
       const toRead = Math.min(len, avail);
@@ -163,13 +168,15 @@ function createSharedPipe(bufferSize: number): { input: InputStream; output: Out
 
     blockingRead(len: number): Uint8Array {
       let avail = available();
-      if (avail === 0) {
-        if (Atomics.load(control, WRITER_CLOSED)) throw { tag: 'closed' } as StreamError;
+      while (avail === 0) {
+        if (Atomics.load(control, WRITER_CLOSED)) {
+          // Re-check: writer may have written data just before setting WRITER_CLOSED
+          avail = available();
+          if (avail === 0) throw { tag: 'closed' } as StreamError;
+          break;
+        }
         Atomics.wait(control, WRITE_POS, Atomics.load(control, WRITE_POS));
         avail = available();
-        if (avail === 0 && Atomics.load(control, WRITER_CLOSED)) {
-          throw { tag: 'closed' } as StreamError;
-        }
       }
       const toRead = Math.min(len, avail);
       return readFromRing(toRead);
@@ -273,22 +280,29 @@ export function inputFromSharedBuffer(buffer: SharedArrayBuffer, bufferSize: num
 
   const inputHandler: InputStreamHandler = {
     read(len: number): Uint8Array | undefined {
-      const avail = available();
+      let avail = available();
       if (avail === 0) {
-        if (Atomics.load(control, WRITER_CLOSED)) throw { tag: 'closed' } as StreamError;
+        if (Atomics.load(control, WRITER_CLOSED)) {
+          // Re-check: writer may have written data just before setting WRITER_CLOSED
+          avail = available();
+          if (avail === 0) throw { tag: 'closed' } as StreamError;
+          return readFromRing(Math.min(len, avail));
+        }
         return undefined;
       }
       return readFromRing(Math.min(len, avail));
     },
     blockingRead(len: number): Uint8Array {
       let avail = available();
-      if (avail === 0) {
-        if (Atomics.load(control, WRITER_CLOSED)) throw { tag: 'closed' } as StreamError;
+      while (avail === 0) {
+        if (Atomics.load(control, WRITER_CLOSED)) {
+          // Re-check: writer may have written data just before setting WRITER_CLOSED
+          avail = available();
+          if (avail === 0) throw { tag: 'closed' } as StreamError;
+          break;
+        }
         Atomics.wait(control, WRITE_POS, Atomics.load(control, WRITE_POS));
         avail = available();
-        if (avail === 0 && Atomics.load(control, WRITER_CLOSED)) {
-          throw { tag: 'closed' } as StreamError;
-        }
       }
       return readFromRing(Math.min(len, avail));
     },
