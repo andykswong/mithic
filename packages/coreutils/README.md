@@ -23,6 +23,8 @@ cat, cp, mv, rm, mkdir, rmdir, ls, head, tail, wc, sort, uniq, cut, tr, tee, sle
 
 Single `wasm32-wasip2` binary. Command is determined by `argv[0]` (BusyBox pattern). Uses `std::fs`/`std::io` throughout (maps to WASI automatically). A shared regex engine (`src/commands/regex.rs`) is used by both `grep` and `sed`.
 
+Commands that read from stdin use streaming I/O (`cat`, `head`, `tr`, `tee`) — reading chunks or lines incrementally rather than buffering all stdin. This enables correct behavior in pipelines with infinite or large producers (e.g., `cat /dev/zero | head -c 4`). All stdout writes exit with code 141 on broken-pipe.
+
 ## Build & Test
 
 ```bash

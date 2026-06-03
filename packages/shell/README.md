@@ -24,9 +24,11 @@
   - **Glob expansion** — `*`, `?`, `[...]`
   - **Builtins** — `cd`, `echo`, `export`, `unset`, `read`, `test`/`[`/`[[`, `declare`/`local`, `source`, `true`, `false`
   - **Error handling** — Arithmetic expansion errors abort the containing command; proper exit codes propagate through pipes, assignments, for/case/select
-- **Command resolution** — `SimpleProcessManager` with `CommandResolver` dispatching to shell, coreutils WASM, host-side commands (chmod), and PATH-based scripts
+- **Command resolution** — `CommandResolver` dispatching to shell, shell builtins, coreutils WASM, host-side commands, PATH-based WASM components and scripts, with worker-per-process model
 - **POSIX mode** — Auto-activates when invoked as `sh`; disables non-standard extensions, including `[[`, `(( ))`, `<<<`, arrays, brace expansion
-- **Pipelines** — `cmd1 | cmd2 | cmd3` and `cmd1 |& cmd2` (pipe stderr+stdout) via `mithic:process/manager` pipe creation
+- **Pipelines** — `cmd1 | cmd2 | cmd3` and `cmd1 |& cmd2` (pipe stderr+stdout) with true concurrent execution — each pipeline stage runs in its own Worker. Infinite producers terminate correctly via broken-pipe propagation (`cat /dev/zero | head -c 4` works).
+- **Background jobs** — `cmd &` runs concurrently in a separate Worker
+- **Dynamic WASM execution** — Arbitrary `.wasm` components on the filesystem are transpiled and executed at runtime
 - **Script execution** — Shebang (`#!/bin/sh`) support, PATH lookup with executable permission checks
 - **Streaming I/O** — Uses WASI `blocking-read`/`blocking-write-and-flush` backed by `SharedArrayBuffer` + `Atomics.wait` for true blocking semantics in a Web Worker
 
@@ -138,7 +140,7 @@ The TypeScript `commands.ts` implements a `CommandResolver` that resolves comman
 4. **Absolute/relative paths** → Script execution (shebang + permission check)
 5. **Bare commands** → PATH lookup at invocation time
 
-The resolver is passed to `SimpleProcessManager` which handles sync/async dispatch (sync handlers return `number` directly, enabling synchronous `tryWait()` in WASM context).
+The resolver is used by `WorkerProcessManager` (or `SimpleProcessManager` in test/single-thread mode). Sync handlers return `number` directly, enabling synchronous `tryWait()` in WASM context. Dynamic WASM components are resolved via `ComponentRegistry` and executed in process Workers.
 
 ## WIT World
 
@@ -175,11 +177,9 @@ The shell has no readline library or terminal raw-mode support. This means:
 
 ### Process Model
 
-All processes run as in-process JavaScript functions on the same thread:
-- Pipelines with infinite producers hang (`cat /dev/zero | head -c 4`) — stages run sequentially, so the writer never receives broken-pipe from the reader
-- Background commands (`cmd &`) are dispatched but may execute synchronously depending on the handler
 - No true process groups or `setpgid` — `kill(-pgid, sig)` not supported
-- `coproc` is parsed but returns an error (requires concurrent bidirectional I/O)
+- `coproc` is parsed but returns an error (requires bidirectional pipe wiring)
+- Signal handler registration (`trap`) is not delivered to WASM processes — signals terminate the Worker
 - `$$` and `$BASHPID` expand to a fixed PID (`1`) since WASM has no real process IDs
 - `exec cmd` spawns and waits rather than replacing the shell process
 

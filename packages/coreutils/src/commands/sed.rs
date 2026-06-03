@@ -55,10 +55,14 @@ pub fn run(args: &[&str]) -> u8 {
     };
 
     if file_args.is_empty() {
-        let data = read_stdin_all();
-        let text = String::from_utf8_lossy(&data);
-        let result = apply_script(&text, &parsed, suppress);
-        write_stdout(&result);
+        if script_needs_all_input(&parsed) {
+            let data = read_stdin_all();
+            let text = String::from_utf8_lossy(&data);
+            let result = apply_script(&text, &parsed, suppress);
+            write_stdout(&result);
+        } else {
+            sed_stdin_stream(&parsed, suppress);
+        }
     } else {
         let mut errors = 0u8;
         for &path in &file_args {
@@ -84,6 +88,185 @@ pub fn run(args: &[&str]) -> u8 {
         return errors;
     }
     0
+}
+
+fn script_needs_all_input(exprs: &[SedExpr]) -> bool {
+    for expr in exprs {
+        if let Some(ref addr) = expr.address {
+            if addr_uses_last_line(addr) {
+                return true;
+            }
+        }
+        match &expr.cmd {
+            SedCmd::Next => return true,
+            SedCmd::PrintFirst => return true,
+            SedCmd::DeleteFirst => return true,
+            SedCmd::Group(inner) => {
+                if script_needs_all_input(inner) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn addr_uses_last_line(addr: &Address) -> bool {
+    match addr {
+        Address::LastLine => true,
+        Address::Range(a, b) => addr_uses_last_line(a) || addr_uses_last_line(b),
+        _ => false,
+    }
+}
+
+fn sed_stdin_stream(exprs: &[SedExpr], suppress: bool) {
+    use std::io::{BufRead, BufReader};
+
+    let stdin = std::io::stdin();
+    let mut reader = BufReader::new(stdin.lock());
+    let mut buf = String::new();
+    let mut lineno: usize = 0;
+    let mut hold_space = String::new();
+
+    loop {
+        buf.clear();
+        match reader.read_line(&mut buf) {
+            Ok(0) => break,
+            Ok(_) => {
+                lineno += 1;
+                let line = buf.trim_end_matches('\n').trim_end_matches('\r');
+                let mut s = line.to_string();
+
+                let mut deleted = false;
+                let mut explicitly_printed = false;
+                let mut sub_made = false;
+
+                let mut ip = 0;
+                while ip < exprs.len() {
+                    let expr = &exprs[ip];
+
+                    if let SedCmd::Label(_) = &expr.cmd {
+                        ip += 1;
+                        continue;
+                    }
+
+                    let active = match &expr.address {
+                        None => true,
+                        Some(addr) => stream_address_matches(addr, lineno, &s),
+                    };
+                    if !active { ip += 1; continue; }
+
+                    match &expr.cmd {
+                        SedCmd::Delete => { deleted = true; break; }
+                        SedCmd::Print => {
+                            write_stdout(&s);
+                            write_stdout("\n");
+                            explicitly_printed = true;
+                        }
+                        SedCmd::Substitute { pattern, replacement, global } => {
+                            let new_s = apply_substitute(&s, pattern, replacement, *global);
+                            if new_s != s {
+                                sub_made = true;
+                            }
+                            s = new_s;
+                        }
+                        SedCmd::HoldCopy => {
+                            hold_space = s.clone();
+                        }
+                        SedCmd::HoldAppend => {
+                            hold_space.push('\n');
+                            hold_space.push_str(&s);
+                        }
+                        SedCmd::GetCopy => {
+                            s = hold_space.clone();
+                        }
+                        SedCmd::GetAppend => {
+                            s.push('\n');
+                            s.push_str(&hold_space);
+                        }
+                        SedCmd::Exchange => {
+                            let tmp = s.clone();
+                            s = hold_space.clone();
+                            hold_space = tmp;
+                        }
+                        SedCmd::Branch(target) => {
+                            match target {
+                                Some(label) => {
+                                    match find_label(exprs, label) {
+                                        Some(pos) => { ip = pos; continue; }
+                                        None => break,
+                                    }
+                                }
+                                None => break,
+                            }
+                        }
+                        SedCmd::BranchIfSub(target) => {
+                            if sub_made {
+                                sub_made = false;
+                                match target {
+                                    Some(label) => {
+                                        match find_label(exprs, label) {
+                                            Some(pos) => { ip = pos; continue; }
+                                            None => break,
+                                        }
+                                    }
+                                    None => break,
+                                }
+                            } else {
+                                sub_made = false;
+                            }
+                        }
+                        SedCmd::Group(inner_exprs) => {
+                            let group_result = execute_group(inner_exprs, &mut s, &mut hold_space, &mut sub_made);
+                            match group_result {
+                                GroupResult::Continue => {}
+                                GroupResult::Deleted => { deleted = true; break; }
+                                GroupResult::Printed => {
+                                    explicitly_printed = true;
+                                    write_stdout(&s);
+                                    write_stdout("\n");
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    ip += 1;
+                }
+
+                if !deleted && (!suppress || explicitly_printed) && !explicitly_printed {
+                    write_stdout(&s);
+                    write_stdout("\n");
+                }
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+fn stream_address_matches(addr: &Address, lineno: usize, line: &str) -> bool {
+    match addr {
+        Address::Line(n) => lineno == *n,
+        Address::LastLine => false,
+        Address::Range(a, b) => {
+            let s = stream_addr_line_num(a);
+            let e = stream_addr_line_num(b);
+            lineno >= s && lineno <= e
+        }
+        Address::Pattern(pat) => {
+            let chars: Vec<char> = line.chars().collect();
+            regex_find_at(&chars, 0, pat, &sed_opts()).is_some()
+        }
+    }
+}
+
+fn stream_addr_line_num(addr: &Address) -> usize {
+    match addr {
+        Address::Line(n) => *n,
+        Address::LastLine => usize::MAX,
+        Address::Pattern(_) => 0,
+        Address::Range(_, _) => 0,
+    }
 }
 
 #[derive(Debug, PartialEq)]

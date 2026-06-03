@@ -1,4 +1,4 @@
-use super::{write_stdout, read_input};
+use super::{write_stdout, write_stderr, read_file};
 
 enum Mode {
     Fields { delim: char, list: Vec<usize> },
@@ -66,40 +66,76 @@ pub fn run(args: &[&str]) -> u8 {
         Mode::Fields { delim, list: field_list.unwrap_or_default() }
     };
 
-    let (data, errors) = read_input(&file_args);
-    let text = String::from_utf8_lossy(&data);
+    if file_args.is_empty() {
+        cut_stdin(&mode);
+        return 0;
+    }
 
-    for line in text.lines() {
-        match &mode {
-            Mode::Fields { delim, list } => {
-                if list.is_empty() {
-                    write_stdout(line);
-                } else {
-                    let parts: Vec<&str> = line.split(*delim).collect();
-                    let selected: Vec<&str> = list.iter()
-                        .filter_map(|&f| if f > 0 { parts.get(f - 1).copied() } else { None })
-                        .collect();
-                    write_stdout(&selected.join(&delim.to_string()));
+    let mut errors = 0u8;
+    for &path in &file_args {
+        match read_file(path) {
+            Some(data) => {
+                let text = String::from_utf8_lossy(&data);
+                for line in text.lines() {
+                    cut_line(line, &mode);
                 }
             }
-            Mode::Chars(list) => {
-                let chars: Vec<char> = line.chars().collect();
-                let selected: String = list.iter()
-                    .filter_map(|&p| if p > 0 { chars.get(p - 1).copied() } else { None })
-                    .collect();
-                write_stdout(&selected);
-            }
-            Mode::Bytes(list) => {
-                let bytes = line.as_bytes();
-                let selected: Vec<u8> = list.iter()
-                    .filter_map(|&p| if p > 0 { bytes.get(p - 1).copied() } else { None })
-                    .collect();
-                write_stdout(&String::from_utf8_lossy(&selected));
+            None => {
+                write_stderr(&format!("cut: {}: No such file or directory\n", path));
+                errors = 1;
             }
         }
-        write_stdout("\n");
     }
     errors
+}
+
+fn cut_stdin(mode: &Mode) {
+    use std::io::{BufRead, BufReader};
+    let stdin = std::io::stdin();
+    let mut reader = BufReader::new(stdin.lock());
+    let mut buf = String::new();
+    loop {
+        buf.clear();
+        match reader.read_line(&mut buf) {
+            Ok(0) => break,
+            Ok(_) => {
+                let line = buf.trim_end_matches('\n').trim_end_matches('\r');
+                cut_line(line, mode);
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+fn cut_line(line: &str, mode: &Mode) {
+    match mode {
+        Mode::Fields { delim, list } => {
+            if list.is_empty() {
+                write_stdout(line);
+            } else {
+                let parts: Vec<&str> = line.split(*delim).collect();
+                let selected: Vec<&str> = list.iter()
+                    .filter_map(|&f| if f > 0 { parts.get(f - 1).copied() } else { None })
+                    .collect();
+                write_stdout(&selected.join(&delim.to_string()));
+            }
+        }
+        Mode::Chars(list) => {
+            let chars: Vec<char> = line.chars().collect();
+            let selected: String = list.iter()
+                .filter_map(|&p| if p > 0 { chars.get(p - 1).copied() } else { None })
+                .collect();
+            write_stdout(&selected);
+        }
+        Mode::Bytes(list) => {
+            let bytes = line.as_bytes();
+            let selected: Vec<u8> = list.iter()
+                .filter_map(|&p| if p > 0 { bytes.get(p - 1).copied() } else { None })
+                .collect();
+            write_stdout(&String::from_utf8_lossy(&selected));
+        }
+    }
+    write_stdout("\n");
 }
 
 fn parse_list(s: &str) -> Vec<usize> {

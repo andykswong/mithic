@@ -7,11 +7,11 @@ import { dirname, join } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = join(__dirname, '../cli.ts');
 
-function runShell(script: string): Promise<{ stdout: string; stderr: string; exit: number }> {
+function runShell(script: string, timeoutMs = 5000): Promise<{ stdout: string; stderr: string; exit: number }> {
   return new Promise((resolve) => {
     const child = spawn('node', ['--experimental-strip-types', CLI], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 5000,
+      timeout: timeoutMs,
     });
     let stdout = '';
     let stderr = '';
@@ -256,5 +256,65 @@ describe('head streaming', () => {
   it('head -c N from /dev/zero reads N zero bytes', async () => {
     const { stdout } = await runShell('head -c 4 /dev/zero | base64\n');
     assert.strictEqual(stdout.trim(), 'AAAAAA==');
+  });
+
+  it('head -n 3 from stdin pipe', async () => {
+    const { stdout, exit } = await runShell('printf "a\\nb\\nc\\nd\\ne\\n" | head -n 3\n');
+    assert.strictEqual(exit, 0);
+    assert.strictEqual(stdout.trim(), 'a\nb\nc');
+  });
+});
+
+// =============================================================================
+// broken-pipe with streaming commands
+// =============================================================================
+
+describe('broken-pipe with streaming commands', () => {
+  it('yes | grep y | head -n 3 (grep streaming)', async () => {
+    const { stdout, exit } = await runShell('yes | grep y | head -n 3\n', 10000);
+    assert.strictEqual(exit, 0);
+    assert.strictEqual(stdout.trim(), 'y\ny\ny');
+  });
+
+  it('yes | cut -c1 | head -n 3 (cut streaming)', async () => {
+    const { stdout, exit } = await runShell('yes | cut -c1 | head -n 3\n', 10000);
+    assert.strictEqual(exit, 0);
+    assert.strictEqual(stdout.trim(), 'y\ny\ny');
+  });
+
+  it('yes | uniq | head -n 1 (uniq streaming, adjacent dedup)', async () => {
+    const { stdout, exit } = await runShell('yes | uniq | head -n 1\n', 10000);
+    assert.strictEqual(exit, 0);
+    assert.strictEqual(stdout.trim(), 'y');
+  });
+
+  it('yes | rev | head -n 3 (rev streaming)', async () => {
+    const { stdout, exit } = await runShell('yes | rev | head -n 3\n', 10000);
+    assert.strictEqual(exit, 0);
+    assert.strictEqual(stdout.trim(), 'y\ny\ny');
+  });
+
+  it('yes | sed \'s/y/Y/\' | head -n 3 (sed streaming)', async () => {
+    const { stdout, exit } = await runShell('yes | sed \'s/y/Y/\' | head -n 3\n', 10000);
+    assert.strictEqual(exit, 0);
+    assert.strictEqual(stdout.trim(), 'Y\nY\nY');
+  });
+});
+
+// =============================================================================
+// empty input edge cases
+// =============================================================================
+
+describe('empty input edge cases', () => {
+  it('echo -n "" | wc -l returns 0', async () => {
+    const { stdout, exit } = await runShell('echo -n "" | wc -l\n');
+    assert.strictEqual(exit, 0);
+    assert.strictEqual(stdout.trim(), '0');
+  });
+
+  it('echo -n "" | wc -c returns 0', async () => {
+    const { stdout, exit } = await runShell('echo -n "" | wc -c\n');
+    assert.strictEqual(exit, 0);
+    assert.strictEqual(stdout.trim(), '0');
   });
 });

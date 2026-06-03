@@ -56,4 +56,34 @@ describe('concurrent pipeline execution (Phase B)', () => {
     assert.strictEqual(exit, 0);
     assert.strictEqual(stdout.trim(), '4');
   });
+
+  it('yes | head -c 4 terminates (infinite producer, byte limit)', async () => {
+    const { stdout, exit } = await runShell('yes | head -c 4 | wc -c\n', 10000);
+    assert.strictEqual(exit, 0);
+    assert.strictEqual(stdout.trim(), '4');
+  });
+
+  it('yes | tr y Y | head -n 3 (infinite → transform → finite)', async () => {
+    const { stdout, exit } = await runShell('yes | tr y Y | head -n 3\n', 10000);
+    assert.strictEqual(exit, 0);
+    assert.strictEqual(stdout.trim(), 'Y\nY\nY');
+  });
+
+  it('yes | tee /dev/null | head -n 3 (infinite → tee → finite)', async () => {
+    const { stdout, exit } = await runShell('yes | tee /dev/null | head -n 3\n', 10000);
+    assert.strictEqual(exit, 0);
+    assert.strictEqual(stdout.trim(), 'y\ny\ny');
+  });
+
+  it('yes | cat | head -n 3 (infinite → passthrough → finite)', async () => {
+    const { stdout, exit } = await runShell('yes | cat | head -n 3\n', 10000);
+    assert.strictEqual(exit, 0);
+    assert.strictEqual(stdout.trim(), 'y\ny\ny');
+  });
+
+  it('seq 1 10000 | cat | wc -l (large finite through pipeline)', async () => {
+    const { stdout, exit } = await runShell('seq 1 10000 | cat | wc -l\n', 10000);
+    assert.strictEqual(exit, 0);
+    assert.strictEqual(stdout.trim(), '10000');
+  });
 });

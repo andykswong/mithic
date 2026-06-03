@@ -1,4 +1,4 @@
-use super::{write_stdout, write_stderr, read_input, read_file, read_dir, file_kind, FileKind};
+use super::{write_stdout, write_stderr, read_file, read_dir, file_kind, FileKind};
 use super::regex::{RegexOpts, regex_find_opts};
 
 pub fn run(args: &[&str]) -> u8 {
@@ -164,15 +164,7 @@ pub fn run(args: &[&str]) -> u8 {
 
     if list_files {
         if resolved_files.is_empty() {
-            let (data, _) = read_input(&[]);
-            let text = String::from_utf8_lossy(&data);
-            for line in text.split('\n') {
-                if line_matches(line) {
-                    write_stdout("(standard input)\n");
-                    return 0;
-                }
-            }
-            return 1;
+            return grep_stdin_list(&line_matches);
         }
         let mut found_any = false;
         for file in &resolved_files {
@@ -197,11 +189,7 @@ pub fn run(args: &[&str]) -> u8 {
 
     // Multi-file or single file/stdin
     if resolved_files.is_empty() {
-        // Read from stdin
-        let (data, _) = read_input(&[]);
-        let text = String::from_utf8_lossy(&data);
-        let lines: Vec<&str> = strip_trailing_empty(text.split('\n').collect());
-        return grep_lines(&lines, &line_matches, line_number, count_mode, multi_file, None, has_context, before_context, after_context);
+        return grep_stdin_stream(&line_matches, line_number, count_mode, has_context, before_context, after_context);
     }
 
     let mut found_any = false;
@@ -222,6 +210,135 @@ pub fn run(args: &[&str]) -> u8 {
         }
     }
     if found_any { 0 } else { 1 }
+}
+
+fn grep_stdin_list(line_matches: &dyn Fn(&str) -> bool) -> u8 {
+    use std::io::{BufRead, BufReader};
+    let stdin = std::io::stdin();
+    let mut reader = BufReader::new(stdin.lock());
+    let mut buf = String::new();
+    loop {
+        buf.clear();
+        match reader.read_line(&mut buf) {
+            Ok(0) => break,
+            Ok(_) => {
+                let line = buf.trim_end_matches('\n').trim_end_matches('\r');
+                if line_matches(line) {
+                    write_stdout("(standard input)\n");
+                    return 0;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    1
+}
+
+fn grep_stdin_stream(
+    line_matches: &dyn Fn(&str) -> bool,
+    show_line_number: bool,
+    count_mode: bool,
+    has_context: bool,
+    before_context: usize,
+    after_context: usize,
+) -> u8 {
+    use std::io::{BufRead, BufReader};
+    use std::collections::VecDeque;
+
+    let stdin = std::io::stdin();
+    let mut reader = BufReader::new(stdin.lock());
+    let mut buf = String::new();
+
+    if !has_context {
+        let mut lineno: usize = 0;
+        let mut match_count: usize = 0;
+        loop {
+            buf.clear();
+            match reader.read_line(&mut buf) {
+                Ok(0) => break,
+                Ok(_) => {
+                    lineno += 1;
+                    let line = buf.trim_end_matches('\n').trim_end_matches('\r');
+                    if line_matches(line) {
+                        match_count += 1;
+                        if !count_mode {
+                            format_line(line, lineno, ':', show_line_number, None);
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        if count_mode {
+            write_stdout(&format!("{}\n", match_count));
+        }
+        return if match_count > 0 { 0 } else { 1 };
+    }
+
+    // Context mode: use a sliding window for before-context
+    let mut lineno: usize = 0;
+    let mut match_count: usize = 0;
+    let mut before_buf: VecDeque<(String, usize)> = VecDeque::new();
+    let mut after_remaining: usize = 0;
+    let mut last_printed_lineno: usize = 0;
+
+    loop {
+        buf.clear();
+        match reader.read_line(&mut buf) {
+            Ok(0) => break,
+            Ok(_) => {
+                lineno += 1;
+                let line = buf.trim_end_matches('\n').trim_end_matches('\r').to_string();
+
+                if line_matches(&line) {
+                    match_count += 1;
+
+                    if !count_mode {
+                        // Print separator if gap
+                        if last_printed_lineno > 0 && !before_buf.is_empty() {
+                            let first_before = before_buf.front().map(|(_, ln)| *ln).unwrap_or(lineno);
+                            if first_before > last_printed_lineno + 1 {
+                                write_stdout("--\n");
+                            }
+                        } else if last_printed_lineno > 0 && lineno > last_printed_lineno + 1 {
+                            write_stdout("--\n");
+                        }
+
+                        // Print before-context lines
+                        for (bline, blineno) in &before_buf {
+                            if *blineno > last_printed_lineno {
+                                format_line(bline, *blineno, '-', show_line_number, None);
+                                last_printed_lineno = *blineno;
+                            }
+                        }
+                        before_buf.clear();
+
+                        // Print matching line
+                        format_line(&line, lineno, ':', show_line_number, None);
+                        last_printed_lineno = lineno;
+                    }
+
+                    after_remaining = after_context;
+                } else if after_remaining > 0 && !count_mode {
+                    format_line(&line, lineno, '-', show_line_number, None);
+                    last_printed_lineno = lineno;
+                    after_remaining -= 1;
+                } else {
+                    // Add to before-context buffer
+                    before_buf.push_back((line, lineno));
+                    if before_buf.len() > before_context {
+                        before_buf.pop_front();
+                    }
+                }
+            }
+            Err(_) => break,
+        }
+    }
+
+    if count_mode {
+        write_stdout(&format!("{}\n", match_count));
+    }
+    if match_count > 0 { 0 } else { 1 }
 }
 
 fn strip_trailing_empty(mut lines: Vec<&str>) -> Vec<&str> {

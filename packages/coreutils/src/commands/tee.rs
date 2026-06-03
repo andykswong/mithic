@@ -1,26 +1,40 @@
-use super::{write_stdout, read_stdin_all, write_file, append_file};
+use super::{write_stdout_bytes, write_file, append_file};
 
 pub fn run(args: &[&str]) -> u8 {
-    let mut append = false;
+    use std::io::Read;
+
+    let mut append_mode = false;
     let mut file_args: Vec<&str> = Vec::new();
 
     for &arg in args {
         match arg {
-            "-a" => append = true,
+            "-a" => append_mode = true,
             a if a.starts_with('-') => {}
             _ => file_args.push(arg),
         }
     }
 
-    let data = read_stdin_all();
-    let s = String::from_utf8_lossy(&data);
-    write_stdout(&s);
+    let stdin = std::io::stdin();
+    let mut reader = stdin.lock();
+    let mut buf = [0u8; 4096];
+    let mut first_write = vec![true; file_args.len()];
 
-    for &arg in &file_args {
-        if append {
-            append_file(arg, &data);
-        } else {
-            write_file(arg, &data);
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                let chunk = &buf[..n];
+                write_stdout_bytes(chunk);
+                for (i, &path) in file_args.iter().enumerate() {
+                    if first_write[i] && !append_mode {
+                        write_file(path, chunk);
+                        first_write[i] = false;
+                    } else {
+                        append_file(path, chunk);
+                    }
+                }
+            }
+            Err(_) => break,
         }
     }
     0

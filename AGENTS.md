@@ -10,7 +10,7 @@ Mithic is an isomorphic sandboxed WebAssembly shell runtime. It provides a shell
 packages/
 ├── io/           @mithic/io        — VFS router, providers, HTTP/sockets, sync-bridge
 ├── wasip2/       @mithic/wasip2    — WASI P2 shim (thin adapter over @mithic/io)
-├── process/      @mithic/process   — Process spawn, pipes, stream inversion
+├── process/      @mithic/process   — Process spawn, Worker-per-process execution, SharedPipe, CompilerBridge for dynamic WASM
 ├── shell/        @mithic/shell     — Rust WASM shell: POSIX-compatible WASI P2 component
 ├── coreutils/    @mithic/coreutils — BusyBox-style Unix coreutils WASM component (30+ commands)
 └── examples/
@@ -44,7 +44,7 @@ Tests use Node.js built-in test runner (`node --test`) with `--experimental-stri
 
 - **Pluggable components** — VFS, HTTP, sockets, and process management are all defined as interfaces with injectable implementations, configured via WASI instantiation helpers. This follows SOLID principles for loose coupling and testability.
 - **Isomorphic by design** — Exposes both standard Web APIs for JavaScript consumers (Web File System API) and WASI interfaces for WebAssembly components, backed by the same underlying providers.
-- **Standards-based** — Implements WASI Preview 2 interfaces faithfully. Process management mirrors POSIX semantics (spawn, pipes, signals). Shell mirrors Bash shell behavior with POSIX mode support. Follows the Unix "everything is a file" philosophy — cloud storage, devices, and IPC are all VFS mounts.
+- **Standards-based** — Implements WASI Preview 2 interfaces faithfully. Process management mirrors POSIX semantics (spawn, pipes, signals) with a Worker-per-process model: each spawned WASM component runs in its own Web Worker with SharedPipe ring buffers for cross-Worker I/O and `Atomics`-based blocking semantics. Shell mirrors Bash shell behavior with POSIX mode support. Follows the Unix "everything is a file" philosophy — cloud storage, devices, and IPC are all VFS mounts.
 
 ## When Editing
 

@@ -1,4 +1,4 @@
-use super::{write_stdout, write_stdout_bytes, write_stderr, read_stdin_all};
+use super::{write_stdout, write_stdout_bytes, write_stderr};
 
 pub fn run(args: &[&str]) -> u8 {
     let mut number_lines = false;
@@ -17,9 +17,11 @@ pub fn run(args: &[&str]) -> u8 {
     }
 
     if file_args.is_empty() {
-        let data = read_stdin_all();
-        let s = String::from_utf8_lossy(&data);
-        output_data(&s, number_lines);
+        if number_lines {
+            cat_stdin_numbered();
+        } else {
+            cat_stdin_stream();
+        }
         return 0;
     }
 
@@ -44,6 +46,36 @@ pub fn run(args: &[&str]) -> u8 {
         }
     }
     errors
+}
+
+fn cat_stdin_stream() {
+    use std::io::Read;
+    let stdin = std::io::stdin();
+    let mut reader = stdin.lock();
+    let mut buf = [0u8; 4096];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => write_stdout_bytes(&buf[..n]),
+            Err(_) => break,
+        }
+    }
+}
+
+fn cat_stdin_numbered() {
+    use std::io::{BufRead, BufReader};
+    let stdin = std::io::stdin();
+    let reader = BufReader::new(stdin.lock());
+    let mut line_num = 1usize;
+    for line in reader.lines() {
+        match line {
+            Ok(l) => {
+                write_stdout(&format!("{:>6}\t{}\n", line_num, l));
+                line_num += 1;
+            }
+            Err(_) => break,
+        }
+    }
 }
 
 fn cat_file_stream(path: &str) -> std::io::Result<()> {
@@ -71,23 +103,6 @@ fn cat_file_numbered(path: &str) -> std::io::Result<()> {
         line_num += 1;
     }
     Ok(())
-}
-
-fn output_data(s: &str, number_lines: bool) {
-    if !number_lines {
-        write_stdout(s);
-        return;
-    }
-    let lines: Vec<&str> = s.split('\n').collect();
-    let last = if lines.last() == Some(&"") { lines.len() - 1 } else { lines.len() };
-    for (i, line) in lines[..last].iter().enumerate() {
-        write_stdout(&format!("{:>6}\t{}\n", i + 1, line));
-    }
-    if lines.last() == Some(&"") {
-        // trailing newline already consumed
-    } else if let Some(&last_line) = lines.last() {
-        write_stdout(&format!("{:>6}\t{}", last_line.len(), last_line));
-    }
 }
 
 #[cfg(test)]

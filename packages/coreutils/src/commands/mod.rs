@@ -82,15 +82,15 @@ pub fn dispatch(name: &str, args: &[&str]) -> u8 {
 pub fn write_stdout(s: &str) {
     use std::io::Write;
     let mut out = std::io::stdout();
-    out.write_all(s.as_bytes()).ok();
-    out.flush().ok();
+    if out.write_all(s.as_bytes()).is_err() { std::process::exit(141); }
+    if out.flush().is_err() { std::process::exit(141); }
 }
 
 pub fn write_stdout_bytes(data: &[u8]) {
     use std::io::Write;
     let mut out = std::io::stdout();
     if out.write_all(data).is_err() { std::process::exit(141); }
-    out.flush().ok();
+    if out.flush().is_err() { std::process::exit(141); }
 }
 
 pub fn write_stderr(s: &str) {

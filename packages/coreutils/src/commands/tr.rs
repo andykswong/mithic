@@ -1,6 +1,8 @@
-use super::{write_stdout, read_stdin_all, expand_char_set};
+use super::{write_stdout, expand_char_set};
 
 pub fn run(args: &[&str]) -> u8 {
+    use std::io::{BufRead, BufReader};
+
     let mut delete = false;
     let mut squeeze = false;
     let mut sets: Vec<&str> = Vec::new();
@@ -25,20 +27,35 @@ pub fn run(args: &[&str]) -> u8 {
         i += 1;
     }
 
-    let data = read_stdin_all();
-    let text = String::from_utf8_lossy(&data).into_owned();
+    let stdin = std::io::stdin();
+    let mut reader = BufReader::new(stdin.lock());
+    let mut buf = String::new();
 
+    loop {
+        buf.clear();
+        match reader.read_line(&mut buf) {
+            Ok(0) => break,
+            Ok(_) => {
+                let result = transform_line(&buf, delete, squeeze, &sets);
+                write_stdout(&result);
+            }
+            Err(_) => break,
+        }
+    }
+    0
+}
+
+fn transform_line(text: &str, delete: bool, squeeze: bool, sets: &[&str]) -> String {
     if delete {
         let set1 = sets.first().copied().unwrap_or("");
         let del_chars: Vec<char> = expand_char_set(set1);
         let filtered: String = text.chars().filter(|c| !del_chars.contains(c)).collect();
-        let result = if squeeze && sets.len() >= 2 {
+        if squeeze && sets.len() >= 2 {
             let sq_chars = expand_char_set(sets[1]);
             squeeze_chars(&filtered, &sq_chars)
         } else {
             filtered
-        };
-        write_stdout(&result);
+        }
     } else if sets.len() >= 2 {
         let from = expand_char_set(sets[0]);
         let to = expand_char_set(sets[1]);
@@ -49,19 +66,17 @@ pub fn run(args: &[&str]) -> u8 {
                 c
             }
         }).collect();
-        let result = if squeeze {
+        if squeeze {
             squeeze_chars(&translated, &to)
         } else {
             translated
-        };
-        write_stdout(&result);
+        }
     } else if squeeze && !sets.is_empty() {
         let sq_chars = expand_char_set(sets[0]);
-        write_stdout(&squeeze_chars(&text, &sq_chars));
+        squeeze_chars(text, &sq_chars)
     } else {
-        write_stdout(&text);
+        text.to_string()
     }
-    0
 }
 
 fn squeeze_chars(s: &str, chars: &[char]) -> String {

@@ -1,4 +1,4 @@
-use super::{write_stdout, read_input, lines_of};
+use super::{write_stdout, write_stderr, read_file, lines_of};
 
 pub fn run(args: &[&str]) -> u8 {
     let mut count_mode = false;
@@ -28,16 +28,72 @@ pub fn run(args: &[&str]) -> u8 {
         }
     }
 
-    let (data, errors) = read_input(&file_args);
-    let lines = lines_of(&data);
+    if file_args.is_empty() {
+        uniq_stdin(count_mode, dup_only, unique_only, ignore_case);
+        return 0;
+    }
 
+    let mut errors = 0u8;
+    for &path in &file_args {
+        match read_file(path) {
+            Some(data) => {
+                let lines = lines_of(&data);
+                uniq_lines(&lines, count_mode, dup_only, unique_only, ignore_case);
+            }
+            None => {
+                write_stderr(&format!("uniq: {}: No such file or directory\n", path));
+                errors = 1;
+            }
+        }
+    }
+    errors
+}
+
+fn uniq_stdin(count_mode: bool, dup_only: bool, unique_only: bool, ignore_case: bool) {
+    use std::io::{BufRead, BufReader};
+    let stdin = std::io::stdin();
+    let mut reader = BufReader::new(stdin.lock());
+    let mut buf = String::new();
+
+    let mut prev_line: Option<String> = None;
+    let mut count: usize = 0;
+
+    loop {
+        buf.clear();
+        match reader.read_line(&mut buf) {
+            Ok(0) => break,
+            Ok(_) => {
+                let line = buf.trim_end_matches('\n').trim_end_matches('\r');
+                let key = if ignore_case { line.to_lowercase() } else { line.to_string() };
+
+                if let Some(ref prev) = prev_line {
+                    let prev_key = if ignore_case { prev.to_lowercase() } else { prev.clone() };
+                    if prev_key == key {
+                        count += 1;
+                        continue;
+                    }
+                    emit_group(prev, count, count_mode, dup_only, unique_only);
+                }
+                prev_line = Some(line.to_string());
+                count = 1;
+            }
+            Err(_) => break,
+        }
+    }
+
+    if let Some(ref prev) = prev_line {
+        emit_group(prev, count, count_mode, dup_only, unique_only);
+    }
+}
+
+fn uniq_lines(lines: &[&str], count_mode: bool, dup_only: bool, unique_only: bool, ignore_case: bool) {
     struct Group<'a> {
         line: &'a str,
         count: usize,
     }
 
     let mut groups: Vec<Group> = Vec::new();
-    for &line in &lines {
+    for &line in lines {
         let key = if ignore_case { line.to_lowercase() } else { line.to_string() };
         if let Some(last) = groups.last_mut() {
             let last_key = if ignore_case { last.line.to_lowercase() } else { last.line.to_string() };
@@ -59,7 +115,17 @@ pub fn run(args: &[&str]) -> u8 {
             write_stdout("\n");
         }
     }
-    errors
+}
+
+fn emit_group(line: &str, count: usize, count_mode: bool, dup_only: bool, unique_only: bool) {
+    if dup_only && count < 2 { return; }
+    if unique_only && count > 1 { return; }
+    if count_mode {
+        write_stdout(&format!("{:>7} {}\n", count, line));
+    } else {
+        write_stdout(line);
+        write_stdout("\n");
+    }
 }
 
 #[cfg(test)]

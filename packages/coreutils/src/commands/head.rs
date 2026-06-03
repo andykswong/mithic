@@ -1,4 +1,4 @@
-use super::{write_stdout, write_stdout_bytes, write_stderr, read_stdin_all, lines_of};
+use super::{write_stdout, write_stdout_bytes, write_stderr};
 
 pub fn run(args: &[&str]) -> u8 {
     let mut n: Option<usize> = None;
@@ -32,8 +32,11 @@ pub fn run(args: &[&str]) -> u8 {
     }
 
     if file_args.is_empty() {
-        let data = read_stdin_all();
-        output_head(&data, n, c);
+        if let Some(bytes) = c {
+            head_stdin_bytes(bytes);
+        } else {
+            head_stdin_lines(n.unwrap_or(10));
+        }
         return 0;
     }
 
@@ -61,6 +64,45 @@ pub fn run(args: &[&str]) -> u8 {
     errors
 }
 
+fn head_stdin_bytes(count: usize) {
+    use std::io::Read;
+    let mut remaining = count;
+    let mut buf = [0u8; 4096];
+    let stdin = std::io::stdin();
+    let mut reader = stdin.lock();
+    while remaining > 0 {
+        let to_read = remaining.min(buf.len());
+        match reader.read(&mut buf[..to_read]) {
+            Ok(0) => break,
+            Ok(n) => {
+                write_stdout_bytes(&buf[..n]);
+                remaining -= n;
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+fn head_stdin_lines(count: usize) {
+    use std::io::{BufRead, BufReader};
+    let stdin = std::io::stdin();
+    let reader = BufReader::new(stdin.lock());
+    let mut lines_read = 0usize;
+    for line in reader.lines() {
+        if lines_read >= count {
+            break;
+        }
+        match line {
+            Ok(l) => {
+                write_stdout(&l);
+                write_stdout("\n");
+                lines_read += 1;
+            }
+            Err(_) => break,
+        }
+    }
+}
+
 fn head_file_bytes(path: &str, count: usize) -> std::io::Result<()> {
     use std::io::Read;
     let mut file = std::fs::File::open(path)?;
@@ -86,22 +128,6 @@ fn head_file_lines(path: &str, count: usize) -> std::io::Result<()> {
         lines_read += 1;
     }
     Ok(())
-}
-
-fn output_head(data: &[u8], n: Option<usize>, c: Option<usize>) {
-    if let Some(bytes) = c {
-        let take = bytes.min(data.len());
-        write_stdout(&String::from_utf8_lossy(&data[..take]));
-    } else {
-        let n = n.unwrap_or(10);
-        let lines = lines_of(data);
-        let take = n.min(lines.len());
-        let out = lines[..take].join("\n");
-        if !out.is_empty() {
-            write_stdout(&out);
-            write_stdout("\n");
-        }
-    }
 }
 
 #[cfg(test)]
