@@ -26,6 +26,7 @@ import { MemoryFsProvider, DeviceFsProvider, SyncFileSystemRouter } from '@mithi
 import { NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
 import { WorkerProcessManager, pipeHandleMap, type SpawnExternalOptions } from '@mithic/process/manager/worker';
 import { ComponentProcessWorker } from '@mithic/process/manager/component-worker';
+import { InlineProcessWorker } from '@mithic/process/manager/inline-worker';
 import { CALL_SPAWN } from '@mithic/process/manager/proxy';
 import type { CompileResult } from '@mithic/process/component/compiler';
 import { createComponentCompiler } from '@mithic/process/component/compiler';
@@ -35,6 +36,7 @@ import { COREUTILS_COMMANDS } from '@mithic/coreutils';
 import { modules as shellModules } from '@mithic/shell/component';
 import { modules as coreutilsModules } from '@mithic/coreutils/component';
 import { inputFromSharedBuffer, outputFromSharedBuffer } from '@mithic/process/io';
+import { runChmod } from './commands/chmod.ts';
 import type { ShellWorkerInit } from './worker/shell.ts';
 
 // --- Fetch raw module bytes (needed for CompileResult sent to process Workers) ---
@@ -88,21 +90,19 @@ const registry = new CommandRegistry({ compiler: compilerBridge });
 
 // --- Command resolver ---
 
-// Commands handled locally in the shell Worker (not via process Workers)
-const LOCAL_COMMANDS = new Set(['chmod']);
-
 const processWorkerUrl = new URL(import.meta.resolve('@mithic/process/worker/process'));
 
-function resolveCommand(file: string): CompileResult | undefined {
-  const name = file.includes('/') ? file.split('/').pop()! : file;
-  if (LOCAL_COMMANDS.has(name)) return undefined;
-  if (name === 'sh' || name === 'bash') return shellCompileResult;
-  if (COREUTILS_COMMANDS.has(name)) return coreutilsCompileResult;
-  return undefined;
-}
-
 function createWorker(file: string, name?: string): ProcessWorker | undefined {
-  const compileResult = resolveCommand(file);
+  const cmdName = file.includes('/') ? file.split('/').pop()! : file;
+  if (cmdName === 'chmod') {
+    return new InlineProcessWorker((opts) => {
+      const chmodArgs = opts.args.slice(1);
+      return runChmod(chmodArgs, memFs);
+    });
+  }
+  let compileResult: CompileResult | undefined;
+  if (cmdName === 'sh' || cmdName === 'bash') compileResult = shellCompileResult;
+  else if (COREUTILS_COMMANDS.has(cmdName)) compileResult = coreutilsCompileResult;
   if (!compileResult) return undefined;
   const worker = new Worker(processWorkerUrl, { type: 'module', name });
   return new ComponentProcessWorker(worker, compileResult);
