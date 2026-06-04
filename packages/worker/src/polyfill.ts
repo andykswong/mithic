@@ -44,16 +44,16 @@ function setupWorkerGlobals() {
   });
 }
 
-if (!isMainThread && workerData?.mod) {
-  // Worker side: bootstrap Web Worker globals then load target module
+if (!isMainThread && !('onmessage' in globalThis)) {
+  // Worker side: set up Web Worker globals
   setupWorkerGlobals();
 
-  const mod = workerData.mod;
-  await import(mod);
-} else if (!isMainThread && typeof (globalThis as unknown as Record<string, unknown>).onmessage === 'undefined') {
-  // Worker side: imported directly (not via bootstrap) — set up globals
-  setupWorkerGlobals();
-} else if (typeof globalThis.Worker === 'undefined') {
+  const mod = workerData?.mod;
+  if (mod) {
+    // Bootstraped - import target module
+    await import(mod);
+  }
+} else if (isMainThread && typeof globalThis.Worker === 'undefined') {
   // Main side: register Web Worker polyfill
   const polyfillPath = fileURLToPath(import.meta.url);
 

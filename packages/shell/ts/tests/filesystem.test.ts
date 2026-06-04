@@ -275,6 +275,18 @@ describe('script execution with shebang', () => {
     assert.notStrictEqual(exit, 0);
     assert.ok(stderr.includes('interpreter not found'));
   });
+
+  it('unknown interpreter error piped through 2>&1 | cat', async () => {
+    const { stdout } = await runShell(
+      'printf "#!/usr/bin/ruby\\nputs hi\\n" > /tmp/rb.sh\nchmod 755 /tmp/rb.sh\n/tmp/rb.sh 2>&1 | cat\n'
+    );
+    assert.ok(stdout.includes('interpreter not found'));
+  });
+
+  it('chmod error piped through 2>&1 | cat', async () => {
+    const { stdout } = await runShell('chmod 2>&1 | cat\n');
+    assert.ok(stdout.includes('missing operand'));
+  });
 });
 
 describe('PATH lookup for executable scripts', () => {

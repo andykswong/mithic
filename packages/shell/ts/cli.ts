@@ -92,20 +92,104 @@ const registry = new CommandRegistry({ compiler: compilerBridge });
 
 const processWorkerUrl = new URL(import.meta.resolve('@mithic/process/worker/process'));
 
+function resolveFromPath(file: string, env: Record<string, string>): string | undefined {
+  if (file.includes('/')) {
+    try { memFs.stat(file); return file; } catch { return undefined; }
+  }
+  const pathDirs = (env['PATH'] ?? '/usr/bin:/bin').split(':').filter(Boolean);
+  for (const dir of pathDirs) {
+    const candidate = `${dir}/${file}`;
+    try {
+      const stat = memFs.stat(candidate);
+      if (stat.mode & 0o111) return candidate;
+    } catch { /* not found */ }
+  }
+  return undefined;
+}
+
+function createScriptWorker(path: string, name?: string): ProcessWorker | undefined {
+  try {
+    const stat = memFs.stat(path);
+    if (!(stat.mode & 0o111)) return undefined;
+    const handle = memFs.open(path, { read: true });
+    let bytes: Uint8Array;
+    try { bytes = memFs.read(handle, 0, Number(stat.size)); }
+    finally { memFs.close(handle); }
+
+    if (CommandRegistry.isWasmComponent(bytes)) {
+      const result = registry.resolveBytes(bytes, path);
+      if (!result) return undefined;
+      const worker = new Worker(processWorkerUrl, { type: 'module', name });
+      return new ComponentProcessWorker(worker, result);
+    }
+
+    const text = new TextDecoder().decode(bytes);
+    let interpreter = 'sh';
+    let interpArgs: string[] = [];
+    if (text.startsWith('#!')) {
+      const firstLine = text.split('\n')[0].slice(2).trim();
+      const parts = firstLine.split(/\s+/);
+      interpreter = parts[0];
+      interpArgs = parts.slice(1);
+    }
+    const interpName = interpreter.includes('/') ? interpreter.split('/').pop()! : interpreter;
+    if (interpName === 'sh' || interpName === 'bash') {
+      const worker = new Worker(processWorkerUrl, { type: 'module', name });
+      const pw = new ComponentProcessWorker(worker, shellCompileResult);
+      return {
+        run(options, transfer) {
+          const scriptArgs = options.args.slice(1);
+          pw.run({ ...options, args: [interpName, ...interpArgs, path, ...scriptArgs] }, transfer);
+        },
+        terminate: () => pw.terminate(),
+        addEventListener: (type, handler) => pw.addEventListener(type, handler),
+      };
+    }
+    const errorMsg = `${path}: ${interpreter}: interpreter not found\n`;
+    return new InlineProcessWorker((opts) => {
+      if (opts.inheritStderr) {
+        hostStderr.write(new TextEncoder().encode(errorMsg));
+      } else {
+        const stderr = outputFromSharedBuffer(opts.stderrBuf, opts.stderrBufSize);
+        stderr.write(new TextEncoder().encode(errorMsg));
+        stderr[Symbol.dispose]();
+      }
+      return 127;
+    });
+  } catch { return undefined; }
+}
+
 function createWorker(file: string, name?: string): ProcessWorker | undefined {
   const cmdName = file.includes('/') ? file.split('/').pop()! : file;
   if (cmdName === 'chmod') {
     return new InlineProcessWorker((opts) => {
       const chmodArgs = opts.args.slice(1);
-      return runChmod(chmodArgs, memFs);
+      const writeErr = (msg: string) => {
+        if (opts.inheritStderr) {
+          hostStderr.write(new TextEncoder().encode(msg));
+        } else {
+          const stderr = outputFromSharedBuffer(opts.stderrBuf, opts.stderrBufSize);
+          stderr.write(new TextEncoder().encode(msg));
+          stderr[Symbol.dispose]();
+        }
+      };
+      return runChmod(chmodArgs, memFs, writeErr);
     });
   }
-  let compileResult: CompileResult | undefined;
-  if (cmdName === 'sh' || cmdName === 'bash') compileResult = shellCompileResult;
-  else if (COREUTILS_COMMANDS.has(cmdName)) compileResult = coreutilsCompileResult;
-  if (!compileResult) return undefined;
-  const worker = new Worker(processWorkerUrl, { type: 'module', name });
-  return new ComponentProcessWorker(worker, compileResult);
+  if (cmdName === 'sh' || cmdName === 'bash') {
+    const worker = new Worker(processWorkerUrl, { type: 'module', name });
+    return new ComponentProcessWorker(worker, shellCompileResult);
+  }
+  if (COREUTILS_COMMANDS.has(cmdName)) {
+    const worker = new Worker(processWorkerUrl, { type: 'module', name });
+    return new ComponentProcessWorker(worker, coreutilsCompileResult);
+  }
+  if (file.includes('/')) {
+    return createScriptWorker(file, name);
+  }
+  const resolved = resolveFromPath(file, {});
+  if (resolved) return createScriptWorker(resolved, name);
+  return undefined;
 }
 
 // --- Async stdin handler for the main thread ---
@@ -172,6 +256,7 @@ function createAsyncStdinHandler(): InputStreamHandler {
 
 // --- Shared VFS served via IoLoop ---
 
+const hostStderr = new NodeStderrHandler();
 const memFs = new MemoryFsProvider();
 memFs.mkdir('/tmp');
 const vfs = new SyncFileSystemRouter();

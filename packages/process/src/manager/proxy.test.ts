@@ -2,22 +2,23 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ProxyProcessManager, CALL_SPAWN } from './proxy.ts';
 import type { BlockingCallFn } from '@mithic/io/io';
-import { createExitSlot, createSignalSlot } from '../io/slots.ts';
 import { SIGNAL_NUMBER } from '../types.ts';
 
 function createMockBridge(exitCode?: number): { bridge: BlockingCallFn; calls: unknown[][] } {
-  const exitSlot = createExitSlot();
-  const signalSlot = createSignalSlot();
-  if (exitCode !== undefined) exitSlot.setExitCode(exitCode);
-
   const calls: unknown[][] = [];
   const bridge: BlockingCallFn = (...args: unknown[]) => {
     calls.push(args);
-    return {
-      pid: calls.length,
-      exitSlotBuf: exitSlot.buffer,
-      signalSlotBuf: signalSlot.buffer,
-    };
+    // The proxy sends exitSlotBuf/signalSlotBuf in the payload (3rd arg).
+    // Simulate the main thread setting the exit code on the proxy's slot.
+    if (exitCode !== undefined) {
+      const payload = args[2] as { exitSlotBuf?: SharedArrayBuffer };
+      if (payload?.exitSlotBuf) {
+        const view = new Int32Array(payload.exitSlotBuf);
+        Atomics.store(view, 0, exitCode);
+        Atomics.notify(view, 0);
+      }
+    }
+    return { pid: calls.length };
   };
   return { bridge, calls };
 }
@@ -74,33 +75,44 @@ describe('ProxyProcessManager', () => {
   });
 
   it('kill writes signal number to signal slot', () => {
-    const exitSlot = createExitSlot();
-    const signalSlot = createSignalSlot();
-    exitSlot.setExitCode(0);
-    const bridge: BlockingCallFn = () => ({
-      pid: 1,
-      exitSlotBuf: exitSlot.buffer,
-      signalSlotBuf: signalSlot.buffer,
-    });
+    let capturedSignalBuf: SharedArrayBuffer | undefined;
+    const bridge: BlockingCallFn = (...args: unknown[]) => {
+      const payload = args[2] as { exitSlotBuf?: SharedArrayBuffer; signalSlotBuf?: SharedArrayBuffer };
+      // Set exit code so wait() won't block
+      if (payload?.exitSlotBuf) {
+        const v = new Int32Array(payload.exitSlotBuf);
+        Atomics.store(v, 0, 0);
+        Atomics.notify(v, 0);
+      }
+      capturedSignalBuf = payload?.signalSlotBuf;
+      return { pid: 1 };
+    };
     const manager = new ProxyProcessManager(bridge);
     const proc = manager.spawn('cat', []);
     proc.kill('sigint');
-    assert.equal(signalSlot.pending(), SIGNAL_NUMBER.sigint);
+    assert.ok(capturedSignalBuf);
+    const signalView = new Int32Array(capturedSignalBuf!);
+    assert.equal(Atomics.load(signalView, 0), SIGNAL_NUMBER.sigint);
   });
 
   it('kill with sigterm writes 15', () => {
-    const exitSlot = createExitSlot();
-    const signalSlot = createSignalSlot();
-    exitSlot.setExitCode(0);
-    const bridge: BlockingCallFn = () => ({
-      pid: 1,
-      exitSlotBuf: exitSlot.buffer,
-      signalSlotBuf: signalSlot.buffer,
-    });
+    let capturedSignalBuf: SharedArrayBuffer | undefined;
+    const bridge: BlockingCallFn = (...args: unknown[]) => {
+      const payload = args[2] as { exitSlotBuf?: SharedArrayBuffer; signalSlotBuf?: SharedArrayBuffer };
+      if (payload?.exitSlotBuf) {
+        const v = new Int32Array(payload.exitSlotBuf);
+        Atomics.store(v, 0, 0);
+        Atomics.notify(v, 0);
+      }
+      capturedSignalBuf = payload?.signalSlotBuf;
+      return { pid: 1 };
+    };
     const manager = new ProxyProcessManager(bridge);
     const proc = manager.spawn('cat', []);
     proc.kill('sigterm');
-    assert.equal(signalSlot.pending(), 15);
+    assert.ok(capturedSignalBuf);
+    const signalView = new Int32Array(capturedSignalBuf!);
+    assert.equal(Atomics.load(signalView, 0), 15);
   });
 
   it('createPipe returns a working shared pipe', () => {
@@ -119,14 +131,7 @@ describe('ProxyProcessManager', () => {
   });
 
   it('signal sends to foreground processes during wait', () => {
-    const exitSlot = createExitSlot();
-    const signalSlot = createSignalSlot();
-    exitSlot.setExitCode(0);
-    const bridge: BlockingCallFn = () => ({
-      pid: 1,
-      exitSlotBuf: exitSlot.buffer,
-      signalSlotBuf: signalSlot.buffer,
-    });
+    const { bridge } = createMockBridge(0);
     const manager = new ProxyProcessManager(bridge);
     manager.spawn('cat', []);
     assert.equal(manager.hasForeground, false);

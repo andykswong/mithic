@@ -1,5 +1,3 @@
-import '@mithic/worker';
-
 const HEADER_SIZE = 16;
 const WRITE_POS = 1;
 
