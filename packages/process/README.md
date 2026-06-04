@@ -29,25 +29,17 @@ await proc.wait();
 ### Spawn with Pipes
 
 ```typescript
-import { ProcessManager, createPipe } from '@mithic/process';
+import { WorkerProcessManager } from '@mithic/process/manager/worker';
 
-const manager = new ProcessManager(/* ... */);
+const manager = new WorkerProcessManager({ createWorker, maxWorkers: 4, /* ... */ });
 
 // Create a pipe and wire it to the child's stdout
 const { input, output } = manager.createPipe();
-const proc = manager.spawn('cat.wasm', ['file.txt'], { stdout: output });
+const proc = manager.spawn('cat.wasm', ['cat', 'file.txt'], { stdout: output });
 
 // Read child output from the pipe
-const data = await input.blockingRead(4096);
-const exitCode = await proc.wait();
-```
-
-### Convenience Helper
-
-```typescript
-import { spawnWithPipes } from '@mithic/process/utils';
-
-const { process, stdin, stdout, stderr } = spawnWithPipes(manager, 'program.wasm', []);
+const data = input.blockingRead(4096);
+const exitCode = proc.wait();
 ```
 
 ## Key Concepts
@@ -105,7 +97,7 @@ The `WorkerProcessManager` accepts a `createWorker` factory function that return
 
 ## Dynamic WASM Component Execution
 
-The `ComponentRegistry` + `CompilerBridge` enable executing arbitrary WASM components at runtime via jco transpilation.
+The `CommandRegistry` + `CompilerBridge` enable executing arbitrary WASM components at runtime via jco transpilation.
 
 ### Optional Dependency: `@bytecodealliance/jco`
 
@@ -115,25 +107,26 @@ Dynamic WASM execution requires `@bytecodealliance/jco` as an optional peer depe
 npm install @bytecodealliance/jco@1
 ```
 
-**Version coupling:** The `ComponentRegistry` evaluates jco's transpiled JavaScript output at runtime using `new Function()`. This is coupled to jco's specific output format — currently a single `export function instantiate(...)` with no ES module imports, referencing only `import.meta.url` (which is mocked). If jco changes its output format in future versions, dynamic execution may break. Pin to a tested jco version.
+**Version coupling:** The `CommandRegistry` evaluates jco's transpiled JavaScript output at runtime using `new Function()`. This is coupled to jco's specific output format — currently a single `export function instantiate(...)` with no ES module imports, referencing only `import.meta.url` (which is mocked). If jco changes its output format in future versions, dynamic execution may break. Pin to a tested jco version.
 
 ### Usage
 
 ```typescript
-import { ComponentRegistry } from '@mithic/process/component/registry';
-import { CompilerBridge } from '@mithic/process/component/compiler';
+import { CommandRegistry } from '@mithic/process/component/registry';
+import { createComponentCompiler } from '@mithic/process/component/compiler';
 
-const compiler = new CompilerBridge(new Worker(compilerWorkerUrl, { type: 'module' }));
-const registry = new ComponentRegistry({ precompiled: new Map(), compiler });
+const compiler = createComponentCompiler(compilerPort);
+const registry = new CommandRegistry({ compiler });
 
-// Resolve WASM bytes to a runnable component
-const resolved = registry.resolveBytes(wasmBytes, '/path/to/component');
-if (resolved) {
-  const { run } = resolved.instantiate(resolved.compileCore, wasiImports, syncInstantiateCore);
-  run.run();
+// Resolve WASM bytes to a CompileResult
+const result = registry.resolveBytes(wasmBytes, '/path/to/component');
+if (result) {
+  // Pass result to ComponentProcessWorker for execution in a process Worker
+  const worker = new Worker(processWorkerUrl, { type: 'module' });
+  const processWorker = new ComponentProcessWorker(worker, result);
 }
 
-// Cleanup (terminates compiler Worker)
+// Cleanup
 registry[Symbol.dispose]();
 ```
 
@@ -141,8 +134,8 @@ registry[Symbol.dispose]();
 
 | Entry Point | Contents |
 |-------------|----------|
-| `@mithic/process` | Main index (ProcessManager, types, pipe) |
-| `@mithic/process/manager` | ProcessManager implementation |
+| `@mithic/process` | Main index (WASIProcess, imports) |
+| `@mithic/process/manager` | Global ProcessManager getter/setter, spawn, createPipe |
 | `@mithic/process/types` | Process, SpawnOptions, ErrorCode, ProcessWorker, RunOptions types |
 | `@mithic/process/imports` | WASI import map for process interface |
 | `@mithic/process/instantiation` | WASIProcess integration |
@@ -154,8 +147,7 @@ registry[Symbol.dispose]();
 | `@mithic/process/manager/component-worker` | ComponentProcessWorker implementation |
 | `@mithic/process/manager/inline-worker` | InlineProcessWorker implementation |
 | `@mithic/process/manager/proxy` | Proxy manager for cross-thread |
-| `@mithic/process/component/eval-jco` | jco eval helper |
-| `@mithic/process/component/registry` | ComponentRegistry for dynamic WASM |
+| `@mithic/process/component/registry` | CommandRegistry for dynamic WASM |
 | `@mithic/process/component/compiler` | CompilerBridge client |
 | `@mithic/process/worker/compiler` | Compiler Worker entry point |
 | `@mithic/process/worker/process` | Process Worker entry point |

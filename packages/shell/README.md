@@ -24,7 +24,7 @@
   - **Glob expansion** — `*`, `?`, `[...]`
   - **Builtins** — `cd`, `echo`, `export`, `unset`, `read`, `test`/`[`/`[[`, `declare`/`local`, `source`, `true`, `false`
   - **Error handling** — Arithmetic expansion errors abort the containing command; proper exit codes propagate through pipes, assignments, for/case/select
-- **Command resolution** — `CommandResolver` dispatching to shell, shell builtins, coreutils WASM, host-side commands, PATH-based WASM components and scripts, with worker-per-process model
+- **Command resolution** — `createWorker` factory dispatching to shell, shell builtins, coreutils WASM, host-side commands, PATH-based WASM components and scripts, with worker-per-process model
 - **POSIX mode** — Auto-activates when invoked as `sh`; disables non-standard extensions, including `[[`, `(( ))`, `<<<`, arrays, brace expansion
 - **Pipelines** — `cmd1 | cmd2 | cmd3` and `cmd1 |& cmd2` (pipe stderr+stdout) with true concurrent execution — each pipeline stage runs in its own Worker. Infinite producers terminate correctly via broken-pipe propagation (`cat /dev/zero | head -c 4` works).
 - **Background jobs** — `cmd &` runs concurrently in a separate Worker
@@ -35,24 +35,31 @@
 ## Usage
 
 ```typescript
-import { MithicShell } from '@mithic/shell';
+import { Runtime } from '@mithic/shell';
+import { ComponentProcessWorker } from '@mithic/process/manager/component-worker';
 
-const shell = new MithicShell({
-  wasi: {
-    sandbox: {
-      stdin: { handler: stdinHandler, isatty: true },
-      stdout: { handler: stdoutHandler, isatty: true },
-      stderr: { handler: stderrHandler, isatty: true },
-      env: { HOME: '/home', PATH: '/bin', USER: 'user', TERM: 'xterm-256color' },
-      args: ['msh'],
-      preopens: { '/': rootDescriptor },
-    },
+const runtime = new Runtime({
+  fs: memoryFsProvider,
+  stdio: {
+    stdin: stdinHandler,
+    stdout: stdoutHandler,
+    stderr: stderrHandler,
   },
-  process: { manager },
-  component: () => import('@mithic/shell/component'),
+  isatty: { stdin: true, stdout: true, stderr: true },
+  env: { HOME: '/home', PATH: '/bin', USER: 'user', TERM: 'xterm-256color' },
+  cwd: '/',
+  createWorker: (file, name) => {
+    const worker = new Worker(processWorkerUrl, { type: 'module', name });
+    return new ComponentProcessWorker(worker, compileResult);
+  },
 });
 
-const exitCode = await shell.run();
+// Execute a command
+const proc = runtime.exec('bash', { args: ['bash', '-c', 'echo hello'] });
+const exitCode = await runtime.waitAsync(proc);
+
+// Cleanup
+runtime[Symbol.dispose]();
 ```
 
 ## Build & Test
@@ -100,13 +107,17 @@ src/                   (~10k lines Rust)
 └── arith.rs, brace.rs, regex.rs, value.rs, options.rs, params.rs, jobs.rs
 
 ts/
-├── index.ts          Package exports (MithicShell)
-├── shell.ts          MithicShell instantiation class
-├── cli.ts            Node.js CLI runner (VFS + ProcessManager setup)
-└── commands.ts       CommandResolver: sh/bash, coreutils, chmod, PATH, shebang
+├── index.ts          Package exports (Runtime, ExecOptions)
+├── runtime.ts        Runtime class: IoLoop + WorkerProcessManager orchestration
+├── cli.ts            Node.js CLI runner (VFS + command resolution + shell Worker)
+├── commands/
+│   └── chmod.ts      Host-side chmod handler (numeric + symbolic modes)
+└── worker/
+    ├── shell.ts      Shell Worker entry: WASI shim + ProxyProcessManager setup
+    └── shell.worker.ts  Worker script that calls handleShellInit
 ```
 
-The shell compiles to a WASI Preview 2 component (`wasm32-wasip2`), transpiled to JavaScript via `jco`. The TypeScript host-side (`MithicShell`) configures WASI imports and process management, then instantiates and runs the component.
+The shell compiles to a WASI Preview 2 component (`wasm32-wasip2`), transpiled to JavaScript via `jco`. The TypeScript host-side (`Runtime`) orchestrates an `IoLoop` for filesystem/stdio and a `WorkerProcessManager` for process spawning. The shell itself runs in a dedicated Worker (`worker/shell.ts`) with a `ProxyProcessManager` that delegates spawn requests back to the main thread.
 
 ### Runtime Abstraction
 
@@ -132,15 +143,15 @@ Shell logic is decoupled from WASM bindings via three ISP-compliant traits compo
 
 ### Host-Side Command Resolution
 
-The TypeScript `commands.ts` implements a `CommandResolver` that resolves command names to synchronous handlers:
+The `Runtime` constructor accepts a `createWorker(file, name?) → ProcessWorker | undefined` factory function. The CLI (`cli.ts`) implements the resolution logic:
 
-1. **`sh`/`bash`** → Instantiate child shell WASM component (POSIX mode for `sh`)
-2. **`chmod`** → Host-side handler with VFS access (numeric + symbolic modes)
-3. **Coreutils** → Instantiate coreutils WASM component with `argv[0]`
-4. **Absolute/relative paths** → Script execution (shebang + permission check)
+1. **`sh`/`bash`** → `ComponentProcessWorker` with shell WASM component (POSIX mode for `sh`)
+2. **`chmod`** → `InlineProcessWorker` with host-side VFS access (numeric + symbolic modes)
+3. **Coreutils** → `ComponentProcessWorker` with coreutils WASM component
+4. **Absolute/relative paths** → Script execution (WASM detection, shebang + permission check)
 5. **Bare commands** → PATH lookup at invocation time
 
-The resolver is used by `WorkerProcessManager` (or `SimpleProcessManager` in test/single-thread mode). Each resolved command returns a `ProcessWorker` — either a `ComponentProcessWorker` (spawns a Web Worker for WASM execution) or an `InlineProcessWorker` (runs synchronously for builtins). Dynamic WASM components are resolved via `ComponentRegistry` and executed in process Workers.
+Each resolved command returns a `ProcessWorker` — either a `ComponentProcessWorker` (spawns a Web Worker for WASM execution) or an `InlineProcessWorker` (runs synchronously for builtins). Dynamic WASM components are resolved via `CommandRegistry` and executed in process Workers.
 
 ## WIT World
 

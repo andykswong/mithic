@@ -1,28 +1,23 @@
 import type { Terminal } from '@xterm/xterm';
+import type { InputStreamHandler, OutputStreamHandler, SyncOutputStreamHandler } from '@mithic/io/io';
 
-const STDIN_BUFFER_SIZE = 4096;
-
-export interface TerminalBridge {
-  stdinSignal: SharedArrayBuffer;
-  stdinData: SharedArrayBuffer;
-  writeToTerminal(text: string): void;
+export interface TerminalStdio {
+  stdin: InputStreamHandler;
+  stdout: OutputStreamHandler & SyncOutputStreamHandler;
+  stderr: OutputStreamHandler & SyncOutputStreamHandler;
 }
 
-export function createTerminalBridge(terminal: Terminal, worker: Worker): TerminalBridge {
-  const stdinSignal = new SharedArrayBuffer(12);
-  const stdinData = new SharedArrayBuffer(STDIN_BUFFER_SIZE);
-  const signalView = new Int32Array(stdinSignal);
-
+export function createTerminalStdio(terminal: Terminal): TerminalStdio {
   const encoder = new TextEncoder();
-  const dataView = new Uint8Array(stdinData);
 
-  let lineBuffer = '';
+  let buffer: Uint8Array = new Uint8Array(0);
+  let waiting: ((chunk: Uint8Array) => void) | null = null;
 
   terminal.onData((data) => {
     for (const ch of data) {
       if (ch === '\r' || ch === '\n') {
         terminal.write('\r\n');
-        sendLine(lineBuffer + '\n');
+        pushInput(encoder.encode(lineBuffer + '\n'));
         lineBuffer = '';
       } else if (ch === '\x7f' || ch === '\b') {
         if (lineBuffer.length > 0) {
@@ -32,11 +27,11 @@ export function createTerminalBridge(terminal: Terminal, worker: Worker): Termin
       } else if (ch === '\x03') {
         terminal.write('^C\r\n');
         lineBuffer = '';
-        sendSignal(2);
+        pushInput(encoder.encode('\n'));
       } else if (ch === '\x1a') {
         terminal.write('^Z\r\n');
         lineBuffer = '';
-        sendSignal(20);
+        pushInput(encoder.encode('\n'));
       } else {
         lineBuffer += ch;
         terminal.write(ch);
@@ -44,32 +39,59 @@ export function createTerminalBridge(terminal: Terminal, worker: Worker): Termin
     }
   });
 
-  function sendLine(line: string): void {
-    const bytes = encoder.encode(line);
-    const writeLen = Math.min(bytes.byteLength, STDIN_BUFFER_SIZE);
-    dataView.set(bytes.subarray(0, writeLen));
-    Atomics.store(signalView, 1, writeLen);
-    Atomics.store(signalView, 0, 1);
-    Atomics.notify(signalView, 0);
+  let lineBuffer = '';
+
+  function pushInput(data: Uint8Array): void {
+    if (waiting) {
+      const cb = waiting;
+      waiting = null;
+      cb(data);
+    } else {
+      const merged = new Uint8Array(buffer.length + data.length);
+      merged.set(buffer);
+      merged.set(data, buffer.length);
+      buffer = merged;
+    }
   }
 
-  function sendSignal(sigNum: number): void {
-    Atomics.store(signalView, 2, sigNum);
-    Atomics.store(signalView, 0, 1);
-    Atomics.notify(signalView, 0);
-  }
-
-  function writeToTerminal(text: string): void {
+  function writeToTerminal(data: Uint8Array): void {
+    const text = new TextDecoder().decode(data);
     terminal.write(text.replace(/\n/g, '\r\n'));
   }
 
-  worker.onmessage = (e: MessageEvent) => {
-    if (e.data?.type === 'stdout' || e.data?.type === 'stderr') {
-      writeToTerminal(e.data.value);
-    } else if (e.data?.type === 'prompt') {
-      terminal.write(e.data.value);
-    }
+  const stdin: InputStreamHandler = {
+    read(len: number): Uint8Array | undefined {
+      if (buffer.length > 0) {
+        const chunk = buffer.subarray(0, len);
+        buffer = buffer.subarray(len);
+        return new Uint8Array(chunk);
+      }
+      return undefined;
+    },
+    blockingRead(len: number): Promise<Uint8Array> {
+      if (buffer.length > 0) {
+        const chunk = buffer.subarray(0, len);
+        buffer = buffer.subarray(len);
+        return Promise.resolve(new Uint8Array(chunk));
+      }
+      return new Promise((resolve) => {
+        waiting = (chunk) => {
+          buffer = chunk;
+          const result = buffer.subarray(0, len);
+          buffer = buffer.subarray(len);
+          resolve(new Uint8Array(result));
+        };
+      });
+    },
   };
 
-  return { stdinSignal, stdinData, writeToTerminal };
+  const stdout: OutputStreamHandler & SyncOutputStreamHandler = {
+    write(data: Uint8Array): void { writeToTerminal(data); },
+  };
+
+  const stderr: OutputStreamHandler & SyncOutputStreamHandler = {
+    write(data: Uint8Array): void { writeToTerminal(data); },
+  };
+
+  return { stdin, stdout, stderr };
 }

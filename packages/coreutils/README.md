@@ -8,7 +8,7 @@ BusyBox-style Unix coreutils as a single WASI Preview 2 component.
 
 ## Commands
 
-cat, cp, mv, rm, mkdir, rmdir, ls, head, tail, wc, sort, uniq, cut, tr, tee, sleep, basename, dirname, touch, ln, seq, grep, sed, find, xargs, date, diff, chmod, readlink, yes, rev, paste
+awk, cat, cp, mv, rm, mkdir, rmdir, ls, head, tail, wc, sort, uniq, cut, tr, tee, sleep, basename, dirname, touch, ln, seq, grep, sed, find, xargs, date, diff, chmod, readlink, yes, rev, paste, base64, base32
 
 ### Notable Features
 
@@ -43,4 +43,4 @@ Commands are registered via `ProcessManager`. The resolver maps command names to
 
 1. Create `src/commands/yourcommand.rs` with `pub fn run(args: &[&str]) -> u8`
 2. Add `mod yourcommand;` and a match arm in `src/commands/mod.rs`
-3. Add the command name to `COREUTILS_COMMANDS` in `packages/shell/ts/commands.ts` (`@mithic/shell` package)
+3. Add the command name to `COREUTILS_COMMANDS` in `ts/index.ts` (this package's exported set)

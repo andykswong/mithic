@@ -17,7 +17,7 @@ packages/
 └── examples/
     ├── simple/   — ComponentizeJS WASM component
     ├── rust-cli/ — Rust WASM component
-    └── shell/    — xterm.js + MithicShell
+    └── shell/    — xterm.js + Runtime
 ```
 
 ## Build & Test

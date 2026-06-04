@@ -128,6 +128,8 @@ Node.js does allow `Atomics.wait()` on the main thread, but using it there would
 |-------------|----------|
 | `@mithic/io` | Main index (all types and providers) |
 | `@mithic/io/io` | Sync-bridge, call handler, stream handlers, WorkerIo, IoLoop |
+| `@mithic/io/io/providers/node-stdio` | Node.js stdout/stderr stream handlers |
+| `@mithic/io/io/providers/sync-bridge` | SyncBridge providers (SyncBridgeFsProvider, createStdinHandler, etc.) |
 | `@mithic/io/vfs` | VFS router, provider interface, MemoryFsProvider |
 | `@mithic/io/vfs/providers/opfs` | OPFS provider (browser) |
 | `@mithic/io/vfs/providers/node-fs` | Node.js native fs provider |
