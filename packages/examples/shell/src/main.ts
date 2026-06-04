@@ -5,8 +5,11 @@ import { MemoryFsProvider } from '@mithic/io/vfs';
 import { ComponentProcessWorker } from '@mithic/process/manager/component-worker';
 import type { CompileResult } from '@mithic/process/component/compiler';
 import type { ProcessWorker } from '@mithic/process/types';
+import { COREUTILS_COMMANDS } from '@mithic/coreutils';
 import { Runtime } from '@mithic/shell';
 import { modules as shellModules } from '@mithic/shell/component';
+import { modules as coreutilsModules } from '@mithic/coreutils/component';
+import { modules as rustCliModules } from '@mithic/example-rust-cli/component';
 import { createTerminalStdio } from './terminal.ts';
 
 const terminal = new Terminal({
@@ -41,18 +44,37 @@ async function fetchModuleBytes(dataUris: Record<string, string>): Promise<Recor
   return modules;
 }
 
-const shellRawModules = await fetchModuleBytes(shellModules);
+const [shellRawModules, coreutilsRawModules, rustCliRawModules] = await Promise.all([
+  fetchModuleBytes(shellModules),
+  fetchModuleBytes(coreutilsModules),
+  fetchModuleBytes(rustCliModules),
+]);
 
-// --- Build shell CompileResult ---
-// The component.js is co-located with the modules in @mithic/shell/component.
-// In Vite, we resolve the URL at runtime and fetch the JS source as text.
+// --- Build CompileResults ---
 
 const shellComponentBaseUrl = new URL('.', import.meta.resolve('@mithic/shell/component'));
-const shellJsSource = await (await fetch(new URL('component.js', shellComponentBaseUrl))).text();
+const coreutilsComponentBaseUrl = new URL('.', import.meta.resolve('@mithic/coreutils/component'));
+const rustCliComponentBaseUrl = new URL('.', import.meta.resolve('@mithic/example-rust-cli/component'));
+
+const [shellJsSource, coreutilsJsSource, rustCliJsSource] = await Promise.all([
+  (await fetch(new URL('component.js', shellComponentBaseUrl))).text(),
+  (await fetch(new URL('component.js', coreutilsComponentBaseUrl))).text(),
+  (await fetch(new URL('component.js', rustCliComponentBaseUrl))).text(),
+]);
 
 const shellCompileResult: CompileResult = {
   modules: shellRawModules,
   jsFiles: { 'component.js': shellJsSource },
+  cached: true,
+};
+const coreutilsCompileResult: CompileResult = {
+  modules: coreutilsRawModules,
+  jsFiles: { 'component.js': coreutilsJsSource },
+  cached: true,
+};
+const rustCliCompileResult: CompileResult = {
+  modules: rustCliRawModules,
+  jsFiles: { 'component.js': rustCliJsSource },
   cached: true,
 };
 
@@ -65,8 +87,13 @@ const processWorkerUrl = new URL('./worker.ts', import.meta.url);
 function createWorker(file: string, name?: string): ProcessWorker | undefined {
   const cmdName = file.includes('/') ? file.split('/').pop()! : file;
   if (cmdName === 'sh' || cmdName === 'bash') {
-    const worker = new Worker(processWorkerUrl, { type: 'module', name });
-    return new ComponentProcessWorker(worker, shellCompileResult);
+    return new ComponentProcessWorker(new Worker(processWorkerUrl, { type: 'module', name }), shellCompileResult);
+  }
+  if (COREUTILS_COMMANDS.has(cmdName)) {
+    return new ComponentProcessWorker(new Worker(processWorkerUrl, { type: 'module', name }), coreutilsCompileResult);
+  }
+  if (cmdName === 'rust-cli') {
+    return new ComponentProcessWorker(new Worker(processWorkerUrl, { type: 'module', name }), rustCliCompileResult);
   }
   return undefined;
 }

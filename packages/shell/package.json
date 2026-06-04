@@ -12,6 +12,9 @@
     "./worker/shell": "./dist/ts/worker/shell.js",
     "./worker/shell.worker": "./dist/ts/worker/shell.worker.js"
   },
+  "bin": {
+    "mithic-shell": "./dist/ts/cli.js"
+  },
   "files": [
     "/dist"
   ],

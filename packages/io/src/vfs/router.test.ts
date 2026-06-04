@@ -97,6 +97,37 @@ describe('FileSystemRouter', () => {
     });
   });
 
+  describe('open/read routes to correct provider', () => {
+    it('should read from sub-mount after open', async () => {
+      const { DeviceFsProvider } = await import('./providers/device.ts');
+      const devRouter = new FileSystemRouter();
+      await devRouter.mount('/', new MemoryFsProvider());
+      await devRouter.mount('/dev', new DeviceFsProvider());
+
+      const handle = await devRouter.open('/dev/zero', { read: true });
+      assert.strictEqual(handle.path, '/dev/zero');
+      const data = await devRouter.read(handle, 0, 4);
+      assert.strictEqual(data.length, 4);
+      assert.deepStrictEqual(data, new Uint8Array([0, 0, 0, 0]));
+      await devRouter.close(handle);
+    });
+
+    it('should read from root mount', async () => {
+      const rootFs = new MemoryFsProvider();
+      const rootHandle = rootFs.open('test.txt', { create: true, write: true });
+      rootFs.write(rootHandle, new TextEncoder().encode('hello'), 0);
+      rootFs.close(rootHandle);
+
+      const testRouter = new FileSystemRouter();
+      await testRouter.mount('/', rootFs);
+
+      const handle = await testRouter.open('/test.txt', { read: true });
+      const data = await testRouter.read(handle, 0, 5);
+      assert.strictEqual(new TextDecoder().decode(data), 'hello');
+      await testRouter.close(handle);
+    });
+  });
+
   describe('exists', () => {
     it('should return true for existing file', async () => {
       const result = await router.exists('/home/user/file.txt');

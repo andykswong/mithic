@@ -22,7 +22,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { handleBlockingCalls, type CallHandler } from '@mithic/io/io';
 import type { InputStreamHandler } from '@mithic/io/io';
-import { MemoryFsProvider, DeviceFsProvider } from '@mithic/io/vfs';
+import { MemoryFsProvider, DeviceFsProvider, FileSystemRouter } from '@mithic/io/vfs';
+import { NodeFsProvider } from '@mithic/io/vfs/providers/node-fs';
 import { NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
 import { pipeHandleMap, type SpawnExternalOptions } from '@mithic/process/manager/worker';
 import { ComponentProcessWorker } from '@mithic/process/manager/component-worker';
@@ -94,6 +95,8 @@ const registry = new CommandRegistry({ compiler: compilerBridge });
 const hostStderr = new NodeStderrHandler();
 const memFs = new MemoryFsProvider();
 memFs.mkdir('/tmp');
+memFs.mkdir('/root');
+const hostFs = new NodeFsProvider({ root: process.cwd() });
 
 // --- Command resolver ---
 
@@ -261,14 +264,16 @@ function createAsyncStdinHandler(): InputStreamHandler {
 
 // --- Create Runtime ---
 
+const vfs = new FileSystemRouter();
+await vfs.mount('/', memFs);
+await vfs.mount('/root', hostFs);
+await vfs.mount('/dev', new DeviceFsProvider({
+  stdout: new NodeStdoutHandler(),
+  stderr: new NodeStderrHandler(),
+}));
+
 const runtime = new Runtime({
-  fs: { mounts: {
-    '/': memFs,
-    '/dev': new DeviceFsProvider({
-      stdout: new NodeStdoutHandler(),
-      stderr: new NodeStderrHandler(),
-    }),
-  } },
+  fs: vfs,
   stdio: {
     stdin: createAsyncStdinHandler(),
     stdout: new NodeStdoutHandler(),
@@ -278,8 +283,9 @@ const runtime = new Runtime({
   env: {
     ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] != null)),
     PATH: '/usr/bin:/bin',
+    HOME: '/root',
   },
-  cwd: '/',
+  cwd: '/root',
   createWorker,
   maxWorkers: 8,
 });

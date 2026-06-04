@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Runtime } from '../runtime.ts';
-import { MemoryFsProvider, DeviceFsProvider } from '@mithic/io/vfs';
+import { MemoryFsProvider, DeviceFsProvider, SyncFileSystemRouter } from '@mithic/io/vfs';
 import type { SyncOutputStreamHandler } from '@mithic/io/io';
 import { ComponentProcessWorker } from '@mithic/process/manager/component-worker';
 import { InlineProcessWorker } from '@mithic/process/manager/inline-worker';
@@ -84,6 +84,13 @@ function createCaptureStderr(): { handler: SyncOutputStreamHandler; chunks: Uint
   return { handler, chunks };
 }
 
+function createTestVfs(memFs: MemoryFsProvider, stdoutHandler: SyncOutputStreamHandler, stderrHandler: SyncOutputStreamHandler) {
+  const vfs = new SyncFileSystemRouter();
+  vfs.mount('/', memFs);
+  vfs.mount('/dev', new DeviceFsProvider({ stdout: stdoutHandler, stderr: stderrHandler }));
+  return vfs;
+}
+
 function getOutput(chunks: Uint8Array[]): string {
   return new TextDecoder().decode(Buffer.concat(chunks));
 }
@@ -95,10 +102,7 @@ describe('Runtime', () => {
     const { handler: stderrHandler } = createCaptureStderr();
 
     const runtime = new Runtime({
-      fs: { mounts: {
-        '/': memFs,
-        '/dev': new DeviceFsProvider({ stdout: stdoutHandler, stderr: stderrHandler }),
-      } },
+      fs: createTestVfs(memFs, stdoutHandler, stderrHandler),
       stdio: { stdout: stdoutHandler, stderr: stderrHandler },
       createWorker: createWorkerFactory(memFs),
     });
@@ -119,10 +123,7 @@ describe('Runtime', () => {
     const { handler: stderrHandler } = createCaptureStderr();
 
     const runtime = new Runtime({
-      fs: { mounts: {
-        '/': memFs,
-        '/dev': new DeviceFsProvider({ stdout: stdoutHandler, stderr: stderrHandler }),
-      } },
+      fs: createTestVfs(memFs, stdoutHandler, stderrHandler),
       stdio: { stdout: stdoutHandler, stderr: stderrHandler },
       createWorker: createWorkerFactory(memFs),
     });
@@ -143,10 +144,7 @@ describe('Runtime', () => {
     const { handler: stderrHandler } = createCaptureStderr();
 
     const runtime = new Runtime({
-      fs: { mounts: {
-        '/': memFs,
-        '/dev': new DeviceFsProvider({ stdout: stdoutHandler, stderr: stderrHandler }),
-      } },
+      fs: createTestVfs(memFs, stdoutHandler, stderrHandler),
       stdio: { stdout: stdoutHandler, stderr: stderrHandler },
       createWorker: createWorkerFactory(memFs),
       env: { PATH: '/usr/bin:/bin' },
@@ -168,10 +166,7 @@ describe('Runtime', () => {
     const { handler: stderrHandler } = createCaptureStderr();
 
     const runtime = new Runtime({
-      fs: { mounts: {
-        '/': memFs,
-        '/dev': new DeviceFsProvider({ stdout: stdoutHandler, stderr: stderrHandler }),
-      } },
+      fs: createTestVfs(memFs, stdoutHandler, stderrHandler),
       stdio: { stdout: stdoutHandler, stderr: stderrHandler },
       createWorker: (file: string) => {
         if (file === 'exit42') {
@@ -196,10 +191,7 @@ describe('Runtime', () => {
     const { handler: stderrHandler } = createCaptureStderr();
 
     const runtime = new Runtime({
-      fs: { mounts: {
-        '/': memFs,
-        '/dev': new DeviceFsProvider({ stdout: stdoutHandler, stderr: stderrHandler }),
-      } },
+      fs: createTestVfs(memFs, stdoutHandler, stderrHandler),
       stdio: { stdout: stdoutHandler, stderr: stderrHandler },
       createWorker: () => undefined,
     });
@@ -219,10 +211,7 @@ describe('Runtime', () => {
     const { handler: stderrHandler } = createCaptureStderr();
 
     const runtime = new Runtime({
-      fs: { mounts: {
-        '/': memFs,
-        '/dev': new DeviceFsProvider({ stdout: stdoutHandler, stderr: stderrHandler }),
-      } },
+      fs: createTestVfs(memFs, stdoutHandler, stderrHandler),
       stdio: { stdout: stdoutHandler, stderr: stderrHandler },
       createWorker: createWorkerFactory(memFs),
     });
@@ -243,10 +232,7 @@ describe('Runtime', () => {
     const { handler: stderrHandler } = createCaptureStderr();
 
     const runtime = new Runtime({
-      fs: { mounts: {
-        '/': memFs,
-        '/dev': new DeviceFsProvider({ stdout: stdoutHandler, stderr: stderrHandler }),
-      } },
+      fs: createTestVfs(memFs, stdoutHandler, stderrHandler),
       stdio: { stdout: stdoutHandler, stderr: stderrHandler },
       createWorker: createWorkerFactory(memFs),
     });
@@ -263,10 +249,7 @@ describe('Runtime', () => {
     const { handler: stderrHandler } = createCaptureStderr();
 
     const runtime = new Runtime({
-      fs: { mounts: {
-        '/': memFs,
-        '/dev': new DeviceFsProvider({ stdout: stdoutHandler, stderr: stderrHandler }),
-      } },
+      fs: createTestVfs(memFs, stdoutHandler, stderrHandler),
       stdio: { stdout: stdoutHandler, stderr: stderrHandler },
       createWorker: createWorkerFactory(memFs),
     });

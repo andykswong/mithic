@@ -1,12 +1,12 @@
 import { IoLoop, createCallHandler, handleBlockingCalls, type CallHandler, type InputStreamHandler, type OutputStreamHandler, type SyncOutputStreamHandler } from '@mithic/io/io';
-import { MemoryFsProvider, DeviceFsProvider, SyncFileSystemRouter, type SyncFileSystemProvider } from '@mithic/io/vfs';
+import type { FileSystemProvider } from '@mithic/io/vfs';
 import { WorkerProcessManager, pipeHandleMap, type SpawnExternalOptions } from '@mithic/process/manager/worker';
 import { CALL_SPAWN } from '@mithic/process/manager/proxy';
 import type { Process, ProcessWorker } from '@mithic/process/types';
 import { inputFromSharedBuffer, outputFromSharedBuffer } from '@mithic/process/io';
 
 export interface RuntimeConfig {
-  fs?: SyncFileSystemProvider | { mounts: Record<string, SyncFileSystemProvider> };
+  fs: FileSystemProvider;
   stdio?: {
     stdin?: InputStreamHandler;
     stdout?: OutputStreamHandler & SyncOutputStreamHandler;
@@ -33,23 +33,8 @@ export class Runtime implements Disposable {
   readonly #spawnPorts: MessagePort[] = [];
 
   constructor(config: RuntimeConfig) {
-    const vfs = new SyncFileSystemRouter();
-    if (config.fs && 'mounts' in config.fs) {
-      for (const [path, provider] of Object.entries(config.fs.mounts)) {
-        vfs.mount(path, provider);
-      }
-    } else {
-      vfs.mount('/', config.fs ?? new MemoryFsProvider());
-    }
-    if (!config.fs || !('mounts' in config.fs) || !('/dev' in config.fs.mounts)) {
-      vfs.mount('/dev', new DeviceFsProvider({
-        stdout: config.stdio?.stdout,
-        stderr: config.stdio?.stderr,
-      }));
-    }
-
     this.#ioLoop = new IoLoop({ onCall: createCallHandler({
-      fs: vfs,
+      fs: config.fs,
       stdin: config.stdio?.stdin,
       stdout: config.stdio?.stdout,
       stderr: config.stdio?.stderr,

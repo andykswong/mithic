@@ -69,7 +69,8 @@ export class FileSystemRouter implements FileSystemProvider {
 
   async open(path: string, flags: OpenFlags): Promise<FileHandle> {
     const { provider, relativePath } = this.resolve(path);
-    return provider.open(relativePath, flags);
+    const handle = await provider.open(relativePath, flags);
+    return { ...handle, path };
   }
 
   async close(handle: FileHandle): Promise<void> {
