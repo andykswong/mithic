@@ -236,9 +236,14 @@ impl ProcessMgr for WasiRuntime {
             .and_then(|h| self.take_output(&h));
 
         let env_list: Option<Vec<(String, String)>> = opts.env;
+        let mut env_with_cwd = env_list.unwrap_or_default();
+        if let Some(ref cwd) = opts.cwd {
+            env_with_cwd.retain(|(k, _)| k != "PWD");
+            env_with_cwd.push(("PWD".to_string(), cwd.clone()));
+        }
         let spawn_opts = SpawnOptions {
             cwd: None,
-            env: env_list,
+            env: Some(env_with_cwd),
             stdin,
             stdout,
             stderr,

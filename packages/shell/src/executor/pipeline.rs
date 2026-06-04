@@ -81,7 +81,7 @@ impl<R: Runtime> Shell<R> {
             if let Some(err) = stderr_opt { self.rt.pipe_close_write(err); }
             StageResult::Builtin(exit)
         } else {
-            let opts = SpawnOpts {
+            let opts = SpawnOpts { cwd: Some(self.cwd.clone()),
                 env: Some(env_list.to_vec()),
                 stdin: stdin_opt,
                 stdout: stdout_opt,
@@ -129,7 +129,7 @@ impl<R: Runtime> Shell<R> {
                     }
 
                     let env_list = self.env_list();
-                    let opts = SpawnOpts {
+                    let opts = SpawnOpts { cwd: Some(self.cwd.clone()),
                         env: Some(env_list),
                         stdin: stdin_opt,
                         stdout: stdout_opt,
@@ -180,7 +180,7 @@ impl<R: Runtime> Shell<R> {
                 if !self.apply_redirects(&cmd.redirects, &mut stdin_opt, &mut stdout_opt, &mut stderr_opt) {
                     continue;
                 }
-                let opts = SpawnOpts {
+                let opts = SpawnOpts { cwd: Some(self.cwd.clone()),
                     env: Some(env_list.clone()),
                     stdin: stdin_opt,
                     stdout: stdout_opt,

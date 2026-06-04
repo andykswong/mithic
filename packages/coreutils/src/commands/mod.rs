@@ -144,8 +144,23 @@ pub enum FileKind {
     NotFound,
 }
 
+pub fn resolve_path(path: &str) -> String {
+    if path.starts_with('/') {
+        return path.to_string();
+    }
+    let cwd = std::env::var("PWD").unwrap_or_else(|_| "/".to_string());
+    if path == "." {
+        return cwd;
+    }
+    if path == ".." {
+        return cwd.rsplit_once('/').map(|(p, _)| if p.is_empty() { "/" } else { p }).unwrap_or("/").to_string();
+    }
+    format!("{}/{}", cwd.trim_end_matches('/'), path)
+}
+
 pub fn file_kind(path: &str) -> FileKind {
-    match std::fs::metadata(path) {
+    let resolved = resolve_path(path);
+    match std::fs::metadata(&resolved) {
         Ok(m) if m.is_dir() => FileKind::Directory,
         Ok(m) if m.is_file() => FileKind::Regular,
         Ok(_) => FileKind::Other,
@@ -154,7 +169,8 @@ pub fn file_kind(path: &str) -> FileKind {
 }
 
 pub fn read_dir(path: &str) -> Vec<String> {
-    std::fs::read_dir(path)
+    let resolved = resolve_path(path);
+    std::fs::read_dir(&resolved)
         .map(|iter| {
             iter.filter_map(|e| e.ok())
                 .filter_map(|e| e.file_name().into_string().ok())

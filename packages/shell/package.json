@@ -7,7 +7,7 @@
   "main": "./dist/ts/index.js",
   "types": "./dist/ts/index.d.ts",
   "exports": {
-    ".": "./dist/ts/index.ts",
+    ".": "./dist/ts/index.js",
     "./component": "./dist/wasm/index.js",
     "./worker/shell": "./dist/ts/worker/shell.js",
     "./worker/shell.worker": "./dist/ts/worker/shell.worker.js"

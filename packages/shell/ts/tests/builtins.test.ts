@@ -272,7 +272,7 @@ describe('builtin: pushd/popd/dirs', () => {
   it('popd returns to previous directory', async () => {
     const { stdout } = await runShell('mkdir -p /tmp/a\npushd /tmp/a\npopd\npwd\n');
     const lines = stdout.trim().split('\n');
-    assert.strictEqual(lines[lines.length - 1].trim(), '/');
+    assert.strictEqual(lines[lines.length - 1].trim(), '/root');
   });
 
   it('popd on empty stack prints error', async () => {
@@ -301,7 +301,7 @@ describe('builtin: pushd/popd/dirs', () => {
   it('pushd with no arg swaps top and cwd', async () => {
     const { stdout } = await runShell('mkdir -p /tmp/a\npushd /tmp/a\npushd\npwd\n');
     const lines = stdout.trim().split('\n');
-    assert.strictEqual(lines[lines.length - 1].trim(), '/');
+    assert.strictEqual(lines[lines.length - 1].trim(), '/root');
   });
 });
 

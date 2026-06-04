@@ -32,10 +32,12 @@ fn main() {
         .map(|(k, v)| (k, ShellValue::Scalar(v)))
         .collect();
 
-    let cwd = std::env::current_dir()
-        .ok()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "/".to_string());
+    let cwd = std::env::var("PWD").ok().unwrap_or_else(|| {
+        std::env::current_dir()
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "/".to_string())
+    });
 
     let is_interactive = std::io::stdin().is_terminal();
 

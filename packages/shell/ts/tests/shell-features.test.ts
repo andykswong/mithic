@@ -293,7 +293,7 @@ describe('subshell isolation', () => {
 
   it('subshell does not affect parent cwd', async () => {
     const { stdout } = await runShell('mkdir -p /tmp/subdir\n(cd /tmp/subdir)\npwd\n');
-    assert.strictEqual(stdout.trim(), '/');
+    assert.strictEqual(stdout.trim(), '/root');
   });
 
   it('subshell does not affect parent functions', async () => {

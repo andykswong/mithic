@@ -584,7 +584,7 @@ impl<R: Runtime> Shell<R> {
                 Some(list) => list.to_vec(),
                 None => self.env_list(),
             };
-            let opts = SpawnOpts {
+            let opts = SpawnOpts { cwd: Some(self.cwd.clone()),
                 env: Some(env),
                 stdin,
                 stdout,
@@ -870,7 +870,7 @@ impl<R: Runtime> Shell<R> {
                 }
                 if i == n - 1 { last_builtin_exit = Some(exit); }
             } else {
-                let opts = SpawnOpts {
+                let opts = SpawnOpts { cwd: Some(self.cwd.clone()),
                     env: Some(env_list.clone()),
                     stdin: stdin_opt,
                     stdout: stdout_opt,

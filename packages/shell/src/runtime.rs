@@ -13,6 +13,7 @@ pub enum FileType { Regular, Directory, Other, NotFound }
 pub enum Signal { Term, Kill, Int, Tstp, Cont, Null }
 
 pub struct SpawnOpts {
+    pub cwd: Option<String>,
     pub env: Option<Vec<(String, String)>>,
     pub stdin: Option<InputHandle>,
     pub stdout: Option<OutputHandle>,

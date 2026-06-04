@@ -117,7 +117,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
                     f(shell, &name, &args[1..], stdin, stdout)
                 } else {
                     let env = shell.env_list();
-                    let opts = SpawnOpts {
+                    let opts = SpawnOpts { cwd: Some(shell.cwd.clone()),
                         env: Some(env),
                         stdin,
                         stdout,
@@ -340,7 +340,7 @@ fn exec_exec<R: Runtime>(
     let cmd = &args[0];
     let cmd_args = &args[1..];
     let env = shell.env_list();
-    let opts = SpawnOpts {
+    let opts = SpawnOpts { cwd: Some(shell.cwd.clone()),
         env: Some(env),
         stdin,
         stdout,

@@ -121,7 +121,7 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
       sandbox: {
         args: msg.args,
         env: msg.env,
-        cwd: msg.cwd,
+        cwd: msg.env['PWD'] || msg.cwd || '/',
         stdin,
         stdout,
         stderr,

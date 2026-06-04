@@ -17,6 +17,7 @@ export interface ShellWorkerInit {
   ioPort: MessagePort;
   shellArgs: string[];
   env: Record<string, string>;
+  cwd: string;
   isattyStdin: boolean;
   isattyStdout: boolean;
   isattyStderr: boolean;
@@ -73,7 +74,7 @@ export async function handleShellInit(msg: ShellWorkerInit): Promise<number> {
       preopens: { '/': rootDescriptor },
       env,
       args: shellArgs,
-      cwd: '/',
+      cwd: msg.cwd ?? '/',
       stdin: hostStdin.dup(),
       stdout: hostStdout.dup(),
       stderr: hostStderr.dup(),

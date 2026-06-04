@@ -353,9 +353,12 @@ const initMsg: ShellWorkerInit = {
   port: shellPort2 as unknown as MessagePort,
   ioPort: shellIoPort,
   shellArgs: ['bash', ...process.argv.slice(2)],
+  cwd: '/root',
   env: {
     ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] != null)),
     PATH: '/usr/bin:/bin',
+    HOME: '/root',
+    PWD: '/root',
   },
   isattyStdin: isatty(0),
   isattyStdout: isatty(1),
