@@ -12,7 +12,8 @@
       "types": "./dist/polyfill.d.ts",
       "browser": "./dist/browser.js",
       "default": "./dist/polyfill.js"
-    }
+    },
+    "./mock": "./dist/mock.js"
   },
   "files": [
     "/dist"

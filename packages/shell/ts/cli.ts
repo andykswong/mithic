@@ -20,11 +20,11 @@ import { readFileSync } from 'node:fs';
 import { isatty } from 'node:tty';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { handleBlockingCalls, IoLoop, createCallHandler, type CallHandler } from '@mithic/io/io';
+import { handleBlockingCalls, type CallHandler } from '@mithic/io/io';
 import type { InputStreamHandler } from '@mithic/io/io';
-import { MemoryFsProvider, DeviceFsProvider, SyncFileSystemRouter } from '@mithic/io/vfs';
+import { MemoryFsProvider, DeviceFsProvider } from '@mithic/io/vfs';
 import { NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
-import { WorkerProcessManager, pipeHandleMap, type SpawnExternalOptions } from '@mithic/process/manager/worker';
+import { pipeHandleMap, type SpawnExternalOptions } from '@mithic/process/manager/worker';
 import { ComponentProcessWorker } from '@mithic/process/manager/component-worker';
 import { InlineProcessWorker } from '@mithic/process/manager/inline-worker';
 import { CALL_SPAWN } from '@mithic/process/manager/proxy';
@@ -37,6 +37,7 @@ import { modules as shellModules } from '@mithic/shell/component';
 import { modules as coreutilsModules } from '@mithic/coreutils/component';
 import { inputFromSharedBuffer, outputFromSharedBuffer } from '@mithic/process/io';
 import { runChmod } from './commands/chmod.ts';
+import { Runtime } from './runtime.ts';
 import type { ShellWorkerInit } from './worker/shell.ts';
 
 // --- Fetch raw module bytes (needed for CompileResult sent to process Workers) ---
@@ -87,6 +88,12 @@ const compilerWorker = new Worker(
 compilerWorker.postMessage({ type: '__port', port: compilerPort2 }, [compilerPort2]);
 const compilerBridge = createComponentCompiler(compilerPort1 as unknown as MessagePort);
 const registry = new CommandRegistry({ compiler: compilerBridge });
+
+// --- Shared VFS (created before Runtime so createWorker closure can reference it) ---
+
+const hostStderr = new NodeStderrHandler();
+const memFs = new MemoryFsProvider();
+memFs.mkdir('/tmp');
 
 // --- Command resolver ---
 
@@ -193,8 +200,6 @@ function createWorker(file: string, name?: string): ProcessWorker | undefined {
 }
 
 // --- Async stdin handler for the main thread ---
-// Cannot use synchronous readSync(0) here — it blocks the event loop and prevents
-// the IoLoop from servicing VFS and other Worker requests.
 
 function createAsyncStdinHandler(): InputStreamHandler {
   let buffer: Uint8Array = new Uint8Array(0);
@@ -254,42 +259,32 @@ function createAsyncStdinHandler(): InputStreamHandler {
   };
 }
 
-// --- Shared VFS served via IoLoop ---
+// --- Create Runtime ---
 
-const hostStderr = new NodeStderrHandler();
-const memFs = new MemoryFsProvider();
-memFs.mkdir('/tmp');
-const vfs = new SyncFileSystemRouter();
-vfs.mount('/', memFs);
-vfs.mount('/dev', new DeviceFsProvider({
-  stdout: new NodeStdoutHandler(),
-  stderr: new NodeStderrHandler(),
-}));
-
-const ioLoop = new IoLoop({ onCall: createCallHandler({
-  fs: vfs,
-  stdin: createAsyncStdinHandler(),
-  stdout: new NodeStdoutHandler(),
-  stderr: new NodeStderrHandler(),
-}) });
-
-// --- WorkerProcessManager ---
-
-const workerManager = new WorkerProcessManager({
+const runtime = new Runtime({
+  fs: { mounts: {
+    '/': memFs,
+    '/dev': new DeviceFsProvider({
+      stdout: new NodeStdoutHandler(),
+      stderr: new NodeStderrHandler(),
+    }),
+  } },
+  stdio: {
+    stdin: createAsyncStdinHandler(),
+    stdout: new NodeStdoutHandler(),
+    stderr: new NodeStderrHandler(),
+  },
+  isatty: { stdin: isatty(0), stdout: isatty(1), stderr: isatty(2) },
+  env: {
+    ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] != null)),
+    PATH: '/usr/bin:/bin',
+  },
+  cwd: '/',
   createWorker,
   maxWorkers: 8,
-  createIoPort: () => ioLoop.addWorker(),
-  createSpawnPort: () => {
-    const { port1, port2 } = new MessageChannel();
-    handleBlockingCalls(spawnHandler, port1);
-    return port2;
-  },
-  isattyStdin: isatty(0),
-  isattyStdout: isatty(1),
-  isattyStderr: isatty(2),
 });
 
-// --- Spawn handler: responds to CALL_SPAWN from shell Worker ---
+// --- Spawn shell Worker via Runtime's IoLoop and WPM spawn handler ---
 
 const spawnHandler: CallHandler = async (call, _id, payload) => {
   if (call === CALL_SPAWN) {
@@ -315,7 +310,6 @@ const spawnHandler: CallHandler = async (call, _id, payload) => {
       signalSlotBuf: p.signalSlotBuf,
     };
 
-    // Reconstruct pipe streams from SABs if provided by the shell Worker
     if (p.stdinBuf && p.stdinBufSize) {
       const input = inputFromSharedBuffer(p.stdinBuf, p.stdinBufSize);
       pipeHandleMap.set(input, { buffer: p.stdinBuf, bufferSize: p.stdinBufSize });
@@ -332,18 +326,16 @@ const spawnHandler: CallHandler = async (call, _id, payload) => {
       options.stderr = stderr;
     }
 
-    const proc = workerManager.spawn(p.file, p.args, options);
+    const proc = runtime.workerManager.spawn(p.file, p.args, options);
     return { pid: proc.pid() };
   }
   throw new Error(`Unknown call: ${call}`);
 };
 
-// --- Create shell Worker ---
-
 const { port1: shellPort1, port2: shellPort2 } = new MessageChannel();
 handleBlockingCalls(spawnHandler, shellPort1);
 
-const shellIoPort = ioLoop.addWorker();
+const shellIoPort = runtime.ioLoop.addWorker();
 
 const shellWorker = new Worker(
   new URL('./worker/shell.worker.ts', import.meta.url),
@@ -376,16 +368,14 @@ shellWorker.onmessage = (e: MessageEvent) => {
 };
 
 shellWorker.addEventListener('close', () => {
-  ioLoop.dispose();
-  workerManager[Symbol.dispose]();
+  runtime[Symbol.dispose]();
   registry[Symbol.dispose]();
   compilerWorker.terminate();
   process.exit(shellExitCode);
 });
 
 shellWorker.addEventListener('error', () => {
-  ioLoop.dispose();
-  workerManager[Symbol.dispose]();
+  runtime[Symbol.dispose]();
   registry[Symbol.dispose]();
   compilerWorker.terminate();
   process.exit(1);
