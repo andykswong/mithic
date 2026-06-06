@@ -1,4 +1,4 @@
-use super::{write_stderr, read_file, write_file, file_kind, read_dir, FileKind};
+use super::{write_stderr, read_file, write_file, file_kind, read_dir, FileKind, resolve_path};
 
 pub fn run(args: &[&str]) -> u8 {
     let mut recursive = false;
@@ -117,7 +117,7 @@ mod tests {
 }
 
 fn copy_dir_recursive(src: &str, dst: &str) -> u8 {
-    if std::fs::create_dir_all(dst).is_err() {
+    if std::fs::create_dir_all(resolve_path(dst)).is_err() {
         write_stderr(&format!("cp: cannot create directory '{}'\n", dst));
         return 1;
     }

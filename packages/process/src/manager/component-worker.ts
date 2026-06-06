@@ -17,6 +17,11 @@ export class ComponentProcessWorker implements ProcessWorker {
   terminate() { this.#worker.terminate(); }
 
   addEventListener(type: 'error' | 'close', handler: () => void) {
+    if (type === 'close') {
+      this.#worker.addEventListener('message', ((e: MessageEvent) => {
+        if (e.data?.type === 'close') handler();
+      }) as EventListener);
+    }
     this.#worker.addEventListener(type, handler as EventListener);
   }
 }

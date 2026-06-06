@@ -1,13 +1,4 @@
 import type { SyncFileSystemProvider } from '@mithic/io/vfs';
-import type { CommandContext } from '@mithic/process/manager/simple';
-
-const enc = new TextEncoder();
-
-export function createChmodHandler(memFs: SyncFileSystemProvider) {
-  return function chmodHandler(args: string[], ctx: CommandContext): number {
-    return runChmod(args, memFs, (msg) => ctx.stderr.blockingWriteAndFlush(enc.encode(msg)));
-  };
-}
 
 export function runChmod(
   args: string[],

@@ -1,4 +1,4 @@
-use super::{write_stdout, write_stdout_bytes, write_stderr};
+use super::{write_stdout, write_stdout_bytes, write_stderr, resolve_path};
 
 pub fn run(args: &[&str]) -> u8 {
     let mut n: Option<usize> = None;
@@ -105,7 +105,7 @@ fn head_stdin_lines(count: usize) {
 
 fn head_file_bytes(path: &str, count: usize) -> std::io::Result<()> {
     use std::io::Read;
-    let mut file = std::fs::File::open(path)?;
+    let mut file = std::fs::File::open(resolve_path(path))?;
     let mut buf = vec![0u8; count];
     let bytes_read = file.read(&mut buf)?;
     buf.truncate(bytes_read);
@@ -115,7 +115,7 @@ fn head_file_bytes(path: &str, count: usize) -> std::io::Result<()> {
 
 fn head_file_lines(path: &str, count: usize) -> std::io::Result<()> {
     use std::io::{BufRead, BufReader};
-    let file = std::fs::File::open(path)?;
+    let file = std::fs::File::open(resolve_path(path))?;
     let reader = BufReader::new(file);
     let mut lines_read = 0usize;
     for line in reader.lines() {

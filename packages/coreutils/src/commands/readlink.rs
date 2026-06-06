@@ -1,4 +1,4 @@
-use super::{write_stdout, write_stderr};
+use super::{write_stdout, write_stderr, resolve_path};
 
 pub fn run(args: &[&str]) -> u8 {
     let mut canonicalize = false;
@@ -29,7 +29,7 @@ pub fn run(args: &[&str]) -> u8 {
     let mut errors = 0u8;
     for &path in &path_args {
         if !canonicalize {
-            match std::fs::read_link(path) {
+            match std::fs::read_link(resolve_path(path)) {
                 Ok(target) => {
                     write_stdout(&target.to_string_lossy());
                     write_stdout("\n");

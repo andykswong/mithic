@@ -108,11 +108,11 @@ pub fn read_stdin_all() -> Vec<u8> {
 }
 
 pub fn read_file(path: &str) -> Option<Vec<u8>> {
-    std::fs::read(path).ok()
+    std::fs::read(resolve_path(path)).ok()
 }
 
 pub fn write_file(path: &str, data: &[u8]) -> bool {
-    std::fs::write(path, data).is_ok()
+    std::fs::write(resolve_path(path), data).is_ok()
 }
 
 pub fn append_file(path: &str, data: &[u8]) -> bool {
@@ -120,21 +120,21 @@ pub fn append_file(path: &str, data: &[u8]) -> bool {
     std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(path)
+        .open(resolve_path(path))
         .and_then(|mut f| f.write_all(data))
         .is_ok()
 }
 
 pub fn remove_file(path: &str) -> bool {
-    std::fs::remove_file(path).is_ok()
+    std::fs::remove_file(resolve_path(path)).is_ok()
 }
 
 pub fn remove_dir(path: &str) -> bool {
-    std::fs::remove_dir(path).is_ok()
+    std::fs::remove_dir(resolve_path(path)).is_ok()
 }
 
 pub fn create_dir(path: &str) -> bool {
-    std::fs::create_dir(path).is_ok()
+    std::fs::create_dir(resolve_path(path)).is_ok()
 }
 
 pub enum FileKind {

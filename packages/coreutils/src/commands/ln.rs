@@ -1,4 +1,4 @@
-use super::{write_stderr, read_file, write_file, file_kind, FileKind};
+use super::{write_stderr, read_file, write_file, file_kind, FileKind, resolve_path};
 
 pub fn run(args: &[&str]) -> u8 {
     let mut symbolic = false;
@@ -36,7 +36,7 @@ pub fn run(args: &[&str]) -> u8 {
 
     if symbolic {
         #[allow(deprecated)]
-        match std::fs::soft_link(target, &linkname) {
+        match std::fs::soft_link(resolve_path(target), resolve_path(&linkname)) {
             Ok(_) => 0,
             Err(_) => {
                 write_stderr(&format!("ln: failed to create symlink '{}'\n", linkname));

@@ -1,4 +1,4 @@
-use super::{write_stdout, write_stdout_bytes, write_stderr};
+use super::{resolve_path, write_stdout, write_stdout_bytes, write_stderr};
 
 pub fn run(args: &[&str]) -> u8 {
     let mut number_lines = false;
@@ -80,7 +80,7 @@ fn cat_stdin_numbered() {
 
 fn cat_file_stream(path: &str) -> std::io::Result<()> {
     use std::io::Read;
-    let mut file = std::fs::File::open(path)?;
+    let mut file = std::fs::File::open(resolve_path(path))?;
     let mut buf = [0u8; 4096];
     loop {
         match file.read(&mut buf) {
@@ -94,7 +94,7 @@ fn cat_file_stream(path: &str) -> std::io::Result<()> {
 
 fn cat_file_numbered(path: &str) -> std::io::Result<()> {
     use std::io::{BufRead, BufReader};
-    let file = std::fs::File::open(path)?;
+    let file = std::fs::File::open(resolve_path(path))?;
     let reader = BufReader::new(file);
     let mut line_num = 1usize;
     for line in reader.lines() {

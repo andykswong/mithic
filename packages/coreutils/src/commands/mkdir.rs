@@ -1,4 +1,4 @@
-use super::{write_stderr, file_kind, FileKind};
+use super::{write_stderr, file_kind, FileKind, resolve_path};
 
 pub fn run(args: &[&str]) -> u8 {
     let mut parents = false;
@@ -24,12 +24,12 @@ pub fn run(args: &[&str]) -> u8 {
     let mut errors = 0u8;
     for &arg in &dirs {
         if parents {
-            if std::fs::create_dir_all(arg).is_err() {
+            if std::fs::create_dir_all(resolve_path(arg)).is_err() {
                 write_stderr(&format!("mkdir: cannot create directory '{}'\n", arg));
                 errors = 1;
             }
         } else {
-            if std::fs::create_dir(arg).is_err() {
+            if std::fs::create_dir(resolve_path(arg)).is_err() {
                 write_stderr(&format!("mkdir: cannot create directory '{}'\n", arg));
                 errors = 1;
             }

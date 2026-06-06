@@ -1,4 +1,4 @@
-use super::{write_stdout, file_kind, read_dir, dispatch, FileKind};
+use super::{write_stdout, file_kind, read_dir, dispatch, FileKind, resolve_path};
 use regex::Regex;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -310,7 +310,7 @@ fn find_recursive(base: &str, path: &str, name_pattern: Option<&str>, path_patte
 
     let mtime_ok = match mtime {
         Some(filter) => {
-            match std::fs::metadata(path).and_then(|m| m.modified()) {
+            match std::fs::metadata(resolve_path(path)).and_then(|m| m.modified()) {
                 Ok(modified) => {
                     let age_secs = std::time::SystemTime::now()
                         .duration_since(modified)

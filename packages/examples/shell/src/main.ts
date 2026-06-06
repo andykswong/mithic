@@ -1,7 +1,7 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import { MemoryFsProvider } from '@mithic/io/vfs';
+import { MemoryFsProvider, DeviceFsProvider, FileSystemRouter } from '@mithic/io/vfs';
 import { ComponentProcessWorker } from '@mithic/process/manager/component-worker';
 import type { CompileResult } from '@mithic/process/component/compiler';
 import type { ProcessWorker } from '@mithic/process/types';
@@ -10,6 +10,9 @@ import { Runtime } from '@mithic/shell';
 import { modules as shellModules } from '@mithic/shell/component';
 import { modules as coreutilsModules } from '@mithic/coreutils/component';
 import { modules as rustCliModules } from '@mithic/example-rust-cli/component';
+import shellJsSource from '@mithic/shell/component.js?raw';
+import coreutilsJsSource from '@mithic/coreutils/component.js?raw';
+import rustCliJsSource from '@mithic/example-rust-cli/component.js?raw';
 import { createTerminalStdio } from './terminal.ts';
 
 const terminal = new Terminal({
@@ -51,16 +54,6 @@ const [shellRawModules, coreutilsRawModules, rustCliRawModules] = await Promise.
 ]);
 
 // --- Build CompileResults ---
-
-const shellComponentBaseUrl = new URL('.', import.meta.resolve('@mithic/shell/component'));
-const coreutilsComponentBaseUrl = new URL('.', import.meta.resolve('@mithic/coreutils/component'));
-const rustCliComponentBaseUrl = new URL('.', import.meta.resolve('@mithic/example-rust-cli/component'));
-
-const [shellJsSource, coreutilsJsSource, rustCliJsSource] = await Promise.all([
-  (await fetch(new URL('component.js', shellComponentBaseUrl))).text(),
-  (await fetch(new URL('component.js', coreutilsComponentBaseUrl))).text(),
-  (await fetch(new URL('component.js', rustCliComponentBaseUrl))).text(),
-]);
 
 const shellCompileResult: CompileResult = {
   modules: shellRawModules,
@@ -107,10 +100,20 @@ memFs.mkdir('/home');
 memFs.mkdir('/tmp');
 memFs.mkdir('/bin');
 
+for (const cmd of [...COREUTILS_COMMANDS, 'rust-cli']) {
+  const h = memFs.open(`/bin/${cmd}`, { create: true, write: true });
+  memFs.close(h);
+  memFs.chmod(`/bin/${cmd}`, 0o755);
+}
+
+const vfs = new FileSystemRouter();
+await vfs.mount('/', memFs);
+await vfs.mount('/dev', new DeviceFsProvider());
+
 // --- Create Runtime ---
 
 const runtime = new Runtime({
-  fs: memFs,
+  fs: vfs,
   stdio: { stdin, stdout, stderr },
   isatty: { stdin: true, stdout: true, stderr: true },
   env: { HOME: '/home', PATH: '/bin', USER: 'user', TERM: 'xterm-256color', PWD: '/home' },
@@ -120,7 +123,7 @@ const runtime = new Runtime({
 
 // --- Execute bash and wait for exit ---
 
-const proc = runtime.exec('bash', { args: ['bash'] });
+const proc = runtime.exec('bash');
 const exitCode = await runtime.waitAsync(proc);
 
 runtime[Symbol.dispose]();

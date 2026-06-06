@@ -204,6 +204,107 @@ describe('cd and relative paths', () => {
   });
 });
 
+describe('coreutils relative path resolution', () => {
+  it('cat reads relative file after cd', async () => {
+    const { stdout } = await runShell(
+      'echo hello > /tmp/relcat.txt\ncd /tmp\ncat ./relcat.txt\n'
+    );
+    assert.strictEqual(stdout.trim(), 'hello');
+  });
+
+  it('cat reads bare filename after cd', async () => {
+    const { stdout } = await runShell(
+      'echo world > /tmp/barecat.txt\ncd /tmp\ncat barecat.txt\n'
+    );
+    assert.strictEqual(stdout.trim(), 'world');
+  });
+
+  it('head reads relative file after cd', async () => {
+    const { stdout } = await runShell(
+      'echo "line1\nline2\nline3" > /tmp/relhead.txt\ncd /tmp\nhead -n 1 ./relhead.txt\n'
+    );
+    assert.strictEqual(stdout.trim(), 'line1');
+  });
+
+  it('ls lists relative directory after cd', async () => {
+    const { stdout } = await runShell(
+      'mkdir /tmp/reldir\necho x > /tmp/reldir/a.txt\ncd /tmp\nls ./reldir\n'
+    );
+    assert.strictEqual(stdout.trim(), 'a.txt');
+  });
+
+  it('cp copies relative files after cd', async () => {
+    const { stdout } = await runShell(
+      'echo data > /tmp/relsrc.txt\ncd /tmp\ncp ./relsrc.txt ./reldst.txt\ncat ./reldst.txt\n'
+    );
+    assert.strictEqual(stdout.trim(), 'data');
+  });
+
+  it('mv renames relative file after cd', async () => {
+    const { stdout, exit } = await runShell(
+      'echo moved > /tmp/relmv1.txt\ncd /tmp\nmv ./relmv1.txt ./relmv2.txt\ncat ./relmv2.txt\n'
+    );
+    assert.strictEqual(exit, 0);
+    assert.strictEqual(stdout.trim(), 'moved');
+  });
+
+  it('rm removes relative file after cd', async () => {
+    const { exit } = await runShell(
+      'echo del > /tmp/relrm.txt\ncd /tmp\nrm ./relrm.txt\n[ ! -f /tmp/relrm.txt ]\n'
+    );
+    assert.strictEqual(exit, 0);
+  });
+
+  it('mkdir creates relative directory after cd', async () => {
+    const { exit } = await runShell(
+      'cd /tmp\nmkdir ./relmkdir\n[ -d /tmp/relmkdir ]\n'
+    );
+    assert.strictEqual(exit, 0);
+  });
+
+  it('grep searches relative file after cd', async () => {
+    const { stdout } = await runShell(
+      'echo "foo bar baz" > /tmp/relgrep.txt\ncd /tmp\ngrep bar ./relgrep.txt\n'
+    );
+    assert.match(stdout.trim(), /foo bar baz/);
+  });
+
+  it('wc counts relative file after cd', async () => {
+    const { stdout } = await runShell(
+      'echo "one two three" > /tmp/relwc.txt\ncd /tmp\nwc -w ./relwc.txt\n'
+    );
+    assert.match(stdout.trim(), /3/);
+  });
+
+  it('diff compares relative files after cd', async () => {
+    const { exit } = await runShell(
+      'echo same > /tmp/reldiff1.txt\necho same > /tmp/reldiff2.txt\ncd /tmp\ndiff ./reldiff1.txt ./reldiff2.txt\n'
+    );
+    assert.strictEqual(exit, 0);
+  });
+
+  it('sed processes relative file after cd', async () => {
+    const { stdout } = await runShell(
+      'echo "hello world" > /tmp/relsed.txt\ncd /tmp\nsed "s/world/rust/" ./relsed.txt\n'
+    );
+    assert.strictEqual(stdout.trim(), 'hello rust');
+  });
+
+  it('sort processes relative file after cd', async () => {
+    const { stdout } = await runShell(
+      'printf "b\\na\\nc\\n" > /tmp/relsort.txt\ncd /tmp\nsort ./relsort.txt\n'
+    );
+    assert.strictEqual(stdout.trim(), 'a\nb\nc');
+  });
+
+  it('touch creates relative file after cd', async () => {
+    const { exit } = await runShell(
+      'cd /tmp\ntouch ./reltouch.txt\n[ -f /tmp/reltouch.txt ]\n'
+    );
+    assert.strictEqual(exit, 0);
+  });
+});
+
 describe('chmod host command (numeric mode)', () => {
   it('chmod 755 sets executable bits', async () => {
     const { exit } = await runShell(

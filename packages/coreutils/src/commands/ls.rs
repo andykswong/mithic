@@ -1,4 +1,4 @@
-use super::{write_stdout, write_stderr, file_kind, read_dir, FileKind};
+use super::{write_stdout, write_stderr, file_kind, read_dir, FileKind, resolve_path};
 
 pub fn run(args: &[&str]) -> u8 {
     let mut show_hidden = false;
@@ -123,7 +123,7 @@ fn sort_by_time(entries: &mut Vec<String>, parent: &str) {
 }
 
 fn get_mtime(path: &str) -> Option<u64> {
-    std::fs::metadata(path)
+    std::fs::metadata(resolve_path(path))
         .ok()
         .and_then(|m| m.modified().ok())
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -223,7 +223,7 @@ fn days_to_ymd(days: u32) -> (u32, u8, u8) {
 }
 
 fn print_long(path: &str, name: &str) {
-    match std::fs::metadata(path) {
+    match std::fs::metadata(resolve_path(path)) {
         Ok(m) => {
             let mode = get_mode(&m);
             let mode_str = format_mode_bits(mode);

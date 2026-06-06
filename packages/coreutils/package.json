@@ -7,7 +7,8 @@
   "types": "./dist/ts/index.d.ts",
   "exports": {
     ".": "./dist/ts/index.js",
-    "./component": "./dist/wasm/index.js"
+    "./component": "./dist/wasm/index.js",
+    "./component.js": "./dist/wasm/component.js"
   },
   "files": [
     "/dist"
