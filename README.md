@@ -10,31 +10,46 @@
 
 Sandboxed WebAssembly shell runtime with pluggable, capability-based filesystem and resource access. Runs anywhere JavaScript runs.
 
-## Why Mithic?
-
-| | Mithic | WebContainers | Docker | WasmEdge |
-|---|---|---|---|---|
-| Runs in browser | Yes | Yes | No | No |
-| Sandboxing | WASM capability model | Node.js sandbox | Linux namespaces | WASM |
-| Pluggable filesystem | Any provider (memory, cloud, custom) | Fixed | Host bind mounts | WASI only |
-| POSIX shell | Full bash-compatible | Node.js-based | Real bash | None |
-| Component model | WASI Preview 2 | Proprietary | N/A | WASI P1 |
-| Agent-safe | Capability-scoped, no escape | Partial | Full but heavy | Partial |
-| Startup time | Instant (in-process) | ~1s | Seconds | Milliseconds |
-
 ## Core Pillars
 
-> 2. **Agent Harness** — Designed for AI agent tool execution. Pluggable VFS means agents see only the resources they need.
+1. **Agent Harness** — Designed for AI agent tool execution. Pluggable VFS means agents see only the resources they need.
+2. **Security** — WASM capability-based sandboxing. Each process runs in isolation; only explicitly mounted resources are accessible.
+3. **Virtualization** — Mount any storage provider or resource at any path. Cloud storage, APIs, caches, local files, browser OPFS, or custom backends all pluggable via the same interfaces.
+4. **Isomorphic** — Same code runs in the browser (local-first, no server required), on Node.js servers, and native hosts.
 
-1. **Security** — WASM capability-based sandboxing. Each process runs in isolation; only explicitly mounted resources are accessible.
-2. **Virtualization** — Mount any storage provider or resource at any path. Cloud storage, APIs, caches, local files, browser OPFS, or custom backends all pluggable via the same interfaces.
-3. **Isomorphic** — Same code runs in the browser (local-first, no server required), on Node.js servers, and native hosts.
+## Architecture
 
-## Composable Layers
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Browser / Node.js Host                      │
+├──────────────────────────┬──────────────────────────────────────┤
+│       Main Thread        │          Web Workers (1 per process) │
+│                          │                                      │
+│  ┌────────────────────┐  │  ┌────────────────────────────────┐  │
+│  │   Runtime / IoLoop │  │  │  WASM Component (Shell/Utils)  │  │
+│  │  ┌──────────────┐  │  │  │                                │  │
+│  │  │  VFS Router  │  │◄─┼──│  blocking_read / write         │  │
+│  │  │  ├ MemoryFS  │  │  │  │  (Atomics.wait on SAB)         │  │
+│  │  │  ├ DeviceFS  │  │  │  ├────────────────────────────────┤  │
+│  │  │  ├ OPFS      │  │  │  │  DeviceFsProvider (per-process)│  │
+│  │  │  └ NodeFS    │  │  │  │  /dev/stdin → process pipe     │  │
+│  │  ├──────────────┤  │  │  │  /dev/null, /dev/zero, etc.    │  │
+│  │  │  HTTP Client │  │  │  └────────────────────────────────┘  │
+│  │  │  Sockets     │  │  │                                      │
+│  │  ├──────────────┤  │  │  ┌────────────────────────────────┐  │
+│  │  │WorkerProcess │──┼──┼──│  SharedPipe (ring buffer SAB)  │  │
+│  │  │  Manager     │  │  │  │  backpressure + broken-pipe    │  │
+│  │  └──────────────┘  │  │  └────────────────────────────────┘  │
+│  └────────────────────┘  │                                      │
+│                          │  Atomics.notify / Atomics.wait       │
+└──────────────────────────┴──────────────────────────────────────┘
+```
 
-> Each package works independently — pick the abstraction level you need.
+The main thread runs an `IoLoop` that services filesystem, network, and stdio requests from WASM workers via `SharedArrayBuffer` + `Atomics`. Each spawned process (shell command, coreutil, or dynamic WASM component) runs in its own Web Worker with blocking I/O semantics. Pipelines execute concurrently — `cat /dev/zero | head -c 4` terminates correctly via broken-pipe propagation. The `Runtime` class orchestrates process spawning, VFS configuration, and stdio routing.
 
 ## Packages
+
+> Each package works independently — pick the abstraction level you need.
 
 | Package | Description |
 |---------|-------------|
@@ -42,7 +57,8 @@ Sandboxed WebAssembly shell runtime with pluggable, capability-based filesystem 
 | [`@mithic/wasip2`](./packages/wasip2) | WASI Preview 2 shim for WASM components |
 | [`@mithic/process`](./packages/process) | Process manager: spawn WASM processes with piped I/O |
 | [`@mithic/shell`](./packages/shell) | Rust WASM shell: bash-compatible interpreter (30+ builtins) |
-| [`@mithic/coreutils`](./packages/coreutils) | BusyBox-style Unix coreutils (30+ commands) as a single WASM component |
+| [`@mithic/coreutils`](./packages/coreutils) | BusyBox-style Unix coreutils as a single WASM component |
+| [`@mithic/worker`](./packages/worker) | Web Worker polyfill for Node.js (isomorphic `new Worker()`) |
 
 ### Examples
 
@@ -50,65 +66,38 @@ Sandboxed WebAssembly shell runtime with pluggable, capability-based filesystem 
 |---------|-------------|
 | [`examples/simple`](./packages/examples/simple) | JS WebAssembly component built with ComponentizeJS |
 | [`examples/rust-cli`](./packages/examples/rust-cli) | Rust WebAssembly component |
-| [`examples/shell`](./packages/examples/shell) | xterm.js browser terminal with MithicShell |
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Browser / Node.js                    │
-├────────────────────────┬────────────────────────────────┤
-│      Main Thread       │         Web Worker             │
-│                        │                                │
-│  ┌──────────────────┐  │  ┌──────────────────────────┐  │
-│  │     IoLoop       │  │  │    WASM Component        │  │
-│  │  ┌────────────┐  │  │  │    (Shell / Coreutils)   │  │
-│  │  │ VFS Router │  │◄─┼──│    blocking_read/write   │  │
-│  │  │  ├ MemFS   │  │  │  │    (Atomics.wait)        │  │
-│  │  │  ├ OPFS    │  │  │  └──────────────────────────┘  │
-│  │  │  └ NodeFS  │  │  │                                │
-│  │  ├────────────┤  │  │                                │
-│  │  │ HTTP/Sock  │  │  │                                │
-│  │  └────────────┘  │  │                                │
-│  └──────────────────┘  │                                │
-│           ▲            │                                │
-│           │ SharedArrayBuffer + Atomics.notify          │
-└───────────┴────────────┴────────────────────────────────┘
-```
+| [`examples/shell`](./packages/examples/shell) | xterm.js browser terminal with full shell runtime |
 
 ## Getting Started
 
+### Run the Shell (Node.js CLI)
+
 ```shell
 npm install mithic
-# or individual packages:
-npm install @mithic/io @mithic/wasip2 @mithic/process @mithic/shell
+npm start --workspace=@mithic/shell
 ```
 
-### Run a WASM Component (Node.js)
+This launches a bash-compatible shell with coreutils, `/dev` devices, and a virtual filesystem. You can run pipelines, scripts, and arbitrary WASM components.
 
-```js
-import { WASIShim } from '@mithic/wasip2/instantiation';
-
-const shim = new WASIShim({
-  sandbox: {
-    preopens: { '/': { dir: { 'home': { dir: {} } } } },
-    env: { HOME: '/home', PATH: '/bin' },
-    args: ['my-program', '--verbose'],
-  },
-});
-
-const { instantiate } = await import('./transpiled-component.js');
-const { run } = await instantiate(null, shim.getImportObject());
-run.run();
-```
-
-### Shell Example
-
-The [shell example](./packages/examples/shell/) demonstrates an xterm.js terminal connected to `MithicShell` (Rust WASM), running WASM programs in the browser.
+### Run in Browser
 
 ```shell
-cd packages/examples/shell
-npm run dev
+npm run dev --workspace=@mithic/example-shell
+```
+
+Opens an xterm.js terminal connected to the shell runtime via Web Workers.
+
+### Run a Script Non-Interactively
+
+```shell
+echo 'echo hello | tr a-z A-Z' | npm start --workspace=@mithic/shell
+```
+
+Or with arguments:
+
+```shell
+cd packages/shell
+npm start --workspace=@mithic/shell -- -c 'for i in 1 2 3; do echo $i; done' 
 ```
 
 ## Development
@@ -116,12 +105,16 @@ npm run dev
 ### Prerequisites
 
 - Node.js >= 22.8.0
-- Rust toolchain (for `wasm-tools` and `wkg`, installed via `prepare` script)
+- Rust toolchain with `wasm32-wasip2` target (for shell and coreutils packages)
+
+```shell
+rustup target add wasm32-wasip2
+```
 
 ### Commands
 
 ```shell
-npm install          # install deps + rust tools
+npm install          # install deps + rust tools (wasm-tools, wkg)
 npm run build        # build all packages
 npm test             # test all packages
 npm run lint         # lint all packages

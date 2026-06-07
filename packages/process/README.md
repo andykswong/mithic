@@ -23,7 +23,7 @@ npm install @mithic/process
 ```typescript
 // No streams provided — child writes directly to host terminal
 const proc = manager.spawn('echo.wasm', ['hello']);
-await proc.wait();
+const exitCode = proc.wait();
 ```
 
 ### Spawn with Pipes
@@ -38,7 +38,7 @@ const { input, output } = manager.createPipe();
 const proc = manager.spawn('cat.wasm', ['cat', 'file.txt'], { stdout: output });
 
 // Read child output from the pipe
-const data = input.blockingRead(4096);
+const data = input.blockingRead(4096n);
 const exitCode = proc.wait();
 ```
 
@@ -66,7 +66,7 @@ Two backing implementations:
 The authoritative interface is defined in [`wit/process.wit`](./wit/process.wit):
 
 ```wit
-package mithic:process@0.2.0;
+package mithic:process@0.1.0;
 
 interface manager {
   spawn: func(file: string, args: list<string>, options: option<spawn-options>) -> result<process, error-code>;

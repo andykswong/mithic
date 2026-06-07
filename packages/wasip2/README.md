@@ -49,10 +49,11 @@ instance.run.run();
 import { WASIShim } from '@mithic/wasip2/instantiation';
 import { Descriptor } from '@mithic/wasip2/filesystem/types';
 import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
+import { WorkerIo } from '@mithic/io/io';
 import {
-  WorkerIo, SyncBridgeFsProvider, SyncBridgeHttpClient,
+  SyncBridgeFsProvider, SyncBridgeHttpClient,
   createStdinHandler, createStdoutHandler,
-} from '@mithic/io/io';
+} from '@mithic/io/io/providers/sync-bridge';
 
 const io = new WorkerIo(port); // port from main thread's IoLoop.addWorker()
 

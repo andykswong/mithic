@@ -109,15 +109,12 @@ src/                   (~10k lines Rust)
 ts/
 ├── index.ts          Package exports (Runtime, ExecOptions)
 ├── runtime.ts        Runtime class: IoLoop + WorkerProcessManager orchestration
-├── cli.ts            Node.js CLI runner (VFS + command resolution + shell Worker)
-├── commands/
-│   └── chmod.ts      Host-side chmod handler (numeric + symbolic modes)
-└── worker/
-    ├── shell.ts      Shell Worker entry: WASI shim + ProxyProcessManager setup
-    └── shell.worker.ts  Worker script that calls handleShellInit
+├── cli.ts            Node.js CLI runner (VFS + command resolution + process Workers)
+└── commands/
+    └── chmod.ts      Host-side chmod handler (numeric + symbolic modes)
 ```
 
-The shell compiles to a WASI Preview 2 component (`wasm32-wasip2`), transpiled to JavaScript via `jco`. The TypeScript host-side (`Runtime`) orchestrates an `IoLoop` for filesystem/stdio and a `WorkerProcessManager` for process spawning. The shell itself runs in a dedicated Worker (`worker/shell.ts`) with a `ProxyProcessManager` that delegates spawn requests back to the main thread.
+The shell compiles to a WASI Preview 2 component (`wasm32-wasip2`), transpiled to JavaScript via `jco`. The TypeScript host-side (`Runtime`) orchestrates an `IoLoop` for filesystem/stdio and a `WorkerProcessManager` for process spawning. The shell runs as a standard process Worker via `@mithic/process/worker/process` — each spawned command (shell, coreutil, or dynamic WASM component) gets its own Web Worker with a `ProxyProcessManager` that delegates spawn requests back to the main thread.
 
 ### Runtime Abstraction
 
@@ -161,17 +158,17 @@ Each resolved command returns a `ProcessWorker` — either a `ComponentProcessWo
 package mithic:shell@0.1.0;
 
 world shell {
-  import wasi:io/streams@0.2.0;
-  import wasi:cli/stdin@0.2.0;
-  import wasi:cli/stdout@0.2.0;
-  import wasi:cli/stderr@0.2.0;
-  import wasi:filesystem/types@0.2.0;
-  import wasi:filesystem/preopens@0.2.0;
-  import mithic:process/types@0.2.0;
-  import mithic:process/manager@0.2.0;
-  // ... plus clocks, terminal, environment, poll, error
+  import wasi:io/streams@0.2.6;
+  import wasi:cli/stdin@0.2.6;
+  import wasi:cli/stdout@0.2.6;
+  import wasi:cli/stderr@0.2.6;
+  import wasi:filesystem/types@0.2.6;
+  import wasi:filesystem/preopens@0.2.6;
+  import mithic:process/types@0.1.0;
+  import mithic:process/manager@0.1.0;
+  // ... plus clocks, terminal, environment, random, poll, error
 
-  export wasi:cli/run@0.2.0;
+  export wasi:cli/run@0.2.6;
 }
 ```
 
