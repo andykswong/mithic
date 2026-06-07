@@ -191,6 +191,11 @@ describe('source (.) builtin', () => {
 });
 
 describe('cd and relative paths', () => {
+  it('initial PWD matches configured cwd', async () => {
+    const { stdout } = await runShell('echo $PWD\n');
+    assert.strictEqual(stdout.trim(), '/root');
+  });
+
   it('cd /tmp changes working directory', async () => {
     const { stdout } = await runShell('cd /tmp\necho $PWD\n');
     assert.strictEqual(stdout.trim(), '/tmp');

@@ -53,3 +53,11 @@ Tests use Node.js built-in test runner (`node --test`) with `--experimental-stri
 - **IMPORTANT:** The shell and coreutils packages compile Rust to WASM. TS integration tests run against the compiled WASM binary in `dist/`. After any Rust source change, you MUST rebuild (`npm run build` or `npm run build:rust`) before running TS tests — otherwise tests run against stale WASM and results are meaningless. This also applies when using `git stash`/`git checkout` to compare test results between versions.
 - For both `@mithic/wasip2` and `@mithic/process`, WIT definitions are the source of truth for interfaces. Package exports map to the WIT world (e.g., `@mithic/wasip2` exports match `wasi:*` interface names, `@mithic/process` exports match `mithic:process/*`). Each package provides `./instantiation` exporting a helper class (`WASIShim` / `WASIProcess`) that configures and returns the import object for WASM component instantiation.
 - Prefer editing existing files over creating new ones.
+
+## Test Coverage
+
+- **Every code change MUST include comprehensive tests.** Do not consider a change complete until tests covering the new or modified behavior are written, passing, and verified.
+- Test the happy path, edge cases, and error conditions. If a function can fail, test that it fails correctly.
+- When fixing a bug, add a regression test that reproduces the bug before applying the fix, then verify the test passes after.
+- When adding a new feature, write tests that exercise the full surface area — not just a single smoke test.
+- Run `npm run build && npm run typecheck && npm test` in the affected packages and confirm all tests pass before marking work as done.

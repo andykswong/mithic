@@ -60,6 +60,26 @@ describe('Process', () => {
     const proc = new Process(1, handler);
     assert.equal(proc.tryWait(), 42);
   });
+
+  it('waitAsync() delegates to handler.waitAsync', async () => {
+    const proc = new Process(1, {
+      onKill() {},
+      wait() { return 0; },
+      waitAsync() { return Promise.resolve(42); },
+    });
+    assert.equal(await proc.waitAsync(), 42);
+  });
+
+  it('waitAsync() falls back to polling tryWait when handler lacks waitAsync', async () => {
+    let exitCode: number | undefined;
+    const proc = new Process(1, {
+      onKill() {},
+      wait() { return 0; },
+      tryWait() { return exitCode; },
+    });
+    setTimeout(() => { exitCode = 7; }, 20);
+    assert.equal(await proc.waitAsync(), 7);
+  });
 });
 
 describe('SIGNAL_NUMBER', () => {
