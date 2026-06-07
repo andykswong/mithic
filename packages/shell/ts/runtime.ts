@@ -99,14 +99,13 @@ export class Runtime implements Disposable {
     this.#cwd = config.cwd ?? '/';
   }
 
-  get ioLoop(): IoLoop { return this.#ioLoop; }
-  get workerManager(): WorkerProcessManager { return this.#workerManager; }
 
   exec(command: string, options?: ExecOptions): Process {
     const args = options?.args ?? [];
+    const cwd = options?.cwd ?? this.#cwd;
     return this.#workerManager.spawn(command, args, {
-      env: { ...this.#env, ...options?.env },
-      cwd: options?.cwd ?? this.#cwd,
+      env: { ...this.#env, ...options?.env, PWD: cwd },
+      cwd,
     });
   }
 

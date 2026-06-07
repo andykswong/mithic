@@ -1,18 +1,8 @@
 /**
- * Main thread orchestrator for the shell-in-Worker architecture.
+ * Main thread orchestrator for the shell runtime.
  *
- * Spawns a shell Worker that runs the WASM shell component. Handles CALL_SPAWN
- * requests from the shell Worker via sync-bridge, delegating process creation
- * to WorkerProcessManager which spawns each command in its own Process Worker.
- *
- * Architecture:
- *   Main Thread (this file) ─── sync-bridge ──→ Shell Worker (worker/shell.worker.ts)
- *        │                                           │
- *        │ WorkerProcessManager.spawn()              │ ProxyProcessManager (delegates here)
- *        ▼                                           │
- *   Process Workers (one per command)                │
- *        │                                           │
- *        └── SharedPipe SABs ◄───────────────────────┘
+ * Sets up VFS, command resolution, and Runtime, then spawns the shell as a
+ * process Worker via runtime.exec('bash').
  */
 
 import '@mithic/worker';
@@ -20,15 +10,11 @@ import { readFileSync } from 'node:fs';
 import { isatty } from 'node:tty';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { handleBlockingCalls, type CallHandler } from '@mithic/io/io';
-import type { InputStreamHandler } from '@mithic/io/io';
 import { MemoryFsProvider, DeviceFsProvider, FileSystemRouter } from '@mithic/io/vfs';
 import { NodeFsProvider } from '@mithic/io/vfs/providers/node-fs';
-import { NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
-import { pipeHandleMap, type SpawnExternalOptions } from '@mithic/process/manager/worker';
+import { NodeAsyncStdinHandler, NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
 import { ComponentProcessWorker } from '@mithic/process/manager/component-worker';
 import { InlineProcessWorker } from '@mithic/process/manager/inline-worker';
-import { CALL_SPAWN } from '@mithic/process/manager/proxy';
 import type { CompileResult } from '@mithic/process/component/compiler';
 import { createComponentCompiler } from '@mithic/process/component/compiler';
 import { CommandRegistry } from '@mithic/process/component/registry';
@@ -36,10 +22,9 @@ import type { ProcessWorker } from '@mithic/process/types';
 import { COREUTILS_COMMANDS } from '@mithic/coreutils';
 import { modules as shellModules } from '@mithic/shell/component';
 import { modules as coreutilsModules } from '@mithic/coreutils/component';
-import { inputFromSharedBuffer, outputFromSharedBuffer } from '@mithic/process/io';
+import { outputFromSharedBuffer } from '@mithic/process/io';
 import { runChmod } from './commands/chmod.ts';
 import { Runtime } from './runtime.ts';
-import type { ShellWorkerInit } from './worker/shell.ts';
 
 // --- Fetch raw module bytes (needed for CompileResult sent to process Workers) ---
 
@@ -202,65 +187,6 @@ function createWorker(file: string, name?: string): ProcessWorker | undefined {
   return undefined;
 }
 
-// --- Async stdin handler for the main thread ---
-
-function createAsyncStdinHandler(): InputStreamHandler {
-  let buffer: Uint8Array = new Uint8Array(0);
-  let waiting: ((chunk: Uint8Array) => void) | null = null;
-  let ended = false;
-
-  process.stdin.on('data', (chunk: Buffer) => {
-    const data = new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-    if (waiting) {
-      const cb = waiting;
-      waiting = null;
-      cb(data);
-    } else {
-      const merged = new Uint8Array(buffer.length + data.length);
-      merged.set(buffer);
-      merged.set(data, buffer.length);
-      buffer = merged;
-    }
-  });
-  process.stdin.on('end', () => {
-    ended = true;
-    if (waiting) {
-      const cb = waiting;
-      waiting = null;
-      cb(new Uint8Array(0));
-    }
-  });
-  if (process.stdin.isPaused()) process.stdin.resume();
-
-  return {
-    read(len: number): Uint8Array | undefined {
-      if (buffer.length > 0) {
-        const chunk = buffer.subarray(0, len);
-        buffer = buffer.subarray(len);
-        return new Uint8Array(chunk);
-      }
-      if (ended) throw { tag: 'closed' };
-      return undefined;
-    },
-    blockingRead(len: number): Promise<Uint8Array> {
-      if (buffer.length > 0) {
-        const chunk = buffer.subarray(0, len);
-        buffer = buffer.subarray(len);
-        return Promise.resolve(new Uint8Array(chunk));
-      }
-      if (ended) return Promise.reject({ tag: 'closed' });
-      return new Promise((resolve, reject) => {
-        waiting = (chunk) => {
-          if (chunk.length === 0) { reject({ tag: 'closed' }); return; }
-          buffer = chunk;
-          const result = buffer.subarray(0, len);
-          buffer = buffer.subarray(len);
-          resolve(new Uint8Array(result));
-        };
-      });
-    },
-  };
-}
 
 // --- Create Runtime ---
 
@@ -275,7 +201,7 @@ await vfs.mount('/dev', new DeviceFsProvider({
 const runtime = new Runtime({
   fs: vfs,
   stdio: {
-    stdin: createAsyncStdinHandler(),
+    stdin: new NodeAsyncStdinHandler(),
     stdout: new NodeStdoutHandler(),
     stderr: new NodeStderrHandler(),
   },
@@ -290,102 +216,14 @@ const runtime = new Runtime({
   maxWorkers: 8,
 });
 
-// --- Spawn shell Worker via Runtime's IoLoop and WPM spawn handler ---
+// --- Execute shell and wait for exit ---
 
-const spawnHandler: CallHandler = async (call, _id, payload) => {
-  if (call === CALL_SPAWN) {
-    const p = payload as {
-      file: string;
-      args: string[];
-      env?: Record<string, string>;
-      cwd?: string;
-      exitSlotBuf?: SharedArrayBuffer;
-      signalSlotBuf?: SharedArrayBuffer;
-      stdinBuf?: SharedArrayBuffer;
-      stdinBufSize?: number;
-      stdoutBuf?: SharedArrayBuffer;
-      stdoutBufSize?: number;
-      stderrBuf?: SharedArrayBuffer;
-      stderrBufSize?: number;
-    };
-
-    const options: SpawnExternalOptions = {
-      env: p.env,
-      cwd: p.cwd,
-      exitSlotBuf: p.exitSlotBuf,
-      signalSlotBuf: p.signalSlotBuf,
-    };
-
-    if (p.stdinBuf && p.stdinBufSize) {
-      const input = inputFromSharedBuffer(p.stdinBuf, p.stdinBufSize);
-      pipeHandleMap.set(input, { buffer: p.stdinBuf, bufferSize: p.stdinBufSize });
-      options.stdin = input;
-    }
-    if (p.stdoutBuf && p.stdoutBufSize) {
-      const output = outputFromSharedBuffer(p.stdoutBuf, p.stdoutBufSize);
-      pipeHandleMap.set(output, { buffer: p.stdoutBuf, bufferSize: p.stdoutBufSize });
-      options.stdout = output;
-    }
-    if (p.stderrBuf && p.stderrBufSize) {
-      const stderr = outputFromSharedBuffer(p.stderrBuf, p.stderrBufSize);
-      pipeHandleMap.set(stderr, { buffer: p.stderrBuf, bufferSize: p.stderrBufSize });
-      options.stderr = stderr;
-    }
-
-    const proc = runtime.workerManager.spawn(p.file, p.args, options);
-    return { pid: proc.pid() };
-  }
-  throw new Error(`Unknown call: ${call}`);
-};
-
-const { port1: shellPort1, port2: shellPort2 } = new MessageChannel();
-handleBlockingCalls(spawnHandler, shellPort1);
-
-const shellIoPort = runtime.ioLoop.addWorker();
-
-const shellWorker = new Worker(
-  new URL('./worker/shell.worker.ts', import.meta.url),
-  { type: 'module', name: 'mithic-shell' },
-);
-
-const initMsg: ShellWorkerInit = {
-  type: '__shell_init',
-  port: shellPort2 as unknown as MessagePort,
-  ioPort: shellIoPort,
-  shellArgs: ['bash', ...process.argv.slice(2)],
-  cwd: '/root',
-  env: {
-    ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] != null)),
-    PATH: '/usr/bin:/bin',
-    HOME: '/root',
-    PWD: '/root',
-  },
-  isattyStdin: isatty(0),
-  isattyStdout: isatty(1),
-  isattyStderr: isatty(2),
-};
-
-shellWorker.postMessage(initMsg, [shellPort2 as unknown as Transferable, shellIoPort as unknown as Transferable]);
-
-// --- Wait for shell Worker to exit ---
-
-let shellExitCode = 0;
-shellWorker.onmessage = (e: MessageEvent) => {
-  if (e.data?.type === '__exit') {
-    shellExitCode = e.data.code ?? 0;
-  }
-};
-
-shellWorker.addEventListener('close', () => {
-  runtime[Symbol.dispose]();
-  registry[Symbol.dispose]();
-  compilerWorker.terminate();
-  process.exit(shellExitCode);
+const proc = runtime.exec('bash', {
+  args: process.argv.slice(2),
 });
+const exitCode = await runtime.waitAsync(proc);
 
-shellWorker.addEventListener('error', () => {
-  runtime[Symbol.dispose]();
-  registry[Symbol.dispose]();
-  compilerWorker.terminate();
-  process.exit(1);
-});
+runtime[Symbol.dispose]();
+registry[Symbol.dispose]();
+compilerWorker.terminate();
+process.exit(exitCode);
