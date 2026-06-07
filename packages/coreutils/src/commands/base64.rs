@@ -207,12 +207,11 @@ pub fn run(args: &[&str]) -> u8 {
         i += 1;
     }
 
-    let (data, errors) = read_input(&file_args);
-    if errors != 0 {
-        return errors;
-    }
-
     if decode_mode {
+        let (data, errors) = read_input(&file_args);
+        if errors != 0 {
+            return errors;
+        }
         match decode(&data) {
             Ok(decoded) => {
                 use std::io::Write;
@@ -225,12 +224,128 @@ pub fn run(args: &[&str]) -> u8 {
                 return 1;
             }
         }
+    } else if file_args.is_empty() {
+        encode_stream_stdin(wrap);
     } else {
+        let (data, errors) = read_input(&file_args);
+        if errors != 0 {
+            return errors;
+        }
         let encoded = encode(&data, wrap);
         write_stdout(&encoded);
     }
 
     0
+}
+
+fn encode_stream_stdin(wrap: usize) {
+    use std::io::Read;
+    let stdin = std::io::stdin();
+    let mut reader = stdin.lock();
+    // Read in chunks that are multiples of 3 so base64 encoding aligns
+    const CHUNK_SIZE: usize = 4095; // 3 * 1365
+    let mut buf = [0u8; CHUNK_SIZE];
+    let mut remainder: Vec<u8> = Vec::new();
+    let mut col = 0usize;
+
+    loop {
+        let n = match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(_) => break,
+        };
+
+        remainder.extend_from_slice(&buf[..n]);
+
+        // Encode complete 3-byte groups
+        let usable = (remainder.len() / 3) * 3;
+        if usable > 0 {
+            let to_encode = &remainder[..usable];
+            col = encode_chunk_write(to_encode, wrap, col);
+            remainder.drain(..usable);
+        }
+    }
+
+    // Encode any remaining bytes (1 or 2 leftover)
+    if !remainder.is_empty() {
+        encode_chunk_write(&remainder, wrap, col);
+    } else if col > 0 {
+        write_stdout("\n");
+    }
+}
+
+fn encode_chunk_write(data: &[u8], wrap: usize, mut col: usize) -> usize {
+    let mut out = String::new();
+    let mut i = 0;
+
+    while i + 2 < data.len() {
+        let b0 = data[i];
+        let b1 = data[i + 1];
+        let b2 = data[i + 2];
+
+        let chars = [
+            ENCODE_TABLE[(b0 >> 2) as usize],
+            ENCODE_TABLE[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize],
+            ENCODE_TABLE[(((b1 & 0x0F) << 2) | (b2 >> 6)) as usize],
+            ENCODE_TABLE[(b2 & 0x3F) as usize],
+        ];
+
+        for &ch in &chars {
+            out.push(ch as char);
+            col += 1;
+            if wrap > 0 && col >= wrap {
+                out.push('\n');
+                col = 0;
+            }
+        }
+        i += 3;
+    }
+
+    // Handle remaining 1 or 2 bytes (final padding)
+    let remaining = data.len() - i;
+    if remaining == 1 {
+        let b0 = data[i];
+        let chars = [
+            ENCODE_TABLE[(b0 >> 2) as usize],
+            ENCODE_TABLE[((b0 & 0x03) << 4) as usize],
+            b'=',
+            b'=',
+        ];
+        for &ch in &chars {
+            out.push(ch as char);
+            col += 1;
+            if wrap > 0 && col >= wrap {
+                out.push('\n');
+                col = 0;
+            }
+        }
+    } else if remaining == 2 {
+        let b0 = data[i];
+        let b1 = data[i + 1];
+        let chars = [
+            ENCODE_TABLE[(b0 >> 2) as usize],
+            ENCODE_TABLE[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize],
+            ENCODE_TABLE[((b1 & 0x0F) << 2) as usize],
+            b'=',
+        ];
+        for &ch in &chars {
+            out.push(ch as char);
+            col += 1;
+            if wrap > 0 && col >= wrap {
+                out.push('\n');
+                col = 0;
+            }
+        }
+    }
+
+    if col > 0 && (data.len() % 3 != 0) {
+        // Final chunk with padding — add trailing newline
+        out.push('\n');
+        col = 0;
+    }
+
+    write_stdout(&out);
+    col
 }
 
 #[cfg(test)]

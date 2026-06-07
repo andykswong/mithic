@@ -51,9 +51,11 @@ export class NodeAsyncStdinHandler implements InputStreamHandler {
   #buffer: Uint8Array = new Uint8Array(0);
   #waiting: ((chunk: Uint8Array) => void) | null = null;
   #ended = false;
+  #onData: (chunk: Buffer) => void;
+  #onEnd: () => void;
 
   constructor() {
-    process.stdin.on('data', (chunk: Buffer) => {
+    this.#onData = (chunk: Buffer) => {
       const data = new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
       if (this.#waiting) {
         const cb = this.#waiting;
@@ -65,15 +67,17 @@ export class NodeAsyncStdinHandler implements InputStreamHandler {
         merged.set(data, this.#buffer.length);
         this.#buffer = merged;
       }
-    });
-    process.stdin.on('end', () => {
+    };
+    this.#onEnd = () => {
       this.#ended = true;
       if (this.#waiting) {
         const cb = this.#waiting;
         this.#waiting = null;
         cb(new Uint8Array(0));
       }
-    });
+    };
+    process.stdin.on('data', this.#onData);
+    process.stdin.on('end', this.#onEnd);
     if (process.stdin.isPaused()) process.stdin.resume();
   }
 
@@ -103,5 +107,11 @@ export class NodeAsyncStdinHandler implements InputStreamHandler {
         resolve(new Uint8Array(result));
       };
     });
+  }
+
+  drop(): void {
+    process.stdin.removeListener('data', this.#onData);
+    process.stdin.removeListener('end', this.#onEnd);
+    process.stdin.pause();
   }
 }

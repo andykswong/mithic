@@ -209,6 +209,56 @@ describe('cd and relative paths', () => {
   });
 });
 
+describe('VFS mount visibility', () => {
+  it('ls / shows dev mount point', async () => {
+    const { stdout, exit } = await runShell('ls /\n');
+    assert.strictEqual(exit, 0);
+    const entries = stdout.trim().split('\n');
+    assert.ok(entries.includes('dev'), `expected 'dev' in root listing, got: ${entries}`);
+  });
+
+  it('ls / shows all expected top-level directories', async () => {
+    const { stdout } = await runShell('ls /\n');
+    const entries = stdout.trim().split('\n');
+    assert.ok(entries.includes('tmp'), 'should include tmp');
+    assert.ok(entries.includes('root'), 'should include root');
+    assert.ok(entries.includes('dev'), 'should include dev');
+  });
+
+  it('ls /dev lists device files', async () => {
+    const { stdout, exit } = await runShell('ls /dev\n');
+    assert.strictEqual(exit, 0);
+    const entries = stdout.trim().split('\n');
+    assert.ok(entries.includes('null'), 'should include null');
+    assert.ok(entries.includes('zero'), 'should include zero');
+    assert.ok(entries.includes('urandom'), 'should include urandom');
+  });
+
+  it('cat /dev/null produces empty output', async () => {
+    const { stdout, exit } = await runShell('cat /dev/null\n');
+    assert.strictEqual(exit, 0);
+    assert.strictEqual(stdout, '');
+  });
+
+  it('head -c 4 /dev/zero produces 4 null bytes', async () => {
+    const { stdout, exit } = await runShell('head -c 4 /dev/zero | wc -c\n');
+    assert.strictEqual(exit, 0);
+    assert.match(stdout.trim(), /4/);
+  });
+
+  it('/dev/stdin in pipeline reads from pipe (per-process context)', async () => {
+    const { stdout, exit } = await runShell('echo hello | cat /dev/stdin\n');
+    assert.strictEqual(exit, 0);
+    assert.strictEqual(stdout.trim(), 'hello');
+  });
+
+  it('/dev/stdout in pipeline writes to pipe', async () => {
+    const { stdout, exit } = await runShell('echo world > /dev/stdout | cat\n');
+    assert.strictEqual(exit, 0);
+    assert.strictEqual(stdout.trim(), 'world');
+  });
+});
+
 describe('coreutils relative path resolution', () => {
   it('cat reads relative file after cd', async () => {
     const { stdout } = await runShell(

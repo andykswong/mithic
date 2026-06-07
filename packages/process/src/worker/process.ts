@@ -1,16 +1,16 @@
-import type { CompileResult } from '../component/compiler.ts';
-import { exitSlotFromBuffer, signalSlotFromBuffer } from '../io/slots.ts';
-import { inputFromSharedBuffer, outputFromSharedBuffer } from '../io/pipes.ts';
-import { wrapInputWithSignalCheck, wrapOutputWithSignalCheck } from '../io/signal-stream.ts';
+import { type SyncInputStreamHandler, type SyncOutputStreamHandler, WorkerIo, createBlockingCall } from '@mithic/io/io';
+import { SyncBridgeFsProvider, createStdinHandler, createStdoutHandler, createStderrHandler } from '@mithic/io/io/providers/sync-bridge';
+import { SyncFileSystemRouter, DeviceFsProvider } from '@mithic/io/vfs';
 import { WASIShim } from '@mithic/wasip2';
-import { WASIProcess } from '@mithic/process/instantiation';
 import { ComponentExit } from '@mithic/wasip2/cli/exit';
 import { Descriptor } from '@mithic/wasip2/filesystem/types';
 import { SyncFsDescriptorHandler } from '@mithic/wasip2/filesystem/sync-fs-handler';
-import { WorkerIo, createBlockingCall } from '@mithic/io/io';
 import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
-import { SyncBridgeFsProvider } from '@mithic/io/io/providers/sync-bridge';
-import { SyncFileSystemRouter } from '@mithic/io/vfs';
+import type { CompileResult } from '../component/compiler.ts';
+import { WASIProcess } from '../instantiation.ts';
+import { exitSlotFromBuffer, signalSlotFromBuffer } from '../io/slots.ts';
+import { inputFromSharedBuffer, outputFromSharedBuffer } from '../io/pipes.ts';
+import { wrapInputWithSignalCheck, wrapOutputWithSignalCheck } from '../io/signal-stream.ts';
 import { ProxyProcessManager } from '../manager/proxy.ts';
 import { SimpleProcessManager } from '../manager/simple.ts';
 import type { ProcessManager } from '../types.ts';
@@ -52,7 +52,6 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
   let rawStderr: InstanceType<typeof OutputStream>;
 
   if (workerIo && (msg.inheritStdin || msg.inheritStdout || msg.inheritStderr)) {
-    const { createStdinHandler, createStdoutHandler, createStderrHandler } = await import('@mithic/io/io/providers/sync-bridge');
     rawStdin = msg.inheritStdin
       ? new InputStream(createStdinHandler(workerIo), undefined, msg.isattyStdin)
       : inputFromSharedBuffer(msg.stdinBuf, msg.stdinBufSize);
@@ -71,6 +70,10 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
   const stdin = wrapInputWithSignalCheck(rawStdin, signalSlot);
   const stdout = wrapOutputWithSignalCheck(rawStdout, signalSlot);
   const stderr = wrapOutputWithSignalCheck(rawStderr, signalSlot);
+
+  let devStdin: InstanceType<typeof InputStream> | undefined;
+  let devStdout: InstanceType<typeof OutputStream> | undefined;
+  let devStderr: InstanceType<typeof OutputStream> | undefined;
 
   try {
     const jsSource = msg.compileResult.jsFiles?.['component.js'];
@@ -103,8 +106,26 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
     let preopens: Record<string, Descriptor> | undefined;
     if (workerIo) {
       const syncFs = new SyncBridgeFsProvider(workerIo);
+      devStdin = rawStdin.dup();
+      devStdout = rawStdout.dup();
+      devStderr = rawStderr.dup();
+      const devStdinHandler: SyncInputStreamHandler = {
+        blockingRead(len: number) { return devStdin!.blockingRead(BigInt(len)); },
+        read(len: number) { try { return devStdin!.read(BigInt(len)); } catch { return undefined; } },
+      };
+      const devStdoutHandler: SyncOutputStreamHandler = {
+        write(data: Uint8Array) { devStdout!.blockingWriteAndFlush(data); },
+      };
+      const devStderrHandler: SyncOutputStreamHandler = {
+        write(data: Uint8Array) { devStderr!.blockingWriteAndFlush(data); },
+      };
       const vfs = new SyncFileSystemRouter();
       vfs.mount('/', syncFs);
+      vfs.mount('/dev', new DeviceFsProvider({
+        stdin: devStdinHandler,
+        stdout: devStdoutHandler,
+        stderr: devStderrHandler,
+      }));
       preopens = { '/': new Descriptor(new SyncFsDescriptorHandler(vfs, '/')) };
     }
 
@@ -135,14 +156,19 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
     const { run } = await instantiate(compileCore, imports);
     const code = run.run() ?? 0;
     shim[Symbol.dispose]();
-    // Dispose raw streams directly to ensure WRITER_CLOSED/READER_CLOSED is set
-    // on the SharedPipe SABs. The signal wrappers and jco's dup may hold extra
-    // refcounts that prevent the handler.drop() from firing via OutputStream.dispose().
+    // Dispose raw streams directly to ensure WRITER_CLOSED/READER_CLOSED is set on the SharedPipe SABs.
+    // The signal wrappers and jco's dup may hold extra refcounts that prevent the handler.drop() from firing via OutputStream.dispose().
+    devStdout?.[Symbol.dispose]();
+    devStderr?.[Symbol.dispose]();
+    devStdin?.[Symbol.dispose]();
     rawStdout[Symbol.dispose]();
     rawStderr[Symbol.dispose]();
     rawStdin[Symbol.dispose]();
     exitSlot.setExitCode(code);
   } catch (e: unknown) {
+    devStdout?.[Symbol.dispose]();
+    devStderr?.[Symbol.dispose]();
+    devStdin?.[Symbol.dispose]();
     rawStdout[Symbol.dispose]();
     rawStderr[Symbol.dispose]();
     rawStdin[Symbol.dispose]();
