@@ -1,5 +1,6 @@
 import { IoLoop, createCallHandler, handleBlockingCalls, type CallHandler, type InputStreamHandler, type OutputStreamHandler, type SyncOutputStreamHandler } from '@mithic/io/io';
 import type { FileSystemProvider } from '@mithic/io/vfs';
+import type { HttpClient, SocketProvider } from '@mithic/io/net';
 import { WorkerProcessManager, pipeHandleMap, type SpawnExternalOptions } from '@mithic/process/manager/worker';
 import { CALL_SPAWN } from '@mithic/process/manager/proxy';
 import type { Process, ProcessWorker } from '@mithic/process/types';
@@ -7,6 +8,8 @@ import { inputFromSharedBuffer, outputFromSharedBuffer } from '@mithic/process/i
 
 export interface RuntimeConfig {
   fs: FileSystemProvider;
+  http?: HttpClient;
+  sockets?: SocketProvider;
   stdio?: {
     stdin?: InputStreamHandler;
     stdout?: OutputStreamHandler & SyncOutputStreamHandler;
@@ -35,6 +38,8 @@ export class Runtime implements Disposable {
   constructor(config: RuntimeConfig) {
     this.#ioLoop = new IoLoop({ onCall: createCallHandler({
       fs: config.fs,
+      http: config.http,
+      sockets: config.sockets,
       stdin: config.stdio?.stdin,
       stdout: config.stdio?.stdout,
       stderr: config.stdio?.stderr,
