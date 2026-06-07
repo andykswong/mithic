@@ -139,4 +139,58 @@ describe('FileSystemRouter', () => {
       assert.strictEqual(result, false);
     });
   });
+
+  describe('readdir includes mount points', () => {
+    it('readdir / includes mount point entries', async () => {
+      const { DeviceFsProvider } = await import('./providers/device.ts');
+      const r = new FileSystemRouter();
+      const memFs = new MemoryFsProvider();
+      memFs.mkdir('/home');
+      await r.mount('/', memFs);
+      await r.mount('/dev', new DeviceFsProvider());
+
+      const entries = await r.readdir('/');
+      const names = entries.map(e => e.name);
+      assert(names.includes('home'), 'should include home from MemoryFs');
+      assert(names.includes('dev'), 'should include dev mount point');
+    });
+
+    it('readdir / does not duplicate entries that exist in both provider and mounts', async () => {
+      const { DeviceFsProvider } = await import('./providers/device.ts');
+      const r = new FileSystemRouter();
+      const memFs = new MemoryFsProvider();
+      memFs.mkdir('/dev');
+      await r.mount('/', memFs);
+      await r.mount('/dev', new DeviceFsProvider());
+
+      const entries = await r.readdir('/');
+      const devEntries = entries.filter(e => e.name === 'dev');
+      assert.strictEqual(devEntries.length, 1, 'dev should appear exactly once');
+    });
+
+    it('readdir /tmp does not inject top-level mounts', async () => {
+      const { DeviceFsProvider } = await import('./providers/device.ts');
+      const r = new FileSystemRouter();
+      const memFs = new MemoryFsProvider();
+      memFs.mkdir('/tmp');
+      await r.mount('/', memFs);
+      await r.mount('/dev', new DeviceFsProvider());
+
+      const entries = await r.readdir('/tmp');
+      const names = entries.map(e => e.name);
+      assert(!names.includes('dev'), 'dev should not appear in /tmp listing');
+    });
+
+    it('nested mount appears in parent readdir', async () => {
+      const r = new FileSystemRouter();
+      const memFs = new MemoryFsProvider();
+      memFs.mkdir('/mnt');
+      await r.mount('/', memFs);
+      await r.mount('/mnt/usb', new MemoryFsProvider());
+
+      const entries = await r.readdir('/mnt');
+      const names = entries.map(e => e.name);
+      assert(names.includes('usb'), 'should include nested mount point');
+    });
+  });
 });

@@ -100,7 +100,24 @@ export class FileSystemRouter implements FileSystemProvider {
 
   async readdir(path: string): Promise<DirEntry[]> {
     const { provider, relativePath } = this.resolve(path);
-    return provider.readdir(relativePath);
+    const entries = await provider.readdir(relativePath);
+
+    const normalized = normalizePath(path);
+    const prefix = normalized === '/' ? '/' : normalized + '/';
+    const seen = new Set(entries.map(e => e.name));
+    for (const { mountPoint } of this.mounts) {
+      if (mountPoint === '/') continue;
+      if (mountPoint.startsWith(prefix)) {
+        const remainder = mountPoint.slice(prefix.length);
+        if (!remainder.includes('/')) {
+          if (!seen.has(remainder)) {
+            entries.push({ name: remainder, type: 'directory' });
+            seen.add(remainder);
+          }
+        }
+      }
+    }
+    return entries;
   }
 
   async mkdir(path: string): Promise<void> {

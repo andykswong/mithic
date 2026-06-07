@@ -76,7 +76,24 @@ export class SyncFileSystemRouter implements SyncFileSystemProvider {
 
   readdir(path: string): DirEntry[] {
     const { provider, relativePath } = this.#resolve(path);
-    return provider.readdir(relativePath);
+    const entries = provider.readdir(relativePath);
+
+    const normalized = normalizePath(path);
+    const prefix = normalized === '/' ? '/' : normalized + '/';
+    const seen = new Set(entries.map(e => e.name));
+    for (const { mountPoint } of this.#mounts) {
+      if (mountPoint === '/') continue;
+      if (mountPoint.startsWith(prefix)) {
+        const remainder = mountPoint.slice(prefix.length);
+        if (!remainder.includes('/')) {
+          if (!seen.has(remainder)) {
+            entries.push({ name: remainder, type: 'directory' });
+            seen.add(remainder);
+          }
+        }
+      }
+    }
+    return entries;
   }
 
   mkdir(path: string): void {

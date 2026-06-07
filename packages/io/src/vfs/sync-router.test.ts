@@ -116,4 +116,43 @@ describe('SyncFileSystemRouter', () => {
       );
     });
   });
+
+  describe('readdir includes mount points', () => {
+    it('readdir / includes mount point entries', () => {
+      memFs.mkdir('/home');
+      router.mount('/dev', new DeviceFsProvider());
+
+      const entries = router.readdir('/');
+      const names = entries.map(e => e.name);
+      assert(names.includes('home'), 'should include home from MemoryFs');
+      assert(names.includes('dev'), 'should include dev mount point');
+    });
+
+    it('readdir / does not duplicate entries', () => {
+      memFs.mkdir('/dev');
+      router.mount('/dev', new DeviceFsProvider());
+
+      const entries = router.readdir('/');
+      const devEntries = entries.filter(e => e.name === 'dev');
+      assert.strictEqual(devEntries.length, 1, 'dev should appear exactly once');
+    });
+
+    it('readdir /tmp does not inject top-level mounts', () => {
+      memFs.mkdir('/tmp');
+      router.mount('/dev', new DeviceFsProvider());
+
+      const entries = router.readdir('/tmp');
+      const names = entries.map(e => e.name);
+      assert(!names.includes('dev'), 'dev should not appear in /tmp listing');
+    });
+
+    it('nested mount appears in parent readdir', () => {
+      memFs.mkdir('/mnt');
+      router.mount('/mnt/usb', new MemoryFsProvider());
+
+      const entries = router.readdir('/mnt');
+      const names = entries.map(e => e.name);
+      assert(names.includes('usb'), 'should include nested mount point');
+    });
+  });
 });
