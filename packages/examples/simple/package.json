@@ -11,9 +11,9 @@
     "./component": "./dist/index.js"
   },
   "scripts": {
-    "prebuild": "eslint",
-    "build": "node ./componentize.js",
-    "postbuild": "node ./transpile.js",
+    "prebuild": "eslint && mkdir -p dist",
+    "build": "jco componentize src/index.js -w wit -n simple -d http -d fetch-event -o dist/component.wasm",
+    "postbuild": "wasm-transpile ./dist/component.wasm -o ./dist",
     "clean": "rimraf dist",
     "start": "node .",
     "test": "npm start",
@@ -34,6 +34,6 @@
   },
   "devDependencies": {
     "@bytecodealliance/componentize-js": "^0.21",
-    "@bytecodealliance/jco": "^1.20"
+    "@mithic/wasm-transpile": "*"
   }
 }

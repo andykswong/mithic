@@ -1,5 +1,5 @@
 package mithic:example;
 
 world simple {
-  export wasi:cli/run@0.2.0;
+  export wasi:cli/run@0.2.10;
 }

@@ -12,9 +12,10 @@
     "./component.js": "./dist/wasm/component.js"
   },
   "bin": {
-    "mithic-shell": "./dist/ts/cli.js"
+    "mithic-shell": "./bin/mithic-shell.js"
   },
   "files": [
+    "/bin",
     "/dist"
   ],
   "config": {
@@ -29,7 +30,7 @@
     "build": "npm run build:rust && npm run build:ts",
     "build:rust": "cargo build -p $npm_package_config_crate -r --target $npm_package_config_target",
     "postbuild:rust": "cp ../../target/${npm_package_config_target}/release/${npm_package_config_crate}.wasm ./dist/wasm/component.wasm && ../../bin/wasm-tools strip ./dist/wasm/component.wasm -o ./dist/wasm/component.wasm && npm run transpile",
-    "transpile": "node transpile.js",
+    "transpile": "wasm-transpile ./dist/wasm/component.wasm -o ./dist/wasm",
     "build:ts": "vite build",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
@@ -57,12 +58,12 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/wasip2": "^0.1",
+    "@mithic/coreutils": "^0.1",
     "@mithic/process": "^0.1",
-    "@mithic/coreutils": "^0.1"
+    "@mithic/wasip2": "^0.1",
+    "@mithic/worker": "^0.1"
   },
   "devDependencies": {
-    "@bytecodealliance/jco": "^1.20",
-    "@mithic/worker": "^0.1"
+    "@mithic/wasm-transpile": "0.1"
   }
 }

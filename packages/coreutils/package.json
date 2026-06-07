@@ -27,10 +27,10 @@
     "build:rust": "cargo build -p $npm_package_config_crate -r --target $npm_package_config_target",
     "postbuild:rust": "cp ../../target/${npm_package_config_target}/release/${npm_package_config_crate}.wasm ./dist/wasm/component.wasm && ../../bin/wasm-tools strip ./dist/wasm/component.wasm -o ./dist/wasm/component.wasm && npm run transpile",
     "build:ts": "vite build",
-    "transpile": "node transpile.js",
+    "transpile": "wasm-transpile ./dist/wasm/component.wasm -o ./dist/wasm",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@bytecodealliance/jco": "^1.20"
+    "@mithic/wasm-transpile": "0.1"
   }
 }

@@ -58,6 +58,7 @@ The main thread runs an `IoLoop` that services filesystem, network, and stdio re
 | [`@mithic/process`](./packages/process) | Process manager: spawn WASM processes with piped I/O |
 | [`@mithic/shell`](./packages/shell) | Rust WASM shell: bash-compatible interpreter (30+ builtins) |
 | [`@mithic/coreutils`](./packages/coreutils) | BusyBox-style Unix coreutils as a single WASM component |
+| [`@mithic/wasm-transpile`](./packages/wasm-transpile) | WASM component transpiler with asyncify JSPI polyfill |
 | [`@mithic/worker`](./packages/worker) | Web Worker polyfill for Node.js (isomorphic `new Worker()`) |
 
 ### Examples
@@ -73,7 +74,7 @@ The main thread runs an `IoLoop` that services filesystem, network, and stdio re
 ### Run the Shell (Node.js CLI)
 
 ```shell
-npm install mithic
+npm install
 npm start --workspace=@mithic/shell
 ```
 
@@ -96,7 +97,6 @@ echo 'echo hello | tr a-z A-Z' | npm start --workspace=@mithic/shell
 Or with arguments:
 
 ```shell
-cd packages/shell
 npm start --workspace=@mithic/shell -- -c 'for i in 1 2 3; do echo $i; done' 
 ```
 

@@ -1,7 +1,7 @@
 {
   "name": "mithic",
   "version": "0.3.0",
-  "description": "Modular library for universal full-stack applications",
+  "description": "Sandboxed WebAssembly shell runtime with pluggable, capability-based filesystem and resource access",
   "type": "module",
   "sideEffects": false,
   "engines": {
@@ -65,6 +65,7 @@
     "./packages/io",
     "./packages/wasip2",
     "./packages/process",
+    "./packages/wasm-transpile",
     "./packages/coreutils",
     "./packages/shell",
     "./packages/examples/simple",
