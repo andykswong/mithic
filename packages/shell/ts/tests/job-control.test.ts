@@ -9,7 +9,7 @@ const CLI = join(__dirname, '../cli.ts');
 
 async function runShell(script: string, timeout = 5000): Promise<{ stdout: string; stderr: string; exit: number }> {
   return new Promise((resolve, reject) => {
-    const child = spawn('node', ['--experimental-strip-types', CLI], {
+    const child = spawn('node', [CLI], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout,
     });

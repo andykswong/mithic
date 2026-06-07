@@ -5,7 +5,7 @@
   "type": "module",
   "sideEffects": false,
   "engines": {
-    "node": ">=22.8.0"
+    "node": ">=26.0"
   },
   "scripts": {
     "prepare": "rustup target add wasm32-wasip2 && cargo install wasm-tools wkg --root .",

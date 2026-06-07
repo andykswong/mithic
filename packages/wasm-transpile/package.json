@@ -25,9 +25,9 @@
     "build": "vite build",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "demo:transpile": "node --experimental-strip-types src/cli.ts ../examples/rust-cli/dist/component.wasm --async-mode asyncify --no-minify -o dist/example",
-    "demo": "node --experimental-strip-types examples/demo.ts",
-    "test": "node --experimental-strip-types --test \"src/**/*.test.ts\""
+    "demo:transpile": "node src/cli.ts ../examples/rust-cli/dist/component.wasm --async-mode asyncify --no-minify -o dist/example",
+    "demo": "node examples/demo.ts",
+    "test": "node --test \"src/**/*.test.ts\""
   },
   "repository": {
     "type": "git",

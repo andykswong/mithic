@@ -104,7 +104,7 @@ npm start --workspace=@mithic/shell -- -c 'for i in 1 2 3; do echo $i; done'
 
 ### Prerequisites
 
-- Node.js >= 22.8.0
+- Node.js >= 26.0
 - Rust toolchain with `wasm32-wasip2` target (for shell and coreutils packages)
 
 ```shell
@@ -121,7 +121,7 @@ npm run lint         # lint all packages
 npm run typecheck    # type-check all packages
 ```
 
-Tests use `node --test` (Node.js built-in test runner) with `--experimental-strip-types` for direct TypeScript execution.
+Tests use `node --test` (Node.js built-in test runner) with built-in type stripping for direct TypeScript execution.
 
 ## API Documentation
 

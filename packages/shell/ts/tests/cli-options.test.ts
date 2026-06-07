@@ -9,7 +9,7 @@ const CLI = join(__dirname, '../cli.ts');
 
 function runCli(args: string[], stdin?: string): Promise<{ stdout: string; stderr: string; exit: number }> {
   return new Promise((resolve) => {
-    const child = spawn('node', ['--experimental-strip-types', CLI, ...args], {
+    const child = spawn('node', [CLI, ...args], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 5000,
     });

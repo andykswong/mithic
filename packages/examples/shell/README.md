@@ -2,11 +2,6 @@
 
 Interactive xterm.js shell running the Mithic WASM shell in the browser.
 
-## Prerequisites
-
-- Node.js >= 22.8.0
-- npm
-
 ## Running
 
 ```shell

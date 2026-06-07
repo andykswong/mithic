@@ -33,14 +33,14 @@ npm run typecheck            # tsc --noEmit
 
 Individual package: run the same commands inside the package directory.
 
-Tests use Node.js built-in test runner (`node --test`) with `--experimental-strip-types` for direct `.ts` execution. No transpile step needed for testing.
+Tests use Node.js built-in test runner (`node --test`) with built-in type striping for direct `.ts` execution. No transpile step needed for testing.
 
 ## Key Conventions
 
 - **TypeScript 6+**, ESM-only (`"type": "module"`)
 - **Vite** for library builds (produces `dist/`)
 - **No comments unless the "why" is non-obvious**
-- **Node.js >= 22.8.0** required (for `--experimental-strip-types`)
+- **Node.js >= 26.0** required
 
 ## Architecture Principles
 

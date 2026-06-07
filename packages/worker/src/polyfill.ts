@@ -82,7 +82,6 @@ if (!isMainThread && !('onmessage' in globalThis)) {
       }
 
       this.#worker = new NodeWorker(polyfillPath, {
-        execArgv: ['--experimental-strip-types'],
         workerData: { mod: modUrl, name: options?.name, type: options?.type },
       });
 

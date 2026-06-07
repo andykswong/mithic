@@ -9,7 +9,7 @@ const CLI = join(__dirname, '../cli.ts');
 
 async function runShell(script: string, env?: Record<string, string>): Promise<{ stdout: string; stderr: string; exit: number }> {
   return new Promise((resolve) => {
-    const child = spawn('node', ['--experimental-strip-types', CLI], {
+    const child = spawn('node', [CLI], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 5000,
       env: { ...process.env, ...env },
@@ -28,7 +28,7 @@ async function runShell(script: string, env?: Record<string, string>): Promise<{
 
 async function runShellArgs(args: string[], env?: Record<string, string>): Promise<{ stdout: string; stderr: string; exit: number }> {
   return new Promise((resolve) => {
-    const child = spawn('node', ['--experimental-strip-types', CLI, ...args], {
+    const child = spawn('node', [CLI, ...args], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 5000,
       env: { ...process.env, ...env },
