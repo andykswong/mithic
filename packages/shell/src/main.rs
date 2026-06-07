@@ -158,6 +158,8 @@ fn parse_and_run<R: crate::runtime::Runtime>(shell: &mut crate::shell::Shell<R>,
         shell.params.push_frame(positional_params);
     }
 
+    shell.source_startup_files();
+
     if let Some(cmd) = command_string {
         shell.run_string(&cmd)
     } else if let Some(file) = script_file {

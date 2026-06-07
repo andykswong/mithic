@@ -14,8 +14,9 @@ jobs:
         node-version: '24'
     - run: rustup target add wasm32-wasip2
     - run: npm ci --ignore-scripts
+    - run: npm run build
     - run: npm run doc
-    - run: cp -r ./docs ./public
+    - run: mkdir -p ./public && cp -r ./docs/api ./packages/examples/shell/dist/ ./public
     - uses: peaceiris/actions-gh-pages@v4
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}

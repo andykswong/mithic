@@ -101,10 +101,56 @@ impl<R: Runtime> Shell<R> {
         }
     }
 
-    pub fn run(&mut self) -> u8 {
+    pub fn source_startup_files(&mut self) {
         if self.is_interactive {
-            self.rt.write_stdout("mithic shell v0.1.0\n");
+            if self.options.posix {
+                // POSIX interactive: source $ENV
+                if let Some(env_file) = self.env.get("ENV").map(|v| v.as_scalar().to_string()) {
+                    if !env_file.is_empty() {
+                        self.source_file_silent(&env_file);
+                    }
+                }
+            } else {
+                // Bash interactive (non-login): source ~/.bashrc
+                let home = self.env.get("HOME").map(|v| v.as_scalar().to_string()).unwrap_or_default();
+                if !home.is_empty() {
+                    let bashrc = format!("{}/.bashrc", home);
+                    self.source_file_silent(&bashrc);
+                }
+            }
+        } else {
+            if self.options.posix {
+                // POSIX non-interactive: source $ENV
+                if let Some(env_file) = self.env.get("ENV").map(|v| v.as_scalar().to_string()) {
+                    if !env_file.is_empty() {
+                        self.source_file_silent(&env_file);
+                    }
+                }
+            } else {
+                // Bash non-interactive: source $BASH_ENV
+                if let Some(bash_env) = self.env.get("BASH_ENV").map(|v| v.as_scalar().to_string()) {
+                    if !bash_env.is_empty() {
+                        self.source_file_silent(&bash_env);
+                    }
+                }
+            }
         }
+    }
+
+    fn source_file_silent(&mut self, path: &str) {
+        let resolved = self.resolve_path(path);
+        let bytes = self.rt.read_file(&resolved);
+        if bytes.is_empty() {
+            return;
+        }
+        let content = String::from_utf8_lossy(&bytes).to_string();
+        let mut parser = Parser::new_with_mode(&content, self.options.posix);
+        if let Some(list) = parser.parse() {
+            self.exec_list(list);
+        }
+    }
+
+    pub fn run(&mut self) -> u8 {
 
         let mut input_buf = String::new();
 

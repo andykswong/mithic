@@ -14,6 +14,7 @@ import shellJsSource from '@mithic/shell/component.js?raw';
 import coreutilsJsSource from '@mithic/coreutils/component.js?raw';
 import rustCliJsSource from '@mithic/example-rust-cli/component.js?raw';
 import { createTerminalStdio } from './terminal.ts';
+import { BASHRC } from './bashrc.ts';
 
 const terminal = new Terminal({
   cursorBlink: true,
@@ -105,6 +106,12 @@ for (const cmd of [...COREUTILS_COMMANDS, 'rust-cli']) {
   memFs.close(h);
   memFs.chmod(`/bin/${cmd}`, 0o755);
 }
+
+// --- Write ~/.bashrc for interactive welcome ---
+
+const bashrcHandle = memFs.open('/home/.bashrc', { create: true, write: true });
+memFs.write(bashrcHandle, new TextEncoder().encode(BASHRC), 0);
+memFs.close(bashrcHandle);
 
 const vfs = new FileSystemRouter();
 await vfs.mount('/', memFs);

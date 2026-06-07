@@ -90,7 +90,7 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
       ? Buffer.from(jsSource).toString('base64')
       : btoa(jsSource);
     const dataUrl = `data:text/javascript;base64,${encoded}`;
-    const mod = await import(/* webpackIgnore: true */ dataUrl);
+    const mod = await import(/* @vite-ignore */ dataUrl);
     const instantiate = mod.instantiate as (
       compileCore: (path: string) => Promise<WebAssembly.Module>,
       imports: Record<string, object>,

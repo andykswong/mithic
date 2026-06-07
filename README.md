@@ -6,9 +6,9 @@
 [![build](https://img.shields.io/github/actions/workflow/status/andykswong/mithic/build.yaml?style=flat-square)](https://github.com/andykswong/mithic/actions/workflows/build.yaml)
 [![codecov](https://codecov.io/gh/andykswong/mithic/branch/main/graph/badge.svg?token=2OYVQSTDMC)](https://codecov.io/gh/andykswong/mithic)
 
-> Virtual OS for the agent era.
+> Virtual shell runtime for the agent era.
 
-Sandboxed WebAssembly shell runtime with pluggable, capability-based filesystem and resource access. Runs anywhere JavaScript runs.
+Sandboxed WebAssembly bash/POSIX-compatible shell runtime with concurrent process management, capability-based virtual filesystem and resource access. Runs anywhere JavaScript runs.
 
 ## Core Pillars
 
