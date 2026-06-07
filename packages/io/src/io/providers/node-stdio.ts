@@ -4,7 +4,7 @@
  */
 
 import { readSync } from 'node:fs';
-import type { SyncInputStreamHandler, SyncOutputStreamHandler } from '../streams.ts';
+import type { InputStreamHandler, SyncInputStreamHandler, SyncOutputStreamHandler } from '../streams.ts';
 
 export class NodeStdinHandler implements SyncInputStreamHandler {
   read(len: number): Uint8Array | undefined {
@@ -45,4 +45,63 @@ export class NodeStderrHandler implements SyncOutputStreamHandler {
   }
 
   flush(): void {}
+}
+
+export class NodeAsyncStdinHandler implements InputStreamHandler {
+  #buffer: Uint8Array = new Uint8Array(0);
+  #waiting: ((chunk: Uint8Array) => void) | null = null;
+  #ended = false;
+
+  constructor() {
+    process.stdin.on('data', (chunk: Buffer) => {
+      const data = new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+      if (this.#waiting) {
+        const cb = this.#waiting;
+        this.#waiting = null;
+        cb(data);
+      } else {
+        const merged = new Uint8Array(this.#buffer.length + data.length);
+        merged.set(this.#buffer);
+        merged.set(data, this.#buffer.length);
+        this.#buffer = merged;
+      }
+    });
+    process.stdin.on('end', () => {
+      this.#ended = true;
+      if (this.#waiting) {
+        const cb = this.#waiting;
+        this.#waiting = null;
+        cb(new Uint8Array(0));
+      }
+    });
+    if (process.stdin.isPaused()) process.stdin.resume();
+  }
+
+  read(len: number): Uint8Array | undefined {
+    if (this.#buffer.length > 0) {
+      const chunk = this.#buffer.subarray(0, len);
+      this.#buffer = this.#buffer.subarray(len);
+      return new Uint8Array(chunk);
+    }
+    if (this.#ended) throw { tag: 'closed' };
+    return undefined;
+  }
+
+  blockingRead(len: number): Promise<Uint8Array> {
+    if (this.#buffer.length > 0) {
+      const chunk = this.#buffer.subarray(0, len);
+      this.#buffer = this.#buffer.subarray(len);
+      return Promise.resolve(new Uint8Array(chunk));
+    }
+    if (this.#ended) return Promise.reject({ tag: 'closed' });
+    return new Promise((resolve, reject) => {
+      this.#waiting = (chunk) => {
+        if (chunk.length === 0) { reject({ tag: 'closed' }); return; }
+        this.#buffer = chunk;
+        const result = this.#buffer.subarray(0, len);
+        this.#buffer = this.#buffer.subarray(len);
+        resolve(new Uint8Array(result));
+      };
+    });
+  }
 }
