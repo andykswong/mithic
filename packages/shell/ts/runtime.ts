@@ -106,14 +106,7 @@ export class Runtime implements Disposable {
   }
 
   waitAsync(proc: Process): Promise<number> {
-    return new Promise((resolve) => {
-      const poll = () => {
-        const code = proc.tryWait();
-        if (code !== undefined) resolve(code);
-        else setTimeout(poll, 1);
-      };
-      poll();
-    });
+    return proc.waitAsync();
   }
 
   [Symbol.dispose](): void {

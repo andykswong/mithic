@@ -135,6 +135,19 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
       tryWait() {
         return exitSlot.tryWait();
       },
+      waitAsync() {
+        foreground.add(proc);
+        const view = new Int32Array(exitSlot.buffer);
+        const code = Atomics.load(view, 0);
+        if (code !== -1) {
+          foreground.delete(proc);
+          return Promise.resolve(code);
+        }
+        return (Atomics.waitAsync(view, 0, -1) as { value: Promise<string> }).value.then(() => {
+          foreground.delete(proc);
+          return Atomics.load(view, 0);
+        });
+      },
     });
 
     return proc;

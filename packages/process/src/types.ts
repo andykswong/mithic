@@ -70,6 +70,7 @@ export interface ProcessHandler {
   onKill?(signal: Signal): void;
   wait(): number;
   tryWait?(): number | undefined;
+  waitAsync?(): Promise<number>;
 }
 
 /**
@@ -95,6 +96,18 @@ export class Process {
 
   tryWait(): number | undefined {
     return this.#handler.tryWait?.();
+  }
+
+  waitAsync(): Promise<number> {
+    if (this.#handler.waitAsync) return this.#handler.waitAsync();
+    return new Promise((resolve) => {
+      const poll = () => {
+        const code = this.tryWait();
+        if (code !== undefined) resolve(code);
+        else setTimeout(poll, 10);
+      };
+      poll();
+    });
   }
 
   kill(signal: Signal = 'sigterm'): void {
