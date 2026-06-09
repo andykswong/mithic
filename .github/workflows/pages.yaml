@@ -16,7 +16,7 @@ jobs:
     - run: npm ci
     - run: npm run build
     - run: npm run doc
-    - run: mkdir -p ./public && cp -r ./docs/api ./packages/examples/shell/dist/ ./public
+    - run: mkdir -p ./public && cp -r ./docs/api ./packages/examples/shell/dist/* ./public
     - uses: peaceiris/actions-gh-pages@v4
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
