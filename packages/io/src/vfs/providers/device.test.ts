@@ -70,7 +70,7 @@ describe('DeviceFsProvider', () => {
     it('should read from stdin handler', () => {
       const input = new TextEncoder().encode('hello');
       const devWithStdin = new DeviceFsProvider({
-        stdin: { blockingRead: () => input },
+        stdin: { read: () => undefined, blockingRead: () => input },
       });
       const handle = devWithStdin.open('/stdin', { read: true });
       const data = devWithStdin.read(handle, 0, 1024);

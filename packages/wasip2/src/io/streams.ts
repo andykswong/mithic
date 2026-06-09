@@ -2,11 +2,12 @@
  * Implements wasi:io/streams - input and output stream resources.
  */
 
-import type { SyncInputStreamHandler, SyncOutputStreamHandler } from '@mithic/io/io';
+import { type MaybePromise, isThenable } from '@mithic/io';
+import type { InputStreamHandler, OutputStreamHandler } from '@mithic/io/io';
 import type { IoError } from './error.ts';
 import { Pollable } from './poll.ts';
 
-export type { SyncInputStreamHandler as InputStreamHandler, SyncOutputStreamHandler as OutputStreamHandler };
+export type { InputStreamHandler, OutputStreamHandler };
 
 export type StreamError =
   | { tag: 'last-operation-failed'; val: IoError }
@@ -16,14 +17,14 @@ export function isStreamClosed(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'tag' in error && (error as StreamError).tag === 'closed';
 }
 
-export class InputStream {
-  #handler: SyncInputStreamHandler;
+export class InputStream<Sync extends boolean = boolean> {
+  #handler: InputStreamHandler<Sync>;
   #subscribe?: () => Pollable;
   #isatty: boolean;
   #refs: { count: number };
   #disposed = false;
 
-  constructor(handler: SyncInputStreamHandler, subscribe?: () => Pollable, isatty = false, refs?: { count: number }) {
+  constructor(handler: InputStreamHandler<Sync>, subscribe?: () => Pollable, isatty = false, refs?: { count: number }) {
     this.#handler = handler;
     this.#subscribe = subscribe;
     this.#isatty = isatty;
@@ -31,7 +32,7 @@ export class InputStream {
   }
 
   /** Duplicate this stream: returns a new handle to the same underlying handler. The handler is dropped only when the last handle is disposed. */
-  dup(): InputStream {
+  dup(): InputStream<Sync> {
     this.#refs.count++;
     return new InputStream(this.#handler, this.#subscribe, this.#isatty, this.#refs);
   }
@@ -39,18 +40,11 @@ export class InputStream {
   get isatty(): boolean { return this.#isatty; }
 
   read(len: bigint): Uint8Array {
-    const n = Number(len);
-    if (this.#handler.read) {
-      const data = this.#handler.read(n);
-      if (data !== undefined) {
-        return data;
-      }
-      return new Uint8Array(0);
-    }
-    return this.#handler.blockingRead(n);
+    const data = this.#handler.read(Number(len));
+    return data ?? new Uint8Array(0);
   }
 
-  blockingRead(len: bigint): Uint8Array {
+  blockingRead(len: bigint): MaybePromise<Uint8Array, Sync> {
     return this.#handler.blockingRead(Number(len));
   }
 
@@ -59,28 +53,30 @@ export class InputStream {
     if (this.#handler.skip) {
       return BigInt(this.#handler.skip(n));
     }
-    if (this.#handler.read) {
-      const bytes = this.#handler.read(n);
-      return BigInt(bytes?.byteLength ?? 0);
-    }
-    const bytes = this.#handler.blockingRead(n);
-    return BigInt(bytes.byteLength);
+    const bytes = this.#handler.read(n);
+    return BigInt(bytes?.byteLength ?? 0);
   }
 
-  blockingSkip(len: bigint): bigint {
+  blockingSkip(len: bigint): MaybePromise<bigint, Sync> {
     const n = Number(len);
     if (this.#handler.skip) {
       return BigInt(this.#handler.skip(n));
     }
-    const bytes = this.#handler.blockingRead(n);
-    return BigInt(bytes.byteLength);
+    const result = this.#handler.blockingRead(n);
+    if (isThenable(result)) {
+      return result.then(bytes => BigInt(bytes.byteLength)) as MaybePromise<bigint, Sync>;
+    }
+    return BigInt(result.byteLength);
   }
 
   subscribe(): Pollable {
     if (this.#subscribe) {
       return this.#subscribe();
     }
-    return new Pollable();
+    const handler = this.#handler;
+    return new Pollable(
+      () => handler.read(0) !== undefined
+    );
   }
 
   [Symbol.dispose](): void {
@@ -92,15 +88,15 @@ export class InputStream {
   }
 }
 
-export class OutputStream {
-  #handler: SyncOutputStreamHandler;
+export class OutputStream<Sync extends boolean = boolean> {
+  #handler: OutputStreamHandler<Sync>;
   #subscribe?: () => Pollable;
   #isatty: boolean;
   #open = true;
   #disposed = false;
   #refs: { count: number };
 
-  constructor(handler: SyncOutputStreamHandler, subscribe?: () => Pollable, isatty = false, refs?: { count: number }) {
+  constructor(handler: OutputStreamHandler<Sync>, subscribe?: () => Pollable, isatty = false, refs?: { count: number }) {
     this.#handler = handler;
     this.#subscribe = subscribe;
     this.#isatty = isatty;
@@ -108,7 +104,7 @@ export class OutputStream {
   }
 
   /** Duplicate this stream: returns a new handle to the same underlying handler. The handler is dropped only when the last handle is disposed. */
-  dup(): OutputStream {
+  dup(): OutputStream<Sync> {
     this.#refs.count++;
     return new OutputStream(this.#handler, this.#subscribe, this.#isatty, this.#refs);
   }
@@ -120,7 +116,7 @@ export class OutputStream {
       return 0n;
     }
     if (this.#handler.checkWrite) {
-      return BigInt(this.#handler.checkWrite());
+      return BigInt(this.#handler.checkWrite() as number);
     }
     return 1_000_000n;
   }
@@ -152,30 +148,29 @@ export class OutputStream {
     this.flush();
   }
 
-  flush(): void {
-    if (this.#handler.flush) {
-      this.#handler.flush();
-    }
+  flush(): MaybePromise<void, Sync> {
+    if (this.#handler.flush) return this.#handler.flush();
   }
 
-  blockingFlush(): void {
-    if (this.#handler.flush) {
-      this.#handler.flush();
-    }
+  blockingFlush(): MaybePromise<void, Sync> {
+    if (this.#handler.flush) return this.#handler.flush();
   }
 
   subscribe(): Pollable {
     if (this.#subscribe) {
       return this.#subscribe();
     }
-    return new Pollable();
+    const handler = this.#handler;
+    return new Pollable(
+      () => !handler.checkWrite || handler.checkWrite() > 0,
+    );
   }
 
   writeZeroes(len: bigint): void {
     this.write(new Uint8Array(Number(len)));
   }
 
-  splice(src: InputStream, len: bigint): bigint {
+  splice(src: InputStream<Sync>, len: bigint): bigint {
     const n = Number(len);
     const capacity = Number(this.checkWrite());
     const toRead = Math.min(n, capacity);
@@ -187,9 +182,18 @@ export class OutputStream {
     return BigInt(data.byteLength);
   }
 
-  blockingSplice(src: InputStream, len: bigint): bigint {
+  blockingSplice(src: InputStream<Sync>, len: bigint): MaybePromise<bigint, Sync> {
     const n = Number(len);
-    const data = src.blockingRead(BigInt(n));
+    const result = src.blockingRead(BigInt(n));
+    if (isThenable(result)) {
+      return result.then(data => {
+        if (data.byteLength === 0) return 0n;
+        this.write(data);
+        this.flush();
+        return BigInt(data.byteLength);
+      }) as MaybePromise<bigint, Sync>;
+    }
+    const data = result as Uint8Array;
     if (data.byteLength === 0) return 0n;
     this.write(data);
     this.flush();

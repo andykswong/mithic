@@ -8,6 +8,7 @@ describe('Process', () => {
       killed: null as Signal | null,
       onKill(signal: Signal) { handler.killed = signal; },
       wait() { return exitCode; },
+      tryWait() { return exitCode as number | undefined; },
     };
     return handler;
   }
@@ -46,8 +47,11 @@ describe('Process', () => {
     assert.doesNotThrow(() => proc.kill('sigkill'));
   });
 
-  it('tryWait() returns undefined when handler has no tryWait', () => {
-    const handler = createMockHandler();
+  it('tryWait() returns undefined when process not done', () => {
+    const handler: ProcessHandler = {
+      wait() { return 0; },
+      tryWait() { return undefined; },
+    };
     const proc = new Process(1, handler);
     assert.equal(proc.tryWait(), undefined);
   });
@@ -65,6 +69,7 @@ describe('Process', () => {
     const proc = new Process(1, {
       onKill() {},
       wait() { return 0; },
+      tryWait() { return 0; },
       waitAsync() { return Promise.resolve(42); },
     });
     assert.equal(await proc.waitAsync(), 42);

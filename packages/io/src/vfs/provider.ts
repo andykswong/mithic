@@ -44,56 +44,34 @@ export interface WatchEvent {
   path: string;
 }
 
-/** Virtual filesystem provider interface (MaybeAsync — methods return T or Promise<T>). */
-export interface FileSystemProvider {
-  init?(): MaybePromise<void>;
-  dispose?(): MaybePromise<void>;
-  open(path: string, flags: OpenFlags): MaybePromise<FileHandle>;
-  close(handle: FileHandle): MaybePromise<void>;
-  read(handle: FileHandle, offset: number, len: number): MaybePromise<Uint8Array>;
-  write(handle: FileHandle, data: Uint8Array, offset: number): MaybePromise<number>;
-  truncate(handle: FileHandle, size: number): MaybePromise<void>;
-  stat(path: string, options?: { followSymlinks?: boolean }): MaybePromise<FileStat>;
-  readdir(path: string): MaybePromise<DirEntry[]>;
-  mkdir(path: string): MaybePromise<void>;
-  unlink(path: string): MaybePromise<void>;
-  rmdir(path: string): MaybePromise<void>;
-  rename(oldPath: string, newPath: string): MaybePromise<void>;
-  symlink(target: string, linkPath: string): MaybePromise<void>;
-  readlink(path: string): MaybePromise<string>;
-  link(existingPath: string, newPath: string): MaybePromise<void>;
-  chmod(path: string, mode: number): MaybePromise<void>;
-  utimes(path: string, atime: Date, mtime: Date): MaybePromise<void>;
-  mkfifo(path: string): MaybePromise<void>;
+/** Virtual filesystem provider interface, parameterized by sync mode. */
+export interface FileSystemProvider<Sync extends boolean = boolean> {
+  init?(): MaybePromise<void, Sync>;
+  dispose?(): MaybePromise<void, Sync>;
+  open(path: string, flags: OpenFlags): MaybePromise<FileHandle, Sync>;
+  close(handle: FileHandle): MaybePromise<void, Sync>;
+  read(handle: FileHandle, offset: number, len: number): MaybePromise<Uint8Array, Sync>;
+  write(handle: FileHandle, data: Uint8Array, offset: number): MaybePromise<number, Sync>;
+  truncate(handle: FileHandle, size: number): MaybePromise<void, Sync>;
+  stat(path: string, options?: { followSymlinks?: boolean }): MaybePromise<FileStat, Sync>;
+  readdir(path: string): MaybePromise<DirEntry[], Sync>;
+  mkdir(path: string): MaybePromise<void, Sync>;
+  unlink(path: string): MaybePromise<void, Sync>;
+  rmdir(path: string): MaybePromise<void, Sync>;
+  rename(oldPath: string, newPath: string): MaybePromise<void, Sync>;
+  symlink(target: string, linkPath: string): MaybePromise<void, Sync>;
+  readlink(path: string): MaybePromise<string, Sync>;
+  link(existingPath: string, newPath: string): MaybePromise<void, Sync>;
+  chmod(path: string, mode: number): MaybePromise<void, Sync>;
+  utimes(path: string, atime: Date, mtime: Date): MaybePromise<void, Sync>;
+  mkfifo(path: string): MaybePromise<void, Sync>;
   watch?(path: string, callback: (event: WatchEvent) => void): () => void;
-  sync?(): MaybePromise<void>;
-  realpath?(path: string): MaybePromise<string>;
+  sync?(): MaybePromise<void, Sync>;
+  realpath?(path: string): MaybePromise<string, Sync>;
 }
 
 /** Sync filesystem provider — all methods return T (no Promise). */
-export interface SyncFileSystemProvider extends FileSystemProvider {
-  init?(): void;
-  dispose?(): void;
-  open(path: string, flags: OpenFlags): FileHandle;
-  close(handle: FileHandle): void;
-  read(handle: FileHandle, offset: number, len: number): Uint8Array;
-  write(handle: FileHandle, data: Uint8Array, offset: number): number;
-  truncate(handle: FileHandle, size: number): void;
-  stat(path: string, options?: { followSymlinks?: boolean }): FileStat;
-  readdir(path: string): DirEntry[];
-  mkdir(path: string): void;
-  unlink(path: string): void;
-  rmdir(path: string): void;
-  rename(oldPath: string, newPath: string): void;
-  symlink(target: string, linkPath: string): void;
-  readlink(path: string): string;
-  link(existingPath: string, newPath: string): void;
-  chmod(path: string, mode: number): void;
-  utimes(path: string, atime: Date, mtime: Date): void;
-  mkfifo(path: string): void;
-  sync?(): void;
-  realpath?(path: string): string;
-}
+export type SyncFileSystemProvider = FileSystemProvider<true>;
 
 /** Error codes for VFS operations (aligned with WIT wasi:filesystem error-code names). */
 export type FileSystemErrorCode =

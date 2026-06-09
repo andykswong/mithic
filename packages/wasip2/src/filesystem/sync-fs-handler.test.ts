@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import { deepStrictEqual, strictEqual, ok } from 'node:assert';
 
+import type { DirectoryEntryStream, DescriptorStat } from './types.ts';
 import { Descriptor } from './types.ts';
 import { SyncFsDescriptorHandler } from './sync-fs-handler.ts';
 import { MemoryFsProvider } from '@mithic/io/vfs';
@@ -18,7 +19,7 @@ describe('SyncFsDescriptorHandler.getType', () => {
 
   it('returns regular-file for opened file', () => {
     const desc = createDescriptor({ '/hello.txt': 'Hello' });
-    const child = desc.openAt({}, 'hello.txt', {}, { read: true });
+    const child = desc.openAt({}, 'hello.txt', {}, { read: true }) as Descriptor;
     strictEqual(child.getType(), 'regular-file');
   });
 });
@@ -26,8 +27,8 @@ describe('SyncFsDescriptorHandler.getType', () => {
 describe('SyncFsDescriptorHandler.stat', () => {
   it('returns size and type for regular file', () => {
     const desc = createDescriptor({ '/data.txt': 'abcde' });
-    const child = desc.openAt({}, 'data.txt', {}, { read: true });
-    const st = child.stat();
+    const child = desc.openAt({}, 'data.txt', {}, { read: true }) as Descriptor;
+    const st = child.stat() as DescriptorStat;
     strictEqual(st.type, 'regular-file');
     strictEqual(st.size, 5n);
     strictEqual(st.linkCount, 1n);
@@ -35,7 +36,7 @@ describe('SyncFsDescriptorHandler.stat', () => {
 
   it('returns type directory for root', () => {
     const desc = createDescriptor();
-    const st = desc.stat();
+    const st = desc.stat() as DescriptorStat;
     strictEqual(st.type, 'directory');
     strictEqual(st.size, 0n);
   });
@@ -44,15 +45,15 @@ describe('SyncFsDescriptorHandler.stat', () => {
 describe('SyncFsDescriptorHandler.openAt', () => {
   it('opens existing child file', () => {
     const desc = createDescriptor({ '/hello.txt': 'Hello' });
-    const child = desc.openAt({}, 'hello.txt', {}, { read: true });
+    const child = desc.openAt({}, 'hello.txt', {}, { read: true }) as Descriptor;
     strictEqual(child.getType(), 'regular-file');
   });
 
   it('creates file with create flag', () => {
     const desc = createDescriptor();
-    const child = desc.openAt({}, 'new-file.txt', { create: true }, { read: true, write: true });
+    const child = desc.openAt({}, 'new-file.txt', { create: true }, { read: true, write: true }) as Descriptor;
     strictEqual(child.getType(), 'regular-file');
-    strictEqual(child.stat().size, 0n);
+    strictEqual((child.stat() as DescriptorStat).size, 0n);
   });
 
   it('throws for non-existent file without create', () => {
@@ -69,18 +70,18 @@ describe('SyncFsDescriptorHandler.openAt', () => {
 describe('SyncFsDescriptorHandler.read/write', () => {
   it('read returns file content at offset', () => {
     const desc = createDescriptor({ '/data.txt': new Uint8Array([10, 20, 30, 40, 50]) });
-    const child = desc.openAt({}, 'data.txt', {}, { read: true });
-    const [data, eof] = child.read(3n, 0n);
+    const child = desc.openAt({}, 'data.txt', {}, { read: true }) as Descriptor;
+    const [data, eof] = child.read(3n, 0n) as [Uint8Array, boolean];
     deepStrictEqual(data, new Uint8Array([10, 20, 30]));
     strictEqual(eof, false);
   });
 
   it('write writes content at offset', () => {
     const desc = createDescriptor({ '/data.txt': new Uint8Array([0, 0, 0, 0, 0]) });
-    const child = desc.openAt({}, 'data.txt', {}, { read: true, write: true });
+    const child = desc.openAt({}, 'data.txt', {}, { read: true, write: true }) as Descriptor;
     const written = child.write(new Uint8Array([1, 2, 3]), 1n);
     strictEqual(written, 3n);
-    const [data] = child.read(5n, 0n);
+    const [data] = child.read(5n, 0n) as [Uint8Array, boolean];
     deepStrictEqual(data, new Uint8Array([0, 1, 2, 3, 0]));
   });
 });
@@ -88,7 +89,7 @@ describe('SyncFsDescriptorHandler.read/write', () => {
 describe('SyncFsDescriptorHandler.readDirectory', () => {
   it('iterates directory entries', () => {
     const desc = createDescriptor({ '/a.txt': 'a', '/b.txt': 'b' });
-    const stream = desc.readDirectory();
+    const stream = desc.readDirectory() as DirectoryEntryStream;
     const entries = [];
     let entry = stream.readDirectoryEntry();
     while (entry !== null) {
@@ -105,7 +106,7 @@ describe('SyncFsDescriptorHandler.createDirectoryAt', () => {
   it('creates a subdirectory', () => {
     const desc = createDescriptor();
     desc.createDirectoryAt('newdir');
-    const child = desc.openAt({}, 'newdir', { directory: true }, { read: true });
+    const child = desc.openAt({}, 'newdir', { directory: true }, { read: true }) as Descriptor;
     strictEqual(child.getType(), 'directory');
   });
 });
@@ -113,7 +114,7 @@ describe('SyncFsDescriptorHandler.createDirectoryAt', () => {
 describe('SyncFsDescriptorHandler.readViaStream', () => {
   it('reads file content via stream', () => {
     const desc = createDescriptor({ '/f.txt': new Uint8Array([65, 66, 67]) });
-    const child = desc.openAt({}, 'f.txt', {}, { read: true });
+    const child = desc.openAt({}, 'f.txt', {}, { read: true }) as Descriptor;
     const stream = child.readViaStream(0n);
     const data = stream.read(3n);
     deepStrictEqual(data, new Uint8Array([65, 66, 67]));
@@ -123,10 +124,10 @@ describe('SyncFsDescriptorHandler.readViaStream', () => {
 describe('SyncFsDescriptorHandler.writeViaStream', () => {
   it('writes data via stream', () => {
     const desc = createDescriptor({ '/f.txt': new Uint8Array([0, 0, 0]) });
-    const child = desc.openAt({}, 'f.txt', {}, { read: true, write: true });
+    const child = desc.openAt({}, 'f.txt', {}, { read: true, write: true }) as Descriptor;
     const stream = child.writeViaStream(0n);
     stream.write(new Uint8Array([9, 8, 7]));
-    const [data] = child.read(3n, 0n);
+    const [data] = child.read(3n, 0n) as [Uint8Array, boolean];
     deepStrictEqual(data, new Uint8Array([9, 8, 7]));
   });
 });
@@ -162,8 +163,8 @@ describe('SyncFsDescriptorHandler.renameAt', () => {
   it('renames file within same descriptor', () => {
     const desc = createDescriptor({ '/old.txt': new Uint8Array([1, 2, 3]) });
     desc.renameAt('old.txt', desc, 'new.txt');
-    const renamed = desc.openAt({}, 'new.txt', {}, { read: true });
-    const [data] = renamed.read(10n, 0n);
+    const renamed = desc.openAt({}, 'new.txt', {}, { read: true }) as Descriptor;
+    const [data] = renamed.read(10n, 0n) as [Uint8Array, boolean];
     deepStrictEqual(data, new Uint8Array([1, 2, 3]));
   });
 });

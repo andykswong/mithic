@@ -67,15 +67,26 @@ The wrapper is executable and has the shebang; the built `dist/` code does not. 
 
 ## When Editing
 
-- Run `npm run build && npm run typecheck` in the affected package after changes to ensure no type or lint errors. Run `npm test` to verify tests pass.
-- **IMPORTANT:** The shell and coreutils packages compile Rust to WASM. TS integration tests run against the compiled WASM binary in `dist/`. After any Rust source change, you MUST rebuild (`npm run build` or `npm run build:rust`) before running TS tests — otherwise tests run against stale WASM and results are meaningless. This also applies when using `git stash`/`git checkout` to compare test results between versions.
-- For both `@mithic/wasip2` and `@mithic/process`, WIT definitions are the source of truth for interfaces. Package exports map to the WIT world (e.g., `@mithic/wasip2` exports match `wasi:*` interface names, `@mithic/process` exports match `mithic:process/*`). Each package provides `./instantiation` exporting a helper class (`WASIShim` / `WASIProcess`) that configures and returns the import object for WASM component instantiation.
+**The one rule: `npm run build` before ANY test run or verification. No exceptions.**
+
+Many tests import from `dist/`. Running tests without building first risks testing stale compiled code — results may be meaningless regardless of pass/fail. This applies after every action that changes what's in the working tree:
+
+- After editing source files
+- After `git stash` or `git stash pop`
+- After `git checkout` or `git switch`
+- After pulling or rebasing
+
+**Do NOT** `git stash` + `npm test` to check if tests "were already broken" — this tests whatever stale JS was last built, not the stashed-to state. If you need a baseline, do: `git stash && npm run build && npm test`.
+
+The verification sequence is always run from the **monorepo root**: `npm run build && npm run typecheck && npm test`. This builds and tests all packages — don't limit to a single package, since changes often have cross-package effects.
+
+### Tests
+
+- Every code change must include tests covering the new or modified behavior — happy path, edge cases, and error conditions.
+- When fixing a bug, add a regression test that reproduces it before applying the fix.
+- Do not consider work done until `npm run build && npm run typecheck && npm test` passes from the monorepo root.
+
+### Other guidelines
+
+- For both `@mithic/wasip2` and `@mithic/process`, WIT definitions are the source of truth for interfaces. Each package provides `./instantiation` exporting a helper class (`WASIShim` / `WASIProcess`) that configures and returns the import object for WASM component instantiation.
 - Prefer editing existing files over creating new ones.
-
-## Test Coverage
-
-- **Every code change MUST include comprehensive tests.** Do not consider a change complete until tests covering the new or modified behavior are written, passing, and verified.
-- Test the happy path, edge cases, and error conditions. If a function can fail, test that it fails correctly.
-- When fixing a bug, add a regression test that reproduces the bug before applying the fix, then verify the test passes after.
-- When adding a new feature, write tests that exercise the full surface area — not just a single smoke test.
-- Run `npm run build && npm run typecheck && npm test` in the affected packages and confirm all tests pass before marking work as done.

@@ -23,7 +23,7 @@ export class DeviceFsProvider implements SyncFileSystemProvider {
   #handles = new Map<number, DeviceName>();
 
   constructor(options?: DeviceFsProviderOptions) {
-    this.#stdin = options?.stdin ?? { blockingRead: () => new Uint8Array(0) };
+    this.#stdin = options?.stdin ?? { read: () => undefined, blockingRead: () => new Uint8Array(0) };
     this.#stdout = options?.stdout ?? { write() {} };
     this.#stderr = options?.stderr ?? { write() {} };
   }

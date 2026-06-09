@@ -23,6 +23,7 @@
     "./clocks/monotonic-clock": "./dist/clocks/monotonic-clock.js",
     "./clocks/wall-clock": "./dist/clocks/wall-clock.js",
     "./filesystem/preopens": "./dist/filesystem/preopens.js",
+    "./filesystem/fs-handler": "./dist/filesystem/fs-handler.js",
     "./filesystem/sync-fs-handler": "./dist/filesystem/sync-fs-handler.js",
     "./filesystem/types": "./dist/filesystem/types.js",
     "./http/types": "./dist/http/types.js",

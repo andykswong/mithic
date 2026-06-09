@@ -3,6 +3,7 @@
  * Descriptor delegates to a DescriptorHandler (pluggable: in-memory or sync-bridge).
  */
 
+import type { MaybePromise } from '@mithic/io';
 import type { IoError } from '../io/error.ts';
 import type { InputStream, OutputStream } from '../io/streams.ts';
 
@@ -110,34 +111,34 @@ export type NewTimestamp =
 
 // ─── DescriptorHandler interface ──────────────────────────────────────────────
 
-export interface DescriptorHandler {
+export interface DescriptorHandler<Sync extends boolean = boolean> {
   getFlags(): DescriptorFlags;
-  readViaStream(offset: bigint): InputStream;
-  writeViaStream(offset: bigint): OutputStream;
-  appendViaStream(): OutputStream;
-  advise(offset: bigint, length: bigint, advice: Advice): void;
-  syncData(): void;
-  getType(): DescriptorType;
-  setSize(size: bigint): void;
-  setTimes(dataAccessTimestamp: NewTimestamp, dataModificationTimestamp: NewTimestamp): void;
-  read(length: bigint, offset: bigint): [Uint8Array, boolean];
-  write(buffer: Uint8Array, offset: bigint): bigint;
-  readDirectory(): DirectoryEntryStream;
-  sync(): void;
-  createDirectoryAt(path: string): void;
-  stat(): DescriptorStat;
-  statAt(pathFlags: PathFlags, path: string): DescriptorStat;
-  setTimesAt(pathFlags: PathFlags, path: string, atime: NewTimestamp, mtime: NewTimestamp): void;
-  linkAt(oldPathFlags: PathFlags, oldPath: string, newDescriptor: Descriptor, newPath: string): void;
-  openAt(pathFlags: PathFlags, path: string, openFlags: OpenFlags, flags: DescriptorFlags): Descriptor;
-  readlinkAt(path: string): string;
-  removeDirectoryAt(path: string): void;
-  renameAt(oldPath: string, newDescriptor: Descriptor, newPath: string): void;
-  symlinkAt(oldPath: string, newPath: string): void;
-  unlinkFileAt(path: string): void;
+  readViaStream(offset: bigint): InputStream<Sync>;
+  writeViaStream(offset: bigint): OutputStream<Sync>;
+  appendViaStream(): OutputStream<Sync>;
+  advise(offset: bigint, length: bigint, advice: Advice): MaybePromise<void, Sync>;
+  syncData(): MaybePromise<void, Sync>;
+  getType(): MaybePromise<DescriptorType, Sync>;
+  setSize(size: bigint): MaybePromise<void, Sync>;
+  setTimes(dataAccessTimestamp: NewTimestamp, dataModificationTimestamp: NewTimestamp): MaybePromise<void, Sync>;
+  read(length: bigint, offset: bigint): MaybePromise<[Uint8Array, boolean], Sync>;
+  write(buffer: Uint8Array, offset: bigint): MaybePromise<bigint, Sync>;
+  readDirectory(): MaybePromise<DirectoryEntryStream, Sync>;
+  sync(): MaybePromise<void, Sync>;
+  createDirectoryAt(path: string): MaybePromise<void, Sync>;
+  stat(): MaybePromise<DescriptorStat, Sync>;
+  statAt(pathFlags: PathFlags, path: string): MaybePromise<DescriptorStat, Sync>;
+  setTimesAt(pathFlags: PathFlags, path: string, atime: NewTimestamp, mtime: NewTimestamp): MaybePromise<void, Sync>;
+  linkAt(oldPathFlags: PathFlags, oldPath: string, newDescriptor: Descriptor<Sync>, newPath: string): MaybePromise<void, Sync>;
+  openAt(pathFlags: PathFlags, path: string, openFlags: OpenFlags, flags: DescriptorFlags): MaybePromise<Descriptor<Sync>, Sync>;
+  readlinkAt(path: string): MaybePromise<string, Sync>;
+  removeDirectoryAt(path: string): MaybePromise<void, Sync>;
+  renameAt(oldPath: string, newDescriptor: Descriptor<Sync>, newPath: string): MaybePromise<void, Sync>;
+  symlinkAt(oldPath: string, newPath: string): MaybePromise<void, Sync>;
+  unlinkFileAt(path: string): MaybePromise<void, Sync>;
   isSameObject(other: Descriptor): boolean;
-  metadataHash(): MetadataHashValue;
-  metadataHashAt(pathFlags: PathFlags, path: string): MetadataHashValue;
+  metadataHash(): MaybePromise<MetadataHashValue, Sync>;
+  metadataHashAt(pathFlags: PathFlags, path: string): MaybePromise<MetadataHashValue, Sync>;
 }
 
 // ─── DirectoryEntryStream ───────────────────────────────────────────────────
@@ -160,15 +161,15 @@ export class DirectoryEntryStream {
 
 // ─── Descriptor ─────────────────────────────────────────────────────────────
 
-export class Descriptor {
-  #handler: DescriptorHandler;
+export class Descriptor<Sync extends boolean = boolean> {
+  #handler: DescriptorHandler<Sync>;
 
-  constructor(handler: DescriptorHandler) {
+  constructor(handler: DescriptorHandler<Sync>) {
     this.#handler = handler;
   }
 
   /** @internal */
-  _getHandler(): DescriptorHandler {
+  _getHandler(): DescriptorHandler<Sync> {
     return this.#handler;
   }
 
@@ -176,32 +177,32 @@ export class Descriptor {
     return this.#handler.getFlags();
   }
 
-  readViaStream(offset: bigint): InputStream { return this.#handler.readViaStream(offset); }
-  writeViaStream(offset: bigint): OutputStream { return this.#handler.writeViaStream(offset); }
-  appendViaStream(): OutputStream { return this.#handler.appendViaStream(); }
-  advise(offset: bigint, length: bigint, advice: Advice): void { this.#handler.advise(offset, length, advice); }
-  syncData(): void { this.#handler.syncData(); }
-  getType(): DescriptorType { return this.#handler.getType(); }
-  setSize(size: bigint): void { this.#handler.setSize(size); }
-  setTimes(a: NewTimestamp, m: NewTimestamp): void { this.#handler.setTimes(a, m); }
-  read(length: bigint, offset: bigint): [Uint8Array, boolean] { return this.#handler.read(length, offset); }
-  write(buffer: Uint8Array, offset: bigint): bigint { return this.#handler.write(buffer, offset); }
-  readDirectory(): DirectoryEntryStream { return this.#handler.readDirectory(); }
-  sync(): void { this.#handler.sync(); }
-  createDirectoryAt(path: string): void { this.#handler.createDirectoryAt(path); }
-  stat(): DescriptorStat { return this.#handler.stat(); }
-  statAt(pf: PathFlags, path: string): DescriptorStat { return this.#handler.statAt(pf, path); }
-  setTimesAt(pf: PathFlags, path: string, a: NewTimestamp, m: NewTimestamp): void { this.#handler.setTimesAt(pf, path, a, m); }
-  linkAt(opf: PathFlags, op: string, nd: Descriptor, np: string): void { this.#handler.linkAt(opf, op, nd, np); }
-  openAt(pf: PathFlags, path: string, of: OpenFlags, f: DescriptorFlags): Descriptor { return this.#handler.openAt(pf, path, of, f); }
-  readlinkAt(path: string): string { return this.#handler.readlinkAt(path); }
-  removeDirectoryAt(path: string): void { this.#handler.removeDirectoryAt(path); }
-  renameAt(op: string, nd: Descriptor, np: string): void { this.#handler.renameAt(op, nd, np); }
-  symlinkAt(op: string, np: string): void { this.#handler.symlinkAt(op, np); }
-  unlinkFileAt(path: string): void { this.#handler.unlinkFileAt(path); }
+  readViaStream(offset: bigint): InputStream<Sync> { return this.#handler.readViaStream(offset); }
+  writeViaStream(offset: bigint): OutputStream<Sync> { return this.#handler.writeViaStream(offset); }
+  appendViaStream(): OutputStream<Sync> { return this.#handler.appendViaStream(); }
+  advise(offset: bigint, length: bigint, advice: Advice): MaybePromise<void, Sync> { return this.#handler.advise(offset, length, advice); }
+  syncData(): MaybePromise<void, Sync> { return this.#handler.syncData(); }
+  getType(): MaybePromise<DescriptorType, Sync> { return this.#handler.getType(); }
+  setSize(size: bigint): MaybePromise<void, Sync> { return this.#handler.setSize(size); }
+  setTimes(a: NewTimestamp, m: NewTimestamp): MaybePromise<void, Sync> { return this.#handler.setTimes(a, m); }
+  read(length: bigint, offset: bigint): MaybePromise<[Uint8Array, boolean], Sync> { return this.#handler.read(length, offset); }
+  write(buffer: Uint8Array, offset: bigint): MaybePromise<bigint, Sync> { return this.#handler.write(buffer, offset); }
+  readDirectory(): MaybePromise<DirectoryEntryStream, Sync> { return this.#handler.readDirectory(); }
+  sync(): MaybePromise<void, Sync> { return this.#handler.sync(); }
+  createDirectoryAt(path: string): MaybePromise<void, Sync> { return this.#handler.createDirectoryAt(path); }
+  stat(): MaybePromise<DescriptorStat, Sync> { return this.#handler.stat(); }
+  statAt(pf: PathFlags, path: string): MaybePromise<DescriptorStat, Sync> { return this.#handler.statAt(pf, path); }
+  setTimesAt(pf: PathFlags, path: string, a: NewTimestamp, m: NewTimestamp): MaybePromise<void, Sync> { return this.#handler.setTimesAt(pf, path, a, m); }
+  linkAt(opf: PathFlags, op: string, nd: Descriptor<Sync>, np: string): MaybePromise<void, Sync> { return this.#handler.linkAt(opf, op, nd, np); }
+  openAt(pf: PathFlags, path: string, of: OpenFlags, f: DescriptorFlags): MaybePromise<Descriptor<Sync>, Sync> { return this.#handler.openAt(pf, path, of, f); }
+  readlinkAt(path: string): MaybePromise<string, Sync> { return this.#handler.readlinkAt(path); }
+  removeDirectoryAt(path: string): MaybePromise<void, Sync> { return this.#handler.removeDirectoryAt(path); }
+  renameAt(op: string, nd: Descriptor<Sync>, np: string): MaybePromise<void, Sync> { return this.#handler.renameAt(op, nd, np); }
+  symlinkAt(op: string, np: string): MaybePromise<void, Sync> { return this.#handler.symlinkAt(op, np); }
+  unlinkFileAt(path: string): MaybePromise<void, Sync> { return this.#handler.unlinkFileAt(path); }
   isSameObject(other: Descriptor): boolean { return this.#handler.isSameObject(other); }
-  metadataHash(): MetadataHashValue { return this.#handler.metadataHash(); }
-  metadataHashAt(pf: PathFlags, path: string): MetadataHashValue { return this.#handler.metadataHashAt(pf, path); }
+  metadataHash(): MaybePromise<MetadataHashValue, Sync> { return this.#handler.metadataHash(); }
+  metadataHashAt(pf: PathFlags, path: string): MaybePromise<MetadataHashValue, Sync> { return this.#handler.metadataHashAt(pf, path); }
 }
 
 // ─── filesystemErrorCode ────────────────────────────────────────────────────

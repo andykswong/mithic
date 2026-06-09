@@ -5,22 +5,22 @@ export interface HttpRequest {
   url: string;
   headers: [string, string][];
   body?: Uint8Array;
+  timeoutMs?: number;
 }
 
 export interface HttpResponse {
   status: number;
   headers: [string, string][];
   body?: Uint8Array;
+  trailers?: [string, string][];
 }
 
-export interface HttpClient {
-  send(request: HttpRequest): MaybePromise<HttpResponse>;
+export interface HttpClient<Sync extends boolean = boolean> {
+  send(request: HttpRequest): MaybePromise<HttpResponse, Sync>;
   dispose?(): void;
 }
 
-export interface SyncHttpClient extends HttpClient {
-  send(request: HttpRequest): HttpResponse;
-}
+export type SyncHttpClient = HttpClient<true>;
 
 export interface FetchHttpClientOptions {
   /** URL allowlist. If set, only these URL prefixes are permitted. */

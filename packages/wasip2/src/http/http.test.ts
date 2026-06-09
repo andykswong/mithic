@@ -7,6 +7,8 @@ import {
   OutgoingBody,
   OutgoingResponse,
   FutureIncomingResponse,
+  FutureTrailers,
+  IncomingBody,
   IncomingRequest,
   ResponseOutparam,
   RequestOptions,
@@ -17,7 +19,6 @@ import {
   outgoingBodyData,
   _setHttpClient,
 } from './types.ts';
-import type { IncomingBody } from './types.ts';
 import { handle } from './outgoing-handler.ts';
 import { handle as incomingHandle, _setIncomingHandler, _getIncomingHandler } from './incoming-handler.ts';
 
@@ -626,5 +627,177 @@ describe('incoming-handler', () => {
 
     // Clean up
     _setIncomingHandler(null as unknown as (r: IncomingRequest, o: ResponseOutparam) => void);
+  });
+});
+
+describe('OutgoingBody trailers', () => {
+  it('finish() accepts trailers without throwing', () => {
+    const req = new OutgoingRequest(new Fields());
+    const body = req.body();
+    const trailers = new Fields();
+    trailers.append('x-checksum', encoder.encode('abc123'));
+    OutgoingBody.finish(body, trailers);
+  });
+
+  it('finish() without trailers still works', () => {
+    const req = new OutgoingRequest(new Fields());
+    const body = req.body();
+    OutgoingBody.finish(body);
+  });
+
+  it('finish() twice throws error', () => {
+    const req = new OutgoingRequest(new Fields());
+    const body = req.body();
+    OutgoingBody.finish(body);
+    try {
+      OutgoingBody.finish(body);
+      ok(false, 'should have thrown');
+    } catch (e: unknown) {
+      strictEqual((e as { tag: string }).tag, 'internal-error');
+    }
+  });
+});
+
+describe('FutureTrailers', () => {
+  it('get() returns undefined when no trailers present', () => {
+    _setHttpClient({
+      send() { return { status: 200, headers: [], body: encoder.encode('data') }; },
+    });
+
+    const req = new OutgoingRequest(new Fields());
+    req.setMethod({ tag: 'get' });
+    req.setScheme({ tag: 'HTTPS' });
+    req.setAuthority('example.com');
+    req.setPathWithQuery('/no-trailers');
+    OutgoingBody.finish(req.body());
+
+    const future = handle(req);
+    const result = future.get()!;
+    const response = (result as { tag: 'ok'; val: { tag: 'ok'; val: { consume(): IncomingBody } } }).val.val;
+    const incomingBody = response.consume();
+    // Read through the body
+    try { incomingBody.stream().read(1024n); } catch { /* closed */ }
+    const ft = IncomingBody.finish(incomingBody);
+    ok(ft instanceof FutureTrailers);
+
+    const trailersResult = ft.get();
+    strictEqual(trailersResult.tag, 'ok');
+    const inner = (trailersResult as { tag: 'ok'; val: { tag: 'ok'; val: unknown } }).val;
+    strictEqual(inner.tag, 'ok');
+    strictEqual(inner.val, undefined);
+  });
+
+  it('get() returns trailers when present in response', () => {
+    _setHttpClient({
+      send() {
+        return {
+          status: 200,
+          headers: [['content-type', 'text/plain']],
+          body: encoder.encode('data'),
+          trailers: [['x-checksum', 'sha256=abc'], ['x-timing', '42ms']],
+        };
+      },
+    });
+
+    const req = new OutgoingRequest(new Fields());
+    req.setMethod({ tag: 'get' });
+    req.setScheme({ tag: 'HTTPS' });
+    req.setAuthority('example.com');
+    req.setPathWithQuery('/with-trailers');
+    OutgoingBody.finish(req.body());
+
+    const future = handle(req);
+    const result = future.get()!;
+    const response = (result as { tag: 'ok'; val: { tag: 'ok'; val: { consume(): IncomingBody } } }).val.val;
+    const incomingBody = response.consume();
+    try { incomingBody.stream().read(1024n); } catch { /* closed */ }
+    const ft = IncomingBody.finish(incomingBody);
+
+    const trailersResult = ft.get();
+    strictEqual(trailersResult.tag, 'ok');
+    const inner = (trailersResult as { tag: 'ok'; val: { tag: 'ok'; val: Fields } }).val;
+    strictEqual(inner.tag, 'ok');
+    ok(inner.val instanceof Fields);
+    ok(inner.val.has('x-checksum'));
+    strictEqual(decoder.decode(inner.val.get('x-checksum')[0]), 'sha256=abc');
+    strictEqual(decoder.decode(inner.val.get('x-timing')[0]), '42ms');
+  });
+
+  it('get() called twice returns error on second call', () => {
+    _setHttpClient({
+      send() { return { status: 200, headers: [], body: encoder.encode('data') }; },
+    });
+
+    const req = new OutgoingRequest(new Fields());
+    req.setMethod({ tag: 'get' });
+    req.setScheme({ tag: 'HTTPS' });
+    req.setAuthority('example.com');
+    req.setPathWithQuery('/trailers-twice');
+    OutgoingBody.finish(req.body());
+
+    const future = handle(req);
+    const result = future.get()!;
+    const response = (result as { tag: 'ok'; val: { tag: 'ok'; val: { consume(): IncomingBody } } }).val.val;
+    const incomingBody = response.consume();
+    try { incomingBody.stream().read(1024n); } catch { /* closed */ }
+    const ft = IncomingBody.finish(incomingBody);
+
+    const first = ft.get();
+    strictEqual(first.tag, 'ok');
+
+    const second = ft.get();
+    strictEqual(second.tag, 'err');
+  });
+});
+
+describe('RequestOptions timeout integration', () => {
+  it('connect timeout is propagated to request', () => {
+    let capturedRequest: { timeoutMs?: number } | undefined;
+    _setHttpClient({
+      send(request) {
+        capturedRequest = request;
+        return { status: 200, headers: [], body: new Uint8Array(0) };
+      },
+    });
+
+    const req = new OutgoingRequest(new Fields());
+    req.setMethod({ tag: 'get' });
+    req.setScheme({ tag: 'HTTPS' });
+    req.setAuthority('example.com');
+    req.setPathWithQuery('/timeout-test');
+    OutgoingBody.finish(req.body());
+
+    const options = new RequestOptions();
+    options.setConnectTimeout(5_000_000_000n); // 5 seconds in ns
+    options.setFirstByteTimeout(10_000_000_000n); // 10 seconds in ns
+
+    handle(req, options);
+
+    ok(capturedRequest !== undefined);
+    // Should use min(connectTimeout, firstByteTimeout) = 5000ms
+    strictEqual(capturedRequest!.timeoutMs, 5000);
+  });
+
+  it('uses default timeout when no options provided', () => {
+    let capturedRequest: { timeoutMs?: number } | undefined;
+    _setHttpClient({
+      send(request) {
+        capturedRequest = request;
+        return { status: 200, headers: [], body: new Uint8Array(0) };
+      },
+    });
+
+    const req = new OutgoingRequest(new Fields());
+    req.setMethod({ tag: 'get' });
+    req.setScheme({ tag: 'HTTPS' });
+    req.setAuthority('example.com');
+    req.setPathWithQuery('/default-timeout');
+    OutgoingBody.finish(req.body());
+
+    handle(req);
+
+    ok(capturedRequest !== undefined);
+    // Default is 600_000_000_000n ns = 600000ms
+    strictEqual(capturedRequest!.timeoutMs, 600000);
   });
 });

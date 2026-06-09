@@ -106,7 +106,7 @@ describe('NodeSocketProvider', () => {
     it('resolves localhost to at least one IP address', async () => {
       const addresses = await provider.resolveName('localhost');
       assert.ok(addresses.length > 0);
-      assert.equal(addresses[0].family, 'ipv4');
+      assert.ok(addresses[0].family === 'ipv4' || addresses[0].family === 'ipv6');
       assert.ok(addresses[0].address.length > 0);
     });
   });

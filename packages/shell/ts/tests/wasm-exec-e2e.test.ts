@@ -91,7 +91,7 @@ describe('Dynamic WASM E2E (compile → instantiate → run)', () => {
         sandbox: {
           args: ['basename', '/hello/world'],
           env: {},
-          stdin: { handler: { blockingRead() { throw { tag: 'closed' }; } } },
+          stdin: { handler: { read() { return undefined; }, blockingRead() { throw { tag: 'closed' }; } } },
           stdout: { handler: { write(data: Uint8Array) { chunks.push(new Uint8Array(data)); }, checkWrite() { return 65536; } } },
           stderr: { handler: { write() {}, checkWrite() { return 65536; } } },
         },
@@ -145,7 +145,7 @@ describe('Dynamic WASM E2E (compile → instantiate → run)', () => {
         sandbox: {
           args: ['grep', 'nomatch'],
           env: {},
-          stdin: { handler: { blockingRead(len: number) {
+          stdin: { handler: { read() { return undefined; }, blockingRead(len: number) {
             if (stdinPos >= stdinData.length) throw { tag: 'closed' };
             const slice = stdinData.slice(stdinPos, stdinPos + len);
             stdinPos += slice.length;
@@ -200,7 +200,7 @@ describe('Dynamic WASM E2E (compile → instantiate → run)', () => {
         sandbox: {
           args: ['basename', '/cached/path'],
           env: {},
-          stdin: { handler: { blockingRead() { throw { tag: 'closed' }; } } },
+          stdin: { handler: { read() { return undefined; }, blockingRead() { throw { tag: 'closed' }; } } },
           stdout: { handler: { write(data: Uint8Array) { chunks.push(new Uint8Array(data)); }, checkWrite() { return 65536; } } },
           stderr: { handler: { write() {}, checkWrite() { return 65536; } } },
         },

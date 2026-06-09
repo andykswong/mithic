@@ -49,6 +49,8 @@ export interface ExecResult {
 export interface PipeOptions {
   /** Use SharedArrayBuffer ring buffer for cross-thread pipes. */
   shared?: boolean;
+  /** Use async-capable queue pipe with Promise-based blocking. */
+  async?: boolean;
   /** Buffer capacity in bytes (default: 65536). */
   bufferSize?: number;
 }
@@ -68,8 +70,8 @@ export interface SpawnOptions {
 
 export interface ProcessHandler {
   onKill?(signal: Signal): void;
-  wait(): number;
-  tryWait?(): number | undefined;
+  wait(): number | Promise<number>;
+  tryWait(): number | undefined;
   waitAsync?(): Promise<number>;
 }
 
@@ -90,21 +92,21 @@ export class Process {
     return this.#pid;
   }
 
-  wait(): number {
+  wait(): number | Promise<number> {
     return this.#handler.wait();
   }
 
   tryWait(): number | undefined {
-    return this.#handler.tryWait?.();
+    return this.#handler.tryWait();
   }
 
   waitAsync(): Promise<number> {
     if (this.#handler.waitAsync) return this.#handler.waitAsync();
-    return new Promise((resolve) => {
+    return new Promise<number>(resolve => {
       const poll = () => {
         const code = this.tryWait();
-        if (code !== undefined) resolve(code);
-        else setTimeout(poll, 10);
+        if (code !== undefined) { resolve(code); return; }
+        setTimeout(poll, 10);
       };
       poll();
     });

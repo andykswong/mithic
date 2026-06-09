@@ -3,17 +3,18 @@
  * Based on jco's browser HTTP implementation, adapted to use our InputStream/OutputStream/Pollable.
  */
 
+import { isThenable } from '@mithic/io';
+import { type HttpClient, type HttpResponse, DisabledHttpClient } from '@mithic/io/net';
 import { InputStream, OutputStream } from '../io/streams.ts';
 import { Pollable } from '../io/poll.ts';
-import { type SyncHttpClient, type HttpResponse, DisabledHttpClient } from '@mithic/io/net';
 
-let _defaultHttpClient: SyncHttpClient = new DisabledHttpClient();
+let _defaultHttpClient: HttpClient = new DisabledHttpClient();
 
-export function _setHttpClient(client: SyncHttpClient): void {
+export function _setHttpClient(client: HttpClient): void {
   _defaultHttpClient = client;
 }
 
-export function _getHttpClient(): SyncHttpClient {
+export function _getHttpClient(): HttpClient {
   return _defaultHttpClient;
 }
 
@@ -42,6 +43,7 @@ interface OutgoingBodyInternal {
   chunks: Uint8Array[];
   outputStream: OutputStream | null;
   finished: boolean;
+  trailers?: Fields;
 }
 
 interface OutgoingRequestInternal {
@@ -57,6 +59,7 @@ interface OutgoingRequestInternal {
 interface IncomingBodyInternal {
   stream: InputStream | null | undefined;
   finished: boolean;
+  trailers?: Fields;
 }
 
 interface IncomingResponseInternal {
@@ -67,6 +70,7 @@ interface IncomingResponseInternal {
 
 interface FutureTrailersInternal {
   requested: boolean;
+  trailers?: Fields;
 }
 
 interface FutureIncomingResponseInternal {
@@ -217,13 +221,17 @@ function outgoingBodyData(body: OutgoingBody): Uint8Array | null {
 }
 
 /** Create a FutureTrailers instance. */
-function futureTrailersCreate(): FutureTrailers {
-  return new FutureTrailers(INTERNAL);
+function futureTrailersCreate(trailers?: Fields): FutureTrailers {
+  const ft = new FutureTrailers(INTERNAL);
+  if (trailers) {
+    (ft as unknown as Record<symbol, FutureTrailersInternal>)[INTERNAL].trailers = trailers;
+  }
+  return ft;
 }
 
 
 /** Create IncomingBody from a Uint8Array (for sync/non-streaming responses). */
-function incomingBodyCreateFromBuffer(data: Uint8Array | undefined): IncomingBody {
+function incomingBodyCreateFromBuffer(data: Uint8Array | undefined, trailers?: Fields): IncomingBody {
   const incomingBody = new IncomingBody(INTERNAL);
   const internal = (incomingBody as unknown as Record<symbol, IncomingBodyInternal>)[INTERNAL];
   const bodyBuffer = data ?? new Uint8Array(0);
@@ -252,6 +260,10 @@ function incomingBodyCreateFromBuffer(data: Uint8Array | undefined): IncomingBod
     },
   }, () => new Pollable(() => true));
 
+  if (trailers) {
+    internal.trailers = trailers;
+  }
+
   return incomingBody;
 }
 
@@ -266,7 +278,10 @@ function incomingResponseCreateFromClientResponse(clientResponse: HttpResponse):
   );
   internal.headers = fieldsLock(fieldsFromEntriesChecked(headerEntries));
 
-  internal.body = incomingBodyCreateFromBuffer(clientResponse.body);
+  const trailerFields = clientResponse.trailers
+    ? fieldsFromEntriesChecked(clientResponse.trailers.map(([k, v]) => [k, utf8Encoder.encode(v)] as [FieldName, FieldValue]))
+    : undefined;
+  internal.body = incomingBodyCreateFromBuffer(clientResponse.body, trailerFields);
   return res;
 }
 
@@ -293,7 +308,7 @@ function futureIncomingResponseCreate(
   headers: [string, string][],
   bodyData: Uint8Array | null,
   timeoutMs: number,
-  httpClient?: SyncHttpClient,
+  httpClient?: HttpClient,
 ): FutureIncomingResponse {
   const future = new FutureIncomingResponse(INTERNAL);
   const internal = (future as unknown as Record<symbol, FutureIncomingResponseInternal>)[INTERNAL];
@@ -304,13 +319,7 @@ function futureIncomingResponseCreate(
   }
 
   const client = httpClient ?? _getHttpClient();
-  try {
-    const response = client.send({
-      method,
-      url,
-      headers,
-      body: (bodyData && method !== 'GET' && method !== 'HEAD') ? bodyData : undefined,
-    });
+  const resolve = (response: HttpResponse) => {
     if (internal.timer) { clearTimeout(internal.timer); internal.timer = undefined; }
     internal.result = {
       tag: 'ok',
@@ -320,7 +329,8 @@ function futureIncomingResponseCreate(
       },
     };
     internal.resolved = true;
-  } catch (err) {
+  };
+  const reject = (err: unknown) => {
     if (internal.timer) { clearTimeout(internal.timer); internal.timer = undefined; }
     internal.result = {
       tag: 'ok',
@@ -330,6 +340,23 @@ function futureIncomingResponseCreate(
       },
     };
     internal.resolved = true;
+  };
+
+  try {
+    const result = client.send({
+      method,
+      url,
+      headers,
+      body: (bodyData && method !== 'GET' && method !== 'HEAD') ? bodyData : undefined,
+      timeoutMs: timeoutMs < Infinity ? timeoutMs : undefined,
+    });
+    if (isThenable(result)) {
+      internal.promise = (result as Promise<HttpResponse>).then(resolve, reject);
+    } else {
+      resolve(result as HttpResponse);
+    }
+  } catch (err) {
+    reject(err);
   }
 
   return future;
@@ -533,12 +560,12 @@ export class OutgoingBody {
   }
 
   static finish(body: OutgoingBody, trailers?: Fields): void {
-    if (trailers) {
-      throw { tag: 'internal-error', val: 'trailers unsupported' } as ErrorCode;
-    }
     const internal = body[INTERNAL];
     if (internal.finished) {
       throw { tag: 'internal-error', val: 'body already finished' } as ErrorCode;
+    }
+    if (trailers) {
+      internal.trailers = trailers;
     }
     internal.finished = true;
   }
@@ -668,7 +695,7 @@ export class IncomingBody {
       throw new Error('incoming body already finished');
     }
     internal.finished = true;
-    return futureTrailersCreate();
+    return futureTrailersCreate(internal.trailers);
   }
 
   [Symbol.dispose](): void {}
@@ -731,7 +758,7 @@ export class FutureTrailers {
     return new Pollable(() => true);
   }
 
-  get(): { tag: 'ok'; val: { tag: 'ok'; val: undefined } } | { tag: 'err' } {
+  get(): { tag: 'ok'; val: { tag: 'ok'; val: Fields | undefined } } | { tag: 'err' } {
     const internal = this[INTERNAL];
     if (internal.requested) {
       return { tag: 'err' };
@@ -741,7 +768,7 @@ export class FutureTrailers {
       tag: 'ok',
       val: {
         tag: 'ok',
-        val: undefined,
+        val: internal.trailers ?? undefined,
       },
     };
   }
@@ -771,7 +798,11 @@ export class FutureIncomingResponse {
   }
 
   subscribe(): Pollable {
-    return new Pollable(() => this[INTERNAL].resolved);
+    const internal = this[INTERNAL];
+    return new Pollable(
+      () => internal.resolved,
+      internal.promise ? () => internal.promise! : undefined,
+    );
   }
 
   get(): FutureResult | undefined {
@@ -1002,7 +1033,7 @@ export function httpErrorCode(err: unknown): ErrorCode | undefined {
 // --- Exported handler function for outgoing-handler ---
 
 /** Execute an outgoing request - called by outgoing-handler. Accepts optional client for instance isolation. */
-export function outgoingRequestHandle(request: OutgoingRequest, options?: RequestOptions, client?: SyncHttpClient): FutureIncomingResponse {
+export function outgoingRequestHandle(request: OutgoingRequest, options?: RequestOptions, client?: HttpClient): FutureIncomingResponse {
   const internal = request[INTERNAL];
   const scheme = schemeString(internal.scheme);
   const method = (internal.method as { val?: string }).val || internal.method.tag;

@@ -15,7 +15,7 @@ echo -e "  \\033[1;36mnpm install mithic\\033[0m"
 echo -e ""
 echo -e "\\033[2mLinks:\\033[0m \\033]8;;https://github.com/andykswong/mithic\\007\\033[4;36mGitHub\\033[0m\\033]8;;\\007  \\033]8;;https://andykswong.github.io/mithic/api\\007\\033[4;36mAPI Docs\\033[0m\\033]8;;\\007"
 echo -e ""
-echo -e "\\033[2mTry:\\033[0m \\033[36mls\\033[0m, \\033[36mecho hello | tr a-z A-Z\\033[0m, \\033[36mcat /dev/urandom | head -c 8 | base64\\033[0m"
+echo -e "\\033[2mTry:\\033[0m \\033[36mls /bin\\033[0m, \\033[36mecho hello | tr a-z A-Z\\033[0m, \\033[36mcat /dev/urandom | head -c 8 | base64\\033[0m, \\033[36m/bin/rust-cli\\033[0m"
 echo -e ""
 export PS1="\\e[1;32m\\w\\e[0m\\$ "
 `;

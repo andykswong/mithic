@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -22,12 +21,13 @@ if (polyfill.installed) {
 }
 
 const shim = new WASIShim({
+  async: true,
   sandbox: {
     env: Object.fromEntries(Object.entries(process.env).filter(([, v]) => v != null)) as Record<string, string>,
     args: process.argv.slice(2),
-    stdin: { handler: new AsyncNodeStdinHandler() as any },
-    stdout: { handler: new AsyncNodeStdoutHandler() as any },
-    stderr: { handler: new AsyncNodeStderrHandler() as any },
+    stdin: { handler: new AsyncNodeStdinHandler() },
+    stdout: { handler: new AsyncNodeStdoutHandler() },
+    stderr: { handler: new AsyncNodeStderrHandler() },
   },
 });
 

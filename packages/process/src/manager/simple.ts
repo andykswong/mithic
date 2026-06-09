@@ -123,6 +123,7 @@ export class SimpleProcessManager implements ProcessManager {
     let killed = false;
     let done = false;
     let exitCode: number | undefined;
+    let exitPromise: Promise<number> | undefined;
 
     const foreground = this.#foreground;
     const processHandler: ProcessHandler = {
@@ -135,17 +136,20 @@ export class SimpleProcessManager implements ProcessManager {
         const sigNum = SIGNAL_NUMBER[signal];
         exitCode = 128 + sigNum;
       },
-      wait() {
+      wait(): number | Promise<number> {
         foreground.add(proc);
-        try {
-          // For sync handlers (which already have exitCode set), return immediately.
-          // For async handlers (background jobs), this will return the stored exitCode
-          // (which may be undefined if the job hasn't finished — but wait() on background
-          // jobs is only valid after they've completed; shell uses tryWait() for polling).
-          return exitCode ?? 0;
-        } finally {
+        if (done || killed) {
           foreground.delete(proc);
+          return exitCode ?? 0;
         }
+        if (exitPromise) {
+          return exitPromise.then(code => {
+            foreground.delete(proc);
+            return code;
+          });
+        }
+        foreground.delete(proc);
+        return exitCode ?? 0;
       },
       tryWait() { return exitCode; },
     };
@@ -168,13 +172,14 @@ export class SimpleProcessManager implements ProcessManager {
       exitCode = result;
       this.table.remove(pid);
     } else {
-      result.then(
+      exitPromise = result.then(
         (code: number) => {
           done = true;
           if (!killed) {
             exitCode = code;
           }
           this.table.remove(pid);
+          return exitCode ?? 0;
         },
         (err: unknown) => {
           done = true;
@@ -186,6 +191,7 @@ export class SimpleProcessManager implements ProcessManager {
             exitCode = 1;
           }
           this.table.remove(pid);
+          return exitCode ?? 0;
         },
       );
     }

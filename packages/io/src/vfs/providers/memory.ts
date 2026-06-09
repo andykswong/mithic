@@ -1,4 +1,4 @@
-import type { FileHandle, OpenFlags, DirEntry, SyncFileSystemProvider, FileStat } from '../provider.ts';
+import type { FileHandle, OpenFlags, DirEntry, FileSystemProvider, FileStat } from '../provider.ts';
 import { FileSystemError } from '../provider.ts';
 
 /** In-memory file entry. */
@@ -60,7 +60,7 @@ const encoder = new TextEncoder();
 /**
  * In-memory filesystem provider with full Unix semantics.
  */
-export class MemoryFsProvider implements SyncFileSystemProvider {
+export class MemoryFsProvider implements FileSystemProvider<true> {
   private root: MemDirectoryEntry;
   private handles = new Map<number, OpenFileHandle>();
   private nextFd = 3; // 0, 1, 2 reserved for stdio

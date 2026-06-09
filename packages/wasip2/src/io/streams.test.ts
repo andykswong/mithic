@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import { deepStrictEqual, strictEqual, throws } from 'node:assert';
 
-import { InputStream, OutputStream, isStreamClosed } from './streams.ts';
+import { InputStream, OutputStream, isStreamClosed, type InputStreamHandler, type OutputStreamHandler } from './streams.ts';
 import { Pollable, poll } from './poll.ts';
 
 describe('InputStream', () => {
@@ -48,20 +48,22 @@ describe('InputStream', () => {
     deepStrictEqual(result, new Uint8Array(0));
   });
 
-  it('read falls back to blockingRead when no read handler', () => {
+  it('read returns empty when handler.read returns undefined (non-blocking has no data)', () => {
     const data = new Uint8Array([7, 8, 9]);
     const stream = new InputStream({
+      read() { return undefined; },
       blockingRead(len: number) {
         return data.slice(0, len);
       },
     });
 
     const result = stream.read(2n);
-    deepStrictEqual(result, new Uint8Array([7, 8]));
+    deepStrictEqual(result, new Uint8Array(0));
   });
 
   it('blockingRead throws closed when stream is done', () => {
     const stream = new InputStream({
+      read() { return undefined; },
       blockingRead(_len: number): Uint8Array {
         throw { tag: 'closed' };
       },
@@ -76,6 +78,7 @@ describe('InputStream', () => {
     let skipCalled = false;
     let skipArg = 0;
     const stream = new InputStream({
+      read() { return undefined; },
       skip(len: number) {
         skipCalled = true;
         skipArg = len;
@@ -112,9 +115,12 @@ describe('InputStream', () => {
     strictEqual(skipped, 3n);
   });
 
-  it('skip falls back to blockingRead when no skip or read handler', () => {
+  it('skip falls back to read when no skip handler', () => {
     const data = new Uint8Array([1, 2, 3, 4]);
     const stream = new InputStream({
+      read(len: number) {
+        return data.slice(0, len);
+      },
       blockingRead(len: number) {
         return data.slice(0, len);
       },
@@ -127,6 +133,7 @@ describe('InputStream', () => {
   it('blockingSkip delegates to skip handler when present', () => {
     let skipCalled = false;
     const stream = new InputStream({
+      read() { return undefined; },
       skip(len: number) {
         skipCalled = true;
         return len;
@@ -144,6 +151,7 @@ describe('InputStream', () => {
   it('blockingSkip falls back to blockingRead when no skip handler', () => {
     const data = new Uint8Array([1, 2, 3, 4, 5]);
     const stream = new InputStream({
+      read() { return undefined; },
       blockingRead(len: number) {
         return data.slice(0, len);
       },
@@ -156,6 +164,7 @@ describe('InputStream', () => {
   it('subscribe returns handler pollable when provided', () => {
     const customPollable = new Pollable(() => false);
     const stream = new InputStream({
+      read() { return undefined; },
       blockingRead(_len: number) {
         return new Uint8Array(0);
       },
@@ -165,20 +174,25 @@ describe('InputStream', () => {
     strictEqual(p, customPollable);
   });
 
-  it('subscribe returns default always-ready pollable when no handler', () => {
+  it('subscribe returns default pollable that checks handler.read for readiness', () => {
+    let hasData = false;
     const stream = new InputStream({
+      read() { return hasData ? new Uint8Array([1]) : undefined; },
       blockingRead(_len: number) {
         return new Uint8Array(0);
       },
     });
 
     const p = stream.subscribe();
+    strictEqual(p.ready(), false);
+    hasData = true;
     strictEqual(p.ready(), true);
   });
 
   it('[Symbol.dispose] calls handler drop', () => {
     let dropped = false;
     const stream = new InputStream({
+      read() { return undefined; },
       blockingRead(_len: number) {
         return new Uint8Array(0);
       },
@@ -373,6 +387,7 @@ describe('OutputStream', () => {
   it('blockingSplice reads and writes with blocking', () => {
     const inputData = new Uint8Array([100, 200, 150]);
     const inputStream = new InputStream({
+      read() { return undefined; },
       blockingRead(len: number) {
         return inputData.slice(0, len);
       },
@@ -398,6 +413,7 @@ describe('OutputStream', () => {
 
   it('blockingSplice does not write when input returns empty', () => {
     const inputStream = new InputStream({
+      read() { return undefined; },
       blockingRead(_len: number) {
         return new Uint8Array(0);
       },
@@ -524,6 +540,7 @@ describe('InputStream.dup()', () => {
   it('dup delegates read to the same handler', () => {
     const data = new Uint8Array([1, 2, 3]);
     const stream = new InputStream({
+      read() { return undefined; },
       blockingRead(len) { return data.slice(0, len); },
     });
     const duped = stream.dup();
@@ -531,13 +548,14 @@ describe('InputStream.dup()', () => {
   });
 
   it('dup inherits isatty from owner', () => {
-    const stream = new InputStream({ blockingRead() { return new Uint8Array(0); } }, undefined, true);
+    const stream = new InputStream({ read() { return undefined; }, blockingRead() { return new Uint8Array(0); } }, undefined, true);
     strictEqual(stream.dup().isatty, true);
   });
 
   it('disposing a dup when original is still alive does NOT call handler drop', () => {
     let dropped = false;
     const stream = new InputStream({
+      read() { return undefined; },
       blockingRead() { return new Uint8Array(0); },
       drop() { dropped = true; },
     });
@@ -549,6 +567,7 @@ describe('InputStream.dup()', () => {
   it('disposing the original when dup is still alive does NOT call handler drop', () => {
     let dropped = false;
     const stream = new InputStream({
+      read() { return undefined; },
       blockingRead() { return new Uint8Array(0); },
       drop() { dropped = true; },
     });
@@ -562,6 +581,7 @@ describe('InputStream.dup()', () => {
   it('disposing the last handle calls handler drop', () => {
     let dropped = false;
     const stream = new InputStream({
+      read() { return undefined; },
       blockingRead() { return new Uint8Array(0); },
       drop() { dropped = true; },
     });
@@ -656,11 +676,183 @@ describe('poll', () => {
     const p2 = new Pollable(() => false);
     const p3 = new Pollable(() => true);
 
-    const result = poll([p1, p2, p3]);
+    const result = poll([p1, p2, p3]) as Uint32Array;
     deepStrictEqual(Array.from(result), [0, 2]);
   });
 
   it('throws on empty list', () => {
     throws(() => poll([]), /poll list must not be empty/);
+  });
+});
+
+describe('InputStream async blockingRead', () => {
+  it('blockingRead returns Promise when handler returns Promise', async () => {
+    const handler: InputStreamHandler = {
+      read() { return undefined; },
+      blockingRead(len: number) {
+        return new Promise<Uint8Array>(resolve =>
+          setTimeout(() => resolve(new Uint8Array(len).fill(42)), 10)
+        );
+      },
+    };
+    const stream = new InputStream(handler);
+    const result = stream.blockingRead(5n);
+    strictEqual(result instanceof Promise, true);
+    const data = await result;
+    strictEqual(data.byteLength, 5);
+    strictEqual(data[0], 42);
+  });
+
+  it('blockingRead returns Uint8Array directly for sync handler', () => {
+    const handler: InputStreamHandler<true> = {
+      read() { return undefined; },
+      blockingRead(len: number) { return new Uint8Array(len).fill(7); },
+    };
+    const stream = new InputStream<true>(handler);
+    const result = stream.blockingRead(3n);
+    strictEqual(result.byteLength, 3);
+    strictEqual(result[0], 7);
+  });
+
+  it('blockingRead rejects when handler Promise rejects', async () => {
+    const handler: InputStreamHandler = {
+      read() { return undefined; },
+      blockingRead() { return Promise.reject({ tag: 'closed' }); },
+    };
+    const stream = new InputStream(handler);
+    const result = stream.blockingRead(10n);
+    strictEqual(result instanceof Promise, true);
+    try {
+      await result;
+      throw new Error('should have rejected');
+    } catch (err: unknown) {
+      strictEqual((err as { tag: string }).tag, 'closed');
+    }
+  });
+
+  it('blockingSkip with async handler returns Promise<bigint>', async () => {
+    const handler: InputStreamHandler = {
+      read() { return undefined; },
+      blockingRead(len: number) {
+        return new Promise<Uint8Array>(resolve =>
+          setTimeout(() => resolve(new Uint8Array(len)), 5)
+        );
+      },
+    };
+    const stream = new InputStream(handler);
+    const result = stream.blockingSkip(10n);
+    strictEqual(result instanceof Promise, true);
+    const skipped = await result;
+    strictEqual(skipped, 10n);
+  });
+});
+
+describe('OutputStream.write precondition', () => {
+  it('write with data smaller than checkWrite capacity succeeds', () => {
+    const written: Uint8Array[] = [];
+    const stream = new OutputStream({
+      checkWrite() { return 10; },
+      write(data: Uint8Array) { written.push(new Uint8Array(data)); },
+    });
+    stream.write(new Uint8Array(5));
+    strictEqual(written.length, 1);
+  });
+});
+
+describe('InputStream edge cases', () => {
+  it('read after dispose does not crash', () => {
+    const stream = new InputStream({
+      read() { return new Uint8Array([1]); },
+      blockingRead() { return new Uint8Array([1]); },
+    });
+    stream[Symbol.dispose]();
+    // After dispose, handler.drop() was called. Behavior is implementation-defined.
+    // Verify it doesn't crash at minimum (handler still works, just ref-counted).
+    const result = stream.read(1n);
+    deepStrictEqual(result, new Uint8Array([1]));
+  });
+
+  it('skip returns 0 when no data available', () => {
+    const stream = new InputStream({
+      read() { return undefined; },
+      blockingRead() { throw { tag: 'closed' }; },
+    });
+    strictEqual(stream.skip(10n), 0n);
+  });
+
+  it('blockingSkip uses skip handler when available', () => {
+    let skipped = 0;
+    const stream = new InputStream({
+      read() { return undefined; },
+      blockingRead() { return new Uint8Array(10); },
+      skip(len: number) { skipped = len; return len; },
+    });
+    const result = stream.blockingSkip(5n);
+    strictEqual(result, 5n);
+    strictEqual(skipped, 5);
+  });
+});
+
+describe('OutputStream.blockingWriteAndFlush chunking', () => {
+  it('writes in chunks based on checkWrite capacity', () => {
+    const written: Uint8Array[] = [];
+    const stream = new OutputStream({
+      checkWrite() { return 3; },
+      write(data: Uint8Array) { written.push(new Uint8Array(data)); },
+    });
+    stream.blockingWriteAndFlush(new Uint8Array([1, 2, 3, 4, 5, 6, 7]));
+    // Should be written in chunks of 3, 3, 1
+    strictEqual(written.length, 3);
+    deepStrictEqual(written[0], new Uint8Array([1, 2, 3]));
+    deepStrictEqual(written[1], new Uint8Array([4, 5, 6]));
+    deepStrictEqual(written[2], new Uint8Array([7]));
+  });
+});
+
+describe('OutputStream.writeZeroes edge cases', () => {
+  it('writes zero-filled buffer of specified length', () => {
+    const written: Uint8Array[] = [];
+    const stream = new OutputStream({
+      write(data: Uint8Array) { written.push(new Uint8Array(data)); },
+    });
+    stream.writeZeroes(4n);
+    deepStrictEqual(written[0], new Uint8Array([0, 0, 0, 0]));
+  });
+
+  it('writeZeroes on closed stream throws', () => {
+    const stream = new OutputStream({
+      write() {},
+    });
+    stream[Symbol.dispose]();
+    throws(() => stream.writeZeroes(1n), (err: unknown) => {
+      return (err as { tag: string }).tag === 'closed';
+    });
+  });
+});
+
+describe('OutputStream async flush', () => {
+  it('flush returns Promise when handler flush returns Promise', async () => {
+    let flushed = false;
+    const handler: OutputStreamHandler = {
+      write() {},
+      flush() { return new Promise<void>(resolve => setTimeout(() => { flushed = true; resolve(); }, 10)); },
+    };
+    const stream = new OutputStream(handler);
+    const result = stream.flush();
+    strictEqual(result instanceof Promise, true);
+    strictEqual(flushed, false);
+    await result;
+    strictEqual(flushed, true);
+  });
+
+  it('flush returns void for sync handler', () => {
+    let flushed = false;
+    const handler: OutputStreamHandler<true> = {
+      write() {},
+      flush() { flushed = true; },
+    };
+    const stream = new OutputStream<true>(handler);
+    stream.flush();
+    strictEqual(flushed, true);
   });
 });

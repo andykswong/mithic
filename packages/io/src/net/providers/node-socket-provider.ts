@@ -1,7 +1,7 @@
 import * as net from 'node:net';
 import * as dgram from 'node:dgram';
 import * as dns from 'node:dns/promises';
-import type { SocketProvider, TcpSocket, UdpSocket, SocketAddress, IpAddress } from '../sockets.ts';
+import type { SocketProvider, TcpSocket, UdpSocket, SocketAddress, IpAddress, SocketOptions } from '../sockets.ts';
 
 export class NodeSocketProvider implements SocketProvider {
   async createTcpSocket(): Promise<TcpSocket> {
@@ -13,8 +13,11 @@ export class NodeSocketProvider implements SocketProvider {
   }
 
   async resolveName(name: string): Promise<IpAddress[]> {
-    const results = await dns.lookup(name, { all: true, family: 4 });
-    return results.map(r => ({ family: 'ipv4' as const, address: r.address }));
+    const results = await dns.lookup(name, { all: true, family: 0 });
+    return results.map(r => ({
+      family: (r.family === 6 ? 'ipv6' : 'ipv4') as 'ipv4' | 'ipv6',
+      address: r.address,
+    }));
   }
 }
 
@@ -140,10 +143,31 @@ class NativeTcpSocket implements TcpSocket {
     return new Uint8Array(slice.buffer, slice.byteOffset, slice.byteLength);
   }
 
-  async shutdown(): Promise<void> {
-    return new Promise((resolve) => {
-      this.#socket.end(() => resolve());
-    });
+  async shutdown(type?: 'receive' | 'send' | 'both'): Promise<void> {
+    const shutdownType = type ?? 'both';
+    if (shutdownType === 'receive') {
+      this.#socket.pause();
+      this.#socket.removeAllListeners('data');
+      return;
+    }
+    if (shutdownType === 'send') {
+      return new Promise((resolve) => {
+        this.#socket.end(() => resolve());
+      });
+    }
+    // 'both'
+    this.#socket.destroy();
+  }
+
+  async setSocketOptions(options: SocketOptions): Promise<void> {
+    if (options.keepAliveEnabled !== undefined) {
+      this.#socket.setKeepAlive(options.keepAliveEnabled, options.keepAliveIdleTime);
+    }
+    if (options.hopLimit !== undefined) {
+      try {
+        (this.#socket as unknown as { setTTL(ttl: number): void }).setTTL(options.hopLimit);
+      } catch { /* TTL not supported on all platforms */ }
+    }
   }
 
   async close(): Promise<void> {

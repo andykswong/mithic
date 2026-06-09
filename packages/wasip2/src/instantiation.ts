@@ -17,10 +17,11 @@ import * as random from './random/index.ts';
 import * as sockets from './sockets/index.ts';
 import { Descriptor } from './filesystem/types.ts';
 import { InputStream, OutputStream, type InputStreamHandler, type OutputStreamHandler } from './io/streams.ts';
+import { Pollable } from './io/poll.ts';
 import type { InputStdioConfig, OutputStdioConfig } from './cli/stdio.ts';
 import { outgoingRequestHandle } from './http/types.ts';
 import type { OutgoingRequest, RequestOptions, FutureIncomingResponse } from './http/types.ts';
-import type { SyncSocketProvider, SyncHttpClient } from '@mithic/io/net';
+import type { SocketProvider, HttpClient } from '@mithic/io/net';
 import type {
   WasiEnvironment,
   WasiPreopens,
@@ -44,9 +45,10 @@ export interface WASIShimConfig {
     stdin?: InputStream | InputStreamHandler | InputStdioConfig;
     stdout?: OutputStream | OutputStreamHandler | OutputStdioConfig;
     stderr?: OutputStream | OutputStreamHandler | OutputStdioConfig;
-    sockets?: SyncSocketProvider;
-    httpClient?: SyncHttpClient;
+    sockets?: SocketProvider;
+    httpClient?: HttpClient;
   };
+  async?: boolean;
 }
 
 export type WASIImportObject = { [key: string]: object };
@@ -62,8 +64,10 @@ export class WASIShim implements Disposable {
   #terminalStderr: object | null = null;
   #sockets: WasiSockets | null = null;
   #httpOutgoingHandler: WasiOutgoingHandler | null = null;
+  #async: boolean;
 
   constructor(config?: WASIShimConfig) {
+    this.#async = config?.async ?? false;
     const sandbox = config?.sandbox;
     if (!sandbox) return;
 
@@ -91,7 +95,7 @@ export class WASIShim implements Disposable {
     }
 
     if (sandbox.sockets) {
-      this.#sockets = sockets._createIsolatedSockets(sandbox.sockets);
+      this.#sockets = sockets.createIsolatedSockets(sandbox.sockets);
     }
 
     if (sandbox.httpClient) {
@@ -121,7 +125,7 @@ export class WASIShim implements Disposable {
       'wasi:cli/terminal-stdin': this.#terminalStdin ?? cli.terminalStdin,
       'wasi:cli/terminal-stdout': this.#terminalStdout ?? cli.terminalStdout,
       'wasi:cli/terminal-stderr': this.#terminalStderr ?? cli.terminalStderr,
-      'wasi:clocks/monotonic-clock': clocks.monotonicClock,
+      'wasi:clocks/monotonic-clock': this.#async ? createAsyncMonotonicClock() : clocks.monotonicClock,
       'wasi:clocks/wall-clock': clocks.wallClock,
       'wasi:filesystem/preopens': this.#preopens ?? filesystem.preopens,
       'wasi:filesystem/types': filesystem.types,
@@ -202,4 +206,37 @@ function toOutputStream(value: OutputStream | OutputStreamHandler | OutputStdioC
   if (value instanceof OutputStream) return value;
   if ('handler' in value) return new OutputStream((value as OutputStdioConfig).handler, (value as OutputStdioConfig).subscribe, (value as OutputStdioConfig).isatty);
   return new OutputStream(value as OutputStreamHandler);
+}
+
+function createAsyncMonotonicClock() {
+  function nowMs(): number {
+    return performance.now();
+  }
+
+  return {
+    resolution: clocks.monotonicClock.resolution,
+    now: clocks.monotonicClock.now,
+    subscribeInstant(when: bigint): Pollable {
+      const whenMs = Number(when / 1000n) / 1000;
+      return new Pollable(
+        () => nowMs() >= whenMs,
+        () => {
+          const remaining = whenMs - nowMs();
+          if (remaining <= 0) return;
+          return new Promise<void>(resolve => setTimeout(resolve, remaining));
+        },
+      );
+    },
+    subscribeDuration(duration: bigint): Pollable {
+      const whenMs = nowMs() + Number(duration / 1000n) / 1000;
+      return new Pollable(
+        () => nowMs() >= whenMs,
+        () => {
+          const remaining = whenMs - nowMs();
+          if (remaining <= 0) return;
+          return new Promise<void>(resolve => setTimeout(resolve, remaining));
+        },
+      );
+    },
+  };
 }

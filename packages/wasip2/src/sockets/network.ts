@@ -98,10 +98,22 @@ export function parseIpAddress(host: string, family: 'ipv4' | 'ipv6'): IpAddress
     const parts = host.split('.').map(Number) as [number, number, number, number];
     return { tag: 'ipv4', val: parts };
   } else {
-    const parts = host.split(':').map(s => parseInt(s, 16) || 0) as Ipv6Address;
-    while (parts.length < 8) parts.push(0);
-    return { tag: 'ipv6', val: parts.slice(0, 8) as unknown as Ipv6Address };
+    return { tag: 'ipv6', val: parseIpv6(host) };
   }
+}
+
+function parseIpv6(host: string): Ipv6Address {
+  const doubleColonIdx = host.indexOf('::');
+  if (doubleColonIdx === -1) {
+    const parts = host.split(':').map(s => parseInt(s, 16) || 0);
+    while (parts.length < 8) parts.push(0);
+    return parts.slice(0, 8) as unknown as Ipv6Address;
+  }
+  const before = doubleColonIdx === 0 ? [] : host.slice(0, doubleColonIdx).split(':').map(s => parseInt(s, 16) || 0);
+  const after = doubleColonIdx === host.length - 2 ? [] : host.slice(doubleColonIdx + 2).split(':').map(s => parseInt(s, 16) || 0);
+  const zerosNeeded = 8 - before.length - after.length;
+  const parts = [...before, ...Array(zerosNeeded).fill(0), ...after];
+  return parts.slice(0, 8) as unknown as Ipv6Address;
 }
 
 /**

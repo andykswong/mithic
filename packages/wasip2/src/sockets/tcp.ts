@@ -1,11 +1,12 @@
 /**
  * Implements wasi:sockets/tcp - TcpSocket resource with full state machine.
  *
- * Delegates actual socket operations to SyncSocketProvider from @mithic/io.
+ * Delegates actual socket operations to SocketProvider from @mithic/io.
  * State machine is enforced per the WIT spec regardless of provider availability.
  */
 
-import type { SyncSocketProvider, SyncTcpSocket as IoTcpSocket } from '@mithic/io/net';
+import { type MaybePromise, isThenable } from '@mithic/io';
+import type { SocketProvider, TcpSocket as IoTcpSocket } from '@mithic/io/net';
 import { DisabledSocketProvider } from '@mithic/io/net';
 import { InputStream, OutputStream } from '../io/streams.ts';
 import type { InputStreamHandler, OutputStreamHandler } from '../io/streams.ts';
@@ -16,6 +17,7 @@ import {
   type IpSocketAddress,
   type Network,
   convertError,
+  parseIpAddress,
   serializeAddress,
   zeroAddress,
 } from './network.ts';
@@ -32,24 +34,34 @@ type TcpSocketState =
   | 'connected'
   | 'closed';
 
-/** Module-level socket provider. Set via _setSyncSocketProvider. */
-let _socketProvider: SyncSocketProvider = new DisabledSocketProvider() as unknown as SyncSocketProvider;
+/** Module-level socket provider. Set via _setSocketProvider. */
+let _socketProvider: SocketProvider = new DisabledSocketProvider();
 
-export function _setSyncSocketProvider(provider: SyncSocketProvider): void {
+export function _setSocketProvider(provider: SocketProvider): void {
   _socketProvider = provider;
 }
 
-export function _getSyncSocketProvider(): SyncSocketProvider {
+export function _getSocketProvider(): SocketProvider {
+  return _socketProvider;
+}
+
+/** @deprecated Use _setSocketProvider instead. */
+export function _setSyncSocketProvider(provider: SocketProvider): void {
+  _socketProvider = provider;
+}
+
+/** @deprecated Use _getSocketProvider instead. */
+export function _getSyncSocketProvider(): SocketProvider {
   return _socketProvider;
 }
 
 /**
  * A TCP socket resource implementing the wasi:sockets/tcp interface.
  */
-export class TcpSocket {
+export class TcpSocket<Sync extends boolean = boolean> {
   #state: TcpSocketState = 'initial';
   #family: IpAddressFamily;
-  #provider: SyncSocketProvider;
+  #provider: SocketProvider<Sync>;
   #virtualSocket: IoTcpSocket | null = null;
   #localAddress: IpSocketAddress | null = null;
   #remoteAddress: IpSocketAddress | null = null;
@@ -60,8 +72,9 @@ export class TcpSocket {
   #connectError: ErrorCode | null = null;
   #listenDone = false;
   #listenError: ErrorCode | null = null;
-  #inputStream: InputStream | null = null;
-  #outputStream: OutputStream | null = null;
+  #inputStream: InputStream<Sync> | null = null;
+  #outputStream: OutputStream<Sync> | null = null;
+  #pendingPromise: Promise<void> | undefined;
 
   // Socket options (stored locally, applied when possible)
   #listenBacklogSize = 128;
@@ -73,9 +86,9 @@ export class TcpSocket {
   #receiveBufferSize = 65536n;
   #sendBufferSize = 65536n;
 
-  constructor(family: IpAddressFamily, provider?: SyncSocketProvider) {
+  constructor(family: IpAddressFamily, provider?: SocketProvider<Sync>) {
     this.#family = family;
-    this.#provider = provider ?? _socketProvider;
+    this.#provider = provider ?? _socketProvider as SocketProvider<Sync>;
   }
 
   /**
@@ -95,9 +108,35 @@ export class TcpSocket {
 
     const addr = serializeAddress(localAddress);
     try {
-      const sock = this.#provider.createTcpSocket();
-      this.#virtualSocket = sock;
-      sock.bind(addr);
+      const sockResult = this.#provider.createTcpSocket();
+      if (sockResult instanceof Promise) {
+        this.#pendingPromise = sockResult.then(sock => {
+          this.#virtualSocket = sock;
+          const bindResult = sock.bind(addr);
+          if (bindResult instanceof Promise) {
+            return bindResult.then(() => { this.#localAddress = localAddress; });
+          }
+          this.#localAddress = localAddress;
+        }).then(() => {
+          this.#bindDone = true;
+        }).catch(err => {
+          this.#connectError = convertError(err);
+          this.#bindDone = true;
+        });
+        return;
+      }
+      this.#virtualSocket = sockResult;
+      const bindResult = sockResult.bind(addr);
+      if (bindResult instanceof Promise) {
+        this.#pendingPromise = bindResult.then(() => {
+          this.#localAddress = localAddress;
+          this.#bindDone = true;
+        }).catch(err => {
+          this.#connectError = convertError(err);
+          this.#bindDone = true;
+        });
+        return;
+      }
       this.#localAddress = localAddress;
     } catch (err) {
       this.#connectError = convertError(err);
@@ -124,6 +163,7 @@ export class TcpSocket {
     this.#state = 'bound';
     this.#localAddress = this.#pendingBind;
     this.#pendingBind = null;
+    this.#applySocketOptions();
   }
 
   /**
@@ -146,28 +186,48 @@ export class TcpSocket {
 
     const addr = serializeAddress(remoteAddress);
 
-    const doConnect = async () => {
-      if (!this.#virtualSocket) {
-        this.#virtualSocket = await this.#provider.createTcpSocket();
+    const doConnect = (sock: IoTcpSocket): Promise<void> | undefined => {
+      const connectResult = sock.connect(addr);
+      if (connectResult instanceof Promise) {
+        return connectResult.then(() => {
+          this.#remoteAddress = remoteAddress;
+          this.#connectDone = true;
+        }).catch(err => {
+          this.#connectError = convertError(err);
+          this.#connectDone = true;
+        });
       }
-      await this.#virtualSocket.connect(addr);
       this.#remoteAddress = remoteAddress;
+      this.#connectDone = true;
+      return undefined;
     };
 
-    doConnect().then(() => {
-      this.#connectDone = true;
-    }).catch((err) => {
-      this.#connectDone = true;
+    try {
+      if (!this.#virtualSocket) {
+        const sockResult = this.#provider.createTcpSocket();
+        if (sockResult instanceof Promise) {
+          this.#pendingPromise = sockResult.then(sock => {
+            this.#virtualSocket = sock;
+            return doConnect(sock);
+          }).catch(err => {
+            this.#connectError = convertError(err);
+            this.#connectDone = true;
+          });
+          return;
+        }
+        this.#virtualSocket = sockResult;
+      }
+      this.#pendingPromise = doConnect(this.#virtualSocket);
+    } catch (err) {
       this.#connectError = convertError(err);
-    });
-    // Synchronous fallback
-    this.#connectDone = true;
+      this.#connectDone = true;
+    }
   }
 
   /**
    * Complete the connect operation, returning input and output streams.
    */
-  finishConnect(): [InputStream, OutputStream] {
+  finishConnect(): [InputStream<Sync>, OutputStream<Sync>] {
     if (this.#state !== 'connect-in-progress') {
       throw 'not-in-progress' as ErrorCode;
     }
@@ -183,30 +243,54 @@ export class TcpSocket {
     this.#state = 'connected';
     this.#remoteAddress = this.#pendingConnect;
     this.#pendingConnect = null;
+    this.#applySocketOptions();
 
     const sock = this.#virtualSocket;
-    const inputHandler: InputStreamHandler = {
-      read(_len: number): Uint8Array | undefined {
-        // Non-blocking: return undefined if no data (simulated)
-        return undefined;
+    const inputHandler: InputStreamHandler<Sync> = {
+      read(len: number): Uint8Array | undefined {
+        if (!sock) return undefined;
+        try {
+          const result = sock.receive(len);
+          if (isThenable(result)) return undefined;
+          const data = result as Uint8Array;
+          return data.byteLength > 0 ? data : undefined;
+        } catch {
+          return undefined;
+        }
       },
-      blockingRead(_len: number): Uint8Array {
+      blockingRead(len: number): MaybePromise<Uint8Array, Sync> {
         if (!sock) throw { tag: 'closed' };
-        // For sync mode, we can't truly block on async. Return empty for now.
-        // A real provider would use sync-bridge.
-        throw { tag: 'closed' };
+        try {
+          const result = sock.receive(len);
+          if (isThenable(result)) {
+            return (result as Promise<Uint8Array>).then(
+              data => { if (data.byteLength === 0) throw { tag: 'closed' }; return data; },
+              () => { throw { tag: 'closed' }; },
+            ) as MaybePromise<Uint8Array, Sync>;
+          }
+          const data = result as Uint8Array;
+          if (data.byteLength === 0) throw { tag: 'closed' };
+          return data;
+        } catch (err) {
+          if (err && typeof err === 'object' && 'tag' in err) throw err;
+          throw { tag: 'closed' };
+        }
       },
     };
-    const outputHandler: OutputStreamHandler = {
+    const outputHandler: OutputStreamHandler<Sync> = {
       write(data: Uint8Array): void {
         if (!sock) throw { tag: 'closed' };
-        // Fire-and-forget for sync shim
-        void sock.send(data);
+        try {
+          const result = sock.send(data);
+          if (isThenable(result)) (result as Promise<unknown>).catch(() => {});
+        } catch (err) {
+          throw { tag: 'last-operation-failed', val: { toDebugString: () => String(err) } };
+        }
       },
     };
 
-    this.#inputStream = new InputStream(inputHandler);
-    this.#outputStream = new OutputStream(outputHandler);
+    this.#inputStream = new InputStream<Sync>(inputHandler);
+    this.#outputStream = new OutputStream<Sync>(outputHandler);
     return [this.#inputStream, this.#outputStream];
   }
 
@@ -221,20 +305,26 @@ export class TcpSocket {
     this.#listenDone = false;
     this.#listenError = null;
 
-    const doListen = async () => {
-      if (!this.#virtualSocket) {
-        throw new Error('Socket not bound');
-      }
-      await this.#virtualSocket.listen(this.#listenBacklogSize);
-    };
+    if (!this.#virtualSocket) {
+      this.#listenError = convertError(new Error('Socket not bound'));
+      this.#listenDone = true;
+      return;
+    }
 
-    doListen().then(() => {
-      this.#listenDone = true;
-    }).catch((err) => {
-      this.#listenDone = true;
+    try {
+      const listenResult = this.#virtualSocket.listen(this.#listenBacklogSize);
+      if (listenResult instanceof Promise) {
+        this.#pendingPromise = listenResult.then(() => {
+          this.#listenDone = true;
+        }).catch(err => {
+          this.#listenError = convertError(err);
+          this.#listenDone = true;
+        });
+        return;
+      }
+    } catch (err) {
       this.#listenError = convertError(err);
-    });
-    // Synchronous fallback
+    }
     this.#listenDone = true;
   }
 
@@ -259,8 +349,10 @@ export class TcpSocket {
 
   /**
    * Accept a new client connection.
+   * If the provider's accept() returns a Promise, this throws 'would-block'
+   * (the caller should poll and retry).
    */
-  accept(): [TcpSocket, InputStream, OutputStream] {
+  accept(): [TcpSocket<Sync>, InputStream<Sync>, OutputStream<Sync>] {
     if (this.#state !== 'listening') {
       throw 'invalid-state' as ErrorCode;
     }
@@ -268,75 +360,105 @@ export class TcpSocket {
       throw 'would-block' as ErrorCode;
     }
 
-    // In our synchronous shim, accept is modeled as would-block unless
-    // the provider has a pending connection ready.
-    // For a DisabledSocketProvider, this will always throw.
     let acceptedSocket: IoTcpSocket | null = null;
-    let acceptError: ErrorCode | null = null;
 
-    // Attempt synchronous-style accept
     try {
-      acceptedSocket = this.#virtualSocket.accept();
+      const result = this.#virtualSocket.accept();
+      if (result instanceof Promise) {
+        throw 'would-block' as ErrorCode;
+      }
+      acceptedSocket = result;
     } catch (err) {
-      acceptError = convertError(err);
+      if (err === 'would-block') throw err;
+      throw convertError(err);
     }
 
-    if (acceptError) {
-      throw acceptError;
-    }
     if (!acceptedSocket) {
       throw 'would-block' as ErrorCode;
     }
 
-    const clientTcp = new TcpSocket(this.#family, this.#provider);
+    const clientTcp = new TcpSocket<Sync>(this.#family, this.#provider);
     clientTcp.#state = 'connected';
     clientTcp.#virtualSocket = acceptedSocket;
     clientTcp.#localAddress = this.#localAddress;
 
-    const remoteSock = acceptedSocket as IoTcpSocket;
+    const remoteSock = acceptedSocket;
     const remote = remoteSock.remoteAddress();
     if (remote) {
-      if (this.#family === 'ipv4') {
-        const parts = remote.host.split('.').map(Number) as [number, number, number, number];
-        clientTcp.#remoteAddress = { tag: 'ipv4', val: { port: remote.port, address: parts } };
+      const ipAddr = parseIpAddress(remote.host, this.#family === 'ipv4' ? 'ipv4' : 'ipv6');
+      if (ipAddr.tag === 'ipv4') {
+        clientTcp.#remoteAddress = { tag: 'ipv4', val: { port: remote.port, address: ipAddr.val } };
       } else {
-        const parts = remote.host.split(':').map(s => parseInt(s, 16) || 0);
-        while (parts.length < 8) parts.push(0);
-        clientTcp.#remoteAddress = {
-          tag: 'ipv6',
-          val: { port: remote.port, flowInfo: 0, address: parts.slice(0, 8) as [number, number, number, number, number, number, number, number], scopeId: 0 },
-        };
+        clientTcp.#remoteAddress = { tag: 'ipv6', val: { port: remote.port, flowInfo: 0, address: ipAddr.val, scopeId: 0 } };
       }
     }
 
-    const inputHandler: InputStreamHandler = {
-      read(_len: number): Uint8Array | undefined {
-        return undefined;
+    const inputHandler: InputStreamHandler<Sync> = {
+      read(len: number): Uint8Array | undefined {
+        try {
+          const result = remoteSock.receive(len);
+          if (isThenable(result)) return undefined;
+          const data = result as Uint8Array;
+          return data.byteLength > 0 ? data : undefined;
+        } catch {
+          return undefined;
+        }
       },
-      blockingRead(_len: number): Uint8Array {
-        throw { tag: 'closed' };
+      blockingRead(len: number): MaybePromise<Uint8Array, Sync> {
+        try {
+          const result = remoteSock.receive(len);
+          if (isThenable(result)) {
+            return (result as Promise<Uint8Array>).then(
+              data => { if (data.byteLength === 0) throw { tag: 'closed' }; return data; },
+              () => { throw { tag: 'closed' }; },
+            ) as MaybePromise<Uint8Array, Sync>;
+          }
+          const data = result as Uint8Array;
+          if (data.byteLength === 0) throw { tag: 'closed' };
+          return data;
+        } catch (err) {
+          if (err && typeof err === 'object' && 'tag' in err) throw err;
+          throw { tag: 'closed' };
+        }
       },
     };
-    const outputHandler: OutputStreamHandler = {
+    const outputHandler: OutputStreamHandler<Sync> = {
       write(data: Uint8Array): void {
-        void remoteSock.send(data);
+        try {
+          const result = remoteSock.send(data);
+          if (isThenable(result)) (result as Promise<unknown>).catch(() => {});
+        } catch (err) {
+          throw { tag: 'last-operation-failed', val: { toDebugString: () => String(err) } };
+        }
       },
     };
 
-    const inputStream = new InputStream(inputHandler);
-    const outputStream = new OutputStream(outputHandler);
+    const inputStream = new InputStream<Sync>(inputHandler);
+    const outputStream = new OutputStream<Sync>(outputHandler);
     return [clientTcp, inputStream, outputStream];
+  }
+
+  #applySocketOptions(): void {
+    if (this.#virtualSocket?.setSocketOptions) {
+      void this.#virtualSocket.setSocketOptions({
+        keepAliveEnabled: this.#keepAliveEnabled,
+        keepAliveIdleTime: Number(this.#keepAliveIdleTime / 1_000_000n), // ns → ms
+        hopLimit: this.#hopLimit,
+        receiveBufferSize: Number(this.#receiveBufferSize),
+        sendBufferSize: Number(this.#sendBufferSize),
+      });
+    }
   }
 
   /**
    * Initiate a graceful shutdown.
    */
-  shutdown(_shutdownType: ShutdownType): void {
+  shutdown(shutdownType: ShutdownType): void {
     if (this.#state !== 'connected') {
       throw 'invalid-state' as ErrorCode;
     }
     if (this.#virtualSocket) {
-      void this.#virtualSocket.shutdown();
+      void this.#virtualSocket.shutdown(shutdownType);
     }
   }
 
@@ -489,14 +611,19 @@ export class TcpSocket {
   /**
    * Create a pollable for this socket.
    */
-  subscribe(): Pollable {
-    return new Pollable(() => {
-      // Ready when any async operation has completed
-      if (this.#state === 'bind-in-progress') return this.#bindDone;
-      if (this.#state === 'connect-in-progress') return this.#connectDone;
-      if (this.#state === 'listen-in-progress') return this.#listenDone;
-      return true;
-    });
+  subscribe(): Pollable<Sync> {
+    const pendingPromise = this.#pendingPromise;
+    return new Pollable<Sync>(
+      () => {
+        if (this.#state === 'bind-in-progress') return this.#bindDone;
+        if (this.#state === 'connect-in-progress') return this.#connectDone;
+        if (this.#state === 'listen-in-progress') return this.#listenDone;
+        return true;
+      },
+      pendingPromise
+        ? (() => pendingPromise) as () => MaybePromise<void, Sync>
+        : undefined,
+    );
   }
 
   [Symbol.dispose](): void {

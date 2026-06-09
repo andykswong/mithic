@@ -4,7 +4,8 @@
  * Delegates actual socket operations to SocketProvider from @mithic/io.
  */
 
-import type { SyncSocketProvider, SyncUdpSocket as IoUdpSocket } from '@mithic/io/net';
+import { type MaybePromise, isThenable } from '@mithic/io';
+import type { SocketProvider, UdpSocket as IoUdpSocket } from '@mithic/io/net';
 import { Pollable } from '../io/poll.ts';
 import {
   type ErrorCode,
@@ -12,10 +13,11 @@ import {
   type IpSocketAddress,
   type Network,
   convertError,
+  parseIpAddress,
   serializeAddress,
   zeroAddress,
 } from './network.ts';
-import { _getSyncSocketProvider } from './tcp.ts';
+import { _getSocketProvider } from './tcp.ts';
 
 export type IncomingDatagram = {
   data: Uint8Array;
@@ -32,25 +34,26 @@ type UdpSocketState = 'initial' | 'bind-in-progress' | 'bound' | 'connected' | '
 /**
  * A UDP socket resource implementing the wasi:sockets/udp interface.
  */
-export class UdpSocket {
+export class UdpSocket<Sync extends boolean = boolean> {
   #state: UdpSocketState = 'initial';
   #family: IpAddressFamily;
-  #provider: SyncSocketProvider;
+  #provider: SocketProvider<Sync>;
   #virtualSocket: IoUdpSocket | null = null;
   #localAddress: IpSocketAddress | null = null;
   #remoteAddress: IpSocketAddress | null = null;
   #pendingBind: IpSocketAddress | null = null;
   #bindDone = false;
   #bindError: ErrorCode | null = null;
+  #pendingPromise: Promise<void> | undefined;
 
   // Socket options
   #unicastHopLimit = 64;
   #receiveBufferSize = 65536n;
   #sendBufferSize = 65536n;
 
-  constructor(family: IpAddressFamily, provider?: SyncSocketProvider) {
+  constructor(family: IpAddressFamily, provider?: SocketProvider<Sync>) {
     this.#family = family;
-    this.#provider = provider ?? _getSyncSocketProvider();
+    this.#provider = provider ?? _getSocketProvider() as SocketProvider<Sync>;
   }
 
   /**
@@ -70,9 +73,35 @@ export class UdpSocket {
 
     const addr = serializeAddress(localAddress);
     try {
-      const sock = this.#provider.createUdpSocket();
-      this.#virtualSocket = sock;
-      sock.bind(addr);
+      const sockResult = this.#provider.createUdpSocket();
+      if (sockResult instanceof Promise) {
+        this.#pendingPromise = sockResult.then(sock => {
+          this.#virtualSocket = sock;
+          const bindResult = sock.bind(addr);
+          if (bindResult instanceof Promise) {
+            return bindResult.then(() => { this.#localAddress = localAddress; });
+          }
+          this.#localAddress = localAddress;
+        }).then(() => {
+          this.#bindDone = true;
+        }).catch(err => {
+          this.#bindError = convertError(err);
+          this.#bindDone = true;
+        });
+        return;
+      }
+      this.#virtualSocket = sockResult;
+      const bindResult = sockResult.bind(addr);
+      if (bindResult instanceof Promise) {
+        this.#pendingPromise = bindResult.then(() => {
+          this.#localAddress = localAddress;
+          this.#bindDone = true;
+        }).catch(err => {
+          this.#bindError = convertError(err);
+          this.#bindDone = true;
+        });
+        return;
+      }
       this.#localAddress = localAddress;
     } catch (err) {
       this.#bindError = convertError(err);
@@ -206,11 +235,17 @@ export class UdpSocket {
   /**
    * Create a pollable for this socket.
    */
-  subscribe(): Pollable {
-    return new Pollable(() => {
-      if (this.#state === 'bind-in-progress') return this.#bindDone;
-      return true;
-    });
+  subscribe(): Pollable<Sync> {
+    const pendingPromise = this.#pendingPromise;
+    return new Pollable<Sync>(
+      () => {
+        if (this.#state === 'bind-in-progress') return this.#bindDone;
+        return true;
+      },
+      pendingPromise
+        ? (() => pendingPromise) as () => MaybePromise<void, Sync>
+        : undefined,
+    );
   }
 
   [Symbol.dispose](): void {
@@ -227,9 +262,11 @@ export class UdpSocket {
  */
 export class IncomingDatagramStream {
   #socket: IoUdpSocket | null;
+  #family: IpAddressFamily;
 
-  constructor(socket: IoUdpSocket | null, _family: IpAddressFamily) {
+  constructor(socket: IoUdpSocket | null, family: IpAddressFamily) {
     this.#socket = socket;
+    this.#family = family;
   }
 
   /**
@@ -240,8 +277,26 @@ export class IncomingDatagramStream {
     if (!this.#socket || maxResults === 0n) {
       return [];
     }
-    // Non-blocking: in our sync shim, we return empty if no data ready
-    return [];
+    const results: IncomingDatagram[] = [];
+    for (let i = 0n; i < maxResults; i++) {
+      try {
+        const result = this.#socket.receive(65536);
+        if (isThenable(result)) break;
+        const { data, remoteAddress } = result as { data: Uint8Array; remoteAddress: { host: string; port: number } };
+        if (data.byteLength === 0) break;
+        const ipAddr = parseIpAddress(remoteAddress.host, this.#family === 'ipv4' ? 'ipv4' : 'ipv6');
+        let addr: IpSocketAddress;
+        if (ipAddr.tag === 'ipv4') {
+          addr = { tag: 'ipv4', val: { port: remoteAddress.port, address: ipAddr.val } };
+        } else {
+          addr = { tag: 'ipv6', val: { port: remoteAddress.port, flowInfo: 0, address: ipAddr.val, scopeId: 0 } };
+        }
+        results.push({ data, remoteAddress: addr });
+      } catch {
+        break;
+      }
+    }
+    return results;
   }
 
   subscribe(): Pollable {
@@ -258,10 +313,12 @@ export class IncomingDatagramStream {
  */
 export class OutgoingDatagramStream {
   #socket: IoUdpSocket | null;
+  #family: IpAddressFamily;
   #remoteAddress: IpSocketAddress | null;
 
-  constructor(socket: IoUdpSocket | null, _family: IpAddressFamily, remoteAddress: IpSocketAddress | null) {
+  constructor(socket: IoUdpSocket | null, family: IpAddressFamily, remoteAddress: IpSocketAddress | null) {
     this.#socket = socket;
+    this.#family = family;
     this.#remoteAddress = remoteAddress;
   }
 
@@ -272,7 +329,6 @@ export class OutgoingDatagramStream {
     if (!this.#socket) {
       return 0n;
     }
-    // Allow up to 64 datagrams per send batch
     return 64n;
   }
 
@@ -288,6 +344,9 @@ export class OutgoingDatagramStream {
     for (const dg of datagrams) {
       const target = dg.remoteAddress ?? this.#remoteAddress;
       if (!target) {
+        throw 'invalid-argument' as ErrorCode;
+      }
+      if (target.tag !== this.#family) {
         throw 'invalid-argument' as ErrorCode;
       }
       const addr = serializeAddress(target);

@@ -9,7 +9,7 @@ import {
   FS_OPEN, FS_STAT, FS_READ, FS_WRITE, FS_CLOSE, FS_MKDIR, FS_READDIR,
   FS_UNLINK, FS_RMDIR, FS_RENAME, FS_SYMLINK, FS_READLINK,
   HTTP_SEND, SOCKET_CREATE, SOCKET_CLOSE,
-  INPUT_STREAM_READ, OUTPUT_STREAM_WRITE, OUTPUT_STREAM_FLUSH,
+  INPUT_STREAM_READ, INPUT_STREAM_BLOCKING_READ, OUTPUT_STREAM_WRITE, OUTPUT_STREAM_FLUSH,
   INPUT_STREAM_DISPOSE, OUTPUT_STREAM_DISPOSE,
 } from './calls.ts';
 
@@ -110,13 +110,22 @@ describe('createCallHandler - HTTP', () => {
 });
 
 describe('createCallHandler - stdio', () => {
-  it('routes stdin read via options', async () => {
+  it('routes stdin blocking read via options', async () => {
     const handler = createCallHandler({
-      stdin: { blockingRead(_len: number) { return new TextEncoder().encode('input-data'); } },
+      stdin: { read() { return undefined; }, blockingRead(_len: number) { return new TextEncoder().encode('input-data'); } },
     });
 
-    const data = await handler(INPUT_STREAM_READ | STDIN, null, { len: 10 }) as Uint8Array;
+    const data = await handler(INPUT_STREAM_BLOCKING_READ | STDIN, null, { len: 10 }) as Uint8Array;
     strictEqual(new TextDecoder().decode(data), 'input-data');
+  });
+
+  it('routes stdin non-blocking read via options', async () => {
+    const handler = createCallHandler({
+      stdin: { read(len: number) { return new TextEncoder().encode('nb-data'.slice(0, len)); }, blockingRead(_len: number) { return new TextEncoder().encode('input-data'); } },
+    });
+
+    const data = await handler(INPUT_STREAM_READ | STDIN, null, { len: 7 }) as Uint8Array;
+    strictEqual(new TextDecoder().decode(data), 'nb-data');
   });
 
   it('routes stdout write via options', async () => {

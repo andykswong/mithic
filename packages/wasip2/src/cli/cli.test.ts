@@ -9,13 +9,13 @@ import { InputStream, OutputStream } from '../io/streams.ts';
 
 describe('terminal', () => {
   it('getTerminalStdin returns undefined when not a TTY', () => {
-    _setStdin({ blockingRead() { throw { tag: 'closed' }; } });
+    _setStdin({ read() { return undefined; }, blockingRead() { throw { tag: 'closed' }; } });
     const result = terminalStdin.getTerminalStdin();
     assert.equal(result, undefined);
   });
 
   it('getTerminalStdin returns TerminalInput when isatty is true', () => {
-    _setStdin({ handler: { blockingRead() { throw { tag: 'closed' }; } }, isatty: true });
+    _setStdin({ handler: { read() { return undefined; }, blockingRead() { throw { tag: 'closed' }; } }, isatty: true });
     const result = terminalStdin.getTerminalStdin();
     assert.ok(result instanceof TerminalInput);
   });
@@ -236,7 +236,7 @@ describe('stdio', () => {
 
   it('_setStdin accepts InputStream instance directly', () => {
     const data = new Uint8Array([7, 8, 9]);
-    _setStdin(new InputStream({ blockingRead(len) { return data.slice(0, len); } }));
+    _setStdin(new InputStream({ read() { return undefined; }, blockingRead(len) { return data.slice(0, len); } }));
     const stream = getStdin();
     assert.deepEqual(stream.blockingRead(2n), new Uint8Array([7, 8]));
   });
@@ -278,7 +278,7 @@ describe('stdio', () => {
   });
 
   it('getStdin returns a new borrow on each call', () => {
-    _setStdin({ blockingRead() { return new Uint8Array(0); } });
+    _setStdin({ read() { return undefined; }, blockingRead() { return new Uint8Array(0); } });
     const a = getStdin();
     const b = getStdin();
     assert.notStrictEqual(a, b);

@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { WASIShim } from './instantiation.ts';
 import { imports } from './imports.ts';
-import { Descriptor } from './filesystem/types.ts';
+import { Descriptor, type DirectoryEntryStream } from './filesystem/types.ts';
 import { SyncFsDescriptorHandler } from './filesystem/sync-fs-handler.ts';
 import { MemoryFsProvider } from '@mithic/io/vfs';
 import { InputStream, OutputStream } from './io/streams.ts';
@@ -179,11 +179,11 @@ describe('WASIShim', () => {
     const desc1 = dirs1[0][0];
     const desc2 = dirs2[0][0];
 
-    const stream1 = desc1.readDirectory();
+    const stream1 = desc1.readDirectory() as DirectoryEntryStream;
     const entry1 = stream1.readDirectoryEntry();
     assert.equal(entry1!.name, 'a.txt');
 
-    const stream2 = desc2.readDirectory();
+    const stream2 = desc2.readDirectory() as DirectoryEntryStream;
     const entry2 = stream2.readDirectoryEntry();
     assert.equal(entry2!.name, 'b.txt');
   });
@@ -211,7 +211,7 @@ describe('WASIShim', () => {
     assert.equal(rootDesc.getType(), 'directory');
 
     // Verify we can read directory contents
-    const dirStream = rootDesc.readDirectory();
+    const dirStream = rootDesc.readDirectory() as DirectoryEntryStream;
     const entries = [];
     let entry = dirStream.readDirectoryEntry();
     while (entry !== null) {
@@ -292,7 +292,7 @@ describe('WASIShim', () => {
     const shim = new WASIShim({
       sandbox: {
         stdin: {
-          handler: { blockingRead() { return new Uint8Array([42]); } },
+          handler: { read() { return undefined; }, blockingRead() { return new Uint8Array([42]); } },
           isatty: true,
         },
       },
@@ -329,7 +329,7 @@ describe('WASIShim', () => {
   it('getStdin returns a new dup on each call — disposing one does not affect the next', () => {
     let reads = 0;
     const shim = new WASIShim({
-      sandbox: { stdin: { blockingRead(len: number) { reads++; return new Uint8Array(len); } } },
+      sandbox: { stdin: { read() { return undefined; }, blockingRead(len: number) { reads++; return new Uint8Array(len); } } },
     });
     const iface = shim.getImportObject()['wasi:cli/stdin'] as { getStdin: () => InputStream };
 
@@ -346,7 +346,7 @@ describe('WASIShim', () => {
   it('[Symbol.dispose] disposes the shim without throwing', () => {
     const shim = new WASIShim({
       sandbox: {
-        stdin: { blockingRead() { return new Uint8Array(0); } },
+        stdin: { read() { return undefined; }, blockingRead() { return new Uint8Array(0); } },
         stdout: { write() {} },
         stderr: { write() {} },
       },
@@ -359,7 +359,7 @@ describe('WASIShim', () => {
     let stdoutDropped = false;
     const shim = new WASIShim({
       sandbox: {
-        stdin: { blockingRead() { return new Uint8Array(0); }, drop() { stdinDropped = true; } },
+        stdin: { read() { return undefined; }, blockingRead() { return new Uint8Array(0); }, drop() { stdinDropped = true; } },
         stdout: { write() {}, drop() { stdoutDropped = true; } },
       },
     });
@@ -371,7 +371,7 @@ describe('WASIShim', () => {
   it('terminal returns undefined when isatty is false', () => {
     const shim = new WASIShim({
       sandbox: {
-        stdin: { blockingRead() { return new Uint8Array(0); } },
+        stdin: { read() { return undefined; }, blockingRead() { return new Uint8Array(0); } },
       },
     });
     const obj = shim.getImportObject();
@@ -445,5 +445,43 @@ describe('WASIShim', () => {
       obj1['wasi:sockets/instance-network'],
       obj2['wasi:sockets/instance-network'],
     );
+  });
+});
+
+describe('WASIShim async clock', () => {
+  it('subscribeInstant uses setTimeout in async mode', async () => {
+    const shim = new WASIShim({ async: true });
+    const importObj = shim.getImportObject();
+    const clock = importObj['wasi:clocks/monotonic-clock'] as {
+      now: () => bigint;
+      subscribeInstant: (when: bigint) => { ready: () => boolean; block: () => void | Promise<void> };
+    };
+
+    const before = clock.now();
+    const pollable = clock.subscribeInstant(before + 20_000_000n); // 20ms from now
+
+    assert.equal(pollable.ready(), false);
+    const blockResult = pollable.block();
+    assert.ok(blockResult instanceof Promise);
+    await blockResult;
+    // After block resolves, give a small margin for clock to catch up
+    await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(pollable.ready(), true);
+  });
+
+  it('subscribeDuration in async mode resolves after duration', async () => {
+    const shim = new WASIShim({ async: true });
+    const importObj = shim.getImportObject();
+    const clock = importObj['wasi:clocks/monotonic-clock'] as {
+      subscribeDuration: (duration: bigint) => { ready: () => boolean; block: () => void | Promise<void> };
+    };
+
+    const pollable = clock.subscribeDuration(20_000_000n); // 20ms
+    const blockResult = pollable.block();
+    assert.ok(blockResult instanceof Promise);
+    await blockResult;
+    // After block resolves, give a small margin for clock to catch up
+    await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(pollable.ready(), true);
   });
 });

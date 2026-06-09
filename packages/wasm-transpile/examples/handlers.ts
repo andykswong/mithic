@@ -37,21 +37,19 @@ export class AsyncNodeStdinHandler {
 }
 
 export class AsyncNodeStdoutHandler {
-  write(data: Uint8Array): number {
+  write(data: Uint8Array): void {
     process.stdout.write(data);
-    return data.length;
   }
 
-  blockingFlush(): void {
+  flush(): void {
     // Node.js stdout is auto-flushed for TTY, buffered for pipes but flush is sync
   }
 }
 
 export class AsyncNodeStderrHandler {
-  write(data: Uint8Array): number {
+  write(data: Uint8Array): void {
     process.stderr.write(data);
-    return data.length;
   }
 
-  blockingFlush(): void {}
+  flush(): void {}
 }

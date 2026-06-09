@@ -47,9 +47,9 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
   const workerIo = msg.ioPort ? new WorkerIo(msg.ioPort) : undefined;
 
   // Use IoLoop sync-bridge for inherited stdio, SharedPipe SABs for piped stdio
-  let rawStdin: InstanceType<typeof InputStream>;
-  let rawStdout: InstanceType<typeof OutputStream>;
-  let rawStderr: InstanceType<typeof OutputStream>;
+  let rawStdin: InputStream<true>;
+  let rawStdout: OutputStream<true>;
+  let rawStderr: OutputStream<true>;
 
   if (workerIo && (msg.inheritStdin || msg.inheritStdout || msg.inheritStderr)) {
     rawStdin = msg.inheritStdin
@@ -71,9 +71,9 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
   const stdout = wrapOutputWithSignalCheck(rawStdout, signalSlot);
   const stderr = wrapOutputWithSignalCheck(rawStderr, signalSlot);
 
-  let devStdin: InstanceType<typeof InputStream> | undefined;
-  let devStdout: InstanceType<typeof OutputStream> | undefined;
-  let devStderr: InstanceType<typeof OutputStream> | undefined;
+  let devStdin: InputStream<true> | undefined;
+  let devStdout: OutputStream<true> | undefined;
+  let devStderr: OutputStream<true> | undefined;
 
   try {
     const jsSource = msg.compileResult.jsFiles?.['component.js'];

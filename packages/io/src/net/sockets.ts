@@ -10,57 +10,48 @@ export interface IpAddress {
   address: string;
 }
 
-export interface TcpSocket {
-  bind(address: SocketAddress): MaybePromise<void>;
-  connect(address: SocketAddress): MaybePromise<void>;
-  listen(backlog?: number): MaybePromise<void>;
-  accept(): MaybePromise<TcpSocket>;
-  send(data: Uint8Array): MaybePromise<number>;
-  receive(len: number): MaybePromise<Uint8Array>;
-  shutdown(): MaybePromise<void>;
-  close(): MaybePromise<void>;
+export interface SocketOptions {
+  keepAliveEnabled?: boolean;
+  keepAliveIdleTime?: number; // milliseconds
+  hopLimit?: number;
+  receiveBufferSize?: number;
+  sendBufferSize?: number;
+}
+
+export interface TcpSocket<Sync extends boolean = boolean> {
+  bind(address: SocketAddress): MaybePromise<void, Sync>;
+  connect(address: SocketAddress): MaybePromise<void, Sync>;
+  listen(backlog?: number): MaybePromise<void, Sync>;
+  accept(): MaybePromise<TcpSocket<Sync>, Sync>;
+  send(data: Uint8Array): MaybePromise<number, Sync>;
+  receive(len: number): MaybePromise<Uint8Array, Sync>;
+  shutdown(type?: 'receive' | 'send' | 'both'): MaybePromise<void, Sync>;
+  close(): MaybePromise<void, Sync>;
   localAddress(): SocketAddress | undefined;
   remoteAddress(): SocketAddress | undefined;
+  setSocketOptions?(options: SocketOptions): MaybePromise<void, Sync>;
 }
 
-export interface SyncTcpSocket extends TcpSocket {
-  bind(address: SocketAddress): void;
-  connect(address: SocketAddress): void;
-  listen(backlog?: number): void;
-  accept(): SyncTcpSocket;
-  send(data: Uint8Array): number;
-  receive(len: number): Uint8Array;
-  shutdown(): void;
-  close(): void;
-}
+export type SyncTcpSocket = TcpSocket<true>;
 
-export interface UdpSocket {
-  bind(address: SocketAddress): MaybePromise<void>;
-  send(data: Uint8Array, remoteAddress: SocketAddress): MaybePromise<number>;
-  receive(len: number): MaybePromise<{ data: Uint8Array; remoteAddress: SocketAddress }>;
-  close(): MaybePromise<void>;
+export interface UdpSocket<Sync extends boolean = boolean> {
+  bind(address: SocketAddress): MaybePromise<void, Sync>;
+  send(data: Uint8Array, remoteAddress: SocketAddress): MaybePromise<number, Sync>;
+  receive(len: number): MaybePromise<{ data: Uint8Array; remoteAddress: SocketAddress }, Sync>;
+  close(): MaybePromise<void, Sync>;
   localAddress(): SocketAddress | undefined;
 }
 
-export interface SyncUdpSocket extends UdpSocket {
-  bind(address: SocketAddress): void;
-  send(data: Uint8Array, remoteAddress: SocketAddress): number;
-  receive(len: number): { data: Uint8Array; remoteAddress: SocketAddress };
-  close(): void;
-}
+export type SyncUdpSocket = UdpSocket<true>;
 
-export interface SocketProvider {
-  createTcpSocket(): MaybePromise<TcpSocket>;
-  createUdpSocket(): MaybePromise<UdpSocket>;
-  resolveName(name: string): MaybePromise<IpAddress[]>;
+export interface SocketProvider<Sync extends boolean = boolean> {
+  createTcpSocket(): MaybePromise<TcpSocket<Sync>, Sync>;
+  createUdpSocket(): MaybePromise<UdpSocket<Sync>, Sync>;
+  resolveName(name: string): MaybePromise<IpAddress[], Sync>;
   dispose?(): void;
 }
 
-export interface SyncSocketProvider extends SocketProvider {
-  createTcpSocket(): SyncTcpSocket;
-  createUdpSocket(): SyncUdpSocket;
-  resolveName(name: string): IpAddress[];
-}
+export type SyncSocketProvider = SocketProvider<true>;
 
 /** Socket provider that always throws (for sandboxed environments). */
 export class DisabledSocketProvider implements SocketProvider {

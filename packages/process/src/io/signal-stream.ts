@@ -1,15 +1,22 @@
 import { InputStream, OutputStream, type InputStreamHandler, type OutputStreamHandler, type StreamError } from '@mithic/wasip2/io/streams';
+import type { MaybePromise } from '@mithic/io';
 import type { SignalSlot } from './slots.ts';
 
-export function wrapInputWithSignalCheck(stream: InputStream, signalSlot: SignalSlot): InputStream {
-  const handler: InputStreamHandler = {
+export function wrapInputWithSignalCheck<Sync extends boolean>(stream: InputStream<Sync>, signalSlot: SignalSlot): InputStream<Sync> {
+  const handler: InputStreamHandler<Sync> = {
     read(len: number): Uint8Array | undefined {
       if (signalSlot.pending() !== 0) throw { tag: 'closed' } as StreamError;
       return stream.read(BigInt(len)) as unknown as Uint8Array | undefined;
     },
-    blockingRead(len: number): Uint8Array {
+    blockingRead(len: number): MaybePromise<Uint8Array, Sync> {
       if (signalSlot.pending() !== 0) throw { tag: 'closed' } as StreamError;
       const result = stream.blockingRead(BigInt(len));
+      if (result instanceof Promise) {
+        return result.then(data => {
+          if (signalSlot.pending() !== 0) throw { tag: 'closed' } as StreamError;
+          return data;
+        }) as MaybePromise<Uint8Array, Sync>;
+      }
       if (signalSlot.pending() !== 0) throw { tag: 'closed' } as StreamError;
       return result;
     },
@@ -18,8 +25,8 @@ export function wrapInputWithSignalCheck(stream: InputStream, signalSlot: Signal
   return new InputStream(handler, () => stream.subscribe(), stream.isatty);
 }
 
-export function wrapOutputWithSignalCheck(stream: OutputStream, signalSlot: SignalSlot): OutputStream {
-  const handler: OutputStreamHandler = {
+export function wrapOutputWithSignalCheck<Sync extends boolean>(stream: OutputStream<Sync>, signalSlot: SignalSlot): OutputStream<Sync> {
+  const handler: OutputStreamHandler<Sync> = {
     checkWrite(): number {
       if (signalSlot.pending() !== 0) return 0;
       return Number(stream.checkWrite());
@@ -30,7 +37,9 @@ export function wrapOutputWithSignalCheck(stream: OutputStream, signalSlot: Sign
       }
       stream.write(data);
     },
-    flush(): void { stream.flush(); },
+    flush(): MaybePromise<void, Sync> {
+      return stream.flush();
+    },
     drop() { stream[Symbol.dispose]?.(); },
   };
   return new OutputStream(handler, () => stream.subscribe(), stream.isatty);

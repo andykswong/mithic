@@ -4,7 +4,8 @@
  * Delegates to SocketProvider.resolveName() from @mithic/io.
  */
 
-import type { SyncSocketProvider } from '@mithic/io/net';
+import type { MaybePromise } from '@mithic/io';
+import type { SocketProvider } from '@mithic/io/net';
 import { Pollable } from '../io/poll.ts';
 import {
   type ErrorCode,
@@ -13,25 +14,69 @@ import {
   convertError,
   parseIpAddress,
 } from './network.ts';
-import { _getSyncSocketProvider } from './tcp.ts';
+import { _getSocketProvider } from './tcp.ts';
+
+function isIPv4Literal(name: string): boolean {
+  const parts = name.split('.');
+  if (parts.length !== 4) return false;
+  return parts.every(p => { const n = Number(p); return Number.isInteger(n) && n >= 0 && n <= 255; });
+}
+
+function isIPv6Literal(name: string): boolean {
+  if (!name.includes(':')) return false;
+  const stripped = name.startsWith('[') && name.endsWith(']') ? name.slice(1, -1) : name;
+  const parts = stripped.split(':');
+  if (parts.length < 2 || parts.length > 8) return false;
+  return parts.every(p => p === '' || /^[0-9a-fA-F]{1,4}$/.test(p));
+}
 
 /**
  * A stream of resolved IP addresses.
+ * Generic over Sync: when the provider is sync, subscribe() returns a Pollable<true>
+ * (always immediately ready). When async, subscribe() returns a Pollable<Sync> whose
+ * blockReady awaits the resolution Promise.
  */
-export class ResolveAddressStream {
+export class ResolveAddressStream<Sync extends boolean = boolean> {
   #addresses: IpAddress[] = [];
   #index = 0;
   #resolved = false;
   #error: ErrorCode | null = null;
+  #resolvePromise: Promise<void> | undefined;
 
-  constructor(name: string, provider?: SyncSocketProvider) {
+  constructor(name: string, provider?: SocketProvider<Sync>) {
     this.#startResolve(name, provider);
   }
 
-  #startResolve(name: string, provider?: SyncSocketProvider): void {
-    const resolveProvider = provider ?? _getSyncSocketProvider();
+  #startResolve(name: string, provider?: SocketProvider<Sync>): void {
+    if (isIPv4Literal(name)) {
+      this.#addresses = [parseIpAddress(name, 'ipv4')];
+      this.#resolved = true;
+      return;
+    }
+    if (isIPv6Literal(name)) {
+      const stripped = name.startsWith('[') && name.endsWith(']') ? name.slice(1, -1) : name;
+      this.#addresses = [parseIpAddress(stripped, 'ipv6')];
+      this.#resolved = true;
+      return;
+    }
+
+    const resolveProvider = provider ?? _getSocketProvider();
     try {
       const results = resolveProvider.resolveName(name);
+      if (results instanceof Promise) {
+        this.#resolvePromise = results.then(addrs => {
+          this.#addresses = addrs.map((r) => parseIpAddress(r.address, r.family));
+          this.#resolved = true;
+        }).catch(err => {
+          let code = convertError(err);
+          if (code === 'unknown' || code === 'access-denied') {
+            code = 'name-unresolvable';
+          }
+          this.#error = code;
+          this.#resolved = true;
+        });
+        return;
+      }
       this.#addresses = results.map((r) => parseIpAddress(r.address, r.family));
       this.#resolved = true;
     } catch (err) {
@@ -65,8 +110,14 @@ export class ResolveAddressStream {
   /**
    * Create a pollable which resolves once the stream is ready.
    */
-  subscribe(): Pollable {
-    return new Pollable(() => this.#resolved);
+  subscribe(): Pollable<Sync> {
+    const resolvePromise = this.#resolvePromise;
+    return new Pollable<Sync>(
+      () => this.#resolved,
+      resolvePromise
+        ? (() => resolvePromise) as () => MaybePromise<void, Sync>
+        : undefined,
+    );
   }
 }
 
@@ -76,7 +127,7 @@ export class ResolveAddressStream {
  * This function never blocks. It returns a ResolveAddressStream
  * that can be used to asynchronously fetch results.
  */
-export function resolveAddresses(_network: Network, name: string): ResolveAddressStream {
+export function resolveAddresses(_network: Network, name: string): ResolveAddressStream<boolean> {
   // Validate the name
   if (!name || name.length === 0) {
     throw 'invalid-argument' as ErrorCode;

@@ -209,7 +209,7 @@ describe('SharedPipe stress', () => {
     output[Symbol.dispose]();
     try {
       while (true) {
-        const result = input.blockingRead(256n);
+        const result = input.blockingRead(256n) as Uint8Array;
         for (const b of result) read.push(b);
       }
     } catch { /* closed */ }

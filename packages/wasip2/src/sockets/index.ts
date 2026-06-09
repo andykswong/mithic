@@ -5,10 +5,9 @@ export * as tcpCreateSocket from './tcp-create-socket.ts';
 export * as udp from './udp.ts';
 export * as udpCreateSocket from './udp-create-socket.ts';
 export * as ipNameLookup from './ip-name-lookup.ts';
-export type { SyncSocketProvider, SyncTcpSocket as IoTcpSocket, SyncUdpSocket as IoUdpSocket } from '@mithic/io/net';
-export { DisabledSocketProvider } from '@mithic/io/net';
+export type { SocketProvider, SyncSocketProvider, SyncTcpSocket as IoTcpSocket, SyncUdpSocket as IoUdpSocket } from '@mithic/io/net';
 
-import type { SyncSocketProvider } from '@mithic/io/net';
+import type { SocketProvider } from '@mithic/io/net';
 import type { WasiSockets } from '../interfaces.ts';
 import { Network } from './network.ts';
 import { TcpSocket } from './tcp.ts';
@@ -18,7 +17,7 @@ import type { IpAddressFamily, ErrorCode } from './network.ts';
 
 export type { WasiSockets };
 
-export function _createIsolatedSockets(provider: SyncSocketProvider): WasiSockets {
+export function createIsolatedSockets<Sync extends boolean = boolean>(provider: SocketProvider<Sync>): WasiSockets {
   return {
     network: { Network },
     instanceNetwork: {
@@ -28,21 +27,21 @@ export function _createIsolatedSockets(provider: SyncSocketProvider): WasiSocket
       TcpSocket,
     },
     tcpCreateSocket: {
-      createTcpSocket(addressFamily: IpAddressFamily): TcpSocket {
-        return new TcpSocket(addressFamily, provider);
+      createTcpSocket(addressFamily: IpAddressFamily): TcpSocket<Sync> {
+        return new TcpSocket<Sync>(addressFamily, provider);
       },
     },
     udp: {
       UdpSocket,
     },
     udpCreateSocket: {
-      createUdpSocket(addressFamily: IpAddressFamily): UdpSocket {
-        return new UdpSocket(addressFamily, provider);
+      createUdpSocket(addressFamily: IpAddressFamily): UdpSocket<Sync> {
+        return new UdpSocket<Sync>(addressFamily, provider);
       },
     },
     ipNameLookup: {
       ResolveAddressStream,
-      resolveAddresses(_network: Network, name: string): ResolveAddressStream {
+      resolveAddresses<S extends boolean = boolean>(_network: Network, name: string): ResolveAddressStream<S> {
         if (!name || name.length === 0) {
           throw 'invalid-argument' as ErrorCode;
         }
@@ -50,7 +49,7 @@ export function _createIsolatedSockets(provider: SyncSocketProvider): WasiSocket
         if (/[\x00-\x1f\x7f]/.test(name)) {
           throw 'invalid-argument' as ErrorCode;
         }
-        return new ResolveAddressStream(name, provider);
+        return new ResolveAddressStream<S>(name, provider as unknown as SocketProvider<S>);
       },
     },
   };

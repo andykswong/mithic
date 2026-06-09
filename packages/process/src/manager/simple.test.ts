@@ -264,7 +264,7 @@ describe('SimpleProcessManager', () => {
       return 0;
     };
     const reader: CommandHandler = async (_args, ctx) => {
-      const data = ctx.stdin.blockingRead(3n);
+      const data = ctx.stdin.blockingRead(3n) as Uint8Array;
       ctx.stdout.write(data);
       return 0;
     };
@@ -286,6 +286,110 @@ describe('SimpleProcessManager', () => {
 
     const result = resultPipe.input.read(3n);
     assert.deepEqual(result, new Uint8Array([65, 66, 67]));
+  });
+});
+
+describe('SimpleProcessManager async wait', () => {
+  it('async handler — wait() returns Promise that resolves with exit code', async () => {
+    const handler: CommandHandler = async () => {
+      await new Promise(r => setTimeout(r, 10));
+      return 42;
+    };
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('test', []);
+    const result = proc.wait();
+    assert.ok(result instanceof Promise, 'wait() should return a Promise for async handlers');
+    const exitCode = await result;
+    assert.equal(exitCode, 42);
+  });
+
+  it('sync handler — wait() returns number directly', () => {
+    const handler: CommandHandler = () => 7;
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('test', []);
+    const result = proc.wait();
+    assert.equal(typeof result, 'number');
+    assert.equal(result, 7);
+  });
+
+  it('killed async process — wait() returns 128 + signal number immediately', () => {
+    const handler: CommandHandler = async () => {
+      await new Promise(r => setTimeout(r, 10000));
+      return 0;
+    };
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('test', []);
+    proc.kill('sigint');
+    const result = proc.wait();
+    assert.equal(typeof result, 'number');
+    assert.equal(result, 128 + 2);
+  });
+
+  it('async handler that throws — wait() resolves to 1', async () => {
+    const handler: CommandHandler = async () => {
+      await new Promise(r => setTimeout(r, 10));
+      throw new Error('boom');
+    };
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('test', [], { stderr: mgr.createPipe().output });
+    const exitCode = await proc.wait();
+    assert.equal(exitCode, 1);
+  });
+
+  it('waitAsync() works for async handlers', async () => {
+    const handler: CommandHandler = async () => {
+      await new Promise(r => setTimeout(r, 10));
+      return 99;
+    };
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('test', []);
+    const exitCode = await proc.waitAsync();
+    assert.equal(exitCode, 99);
+  });
+
+  it('waitAsync() works for sync handlers', async () => {
+    const handler: CommandHandler = () => 5;
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('test', []);
+    const exitCode = await proc.waitAsync();
+    assert.equal(exitCode, 5);
+  });
+});
+
+describe('SimpleProcessManager async wait with delays', () => {
+  it('wait() returns Promise for delayed async handler', async () => {
+    const resolver = (file: string) => {
+      if (file === 'delayed') return async () => {
+        await new Promise(resolve => setTimeout(resolve, 20));
+        return 42;
+      };
+      return undefined;
+    };
+    const manager = new SimpleProcessManager({ commandResolver: resolver });
+    const proc = manager.spawn('delayed', []);
+
+    // Should not be done yet
+    assert.equal(proc.tryWait(), undefined);
+
+    const result = proc.wait();
+    assert.ok(result instanceof Promise);
+    const code = await result;
+    assert.equal(code, 42);
+  });
+
+  it('waitAsync polls tryWait until done', async () => {
+    const resolver = (file: string) => {
+      if (file === 'slow') return async () => {
+        await new Promise(resolve => setTimeout(resolve, 30));
+        return 7;
+      };
+      return undefined;
+    };
+    const manager = new SimpleProcessManager({ commandResolver: resolver });
+    const proc = manager.spawn('slow', []);
+
+    const code = await proc.waitAsync();
+    assert.equal(code, 7);
   });
 });
 
@@ -365,7 +469,7 @@ describe('WASIProcess', () => {
     const customManager = {
       spawn(_file: string, _args: string[]) {
         spawnCalled = true;
-        return new Process(99, { wait: () => 0 });
+        return new Process(99, { wait: () => 0, tryWait: () => 0 });
       },
       createPipe() {
         const pipe = createPipe();
