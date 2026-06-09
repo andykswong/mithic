@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "description": "mithic process management - shell, process spawn",
   "type": "module",
-  "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -26,6 +25,10 @@
     "./worker/process": "./dist/worker/process.worker.js",
     "./wit/*": "./wit/*"
   },
+  "sideEffects": [
+    "./dist/worker/compiler.worker.js",
+    "./dist/worker/process.worker.js"
+  ],
   "files": [
     "/dist",
     "/wit"

@@ -74,22 +74,22 @@ const rustCliCompileResult: CompileResult = {
 
 // --- Process Web Worker (local shim that imports @mithic/process/worker/process) ---
 
-function createWebWorker(name?: string): Worker {
-  return new Worker(new URL('./worker.ts', import.meta.url), { type: 'module', name });
+function createWebWorker(): Worker {
+  return new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
 }
 
 // --- createWorker factory: resolves command names to ProcessWorkers ---
 
-function createWorker(file: string, name?: string): ProcessWorker | undefined {
+function createWorker(file: string): ProcessWorker | undefined {
   const cmdName = file.includes('/') ? file.split('/').pop()! : file;
   if (cmdName === 'sh' || cmdName === 'bash') {
-    return new ComponentProcessWorker(createWebWorker(name), shellCompileResult);
+    return new ComponentProcessWorker(createWebWorker(), shellCompileResult);
   }
   if (COREUTILS_COMMANDS.has(cmdName)) {
-    return new ComponentProcessWorker(createWebWorker(name), coreutilsCompileResult);
+    return new ComponentProcessWorker(createWebWorker(), coreutilsCompileResult);
   }
   if (cmdName === 'rust-cli') {
-    return new ComponentProcessWorker(createWebWorker(name), rustCliCompileResult);
+    return new ComponentProcessWorker(createWebWorker(), rustCliCompileResult);
   }
   return undefined;
 }
