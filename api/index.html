@@ -1,0 +1,125 @@
+<!DOCTYPE html><html class="default" lang="en" data-base="./"><head><meta charset="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>mithic - v0.3.0</title><meta name="description" content="Documentation for mithic"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="assets/style.css"/><link rel="stylesheet" href="assets/highlight.css"/><script defer src="assets/main.js"></script><script async src="assets/icons.js" id="tsd-icons-script"></script><script async src="assets/search.js" id="tsd-search-script"></script><script async src="assets/navigation.js" id="tsd-nav-script"></script><script async src="assets/hierarchy.js" id="tsd-hierarchy-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os";document.body.style.display="none";setTimeout(() => window.app?app.showPage():document.body.style.removeProperty("display"),500)</script><header class="tsd-page-toolbar"><div class="tsd-toolbar-contents container"><a href="index.html" class="title">mithic - v0.3.0</a><div id="tsd-toolbar-links"></div><button id="tsd-search-trigger" class="tsd-widget" aria-label="Search"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-search"></use></svg></button><dialog id="tsd-search" aria-label="Search"><input role="combobox" id="tsd-search-input" aria-controls="tsd-search-results" aria-autocomplete="list" aria-expanded="true" autocapitalize="off" autocomplete="off" placeholder="Search the docs" maxLength="100"/><ul role="listbox" id="tsd-search-results"></ul><div id="tsd-search-status" aria-live="polite" aria-atomic="true"><div>Preparing search index...</div></div></dialog><a href="#" class="tsd-widget menu" id="tsd-toolbar-menu-trigger" data-toggle="menu" aria-label="Menu"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-menu"></use></svg></a></div></header><div class="container container-main"><div class="col-content"><div class="tsd-page-title"><h1>mithic - v0.3.0</h1></div><div class="tsd-panel tsd-typography"><h1 id="mithic" class="tsd-anchor-link">mithic<a href="#mithic" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h1>
+<p><a href="https://github.com/andykswong/mithic"><img src="https://img.shields.io/badge/project-mithic-blueviolet.svg?style=flat-square&amp;logo=github" alt="mithic"></a>
+<a href="https://www.npmjs.com/package/mithic"><img src="https://img.shields.io/npm/v/mithic?style=flat-square&amp;logo=npm" alt="npm"></a>
+<a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-red.svg?style=flat-square" alt="license: MIT"></a>
+<a href="https://github.com/andykswong/mithic/actions/workflows/build.yaml"><img src="https://img.shields.io/github/actions/workflow/status/andykswong/mithic/build.yaml?style=flat-square" alt="build"></a>
+<a href="https://codecov.io/gh/andykswong/mithic"><img src="https://codecov.io/gh/andykswong/mithic/branch/main/graph/badge.svg?token=2OYVQSTDMC" alt="codecov"></a></p>
+<blockquote>
+<p>Virtual shell runtime for the agent era.</p>
+</blockquote>
+<p>Sandboxed WebAssembly bash/POSIX-compatible shell runtime with concurrent process management, capability-based virtual filesystem and resource access. Runs anywhere JavaScript runs.</p>
+<h2 id="core-pillars" class="tsd-anchor-link">Core Pillars<a href="#core-pillars" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<ol>
+<li><strong>Agent Harness</strong> — Designed for AI agent tool execution. Pluggable VFS means agents see only the resources they need.</li>
+<li><strong>Security</strong> — WASM capability-based sandboxing. Each process runs in isolation; only explicitly mounted resources are accessible.</li>
+<li><strong>Virtualization</strong> — Mount any storage provider or resource at any path. Cloud storage, APIs, caches, local files, browser OPFS, or custom backends all pluggable via the same interfaces.</li>
+<li><strong>Isomorphic</strong> — Same code runs in the browser (local-first, no server required), on Node.js servers, and native hosts.</li>
+</ol>
+<h2 id="architecture" class="tsd-anchor-link">Architecture<a href="#architecture" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<pre><code><span class="hl-0">┌─────────────────────────────────────────────────────────────────┐</span><br/><span class="hl-0">│                     </span><span class="hl-1">Browser</span><span class="hl-0"> / </span><span class="hl-1">Node</span><span class="hl-0">.</span><span class="hl-1">js</span><span class="hl-0"> </span><span class="hl-1">Host</span><span class="hl-0">                      │</span><br/><span class="hl-0">├──────────────────────────┬──────────────────────────────────────┤</span><br/><span class="hl-0">│       </span><span class="hl-1">Main</span><span class="hl-0"> </span><span class="hl-1">Thread</span><span class="hl-0">        │          </span><span class="hl-1">Web</span><span class="hl-0"> </span><span class="hl-2">Workers</span><span class="hl-0"> (</span><span class="hl-3">1</span><span class="hl-0"> </span><span class="hl-1">per</span><span class="hl-0"> </span><span class="hl-1">process</span><span class="hl-0">) │</span><br/><span class="hl-0">│                          │                                      │</span><br/><span class="hl-0">│  ┌────────────────────┐  │  ┌────────────────────────────────┐  │</span><br/><span class="hl-0">│  │   </span><span class="hl-1">Runtime</span><span class="hl-0"> / </span><span class="hl-1">IoLoop</span><span class="hl-0"> │  │  │  </span><span class="hl-4">WASM</span><span class="hl-0"> </span><span class="hl-2">Component</span><span class="hl-0"> (</span><span class="hl-1">Shell</span><span class="hl-0">/</span><span class="hl-1">Utils</span><span class="hl-0">)  │  │</span><br/><span class="hl-0">│  │  ┌──────────────┐  │  │  │                                │  │</span><br/><span class="hl-0">│  │  │  </span><span class="hl-4">VFS</span><span class="hl-0"> </span><span class="hl-1">Router</span><span class="hl-0">  │  │◄─┼──│  </span><span class="hl-1">blocking_read</span><span class="hl-0"> / </span><span class="hl-1">write</span><span class="hl-0">         │  │</span><br/><span class="hl-0">│  │  │  ├ </span><span class="hl-1">MemoryFS</span><span class="hl-0">  │  │  │  │  (</span><span class="hl-1">Atomics</span><span class="hl-0">.</span><span class="hl-1">wait</span><span class="hl-0"> </span><span class="hl-1">on</span><span class="hl-0"> </span><span class="hl-4">SAB</span><span class="hl-0">)         │  │</span><br/><span class="hl-0">│  │  │  ├ </span><span class="hl-1">DeviceFS</span><span class="hl-0">  │  │  │  ├────────────────────────────────┤  │</span><br/><span class="hl-0">│  │  │  ├ </span><span class="hl-4">OPFS</span><span class="hl-0">      │  │  │  │  </span><span class="hl-2">DeviceFsProvider</span><span class="hl-0"> (</span><span class="hl-1">per</span><span class="hl-0">-</span><span class="hl-1">process</span><span class="hl-0">)│  │</span><br/><span class="hl-0">│  │  │  └ </span><span class="hl-1">NodeFS</span><span class="hl-0">    │  │  │  │  /</span><span class="hl-1">dev</span><span class="hl-0">/</span><span class="hl-1">stdin</span><span class="hl-0"> → </span><span class="hl-1">process</span><span class="hl-0"> </span><span class="hl-1">pipe</span><span class="hl-0">     │  │</span><br/><span class="hl-0">│  │  ├──────────────┤  │  │  │  /</span><span class="hl-1">dev</span><span class="hl-0">/</span><span class="hl-5">null</span><span class="hl-0">, /</span><span class="hl-1">dev</span><span class="hl-0">/</span><span class="hl-1">zero</span><span class="hl-0">, </span><span class="hl-1">etc</span><span class="hl-0">.    │  │</span><br/><span class="hl-0">│  │  │  </span><span class="hl-4">HTTP</span><span class="hl-0"> </span><span class="hl-1">Client</span><span class="hl-0"> │  │  │  └────────────────────────────────┘  │</span><br/><span class="hl-0">│  │  │  </span><span class="hl-1">Sockets</span><span class="hl-0">     │  │  │                                      │</span><br/><span class="hl-0">│  │  ├──────────────┤  │  │  ┌────────────────────────────────┐  │</span><br/><span class="hl-0">│  │  │</span><span class="hl-1">WorkerProcess</span><span class="hl-0"> │──┼──┼──│  </span><span class="hl-2">SharedPipe</span><span class="hl-0"> (</span><span class="hl-1">ring</span><span class="hl-0"> </span><span class="hl-1">buffer</span><span class="hl-0"> </span><span class="hl-4">SAB</span><span class="hl-0">)  │  │</span><br/><span class="hl-0">│  │  │  </span><span class="hl-1">Manager</span><span class="hl-0">     │  │  │  │  </span><span class="hl-1">backpressure</span><span class="hl-0"> + </span><span class="hl-1">broken</span><span class="hl-0">-</span><span class="hl-1">pipe</span><span class="hl-0">    │  │</span><br/><span class="hl-0">│  │  └──────────────┘  │  │  └────────────────────────────────┘  │</span><br/><span class="hl-0">│  └────────────────────┘  │                                      │</span><br/><span class="hl-0">│                          │  </span><span class="hl-1">Atomics</span><span class="hl-0">.</span><span class="hl-1">notify</span><span class="hl-0"> / </span><span class="hl-1">Atomics</span><span class="hl-0">.</span><span class="hl-1">wait</span><span class="hl-0">       │</span><br/><span class="hl-0">└──────────────────────────┴──────────────────────────────────────┘</span>
+</code><button>Copy</button></pre>
+
+<p>The main thread runs an <code>IoLoop</code> that services filesystem, network, and stdio requests from WASM workers via <code>SharedArrayBuffer</code> + <code>Atomics</code>. Each spawned process (shell command, coreutil, or dynamic WASM component) runs in its own Web Worker with blocking I/O semantics. Pipelines execute concurrently — <code>cat /dev/zero | head -c 4</code> terminates correctly via broken-pipe propagation. The <code>Runtime</code> class orchestrates process spawning, VFS configuration, and stdio routing.</p>
+<h2 id="packages" class="tsd-anchor-link">Packages<a href="#packages" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<blockquote>
+<p>Each package works independently — pick the abstraction level you need.</p>
+</blockquote>
+<table>
+<thead>
+<tr>
+<th>Package</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="modules/_mithic_io.html"><code>@mithic/io</code></a></td>
+<td>I/O layer: virtual file system, HTTP/socket providers, sync-bridge</td>
+</tr>
+<tr>
+<td><a href="modules/_mithic_wasip2.html"><code>@mithic/wasip2</code></a></td>
+<td>WASI Preview 2 shim for WASM components</td>
+</tr>
+<tr>
+<td><a href="modules/_mithic_process.html"><code>@mithic/process</code></a></td>
+<td>Process manager: spawn WASM processes with piped I/O</td>
+</tr>
+<tr>
+<td><a href="modules/_mithic_shell.html"><code>@mithic/shell</code></a></td>
+<td>Rust WASM shell: bash-compatible interpreter (30+ builtins)</td>
+</tr>
+<tr>
+<td><a href="modules/_mithic_coreutils.html"><code>@mithic/coreutils</code></a></td>
+<td>BusyBox-style Unix coreutils as a single WASM component</td>
+</tr>
+<tr>
+<td><a href="modules/_mithic_wasm-transpile.html"><code>@mithic/wasm-transpile</code></a></td>
+<td>WASM component transpiler with asyncify JSPI polyfill</td>
+</tr>
+<tr>
+<td><a href="modules/_mithic_worker.html"><code>@mithic/worker</code></a></td>
+<td>Web Worker polyfill for Node.js (isomorphic <code>new Worker()</code>)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="examples" class="tsd-anchor-link">Examples<a href="#examples" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<table>
+<thead>
+<tr>
+<th>Example</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="media/simple"><code>examples/simple</code></a></td>
+<td>JS WebAssembly component built with ComponentizeJS</td>
+</tr>
+<tr>
+<td><a href="media/rust-cli"><code>examples/rust-cli</code></a></td>
+<td>Rust WebAssembly component</td>
+</tr>
+<tr>
+<td><a href="media/shell"><code>examples/shell</code></a></td>
+<td>xterm.js browser terminal with full shell runtime</td>
+</tr>
+</tbody>
+</table>
+<h2 id="getting-started" class="tsd-anchor-link">Getting Started<a href="#getting-started" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<h3 id="run-the-shell-nodejs-cli" class="tsd-anchor-link">Run the Shell (Node.js CLI)<a href="#run-the-shell-nodejs-cli" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<pre><code class="shell"><span class="hl-2">npm</span><span class="hl-0"> </span><span class="hl-6">install</span><br/><span class="hl-2">npm</span><span class="hl-0"> </span><span class="hl-6">start</span><span class="hl-0"> </span><span class="hl-5">--workspace=@mithic/shell</span>
+</code><button type="button">Copy</button></pre>
+
+<p>This launches a bash-compatible shell with coreutils, <code>/dev</code> devices, and a virtual filesystem. You can run pipelines, scripts, and arbitrary WASM components.</p>
+<h3 id="run-in-browser" class="tsd-anchor-link">Run in Browser<a href="#run-in-browser" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<pre><code class="shell"><span class="hl-2">npm</span><span class="hl-0"> </span><span class="hl-6">run</span><span class="hl-0"> </span><span class="hl-6">dev</span><span class="hl-0"> </span><span class="hl-5">--workspace=@mithic/example-shell</span>
+</code><button type="button">Copy</button></pre>
+
+<p>Opens an xterm.js terminal connected to the shell runtime via Web Workers.</p>
+<h3 id="run-a-script-non-interactively" class="tsd-anchor-link">Run a Script Non-Interactively<a href="#run-a-script-non-interactively" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<pre><code class="shell"><span class="hl-2">echo</span><span class="hl-0"> </span><span class="hl-6">&#39;echo hello | tr a-z A-Z&#39;</span><span class="hl-0"> | </span><span class="hl-2">npm</span><span class="hl-0"> </span><span class="hl-6">start</span><span class="hl-0"> </span><span class="hl-5">--workspace=@mithic/shell</span>
+</code><button type="button">Copy</button></pre>
+
+<p>Or with arguments:</p>
+<pre><code class="shell"><span class="hl-2">npm</span><span class="hl-0"> </span><span class="hl-6">start</span><span class="hl-0"> </span><span class="hl-5">--workspace=@mithic/shell</span><span class="hl-0"> </span><span class="hl-5">--</span><span class="hl-0"> </span><span class="hl-5">-c</span><span class="hl-0"> </span><span class="hl-6">&#39;for i in 1 2 3; do echo $i; done&#39;</span><span class="hl-0"> </span>
+</code><button type="button">Copy</button></pre>
+
+<h2 id="development" class="tsd-anchor-link">Development<a href="#development" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<h3 id="prerequisites" class="tsd-anchor-link">Prerequisites<a href="#prerequisites" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<ul>
+<li>Node.js &gt;= 26.0</li>
+<li>Rust toolchain with <code>wasm32-wasip2</code> target (for shell and coreutils packages)</li>
+</ul>
+<pre><code class="shell"><span class="hl-2">rustup</span><span class="hl-0"> </span><span class="hl-6">target</span><span class="hl-0"> </span><span class="hl-6">add</span><span class="hl-0"> </span><span class="hl-6">wasm32-wasip2</span>
+</code><button type="button">Copy</button></pre>
+
+<h3 id="commands" class="tsd-anchor-link">Commands<a href="#commands" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<pre><code class="shell"><span class="hl-2">npm</span><span class="hl-0"> </span><span class="hl-6">install</span><span class="hl-0">          </span><span class="hl-7"># install deps + rust tools (wasm-tools, wkg)</span><br/><span class="hl-2">npm</span><span class="hl-0"> </span><span class="hl-6">run</span><span class="hl-0"> </span><span class="hl-6">build</span><span class="hl-0">        </span><span class="hl-7"># build all packages</span><br/><span class="hl-2">npm</span><span class="hl-0"> </span><span class="hl-6">test</span><span class="hl-0">             </span><span class="hl-7"># test all packages</span><br/><span class="hl-2">npm</span><span class="hl-0"> </span><span class="hl-6">run</span><span class="hl-0"> </span><span class="hl-6">lint</span><span class="hl-0">         </span><span class="hl-7"># lint all packages</span><br/><span class="hl-2">npm</span><span class="hl-0"> </span><span class="hl-6">run</span><span class="hl-0"> </span><span class="hl-6">typecheck</span><span class="hl-0">    </span><span class="hl-7"># type-check all packages</span>
+</code><button type="button">Copy</button></pre>
+
+<p>Tests use <code>node --test</code> (Node.js built-in test runner) with built-in type stripping for direct TypeScript execution.</p>
+<h2 id="api-documentation" class="tsd-anchor-link">API Documentation<a href="#api-documentation" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>TypeDoc-generated API reference is available at <a href="./docs/api/"><code>docs/api/</code></a>.</p>
+<h2 id="license" class="tsd-anchor-link">License<a href="#license" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>This repository and the code inside it is licensed under the MIT License. Read <a href="media/LICENSE">LICENSE</a> for more information.</p>
+</div></div><div class="col-sidebar"><div class="page-menu"><div class="tsd-navigation settings"><details class="tsd-accordion"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-chevronDown"></use></svg><h3>Settings</h3></summary><div class="tsd-accordion-details"><div class="tsd-filter-visibility"><span class="settings-label">Member Visibility</span><ul id="tsd-filter-options"><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-protected" name="protected"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Protected</span></label></li><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-inherited" name="inherited" checked/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Inherited</span></label></li><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-external" name="external"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>External</span></label></li></ul></div><div class="tsd-theme-toggle"><label class="settings-label" for="tsd-theme">Theme</label><select id="tsd-theme"><option value="os">OS</option><option value="light">Light</option><option value="dark">Dark</option></select></div></div></details></div><details open class="tsd-accordion tsd-page-navigation"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-chevronDown"></use></svg><h3>On This Page</h3></summary><div class="tsd-accordion-details"><a href="#mithic"><span>mithic</span></a><ul><li><a href="#core-pillars"><span>Core <wbr/>Pillars</span></a></li><li><a href="#architecture"><span>Architecture</span></a></li><li><a href="#packages"><span>Packages</span></a></li><li><ul><li><a href="#examples"><span>Examples</span></a></li></ul></li><li><a href="#getting-started"><span>Getting <wbr/>Started</span></a></li><li><ul><li><a href="#run-the-shell-nodejs-cli"><span>Run the <wbr/>Shell (<wbr/>Node.js <wbr/>CLI)</span></a></li><li><a href="#run-in-browser"><span>Run in <wbr/>Browser</span></a></li><li><a href="#run-a-script-non-interactively"><span>Run a <wbr/>Script <wbr/>Non-<wbr/>Interactively</span></a></li></ul></li><li><a href="#development"><span>Development</span></a></li><li><ul><li><a href="#prerequisites"><span>Prerequisites</span></a></li><li><a href="#commands"><span>Commands</span></a></li></ul></li><li><a href="#api-documentation"><span>API <wbr/>Documentation</span></a></li><li><a href="#license"><span>License</span></a></li></ul></div></details></div><div class="site-menu"><nav class="tsd-navigation"><a href="modules.html">mithic - v0.3.0</a><ul class="tsd-small-nested-navigation" id="tsd-nav-container"><li>Loading...</li></ul></nav></div></div></div><footer><p class="tsd-generator">Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p></footer><div class="overlay"></div></body></html>
