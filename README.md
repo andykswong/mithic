@@ -65,8 +65,8 @@ The main thread runs an `IoLoop` that services filesystem, network, and stdio re
 
 | Example | Description |
 |---------|-------------|
-| [`examples/simple`](./packages/examples/simple) | JS WebAssembly component built with ComponentizeJS |
-| [`examples/rust-cli`](./packages/examples/rust-cli) | Rust WebAssembly component |
+| [`examples/component-js`](./packages/examples/component-js) | JS WebAssembly component built with ComponentizeJS |
+| [`examples/component-rust`](./packages/examples/component-rust) | Rust WebAssembly component |
 | [`examples/shell`](./packages/examples/shell) | xterm.js browser terminal with full shell runtime |
 
 ## Getting Started

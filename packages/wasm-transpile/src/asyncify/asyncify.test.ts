@@ -14,7 +14,7 @@ import {
 } from '../index.ts';
 import { WASIShim } from '@mithic/wasip2';
 
-const RUST_CLI_COMPONENT = join(import.meta.dirname, '../../../examples/rust-cli/dist/component.wasm');
+const RUST_CLI_COMPONENT = join(import.meta.dirname, '../../../examples/component-rust/dist/component.wasm');
 
 describe('asyncifyTransform', () => {
   it('instruments WASM with asyncify exports and secondary memory', async () => {
@@ -70,7 +70,7 @@ describe('transpileComponent with asyncMode asyncify', () => {
 });
 
 describe('asyncify JSPI polyfill (end-to-end)', () => {
-  it('runs rust-cli with async stdin via asyncify', async () => {
+  it('runs rust-component with async stdin via asyncify', async () => {
     const component = new Uint8Array(await readFile(RUST_CLI_COMPONENT));
 
     const result = await transpileComponent(component, {

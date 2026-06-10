@@ -32,7 +32,8 @@ export function createInstantiateCore(opts?: InstantiateOptions) {
     const modExports = WebAssembly.Module.exports(module);
     const modImports = WebAssembly.Module.imports(module);
     const hasAsyncify = asyncifyEnabled &&
-      modExports.some((e: WebAssembly.ModuleExportDescriptor) => e.name === 'asyncify_get_state');
+      modExports.some((e: WebAssembly.ModuleExportDescriptor) => e.name === 'asyncify_get_state') &&
+      modExports.some((e: WebAssembly.ModuleExportDescriptor) => e.name === 'asyncify_memory');
 
     const processed: WebAssembly.Imports = {};
     if (imports) {

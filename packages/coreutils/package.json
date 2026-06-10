@@ -7,8 +7,14 @@
   "types": "./dist/ts/index.d.ts",
   "exports": {
     ".": "./dist/ts/index.js",
+    "./component.wasm": "./dist/wasm/component.wasm",
     "./component": "./dist/wasm/index.js",
-    "./component.js": "./dist/wasm/component.js"
+    "./component/jspi": "./dist/wasm/jspi.js",
+    "./component/asyncify": "./dist/wasm/asyncify.js",
+    "./component/core/*": "./dist/wasm/core/*",
+    "./component/core-asyncify/*": "./dist/wasm/core-asyncify/*",
+    "./component.js": "./dist/wasm/component.js",
+    "./component.async.js": "./dist/wasm/component.async.js"
   },
   "files": [
     "/dist"
@@ -22,12 +28,12 @@
     "prepublishOnly": "npm run clean && npm run build && npm test",
     "test": "cargo test -p $npm_package_config_crate --config \"build.target=\\\"$(rustc -vV | sed -n 's/host: //p')\\\"\"",
     "clean": "rimraf dist",
-    "prebuild": "mkdir -p dist/wasm dist/ts",
+    "prebuild": "mkdir -p dist/wasm/core dist/wasm/core-asyncify dist/ts",
     "build": "npm run build:rust && npm run build:ts",
     "build:rust": "cargo build -p $npm_package_config_crate -r --target $npm_package_config_target",
     "postbuild:rust": "cp ../../target/${npm_package_config_target}/release/${npm_package_config_crate}.wasm ./dist/wasm/component.wasm && ../../bin/wasm-tools strip ./dist/wasm/component.wasm -o ./dist/wasm/component.wasm && npm run transpile",
     "build:ts": "vite build",
-    "transpile": "wasm-transpile ./dist/wasm/component.wasm -o ./dist/wasm",
+    "transpile": "wasm-transpile ./dist/wasm/component.wasm -o ./dist/wasm --variants sync,jspi,asyncify --asyncify-pages 4",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

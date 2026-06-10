@@ -1,8 +1,8 @@
 {
-  "name": "@mithic/example-simple",
+  "name": "@mithic/example-js-component",
   "version": "0.3.0",
   "private": "true",
-  "description": "mithic simple component example",
+  "description": "mithic example WASI component in JavaScript (ComponentizeJS)",
   "type": "module",
   "sideEffects": false,
   "main": "index.js",
@@ -30,10 +30,11 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
+    "@mithic/io": "^0.4",
     "@mithic/wasip2": "^0.1"
   },
   "devDependencies": {
     "@bytecodealliance/componentize-js": "^0.21",
-    "@mithic/wasm-transpile": "*"
+    "@mithic/wasm-transpile": "0.1"
   }
 }

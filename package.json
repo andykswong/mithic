@@ -68,8 +68,8 @@
     "./packages/wasm-transpile",
     "./packages/coreutils",
     "./packages/shell",
-    "./packages/examples/simple",
-    "./packages/examples/rust-cli",
+    "./packages/examples/component-js",
+    "./packages/examples/component-rust",
     "./packages/examples/shell"
   ]
 }

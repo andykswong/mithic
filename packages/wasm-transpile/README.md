@@ -27,17 +27,17 @@ npm install @mithic/wasm-transpile
 The `wasm-transpile` command transpiles a WASM component into JS + core WASM modules:
 
 ```shell
-# Basic transpile (sync mode)
+# Basic transpile (sync mode, default)
 wasm-transpile component.wasm -o ./dist
 
-# Transpile with native JSPI support for async imports
-wasm-transpile component.wasm --async-mode jspi -o ./dist
+# All three variants (sync + jspi + asyncify) in one deduplicated output
+wasm-transpile component.wasm -o ./dist --variants sync,jspi,asyncify --asyncify-pages 4
 
-# Transpile with asyncify (polyfills JSPI for environments without native support)
-wasm-transpile component.wasm --async-mode asyncify -o ./dist
+# JSPI only
+wasm-transpile component.wasm -o ./dist --variants jspi
 
-# Asyncify with larger stack (4 pages = 256KB)
-wasm-transpile component.wasm --async-mode asyncify --asyncify-pages 4 -o ./dist
+# Asyncify only with larger stack (4 pages = 256KB)
+wasm-transpile component.wasm -o ./dist --variants asyncify --asyncify-pages 4
 ```
 
 Options:
@@ -46,10 +46,9 @@ Options:
 |------|-------------|
 | `-o, --out-dir <dir>` | Output directory (default: `./dist`) |
 | `-n, --name <name>` | Module name (default: derived from filename) |
-| `--async-mode <mode>` | `jspi` (native JSPI) or `asyncify` (polyfill via binaryen) |
+| `--variants <list>` | Comma-separated variants: `sync`, `jspi`, `asyncify` (default: `sync`) |
 | `--asyncify-pages <n>` | Secondary memory pages for asyncify stack (default: 1 = 64KB) |
 | `--no-minify` | Disable JS minification |
-| `--no-generate-index` | Skip `index.js` + `index.d.ts` generation |
 | `-q, --quiet` | Suppress progress output |
 
 ### Programmatic: Transpile a WASM Component
@@ -80,11 +79,12 @@ import { transpileToFiles, ASYNC_WASI_IMPORTS, ASYNC_WASI_EXPORTS } from '@mithi
 await transpileToFiles(component, {
   name: 'component',
   outputDir: './dist',
-  asyncMode: 'asyncify',
+  variants: ['sync', 'jspi', 'asyncify'],
   asyncImports: ASYNC_WASI_IMPORTS,
   asyncExports: ASYNC_WASI_EXPORTS,
+  asyncifyPages: 4,
 });
-// Writes: component.js, component.core.wasm (asyncified), index.js, index.d.ts
+// Writes: component.js, component.async.js, core/*.wasm, core-asyncify/*.wasm, index.js, jspi.js, asyncify.js + .d.ts
 ```
 
 ### Run with Asyncify Polyfill
@@ -176,6 +176,5 @@ Only one Promise can be in-flight at a time per module instance. The WASM stack 
 ```shell
 npm run build       # Vite library build
 npm run typecheck   # TypeScript type checking
-npm test            # Run tests (26 tests across 8 suites)
-npm run demo        # Run the asyncified rust-cli example with polyfill
+npm test            # Run tests
 ```

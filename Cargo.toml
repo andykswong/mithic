@@ -1,8 +1,8 @@
 [workspace]
 members = [
-  "packages/examples/rust-*",
   "packages/shell",
-  "packages/coreutils"
+  "packages/coreutils",
+  "packages/examples/component-rust"
 ]
 resolver = "2"
 

@@ -1,16 +1,16 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import {
   transpileComponent,
-  generateIndexJs,
-  generateIndexDts,
+  transpileToFiles,
   ASYNC_WASI_IMPORTS,
   ASYNC_WASI_EXPORTS,
 } from './transpile.ts';
 
-const RUST_CLI_COMPONENT = join(import.meta.dirname, '../../examples/rust-cli/dist/component.wasm');
+const RUST_CLI_COMPONENT = join(import.meta.dirname, '../../examples/component-rust/dist/component.wasm');
 
 describe('transpileComponent', () => {
   it('produces files including component.js and at least one .core.wasm', async () => {
@@ -80,46 +80,123 @@ describe('transpileComponent', () => {
   });
 });
 
-describe('generateIndexJs', () => {
-  it('produces re-export and modules map', () => {
-    const modules = { 'component.core.wasm': 'data:content/type;base64,AAAA' };
-    const output = generateIndexJs('component', modules);
+describe('transpileToFiles', () => {
+  async function exists(path: string): Promise<boolean> {
+    try { await stat(path); return true; } catch { return false; }
+  }
 
-    assert.ok(output.includes('export * from \'./component.js\''), 'should re-export component.js');
-    assert.ok(output.includes('export const modules ='), 'should export modules');
-    assert.ok(output.includes('"component.core.wasm"'), 'should contain module key');
-    assert.ok(output.includes('data:content/type;base64,AAAA'), 'should contain base64 data URI');
+  it('produces all variant files with all variants', async () => {
+    const component = new Uint8Array(await readFile(RUST_CLI_COMPONENT));
+    const outputDir = join(tmpdir(), `wasm-transpile-test-${Date.now()}-all`);
+
+    try {
+      await transpileToFiles(component, {
+        outputDir,
+        variants: ['sync', 'jspi', 'asyncify'],
+        asyncImports: ASYNC_WASI_IMPORTS,
+        asyncExports: ASYNC_WASI_EXPORTS,
+        asyncifyPages: 1,
+      });
+
+      assert.ok(await exists(join(outputDir, 'component.js')), 'should produce component.js');
+      assert.ok(await exists(join(outputDir, 'component.async.js')), 'should produce component.async.js');
+      assert.ok(await exists(join(outputDir, 'component.d.ts')), 'should produce component.d.ts');
+      assert.ok(await exists(join(outputDir, 'component.async.d.ts')), 'should produce component.async.d.ts');
+      assert.ok(await exists(join(outputDir, 'index.js')), 'should produce index.js');
+      assert.ok(await exists(join(outputDir, 'index.d.ts')), 'should produce index.d.ts');
+      assert.ok(await exists(join(outputDir, 'jspi.js')), 'should produce jspi.js');
+      assert.ok(await exists(join(outputDir, 'jspi.d.ts')), 'should produce jspi.d.ts');
+      assert.ok(await exists(join(outputDir, 'asyncify.js')), 'should produce asyncify.js');
+      assert.ok(await exists(join(outputDir, 'asyncify.d.ts')), 'should produce asyncify.d.ts');
+      assert.ok(await exists(join(outputDir, 'core')), 'should produce core/ directory');
+      assert.ok(await exists(join(outputDir, 'core-asyncify')), 'should produce core-asyncify/ directory');
+
+      const indexJs = await readFile(join(outputDir, 'index.js'), 'utf8');
+      assert.ok(indexJs.includes('from \'./component.js\''), 'index.js should reference component.js');
+      assert.ok(indexJs.includes('data:content/type;base64,'), 'index.js should contain base64 modules');
+
+      const jspiJs = await readFile(join(outputDir, 'jspi.js'), 'utf8');
+      assert.ok(jspiJs.includes('from \'./component.async.js\''), 'jspi.js should reference component.async.js');
+
+      const asyncifyJs = await readFile(join(outputDir, 'asyncify.js'), 'utf8');
+      assert.ok(asyncifyJs.includes('from \'./component.async.js\''), 'asyncify.js should reference component.async.js');
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
   });
 
-  it('handles multiple wasm modules', () => {
-    const modules = {
-      'component.core.wasm': 'data:a',
-      'component.core2.wasm': 'data:b',
-    };
-    const output = generateIndexJs('component', modules);
+  it('produces only sync variant by default', async () => {
+    const component = new Uint8Array(await readFile(RUST_CLI_COMPONENT));
+    const outputDir = join(tmpdir(), `wasm-transpile-test-${Date.now()}-sync`);
 
-    assert.ok(output.includes('"component.core.wasm"'));
-    assert.ok(output.includes('"component.core2.wasm"'));
+    try {
+      await transpileToFiles(component, { outputDir });
+
+      assert.ok(await exists(join(outputDir, 'component.js')), 'should produce component.js');
+      assert.ok(await exists(join(outputDir, 'index.js')), 'should produce index.js');
+      assert.ok(await exists(join(outputDir, 'core')), 'should produce core/ directory');
+      assert.ok(!(await exists(join(outputDir, 'component.async.js'))), 'should NOT produce component.async.js');
+      assert.ok(!(await exists(join(outputDir, 'jspi.js'))), 'should NOT produce jspi.js');
+      assert.ok(!(await exists(join(outputDir, 'asyncify.js'))), 'should NOT produce asyncify.js');
+      assert.ok(!(await exists(join(outputDir, 'core-asyncify'))), 'should NOT produce core-asyncify/');
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
   });
 
-  it('handles empty modules map', () => {
-    const output = generateIndexJs('component', {});
-    assert.ok(output.includes('export * from \'./component.js\''));
-    assert.ok(output.includes('export const modules = {}'));
+  it('asyncify entry point has different module map than sync', async () => {
+    const component = new Uint8Array(await readFile(RUST_CLI_COMPONENT));
+    const outputDir = join(tmpdir(), `wasm-transpile-test-${Date.now()}-diff`);
+
+    try {
+      await transpileToFiles(component, {
+        outputDir,
+        variants: ['sync', 'asyncify'],
+        asyncImports: ASYNC_WASI_IMPORTS,
+        asyncExports: ASYNC_WASI_EXPORTS,
+        asyncifyPages: 1,
+      });
+
+      const indexJs = await readFile(join(outputDir, 'index.js'), 'utf8');
+      const asyncifyJs = await readFile(join(outputDir, 'asyncify.js'), 'utf8');
+
+      const indexModules = JSON.parse(indexJs.split('export const modules = ')[1].trimEnd().replace(/;\s*$/, ''));
+      const asyncifyModules = JSON.parse(asyncifyJs.split('export const modules = ')[1].trimEnd().replace(/;\s*$/, ''));
+
+      assert.notEqual(
+        indexModules['component.core.wasm'],
+        asyncifyModules['component.core.wasm'],
+        'asyncified core.wasm should differ from sync core.wasm',
+      );
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
   });
-});
 
-describe('generateIndexDts', () => {
-  it('re-exports from component module and declares modules map', () => {
-    const output = generateIndexDts('component');
+  it('core-asyncify/ contains all core wasm files', async () => {
+    const component = new Uint8Array(await readFile(RUST_CLI_COMPONENT));
+    const outputDir = join(tmpdir(), `wasm-transpile-test-${Date.now()}-cores`);
 
-    assert.ok(output.includes('export * from \'./component.js\''), 'should re-export from component');
-    assert.ok(output.includes('export declare const modules'), 'should declare modules');
-  });
+    try {
+      await transpileToFiles(component, {
+        outputDir,
+        variants: ['sync', 'asyncify'],
+        asyncImports: ASYNC_WASI_IMPORTS,
+        asyncExports: ASYNC_WASI_EXPORTS,
+        asyncifyPages: 1,
+      });
 
-  it('uses the provided component name', () => {
-    const output = generateIndexDts('my-app');
+      const { readdir } = await import('node:fs/promises');
+      const coreFiles = (await readdir(join(outputDir, 'core'))).filter(f => f.endsWith('.wasm')).sort();
+      const asyncifyCoreFiles = (await readdir(join(outputDir, 'core-asyncify'))).filter(f => f.endsWith('.wasm')).sort();
 
-    assert.ok(output.includes('export * from \'./my-app.js\''), 'should reference correct module');
+      assert.deepEqual(asyncifyCoreFiles, coreFiles, 'core-asyncify/ should contain the same set of files as core/');
+
+      const coreSize = (await stat(join(outputDir, 'core', 'component.core.wasm'))).size;
+      const asyncifyCoreSize = (await stat(join(outputDir, 'core-asyncify', 'component.core.wasm'))).size;
+      assert.ok(asyncifyCoreSize > coreSize, 'asyncified core.wasm should be larger than original');
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
   });
 });

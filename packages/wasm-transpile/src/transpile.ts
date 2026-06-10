@@ -20,9 +20,15 @@ export interface TranspileResult {
   exports: [string, 'function' | 'instance'][];
 }
 
-export interface TranspileToFilesOptions extends TranspileOptions {
+export interface TranspileToFilesOptions {
+  name?: string;
+  minify?: boolean;
   outputDir: string;
-  generateIndex?: boolean;
+  asyncImports?: string[];
+  asyncExports?: string[];
+  asyncifyPages?: number;
+  /** Which variants to produce. Default: ['sync']. */
+  variants?: Array<'sync' | 'jspi' | 'asyncify'>;
 }
 
 /**
@@ -50,67 +56,144 @@ export async function transpileComponent(component: Uint8Array, opts?: Transpile
   const files = new Map(Object.entries(result.files));
 
   if (opts?.asyncMode === 'asyncify') {
-    const asyncImports = opts.asyncImports;
-    for (const [filename, content] of files) {
-      if (!filename.endsWith('.wasm')) continue;
-      const mod = new WebAssembly.Module(content as BufferSource);
-      const modImports = WebAssembly.Module.imports(mod);
-      const hasWasiOrMithic = modImports.some(
-        (i: WebAssembly.ModuleImportDescriptor) => i.module.startsWith('wasi:') || i.module.startsWith('mithic:'),
-      );
-      if (!hasWasiOrMithic) continue;
-
-      const versionedImports = asyncImports
-        ? resolveVersionedImports(modImports, asyncImports)
-        : undefined;
-      files.set(filename, asyncifyTransform(content, {
-        asyncImports: versionedImports,
-        secondaryMemoryPages: opts.asyncifyPages,
-      }));
-    }
+    applyAsyncify(files, opts.asyncImports, opts.asyncifyPages);
   }
 
   return { files, imports: result.imports, exports: result.exports };
 }
 
 /**
- * Generate index.js that re-exports the component and provides base64 data URI module map.
- */
-export function generateIndexJs(componentName: string, wasmModules: Record<string, string>): string {
-  return `export * from './${componentName}.js';\nexport const modules = ${JSON.stringify(wasmModules)};\n`;
-}
-
-/**
- * Generate index.d.ts that re-exports types from the JCO-generated component.d.ts
- * and adds the modules map declaration.
- */
-export function generateIndexDts(componentName: string): string {
-  return `export * from './${componentName}.js';\nexport declare const modules: Record<string, string>;\n`;
-}
-
-/**
- * Transpile a WASM component and write all output files to disk.
- * Optionally generates index.js + index.d.ts with base64 module map.
+ * Transpile a WASM component and write variant output files to disk.
  */
 export async function transpileToFiles(component: Uint8Array, opts: TranspileToFilesOptions): Promise<void> {
-  const { outputDir, generateIndex = true, ...transpileOpts } = opts;
-  const result = await transpileComponent(component, transpileOpts);
+  const { outputDir, variants = ['sync'], name = 'component', minify, asyncifyPages, asyncImports, asyncExports } = opts;
 
+  const wantSync = variants.includes('sync');
+  const wantJspi = variants.includes('jspi');
+  const wantAsyncify = variants.includes('asyncify');
+  const wantAsync = wantJspi || wantAsyncify;
+
+  let syncResult: TranspileResult | undefined;
+  let asyncResult: TranspileResult | undefined;
+
+  if (wantSync) {
+    syncResult = await transpileComponent(component, { name, minify });
+  }
+
+  if (wantAsync) {
+    asyncResult = await transpileComponent(component, { name, minify, asyncMode: 'jspi', asyncImports, asyncExports });
+  }
+
+  await mkdir(outputDir, { recursive: true });
+  const coreDir = join(outputDir, 'core');
+  await mkdir(coreDir, { recursive: true });
+
+  const baseResult = syncResult ?? asyncResult!;
   const wasmModules: Record<string, string> = {};
 
-  for (const [filename, content] of result.files) {
-    const outPath = join(outputDir, filename);
-    await mkdir(dirname(outPath), { recursive: true });
-    await writeFile(outPath, content);
+  for (const [filename, content] of baseResult.files) {
+    if (!filename.endsWith('.wasm')) continue;
+    const base = filename.includes('/') ? filename.split('/').pop()! : filename;
+    await writeFile(join(coreDir, base), content);
+    wasmModules[filename] = `data:content/type;base64,${Buffer.from(content).toString('base64')}`;
+  }
 
-    if (filename.endsWith('.wasm')) {
-      wasmModules[filename] = `data:content/type;base64,${Buffer.from(content).toString('base64')}`;
+  if (wantSync) {
+    const jsFile = syncResult!.files.get(`${name}.js`);
+    if (jsFile) await writeFile(join(outputDir, `${name}.js`), jsFile);
+  }
+
+  if (wantAsync) {
+    const jsFile = asyncResult!.files.get(`${name}.js`);
+    if (jsFile) await writeFile(join(outputDir, `${name}.async.js`), jsFile);
+  }
+
+  const dtsFile = baseResult.files.get(`${name}.d.ts`);
+  if (dtsFile) {
+    if (wantSync) await writeFile(join(outputDir, `${name}.d.ts`), dtsFile);
+    if (wantAsync) await writeFile(join(outputDir, `${name}.async.d.ts`), dtsFile);
+  }
+
+  for (const [filename, content] of baseResult.files) {
+    if (filename.startsWith('interfaces/')) {
+      const outPath = join(outputDir, filename);
+      await mkdir(dirname(outPath), { recursive: true });
+      await writeFile(outPath, content);
     }
   }
 
-  if (generateIndex) {
-    const name = transpileOpts.name ?? 'component';
-    await writeFile(join(outputDir, 'index.js'), generateIndexJs(name, wasmModules));
-    await writeFile(join(outputDir, 'index.d.ts'), generateIndexDts(name));
+  let asyncifyModules: Record<string, string> | undefined;
+  if (wantAsyncify) {
+    asyncifyModules = { ...wasmModules };
+    const sourceFiles = asyncResult ?? syncResult!;
+    const asyncifyDir = join(outputDir, 'core-asyncify');
+    await mkdir(asyncifyDir, { recursive: true });
+
+    for (const [filename, content] of sourceFiles.files) {
+      if (!filename.endsWith('.wasm')) continue;
+      const base = filename.includes('/') ? filename.split('/').pop()! : filename;
+      const mod = new WebAssembly.Module(content as BufferSource);
+      const modImports = WebAssembly.Module.imports(mod);
+      const hasWasiOrMithic = modImports.some(
+        (i: WebAssembly.ModuleImportDescriptor) => i.module.startsWith('wasi:') || i.module.startsWith('mithic:'),
+      );
+
+      if (hasWasiOrMithic) {
+        const versionedImports = asyncImports
+          ? resolveVersionedImports(modImports, asyncImports)
+          : undefined;
+        const asyncified = asyncifyTransform(content, {
+          asyncImports: versionedImports,
+          secondaryMemoryPages: asyncifyPages,
+        });
+        await writeFile(join(asyncifyDir, base), asyncified);
+        asyncifyModules[filename] = `data:content/type;base64,${Buffer.from(asyncified).toString('base64')}`;
+      } else {
+        await writeFile(join(asyncifyDir, base), content);
+      }
+    }
+  }
+
+  if (wantSync) {
+    await writeFile(join(outputDir, 'index.js'), generateEntryJs(name, wasmModules));
+    await writeFile(join(outputDir, 'index.d.ts'), generateEntryDts(name));
+  }
+
+  if (wantJspi) {
+    await writeFile(join(outputDir, 'jspi.js'), generateEntryJs(`${name}.async`, wasmModules));
+    await writeFile(join(outputDir, 'jspi.d.ts'), generateEntryDts(`${name}.async`));
+  }
+
+  if (wantAsyncify) {
+    await writeFile(join(outputDir, 'asyncify.js'), generateEntryJs(`${name}.async`, asyncifyModules!));
+    await writeFile(join(outputDir, 'asyncify.d.ts'), generateEntryDts(`${name}.async`));
+  }
+}
+
+function generateEntryJs(modulePath: string, wasmModules: Record<string, string>): string {
+  return `export { instantiate } from './${modulePath}.js';\nexport const modules = ${JSON.stringify(wasmModules)};\n`;
+}
+
+function generateEntryDts(modulePath: string): string {
+  return `export * from './${modulePath}.js';\nexport declare const modules: Record<string, string>;\n`;
+}
+
+function applyAsyncify(files: Map<string, Uint8Array>, asyncImports?: string[], asyncifyPages?: number): void {
+  for (const [filename, content] of files) {
+    if (!filename.endsWith('.wasm')) continue;
+    const mod = new WebAssembly.Module(content as BufferSource);
+    const modImports = WebAssembly.Module.imports(mod);
+    const hasWasiOrMithic = modImports.some(
+      (i: WebAssembly.ModuleImportDescriptor) => i.module.startsWith('wasi:') || i.module.startsWith('mithic:'),
+    );
+    if (!hasWasiOrMithic) continue;
+
+    const versionedImports = asyncImports
+      ? resolveVersionedImports(modImports, asyncImports)
+      : undefined;
+    files.set(filename, asyncifyTransform(content, {
+      asyncImports: versionedImports,
+      secondaryMemoryPages: asyncifyPages,
+    }));
   }
 }

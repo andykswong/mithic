@@ -16,8 +16,8 @@ packages/
 ├── wasm-transpile/ @mithic/wasm-transpile — WASM component transpiler (JCO wrapper + asyncify JSPI polyfill)
 ├── worker/         @mithic/worker         — Web Worker polyfill for Node.js (isomorphic new Worker())
 └── examples/
-    ├── simple/   — ComponentizeJS WASM component
-    ├── rust-cli/ — Rust WASM component
+    ├── component-js/  — JS WASM component (ComponentizeJS)
+    ├── component-rust/ — Rust WASM component
     └── shell/    — xterm.js + Runtime
 ```
 
@@ -51,10 +51,10 @@ Tests use Node.js built-in test runner (`node --test`) with built-in type stripi
 ## WASM Transpilation
 
 All packages that produce WASM components use `@mithic/wasm-transpile` for JCO transpilation:
-- **CLI**: `wasm-transpile component.wasm -o ./dist` (supports `--async-mode jspi|asyncify`)
+- **CLI**: `wasm-transpile component.wasm -o ./dist` (supports `--variants sync,jspi,asyncify`)
 - **Programmatic**: `transpileComponent()` / `transpileToFiles()` from `@mithic/wasm-transpile`
 - Shell, coreutils, and example packages call `wasm-transpile` in their `"transpile"` npm script
-- The `examples/simple` package uses `jco componentize` CLI for JS→WASM then `wasm-transpile` for transpilation
+- The `examples/component-js` package uses `jco componentize` CLI for JS→WASM then `wasm-transpile` for transpilation
 
 ### Bin Scripts
 

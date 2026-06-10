@@ -9,10 +9,10 @@ import { COREUTILS_COMMANDS } from '@mithic/coreutils';
 import { Runtime } from '@mithic/shell';
 import { modules as shellModules } from '@mithic/shell/component';
 import { modules as coreutilsModules } from '@mithic/coreutils/component';
-import { modules as rustCliModules } from '@mithic/example-rust-cli/component';
+import { modules as rustComponentModules } from '@mithic/example-rust-component/component';
 import shellJsSource from '@mithic/shell/component.js?raw';
 import coreutilsJsSource from '@mithic/coreutils/component.js?raw';
-import rustCliJsSource from '@mithic/example-rust-cli/component.js?raw';
+import rustComponentJsSource from '@mithic/example-rust-component/component.js?raw';
 import { createTerminalStdio } from './terminal.ts';
 import { BASHRC } from './bashrc.ts';
 
@@ -48,10 +48,10 @@ async function fetchModuleBytes(dataUris: Record<string, string>): Promise<Recor
   return modules;
 }
 
-const [shellRawModules, coreutilsRawModules, rustCliRawModules] = await Promise.all([
+const [shellRawModules, coreutilsRawModules, rustComponentRawModules] = await Promise.all([
   fetchModuleBytes(shellModules),
   fetchModuleBytes(coreutilsModules),
-  fetchModuleBytes(rustCliModules),
+  fetchModuleBytes(rustComponentModules),
 ]);
 
 // --- Build CompileResults ---
@@ -66,9 +66,9 @@ const coreutilsCompileResult: CompileResult = {
   jsFiles: { 'component.js': coreutilsJsSource },
   cached: true,
 };
-const rustCliCompileResult: CompileResult = {
-  modules: rustCliRawModules,
-  jsFiles: { 'component.js': rustCliJsSource },
+const rustComponentCompileResult: CompileResult = {
+  modules: rustComponentRawModules,
+  jsFiles: { 'component.js': rustComponentJsSource },
   cached: true,
 };
 
@@ -88,8 +88,8 @@ function createWorker(file: string): ProcessWorker | undefined {
   if (COREUTILS_COMMANDS.has(cmdName)) {
     return new ComponentProcessWorker(createWebWorker(), coreutilsCompileResult);
   }
-  if (cmdName === 'rust-cli') {
-    return new ComponentProcessWorker(createWebWorker(), rustCliCompileResult);
+  if (cmdName === 'rust-component') {
+    return new ComponentProcessWorker(createWebWorker(), rustComponentCompileResult);
   }
   return undefined;
 }
@@ -103,7 +103,7 @@ memFs.mkdir('/home');
 memFs.mkdir('/tmp');
 memFs.mkdir('/bin');
 
-for (const cmd of [...COREUTILS_COMMANDS, 'rust-cli']) {
+for (const cmd of [...COREUTILS_COMMANDS, 'rust-component']) {
   const h = memFs.open(`/bin/${cmd}`, { create: true, write: true });
   memFs.close(h);
   memFs.chmod(`/bin/${cmd}`, 0o755);

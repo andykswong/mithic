@@ -1,8 +1,6 @@
 export {
   transpileComponent,
   transpileToFiles,
-  generateIndexJs,
-  generateIndexDts,
   ASYNC_WASI_IMPORTS,
   ASYNC_WASI_EXPORTS,
   matchesAsyncImport,

@@ -1,15 +1,20 @@
 {
-  "name": "@mithic/example-rust-cli",
+  "name": "@mithic/example-rust-component",
   "version": "0.3.0",
   "private": "true",
-  "description": "mithic example CLI component in Rust",
+  "description": "mithic example WASI component in Rust",
   "type": "module",
   "sideEffects": false,
   "main": "./index.js",
   "exports": {
     ".": "./index.js",
     "./component": "./dist/index.js",
-    "./component.js": "./dist/component.js"
+    "./component/jspi": "./dist/jspi.js",
+    "./component/asyncify": "./dist/asyncify.js",
+    "./component/core/*": "./dist/core/*",
+    "./component/core-asyncify/*": "./dist/core-asyncify/*",
+    "./component.js": "./dist/component.js",
+    "./component.async.js": "./dist/component.async.js"
   },
   "config": {
     "crate": "mithic_example_cli",
@@ -17,12 +22,14 @@
   },
   "scripts": {
     "prepare": "rustup target add $npm_package_config_target",
-    "prebuild": "eslint && mkdir -p dist",
+    "prebuild": "eslint && mkdir -p dist/core dist/core-asyncify",
     "build": "cargo build -p $npm_package_config_crate -r --target $npm_package_config_target",
     "postbuild": "cp ../../../target/${npm_package_config_target}/release/${npm_package_config_crate}.wasm ./dist/component.wasm && npm run transpile",
-    "transpile": "wasm-transpile ./dist/component.wasm -o ./dist",
+    "transpile": "wasm-transpile ./dist/component.wasm -o ./dist --variants sync,jspi,asyncify --asyncify-pages 4",
     "clean": "rimraf dist",
     "start": "TEST=itworks node .",
+    "start:jspi": "TEST=itworks node . --jspi",
+    "start:asyncify": "TEST=itworks node . --asyncify",
     "test": "echo 'User' | npm start"
   },
   "repository": {
@@ -36,9 +43,10 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/wasip2": "^0.1"
+    "@mithic/io": "^0.4",
+    "@mithic/wasip2": "^0.1",
+    "@mithic/wasm-transpile": "0.1"
   },
   "devDependencies": {
-    "@mithic/wasm-transpile": "0.1"
   }
 }

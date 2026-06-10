@@ -26,7 +26,7 @@
     "@mithic/process": "^0.1",
     "@mithic/shell": "^0.1",
     "@mithic/coreutils": "^0.1",
-    "@mithic/example-rust-cli": "^0.3",
+    "@mithic/example-rust-component": "^0.3",
     "@xterm/xterm": "^6.0",
     "@xterm/addon-fit": "^0.11"
   },
