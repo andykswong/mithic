@@ -147,6 +147,17 @@ impl<R: Runtime> Shell<R> {
                 ((self.random_state >> 33) % 32768).to_string()
             }
             "LINENO" => self.current_line.to_string(),
+            "-" => {
+                let mut flags = String::new();
+                if self.is_interactive { flags.push('i'); }
+                if self.options.errexit { flags.push('e'); }
+                if self.options.nounset { flags.push('u'); }
+                if self.options.xtrace { flags.push('x'); }
+                if self.options.verbose { flags.push('v'); }
+                if self.options.noclobber { flags.push('C'); }
+                flags.push('s');
+                flags
+            }
             _ => {
                 if name == "0" {
                     return self.env.get("0").map(|v| v.as_scalar().to_string())
@@ -177,9 +188,42 @@ impl<R: Runtime> Shell<R> {
                     };
                 }
             }
+            // ${!prefix*} or ${!prefix@} — list variable names matching prefix
+            if let Some(prefix) = inner.strip_suffix('*').or_else(|| inner.strip_suffix('@')) {
+                let mut names: Vec<&String> = self.env.keys()
+                    .filter(|k| k.starts_with(prefix))
+                    .collect();
+                names.sort();
+                return names.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" ");
+            }
             // ${!VAR} — indirect expansion (expand the value of $VAR as a variable name)
             let var_val = self.expand_var(inner, false);
             if !var_val.is_empty() {
+                // If the indirect value contains '[', treat as array reference
+                if let Some((arr_name, subscript)) = parse_array_subscript(&var_val) {
+                    return match self.env.get(arr_name) {
+                        Some(v) => {
+                            if subscript == "@" || subscript == "*" {
+                                v.all_elements()
+                            } else if let Ok(idx) = subscript.parse::<i64>() {
+                                match v {
+                                    ShellValue::AssocArray(_) => v.assoc_get(subscript).to_string(),
+                                    _ => {
+                                        let actual_idx = if idx < 0 {
+                                            (v.len() as i64 + idx).max(0) as usize
+                                        } else {
+                                            idx as usize
+                                        };
+                                        v.index(actual_idx).to_string()
+                                    }
+                                }
+                            } else {
+                                v.assoc_get(subscript).to_string()
+                            }
+                        }
+                        None => String::new(),
+                    };
+                }
                 return self.expand_var(&var_val, false);
             }
             return String::new();

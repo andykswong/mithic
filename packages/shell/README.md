@@ -242,7 +242,6 @@ The shell has no readline library or terminal raw-mode support. This means:
 
 - No extended glob (`extglob`): `?(pat)`, `*(pat)`, `+(pat)`, `@(pat)`, `!(pat)` not supported
 - No recursive glob (`**`)
-- No named POSIX character classes (`[[:digit:]]`)
 - `${!var}` variable indirection not supported
 
 ### I/O & Redirection

@@ -120,6 +120,24 @@ pub(crate) fn glob_match(pattern: &str, name: &str) -> bool {
     glob_match_inner(&pat, &nam)
 }
 
+fn matches_posix_class(name: &str, c: char) -> bool {
+    match name {
+        "digit" => c.is_ascii_digit(),
+        "alpha" => c.is_ascii_alphabetic(),
+        "alnum" => c.is_ascii_alphanumeric(),
+        "upper" => c.is_ascii_uppercase(),
+        "lower" => c.is_ascii_lowercase(),
+        "space" => c.is_ascii_whitespace(),
+        "blank" => c == ' ' || c == '\t',
+        "punct" => c.is_ascii_punctuation(),
+        "print" => c >= ' ' && c <= '~',
+        "graph" => c > ' ' && c <= '~',
+        "cntrl" => c.is_ascii_control(),
+        "xdigit" => c.is_ascii_hexdigit(),
+        _ => false,
+    }
+}
+
 fn char_class_matches(class: &[char], c: char) -> bool {
     let (negate, class) = if class.first() == Some(&'!') || class.first() == Some(&'^') {
         (true, &class[1..])
@@ -130,6 +148,30 @@ fn char_class_matches(class: &[char], c: char) -> bool {
     let mut matched = false;
     let mut i = 0;
     while i < class.len() {
+        // Check for POSIX character class [:name:]
+        if i + 3 < class.len() && class[i] == '[' && class[i + 1] == ':' {
+            // Find the closing :]
+            let start = i + 2;
+            let mut end = None;
+            let mut j = start;
+            while j + 1 < class.len() {
+                if class[j] == ':' && class[j + 1] == ']' {
+                    end = Some(j);
+                    break;
+                }
+                j += 1;
+            }
+            if let Some(end_pos) = end {
+                let name: String = class[start..end_pos].iter().collect();
+                if matches_posix_class(&name, c) {
+                    matched = true;
+                    break;
+                }
+                i = end_pos + 2; // skip past :]
+                continue;
+            }
+        }
+
         if i + 2 < class.len() && class[i + 1] == '-' {
             let start = class[i];
             let end = class[i + 2];
@@ -150,6 +192,37 @@ fn char_class_matches(class: &[char], c: char) -> bool {
     if negate { !matched } else { matched }
 }
 
+/// Find the closing `]` of a bracket expression, skipping over POSIX class sequences `[:...:]`.
+fn find_bracket_close(chars: &[char]) -> Option<usize> {
+    let mut i = 0;
+    // Allow ] as first char in bracket (or after ^ / !)
+    if i < chars.len() && (chars[i] == '!' || chars[i] == '^') {
+        i += 1;
+    }
+    if i < chars.len() && chars[i] == ']' {
+        i += 1;
+    }
+    while i < chars.len() {
+        if chars[i] == '[' && i + 1 < chars.len() && chars[i + 1] == ':' {
+            // Skip over [:...:] POSIX class
+            let mut j = i + 2;
+            while j + 1 < chars.len() {
+                if chars[j] == ':' && chars[j + 1] == ']' {
+                    j += 2;
+                    break;
+                }
+                j += 1;
+            }
+            i = j;
+        } else if chars[i] == ']' {
+            return Some(i);
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
 fn glob_match_inner(pat: &[char], name: &[char]) -> bool {
     match (pat.first(), name.first()) {
         (None, None) => true,
@@ -165,7 +238,7 @@ fn glob_match_inner(pat: &[char], name: &[char]) -> bool {
         (Some(&'?'), Some(_)) => glob_match_inner(&pat[1..], &name[1..]),
         (Some(&'?'), None) => false,
         (Some(&'['), _) => {
-            let close = pat[1..].iter().position(|&c| c == ']');
+            let close = find_bracket_close(&pat[1..]);
             if let Some(rel) = close {
                 let class = &pat[1..1 + rel];
                 let rest = &pat[2 + rel..];
@@ -378,5 +451,102 @@ mod tests {
     fn test_glob_replace_all_star() {
         // greedy: "h*" starting at 0 matches "hello" (all chars)
         assert_eq!(glob_replace_all("hello", "h*", "X"), "X");
+    }
+
+    #[test]
+    fn test_glob_match_posix_digit() {
+        assert!(glob_match("[[:digit:]]", "5"));
+        assert!(glob_match("[[:digit:]]", "0"));
+        assert!(glob_match("[[:digit:]]", "9"));
+        assert!(!glob_match("[[:digit:]]", "a"));
+        assert!(!glob_match("[[:digit:]]", " "));
+        // In pattern context
+        assert!(glob_match("f[[:digit:]].txt", "f1.txt"));
+        assert!(!glob_match("f[[:digit:]].txt", "fa.txt"));
+    }
+
+    #[test]
+    fn test_glob_match_posix_alpha() {
+        assert!(glob_match("[[:alpha:]]", "a"));
+        assert!(glob_match("[[:alpha:]]", "Z"));
+        assert!(!glob_match("[[:alpha:]]", "5"));
+        assert!(!glob_match("[[:alpha:]]", " "));
+    }
+
+    #[test]
+    fn test_glob_match_posix_alnum() {
+        assert!(glob_match("[[:alnum:]]", "a"));
+        assert!(glob_match("[[:alnum:]]", "5"));
+        assert!(!glob_match("[[:alnum:]]", "_"));
+        assert!(!glob_match("[[:alnum:]]", " "));
+    }
+
+    #[test]
+    fn test_glob_match_posix_upper_lower() {
+        assert!(glob_match("[[:upper:]]", "A"));
+        assert!(!glob_match("[[:upper:]]", "a"));
+        assert!(glob_match("[[:lower:]]", "a"));
+        assert!(!glob_match("[[:lower:]]", "A"));
+    }
+
+    #[test]
+    fn test_glob_match_posix_space() {
+        assert!(glob_match("[[:space:]]", " "));
+        assert!(glob_match("[[:space:]]", "\t"));
+        assert!(glob_match("[[:space:]]", "\n"));
+        assert!(!glob_match("[[:space:]]", "a"));
+    }
+
+    #[test]
+    fn test_glob_match_posix_punct() {
+        assert!(glob_match("[[:punct:]]", "."));
+        assert!(glob_match("[[:punct:]]", "!"));
+        assert!(glob_match("[[:punct:]]", ","));
+        assert!(!glob_match("[[:punct:]]", "a"));
+        assert!(!glob_match("[[:punct:]]", "5"));
+    }
+
+    #[test]
+    fn test_glob_match_posix_negated() {
+        assert!(glob_match("[^[:digit:]]", "a"));
+        assert!(!glob_match("[^[:digit:]]", "5"));
+        assert!(glob_match("[![:digit:]]", "a"));
+        assert!(!glob_match("[![:digit:]]", "5"));
+    }
+
+    #[test]
+    fn test_glob_match_posix_mixed() {
+        // Mix POSIX class with literal characters
+        assert!(glob_match("[[:digit:]ab]", "1"));
+        assert!(glob_match("[[:digit:]ab]", "a"));
+        assert!(glob_match("[[:digit:]ab]", "b"));
+        assert!(!glob_match("[[:digit:]ab]", "c"));
+    }
+
+    #[test]
+    fn test_glob_match_posix_xdigit() {
+        assert!(glob_match("[[:xdigit:]]", "a"));
+        assert!(glob_match("[[:xdigit:]]", "F"));
+        assert!(glob_match("[[:xdigit:]]", "9"));
+        assert!(!glob_match("[[:xdigit:]]", "g"));
+    }
+
+    #[test]
+    fn test_glob_match_posix_blank() {
+        assert!(glob_match("[[:blank:]]", " "));
+        assert!(glob_match("[[:blank:]]", "\t"));
+        assert!(!glob_match("[[:blank:]]", "\n"));
+        assert!(!glob_match("[[:blank:]]", "a"));
+    }
+
+    #[test]
+    fn test_glob_match_posix_print_graph_cntrl() {
+        assert!(glob_match("[[:print:]]", "a"));
+        assert!(glob_match("[[:print:]]", " "));
+        assert!(!glob_match("[[:print:]]", "\x01"));
+        assert!(glob_match("[[:graph:]]", "a"));
+        assert!(!glob_match("[[:graph:]]", " "));
+        assert!(glob_match("[[:cntrl:]]", "\x01"));
+        assert!(!glob_match("[[:cntrl:]]", "a"));
     }
 }

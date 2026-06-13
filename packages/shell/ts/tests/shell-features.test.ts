@@ -62,6 +62,158 @@ describe('special variables', () => {
     const { stdout } = await runShell('echo $LINENO\necho $LINENO\necho $LINENO\n');
     assert.strictEqual(stdout.trim(), '1\n2\n3');
   });
+
+  it('$- contains option flags', async () => {
+    const { stdout } = await runShell('echo $-\n');
+    assert.ok(stdout.trim().length > 0, '$- should not be empty');
+  });
+
+  it('$- reflects -e flag', async () => {
+    const { stdout } = await runShell('set -e\necho $-\n');
+    assert.ok(stdout.trim().includes('e'), '$- should contain e after set -e');
+  });
+
+  it('$- reflects -u flag', async () => {
+    const { stdout } = await runShell('set -u\necho $-\n');
+    assert.ok(stdout.trim().includes('u'), '$- should contain u after set -u');
+  });
+
+  it('$- reflects -x flag', async () => {
+    const { stdout } = await runShell('set -x\necho $-\n');
+    assert.ok(stdout.trim().includes('x'), '$- should contain x after set -x');
+  });
+
+  it('$- does not contain flag before it is set', async () => {
+    const { stdout } = await runShell('echo $-\n');
+    assert.ok(!stdout.trim().includes('e'), '$- should not contain e by default');
+  });
+
+  it('$- reflects multiple flags', async () => {
+    const { stdout } = await runShell('set -eu\necho $-\n');
+    const flags = stdout.trim();
+    assert.ok(flags.includes('e') && flags.includes('u'));
+  });
+
+  it('$- updates after set +e', async () => {
+    const { stdout } = await runShell('set -e\nset +e\necho $-\n');
+    assert.ok(!stdout.trim().includes('e'), '$- should not contain e after set +e');
+  });
+});
+
+describe('${!var} variable indirection', () => {
+  it('basic indirection resolves variable name', async () => {
+    const { stdout } = await runShell('x=hello\nref=x\necho ${!ref}\n');
+    assert.strictEqual(stdout.trim(), 'hello');
+  });
+
+  it('indirection with unset target expands to empty', async () => {
+    const { stdout } = await runShell('ref=nonexistent\necho "${!ref}"\n');
+    assert.strictEqual(stdout.trim(), '');
+  });
+
+  it('indirection chain (two levels)', async () => {
+    const { stdout } = await runShell('a=world\nb=a\necho ${!b}\n');
+    assert.strictEqual(stdout.trim(), 'world');
+  });
+
+  it('indirection with array element', async () => {
+    const { stdout } = await runShell('arr=(one two three)\nref="arr[1]"\necho ${!ref}\n');
+    assert.strictEqual(stdout.trim(), 'two');
+  });
+
+  it('indirection with special variable', async () => {
+    const { stdout } = await runShell('ref=HOME\necho ${!ref}\n');
+    assert.ok(stdout.trim().length > 0, '${!HOME_REF} should expand to HOME value');
+  });
+
+  it('${!prefix*} lists variable names with prefix', async () => {
+    const { stdout } = await runShell('FOO_A=1\nFOO_B=2\nFOO_C=3\necho ${!FOO_*}\n');
+    const vars = stdout.trim().split(/\s+/).sort();
+    assert.ok(vars.includes('FOO_A'));
+    assert.ok(vars.includes('FOO_B'));
+    assert.ok(vars.includes('FOO_C'));
+  });
+
+  it('${!prefix@} lists variable names with prefix', async () => {
+    const { stdout } = await runShell('BAR_X=10\nBAR_Y=20\necho "${!BAR_@}"\n');
+    const vars = stdout.trim().split(/\s+/).sort();
+    assert.ok(vars.includes('BAR_X'));
+    assert.ok(vars.includes('BAR_Y'));
+  });
+});
+
+describe('POSIX character classes in globs', () => {
+  it('[[:digit:]] matches digits', async () => {
+    const { stdout } = await runShell(
+      'echo 1 > /tmp/f1.txt\necho a > /tmp/fa.txt\nls /tmp/f[[:digit:]].txt\n'
+    );
+    assert.ok(stdout.trim().includes('f1.txt'));
+    assert.ok(!stdout.trim().includes('fa.txt'));
+  });
+
+  it('[[:alpha:]] matches letters', async () => {
+    const { stdout } = await runShell(
+      'echo x > /tmp/ga.txt\necho 1 > /tmp/g1.txt\nls /tmp/g[[:alpha:]].txt\n'
+    );
+    assert.ok(stdout.trim().includes('ga.txt'));
+    assert.ok(!stdout.trim().includes('g1.txt'));
+  });
+
+  it('[[:alnum:]] matches alphanumeric', async () => {
+    const { stdout } = await runShell(
+      'echo x > /tmp/ha.txt\necho 1 > /tmp/h1.txt\necho _ > /tmp/h_.txt\nls /tmp/h[[:alnum:]].txt\n'
+    );
+    assert.ok(stdout.trim().includes('ha.txt'));
+    assert.ok(stdout.trim().includes('h1.txt'));
+    assert.ok(!stdout.trim().includes('h_.txt'));
+  });
+
+  it('[[:upper:]] matches uppercase', async () => {
+    const { stdout } = await runShell(
+      'echo U > /tmp/iA.txt\necho l > /tmp/ia.txt\nls /tmp/i[[:upper:]].txt\n'
+    );
+    assert.ok(stdout.trim().includes('iA.txt'));
+    assert.ok(!stdout.trim().includes('ia.txt'));
+  });
+
+  it('[[:lower:]] matches lowercase', async () => {
+    const { stdout } = await runShell(
+      'echo l > /tmp/ja.txt\necho U > /tmp/jA.txt\nls /tmp/j[[:lower:]].txt\n'
+    );
+    assert.ok(stdout.trim().includes('ja.txt'));
+    assert.ok(!stdout.trim().includes('jA.txt'));
+  });
+
+  it('[[:space:]] in case pattern matches whitespace', async () => {
+    const { stdout } = await runShell(
+      'c=" "\ncase "$c" in [[:space:]]) echo yes;; *) echo no;; esac\n'
+    );
+    assert.strictEqual(stdout.trim(), 'yes');
+  });
+
+  it('[[:punct:]] matches punctuation', async () => {
+    const { stdout } = await runShell(
+      'c="."\ncase "$c" in [[:punct:]]) echo yes;; *) echo no;; esac\n'
+    );
+    assert.strictEqual(stdout.trim(), 'yes');
+  });
+
+  it('negated class [^[:digit:]] matches non-digits', async () => {
+    const { stdout } = await runShell(
+      'echo x > /tmp/ka.txt\necho 1 > /tmp/k1.txt\nls /tmp/k[^[:digit:]].txt\n'
+    );
+    assert.ok(stdout.trim().includes('ka.txt'));
+    assert.ok(!stdout.trim().includes('k1.txt'));
+  });
+
+  it('mixed class and literal [[:digit:]ab] matches digit or a or b', async () => {
+    const { stdout } = await runShell(
+      'echo 1 > /tmp/l1.txt\necho a > /tmp/la.txt\necho c > /tmp/lc.txt\nls /tmp/l[[:digit:]ab].txt\n'
+    );
+    assert.ok(stdout.trim().includes('l1.txt'));
+    assert.ok(stdout.trim().includes('la.txt'));
+    assert.ok(!stdout.trim().includes('lc.txt'));
+  });
 });
 
 describe('$RANDOM seeded with getrandom', () => {
