@@ -48,6 +48,14 @@
 <td>Secondary memory pages for asyncify stack (default: 1 = 64KB)</td>
 </tr>
 <tr>
+<td><code>--async-imports &lt;list&gt;</code></td>
+<td>Additional async imports (comma-separated, appended to ASYNC_WASI_IMPORTS defaults)</td>
+</tr>
+<tr>
+<td><code>--async-exports &lt;list&gt;</code></td>
+<td>Additional async exports (comma-separated, appended to ASYNC_WASI_EXPORTS defaults)</td>
+</tr>
+<tr>
 <td><code>--no-minify</code></td>
 <td>Disable JS minification</td>
 </tr>
@@ -57,6 +65,7 @@
 </tr>
 </tbody>
 </table>
+<p>Async import/export format: <code>namespace:package/interface#function-name</code> (e.g. <code>myapp:storage/kv#get</code>)</p>
 <h3 id="programmatic-transpile-a-wasm-component" class="tsd-anchor-link">Programmatic: Transpile a WASM Component<a href="#programmatic-transpile-a-wasm-component" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <pre><code class="typescript"><span class="hl-9">import</span><span class="hl-0"> { </span><span class="hl-1">transpileComponent</span><span class="hl-0">, </span><span class="hl-1">ASYNC_WASI_IMPORTS</span><span class="hl-0">, </span><span class="hl-1">ASYNC_WASI_EXPORTS</span><span class="hl-0"> } </span><span class="hl-9">from</span><span class="hl-0"> </span><span class="hl-6">&#39;@mithic/wasm-transpile&#39;</span><span class="hl-0">;</span><br/><span class="hl-9">import</span><span class="hl-0"> { </span><span class="hl-1">readFile</span><span class="hl-0"> } </span><span class="hl-9">from</span><span class="hl-0"> </span><span class="hl-6">&#39;node:fs/promises&#39;</span><span class="hl-0">;</span><br/><br/><span class="hl-5">const</span><span class="hl-0"> </span><span class="hl-4">component</span><span class="hl-0"> = </span><span class="hl-5">new</span><span class="hl-0"> </span><span class="hl-2">Uint8Array</span><span class="hl-0">(</span><span class="hl-9">await</span><span class="hl-0"> </span><span class="hl-2">readFile</span><span class="hl-0">(</span><span class="hl-6">&#39;my-component.wasm&#39;</span><span class="hl-0">));</span><br/><br/><span class="hl-7">// Transpile with asyncify (JSPI codegen + asyncify instrumentation in one step)</span><br/><span class="hl-5">const</span><span class="hl-0"> </span><span class="hl-4">result</span><span class="hl-0"> = </span><span class="hl-9">await</span><span class="hl-0"> </span><span class="hl-2">transpileComponent</span><span class="hl-0">(</span><span class="hl-1">component</span><span class="hl-0">, {</span><br/><span class="hl-0">  </span><span class="hl-1">name:</span><span class="hl-0"> </span><span class="hl-6">&#39;component&#39;</span><span class="hl-0">,</span><br/><span class="hl-0">  </span><span class="hl-1">asyncMode:</span><span class="hl-0"> </span><span class="hl-6">&#39;asyncify&#39;</span><span class="hl-0">,</span><br/><span class="hl-0">  </span><span class="hl-1">asyncImports:</span><span class="hl-0"> </span><span class="hl-4">ASYNC_WASI_IMPORTS</span><span class="hl-0">,</span><br/><span class="hl-0">  </span><span class="hl-1">asyncExports:</span><span class="hl-0"> </span><span class="hl-4">ASYNC_WASI_EXPORTS</span><span class="hl-0">,</span><br/><span class="hl-0">  </span><span class="hl-1">asyncifyPages:</span><span class="hl-0"> </span><span class="hl-3">4</span><span class="hl-0">,</span><br/><span class="hl-0">});</span><br/><br/><span class="hl-7">// result.files: Map&lt;string, Uint8Array&gt; — JS glue + asyncified core WASM modules</span>
 </code><button type="button">Copy</button></pre>
@@ -118,7 +127,7 @@
 <li>This makes Promises visible to the asyncify state machine</li>
 </ul>
 <h3 id="async-import-matching" class="tsd-anchor-link">Async Import Matching<a href="#async-import-matching" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<p><code>ASYNC_WASI_IMPORTS</code> uses unversioned format (<code>wasi:io/poll#[method]pollable.block</code>). At runtime, <code>matchesAsyncImport()</code> strips version numbers from actual WASM imports (<code>wasi:io/poll@0.2.0</code>) to match against the spec list. <code>resolveVersionedImports()</code> produces the versioned <code>module.name</code> format that binaryen expects.</p>
+<p><code>ASYNC_WASI_IMPORTS</code> is a comprehensive list covering <code>wasi:io</code> (poll, blocking streams), <code>wasi:filesystem</code> (all descriptor methods), <code>wasi:http</code> (outgoing handler), <code>wasi:sockets</code> (TCP/UDP/DNS), and <code>mithic:process</code> (process wait). It uses unversioned format (<code>wasi:io/poll#[method]pollable.block</code>). At runtime, <code>matchesAsyncImport()</code> strips version numbers from actual WASM imports (<code>wasi:io/poll@0.2.0</code>) to match against the spec list. <code>resolveVersionedImports()</code> produces the versioned <code>module.name</code> format that binaryen expects.</p>
 <h2 id="limitations" class="tsd-anchor-link">Limitations<a href="#limitations" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
 <h3 id="no-reentrance" class="tsd-anchor-link">No Reentrance<a href="#no-reentrance" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p>The asyncify state machine uses a single unwind/rewind slot per module. Nested async calls (an import that triggers another WASM export which triggers another async import) would corrupt the state. This is safe for WASI P2's sequential blocking I/O pattern but would break with concurrent subtasks.</p>
