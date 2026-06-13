@@ -51,8 +51,9 @@ Tests use Node.js built-in test runner (`node --test`) with built-in type stripi
 ## WASM Transpilation
 
 All packages that produce WASM components use `@mithic/wasm-transpile` for JCO transpilation:
-- **CLI**: `wasm-transpile component.wasm -o ./dist` (supports `--variants sync,jspi,asyncify`)
+- **CLI**: `wasm-transpile component.wasm -o ./dist --variants sync,jspi,asyncify` (also supports `--async-imports` and `--async-exports` for custom async functions)
 - **Programmatic**: `transpileComponent()` / `transpileToFiles()` from `@mithic/wasm-transpile`
+- **Multi-variant builds**: shell, coreutils, and example packages produce deduplicated variants via `--variants`. Package exports: `./component` (sync), `./component/jspi`, `./component/asyncify`, `./component/core/*`, `./component/core-asyncify/*`
 - Shell, coreutils, and example packages call `wasm-transpile` in their `"transpile"` npm script
 - The `examples/component-js` package uses `jco componentize` CLI for JS→WASM then `wasm-transpile` for transpilation
 
@@ -61,7 +62,7 @@ All packages that produce WASM components use `@mithic/wasm-transpile` for JCO t
 Packages with CLI binaries use a `bin/` wrapper pattern for portability:
 ```
 bin/wasm-transpile.js   ← #!/usr/bin/env node + import '../dist/cli.js'
-bin/mithic-shell.js     ← #!/usr/bin/env node + import '../dist/ts/cli.js'
+bin/mithic-shell.js     ← #!/usr/bin/env node + import '../dist/ts/cli/index.js'
 ```
 The wrapper is executable and has the shebang; the built `dist/` code does not. This avoids permission issues when npm links the bin.
 

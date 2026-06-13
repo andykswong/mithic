@@ -24,41 +24,62 @@
   - **Glob expansion** — `*`, `?`, `[...]`
   - **Builtins** — `cd`, `echo`, `export`, `unset`, `read`, `test`/`[`/`[[`, `declare`/`local`, `source`, `true`, `false`
   - **Error handling** — Arithmetic expansion errors abort the containing command; proper exit codes propagate through pipes, assignments, for/case/select
-- **Command resolution** — `createWorker` factory dispatching to shell, shell builtins, coreutils WASM, host-side commands, PATH-based WASM components and scripts, with worker-per-process model
+- **Command resolution** — `ProcessManager`-based dispatching to shell, shell builtins, coreutils WASM, host-side commands, PATH-based WASM components and scripts
 - **POSIX mode** — Auto-activates when invoked as `sh`; disables non-standard extensions, including `[[`, `(( ))`, `<<<`, arrays, brace expansion
 - **Pipelines** — `cmd1 | cmd2 | cmd3` and `cmd1 |& cmd2` (pipe stderr+stdout) with true concurrent execution — each pipeline stage runs in its own Worker. Infinite producers terminate correctly via broken-pipe propagation (`cat /dev/zero | head -c 4` works).
 - **Background jobs** — `cmd &` runs concurrently in a separate Worker
 - **Dynamic WASM execution** — Arbitrary `.wasm` components on the filesystem are transpiled and executed at runtime
 - **Script execution** — Shebang (`#!/bin/sh`) support, PATH lookup with executable permission checks
-- **Streaming I/O** — Uses WASI `blocking-read`/`blocking-write-and-flush` backed by `SharedArrayBuffer` + `Atomics.wait` for true blocking semantics in a Web Worker
+- **Streaming I/O** — Uses WASI `blocking-read`/`blocking-write-and-flush`. In worker mode, backed by `SharedArrayBuffer` + `Atomics.wait` for true blocking semantics. In async mode, backed by JSPI/asyncify for suspendable async I/O without Workers.
 
 ## Usage
 
+The `Runtime` accepts a `ProcessManager` via the `manager` field. Two modes are available:
+
+### Worker Mode (Workers + SharedArrayBuffer)
+
 ```typescript
-import { Runtime } from '@mithic/shell';
+import { Runtime, createWorkerStrategy } from '@mithic/shell';
 import { ComponentProcessWorker } from '@mithic/process/manager/component-worker';
 
-const runtime = new Runtime({
-  fs: memoryFsProvider,
-  stdio: {
-    stdin: stdinHandler,
-    stdout: stdoutHandler,
-    stderr: stderrHandler,
-  },
+// createWorkerStrategy() returns a ProcessManager & Disposable (IoLoop + WorkerProcessManager)
+const manager = createWorkerStrategy({
+  fs: vfsProvider,
+  stdio: { stdin: stdinHandler, stdout: stdoutHandler, stderr: stderrHandler },
   isatty: { stdin: true, stdout: true, stderr: true },
-  env: { HOME: '/home', PATH: '/bin', USER: 'user', TERM: 'xterm-256color' },
-  cwd: '/',
   createWorker: (file, name) => {
     const worker = new Worker(processWorkerUrl, { type: 'module', name });
     return new ComponentProcessWorker(worker, compileResult);
   },
 });
 
-// Execute a command
+const runtime = new Runtime({
+  manager,
+  env: { HOME: '/home', PATH: '/bin', USER: 'user', TERM: 'xterm-256color' },
+  cwd: '/',
+});
+
 const proc = runtime.exec('bash', { args: ['bash', '-c', 'echo hello'] });
 const exitCode = await runtime.waitAsync(proc);
+runtime[Symbol.dispose]();
+```
 
-// Cleanup
+### Async Mode (JSPI/asyncify, no Workers/SAB needed)
+
+```typescript
+import { Runtime } from '@mithic/shell';
+import { SimpleProcessManager } from '@mithic/process/manager/simple';
+
+// SimpleProcessManager runs commands in-process using JSPI or asyncify polyfill
+const manager = new SimpleProcessManager({
+  hostStreams: { stdin, stdout, stderr },
+  env: { HOME: '/home', PATH: '/bin' },
+});
+manager.commandResolver = (file) => { /* resolve to CommandHandler */ };
+
+const runtime = new Runtime({ manager, env, cwd: '/' });
+const proc = runtime.exec('bash', { args: ['-c', 'echo hello'] });
+const exitCode = await runtime.waitAsync(proc);
 runtime[Symbol.dispose]();
 ```
 
@@ -75,6 +96,20 @@ npm test             # cargo test + node --test
 Requires Rust toolchain with `wasm32-wasip2` target:
 ```shell
 rustup target add wasm32-wasip2
+```
+
+## CLI
+
+The `mithic-shell` binary defaults to worker mode (Workers + SharedArrayBuffer). Use `--async` for async mode (JSPI/asyncify, no Workers needed):
+
+```shell
+# Worker mode (default)
+mithic-shell
+mithic-shell -c 'echo hello | tr a-z A-Z'
+
+# Async mode (JSPI/asyncify polyfill, no SharedArrayBuffer required)
+mithic-shell --async
+mithic-shell --async -c 'ls /tmp'
 ```
 
 ## Architecture
@@ -107,14 +142,22 @@ src/                   (~10k lines Rust)
 └── arith.rs, brace.rs, regex.rs, value.rs, options.rs, params.rs, jobs.rs
 
 ts/
-├── index.ts          Package exports (Runtime, ExecOptions)
-├── runtime.ts        Runtime class: IoLoop + WorkerProcessManager orchestration
-├── cli.ts            Node.js CLI runner (VFS + command resolution + process Workers)
+├── index.ts              Package exports (Runtime, createWorkerStrategy)
+├── runtime.ts            Runtime class: accepts ProcessManager, orchestrates exec/wait
+├── worker-strategy.ts    createWorkerStrategy(): IoLoop + WorkerProcessManager factory
+├── cli/
+│   ├── index.ts          CLI entry point (routes --async flag)
+│   ├── worker.ts         Worker mode CLI (default): VFS + command resolution + process Workers
+│   ├── async.ts          Async mode CLI (--async flag): JSPI/asyncify, no Workers/SAB
+│   └── shared.ts         Shared CLI utilities (VFS setup, env)
 └── commands/
-    └── chmod.ts      Host-side chmod handler (numeric + symbolic modes)
+    └── chmod.ts          Host-side chmod handler (numeric + symbolic modes)
 ```
 
-The shell compiles to a WASI Preview 2 component (`wasm32-wasip2`), transpiled to JavaScript via `jco`. The TypeScript host-side (`Runtime`) orchestrates an `IoLoop` for filesystem/stdio and a `WorkerProcessManager` for process spawning. The shell runs as a standard process Worker via `@mithic/process/worker/process` — each spawned command (shell, coreutil, or dynamic WASM component) gets its own Web Worker with a `ProxyProcessManager` that delegates spawn requests back to the main thread.
+The shell compiles to a WASI Preview 2 component (`wasm32-wasip2`), transpiled to JavaScript via `jco`. The TypeScript host-side `Runtime` accepts a `ProcessManager` and orchestrates command execution. Two execution modes are supported:
+
+- **Worker mode** (`createWorkerStrategy()`): An `IoLoop` services filesystem/stdio requests from Workers via `SharedArrayBuffer` + `Atomics`. Each spawned command (shell, coreutil, or dynamic WASM component) gets its own Web Worker with a `ProxyProcessManager` that delegates spawn requests back to the main thread.
+- **Async mode** (`SimpleProcessManager`): Commands run in-process using JSPI or asyncify polyfill for async I/O. No Workers or SharedArrayBuffer required — suitable for environments without cross-origin isolation headers.
 
 ### Runtime Abstraction
 
@@ -140,7 +183,7 @@ Shell logic is decoupled from WASM bindings via three ISP-compliant traits compo
 
 ### Host-Side Command Resolution
 
-The `Runtime` constructor accepts a `createWorker(file, name?) → ProcessWorker | undefined` factory function. The CLI (`cli.ts`) implements the resolution logic:
+In worker mode, the `createWorkerStrategy()` config accepts a `createWorker(file, name?) → ProcessWorker | undefined` factory function. In async mode, the `SimpleProcessManager` accepts a `commandResolver(file) → CommandHandler | undefined`. The CLI (`ts/cli/worker.ts` and `ts/cli/async.ts`) implements the resolution logic:
 
 1. **`sh`/`bash`** → `ComponentProcessWorker` with shell WASM component (POSIX mode for `sh`)
 2. **`chmod`** → `InlineProcessWorker` with host-side VFS access (numeric + symbolic modes)

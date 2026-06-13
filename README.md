@@ -45,7 +45,9 @@ Sandboxed WebAssembly bash/POSIX-compatible shell runtime with concurrent proces
 └──────────────────────────┴──────────────────────────────────────┘
 ```
 
-The main thread runs an `IoLoop` that services filesystem, network, and stdio requests from WASM workers via `SharedArrayBuffer` + `Atomics`. Each spawned process (shell command, coreutil, or dynamic WASM component) runs in its own Web Worker with blocking I/O semantics. Pipelines execute concurrently — `cat /dev/zero | head -c 4` terminates correctly via broken-pipe propagation. The `Runtime` class orchestrates process spawning, VFS configuration, and stdio routing.
+The diagram above shows **worker mode** (default). The main thread runs an `IoLoop` that services filesystem, network, and stdio requests from WASM workers via `SharedArrayBuffer` + `Atomics`. Each spawned process (shell command, coreutil, or dynamic WASM component) runs in its own Web Worker with blocking I/O semantics. Pipelines execute concurrently — `cat /dev/zero | head -c 4` terminates correctly via broken-pipe propagation.
+
+An alternative **async mode** is also available, using JSPI or asyncify polyfill for suspendable async I/O without Workers or SharedArrayBuffer — suitable for environments without cross-origin isolation headers.
 
 ## Packages
 
@@ -65,9 +67,9 @@ The main thread runs an `IoLoop` that services filesystem, network, and stdio re
 
 | Example | Description |
 |---------|-------------|
-| [`examples/component-js`](./packages/examples/component-js) | JS WebAssembly component built with ComponentizeJS |
-| [`examples/component-rust`](./packages/examples/component-rust) | Rust WebAssembly component |
-| [`examples/shell`](./packages/examples/shell) | xterm.js browser terminal with full shell runtime |
+| [`@mithic/example-js-component`](./packages/examples/component-js) | JS WebAssembly component built with ComponentizeJS |
+| [`@mithic/example-rust-component`](./packages/examples/component-rust) | Rust WebAssembly component |
+| [`@mithic/example-shell`](./packages/examples/shell) | xterm.js browser terminal with full shell runtime |
 
 ## Getting Started
 

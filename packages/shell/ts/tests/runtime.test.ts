@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Runtime } from '../runtime.ts';
+import { createWorkerStrategy } from '../worker-strategy.ts';
 import { MemoryFsProvider, DeviceFsProvider, SyncFileSystemRouter } from '@mithic/io/vfs';
 import type { SyncOutputStreamHandler } from '@mithic/io/io';
 import { ComponentProcessWorker } from '@mithic/process/manager/component-worker';
@@ -51,7 +52,7 @@ const coreutilsCompileResult: CompileResult = {
 
 const processWorkerUrl = new URL(import.meta.resolve('@mithic/process/worker/process'));
 
-function createWorkerFactory(memFs: MemoryFsProvider) {
+function createWorkerFactory(_memFs: MemoryFsProvider) {
   return function createWorker(file: string, name?: string): ProcessWorker | undefined {
     const cmdName = file.includes('/') ? file.split('/').pop()! : file;
     if (cmdName === 'sh' || cmdName === 'bash') {
@@ -95,20 +96,30 @@ function getOutput(chunks: Uint8Array[]): string {
   return new TextDecoder().decode(Buffer.concat(chunks));
 }
 
+function createTestRuntime(
+  memFs: MemoryFsProvider,
+  stdoutHandler: SyncOutputStreamHandler,
+  stderrHandler: SyncOutputStreamHandler,
+  createWorker: (file: string, name?: string) => ProcessWorker | undefined,
+  env?: Record<string, string>,
+): Runtime {
+  const manager = createWorkerStrategy({
+    fs: createTestVfs(memFs, stdoutHandler, stderrHandler),
+    stdio: { stdout: stdoutHandler, stderr: stderrHandler },
+    createWorker,
+  });
+  return new Runtime({ manager, env });
+}
+
 describe('Runtime', () => {
   it('exec returns Process with pid', () => {
     const memFs = new MemoryFsProvider();
     const { handler: stdoutHandler } = createCaptureStdout();
     const { handler: stderrHandler } = createCaptureStderr();
 
-    const runtime = new Runtime({
-      fs: createTestVfs(memFs, stdoutHandler, stderrHandler),
-      stdio: { stdout: stdoutHandler, stderr: stderrHandler },
-      createWorker: createWorkerFactory(memFs),
-    });
+    const runtime = createTestRuntime(memFs, stdoutHandler, stderrHandler, createWorkerFactory(memFs));
 
     try {
-      // Use basename which is in COREUTILS_COMMANDS
       const proc = runtime.exec('basename', { args: ['/hello/world'] });
       assert.equal(typeof proc.pid(), 'number');
       assert.ok(proc.pid() >= 0);
@@ -122,11 +133,7 @@ describe('Runtime', () => {
     const { handler: stdoutHandler, chunks } = createCaptureStdout();
     const { handler: stderrHandler } = createCaptureStderr();
 
-    const runtime = new Runtime({
-      fs: createTestVfs(memFs, stdoutHandler, stderrHandler),
-      stdio: { stdout: stdoutHandler, stderr: stderrHandler },
-      createWorker: createWorkerFactory(memFs),
-    });
+    const runtime = createTestRuntime(memFs, stdoutHandler, stderrHandler, createWorkerFactory(memFs));
 
     try {
       const proc = runtime.exec('basename', { args: ['/hello/world'] });
@@ -143,12 +150,7 @@ describe('Runtime', () => {
     const { handler: stdoutHandler, chunks } = createCaptureStdout();
     const { handler: stderrHandler } = createCaptureStderr();
 
-    const runtime = new Runtime({
-      fs: createTestVfs(memFs, stdoutHandler, stderrHandler),
-      stdio: { stdout: stdoutHandler, stderr: stderrHandler },
-      createWorker: createWorkerFactory(memFs),
-      env: { PATH: '/usr/bin:/bin' },
-    });
+    const runtime = createTestRuntime(memFs, stdoutHandler, stderrHandler, createWorkerFactory(memFs), { PATH: '/usr/bin:/bin' });
 
     try {
       const proc = runtime.exec('bash', { args: ['-c', 'echo world'] });
@@ -165,15 +167,11 @@ describe('Runtime', () => {
     const { handler: stdoutHandler } = createCaptureStdout();
     const { handler: stderrHandler } = createCaptureStderr();
 
-    const runtime = new Runtime({
-      fs: createTestVfs(memFs, stdoutHandler, stderrHandler),
-      stdio: { stdout: stdoutHandler, stderr: stderrHandler },
-      createWorker: (file: string) => {
-        if (file === 'exit42') {
-          return new InlineProcessWorker(() => 42);
-        }
-        return createWorkerFactory(memFs)(file);
-      },
+    const runtime = createTestRuntime(memFs, stdoutHandler, stderrHandler, (file: string) => {
+      if (file === 'exit42') {
+        return new InlineProcessWorker(() => 42);
+      }
+      return createWorkerFactory(memFs)(file);
     });
 
     try {
@@ -190,11 +188,7 @@ describe('Runtime', () => {
     const { handler: stdoutHandler } = createCaptureStdout();
     const { handler: stderrHandler } = createCaptureStderr();
 
-    const runtime = new Runtime({
-      fs: createTestVfs(memFs, stdoutHandler, stderrHandler),
-      stdio: { stdout: stdoutHandler, stderr: stderrHandler },
-      createWorker: () => undefined,
-    });
+    const runtime = createTestRuntime(memFs, stdoutHandler, stderrHandler, () => undefined);
 
     try {
       assert.throws(() => runtime.exec('nonexistent_cmd'), (err: unknown) => {
@@ -207,17 +201,12 @@ describe('Runtime', () => {
 
   it('waitAsync resolves with exit code', async () => {
     const memFs = new MemoryFsProvider();
-    const { handler: stdoutHandler, chunks } = createCaptureStdout();
+    const { handler: stdoutHandler } = createCaptureStdout();
     const { handler: stderrHandler } = createCaptureStderr();
 
-    const runtime = new Runtime({
-      fs: createTestVfs(memFs, stdoutHandler, stderrHandler),
-      stdio: { stdout: stdoutHandler, stderr: stderrHandler },
-      createWorker: createWorkerFactory(memFs),
-    });
+    const runtime = createTestRuntime(memFs, stdoutHandler, stderrHandler, createWorkerFactory(memFs));
 
     try {
-      // bash -c 'true' exits 0
       const proc = runtime.exec('bash', { args: ['-c', 'true'] });
       const code = await runtime.waitAsync(proc);
       assert.equal(code, 0);
@@ -231,15 +220,9 @@ describe('Runtime', () => {
     const { handler: stdoutHandler } = createCaptureStdout();
     const { handler: stderrHandler } = createCaptureStderr();
 
-    const runtime = new Runtime({
-      fs: createTestVfs(memFs, stdoutHandler, stderrHandler),
-      stdio: { stdout: stdoutHandler, stderr: stderrHandler },
-      createWorker: createWorkerFactory(memFs),
-    });
+    const runtime = createTestRuntime(memFs, stdoutHandler, stderrHandler, createWorkerFactory(memFs));
 
-    // Should not throw
     runtime[Symbol.dispose]();
-    // Calling dispose again should not throw
     runtime[Symbol.dispose]();
   });
 
@@ -248,11 +231,7 @@ describe('Runtime', () => {
     const { handler: stdoutHandler, chunks } = createCaptureStdout();
     const { handler: stderrHandler } = createCaptureStderr();
 
-    const runtime = new Runtime({
-      fs: createTestVfs(memFs, stdoutHandler, stderrHandler),
-      stdio: { stdout: stdoutHandler, stderr: stderrHandler },
-      createWorker: createWorkerFactory(memFs),
-    });
+    const runtime = createTestRuntime(memFs, stdoutHandler, stderrHandler, createWorkerFactory(memFs));
 
     try {
       const proc1 = runtime.exec('basename', { args: ['/a/one'] });

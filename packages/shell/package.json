@@ -40,7 +40,8 @@
     "build:ts": "vite build",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "start": "node ts/cli.ts",
+    "start": "node ts/cli/index.ts",
+    "start:async": "node ts/cli/index.ts --async",
     "test:rust": "cargo test -p $npm_package_config_crate --config \"build.target=\\\"$(rustc -vV | sed -n 's/host: //p')\\\"\"",
     "test:ts": "node --test \"ts/**/*.test.ts\"",
     "test": "npm run test:rust && npm run test:ts",
@@ -65,11 +66,10 @@
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
     "@mithic/coreutils": "^0.1",
+    "@mithic/io": "^0.4",
     "@mithic/process": "^0.1",
+    "@mithic/wasm-transpile": "0.1",
     "@mithic/wasip2": "^0.1",
     "@mithic/worker": "^0.1"
-  },
-  "devDependencies": {
-    "@mithic/wasm-transpile": "0.1"
   }
 }

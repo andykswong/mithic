@@ -74,6 +74,7 @@ const shim = new WASIShim({
 - **Per-instance isolation** — each `WASIShim` has its own preopens, env, args, stdio, and network policy
 - **Pluggable providers** — filesystem, HTTP, sockets, and stdio are all injectable via `WASIShim` config. `Descriptor` delegates to a `DescriptorHandler` interface, which adapts any `SyncFileSystemProvider` implementation.
 - **Synchronous by design** — WASI APIs are synchronous. All I/O interfaces accept only `Sync*` variants from `@mithic/io` (`SyncFileSystemProvider`, `SyncHttpClient`, `SyncSocketProvider`, `SyncInputStreamHandler`), ensuring no Promise leaks into WASI call paths.
+- **Async mode** — Pass `async: true` to `WASIShim` config when using JSPI or asyncify. This enables async-compatible implementations (e.g., async filesystem descriptor handlers via `FsDescriptorHandler`) that return Promises from WASI calls, which are then suspended/resumed by the JSPI/asyncify runtime.
 - **Sync-bridge for cross-thread** — For WASM running in a worker thread, `@mithic/io` provides `SyncBridge*` providers that dispatch through `SharedArrayBuffer` + `Atomics` to async providers on the I/O loop. Same interfaces, transparent to WASI code.
 
 ### jco Transpile Integration

@@ -1,17 +1,8 @@
-/**
- * Main thread orchestrator for the shell runtime.
- *
- * Sets up VFS, command resolution, and Runtime, then spawns the shell as a
- * process Worker via runtime.exec('bash').
- */
-
 import '@mithic/worker';
 import { readFileSync } from 'node:fs';
 import { isatty } from 'node:tty';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { MemoryFsProvider, DeviceFsProvider, FileSystemRouter } from '@mithic/io/vfs';
-import { NodeFsProvider } from '@mithic/io/vfs/providers/node-fs';
 import { NodeAsyncStdinHandler, NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
 import { ComponentProcessWorker } from '@mithic/process/manager/component-worker';
 import { InlineProcessWorker } from '@mithic/process/manager/inline-worker';
@@ -23,8 +14,10 @@ import { COREUTILS_COMMANDS } from '@mithic/coreutils';
 import { modules as shellModules } from '@mithic/shell/component';
 import { modules as coreutilsModules } from '@mithic/coreutils/component';
 import { outputFromSharedBuffer } from '@mithic/process/io';
-import { runChmod } from './commands/chmod.ts';
-import { Runtime } from './runtime.ts';
+import { runChmod } from '../commands/chmod.ts';
+import { Runtime } from '../runtime.ts';
+import { createWorkerStrategy } from '../worker-strategy.ts';
+import { createNodeVfs, mountNodeVfs, getNodeEnv } from './shared.ts';
 
 // --- Fetch raw module bytes (needed for CompileResult sent to process Workers) ---
 
@@ -75,13 +68,11 @@ compilerWorker.postMessage({ type: '__port', port: compilerPort2 }, [compilerPor
 const compilerBridge = createComponentCompiler(compilerPort1 as unknown as MessagePort);
 const registry = new CommandRegistry({ compiler: compilerBridge });
 
-// --- Shared VFS (created before Runtime so createWorker closure can reference it) ---
+// --- Shared VFS ---
 
 const hostStderr = new NodeStderrHandler();
-const memFs = new MemoryFsProvider();
-memFs.mkdir('/tmp');
-memFs.mkdir('/root');
-const hostFs = new NodeFsProvider({ root: process.cwd() });
+const { memFs, hostFs, vfs } = createNodeVfs();
+await mountNodeVfs(vfs, memFs, hostFs);
 
 // --- Command resolver ---
 
@@ -187,18 +178,9 @@ function createWorker(file: string, name?: string): ProcessWorker | undefined {
   return undefined;
 }
 
-
 // --- Create Runtime ---
 
-const vfs = new FileSystemRouter();
-await vfs.mount('/', memFs);
-await vfs.mount('/root', hostFs);
-await vfs.mount('/dev', new DeviceFsProvider({
-  stdout: new NodeStdoutHandler(),
-  stderr: new NodeStderrHandler(),
-}));
-
-const runtime = new Runtime({
+const manager = createWorkerStrategy({
   fs: vfs,
   stdio: {
     stdin: new NodeAsyncStdinHandler(),
@@ -206,14 +188,14 @@ const runtime = new Runtime({
     stderr: new NodeStderrHandler(),
   },
   isatty: { stdin: isatty(0), stdout: isatty(1), stderr: isatty(2) },
-  env: {
-    ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] != null)),
-    PATH: '/usr/bin:/bin',
-    HOME: '/root',
-  },
-  cwd: '/root',
   createWorker,
   maxWorkers: 8,
+});
+
+const runtime = new Runtime({
+  manager,
+  env: getNodeEnv(),
+  cwd: '/root',
 });
 
 // --- Execute shell and wait for exit ---

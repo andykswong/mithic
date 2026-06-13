@@ -48,8 +48,12 @@ Options:
 | `-n, --name <name>` | Module name (default: derived from filename) |
 | `--variants <list>` | Comma-separated variants: `sync`, `jspi`, `asyncify` (default: `sync`) |
 | `--asyncify-pages <n>` | Secondary memory pages for asyncify stack (default: 1 = 64KB) |
+| `--async-imports <list>` | Additional async imports (comma-separated, appended to ASYNC_WASI_IMPORTS defaults) |
+| `--async-exports <list>` | Additional async exports (comma-separated, appended to ASYNC_WASI_EXPORTS defaults) |
 | `--no-minify` | Disable JS minification |
 | `-q, --quiet` | Suppress progress output |
+
+Async import/export format: `namespace:package/interface#function-name` (e.g. `myapp:storage/kv#get`)
 
 ### Programmatic: Transpile a WASM Component
 
@@ -151,7 +155,7 @@ JCO generates multiple core WASM modules linked via a shared table. The asyncify
 
 ### Async Import Matching
 
-`ASYNC_WASI_IMPORTS` uses unversioned format (`wasi:io/poll#[method]pollable.block`). At runtime, `matchesAsyncImport()` strips version numbers from actual WASM imports (`wasi:io/poll@0.2.0`) to match against the spec list. `resolveVersionedImports()` produces the versioned `module.name` format that binaryen expects.
+`ASYNC_WASI_IMPORTS` is a comprehensive list covering `wasi:io` (poll, blocking streams), `wasi:filesystem` (all descriptor methods), `wasi:http` (outgoing handler), `wasi:sockets` (TCP/UDP/DNS), and `mithic:process` (process wait). It uses unversioned format (`wasi:io/poll#[method]pollable.block`). At runtime, `matchesAsyncImport()` strips version numbers from actual WASM imports (`wasi:io/poll@0.2.0`) to match against the spec list. `resolveVersionedImports()` produces the versioned `module.name` format that binaryen expects.
 
 ## Limitations
 

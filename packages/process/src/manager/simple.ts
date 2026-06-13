@@ -165,7 +165,7 @@ export class SimpleProcessManager implements ProcessManager {
       stderr: childStderr,
     };
 
-    const result = handler(args, ctx);
+    const result = handler([file, ...args], ctx);
 
     if (typeof result === 'number') {
       done = true;
@@ -176,7 +176,7 @@ export class SimpleProcessManager implements ProcessManager {
         (code: number) => {
           done = true;
           if (!killed) {
-            exitCode = code;
+            exitCode = code ?? 0;
           }
           this.table.remove(pid);
           return exitCode ?? 0;

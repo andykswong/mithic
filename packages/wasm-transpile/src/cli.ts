@@ -19,13 +19,18 @@ Options:
   --no-minify               Disable minification
   --variants <list>         Comma-separated variants: sync,jspi,asyncify (default: sync)
   --asyncify-pages <n>      Secondary memory pages for asyncify (default: 1, 64KB each)
+  --async-imports <list>    Additional async imports (comma-separated, appended to defaults)
+  --async-exports <list>    Additional async exports (comma-separated, appended to defaults)
   -q, --quiet               Suppress progress output
   -h, --help                Show this help
+
+Async import/export format: namespace:package/interface#function-name
+  e.g. myapp:storage/kv#get, myapp:storage/kv#put
 
 Examples:
   wasm-transpile component.wasm -o ./out
   wasm-transpile component.wasm -o ./out --variants sync,jspi,asyncify --asyncify-pages 4
-  wasm-transpile component.wasm -o ./out --variants jspi`);
+  wasm-transpile component.wasm -o ./out --variants jspi --async-imports myapp:db/query#execute`);
 }
 
 async function main(): Promise<void> {
@@ -37,6 +42,8 @@ async function main(): Promise<void> {
       'no-minify': { type: 'boolean', default: false },
       'variants': { type: 'string' },
       'asyncify-pages': { type: 'string' },
+      'async-imports': { type: 'string' },
+      'async-exports': { type: 'string' },
       'quiet': { type: 'boolean', short: 'q', default: false },
       'help': { type: 'boolean', short: 'h', default: false },
     },
@@ -65,13 +72,23 @@ async function main(): Promise<void> {
     }
   }
 
+  const asyncImports = [...ASYNC_WASI_IMPORTS];
+  if (values['async-imports']) {
+    asyncImports.push(...(values['async-imports'] as string).split(',').map(s => s.trim()));
+  }
+
+  const asyncExports = [...ASYNC_WASI_EXPORTS];
+  if (values['async-exports']) {
+    asyncExports.push(...(values['async-exports'] as string).split(',').map(s => s.trim()));
+  }
+
   const opts: TranspileToFilesOptions = {
     name: (values.name as string) ?? basename(input, '.wasm'),
     outputDir: resolve((values['out-dir'] as string) ?? './dist'),
     minify: !values['no-minify'],
     variants,
-    asyncImports: ASYNC_WASI_IMPORTS,
-    asyncExports: ASYNC_WASI_EXPORTS,
+    asyncImports,
+    asyncExports,
   };
 
   if (variants.includes('asyncify')) {
