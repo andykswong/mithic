@@ -856,3 +856,96 @@ describe('OutputStream async flush', () => {
     strictEqual(flushed, true);
   });
 });
+
+describe('close() idempotency (no double-drop)', () => {
+  it('InputStream.close() does not double-drop handler', () => {
+    let dropCount = 0;
+    const stream = new InputStream<true>({
+      read() { return undefined; },
+      blockingRead() { return new Uint8Array(0); },
+      drop() { dropCount++; },
+    });
+    stream.close();
+    stream.close();
+    stream[Symbol.dispose]();
+    strictEqual(dropCount, 1);
+  });
+
+  it('OutputStream.close() does not double-drop handler', () => {
+    let dropCount = 0;
+    const stream = new OutputStream<true>({
+      write() {},
+      drop() { dropCount++; },
+    });
+    stream.close();
+    stream.close();
+    stream[Symbol.dispose]();
+    strictEqual(dropCount, 1);
+  });
+
+  it('close() then dispose() does not drop again', () => {
+    let dropCount = 0;
+    const stream = new OutputStream<true>({
+      write() {},
+      drop() { dropCount++; },
+    });
+    stream.close();
+    stream[Symbol.dispose]();
+    strictEqual(dropCount, 1);
+  });
+
+  it('dispose() then close() does not drop again', () => {
+    let dropCount = 0;
+    const stream = new InputStream<true>({
+      read() { return undefined; },
+      blockingRead() { return new Uint8Array(0); },
+      drop() { dropCount++; },
+    });
+    stream[Symbol.dispose]();
+    stream.close();
+    strictEqual(dropCount, 1);
+  });
+
+  it('close() on dup zeros refs — other dup dispose does not double-drop', () => {
+    let dropCount = 0;
+    const stream = new OutputStream<true>({
+      write() {},
+      drop() { dropCount++; },
+    });
+    const duped = stream.dup();
+    duped.close();
+    strictEqual(dropCount, 1, 'close() should drop immediately');
+    stream[Symbol.dispose]();
+    strictEqual(dropCount, 1, 'dispose() on original should not drop again (refs zeroed)');
+  });
+
+  it('dispose() on dup decrements — close() on original still drops', () => {
+    let dropCount = 0;
+    const stream = new InputStream<true>({
+      read() { return undefined; },
+      blockingRead() { return new Uint8Array(0); },
+      drop() { dropCount++; },
+    });
+    const duped = stream.dup();
+    duped[Symbol.dispose]();
+    strictEqual(dropCount, 0, 'dispose() on dup should not drop (ref count still > 0)');
+    stream.close();
+    strictEqual(dropCount, 1, 'close() on original should drop');
+  });
+
+  it('two dups — dispose both ref-counted, drop on last', () => {
+    let dropCount = 0;
+    const stream = new OutputStream<true>({
+      write() {},
+      drop() { dropCount++; },
+    });
+    const dup1 = stream.dup();
+    const dup2 = stream.dup();
+    stream[Symbol.dispose]();
+    strictEqual(dropCount, 0);
+    dup1[Symbol.dispose]();
+    strictEqual(dropCount, 0);
+    dup2[Symbol.dispose]();
+    strictEqual(dropCount, 1, 'handler dropped on last dispose');
+  });
+});

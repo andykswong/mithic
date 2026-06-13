@@ -45,7 +45,9 @@ export class Pollable<Sync extends boolean = boolean> {
     if (this.#pollReady()) return;
 
     if (this.#blockReady) {
-      return this.#blockReady();
+      const result = this.#blockReady();
+      if (isThenable(result)) return result;
+      if (this.#pollReady()) return;
     }
 
     const deadline = performance.now() + globalBlockTimeout;

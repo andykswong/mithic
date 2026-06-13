@@ -60,8 +60,9 @@ const instantiateCore = createInstantiateCore({ asyncify: polyfill.installed });
 
 type ComponentEntry = { instantiate: (...args: unknown[]) => Promise<{ run: { run: () => Promise<number> } }>; modules: Record<string, string> };
 
-function createHandler(entry: ComponentEntry): CommandHandler {
+function createHandler(getEntry: () => Promise<ComponentEntry>): CommandHandler {
   return async (args: string[], ctx: CommandContext): Promise<number> => {
+    const entry = await getEntry();
     const shim = new WASIShim({
       async: true,
       sandbox: {
@@ -95,8 +96,8 @@ function createHandler(entry: ComponentEntry): CommandHandler {
   };
 }
 
-const shellHandler = createHandler(shellEntry as unknown as ComponentEntry);
-const coreutilsHandler = createHandler(coreutilsEntry as unknown as ComponentEntry);
+const shellHandler = createHandler(async () => shellEntry as unknown as ComponentEntry);
+const coreutilsHandler = createHandler(async () => coreutilsEntry as unknown as ComponentEntry);
 
 const commandResolver: CommandResolver = (file: string): CommandHandler | undefined => {
   const cmdName = file.includes('/') ? file.split('/').pop()! : file;

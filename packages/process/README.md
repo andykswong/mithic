@@ -42,6 +42,33 @@ const data = input.blockingRead(4096n);
 const exitCode = proc.wait();
 ```
 
+### Async Mode (JSPI/asyncify, no Workers/SAB)
+
+```typescript
+import { SimpleProcessManager } from '@mithic/process/manager/simple';
+
+// SimpleProcessManager runs commands in-process via JSPI or asyncify
+const manager = new SimpleProcessManager({
+  hostStreams: { stdin, stdout, stderr },
+  env: { HOME: '/', PATH: '/bin' },
+});
+
+// CommandHandler returns number | Promise<number>
+manager.commandResolver = (file) => {
+  return async (args, ctx) => {
+    const instance = await instantiateComponent(file, ctx);
+    return instance.run.run(); // JSPI suspends, event loop services other stacks
+  };
+};
+
+// Pipelines work — each process is a separate WASM instance
+const { input, output } = manager.createPipe(); // async pipe (Promise-based blocking)
+const proc = manager.spawn('cat.wasm', ['cat', '/dev/urandom'], { stdout: output });
+// When reader disposes input → writer gets broken-pipe → cat terminates
+```
+
+Stream lifecycle is the handler's responsibility: the handler calls `shim[Symbol.dispose]()` in its `finally` block, which drops the owned streams and propagates EOF/broken-pipe to pipe peers.
+
 ## Key Concepts
 
 ### Stream Inversion
@@ -57,8 +84,9 @@ Traditional process APIs expose `process.stdout` after `spawn`. Mithic inverts t
 - **Writer disposed** → reader gets EOF (`{tag: 'closed'}`)
 - **Reader disposed** → writer gets `broken-pipe` error
 
-Two backing implementations:
-- `QueuePipe` — `Uint8Array[]` queue (same-thread, default)
+Three backing implementations:
+- `QueuePipe` — `Uint8Array[]` queue (same-thread, sync, default)
+- `AsyncQueuePipe` — `Uint8Array[]` queue with Promise-based blocking (same-thread, async). Created via `createPipe({ async: true })`. Used by `SimpleProcessManager` for async mode — `blockingRead()` returns a `Promise<Uint8Array>` when the queue is empty, resolved when data arrives or the pipe closes.
 - `SharedPipe` — `SharedArrayBuffer` ring buffer with `Atomics` (cross-thread)
 
 ### WIT Specification

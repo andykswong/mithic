@@ -46,7 +46,16 @@ Tests use Node.js built-in test runner (`node --test`) with built-in type stripi
 
 - **Pluggable components** — VFS, HTTP, sockets, and process management are all defined as interfaces with injectable implementations, configured via WASI instantiation helpers. This follows SOLID principles for loose coupling and testability.
 - **Isomorphic by design** — Exposes both standard Web APIs for JavaScript consumers (Web File System API) and WASI interfaces for WebAssembly components, backed by the same underlying providers.
-- **Standards-based** — Implements WASI Preview 2 interfaces faithfully. Process management mirrors POSIX semantics (spawn, pipes, signals) with a Worker-per-process model: each spawned WASM component runs in its own Web Worker with SharedPipe ring buffers for cross-Worker I/O and `Atomics`-based blocking semantics. Shell mirrors Bash shell behavior with POSIX mode support. Follows the Unix "everything is a file" philosophy — cloud storage, devices, and IPC are all VFS mounts.
+- **Standards-based** — Implements WASI Preview 2 interfaces faithfully. Process management mirrors POSIX semantics (spawn, pipes, signals) with two execution modes:
+  - **Worker mode**: Each spawned WASM component runs in its own Web Worker with SharedPipe ring buffers for cross-Worker I/O and `Atomics`-based blocking semantics. True parallelism.
+  - **Async mode**: All processes run on the same JS thread as suspended JSPI stacks (or asyncify-instrumented stacks). Cooperative concurrency via Promise yielding. No Workers, no SharedArrayBuffer needed — works in environments without COOP/COEP headers.
+  
+  Shell mirrors Bash shell behavior with POSIX mode support. Follows the Unix "everything is a file" philosophy — cloud storage, devices, and IPC are all VFS mounts.
+- **Disposable ownership convention** — When a component receives a `Disposable` resource, ownership must be explicit:
+  - **Owned**: The receiver calls `[Symbol.dispose]()` when done. The resource's lifetime is tied to the receiver.
+  - **Borrowed**: The receiver uses the resource but does NOT dispose it. The caller retains ownership. For streams, use `borrow()` to make this explicit — the borrow is a non-ref-counted view whose dispose is a no-op.
+  
+  Example: `WASIShim` owns its stdio streams and exposes them as `borrow()` to WASM guests. The handler disposes the shim in its `finally` block, which drops the owned streams and propagates EOF/broken-pipe.
 
 ## WASM Transpilation
 

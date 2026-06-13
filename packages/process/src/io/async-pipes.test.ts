@@ -121,10 +121,13 @@ describe('createAsyncQueuePipe', () => {
       );
     });
 
-    it('checkWrite returns 0 when reader is closed', () => {
+    it('checkWrite throws broken-pipe when reader is closed', () => {
       const { input, output } = createAsyncQueuePipe(1024);
       input[Symbol.dispose]();
-      assert.equal(Number(output.checkWrite()), 0);
+      assert.throws(
+        () => output.checkWrite(),
+        (err: StreamError) => err.tag === 'last-operation-failed',
+      );
     });
   });
 

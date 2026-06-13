@@ -31,10 +31,30 @@ export class InputStream<Sync extends boolean = boolean> {
     this.#refs = refs ?? { count: 1 };
   }
 
-  /** Duplicate this stream: returns a new handle to the same underlying handler. The handler is dropped only when the last handle is disposed. */
   dup(): InputStream<Sync> {
     this.#refs.count++;
     return new InputStream(this.#handler, this.#subscribe, this.#isatty, this.#refs);
+  }
+
+  /** Return a borrowed view that delegates to this stream but does not participate in ref counting. Dispose on the borrow is a no-op — the owner retains responsibility for dropping. */
+  borrow(): InputStream<Sync> {
+    const h = this.#handler;
+    const handler: InputStreamHandler<Sync> = {
+      read: (len) => h.read(len),
+      blockingRead: (len) => h.blockingRead(len),
+      skip: h.skip ? (len) => h.skip!(len) : undefined,
+    };
+    return new InputStream(handler, this.#subscribe, this.#isatty);
+  }
+
+  /** Force-drop: drop handler and zero refs regardless of other handles. */
+  close(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    if (this.#refs.count > 0) {
+      this.#refs.count = 0;
+      if (this.#handler.drop) this.#handler.drop();
+    }
   }
 
   get isatty(): boolean { return this.#isatty; }
@@ -79,10 +99,11 @@ export class InputStream<Sync extends boolean = boolean> {
     );
   }
 
+  /** Ref-counted dispose: drop handler only when last handle is disposed. */
   [Symbol.dispose](): void {
     if (this.#disposed) return;
     this.#disposed = true;
-    if (--this.#refs.count === 0 && this.#handler.drop) {
+    if (this.#refs.count > 0 && --this.#refs.count === 0 && this.#handler.drop) {
       this.#handler.drop();
     }
   }
@@ -92,7 +113,6 @@ export class OutputStream<Sync extends boolean = boolean> {
   #handler: OutputStreamHandler<Sync>;
   #subscribe?: () => Pollable;
   #isatty: boolean;
-  #open = true;
   #disposed = false;
   #refs: { count: number };
 
@@ -103,16 +123,36 @@ export class OutputStream<Sync extends boolean = boolean> {
     this.#refs = refs ?? { count: 1 };
   }
 
-  /** Duplicate this stream: returns a new handle to the same underlying handler. The handler is dropped only when the last handle is disposed. */
   dup(): OutputStream<Sync> {
     this.#refs.count++;
     return new OutputStream(this.#handler, this.#subscribe, this.#isatty, this.#refs);
   }
 
+  /** Return a borrowed view that delegates to this stream but does not participate in ref counting. Dispose on the borrow is a no-op — the owner retains responsibility for dropping. */
+  borrow(): OutputStream<Sync> {
+    const h = this.#handler;
+    const handler: OutputStreamHandler<Sync> = {
+      write: (data) => h.write(data),
+      flush: h.flush ? () => h.flush!() : undefined,
+      checkWrite: h.checkWrite ? () => h.checkWrite!() : undefined,
+    };
+    return new OutputStream(handler, this.#subscribe, this.#isatty);
+  }
+
+  /** Force-drop: drop handler and zero refs regardless of other handles. */
+  close(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    if (this.#refs.count > 0) {
+      this.#refs.count = 0;
+      if (this.#handler.drop) this.#handler.drop();
+    }
+  }
+
   get isatty(): boolean { return this.#isatty; }
 
   checkWrite(): bigint {
-    if (!this.#open) {
+    if (this.#disposed) {
       return 0n;
     }
     if (this.#handler.checkWrite) {
@@ -122,30 +162,35 @@ export class OutputStream<Sync extends boolean = boolean> {
   }
 
   write(contents: Uint8Array): void {
-    if (!this.#open) {
+    if (this.#disposed) {
       throw { tag: 'closed' } as StreamError;
     }
     this.#handler.write(contents);
   }
 
-  blockingWriteAndFlush(contents: Uint8Array): void {
-    if (!this.#open) {
+  blockingWriteAndFlush(contents: Uint8Array): MaybePromise<void, Sync> {
+    if (this.#disposed) {
       throw { tag: 'closed' } as StreamError;
     }
-    // Per WASI spec: block until all data written, writing in chunks based on checkWrite capacity
     let offset = 0;
-    while (offset < contents.byteLength) {
-      const capacity = Number(this.checkWrite());
-      if (capacity <= 0) {
-        const pollable = this.subscribe();
-        pollable.block();
-        continue;
+    const writeLoop = (): MaybePromise<void, Sync> => {
+      while (offset < contents.byteLength) {
+        const capacity = Number(this.checkWrite());
+        if (capacity <= 0) {
+          const pollable = this.subscribe();
+          const result = pollable.block();
+          if (isThenable(result)) {
+            return (result as Promise<void>).then(writeLoop) as MaybePromise<void, Sync>;
+          }
+          continue;
+        }
+        const chunk = contents.subarray(offset, offset + Math.min(contents.byteLength - offset, capacity));
+        this.write(chunk);
+        offset += chunk.byteLength;
       }
-      const chunk = contents.subarray(offset, offset + Math.min(contents.byteLength - offset, capacity));
-      this.write(chunk);
-      offset += chunk.byteLength;
-    }
-    this.flush();
+      return this.flush();
+    };
+    return writeLoop();
   }
 
   flush(): MaybePromise<void, Sync> {
@@ -200,11 +245,11 @@ export class OutputStream<Sync extends boolean = boolean> {
     return BigInt(data.byteLength);
   }
 
+  /** Ref-counted dispose: drop handler only when last handle is disposed. */
   [Symbol.dispose](): void {
     if (this.#disposed) return;
     this.#disposed = true;
-    this.#open = false;
-    if (--this.#refs.count === 0 && this.#handler.drop) {
+    if (this.#refs.count > 0 && --this.#refs.count === 0 && this.#handler.drop) {
       this.#handler.drop();
     }
   }

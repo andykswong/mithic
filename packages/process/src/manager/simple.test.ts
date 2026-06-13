@@ -122,21 +122,15 @@ describe('SimpleProcessManager', () => {
     assert.throws(() => proc.kill('signull'));
   });
 
-  it('handler error produces exit code 1 and writes to stderr', async () => {
+  it('handler error produces exit code 1', async () => {
     const handler: CommandHandler = async () => {
       throw new Error('something went wrong');
     };
     const mgr = new SimpleProcessManager({ commandResolver: () => handler });
-    const stderrPipe = mgr.createPipe();
-    const proc = mgr.spawn('fail', [], { stderr: stderrPipe.output });
-    // wait() is now sync — returns exitCode immediately (0 before async handler settles)
-    // Poll tryWait() after yielding to let the async handler reject
+    const proc = mgr.spawn('fail', []);
     await new Promise(r => setTimeout(r, 10));
     const exitCode = proc.tryWait();
     assert.equal(exitCode, 1);
-    const errData = stderrPipe.input.read(4096n);
-    const errMsg = new TextDecoder().decode(errData);
-    assert.ok(errMsg.includes('something went wrong'));
   });
 
   it('process is removed from table after completion', async () => {
@@ -511,5 +505,53 @@ describe('WASIProcess', () => {
 
     assert.deepEqual(pipe1In.read(1n), new Uint8Array([1]));
     assert.deepEqual(pipe2In.read(1n), new Uint8Array([2]));
+  });
+
+  it('handler dispose signals EOF to pipe reader', async () => {
+    const handler: CommandHandler = async (_args, ctx) => {
+      ctx.stdout.write(new Uint8Array([42]));
+      ctx.stdout[Symbol.dispose]();
+      return 0;
+    };
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const pipe = createPipe({ async: true });
+    const proc = mgr.spawn('test', [], { stdout: pipe.output });
+
+    await proc.wait();
+    const data = await pipe.input.blockingRead(1n);
+    assert.deepEqual(data, new Uint8Array([42]));
+    await assert.rejects(async () => pipe.input.blockingRead(1n), (err: unknown) => {
+      return (err as { tag: string }).tag === 'closed';
+    });
+  });
+
+  it('pipe reader close signals broken-pipe to writer', async () => {
+    let brokenPipe = false;
+    const handler: CommandHandler = async (_args, ctx) => {
+      try {
+        for (let i = 0; i < 100; i++) {
+          const cap = Number(ctx.stdout.checkWrite());
+          if (cap <= 0) break;
+          ctx.stdout.write(new Uint8Array(Math.min(cap, 1024)));
+        }
+      } catch (e: unknown) {
+        if (e && typeof e === 'object' && 'tag' in e) {
+          const err = e as { tag: string; val?: { toDebugString?: () => string } };
+          if (err.val?.toDebugString?.() === 'broken-pipe') {
+            brokenPipe = true;
+          }
+        }
+      }
+      return brokenPipe ? 141 : 0;
+    };
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const pipe = createPipe({ async: true });
+
+    pipe.input.close();
+    const proc = mgr.spawn('producer', [], { stdout: pipe.output });
+
+    const code = await proc.wait();
+    assert.equal(code, 141);
+    assert.ok(brokenPipe);
   });
 });

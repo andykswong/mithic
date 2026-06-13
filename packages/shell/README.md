@@ -26,7 +26,7 @@
   - **Error handling** — Arithmetic expansion errors abort the containing command; proper exit codes propagate through pipes, assignments, for/case/select
 - **Command resolution** — `ProcessManager`-based dispatching to shell, shell builtins, coreutils WASM, host-side commands, PATH-based WASM components and scripts
 - **POSIX mode** — Auto-activates when invoked as `sh`; disables non-standard extensions, including `[[`, `(( ))`, `<<<`, arrays, brace expansion
-- **Pipelines** — `cmd1 | cmd2 | cmd3` and `cmd1 |& cmd2` (pipe stderr+stdout) with true concurrent execution — each pipeline stage runs in its own Worker. Infinite producers terminate correctly via broken-pipe propagation (`cat /dev/zero | head -c 4` works).
+- **Pipelines** — `cmd1 | cmd2 | cmd3` and `cmd1 |& cmd2` (pipe stderr+stdout). In Worker mode, each pipeline stage runs in its own Worker for true parallel execution. In async mode, stages run cooperatively via JSPI/asyncify suspension. Infinite producers terminate correctly via broken-pipe propagation in both modes (`cat /dev/zero | head -c 4` works).
 - **Background jobs** — `cmd &` runs concurrently in a separate Worker
 - **Dynamic WASM execution** — Arbitrary `.wasm` components on the filesystem are transpiled and executed at runtime
 - **Script execution** — Shebang (`#!/bin/sh`) support, PATH lookup with executable permission checks
@@ -242,7 +242,6 @@ The shell has no readline library or terminal raw-mode support. This means:
 
 - No extended glob (`extglob`): `?(pat)`, `*(pat)`, `+(pat)`, `@(pat)`, `!(pat)` not supported
 - No recursive glob (`**`)
-- `${!var}` variable indirection not supported
 
 ### I/O & Redirection
 

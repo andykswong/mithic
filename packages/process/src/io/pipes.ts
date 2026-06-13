@@ -189,7 +189,9 @@ export function createAsyncQueuePipe(bufferSize: number): { input: InputStream; 
 
   const outputHandler: OutputStreamHandler = {
     checkWrite(): number {
-      if (readerClosed) return 0;
+      if (readerClosed) {
+        throw { tag: 'last-operation-failed', val: { toDebugString: () => 'broken-pipe' } } as StreamError;
+      }
       return Math.max(0, bufferSize - buffered);
     },
 
@@ -232,6 +234,7 @@ export function createAsyncQueuePipe(bufferSize: number): { input: InputStream; 
   };
 
   const pendingNotifies: Array<() => void> = [];
+  const pendingWriters: Array<() => void> = [];
 
   const originalWrite = outputHandler.write;
   outputHandler.write = (data: Uint8Array): void => {
@@ -251,6 +254,36 @@ export function createAsyncQueuePipe(bufferSize: number): { input: InputStream; 
     }
   };
 
+  function notifyWriters(): void {
+    if (pendingWriters.length > 0) {
+      const writers = pendingWriters.splice(0);
+      for (const w of writers) w();
+    }
+  }
+
+  const originalRead = inputHandler.read;
+  inputHandler.read = (len: number): Uint8Array | undefined => {
+    const result = originalRead.call(inputHandler, len);
+    if (result && result.byteLength > 0) notifyWriters();
+    return result;
+  };
+
+  const originalBlockingRead = inputHandler.blockingRead;
+  inputHandler.blockingRead = (len: number): Uint8Array | Promise<Uint8Array> => {
+    const result = originalBlockingRead.call(inputHandler, len);
+    if (result instanceof Promise) {
+      return result.then(data => { notifyWriters(); return data; });
+    }
+    if (result.byteLength > 0) notifyWriters();
+    return result;
+  };
+
+  const originalInputDrop = inputHandler.drop!;
+  inputHandler.drop = (): void => {
+    originalInputDrop.call(inputHandler);
+    notifyWriters();
+  };
+
   return {
     input: new InputStream(
       inputHandler,
@@ -264,7 +297,18 @@ export function createAsyncQueuePipe(bufferSize: number): { input: InputStream; 
         },
       ),
     ),
-    output: new OutputStream(outputHandler, () => new Pollable(() => readerClosed || buffered < bufferSize)),
+    output: new OutputStream(
+      outputHandler,
+      () => new Pollable(
+        () => readerClosed || buffered < bufferSize,
+        () => {
+          if (readerClosed || buffered < bufferSize) return;
+          return new Promise<void>(resolve => {
+            pendingWriters.push(resolve);
+          });
+        },
+      ),
+    ),
   };
 }
 

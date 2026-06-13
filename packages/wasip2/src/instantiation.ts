@@ -53,6 +53,15 @@ export interface WASIShimConfig {
 
 export type WASIImportObject = { [key: string]: object };
 
+/**
+ * Configurable WASI Preview 2 shim for WebAssembly component instantiation.
+ *
+ * **Stream ownership**: WASIShim owns the stdio streams passed to it via config.
+ * `getImportObject()` exposes stdin/stdout/stderr as `borrow()` — non-ref-counted
+ * views whose `[Symbol.dispose]()` is a no-op. This means JCO's resource-drop on
+ * the borrowed handle is harmless. The shim's own `[Symbol.dispose]()` drops the
+ * owned streams (ref 1->0), triggering `handler.drop()` for EOF/broken-pipe propagation.
+ */
 export class WASIShim implements Disposable {
   #environment: WasiEnvironment | null = null;
   #preopens: WasiPreopens | null = null;
@@ -117,9 +126,9 @@ export class WASIShim implements Disposable {
     return {
       'wasi:cli/environment': this.#environment ?? cli.environment,
       'wasi:cli/exit': cli.exit,
-      'wasi:cli/stdin': this.#stdinStream ? { InputStream, getStdin: () => this.#stdinStream!.dup() } : cli.stdin,
-      'wasi:cli/stdout': this.#stdoutStream ? { OutputStream, getStdout: () => this.#stdoutStream!.dup() } : cli.stdout,
-      'wasi:cli/stderr': this.#stderrStream ? { OutputStream, getStderr: () => this.#stderrStream!.dup() } : cli.stderr,
+      'wasi:cli/stdin': this.#stdinStream ? { InputStream, getStdin: () => this.#stdinStream!.borrow() } : cli.stdin,
+      'wasi:cli/stdout': this.#stdoutStream ? { OutputStream, getStdout: () => this.#stdoutStream!.borrow() } : cli.stdout,
+      'wasi:cli/stderr': this.#stderrStream ? { OutputStream, getStderr: () => this.#stderrStream!.borrow() } : cli.stderr,
       'wasi:cli/terminal-input': cli.terminalInput,
       'wasi:cli/terminal-output': cli.terminalOutput,
       'wasi:cli/terminal-stdin': this.#terminalStdin ?? cli.terminalStdin,

@@ -175,21 +175,13 @@ export class SimpleProcessManager implements ProcessManager {
       exitPromise = result.then(
         (code: number) => {
           done = true;
-          if (!killed) {
-            exitCode = code ?? 0;
-          }
+          if (!killed) exitCode = code ?? 0;
           this.table.remove(pid);
           return exitCode ?? 0;
         },
-        (err: unknown) => {
+        () => {
           done = true;
-          if (!killed) {
-            try {
-              const msg = new TextEncoder().encode(String(err));
-              childStderr.write(msg);
-            } catch { /* stderr may be closed */ }
-            exitCode = 1;
-          }
+          if (!killed) exitCode = 1;
           this.table.remove(pid);
           return exitCode ?? 0;
         },
@@ -200,7 +192,7 @@ export class SimpleProcessManager implements ProcessManager {
   }
 
   createPipe(options?: PipeOptions): { input: InputStream; output: OutputStream } {
-    return createPipeImpl(options);
+    return createPipeImpl({ async: true, ...options });
   }
 
   dupOutputStream(stream: OutputStream): OutputStream {
