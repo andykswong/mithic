@@ -26,7 +26,7 @@
 </li>
 <li><strong>Command resolution</strong> — <code>ProcessManager</code>-based dispatching to shell, shell builtins, coreutils WASM, host-side commands, PATH-based WASM components and scripts</li>
 <li><strong>POSIX mode</strong> — Auto-activates when invoked as <code>sh</code>; disables non-standard extensions, including <code>[[</code>, <code>(( ))</code>, <code>&lt;&lt;&lt;</code>, arrays, brace expansion</li>
-<li><strong>Pipelines</strong> — <code>cmd1 | cmd2 | cmd3</code> and <code>cmd1 |&amp; cmd2</code> (pipe stderr+stdout) with true concurrent execution — each pipeline stage runs in its own Worker. Infinite producers terminate correctly via broken-pipe propagation (<code>cat /dev/zero | head -c 4</code> works).</li>
+<li><strong>Pipelines</strong> — <code>cmd1 | cmd2 | cmd3</code> and <code>cmd1 |&amp; cmd2</code> (pipe stderr+stdout). In Worker mode, each pipeline stage runs in its own Worker for true parallel execution. In async mode, stages run cooperatively via JSPI/asyncify suspension. Infinite producers terminate correctly via broken-pipe propagation in both modes (<code>cat /dev/zero | head -c 4</code> works).</li>
 <li><strong>Background jobs</strong> — <code>cmd &amp;</code> runs concurrently in a separate Worker</li>
 <li><strong>Dynamic WASM execution</strong> — Arbitrary <code>.wasm</code> components on the filesystem are transpiled and executed at runtime</li>
 <li><strong>Script execution</strong> — Shebang (<code>#!/bin/sh</code>) support, PATH lookup with executable permission checks</li>
@@ -160,8 +160,6 @@ world shell {
 <ul>
 <li>No extended glob (<code>extglob</code>): <code>?(pat)</code>, <code>*(pat)</code>, <code>+(pat)</code>, <code>@(pat)</code>, <code>!(pat)</code> not supported</li>
 <li>No recursive glob (<code>**</code>)</li>
-<li>No named POSIX character classes (<code>[[:digit:]]</code>)</li>
-<li><code>${!var}</code> variable indirection not supported</li>
 </ul>
 <h3 id="io-redirection" class="tsd-anchor-link">I/O &amp; Redirection<a href="#io-redirection" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul>
