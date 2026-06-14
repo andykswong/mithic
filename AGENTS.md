@@ -12,8 +12,9 @@ packages/
 ├── wasip2/         @mithic/wasip2         — WASI P2 shim (thin adapter over @mithic/io)
 ├── process/        @mithic/process        — mithic:process WIT, Process spawn, Worker-per-process execution, SharedPipe, CompilerBridge for dynamic WASM
 ├── shell/          @mithic/shell          — Rust WASM shell: POSIX-compatible WASI P2 component
+├── commands/
+│   └── jq/         @mithic/jq             — jq JSON processor WASM component
 ├── coreutils/      @mithic/coreutils      — BusyBox-style Unix coreutils WASM component (35 commands)
-├── jq/             @mithic/jq             — jq JSON processor WASM component
 ├── wasm-transpile/ @mithic/wasm-transpile — WASM component transpiler (JCO wrapper + asyncify JSPI polyfill)
 ├── worker/         @mithic/worker         — Web Worker polyfill for Node.js (isomorphic new Worker())
 └── examples/

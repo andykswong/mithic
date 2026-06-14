@@ -67,7 +67,7 @@
     "./packages/process",
     "./packages/wasm-transpile",
     "./packages/coreutils",
-    "./packages/jq",
+    "./packages/commands/jq",
     "./packages/shell",
     "./packages/examples/component-js",
     "./packages/examples/component-rust",

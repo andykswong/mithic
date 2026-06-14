@@ -2,7 +2,7 @@
 members = [
   "packages/shell",
   "packages/coreutils",
-  "packages/jq",
+  "packages/commands/jq",
   "packages/examples/component-rust"
 ]
 resolver = "2"

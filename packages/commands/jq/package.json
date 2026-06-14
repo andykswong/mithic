@@ -31,7 +31,7 @@
     "prebuild": "mkdir -p dist/wasm/core dist/wasm/core-asyncify dist/ts",
     "build": "npm run build:rust && npm run build:ts",
     "build:rust": "cargo build -p $npm_package_config_crate -r --target $npm_package_config_target",
-    "postbuild:rust": "cp ../../target/${npm_package_config_target}/release/${npm_package_config_crate}.wasm ./dist/wasm/component.wasm && ../../bin/wasm-tools strip ./dist/wasm/component.wasm -o ./dist/wasm/component.wasm && npm run transpile",
+    "postbuild:rust": "cp ../../../target/${npm_package_config_target}/release/${npm_package_config_crate}.wasm ./dist/wasm/component.wasm && ../../../bin/wasm-tools strip ./dist/wasm/component.wasm -o ./dist/wasm/component.wasm && npm run transpile",
     "build:ts": "vite build",
     "transpile": "wasm-transpile ./dist/wasm/component.wasm -o ./dist/wasm --variants sync,jspi,asyncify --asyncify-pages 4",
     "typecheck": "tsc --noEmit"
