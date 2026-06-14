@@ -325,12 +325,16 @@ impl Lexer {
             }
         };
 
-        // Skip rest of current line (consume until newline)
+        // Save remaining text on this line (e.g., "> /tmp/file") for tokenization after heredoc body.
+        // In bash, `cat << EOF > file` means the `> file` is part of the command's redirect list.
+        let mut trailing: Vec<char> = Vec::new();
         while self.peek() != Some('\n') && self.peek().is_some() {
-            self.advance();
+            trailing.push(self.chars[self.pos]);
+            self.pos += 1;
+            self.col += 1;
         }
         if self.peek() == Some('\n') {
-            self.advance(); // consume the newline
+            self.advance(); // consume the newline before heredoc body
         }
 
         // Read content lines until a line matches the delimiter exactly
@@ -362,6 +366,16 @@ impl Lexer {
             if self.peek().is_none() {
                 break; // EOF before delimiter found
             }
+        }
+
+        // Re-inject trailing text (e.g., " > /tmp/file") back into the input stream
+        // so it gets tokenized as part of the same command (redirects following the heredoc).
+        // Append a newline to terminate the logical command line.
+        if !trailing.is_empty() {
+            let mut inject: Vec<char> = trailing;
+            inject.push('\n');
+            let insert_pos = self.pos;
+            self.chars.splice(insert_pos..insert_pos, inject);
         }
 
         Token::HereDoc(content, expand)
@@ -996,5 +1010,53 @@ mod tests {
     fn test_herestring_still_works() {
         assert_eq!(lex("<<<"), vec![Token::HereString]);
         assert_eq!(lex("<<< word"), vec![Token::HereString, word(vec![lit("word")])]);
+    }
+
+    #[test]
+    fn test_heredoc_with_output_redirect() {
+        // `cat << EOF > /tmp/file` should produce HereDoc + Gt + Word tokens
+        let tokens = lex("cat << EOF > /tmp/file\nhello\nEOF\n");
+        assert_eq!(tokens, vec![
+            word(vec![lit("cat")]),
+            Token::HereDoc("hello\n".into(), true),
+            Token::Gt,
+            word(vec![lit("/tmp/file")]),
+            Token::Newline,
+        ]);
+    }
+
+    #[test]
+    fn test_heredoc_with_append_redirect() {
+        let tokens = lex("cat << EOF >> /tmp/file\ndata\nEOF\n");
+        assert_eq!(tokens, vec![
+            word(vec![lit("cat")]),
+            Token::HereDoc("data\n".into(), true),
+            Token::GtGt,
+            word(vec![lit("/tmp/file")]),
+            Token::Newline,
+        ]);
+    }
+
+    #[test]
+    fn test_heredoc_with_stderr_and_output_redirect() {
+        let tokens = lex("cat << EOF 2>/dev/null > /tmp/file\ndata\nEOF\n");
+        assert_eq!(tokens, vec![
+            word(vec![lit("cat")]),
+            Token::HereDoc("data\n".into(), true),
+            Token::Fd2Gt,
+            word(vec![lit("/dev/null")]),
+            Token::Gt,
+            word(vec![lit("/tmp/file")]),
+            Token::Newline,
+        ]);
+    }
+
+    #[test]
+    fn test_heredoc_no_trailing_unchanged() {
+        // Without trailing redirect, behavior unchanged
+        let tokens = lex("<<EOF\nhello\nEOF\n");
+        assert_eq!(tokens, vec![
+            Token::HereDoc("hello\n".into(), true),
+        ]);
     }
 }

@@ -167,3 +167,66 @@ describe('/dev/tcp and /dev/udp', () => {
     assert.ok(!stderr.includes('not supported'), `Should not say "not supported", got: ${stderr}`);
   });
 });
+
+describe('heredoc with output redirect', () => {
+  it('cat << EOF > file writes heredoc content to file', async () => {
+    const { stdout } = await runShell(
+      'cat << EOF > /tmp/heredoc_out.txt\nhello\nEOF\ncat /tmp/heredoc_out.txt\n'
+    );
+    assert.strictEqual(stdout.trim(), 'hello');
+  });
+
+  it('cat << EOF >> file appends heredoc content', async () => {
+    const { stdout } = await runShell(
+      'echo first > /tmp/heredoc_append.txt\ncat << EOF >> /tmp/heredoc_append.txt\nsecond\nEOF\ncat /tmp/heredoc_append.txt\n'
+    );
+    assert.strictEqual(stdout.trim(), 'first\nsecond');
+  });
+
+  it('heredoc with JSON content writes correctly', async () => {
+    const { stdout } = await runShell(
+      'cat << EOF > /tmp/heredoc_json.json\n{"key": "value"}\nEOF\ncat /tmp/heredoc_json.json\n'
+    );
+    assert.strictEqual(stdout.trim(), '{"key": "value"}');
+  });
+
+  it('heredoc with quoted delimiter and output redirect', async () => {
+    const { stdout } = await runShell(
+      'export HOME=/home\ncat << \'EOF\' > /tmp/heredoc_literal.txt\n$HOME\nEOF\ncat /tmp/heredoc_literal.txt\n'
+    );
+    assert.strictEqual(stdout.trim(), '$HOME');
+  });
+
+  it('heredoc multi-line with output redirect', async () => {
+    const { stdout } = await runShell(
+      'cat << EOF > /tmp/heredoc_multi.txt\nline 1\nline 2\nline 3\nEOF\ncat /tmp/heredoc_multi.txt\n'
+    );
+    assert.strictEqual(stdout.trim(), 'line 1\nline 2\nline 3');
+  });
+
+  it('heredoc with strip tabs (<<-) and output redirect', async () => {
+    const { stdout } = await runShell(
+      'cat <<- EOF > /tmp/heredoc_tabs.txt\n\thello\n\tEOF\ncat /tmp/heredoc_tabs.txt\n'
+    );
+    assert.strictEqual(stdout.trim(), 'hello');
+  });
+
+  it('heredoc with stderr redirect and output redirect', async () => {
+    const { stdout } = await runShell(
+      'cat << EOF 2>/dev/null > /tmp/heredoc_fd.txt\ndata\nEOF\ncat /tmp/heredoc_fd.txt\n'
+    );
+    assert.strictEqual(stdout.trim(), 'data');
+  });
+
+  it('basic heredoc without redirect still works', async () => {
+    const { stdout } = await runShell('cat << EOF\nhello world\nEOF\n');
+    assert.strictEqual(stdout.trim(), 'hello world');
+  });
+
+  it('heredoc redirect does not leak to stdout', async () => {
+    const { stdout } = await runShell(
+      'cat << EOF > /tmp/heredoc_noleak.txt\nsecret\nEOF\necho done\n'
+    );
+    assert.strictEqual(stdout.trim(), 'done');
+  });
+});

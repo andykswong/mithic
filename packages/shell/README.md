@@ -13,7 +13,7 @@
 ### Features
 
 - **Bash compatible** - Implements full bash syntax and semantics, including:
-  - **Redirections** — `>`, `>>`, `<`, `2>`, `2>&1`, `&>`, `<<<`, `N>`, `N>>`, `N>&M`, `N>&-`
+  - **Redirections** — `>`, `>>`, `<`, `<<`, `<<-`, `<<<`, `2>`, `2>&1`, `&>`, `N>`, `N>>`, `N>&M`, `N>&-`
   - **Control flow** — `if/elif/else/fi`, `while/until/do/done`, `for/in/do/done`, `case/esac`, `select`
   - **Functions** — `name() { body; }` with positional parameters, `return`
   - **Arrays** — `arr=(a b c)`, `${arr[0]}`, `${arr[@]}`, `${#arr[@]}`, negative indices, sparse arrays
