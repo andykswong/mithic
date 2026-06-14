@@ -73,11 +73,12 @@ pub struct Lexer {
     pos: usize,
     line: u32,
     col: u32,
+    pub extglob: bool,
 }
 
 impl Lexer {
     pub fn new(input: &str) -> Self {
-        Lexer { chars: input.chars().collect(), pos: 0, line: 1, col: 1 }
+        Lexer { chars: input.chars().collect(), pos: 0, line: 1, col: 1, extglob: false }
     }
 
     pub fn span(&self) -> Span {
@@ -395,6 +396,32 @@ impl Lexer {
         loop {
             match self.peek() {
                 None => break,
+                // Extglob: ?(, *(, +(, @(, !( — consume the entire extglob expression as literal
+                Some(c) if self.extglob && matches!(c, '?' | '*' | '+' | '@' | '!') && self.peek2() == Some('(') => {
+                    buf.push(c);
+                    self.advance(); // consume operator char
+                    buf.push('(');
+                    self.advance(); // consume '('
+                    let mut depth = 1u32;
+                    while depth > 0 {
+                        match self.peek() {
+                            None => break,
+                            Some('(') => { buf.push('('); self.advance(); depth += 1; }
+                            Some(')') => {
+                                depth -= 1;
+                                if depth > 0 { buf.push(')'); }
+                                self.advance();
+                            }
+                            Some('\\') => {
+                                self.advance();
+                                buf.push('\\');
+                                if let Some(c2) = self.peek() { buf.push(c2); self.advance(); }
+                            }
+                            Some(ch) => { buf.push(ch); self.advance(); }
+                        }
+                    }
+                    buf.push(')');
+                }
                 // Hard delimiters — end word
                 Some(c) if matches!(c, ' ' | '\t' | '\n' | '|' | '&' | ';' | '(' | ')') => break,
                 // Redirect operators — end word (special: digit followed by '>' or '<' is handled

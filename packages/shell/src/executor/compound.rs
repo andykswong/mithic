@@ -3,7 +3,7 @@ use crate::shell::Shell;
 use crate::parser::{Command, List, ListItem, ListOp};
 use crate::parser::{ArrayAssign, Redirect};
 use crate::value::ShellValue;
-use crate::executor::expansion::glob_match;
+use crate::executor::expansion::glob_match_ext;
 
 impl<R: Runtime> Shell<R> {
     pub(crate) fn exec_list_with_stdout(&mut self, list: List, stdout: OutputHandle) -> u8 {
@@ -344,7 +344,7 @@ impl<R: Runtime> Shell<R> {
         for arm in cmd.arms {
             let matched = arm.patterns.iter().any(|pat| {
                 let pattern = self.expand_word(pat);
-                glob_match(&pattern, &value)
+                glob_match_ext(&pattern, &value, self.options.extglob)
             });
             if matched {
                 return self.exec_list_redirected(arm.body, &cmd.redirects);

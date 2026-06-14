@@ -21,7 +21,7 @@
   - **Parameter expansion** — `${VAR:-default}`, `${VAR:+alt}`, `${VAR#pat}`, `${VAR%pat}`, `${VAR//pat/rep}`, `${VAR:offset:length}`
   - **Brace expansion** — `{a,b,c}`, `{1..10..2}`, `{a..z}`, nesting
   - **Process substitution** — `<(cmd)`
-  - **Glob expansion** — `*`, `?`, `[...]`
+  - **Glob expansion** — `*`, `?`, `[...]`, extglob (`?(pat)`, `*(pat)`, `+(pat)`, `@(pat)`, `!(pat)`), globstar (`**`)
   - **Builtins** — `cd`, `echo`, `export`, `unset`, `read`, `test`/`[`/`[[`, `declare`/`local`, `source`, `shopt`, `true`, `false`
   - **Error handling** — Arithmetic expansion errors abort the containing command; proper exit codes propagate through pipes, assignments, for/case/select
 - **Command resolution** — `ProcessManager`-based dispatching to shell, shell builtins, coreutils WASM, host-side commands, PATH-based WASM components and scripts
@@ -240,8 +240,7 @@ The shell has no readline library or terminal raw-mode support. This means:
 
 ### Glob & Expansion
 
-- No extended glob (`extglob`): `?(pat)`, `*(pat)`, `+(pat)`, `@(pat)`, `!(pat)` not supported
-- No recursive glob (`**`)
+- No `GLOBIGNORE`
 
 ### I/O & Redirection
 

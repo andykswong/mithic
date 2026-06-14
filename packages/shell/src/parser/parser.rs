@@ -25,6 +25,13 @@ impl Parser {
         Parser { tokens, spans, pos: 0, errors: Vec::new(), posix }
     }
 
+    pub fn new_with_options(input: &str, posix: bool, extglob: bool) -> Self {
+        let mut lexer = Lexer::new(input);
+        lexer.extglob = extglob;
+        let (tokens, spans) = lexer.tokenize_with_spans();
+        Parser { tokens, spans, pos: 0, errors: Vec::new(), posix }
+    }
+
     pub fn errors(&self) -> &[ParseError] {
         &self.errors
     }
@@ -566,12 +573,13 @@ impl Parser {
     fn parse_double_bracket(&mut self) -> Command {
         self.advance(); // consume [[
         let mut words = vec![Word::literal("[[")];
+        let mut after_pattern_op = false;
         loop {
             match self.peek() {
                 Token::DoubleBracketClose => { self.advance(); break; }
                 Token::Eof => break,
-                Token::AmpAmp => { self.advance(); words.push(Word::literal("&&")); }
-                Token::PipePipe => { self.advance(); words.push(Word::literal("||")); }
+                Token::AmpAmp => { self.advance(); words.push(Word::literal("&&")); after_pattern_op = false; }
+                Token::PipePipe => { self.advance(); words.push(Word::literal("||")); after_pattern_op = false; }
                 _ => {
                     if let Some(w) = self.parse_word() {
                         // When the operator is =~, the RHS is a raw regex pattern.
@@ -579,7 +587,22 @@ impl Parser {
                         // because the lexer splits on ( and ) which are valid regex syntax.
                         let is_regex_op = w.0.len() == 1
                             && matches!(&w.0[0], WordPart::Literal(s) if s == "=~");
-                        words.push(w);
+                        let is_pattern_op = w.0.len() == 1
+                            && matches!(&w.0[0], WordPart::Literal(s) if s == "==" || s == "=" || s == "!=");
+
+                        if after_pattern_op {
+                            // RHS of == or != — mark Literal parts as Quoted to prevent
+                            // glob/filename expansion while preserving the pattern for matching.
+                            let quoted_word = Word(w.0.into_iter().map(|p| match p {
+                                WordPart::Literal(s) => WordPart::Quoted(s),
+                                other => other,
+                            }).collect());
+                            words.push(quoted_word);
+                            after_pattern_op = false;
+                        } else {
+                            words.push(w);
+                        }
+
                         if is_regex_op {
                             let pattern_word = self.collect_regex_pattern();
                             if !pattern_word.0.is_empty() {
@@ -587,6 +610,7 @@ impl Parser {
                             }
                             break;
                         }
+                        after_pattern_op = is_pattern_op;
                     } else {
                         self.advance();
                     }

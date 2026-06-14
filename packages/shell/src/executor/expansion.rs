@@ -18,40 +18,40 @@ pub(crate) fn split_var_and_op(raw: &str) -> (&str, &str) {
     (&raw[..end], &raw[end..])
 }
 
-pub(crate) fn remove_shortest_prefix(val: &str, pattern: &str) -> String {
+pub(crate) fn remove_shortest_prefix(val: &str, pattern: &str, extglob: bool) -> String {
     for i in 0..=val.len() {
         if !val.is_char_boundary(i) { continue; }
-        if glob_match(pattern, &val[..i]) {
+        if glob_match_ext(pattern, &val[..i], extglob) {
             return val[i..].to_string();
         }
     }
     val.to_string()
 }
 
-pub(crate) fn remove_longest_prefix(val: &str, pattern: &str) -> String {
+pub(crate) fn remove_longest_prefix(val: &str, pattern: &str, extglob: bool) -> String {
     for i in (0..=val.len()).rev() {
         if !val.is_char_boundary(i) { continue; }
-        if glob_match(pattern, &val[..i]) {
+        if glob_match_ext(pattern, &val[..i], extglob) {
             return val[i..].to_string();
         }
     }
     val.to_string()
 }
 
-pub(crate) fn remove_shortest_suffix(val: &str, pattern: &str) -> String {
+pub(crate) fn remove_shortest_suffix(val: &str, pattern: &str, extglob: bool) -> String {
     for i in (0..=val.len()).rev() {
         if !val.is_char_boundary(i) { continue; }
-        if glob_match(pattern, &val[i..]) {
+        if glob_match_ext(pattern, &val[i..], extglob) {
             return val[..i].to_string();
         }
     }
     val.to_string()
 }
 
-pub(crate) fn remove_longest_suffix(val: &str, pattern: &str) -> String {
+pub(crate) fn remove_longest_suffix(val: &str, pattern: &str, extglob: bool) -> String {
     for i in 0..=val.len() {
         if !val.is_char_boundary(i) { continue; }
-        if glob_match(pattern, &val[i..]) {
+        if glob_match_ext(pattern, &val[i..], extglob) {
             return val[..i].to_string();
         }
     }
@@ -114,10 +114,235 @@ pub(crate) fn has_glob(s: &str) -> bool {
     s.contains('*') || s.contains('?') || s.contains('[')
 }
 
+pub(crate) fn has_glob_ext(s: &str, extglob: bool) -> bool {
+    if has_glob(s) { return true; }
+    if extglob { has_extglob_pattern(s) } else { false }
+}
+
+fn has_extglob_pattern(s: &str) -> bool {
+    let chars: Vec<char> = s.chars().collect();
+    for i in 0..chars.len().saturating_sub(1) {
+        if matches!(chars[i], '?' | '*' | '+' | '@' | '!') && chars[i + 1] == '(' {
+            return true;
+        }
+    }
+    false
+}
+
 pub(crate) fn glob_match(pattern: &str, name: &str) -> bool {
     let pat: Vec<char> = pattern.chars().collect();
     let nam: Vec<char> = name.chars().collect();
     glob_match_inner(&pat, &nam)
+}
+
+pub(crate) fn glob_match_ext(pattern: &str, name: &str, extglob: bool) -> bool {
+    if !extglob {
+        return glob_match(pattern, name);
+    }
+    let pat: Vec<char> = pattern.chars().collect();
+    let nam: Vec<char> = name.chars().collect();
+    glob_match_ext_inner(&pat, &nam)
+}
+
+fn find_closing_paren(pat: &[char], start: usize) -> Option<usize> {
+    let mut depth = 1;
+    let mut i = start;
+    while i < pat.len() {
+        if pat[i] == '(' {
+            depth += 1;
+        } else if pat[i] == ')' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn split_alternatives(pat: &[char]) -> Vec<&[char]> {
+    let mut alts = Vec::new();
+    let mut start = 0;
+    let mut depth = 0;
+    for i in 0..pat.len() {
+        if pat[i] == '(' {
+            depth += 1;
+        } else if pat[i] == ')' {
+            depth -= 1;
+        } else if pat[i] == '|' && depth == 0 {
+            alts.push(&pat[start..i]);
+            start = i + 1;
+        }
+    }
+    alts.push(&pat[start..]);
+    alts
+}
+
+fn glob_match_ext_inner(pat: &[char], name: &[char]) -> bool {
+    if pat.is_empty() && name.is_empty() { return true; }
+    if pat.is_empty() { return false; }
+
+    // Check for extglob operator: ?(, *(, +(, @(, !(
+    if pat.len() >= 2 && pat[1] == '(' && matches!(pat[0], '?' | '*' | '+' | '@' | '!') {
+        let op = pat[0];
+        if let Some(close) = find_closing_paren(pat, 2) {
+            let alternatives = split_alternatives(&pat[2..close]);
+            let rest = &pat[close + 1..];
+
+            match op {
+                '@' => {
+                    // Exactly one of the alternatives
+                    for alt in &alternatives {
+                        // Try matching alt + rest against name
+                        if match_concat_ext(alt, rest, name) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+                '?' => {
+                    // Zero or one occurrence
+                    // Try zero: match rest against name
+                    if glob_match_ext_inner(rest, name) {
+                        return true;
+                    }
+                    // Try one of the alternatives
+                    for alt in &alternatives {
+                        if match_concat_ext(alt, rest, name) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+                '*' => {
+                    // Zero or more occurrences
+                    // Try zero: match rest against name
+                    if glob_match_ext_inner(rest, name) {
+                        return true;
+                    }
+                    // Try one alternative then recurse with *(...)rest
+                    for alt in &alternatives {
+                        for consumed in 1..=name.len() {
+                            if glob_match_ext_inner(alt, &name[..consumed]) {
+                                // After consuming, try *(...)rest on remainder
+                                let mut new_pat = Vec::with_capacity(pat.len());
+                                new_pat.extend_from_slice(&pat[..close + 1]);
+                                new_pat.extend_from_slice(rest);
+                                if glob_match_ext_inner(&new_pat, &name[consumed..]) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                    return false;
+                }
+                '+' => {
+                    // One or more occurrences — same as @(...) followed by *(...)
+                    for alt in &alternatives {
+                        for consumed in 1..=name.len() {
+                            if glob_match_ext_inner(alt, &name[..consumed]) {
+                                // Build *(...)rest pattern for remainder
+                                let mut star_pat = vec!['*', '('];
+                                star_pat.extend_from_slice(&pat[2..close]);
+                                star_pat.push(')');
+                                star_pat.extend_from_slice(rest);
+                                if glob_match_ext_inner(&star_pat, &name[consumed..]) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                    return false;
+                }
+                '!' => {
+                    // Anything except the patterns
+                    // !(pat)rest matches if the entire string matches rest when we can
+                    // consume a prefix that doesn't match any of the alternatives.
+                    // Bash semantics: try every possible split point; at each point,
+                    // the prefix must NOT match any alternative, and the suffix must match rest.
+                    // Also: the whole string might match rest directly (zero-char prefix consumed).
+                    // First try matching the whole name against rest (consuming zero chars for !)
+                    if glob_match_ext_inner(rest, name) {
+                        // But only if the empty string doesn't match any alternative
+                        let empty_matches_alt = alternatives.iter().any(|alt| {
+                            glob_match_ext_inner(alt, &[])
+                        });
+                        if !empty_matches_alt {
+                            return true;
+                        }
+                    }
+                    // Try consuming 1..=name.len() chars as "not matching any alt"
+                    for consumed in 1..=name.len() {
+                        let prefix = &name[..consumed];
+                        let any_alt_matches = alternatives.iter().any(|alt| {
+                            glob_match_ext_inner(alt, prefix)
+                        });
+                        if !any_alt_matches {
+                            if glob_match_ext_inner(rest, &name[consumed..]) {
+                                return true;
+                            }
+                        }
+                    }
+                    return false;
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    // Not an extglob operator — fall through to regular matching with ext support
+    match (pat.first(), name.first()) {
+        (None, None) => true,
+        (None, _) => false,
+        (Some(&'*'), _) => {
+            for skip in 0..=name.len() {
+                if glob_match_ext_inner(&pat[1..], &name[skip..]) {
+                    return true;
+                }
+            }
+            false
+        }
+        (Some(&'?'), Some(_)) => glob_match_ext_inner(&pat[1..], &name[1..]),
+        (Some(&'?'), None) => false,
+        (Some(&'['), _) => {
+            let close = find_bracket_close(&pat[1..]);
+            if let Some(rel) = close {
+                let class = &pat[1..1 + rel];
+                let rest = &pat[2 + rel..];
+                if let Some(&nc) = name.first() {
+                    if char_class_matches(class, nc) {
+                        return glob_match_ext_inner(rest, &name[1..]);
+                    }
+                }
+                false
+            } else {
+                if name.first() == Some(&'[') {
+                    glob_match_ext_inner(&pat[1..], &name[1..])
+                } else {
+                    false
+                }
+            }
+        }
+        (Some(pc), Some(nc)) => {
+            if pc == nc {
+                glob_match_ext_inner(&pat[1..], &name[1..])
+            } else {
+                false
+            }
+        }
+        (Some(_), None) => false,
+    }
+}
+
+fn match_concat_ext(first: &[char], second: &[char], name: &[char]) -> bool {
+    // Try all split points: first matches name[..i], second matches name[i..]
+    for i in 0..=name.len() {
+        if glob_match_ext_inner(first, &name[..i]) && glob_match_ext_inner(second, &name[i..]) {
+            return true;
+        }
+    }
+    false
 }
 
 fn matches_posix_class(name: &str, c: char) -> bool {
@@ -267,14 +492,13 @@ fn glob_match_inner(pat: &[char], name: &[char]) -> bool {
     }
 }
 
-pub(crate) fn glob_replace_first(val: &str, pattern: &str, replacement: &str) -> String {
+pub(crate) fn glob_replace_first(val: &str, pattern: &str, replacement: &str, extglob: bool) -> String {
     if pattern.is_empty() { return val.to_string(); }
     let chars: Vec<char> = val.chars().collect();
-    // For each start position, try longest match first (greedy, matching bash behavior)
     for start in 0..chars.len() {
         for end in (start + 1..=chars.len()).rev() {
             let substr: String = chars[start..end].iter().collect();
-            if glob_match(pattern, &substr) {
+            if glob_match_ext(pattern, &substr, extglob) {
                 let prefix: String = chars[..start].iter().collect();
                 let suffix: String = chars[end..].iter().collect();
                 return format!("{}{}{}", prefix, replacement, suffix);
@@ -284,17 +508,16 @@ pub(crate) fn glob_replace_first(val: &str, pattern: &str, replacement: &str) ->
     val.to_string()
 }
 
-pub(crate) fn glob_replace_all(val: &str, pattern: &str, replacement: &str) -> String {
+pub(crate) fn glob_replace_all(val: &str, pattern: &str, replacement: &str, extglob: bool) -> String {
     if pattern.is_empty() { return val.to_string(); }
     let chars: Vec<char> = val.chars().collect();
     let mut result = String::new();
     let mut i = 0;
     while i < chars.len() {
         let mut matched = false;
-        // Try longest match first at position i (greedy, matching bash behavior)
         for end in (i + 1..=chars.len()).rev() {
             let substr: String = chars[i..end].iter().collect();
-            if glob_match(pattern, &substr) {
+            if glob_match_ext(pattern, &substr, extglob) {
                 result.push_str(replacement);
                 i = end;
                 matched = true;
@@ -327,7 +550,7 @@ pub(crate) fn normalize_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{expand_tilde, glob_match, glob_replace_all, glob_replace_first, has_glob, normalize_path};
+    use super::{expand_tilde, glob_match, glob_match_ext, glob_replace_all, glob_replace_first, has_glob, has_glob_ext, normalize_path};
 
     #[test]
     fn test_tilde_expansion_in_word() {
@@ -436,21 +659,21 @@ mod tests {
 
     #[test]
     fn test_glob_replace_first_star() {
-        assert_eq!(glob_replace_first("hello", "h*", "X"), "X");
-        assert_eq!(glob_replace_first("hello", "h?", "X"), "Xllo");
-        assert_eq!(glob_replace_first("hello", "l", "L"), "heLlo");
+        assert_eq!(glob_replace_first("hello", "h*", "X", false), "X");
+        assert_eq!(glob_replace_first("hello", "h?", "X", false), "Xllo");
+        assert_eq!(glob_replace_first("hello", "l", "L", false), "heLlo");
     }
 
     #[test]
     fn test_glob_replace_all_char_class() {
-        assert_eq!(glob_replace_all("hello", "[lo]", "X"), "heXXX");
-        assert_eq!(glob_replace_all("hello", "l", "L"), "heLLo");
+        assert_eq!(glob_replace_all("hello", "[lo]", "X", false), "heXXX");
+        assert_eq!(glob_replace_all("hello", "l", "L", false), "heLLo");
     }
 
     #[test]
     fn test_glob_replace_all_star() {
         // greedy: "h*" starting at 0 matches "hello" (all chars)
-        assert_eq!(glob_replace_all("hello", "h*", "X"), "X");
+        assert_eq!(glob_replace_all("hello", "h*", "X", false), "X");
     }
 
     #[test]
@@ -548,5 +771,101 @@ mod tests {
         assert!(!glob_match("[[:graph:]]", " "));
         assert!(glob_match("[[:cntrl:]]", "\x01"));
         assert!(!glob_match("[[:cntrl:]]", "a"));
+    }
+
+    // --- extglob tests ---
+
+    #[test]
+    fn test_extglob_at_matches_one_alternative() {
+        assert!(glob_match_ext("@(foo|bar)", "foo", true));
+        assert!(glob_match_ext("@(foo|bar)", "bar", true));
+        assert!(!glob_match_ext("@(foo|bar)", "baz", true));
+        assert!(!glob_match_ext("@(foo|bar)", "foobar", true));
+    }
+
+    #[test]
+    fn test_extglob_question_zero_or_one() {
+        assert!(glob_match_ext("?(foo)", "", true));
+        assert!(glob_match_ext("?(foo)", "foo", true));
+        assert!(!glob_match_ext("?(foo)", "foofoo", true));
+        assert!(glob_match_ext("?(foo|bar)", "bar", true));
+        assert!(glob_match_ext("?(foo|bar)", "", true));
+    }
+
+    #[test]
+    fn test_extglob_star_zero_or_more() {
+        assert!(glob_match_ext("*(foo)", "", true));
+        assert!(glob_match_ext("*(foo)", "foo", true));
+        assert!(glob_match_ext("*(foo)", "foofoo", true));
+        assert!(glob_match_ext("*(foo)", "foofoofoo", true));
+        assert!(!glob_match_ext("*(foo)", "foobar", true));
+        assert!(glob_match_ext("*(foo|bar)", "foobar", true));
+        assert!(glob_match_ext("*(foo|bar)", "barfoo", true));
+    }
+
+    #[test]
+    fn test_extglob_plus_one_or_more() {
+        assert!(!glob_match_ext("+(foo)", "", true));
+        assert!(glob_match_ext("+(foo)", "foo", true));
+        assert!(glob_match_ext("+(foo)", "foofoo", true));
+        assert!(!glob_match_ext("+(foo)", "bar", true));
+    }
+
+    #[test]
+    fn test_extglob_not_matches_none() {
+        assert!(glob_match_ext("!(foo)", "bar", true));
+        assert!(glob_match_ext("!(foo)", "fo", true));
+        assert!(!glob_match_ext("!(foo)", "foo", true));
+        assert!(glob_match_ext("!(foo|bar)", "baz", true));
+        assert!(!glob_match_ext("!(foo|bar)", "foo", true));
+        assert!(!glob_match_ext("!(foo|bar)", "bar", true));
+    }
+
+    #[test]
+    fn test_extglob_with_regular_globs() {
+        assert!(glob_match_ext("@(*.txt|*.rs)", "file.txt", true));
+        assert!(glob_match_ext("@(*.txt|*.rs)", "main.rs", true));
+        assert!(!glob_match_ext("@(*.txt|*.rs)", "file.py", true));
+    }
+
+    #[test]
+    fn test_extglob_combined_with_prefix_suffix() {
+        assert!(glob_match_ext("foo@(bar|baz)", "foobar", true));
+        assert!(glob_match_ext("foo@(bar|baz)", "foobaz", true));
+        assert!(!glob_match_ext("foo@(bar|baz)", "fooqux", true));
+        assert!(glob_match_ext("pre*(mid)suf", "presuf", true));
+        assert!(glob_match_ext("pre*(mid)suf", "premidsuf", true));
+        assert!(glob_match_ext("pre*(mid)suf", "premidmidsuf", true));
+    }
+
+    #[test]
+    fn test_extglob_nested() {
+        assert!(glob_match_ext("@(foo@(bar|baz))", "foobar", true));
+        assert!(glob_match_ext("+(a@(b|c))", "ab", true));
+        assert!(glob_match_ext("+(a@(b|c))", "abac", true));
+    }
+
+    #[test]
+    fn test_extglob_disabled_literal() {
+        assert!(!glob_match_ext("@(foo)", "foo", false));
+        assert!(glob_match_ext("@(foo)", "@(foo)", false));
+    }
+
+    #[test]
+    fn test_has_glob_ext() {
+        assert!(!has_glob_ext("@(foo)", false));
+        assert!(has_glob_ext("@(foo)", true));
+        assert!(has_glob_ext("*(bar)", true));
+        assert!(has_glob_ext("?(x)", true));
+        assert!(has_glob_ext("+(y)", true));
+        assert!(has_glob_ext("!(z)", true));
+        assert!(has_glob_ext("*.rs", false));
+        assert!(!has_glob_ext("normal", true));
+    }
+
+    #[test]
+    fn test_extglob_replace() {
+        assert_eq!(glob_replace_first("foobar", "@(foo|baz)", "X", true), "Xbar");
+        assert_eq!(glob_replace_all("foobarfoo", "@(foo|bar)", "X", true), "XXX");
     }
 }
