@@ -8,7 +8,7 @@ BusyBox-style Unix coreutils as a single WASI Preview 2 component.
 
 ## Commands
 
-awk, cat, cp, mv, rm, mkdir, rmdir, ls, head, tail, wc, sort, uniq, cut, tr, tee, sleep, basename, dirname, touch, ln, seq, grep, sed, find, xargs, date, diff, chmod, readlink, yes, rev, paste, base64, base32
+awk, cat, cp, mv, rm, mkdir, rmdir, ls, head, tail, wc, sort, uniq, cut, tr, tee, sleep, basename, dirname, touch, ln, seq, grep, sed, find, xargs, date, diff, chmod, readlink, yes, rev, paste, base64, base32, mktemp
 
 ### Notable Features
 

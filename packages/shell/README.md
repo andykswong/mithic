@@ -23,6 +23,7 @@
   - **Process substitution** — `<(cmd)`
   - **Glob expansion** — `*`, `?`, `[...]`, extglob (`?(pat)`, `*(pat)`, `+(pat)`, `@(pat)`, `!(pat)`), globstar (`**`)
   - **Builtins** — `cd`, `echo`, `export`, `unset`, `read`, `test`/`[`/`[[`, `declare`/`local`, `source`, `shopt`, `true`, `false`
+  - **Special variables** — `$BASH_SOURCE`, `$BASH_LINENO`, `$FUNCNAME` (array call stacks), `$SECONDS`, `$RANDOM`, `$LINENO`, `$PIPESTATUS`
   - **Error handling** — Arithmetic expansion errors abort the containing command; proper exit codes propagate through pipes, assignments, for/case/select
 - **Command resolution** — `ProcessManager`-based dispatching to shell, shell builtins, coreutils WASM, host-side commands, PATH-based WASM components and scripts
 - **POSIX mode** — Auto-activates when invoked as `sh`; disables non-standard extensions, including `[[`, `(( ))`, `<<<`, arrays, brace expansion

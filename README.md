@@ -60,6 +60,8 @@ An alternative **async mode** is also available, using JSPI or asyncify polyfill
 | [`@mithic/process`](./packages/process) | Process manager: spawn WASM processes with piped I/O |
 | [`@mithic/shell`](./packages/shell) | Rust WASM shell: bash-compatible interpreter (30+ builtins) |
 | [`@mithic/coreutils`](./packages/coreutils) | BusyBox-style Unix coreutils as a single WASM component |
+| [`@mithic/jq`](./packages/commands/jq) | Standalone jq JSON processor WASM component |
+| [`@mithic/curl`](./packages/commands/curl) | curl HTTP client WASM component (wasi:http) |
 | [`@mithic/wasm-transpile`](./packages/wasm-transpile) | WASM component transpiler with asyncify JSPI polyfill |
 | [`@mithic/worker`](./packages/worker) | Web Worker polyfill for Node.js (isomorphic `new Worker()`) |
 
