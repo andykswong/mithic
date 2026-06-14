@@ -5,5 +5,5 @@ export const COREUTILS_COMMANDS = new Set([
   'tr', 'cut', 'tee', 'xargs', 'sleep', 'basename', 'dirname',
   'mkdir', 'rm', 'cp', 'mv', 'ls', 'rmdir', 'touch', 'ln',
   'sed', 'find', 'date', 'diff', 'chmod', 'readlink', 'yes',
-  'rev', 'paste', 'base64', 'base32',
+  'rev', 'paste', 'base64', 'base32', 'mktemp',
 ]);

@@ -34,6 +34,7 @@ mod paste;
 mod base64;
 mod base32;
 mod awk;
+mod mktemp;
 
 pub fn dispatch(name: &str, args: &[&str]) -> u8 {
     match name {
@@ -72,6 +73,7 @@ pub fn dispatch(name: &str, args: &[&str]) -> u8 {
         "base64" => base64::run(args),
         "base32" => base32::run(args),
         "awk" => awk::run(args),
+        "mktemp" => mktemp::run(args),
         _ => {
             write_stderr(&format!("{}: command not found\n", name));
             127
