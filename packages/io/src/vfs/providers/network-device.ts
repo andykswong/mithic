@@ -31,6 +31,7 @@ export class NetworkDeviceFsProvider<Sync extends boolean = boolean> implements 
   #freeFds: number[] = [];
   #handles = new Map<number, SocketHandle<Sync>>();
   #pathToFd = new Map<string, { fd: number; refCount: number }>();
+  #pendingOpens = new Map<string, Promise<FileHandle>>();
 
   constructor(options: NetworkDeviceFsProviderOptions<Sync>) {
     this.#sockets = options.sockets;
@@ -50,6 +51,18 @@ export class NetworkDeviceFsProvider<Sync extends boolean = boolean> implements 
       return { fd: existing.fd, path, flags } as MaybePromise<FileHandle, Sync>;
     }
 
+    const pending = this.#pendingOpens.get(normalizedPath);
+    if (pending) {
+      return pending.then(() => {
+        const entry = this.#pathToFd.get(normalizedPath);
+        if (entry && this.#handles.has(entry.fd)) {
+          entry.refCount++;
+          return { fd: entry.fd, path, flags } as FileHandle;
+        }
+        return this.open(path, flags) as Promise<FileHandle>;
+      }) as MaybePromise<FileHandle, Sync>;
+    }
+
     const fd = this.#freeFds.length > 0 ? this.#freeFds.pop()! : this.#nextFd++;
     const handle: SocketHandle<Sync> = {
       protocol: this.#protocol,
@@ -60,7 +73,7 @@ export class NetworkDeviceFsProvider<Sync extends boolean = boolean> implements 
     const resolvedHost = this.#resolveHost(parsed.host);
 
     if (this.#protocol === 'tcp') {
-      return chainMaybePromise(resolvedHost, (host) =>
+      const result = chainMaybePromise(resolvedHost, (host) =>
         chainMaybePromise(this.#sockets.createTcpSocket(), (socket) => {
           let connectResult: MaybePromise<void, Sync>;
           try {
@@ -86,9 +99,17 @@ export class NetworkDeviceFsProvider<Sync extends boolean = boolean> implements 
           return { fd, path, flags } as MaybePromise<FileHandle, Sync>;
         }),
       ) as MaybePromise<FileHandle, Sync>;
+
+      if (result instanceof Promise) {
+        this.#pendingOpens.set(normalizedPath, result as Promise<FileHandle>);
+        return (result as Promise<FileHandle>).finally(() => {
+          this.#pendingOpens.delete(normalizedPath);
+        }) as MaybePromise<FileHandle, Sync>;
+      }
+      return result;
     }
 
-    return chainMaybePromise(this.#sockets.createUdpSocket(), (socket) => {
+    const result = chainMaybePromise(this.#sockets.createUdpSocket(), (socket) => {
       let bindResult: MaybePromise<void, Sync>;
       try {
         bindResult = socket.bind({ host: '0.0.0.0', port: 0 }) as MaybePromise<void, Sync>;
@@ -112,6 +133,14 @@ export class NetworkDeviceFsProvider<Sync extends boolean = boolean> implements 
       this.#pathToFd.set(normalizedPath, { fd, refCount: 1 });
       return { fd, path, flags } as MaybePromise<FileHandle, Sync>;
     }) as MaybePromise<FileHandle, Sync>;
+
+    if (result instanceof Promise) {
+      this.#pendingOpens.set(normalizedPath, result as Promise<FileHandle>);
+      return (result as Promise<FileHandle>).finally(() => {
+        this.#pendingOpens.delete(normalizedPath);
+      }) as MaybePromise<FileHandle, Sync>;
+    }
+    return result;
   }
 
   close(handle: FileHandle): MaybePromise<void, Sync> {

@@ -149,7 +149,7 @@ for (const mode of ['worker', 'async'] as const) {
       dataServer.close();
     });
 
-    it('read from TCP: server sends data, shell reads with cat', { skip: mode === 'worker' ? 'Worker mode: TCP socket EOF propagation through the sync bridge is not immediate — cat blocks on blockingRead after remote close' : undefined }, async () => {
+    it('read from TCP: server sends data, shell reads with cat', async () => {
       const sendServer = createServer((socket) => {
         socket.on('error', () => {});
         socket.write('server-data\n');
@@ -166,7 +166,7 @@ for (const mode of ['worker', 'async'] as const) {
       sendServer.close();
     });
 
-    it('bidirectional: exec 3<>/dev/tcp with echo and read', { skip: 'Bidirectional sockets require single-connection read/write; WASI open_at creates separate connections for writeViaStream and readViaStream' }, async () => {
+    it('bidirectional: exec 3<>/dev/tcp with echo and read', async () => {
       const { stdout, exit } = await runShell(
         `exec 3<> /dev/tcp/127.0.0.1/${echoPort}\necho "ping" >&3\nread -u 3 -r response\necho "$response"\nexec 3>&-\n`,
         mode,
@@ -175,7 +175,7 @@ for (const mode of ['worker', 'async'] as const) {
       assert.ok(stdout.includes('ping'), `Expected 'ping' echoed back in stdout: ${stdout}`);
     });
 
-    it('multiple simultaneous connections', { skip: 'Depends on bidirectional socket support (read from TCP fd)' }, async () => {
+    it('multiple simultaneous connections', async () => {
       const server2 = createServer((socket) => {
         connections.push(socket);
         socket.on('error', () => {});

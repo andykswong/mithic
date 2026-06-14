@@ -27,9 +27,14 @@ class NativeTcpSocket implements TcpSocket {
   #localAddr: SocketAddress | undefined;
   #remoteAddr: SocketAddress | undefined;
   #pendingData: Buffer[] = [];
+  #ended = false;
+  #waiting: (() => void) | null = null;
 
   constructor(socket?: net.Socket) {
     this.#socket = socket ?? new net.Socket();
+    this.#socket.on('end', () => { this.#ended = true; this.#waiting?.(); });
+    this.#socket.on('data', (chunk: Buffer) => { this.#pendingData.push(chunk); this.#waiting?.(); });
+    this.#socket.on('error', () => { this.#ended = true; this.#waiting?.(); });
     if (socket) {
       this.#localAddr = {
         host: socket.localAddress ?? '0.0.0.0',
@@ -104,32 +109,22 @@ class NativeTcpSocket implements TcpSocket {
   }
 
   async receive(len: number): Promise<Uint8Array> {
-    // Check if there's already buffered data in the internal buffer
     if (this.#pendingData.length > 0) {
       return this.#consumeBuffer(len);
     }
-    return new Promise((resolve, reject) => {
-      const onData = (chunk: Buffer) => {
-        this.#pendingData.push(chunk);
-        cleanup();
-        resolve(this.#consumeBuffer(len));
+    if (this.#ended) {
+      return new Uint8Array(0);
+    }
+    return new Promise<Uint8Array>((resolve) => {
+      this.#waiting = () => {
+        if (this.#pendingData.length > 0) {
+          this.#waiting = null;
+          resolve(this.#consumeBuffer(len));
+        } else if (this.#ended) {
+          this.#waiting = null;
+          resolve(new Uint8Array(0));
+        }
       };
-      const onEnd = () => {
-        cleanup();
-        resolve(new Uint8Array(0));
-      };
-      const onError = (err: Error) => {
-        cleanup();
-        reject(err);
-      };
-      const cleanup = () => {
-        this.#socket.off('data', onData);
-        this.#socket.off('end', onEnd);
-        this.#socket.off('error', onError);
-      };
-      this.#socket.once('data', onData);
-      this.#socket.once('end', onEnd);
-      this.#socket.once('error', onError);
     });
   }
 
