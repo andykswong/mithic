@@ -3,7 +3,7 @@ import { installPolyfill, createInstantiateCore } from '@mithic/wasm-transpile';
 import { NodeAsyncStdinHandler, NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
 import { NodeSocketProvider } from '@mithic/io/net/providers/node-socket-provider';
 import { FetchHttpClient } from '@mithic/io/net';
-import type { ComponentExit } from '@mithic/wasip2/cli/exit';
+import { ComponentExit } from '@mithic/wasip2/cli/exit';
 import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 import { WASIShim } from '@mithic/wasip2/instantiation';
 import { Descriptor } from '@mithic/wasip2/filesystem/types';
@@ -100,8 +100,8 @@ function createHandler(getEntry: () => Promise<ComponentEntry>): CommandHandler 
       );
       return (await instance.run.run()) ?? 0;
     } catch (e: unknown) {
-      if (e && typeof e === 'object' && 'exitError' in e) {
-        return (e as ComponentExit).code ?? 1;
+      if (e instanceof ComponentExit) {
+        return e.code ?? 1;
       }
       throw e;
     } finally {
@@ -127,6 +127,19 @@ const commandResolver: CommandResolver = (file: string): CommandHandler | undefi
 manager.commandResolver = commandResolver;
 
 // --- Create Runtime and execute ---
+
+// The asyncify WASM runtime throws ComponentExit synchronously during stack rewind,
+// escaping async try/catch. Suppress all such throws — the exit code for the top-level
+// shell process is captured by overriding process.exitCode on each throw, and the
+// waitAsync() promise resolves normally via the asyncify wrapper's internal completion.
+process.on('uncaughtException', (e) => {
+  if (e instanceof ComponentExit) {
+    process.exitCode = e.code;
+    return;
+  }
+  console.error(e);
+  process.exit(1);
+});
 
 const runtime = new Runtime({ manager, env, cwd: '/root' });
 

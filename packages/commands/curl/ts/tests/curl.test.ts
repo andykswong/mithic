@@ -308,3 +308,73 @@ describe('curl - Combined flags', () => {
     assert.strictEqual(stdout, '{"ok":true}');
   });
 });
+
+describe('curl - HEAD request', () => {
+  it('-I sends HEAD and outputs only headers', async () => {
+    const { stdout, exit } = await runCurl(['-I', 'http://example.com/'], (req) => {
+      assert.strictEqual(req.method, 'HEAD');
+      return {
+        status: 200,
+        headers: [['content-type', 'text/html'], ['content-length', '1234']],
+        body: new TextEncoder().encode('should not appear'),
+      };
+    });
+    assert.strictEqual(exit, 0);
+    assert.ok(stdout.includes('HTTP/1.1 200'));
+    assert.ok(stdout.includes('content-type: text/html'));
+    assert.ok(!stdout.includes('should not appear'));
+  });
+});
+
+describe('curl - Help', () => {
+  it('-h shows help and exits 0', async () => {
+    const { stdout, exit } = await runCurl(['-h'], () => {
+      throw new Error('should not make a request');
+    });
+    assert.strictEqual(exit, 0);
+    assert.ok(stdout.includes('Usage: curl'));
+    assert.ok(stdout.includes('--request'));
+  });
+
+  it('--help shows help', async () => {
+    const { stdout, exit } = await runCurl(['--help'], () => {
+      throw new Error('should not make a request');
+    });
+    assert.strictEqual(exit, 0);
+    assert.ok(stdout.includes('Usage: curl'));
+  });
+});
+
+describe('curl - User-Agent', () => {
+  it('-A sets user-agent header', async () => {
+    const { exit } = await runCurl(['-A', 'mithic/1.0', 'http://example.com/'], (req) => {
+      const ua = req.headers.find(([k]) => k === 'user-agent');
+      assert.ok(ua, 'user-agent header should be set');
+      assert.strictEqual(ua![1], 'mithic/1.0');
+      return { status: 200, headers: [], body: new Uint8Array(0) };
+    });
+    assert.strictEqual(exit, 0);
+  });
+});
+
+describe('curl - Max time', () => {
+  it('-m sets total timeout', async () => {
+    const { exit } = await runCurl(['-m', '30', 'http://example.com/'], (req) => {
+      assert.strictEqual(req.timeoutMs, 30000);
+      return { status: 200, headers: [], body: new Uint8Array(0) };
+    });
+    assert.strictEqual(exit, 0);
+  });
+});
+
+describe('curl - Data raw', () => {
+  it('--data-raw sends body and implies POST', async () => {
+    const { exit } = await runCurl(['--data-raw', '{"key":"val"}', 'http://example.com/api'], (req) => {
+      assert.strictEqual(req.method, 'POST');
+      const body = new TextDecoder().decode(req.body);
+      assert.strictEqual(body, '{"key":"val"}');
+      return { status: 200, headers: [], body: new Uint8Array(0) };
+    });
+    assert.strictEqual(exit, 0);
+  });
+});

@@ -28,14 +28,20 @@ struct CurlOptions {
     method: Option<String>,
     headers: Vec<(String, String)>,
     data: Option<String>,
+    data_raw: Option<String>,
     output: Option<String>,
     silent: bool,
     include_headers: bool,
+    head_only: bool,
     verbose: bool,
     follow_redirects: bool,
     write_out: Option<String>,
     connect_timeout: Option<u64>,
+    max_time: Option<u64>,
     fail_on_error: bool,
+    show_help: bool,
+    user_agent: Option<String>,
+    max_redirs: Option<u32>,
 }
 
 impl CurlOptions {
@@ -45,26 +51,61 @@ impl CurlOptions {
             method: None,
             headers: Vec::new(),
             data: None,
+            data_raw: None,
             output: None,
             silent: false,
             include_headers: false,
+            head_only: false,
             verbose: false,
             follow_redirects: false,
             write_out: None,
             connect_timeout: None,
+            max_time: None,
             fail_on_error: false,
+            show_help: false,
+            user_agent: None,
+            max_redirs: None,
         }
     }
 
     fn effective_method(&self) -> &str {
         if let Some(ref m) = self.method {
             m.as_str()
-        } else if self.data.is_some() {
+        } else if self.head_only {
+            "HEAD"
+        } else if self.data.is_some() || self.data_raw.is_some() {
             "POST"
         } else {
             "GET"
         }
     }
+
+    fn effective_body(&self) -> Option<&str> {
+        self.data.as_deref().or(self.data_raw.as_deref())
+    }
+}
+
+fn print_help() {
+    write_stdout(b"Usage: curl [options...] <url>
+Options:
+  -X, --request <method>    Specify request method (GET, POST, PUT, DELETE, etc.)
+  -H, --header <header>     Add header (repeatable), e.g. -H 'Content-Type: application/json'
+  -d, --data <data>         Request body (implies POST)
+      --data-raw <data>     Request body without special processing
+  -o, --output <file>       Write output to file instead of stdout
+  -s, --silent              Silent mode (suppress errors)
+  -i, --include             Include response headers in output
+  -I, --head                Fetch headers only (HEAD request)
+  -v, --verbose             Show request/response headers on stderr
+  -L, --location            Follow redirects
+  -f, --fail                Exit 22 on HTTP errors (4xx/5xx)
+  -w, --write-out <format>  Output format (supports %{http_code}, %{content_type})
+  -A, --user-agent <agent>  Set User-Agent header
+      --connect-timeout <s> Connection timeout in seconds
+  -m, --max-time <s>        Maximum total time in seconds
+      --max-redirs <num>    Maximum number of redirects (default 10)
+  -h, --help                Show this help message
+");
 }
 
 fn parse_args(args: &[String]) -> Result<CurlOptions, String> {
@@ -74,6 +115,10 @@ fn parse_args(args: &[String]) -> Result<CurlOptions, String> {
     while i < args.len() {
         let arg = &args[i];
         match arg.as_str() {
+            "-h" | "--help" => {
+                opts.show_help = true;
+                return Ok(opts);
+            }
             "-X" | "--request" => {
                 i += 1;
                 if i >= args.len() {
@@ -102,6 +147,13 @@ fn parse_args(args: &[String]) -> Result<CurlOptions, String> {
                 }
                 opts.data = Some(args[i].clone());
             }
+            "--data-raw" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("option --data-raw requires an argument".to_string());
+                }
+                opts.data_raw = Some(args[i].clone());
+            }
             "-o" | "--output" => {
                 i += 1;
                 if i >= args.len() {
@@ -114,6 +166,9 @@ fn parse_args(args: &[String]) -> Result<CurlOptions, String> {
             }
             "-i" | "--include" => {
                 opts.include_headers = true;
+            }
+            "-I" | "--head" => {
+                opts.head_only = true;
             }
             "-v" | "--verbose" => {
                 opts.verbose = true;
@@ -128,6 +183,13 @@ fn parse_args(args: &[String]) -> Result<CurlOptions, String> {
                 }
                 opts.write_out = Some(args[i].clone());
             }
+            "-A" | "--user-agent" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("option -A requires an argument".to_string());
+                }
+                opts.user_agent = Some(args[i].clone());
+            }
             "--connect-timeout" => {
                 i += 1;
                 if i >= args.len() {
@@ -136,6 +198,26 @@ fn parse_args(args: &[String]) -> Result<CurlOptions, String> {
                 match args[i].parse::<u64>() {
                     Ok(v) => opts.connect_timeout = Some(v),
                     Err(_) => return Err(format!("invalid timeout value: {}", args[i])),
+                }
+            }
+            "-m" | "--max-time" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("option -m requires an argument".to_string());
+                }
+                match args[i].parse::<u64>() {
+                    Ok(v) => opts.max_time = Some(v),
+                    Err(_) => return Err(format!("invalid max-time value: {}", args[i])),
+                }
+            }
+            "--max-redirs" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("option --max-redirs requires an argument".to_string());
+                }
+                match args[i].parse::<u32>() {
+                    Ok(v) => opts.max_redirs = Some(v),
+                    Err(_) => return Err(format!("invalid max-redirs value: {}", args[i])),
                 }
             }
             "-f" | "--fail" => {
@@ -148,9 +230,11 @@ fn parse_args(args: &[String]) -> Result<CurlOptions, String> {
                     match chars[j] {
                         's' => opts.silent = true,
                         'i' => opts.include_headers = true,
+                        'I' => opts.head_only = true,
                         'v' => opts.verbose = true,
                         'L' => opts.follow_redirects = true,
                         'f' => opts.fail_on_error = true,
+                        'h' => { opts.show_help = true; return Ok(opts); }
                         'X' => {
                             i += 1;
                             if i >= args.len() {
@@ -196,6 +280,25 @@ fn parse_args(args: &[String]) -> Result<CurlOptions, String> {
                                 return Err("option -w requires an argument".to_string());
                             }
                             opts.write_out = Some(args[i].clone());
+                            j = chars.len();
+                        }
+                        'A' => {
+                            i += 1;
+                            if i >= args.len() {
+                                return Err("option -A requires an argument".to_string());
+                            }
+                            opts.user_agent = Some(args[i].clone());
+                            j = chars.len();
+                        }
+                        'm' => {
+                            i += 1;
+                            if i >= args.len() {
+                                return Err("option -m requires an argument".to_string());
+                            }
+                            match args[i].parse::<u64>() {
+                                Ok(v) => opts.max_time = Some(v),
+                                Err(_) => return Err(format!("invalid max-time value: {}", args[i])),
+                            }
                             j = chars.len();
                         }
                         c => {
@@ -269,18 +372,23 @@ fn parse_url(url: &str) -> Result<(UrlScheme, String, String), String> {
 fn make_request(opts: &CurlOptions) -> Result<(u16, Vec<(String, String)>, Vec<u8>), String> {
     let url = opts.url.as_deref().ok_or("no URL specified")?;
     let method = opts.effective_method();
-    let body = opts.data.as_ref().map(|d| d.as_bytes().to_vec());
-    let timeout_ms = opts.connect_timeout.map(|s| s * 1000);
+    let body = opts.effective_body().map(|d| d.as_bytes().to_vec());
+    let timeout_ms = opts.max_time.or(opts.connect_timeout).map(|s| s * 1000);
+
+    let mut headers = opts.headers.clone();
+    if let Some(ref ua) = opts.user_agent {
+        headers.push(("user-agent".to_string(), ua.clone()));
+    }
 
     if opts.verbose {
         write_stderr(&format!("> {} {} HTTP/1.1\r\n", method, url));
-        for (name, value) in &opts.headers {
+        for (name, value) in &headers {
             write_stderr(&format!("> {}: {}\r\n", name, value));
         }
         write_stderr(">\r\n");
     }
 
-    do_http_request(method, url, &opts.headers, body.as_deref(), timeout_ms)
+    do_http_request(method, url, &headers, body.as_deref(), timeout_ms)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -412,13 +520,20 @@ fn run(args: &[String]) -> i32 {
         }
     };
 
+    if opts.show_help {
+        print_help();
+        return 0;
+    }
+
     if opts.url.is_none() {
         write_stderr("curl: no URL specified\n");
         write_stderr("curl: try 'curl --help' for more information\n");
         return 2;
     }
 
-    let max_redirects = if opts.follow_redirects { 10 } else { 0 };
+    let max_redirects = if opts.follow_redirects {
+        opts.max_redirs.unwrap_or(10) as usize
+    } else { 0 };
     let mut current_url = opts.url.clone().unwrap();
     let mut redirects = 0;
 
@@ -428,14 +543,20 @@ fn run(args: &[String]) -> i32 {
             method: opts.method.clone(),
             headers: opts.headers.clone(),
             data: opts.data.clone(),
+            data_raw: opts.data_raw.clone(),
             output: opts.output.clone(),
             silent: opts.silent,
             include_headers: opts.include_headers,
+            head_only: opts.head_only,
             verbose: opts.verbose,
             follow_redirects: opts.follow_redirects,
             write_out: opts.write_out.clone(),
             connect_timeout: opts.connect_timeout,
+            max_time: opts.max_time,
             fail_on_error: opts.fail_on_error,
+            show_help: false,
+            user_agent: opts.user_agent.clone(),
+            max_redirs: opts.max_redirs,
         };
 
         let (status, headers, body) = match make_request(&request_opts) {
@@ -482,11 +603,13 @@ fn run(args: &[String]) -> i32 {
             write_stderr("<\r\n");
         }
 
-        if opts.include_headers {
+        if opts.head_only || opts.include_headers {
             let header_text = format!("HTTP/1.1 {}\r\n{}\r\n", status, format_headers(&headers));
             if let Some(ref output_path) = opts.output {
                 let mut content = header_text.into_bytes();
-                content.extend_from_slice(&body);
+                if !opts.head_only {
+                    content.extend_from_slice(&body);
+                }
                 if std::fs::write(output_path, &content).is_err() {
                     if !opts.silent {
                         write_stderr(&format!("curl: (23) Failed to write to '{}'\n", output_path));
@@ -495,7 +618,9 @@ fn run(args: &[String]) -> i32 {
                 }
             } else {
                 write_stdout(header_text.as_bytes());
-                write_stdout(&body);
+                if !opts.head_only {
+                    write_stdout(&body);
+                }
             }
         } else if let Some(ref output_path) = opts.output {
             if std::fs::write(output_path, &body).is_err() {
@@ -716,5 +841,66 @@ mod tests {
     fn test_parse_args_invalid_header() {
         let args = vec!["-H".to_string(), "no-colon".to_string(), "http://example.com".to_string()];
         assert!(parse_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_parse_args_head_flag() {
+        let args = vec!["-I".to_string(), "http://example.com".to_string()];
+        let opts = parse_args(&args).unwrap();
+        assert!(opts.head_only);
+        assert_eq!(opts.effective_method(), "HEAD");
+    }
+
+    #[test]
+    fn test_parse_args_help() {
+        let args = vec!["-h".to_string()];
+        let opts = parse_args(&args).unwrap();
+        assert!(opts.show_help);
+    }
+
+    #[test]
+    fn test_parse_args_help_long() {
+        let args = vec!["--help".to_string()];
+        let opts = parse_args(&args).unwrap();
+        assert!(opts.show_help);
+    }
+
+    #[test]
+    fn test_parse_args_user_agent() {
+        let args = vec!["-A".to_string(), "MyAgent/1.0".to_string(), "http://example.com".to_string()];
+        let opts = parse_args(&args).unwrap();
+        assert_eq!(opts.user_agent, Some("MyAgent/1.0".to_string()));
+    }
+
+    #[test]
+    fn test_parse_args_max_time() {
+        let args = vec!["-m".to_string(), "30".to_string(), "http://example.com".to_string()];
+        let opts = parse_args(&args).unwrap();
+        assert_eq!(opts.max_time, Some(30));
+    }
+
+    #[test]
+    fn test_parse_args_max_redirs() {
+        let args = vec!["--max-redirs".to_string(), "5".to_string(), "-L".to_string(), "http://example.com".to_string()];
+        let opts = parse_args(&args).unwrap();
+        assert_eq!(opts.max_redirs, Some(5));
+        assert!(opts.follow_redirects);
+    }
+
+    #[test]
+    fn test_parse_args_data_raw() {
+        let args = vec!["--data-raw".to_string(), "{\"a\":1}".to_string(), "http://example.com".to_string()];
+        let opts = parse_args(&args).unwrap();
+        assert_eq!(opts.data_raw, Some("{\"a\":1}".to_string()));
+        assert_eq!(opts.effective_method(), "POST");
+    }
+
+    #[test]
+    fn test_parse_args_combined_with_head() {
+        let args = vec!["-sI".to_string(), "http://example.com".to_string()];
+        let opts = parse_args(&args).unwrap();
+        assert!(opts.silent);
+        assert!(opts.head_only);
+        assert_eq!(opts.effective_method(), "HEAD");
     }
 }

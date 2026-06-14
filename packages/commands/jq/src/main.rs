@@ -72,6 +72,14 @@ pub fn run(args: &[&str]) -> u8 {
             continue;
         }
         match args[i] {
+            "-h" | "--help" => {
+                write_stderr("Usage: jq [OPTIONS] <FILTER> [FILE...]\n\nOptions:\n  -r, --raw-output    Output raw strings, not JSON\n  -R, --raw-input     Read each line as a string\n  -n, --null-input    Don't read input\n  -c, --compact-output  Compact output\n  -S, --sort-keys     Sort object keys\n  -s, --slurp         Read entire input as array\n  -e, --exit-status   Exit non-zero if last output is false/null\n  --tab               Indent with tabs\n  --indent N          Indent with N spaces\n  --arg NAME VAL      Set $NAME to VAL string\n  --argjson NAME VAL  Set $NAME to parsed JSON\n  --jsonargs          Remaining args are JSON values\n  -h, --help          Show this help\n  -V, --version       Show version\n");
+                return 0;
+            }
+            "-V" | "--version" => {
+                write_stdout("jq-mithic 0.1.0\n");
+                return 0;
+            }
             "-r" | "--raw-output" => raw_output = true,
             "-R" | "--raw-input" => raw_input = true,
             "-n" | "--null-input" => null_input = true,

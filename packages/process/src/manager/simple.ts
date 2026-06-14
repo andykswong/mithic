@@ -179,9 +179,12 @@ export class SimpleProcessManager implements ProcessManager {
           this.table.remove(pid);
           return exitCode ?? 0;
         },
-        () => {
+        (e: unknown) => {
           done = true;
-          if (!killed) exitCode = 1;
+          if (!killed) {
+            exitCode = (e && typeof e === 'object' && 'exitError' in e && 'code' in e)
+              ? (e as { code: number }).code : 1;
+          }
           this.table.remove(pid);
           return exitCode ?? 0;
         },

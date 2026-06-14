@@ -125,3 +125,28 @@ describe('async mode: subshell and scripts', () => {
     assert.strictEqual(stdout.trim(), '1\n2\n3');
   });
 });
+
+describe('async mode: exit handling', () => {
+  it('non-zero command does not crash the shell', async () => {
+    const { stdout, exit } = await runAsync('ls /nonexistent\necho alive\n');
+    assert.ok(stdout.includes('alive'), 'shell should continue after failed command');
+    assert.strictEqual(exit, 0);
+  });
+
+  it('exit 0 after error returns 0', async () => {
+    const { stdout, exit } = await runAsync('false\necho still\nexit 0\n');
+    assert.ok(stdout.includes('still'));
+    assert.strictEqual(exit, 0);
+  });
+
+  it('false as last command exits 1', async () => {
+    const { exit } = await runAsync('false\n');
+    assert.strictEqual(exit, 1);
+  });
+
+  it('successful script exits 0', async () => {
+    const { stdout, exit } = await runAsync('echo ok\ntrue\n');
+    assert.strictEqual(stdout.trim(), 'ok');
+    assert.strictEqual(exit, 0);
+  });
+});
