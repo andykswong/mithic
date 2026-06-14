@@ -72,6 +72,10 @@ impl<R: Runtime> Shell<R> {
 
         match &parts[0] {
             WordPart::BraceVar(raw) => {
+                // ${!name[@]} is indirect/key-list expansion, not array-all; skip it here
+                if raw.starts_with('!') {
+                    return None;
+                }
                 let (name, subscript) = parse_array_subscript(raw)?;
                 if subscript != "@" && subscript != "*" {
                     return None;
@@ -148,6 +152,18 @@ impl<R: Runtime> Shell<R> {
                 // $BASHPID expands to the current process PID (same as $$ for non-subshells).
                 "1".to_string()
             }
+            "SHLVL" => {
+                if self.shlvl == 0 {
+                    String::new()
+                } else {
+                    self.shlvl.to_string()
+                }
+            }
+            "BASH_VERSION" => crate::config::bash_version_string(),
+            "BASH_VERSINFO" => {
+                // Bare $BASH_VERSINFO returns element [0] (major version)
+                crate::config::bash_versinfo_elements()[0].clone()
+            }
             "RANDOM" => {
                 // Simple LCG pseudo-random number generator (16-bit, 0..32767)
                 self.random_state = self.random_state
@@ -223,6 +239,11 @@ impl<R: Runtime> Shell<R> {
         if let Some(inner) = raw.strip_prefix('!') {
             if let Some((arr_name, subscript)) = parse_array_subscript(inner) {
                 if subscript == "@" || subscript == "*" {
+                    // Check special arrays first (BASH_VERSINFO, FUNCNAME, etc.)
+                    if let Some(elements) = self.get_special_array_elements(arr_name) {
+                        let indices: Vec<String> = (0..elements.len()).map(|i| i.to_string()).collect();
+                        return indices.join(" ");
+                    }
                     return match self.env.get(arr_name) {
                         Some(v) => v.assoc_keys().join(" "),
                         None => String::new(),
@@ -284,6 +305,15 @@ impl<R: Runtime> Shell<R> {
                 }
                 // ${#arr[n]} — length of element at index (supports negative indices)
                 if let Ok(idx) = subscript.parse::<i64>() {
+                    // Check special arrays first
+                    if let Some(elements) = self.get_special_array_elements(arr_name) {
+                        let actual_idx = if idx < 0 {
+                            (elements.len() as i64 + idx).max(0) as usize
+                        } else {
+                            idx as usize
+                        };
+                        return elements.get(actual_idx).map(|s| s.len()).unwrap_or(0).to_string();
+                    }
                     return match self.env.get(arr_name) {
                         Some(v) => {
                             let actual_idx = if idx < 0 {
@@ -752,6 +782,9 @@ impl<R: Runtime> Shell<R> {
                 elements.push("0".to_string());
                 Some(elements)
             }
+            "BASH_VERSINFO" => {
+                Some(crate::config::bash_versinfo_elements())
+            }
             _ => None,
         }
     }
@@ -809,5 +842,157 @@ impl<R: Runtime> Shell<R> {
             };
         }
         exit
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use crate::runtime_test::TestRuntime;
+    use crate::shell::Shell;
+    use crate::value::ShellValue;
+
+    fn make_shell(env: HashMap<String, ShellValue>) -> Shell<TestRuntime> {
+        let rt = TestRuntime::new();
+        Shell::new(rt, env, "/".to_string(), false)
+    }
+
+    #[test]
+    fn test_shlvl_default_is_1() {
+        let mut shell = make_shell(HashMap::new());
+        assert_eq!(shell.expand_var("SHLVL", true), "1");
+    }
+
+    #[test]
+    fn test_shlvl_increments_from_env() {
+        let mut env = HashMap::new();
+        env.insert("SHLVL".to_string(), ShellValue::Scalar("3".to_string()));
+        let mut shell = make_shell(env);
+        assert_eq!(shell.expand_var("SHLVL", true), "4");
+    }
+
+    #[test]
+    fn test_shlvl_invalid_value_resets_to_1() {
+        let mut env = HashMap::new();
+        env.insert("SHLVL".to_string(), ShellValue::Scalar("abc".to_string()));
+        let mut shell = make_shell(env);
+        assert_eq!(shell.expand_var("SHLVL", true), "1");
+    }
+
+    #[test]
+    fn test_shlvl_zero_becomes_1() {
+        let mut env = HashMap::new();
+        env.insert("SHLVL".to_string(), ShellValue::Scalar("0".to_string()));
+        let mut shell = make_shell(env);
+        assert_eq!(shell.expand_var("SHLVL", true), "1");
+    }
+
+    #[test]
+    fn test_shlvl_negative_becomes_1() {
+        let mut env = HashMap::new();
+        env.insert("SHLVL".to_string(), ShellValue::Scalar("-5".to_string()));
+        let mut shell = make_shell(env);
+        assert_eq!(shell.expand_var("SHLVL", true), "1");
+    }
+
+    #[test]
+    fn test_bash_version_format() {
+        let mut shell = make_shell(HashMap::new());
+        assert_eq!(shell.expand_var("BASH_VERSION", true), crate::config::bash_version_string());
+    }
+
+    #[test]
+    fn test_bash_versinfo_bare_is_major() {
+        let mut shell = make_shell(HashMap::new());
+        assert_eq!(shell.expand_var("BASH_VERSINFO", true), crate::config::VERSION_MAJOR);
+    }
+
+    #[test]
+    fn test_bash_versinfo_length() {
+        let shell = make_shell(HashMap::new());
+        assert_eq!(shell.special_array_len("BASH_VERSINFO"), Some(6));
+    }
+
+    #[test]
+    fn test_bash_versinfo_elements() {
+        let shell = make_shell(HashMap::new());
+        let elements = shell.get_special_array_elements("BASH_VERSINFO").unwrap();
+        let expected = crate::config::bash_versinfo_elements();
+        assert_eq!(elements, expected);
+    }
+
+    #[test]
+    fn test_bash_versinfo_subscript() {
+        let shell = make_shell(HashMap::new());
+        assert_eq!(shell.expand_special_array("BASH_VERSINFO", "0"), Some(crate::config::VERSION_MAJOR.to_string()));
+        assert_eq!(shell.expand_special_array("BASH_VERSINFO", "4"), Some(crate::config::VERSION_STATUS.to_string()));
+        assert_eq!(shell.expand_special_array("BASH_VERSINFO", "5"), Some(crate::config::VERSION_MACHTYPE.to_string()));
+    }
+
+    #[test]
+    fn test_bash_versinfo_at_expansion() {
+        let shell = make_shell(HashMap::new());
+        let result = shell.expand_special_array("BASH_VERSINFO", "@").unwrap();
+        let expected = crate::config::bash_versinfo_elements().join(" ");
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_shlvl_in_env_for_children() {
+        let shell = make_shell(HashMap::new());
+        let env_val = shell.env.get("SHLVL").unwrap().as_scalar().to_string();
+        assert_eq!(env_val, "1");
+    }
+
+    #[test]
+    fn test_shlvl_in_env_incremented() {
+        let mut env = HashMap::new();
+        env.insert("SHLVL".to_string(), ShellValue::Scalar("5".to_string()));
+        let shell = make_shell(env);
+        let env_val = shell.env.get("SHLVL").unwrap().as_scalar().to_string();
+        assert_eq!(env_val, "6");
+    }
+
+    #[test]
+    fn test_bash_version_in_env() {
+        let shell = make_shell(HashMap::new());
+        let env_val = shell.env.get("BASH_VERSION").unwrap().as_scalar().to_string();
+        assert_eq!(env_val, crate::config::bash_version_string());
+    }
+
+    #[test]
+    fn test_shlvl_wraps_at_1000() {
+        let mut env = HashMap::new();
+        env.insert("SHLVL".to_string(), ShellValue::Scalar("999".to_string()));
+        let mut shell = make_shell(env);
+        assert_eq!(shell.expand_var("SHLVL", true), "1000");
+
+        // At 1000, it wraps to 1
+        let mut env2 = HashMap::new();
+        env2.insert("SHLVL".to_string(), ShellValue::Scalar("1000".to_string()));
+        let mut shell2 = make_shell(env2);
+        assert_eq!(shell2.expand_var("SHLVL", true), "1");
+    }
+
+    #[test]
+    fn test_shlvl_large_value_wraps() {
+        let mut env = HashMap::new();
+        env.insert("SHLVL".to_string(), ShellValue::Scalar("5000".to_string()));
+        let mut shell = make_shell(env);
+        assert_eq!(shell.expand_var("SHLVL", true), "1");
+    }
+
+    #[test]
+    fn test_bash_versinfo_out_of_bounds() {
+        let shell = make_shell(HashMap::new());
+        assert_eq!(shell.expand_special_array("BASH_VERSINFO", "6"), Some(String::new()));
+        assert_eq!(shell.expand_special_array("BASH_VERSINFO", "100"), Some(String::new()));
+    }
+
+    #[test]
+    fn test_bash_versinfo_index_list() {
+        let mut shell = make_shell(HashMap::new());
+        let result = shell.expand_brace_var("!BASH_VERSINFO[@]");
+        assert_eq!(result, "0 1 2 3 4 5");
     }
 }

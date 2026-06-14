@@ -4,7 +4,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
-wit-bindgen = { version = "0.57" }
+wit-bindgen = { version = "0.58" }
 
 [package.metadata.component]
 package = "mithic:curl"

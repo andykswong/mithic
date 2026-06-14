@@ -1,6 +1,7 @@
 pub mod arith;
 pub mod brace;
 pub mod builtins;
+pub mod config;
 pub mod executor;
 pub mod jobs;
 pub mod options;

@@ -619,3 +619,142 @@ describe('PATH-based lookup', () => {
     assert.ok(stdout.length > 0);
   });
 });
+
+describe('$SHLVL', () => {
+  it('SHLVL is at least 1', async () => {
+    const { stdout } = await runShell('echo $SHLVL\n');
+    const val = parseInt(stdout.trim());
+    assert.ok(val >= 1, `SHLVL should be >= 1, got ${val}`);
+  });
+
+  it('SHLVL increments in child shell via bash -c', async () => {
+    const { stdout } = await runShell('echo $SHLVL\nbash -c \'echo $SHLVL\'\n');
+    const lines = stdout.trim().split('\n');
+    const outer = parseInt(lines[0]);
+    const inner = parseInt(lines[1]);
+    assert.strictEqual(inner, outer + 1);
+  });
+
+  it('SHLVL can be assigned', async () => {
+    const { stdout } = await runShell('SHLVL=100\necho $SHLVL\n');
+    assert.strictEqual(stdout.trim(), '100');
+  });
+
+  it('SHLVL in subshell $(echo $SHLVL) is same as parent', async () => {
+    const { stdout } = await runShell('echo $SHLVL $(echo $SHLVL)\n');
+    const parts = stdout.trim().split(' ');
+    assert.strictEqual(parts[0], parts[1]);
+  });
+
+  it('$((SHLVL + 1)) works in arithmetic', async () => {
+    const { stdout } = await runShell('echo $((SHLVL + 1))\n');
+    const val = parseInt(stdout.trim());
+    assert.ok(val >= 2, `expected at least 2, got ${val}`);
+  });
+
+  it('SHLVL assignment via command substitution is intercepted', async () => {
+    const { stdout } = await runShell('SHLVL=$(echo 50)\necho $SHLVL\n');
+    assert.strictEqual(stdout.trim(), '50');
+  });
+});
+
+// Shared version constants — update here when bumping compatibility version
+const BASH_VERSION = '5.3.0(1)-release';
+const VERSINFO = ['5', '3', '0', '1', 'release', 'wasm32-wasip2'];
+
+describe('$BASH_VERSION', () => {
+  it('BASH_VERSION has correct format', async () => {
+    const { stdout } = await runShell('echo $BASH_VERSION\n');
+    assert.ok(/^\d+\.\d+\.\d+\(\d+\)-release$/.test(stdout.trim()),
+      `expected version format, got: ${stdout.trim()}`);
+  });
+
+  it('BASH_VERSION matches expected value', async () => {
+    const { stdout } = await runShell('echo $BASH_VERSION\n');
+    assert.strictEqual(stdout.trim(), BASH_VERSION);
+  });
+
+  it('BASH_VERSION assignment is ignored', async () => {
+    const { stdout } = await runShell('BASH_VERSION=fake\necho $BASH_VERSION\n');
+    assert.strictEqual(stdout.trim(), BASH_VERSION);
+  });
+
+  it('export BASH_VERSION=fake does not change expansion', async () => {
+    const { stdout } = await runShell('export BASH_VERSION=fake\necho $BASH_VERSION\n');
+    assert.strictEqual(stdout.trim(), BASH_VERSION);
+  });
+
+  it('declare BASH_VERSION=x does not change expansion', async () => {
+    const { stdout } = await runShell('declare BASH_VERSION=x\necho $BASH_VERSION\n');
+    assert.strictEqual(stdout.trim(), BASH_VERSION);
+  });
+});
+
+describe('$BASH_VERSINFO', () => {
+  it('BASH_VERSINFO is an array of 6 elements', async () => {
+    const { stdout } = await runShell('echo ${#BASH_VERSINFO[@]}\n');
+    assert.strictEqual(stdout.trim(), '6');
+  });
+
+  it('BASH_VERSINFO[0] is major version', async () => {
+    const { stdout } = await runShell('echo ${BASH_VERSINFO[0]}\n');
+    assert.strictEqual(stdout.trim(), VERSINFO[0]);
+  });
+
+  it('BASH_VERSINFO[1] is minor version', async () => {
+    const { stdout } = await runShell('echo ${BASH_VERSINFO[1]}\n');
+    assert.strictEqual(stdout.trim(), VERSINFO[1]);
+  });
+
+  it('BASH_VERSINFO[2] is patch level', async () => {
+    const { stdout } = await runShell('echo ${BASH_VERSINFO[2]}\n');
+    assert.strictEqual(stdout.trim(), VERSINFO[2]);
+  });
+
+  it('BASH_VERSINFO[3] is build version', async () => {
+    const { stdout } = await runShell('echo ${BASH_VERSINFO[3]}\n');
+    assert.strictEqual(stdout.trim(), VERSINFO[3]);
+  });
+
+  it('BASH_VERSINFO[4] is release status', async () => {
+    const { stdout } = await runShell('echo ${BASH_VERSINFO[4]}\n');
+    assert.strictEqual(stdout.trim(), VERSINFO[4]);
+  });
+
+  it('BASH_VERSINFO[5] is machine type', async () => {
+    const { stdout } = await runShell('echo ${BASH_VERSINFO[5]}\n');
+    assert.strictEqual(stdout.trim(), VERSINFO[5]);
+  });
+
+  it('BASH_VERSINFO[@] expands all elements', async () => {
+    const { stdout } = await runShell('echo "${BASH_VERSINFO[@]}"\n');
+    const parts = stdout.trim().split(' ');
+    assert.strictEqual(parts.length, 6);
+    assert.deepStrictEqual(parts, VERSINFO);
+  });
+
+  it('bare $BASH_VERSINFO returns major version', async () => {
+    const { stdout } = await runShell('echo $BASH_VERSINFO\n');
+    assert.strictEqual(stdout.trim(), VERSINFO[0]);
+  });
+
+  it('${BASH_VERSINFO[6]} out-of-bounds returns empty', async () => {
+    const { stdout } = await runShell('echo "[${BASH_VERSINFO[6]}]"\n');
+    assert.strictEqual(stdout.trim(), '[]');
+  });
+
+  it('${!BASH_VERSINFO[@]} returns index list 0-5', async () => {
+    const { stdout } = await runShell('echo ${!BASH_VERSINFO[@]}\n');
+    assert.strictEqual(stdout.trim(), '0 1 2 3 4 5');
+  });
+
+  it('BASH_VERSINFO[0]=foo assignment is ignored', async () => {
+    const { stdout } = await runShell('BASH_VERSINFO[0]=foo\necho ${BASH_VERSINFO[0]}\n');
+    assert.strictEqual(stdout.trim(), '5');
+  });
+
+  it('${#BASH_VERSINFO[0]} returns string length of element', async () => {
+    const { stdout } = await runShell('echo ${#BASH_VERSINFO[0]}\n');
+    assert.strictEqual(stdout.trim(), '1');
+  });
+});

@@ -15,6 +15,18 @@ pub(crate) fn exec_builtin<R: Runtime>(
         "export" => {
             for arg in args {
                 if let Some((key, value)) = arg.split_once('=') {
+                    if crate::config::is_protected_version_var(key) {
+                        continue;
+                    }
+                    if key == "SHLVL" {
+                        if let Ok(n) = value.parse::<i64>() {
+                            shell.shlvl = if n > 0 { n as u32 } else { 1 };
+                        } else {
+                            shell.shlvl = 1;
+                        }
+                        shell.env.insert("SHLVL".to_string(), ShellValue::Scalar(shell.shlvl.to_string()));
+                        continue;
+                    }
                     shell.env.insert(key.to_string(), ShellValue::Scalar(value.to_string()));
                 }
                 // export VAR (no =): variable already in env is accessible to child processes
@@ -73,6 +85,9 @@ pub(crate) fn exec_builtin<R: Runtime>(
                         _ => {}
                     }
                 } else {
+                    if arg == "SHLVL" {
+                        shell.shlvl = 0;
+                    }
                     shell.env.remove(arg.as_str());
                 }
             }
@@ -161,6 +176,18 @@ fn exec_declare<R: Runtime>(shell: &mut Shell<R>, builtin_name: &str, args: &[St
         }
 
         if let Some((name, value)) = arg.split_once('=') {
+            if crate::config::is_protected_version_var(name) {
+                continue;
+            }
+            if name == "SHLVL" {
+                if let Ok(n) = value.parse::<i64>() {
+                    shell.shlvl = if n > 0 { n as u32 } else { 1 };
+                } else {
+                    shell.shlvl = 1;
+                }
+                shell.env.insert("SHLVL".to_string(), ShellValue::Scalar(shell.shlvl.to_string()));
+                continue;
+            }
             if is_assoc {
                 shell.env.insert(name.to_string(), ShellValue::AssocArray(std::collections::HashMap::new()));
             } else if is_array {

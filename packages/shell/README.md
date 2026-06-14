@@ -23,7 +23,7 @@
   - **Process substitution** — `<(cmd)`
   - **Glob expansion** — `*`, `?`, `[...]`, extglob (`?(pat)`, `*(pat)`, `+(pat)`, `@(pat)`, `!(pat)`), globstar (`**`)
   - **Builtins** — `cd`, `echo`, `export`, `unset`, `read`, `test`/`[`/`[[`, `declare`/`local`, `source`, `shopt`, `true`, `false`
-  - **Special variables** — `$BASH_SOURCE`, `$BASH_LINENO`, `$FUNCNAME` (array call stacks), `$SECONDS`, `$RANDOM`, `$LINENO`, `$PIPESTATUS`
+  - **Special variables** — `$BASH_SOURCE`, `$BASH_LINENO`, `$FUNCNAME` (array call stacks), `$SECONDS`, `$RANDOM`, `$LINENO`, `$PIPESTATUS`, `$SHLVL`, `$BASH_VERSION`, `$BASH_VERSINFO`
   - **Error handling** — Arithmetic expansion errors abort the containing command; proper exit codes propagate through pipes, assignments, for/case/select
 - **Command resolution** — `ProcessManager`-based dispatching to shell, shell builtins, coreutils WASM, host-side commands, PATH-based WASM components and scripts
 - **POSIX mode** — Auto-activates when invoked as `sh`; disables non-standard extensions, including `[[`, `(( ))`, `<<<`, arrays, brace expansion
@@ -250,7 +250,7 @@ The shell has no readline library or terminal raw-mode support. This means:
 ### Other
 
 - No `/etc/profile` or `~/.bash_profile` sourcing (no login shell support) — `~/.bashrc` and `$ENV`/`$BASH_ENV` are sourced
-- No `GLOBIGNORE` or `BASH_VERSINFO`
+- No `GLOBIGNORE`
 - History expansion limited to `!!`, `!N`, `!-N`, `!prefix` (no modifiers like `:p`, `:h`)
 - `read -t` (timeout) not supported — needs WASI poll-based timer
 - `fc` only supports `-l` (listing) — no re-edit mode

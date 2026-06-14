@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
+use crate::config::{bash_version_string, is_protected_version_var};
 use crate::executor::expansion::{
     expand_tilde, literal_text, normalize_path, parse_array_subscript,
 };
@@ -61,6 +62,22 @@ pub struct Shell<R: Runtime> {
     pub(crate) current_source_file: String,
     pub(crate) start_time: Instant,
     pub(crate) seconds_offset: i64,
+    pub(crate) shlvl: u32,
+}
+
+
+/// Computes the SHLVL value given the inherited value from the environment.
+/// Follows bash semantics: if >= 1000, wraps to 1; if < 0, resets to 0 then increments.
+fn compute_shlvl(inherited: i64) -> u32 {
+    if inherited < 0 {
+        1
+    } else if inherited >= 1000 {
+        1
+    } else if inherited == 0 {
+        1
+    } else {
+        (inherited + 1) as u32
+    }
 }
 
 impl<R: Runtime> Shell<R> {
@@ -73,7 +90,16 @@ impl<R: Runtime> Shell<R> {
                 12345678901234567u64
             }
         };
-        Shell {
+        let shlvl = match env.get("SHLVL") {
+            Some(v) => {
+                match v.as_scalar().parse::<i64>() {
+                    Ok(n) => compute_shlvl(n),
+                    _ => 1,
+                }
+            }
+            None => 1,
+        };
+        let mut shell = Shell {
             rt,
             env,
             params: PositionalParams::new(),
@@ -113,7 +139,11 @@ impl<R: Runtime> Shell<R> {
             current_source_file: String::new(),
             start_time: Instant::now(),
             seconds_offset: 0,
-        }
+            shlvl,
+        };
+        shell.env.insert("SHLVL".to_string(), ShellValue::Scalar(shlvl.to_string()));
+        shell.env.insert("BASH_VERSION".to_string(), ShellValue::Scalar(bash_version_string()));
+        shell
     }
 
     pub fn source_startup_files(&mut self) {
@@ -716,6 +746,9 @@ impl<R: Runtime> Shell<R> {
                         self.last_exit = 1;
                         return Some(1);
                     }
+                    if is_protected_version_var(arr_name) {
+                        return Some(0);
+                    }
                     let val = rhs.to_string();
                     let arr_name_str = arr_name.to_string();
                     // Check if this is an associative array
@@ -760,6 +793,20 @@ impl<R: Runtime> Shell<R> {
                         let elapsed = self.start_time.elapsed().as_secs() as i64;
                         self.seconds_offset = n - elapsed;
                     }
+                    return Some(0);
+                }
+                if lhs == "SHLVL" {
+                    if let Ok(n) = rhs.parse::<i64>() {
+                        self.shlvl = if n > 0 { n as u32 } else { 1 };
+                    } else {
+                        self.shlvl = 1;
+                    }
+                    self.env.insert("SHLVL".to_string(), ShellValue::Scalar(self.shlvl.to_string()));
+                    return Some(0);
+                }
+                // Intentional deviation: BASH_VERSION and BASH_VERSINFO are non-reassignable.
+                // In real bash they are readonly; here we silently ignore assignment.
+                if lhs == "BASH_VERSION" || lhs == "BASH_VERSINFO" {
                     return Some(0);
                 }
                 self.env.insert(lhs.to_string(), ShellValue::Scalar(rhs.to_string()));
@@ -843,6 +890,20 @@ impl<R: Runtime> Shell<R> {
             self.rt.write_stderr(&format!("{}: {}: readonly variable\n", self.shell_name, lhs));
             self.last_exit = 1;
             return Some(1);
+        }
+        // Guard SHLVL: intercept and update internal field
+        if lhs == "SHLVL" {
+            if let Ok(n) = rhs.parse::<i64>() {
+                self.shlvl = if n > 0 { n as u32 } else { 1 };
+            } else {
+                self.shlvl = 1;
+            }
+            self.env.insert("SHLVL".to_string(), ShellValue::Scalar(self.shlvl.to_string()));
+            return Some(0);
+        }
+        // Guard BASH_VERSION and BASH_VERSINFO: silently ignore assignment
+        if is_protected_version_var(lhs) {
+            return Some(0);
         }
         let lhs = lhs.to_string();
         self.env.insert(lhs, ShellValue::Scalar(rhs));
