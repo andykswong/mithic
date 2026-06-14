@@ -1,5 +1,5 @@
 import { type SyncInputStreamHandler, type SyncOutputStreamHandler, WorkerIo, createBlockingCall } from '@mithic/io/io';
-import { SyncBridgeFsProvider, SyncBridgeSocketProvider, createStdinHandler, createStdoutHandler, createStderrHandler } from '@mithic/io/io/providers/sync-bridge';
+import { SyncBridgeFsProvider, SyncBridgeSocketProvider, SyncBridgeHttpClient, createStdinHandler, createStdoutHandler, createStderrHandler } from '@mithic/io/io/providers/sync-bridge';
 import { SyncFileSystemRouter, DeviceFsProvider, NetworkDeviceFsProvider } from '@mithic/io/vfs';
 import { WASIShim } from '@mithic/wasip2';
 import { ComponentExit } from '@mithic/wasip2/cli/exit';
@@ -141,6 +141,8 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
       processManager = new SimpleProcessManager();
     }
 
+    const httpClient = workerIo ? new SyncBridgeHttpClient(workerIo) : undefined;
+
     const shim = new WASIShim({
       sandbox: {
         args: msg.args,
@@ -150,6 +152,7 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
         stdout,
         stderr,
         preopens,
+        httpClient,
       },
     });
 
