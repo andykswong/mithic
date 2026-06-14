@@ -22,7 +22,7 @@
   - **Brace expansion** — `{a,b,c}`, `{1..10..2}`, `{a..z}`, nesting
   - **Process substitution** — `<(cmd)`
   - **Glob expansion** — `*`, `?`, `[...]`
-  - **Builtins** — `cd`, `echo`, `export`, `unset`, `read`, `test`/`[`/`[[`, `declare`/`local`, `source`, `true`, `false`
+  - **Builtins** — `cd`, `echo`, `export`, `unset`, `read`, `test`/`[`/`[[`, `declare`/`local`, `source`, `shopt`, `true`, `false`
   - **Error handling** — Arithmetic expansion errors abort the containing command; proper exit codes propagate through pipes, assignments, for/case/select
 - **Command resolution** — `ProcessManager`-based dispatching to shell, shell builtins, coreutils WASM, host-side commands, PATH-based WASM components and scripts
 - **POSIX mode** — Auto-activates when invoked as `sh`; disables non-standard extensions, including `[[`, `(( ))`, `<<<`, arrays, brace expansion
@@ -131,7 +131,7 @@ src/                   (~10k lines Rust)
 ├── builtins/
 │   ├── mod.rs         dispatch + write_out helper
 │   ├── core.rs        echo, pwd, cd, exit, env, true, false, hash
-│   ├── vars.rs        export, unset, declare, local, read, set
+│   ├── vars.rs        export, unset, declare, local, read, set, shopt
 │   ├── flow.rs        break, continue, return, source
 │   ├── test.rs        [, [[, test
 │   └── jobs.rs        jobs, fg, bg, wait, disown, kill, trap
@@ -236,7 +236,7 @@ The shell has no readline library or terminal raw-mode support. This means:
 
 ### Missing Builtins
 
-`ulimit`, `umask`, `shopt`, `compgen`/`complete`, `enable`, `suspend`, `caller`
+`ulimit`, `umask`, `compgen`/`complete`, `enable`, `suspend`, `caller`
 
 ### Glob & Expansion
 
@@ -245,13 +245,12 @@ The shell has no readline library or terminal raw-mode support. This means:
 
 ### I/O & Redirection
 
-- `/dev/tcp` and `/dev/udp` network redirects produce an informative error (no real networking in WASM)
 - Extra FDs (3+) are shell-local only (not passed to child WASM processes via WASI spawn)
 
 ### Other
 
-- No startup file sourcing (`~/.bashrc`, `/etc/profile`) — source explicitly
-- No `GLOBIGNORE`, `nocaseglob`, or `BASH_VERSINFO`
+- No `/etc/profile` or `~/.bash_profile` sourcing (no login shell support) — `~/.bashrc` and `$ENV`/`$BASH_ENV` are sourced
+- No `GLOBIGNORE` or `BASH_VERSINFO`
 - History expansion limited to `!!`, `!N`, `!-N`, `!prefix` (no modifiers like `:p`, `:h`)
 - `read -t` (timeout) not supported — needs WASI poll-based timer
 - `fc` only supports `-l` (listing) — no re-edit mode
