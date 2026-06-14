@@ -1,3 +1,4 @@
+use crate::options::ShellOptions;
 use crate::runtime::{InputHandle, OutputHandle, Runtime};
 use crate::shell::Shell;
 use crate::value::ShellValue;
@@ -80,6 +81,7 @@ pub(crate) fn exec_builtin<R: Runtime>(
         "declare" | "local" => exec_declare(shell, name, args),
         "read" => exec_read(shell, args, stdin),
         "set" => exec_set(shell, args),
+        "shopt" => exec_shopt(shell, args),
         _ => {
             shell.rt.write_stderr(&format!("{}: {}: not handled in vars builtin\n", shell.shell_name, name));
             127
@@ -442,5 +444,121 @@ fn exec_mapfile<R: Runtime>(shell: &mut Shell<R>, args: &[String], stdin: Option
         .collect();
 
     shell.env.insert(arr_name, ShellValue::Array(lines));
+    0
+}
+
+fn exec_shopt<R: Runtime>(shell: &mut Shell<R>, args: &[String]) -> u8 {
+    let mut set_mode = false;
+    let mut unset_mode = false;
+    let mut print_mode = false;
+    let mut quiet_mode = false;
+    let mut names: Vec<&str> = Vec::new();
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-s" => set_mode = true,
+            "-u" => unset_mode = true,
+            "-p" => print_mode = true,
+            "-q" => quiet_mode = true,
+            arg => names.push(arg),
+        }
+        i += 1;
+    }
+
+    if set_mode && !names.is_empty() {
+        for name in &names {
+            if shell.options.set_shopt(name, true).is_none() {
+                shell.rt.write_stderr(&format!(
+                    "{}: shopt: {}: invalid shell option name\n", shell.shell_name, name
+                ));
+                return 2;
+            }
+        }
+        return 0;
+    }
+
+    if unset_mode && !names.is_empty() {
+        for name in &names {
+            if shell.options.set_shopt(name, false).is_none() {
+                shell.rt.write_stderr(&format!(
+                    "{}: shopt: {}: invalid shell option name\n", shell.shell_name, name
+                ));
+                return 2;
+            }
+        }
+        return 0;
+    }
+
+    if print_mode {
+        if names.is_empty() {
+            for &name in ShellOptions::shopt_names() {
+                let enabled = shell.options.get_shopt(name).unwrap_or(false);
+                let flag = if enabled { "-s" } else { "-u" };
+                shell.rt.write_stdout(&format!("shopt {} {}\n", flag, name));
+            }
+        } else {
+            for name in &names {
+                match shell.options.get_shopt(name) {
+                    Some(enabled) => {
+                        let flag = if enabled { "-s" } else { "-u" };
+                        shell.rt.write_stdout(&format!("shopt {} {}\n", flag, name));
+                    }
+                    None => {
+                        shell.rt.write_stderr(&format!(
+                            "{}: shopt: {}: invalid shell option name\n", shell.shell_name, name
+                        ));
+                        return 2;
+                    }
+                }
+            }
+        }
+        return 0;
+    }
+
+    if quiet_mode {
+        if names.is_empty() {
+            return 0;
+        }
+        for name in &names {
+            match shell.options.get_shopt(name) {
+                Some(true) => {}
+                Some(false) => return 1,
+                None => {
+                    shell.rt.write_stderr(&format!(
+                        "{}: shopt: {}: invalid shell option name\n", shell.shell_name, name
+                    ));
+                    return 2;
+                }
+            }
+        }
+        return 0;
+    }
+
+    if !names.is_empty() {
+        let mut exit_code = 0u8;
+        for name in &names {
+            match shell.options.get_shopt(name) {
+                Some(enabled) => {
+                    let status = if enabled { "on" } else { "off" };
+                    shell.rt.write_stdout(&format!("{}\t{}\n", name, status));
+                    if !enabled { exit_code = 1; }
+                }
+                None => {
+                    shell.rt.write_stderr(&format!(
+                        "{}: shopt: {}: invalid shell option name\n", shell.shell_name, name
+                    ));
+                    return 2;
+                }
+            }
+        }
+        return exit_code;
+    }
+
+    for &name in ShellOptions::shopt_names() {
+        let enabled = shell.options.get_shopt(name).unwrap_or(false);
+        let status = if enabled { "on" } else { "off" };
+        shell.rt.write_stdout(&format!("{}\t{}\n", name, status));
+    }
     0
 }

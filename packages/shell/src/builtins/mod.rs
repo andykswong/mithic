@@ -20,7 +20,7 @@ pub(crate) fn write_out<R: Runtime>(shell: &mut Shell<R>, stdout: &Option<Output
 pub(crate) fn lookup_builtin<R: Runtime>(name: &str) -> Option<BuiltinFn<R>> {
     match name {
         "exit" | "echo" | "printf" | "pwd" | "cd" | "env" | "true" | "false" => Some(core::exec_builtin),
-        "export" | "unset" | "declare" | "local" | "read" | "set" |
+        "export" | "unset" | "declare" | "local" | "read" | "set" | "shopt" |
         "readonly" | "let" | "getopts" | "mapfile" | "readarray" => Some(vars::exec_builtin),
         "break" | "continue" | "return" | "source" | "." | "eval" | "shift" | "type" | "command" |
         "exec" | "hash" | "history" | "fc" | "coproc" | "time" | "builtin" | "alias" | "unalias" |

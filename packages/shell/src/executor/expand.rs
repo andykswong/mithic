@@ -158,6 +158,12 @@ impl<R: Runtime> Shell<R> {
                 flags.push('s');
                 flags
             }
+            "SHELLOPTS" => {
+                self.options.enabled_set_o_options().join(":")
+            }
+            "BASHOPTS" => {
+                self.options.enabled_shopt_options().join(":")
+            }
             _ => {
                 if name == "0" {
                     return self.env.get("0").map(|v| v.as_scalar().to_string())

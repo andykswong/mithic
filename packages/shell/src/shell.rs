@@ -557,8 +557,7 @@ impl<R: Runtime> Shell<R> {
             }
         }
 
-        // Alias expansion: in POSIX mode, always expand. In bash mode, only expand when interactive.
-        let expand_aliases = self.options.posix || self.is_interactive;
+        let expand_aliases = self.options.posix || self.is_interactive || self.options.expand_aliases;
         if expand_aliases && !cmd.words.is_empty() {
             if let Some(first_lit) = crate::executor::expansion::literal_text(&cmd.words[0]) {
                 if !first_lit.contains('=') {
