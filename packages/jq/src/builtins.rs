@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use regex::Regex;
 use crate::json::{JValue, FormatOpts, format_value, json_type_name, parse_json};
 use crate::filter::Filter;
-use crate::eval::{JqError, Env, eval, eval_special, collect_recurse, jvalue_cmp, jvalue_add, jvalue_sub, jvalue_mul, jvalue_div, jvalue_mod, is_truthy, jvalue_getpath, jvalue_setpath, jvalue_delpath, jvalue_to_path, collect_paths, eval_path_expr, write_stderr, Path};
+use crate::eval::{JqError, Env, eval, eval_special, collect_recurse, jvalue_cmp, jvalue_add, is_truthy, jvalue_getpath, jvalue_setpath, jvalue_delpath, jvalue_to_path, collect_paths, eval_path_expr, write_stderr};
 
 pub fn eval_call(name: &str, args: &[Filter], input: &JValue, env: &mut Env) -> Result<Vec<JValue>, JqError> {
     if let Some(def) = env.lookup_func(name, args.len()).cloned() {
@@ -695,7 +695,6 @@ pub fn eval_call(name: &str, args: &[Filter], input: &JValue, env: &mut Env) -> 
         ("objects", 0) => Ok(if matches!(input, JValue::Object(_)) { vec![input.clone()] } else { vec![] }),
         ("iterables", 0) => Ok(if matches!(input, JValue::Array(_) | JValue::Object(_)) { vec![input.clone()] } else { vec![] }),
         ("scalars", 0) => Ok(if !matches!(input, JValue::Array(_) | JValue::Object(_)) { vec![input.clone()] } else { vec![] }),
-        ("values", 0) => Ok(if !matches!(input, JValue::Null) { vec![input.clone()] } else { vec![] }),
         ("normals", 0) => Ok(if matches!(input, JValue::Number(n) if n.is_normal()) { vec![input.clone()] } else { vec![] }),
         ("infinites", 0) => Ok(if matches!(input, JValue::Number(n) if n.is_infinite()) { vec![input.clone()] } else { vec![] }),
         ("nans", 0) => Ok(if matches!(input, JValue::Number(n) if n.is_nan()) { vec![input.clone()] } else { vec![] }),
@@ -732,7 +731,7 @@ fn apply_regex_flags(pattern: &str, flags: &str) -> String {
     if has_flags { prefix.push(')'); format!("{}{}", prefix, pattern) } else { pattern.to_string() }
 }
 
-fn make_match_obj(re: &Regex, caps: &regex::Captures<'_>, _text: &str) -> JValue {
+fn make_match_obj(_re: &Regex, caps: &regex::Captures<'_>, _text: &str) -> JValue {
     let m = caps.get(0).unwrap();
     let offset = m.start();
     let length = m.len();
@@ -831,7 +830,7 @@ fn base64_encode(data: &[u8]) -> String {
         let b0 = chunk[0] as usize;
         let b1 = if chunk.len() > 1 { chunk[1] as usize } else { 0 };
         let b2 = if chunk.len() > 2 { chunk[2] as usize } else { 0 };
-        out.push(CHARS[(b0 >> 2)] as char);
+        out.push(CHARS[b0 >> 2] as char);
         out.push(CHARS[((b0 & 3) << 4) | (b1 >> 4)] as char);
         out.push(if chunk.len() > 1 { CHARS[((b1 & 0xf) << 2) | (b2 >> 6)] as char } else { '=' });
         out.push(if chunk.len() > 2 { CHARS[b2 & 0x3f] as char } else { '=' });

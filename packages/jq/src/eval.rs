@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use crate::json::{JValue, FormatOpts, format_value, json_type_name, parse_json};
+use crate::json::{JValue, FormatOpts, format_value, json_type_name};
 use crate::filter::{Filter, Pattern, ObjEntry, StringPart};
 use crate::builtins::eval_call;
 

@@ -1,4 +1,4 @@
-use crate::json::{JValue, FormatOpts, format_value};
+use crate::json::JValue;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Filter {
@@ -111,9 +111,6 @@ enum FTok {
     RBracket,
     LBrace,
     RBrace,
-    At,
-    Dollar,
-    Hash,
     Eq,
     Ne,
     Le,
@@ -150,13 +147,11 @@ enum FTok {
     Def,
     Label,
     Break,
-    Recurse,
     Null,
     True,
     False,
     Ident(String),
     Var(String),
-    Label2(String),
     Num(f64),
     Str(Vec<StringPart>),
     Format(String),
@@ -166,12 +161,11 @@ enum FTok {
 struct FLexer<'a> {
     src: &'a str,
     pos: usize,
-    tokens: Vec<(FTok, usize)>,
 }
 
 impl<'a> FLexer<'a> {
     fn new(src: &'a str) -> Self {
-        FLexer { src, pos: 0, tokens: Vec::new() }
+        FLexer { src, pos: 0 }
     }
 
     fn peek_char(&self) -> Option<char> {
@@ -472,10 +466,6 @@ impl FParser {
 
     fn peek(&self) -> &FTok {
         self.tokens.get(self.pos).unwrap_or(&FTok::Eof)
-    }
-
-    fn peek2(&self) -> &FTok {
-        self.tokens.get(self.pos + 1).unwrap_or(&FTok::Eof)
     }
 
     fn advance(&mut self) -> FTok {
