@@ -2,18 +2,11 @@ use crate::runtime::{InputHandle, OutputHandle, Runtime};
 use crate::shell::Shell;
 
 impl<R: Runtime> Shell<R> {
-    /// Check if a path is a /dev/tcp or /dev/udp virtual path. If so, print an error and return true.
-    pub(crate) fn is_network_redirect(&mut self, path: &str) -> bool {
-        if path.starts_with("/dev/tcp/") || path.starts_with("/dev/udp/") {
-            let proto = if path.starts_with("/dev/tcp/") { "/dev/tcp" } else { "/dev/udp" };
-            self.rt.write_stderr(&format!(
-                "{}: {}: network redirects ({}) not supported in WASM environment\n",
-                self.shell_name, path, proto
-            ));
-            true
-        } else {
-            false
-        }
+    /// Check if a path is a /dev/tcp or /dev/udp virtual path.
+    /// Previously returned true to block network redirects; now returns false to
+    /// let them fall through to normal VFS file operations (handled by NetworkDeviceFsProvider).
+    pub(crate) fn is_network_redirect(&mut self, _path: &str) -> bool {
+        false
     }
 
     /// Returns `true` on success, `false` if a redirect failed (command should not execute).

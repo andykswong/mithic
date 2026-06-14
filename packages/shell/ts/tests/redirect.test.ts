@@ -153,29 +153,17 @@ describe('exec N< file (input fd redirects)', () => {
 });
 
 describe('/dev/tcp and /dev/udp', () => {
-  it('/dev/tcp redirect produces error', async () => {
-    const { stderr, exit } = await runShell(
-      'echo hello > /dev/tcp/localhost/80\n'
-    );
-    assert.ok(stderr.includes('/dev/tcp'));
-    assert.ok(stderr.includes('not supported'));
-    assert.notStrictEqual(exit, 0);
-  });
-
-  it('/dev/udp redirect produces error', async () => {
-    const { stderr, exit } = await runShell(
-      'echo hello > /dev/udp/localhost/53\n'
-    );
-    assert.ok(stderr.includes('/dev/udp'));
-    assert.ok(stderr.includes('not supported'));
-    assert.notStrictEqual(exit, 0);
-  });
-
-  it('/dev/tcp in exec redirect produces error', async () => {
+  it('/dev/tcp connection attempt does not say "not supported"', async () => {
     const { stderr } = await runShell(
-      'exec 3> /dev/tcp/example.com/80\n'
+      'exec 3<> /dev/tcp/127.0.0.1/1\n'
     );
-    assert.ok(stderr.includes('/dev/tcp'));
-    assert.ok(stderr.includes('not supported'));
+    assert.ok(!stderr.includes('not supported'), `Should not say "not supported", got: ${stderr}`);
+  });
+
+  it('/dev/udp access does not say "not supported"', async () => {
+    const { stderr } = await runShell(
+      'exec 3<> /dev/udp/127.0.0.1/9999\n'
+    );
+    assert.ok(!stderr.includes('not supported'), `Should not say "not supported", got: ${stderr}`);
   });
 });
