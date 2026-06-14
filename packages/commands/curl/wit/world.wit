@@ -1,0 +1,25 @@
+package mithic:curl@0.1.0;
+
+world curl {
+  // I/O primitives
+  import wasi:io/error@0.2.6;
+  import wasi:io/poll@0.2.6;
+  import wasi:io/streams@0.2.6;
+
+  // CLI environment
+  import wasi:cli/environment@0.2.6;
+  import wasi:cli/stdin@0.2.6;
+  import wasi:cli/stdout@0.2.6;
+  import wasi:cli/stderr@0.2.6;
+
+  // Filesystem (for -o output)
+  import wasi:filesystem/types@0.2.6;
+  import wasi:filesystem/preopens@0.2.6;
+
+  // Clocks (for timeouts)
+  import wasi:clocks/monotonic-clock@0.2.6;
+
+  // HTTP (for outgoing requests)
+  import wasi:http/types@0.2.6;
+  import wasi:http/outgoing-handler@0.2.6;
+}

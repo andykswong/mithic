@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { NodeAsyncStdinHandler, NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
 import { NodeSocketProvider } from '@mithic/io/net/providers/node-socket-provider';
+import { FetchHttpClient } from '@mithic/io/net';
 import { ComponentProcessWorker } from '@mithic/process/manager/component-worker';
 import { InlineProcessWorker } from '@mithic/process/manager/inline-worker';
 import type { CompileResult } from '@mithic/process/component/compiler';
@@ -13,9 +14,11 @@ import { CommandRegistry } from '@mithic/process/component/registry';
 import type { ProcessWorker } from '@mithic/process/types';
 import { COREUTILS_COMMANDS } from '@mithic/coreutils';
 import { JQ_COMMAND } from '@mithic/jq';
+import { CURL_COMMAND } from '@mithic/curl';
 import { modules as shellModules } from '@mithic/shell/component';
 import { modules as coreutilsModules } from '@mithic/coreutils/component';
 import { modules as jqModules } from '@mithic/jq/component';
+import { modules as curlModules } from '@mithic/curl/component';
 import { outputFromSharedBuffer } from '@mithic/process/io';
 import { runChmod } from '../commands/chmod.ts';
 import { Runtime } from '../runtime.ts';
@@ -35,10 +38,11 @@ async function fetchModuleBytes(dataUris: Record<string, string>): Promise<Recor
   return modules;
 }
 
-const [shellRawModules, coreutilsRawModules, jqRawModules] = await Promise.all([
+const [shellRawModules, coreutilsRawModules, jqRawModules, curlRawModules] = await Promise.all([
   fetchModuleBytes(shellModules),
   fetchModuleBytes(coreutilsModules),
   fetchModuleBytes(jqModules),
+  fetchModuleBytes(curlModules),
 ]);
 
 // --- Read jco JS sources (needed for CompileResult sent to process Workers) ---
@@ -46,9 +50,11 @@ const [shellRawModules, coreutilsRawModules, jqRawModules] = await Promise.all([
 const shellComponentDir = dirname(fileURLToPath(import.meta.resolve('@mithic/shell/component')));
 const coreutilsComponentDir = dirname(fileURLToPath(import.meta.resolve('@mithic/coreutils/component')));
 const jqComponentDir = dirname(fileURLToPath(import.meta.resolve('@mithic/jq/component')));
+const curlComponentDir = dirname(fileURLToPath(import.meta.resolve('@mithic/curl/component')));
 const shellJsSource = readFileSync(join(shellComponentDir, 'component.js'), 'utf-8');
 const coreutilsJsSource = readFileSync(join(coreutilsComponentDir, 'component.js'), 'utf-8');
 const jqJsSource = readFileSync(join(jqComponentDir, 'component.js'), 'utf-8');
+const curlJsSource = readFileSync(join(curlComponentDir, 'component.js'), 'utf-8');
 
 // --- Build CompileResults for process Workers ---
 
@@ -65,6 +71,11 @@ const coreutilsCompileResult: CompileResult = {
 const jqCompileResult: CompileResult = {
   modules: jqRawModules,
   jsFiles: { 'component.js': jqJsSource },
+  cached: true,
+};
+const curlCompileResult: CompileResult = {
+  modules: curlRawModules,
+  jsFiles: { 'component.js': curlJsSource },
   cached: true,
 };
 
@@ -182,6 +193,10 @@ function createWorker(file: string, name?: string): ProcessWorker | undefined {
     const worker = new Worker(processWorkerUrl, { type: 'module', name });
     return new ComponentProcessWorker(worker, jqCompileResult);
   }
+  if (cmdName === CURL_COMMAND) {
+    const worker = new Worker(processWorkerUrl, { type: 'module', name });
+    return new ComponentProcessWorker(worker, curlCompileResult);
+  }
   if (COREUTILS_COMMANDS.has(cmdName)) {
     const worker = new Worker(processWorkerUrl, { type: 'module', name });
     return new ComponentProcessWorker(worker, coreutilsCompileResult);
@@ -198,6 +213,7 @@ function createWorker(file: string, name?: string): ProcessWorker | undefined {
 
 const manager = createWorkerStrategy({
   fs: vfs,
+  http: new FetchHttpClient(),
   sockets: nodeSocketProvider,
   stdio: {
     stdin: new NodeAsyncStdinHandler(),

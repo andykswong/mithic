@@ -66,6 +66,7 @@
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
     "@mithic/coreutils": "^0.1",
+    "@mithic/curl": "^0.1",
     "@mithic/io": "^0.4",
     "@mithic/jq": "^0.1",
     "@mithic/process": "^0.1",

@@ -2,6 +2,7 @@ import { isatty } from 'node:tty';
 import { installPolyfill, createInstantiateCore } from '@mithic/wasm-transpile';
 import { NodeAsyncStdinHandler, NodeStdoutHandler, NodeStderrHandler } from '@mithic/io/io/providers/node-stdio';
 import { NodeSocketProvider } from '@mithic/io/net/providers/node-socket-provider';
+import { FetchHttpClient } from '@mithic/io/net';
 import type { ComponentExit } from '@mithic/wasip2/cli/exit';
 import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
 import { WASIShim } from '@mithic/wasip2/instantiation';
@@ -11,6 +12,7 @@ import { WASIProcess } from '@mithic/process/instantiation';
 import { SimpleProcessManager, type CommandHandler, type CommandResolver, type CommandContext } from '@mithic/process/manager/simple';
 import { COREUTILS_COMMANDS } from '@mithic/coreutils';
 import { JQ_COMMAND } from '@mithic/jq';
+import { CURL_COMMAND } from '@mithic/curl';
 import { Runtime } from '../runtime.ts';
 import { createNodeVfs, mountNodeVfs, getNodeEnv } from './shared.ts';
 
@@ -21,7 +23,7 @@ const variant = polyfill.installed ? 'asyncify' : 'jspi';
 
 // --- Dynamically import the appropriate variant ---
 
-const [shellEntry, coreutilsEntry, jqEntry] = await Promise.all([
+const [shellEntry, coreutilsEntry, jqEntry, curlEntry] = await Promise.all([
   variant === 'asyncify'
     ? import('@mithic/shell/component/asyncify')
     : import('@mithic/shell/component/jspi'),
@@ -31,6 +33,9 @@ const [shellEntry, coreutilsEntry, jqEntry] = await Promise.all([
   variant === 'asyncify'
     ? import('@mithic/jq/component/asyncify')
     : import('@mithic/jq/component/jspi'),
+  variant === 'asyncify'
+    ? import('@mithic/curl/component/asyncify')
+    : import('@mithic/curl/component/jspi'),
 ]);
 
 // --- Shared VFS ---
@@ -66,6 +71,8 @@ const instantiateCore = createInstantiateCore({ asyncify: polyfill.installed });
 
 type ComponentEntry = { instantiate: (...args: unknown[]) => Promise<{ run: { run: () => Promise<number> } }>; modules: Record<string, string> };
 
+const httpClient = new FetchHttpClient();
+
 function createHandler(getEntry: () => Promise<ComponentEntry>): CommandHandler {
   return async (args: string[], ctx: CommandContext): Promise<number> => {
     const entry = await getEntry();
@@ -79,6 +86,7 @@ function createHandler(getEntry: () => Promise<ComponentEntry>): CommandHandler 
         stdin: ctx.stdin,
         stdout: ctx.stdout,
         stderr: ctx.stderr,
+        httpClient,
       },
     });
 
@@ -105,11 +113,13 @@ function createHandler(getEntry: () => Promise<ComponentEntry>): CommandHandler 
 const shellHandler = createHandler(async () => shellEntry as unknown as ComponentEntry);
 const coreutilsHandler = createHandler(async () => coreutilsEntry as unknown as ComponentEntry);
 const jqHandler = createHandler(async () => jqEntry as unknown as ComponentEntry);
+const curlHandler = createHandler(async () => curlEntry as unknown as ComponentEntry);
 
 const commandResolver: CommandResolver = (file: string): CommandHandler | undefined => {
   const cmdName = file.includes('/') ? file.split('/').pop()! : file;
   if (cmdName === 'sh' || cmdName === 'bash') return shellHandler;
   if (cmdName === JQ_COMMAND) return jqHandler;
+  if (cmdName === CURL_COMMAND) return curlHandler;
   if (COREUTILS_COMMANDS.has(cmdName)) return coreutilsHandler;
   return undefined;
 };

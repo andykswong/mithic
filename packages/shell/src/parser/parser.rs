@@ -598,7 +598,6 @@ impl Parser {
                                 other => other,
                             }).collect());
                             words.push(quoted_word);
-                            after_pattern_op = false;
                         } else {
                             words.push(w);
                         }
