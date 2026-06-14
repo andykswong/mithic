@@ -98,6 +98,68 @@ describe('special variables', () => {
     const { stdout } = await runShell('set -e\nset +e\necho $-\n');
     assert.ok(!stdout.trim().includes('e'), '$- should not contain e after set +e');
   });
+
+  it('$SECONDS starts at 0 or small value', async () => {
+    const { stdout } = await runShell('echo $SECONDS\n');
+    const val = parseInt(stdout.trim());
+    assert.ok(!isNaN(val) && val >= 0 && val <= 2);
+  });
+
+  it('$SECONDS can be assigned and read back', async () => {
+    const { stdout } = await runShell('SECONDS=100\necho $SECONDS\n');
+    const val = parseInt(stdout.trim());
+    assert.ok(val >= 100 && val <= 102, `expected 100-102, got ${val}`);
+  });
+
+  it('$FUNCNAME in function returns function name', async () => {
+    const { stdout } = await runShell('f() { echo $FUNCNAME; }; f\n');
+    assert.strictEqual(stdout.trim(), 'f');
+  });
+
+  it('$FUNCNAME outside function returns main', async () => {
+    const { stdout } = await runShell('echo $FUNCNAME\n');
+    assert.strictEqual(stdout.trim(), 'main');
+  });
+
+  it('${FUNCNAME[0]} in nested functions', async () => {
+    const { stdout } = await runShell('inner() { echo "${FUNCNAME[0]} ${FUNCNAME[1]}"; }; outer() { inner; }; outer\n');
+    assert.strictEqual(stdout.trim(), 'inner outer');
+  });
+
+  it('${FUNCNAME[@]} shows full call stack', async () => {
+    const { stdout } = await runShell('c() { echo "${FUNCNAME[@]}"; }; b() { c; }; a() { b; }; a\n');
+    assert.strictEqual(stdout.trim(), 'c b a main');
+  });
+
+  it('$BASH_SOURCE in sourced file', async () => {
+    const { stdout } = await runShell(
+      'echo \'echo $BASH_SOURCE\' > /tmp/src.sh\nsource /tmp/src.sh\n'
+    );
+    assert.strictEqual(stdout.trim(), '/tmp/src.sh');
+  });
+
+  it('${BASH_SOURCE[0]} in nested source', async () => {
+    const { stdout } = await runShell(
+      'echo \'echo ${BASH_SOURCE[0]}\' > /tmp/inner.sh\n' +
+      'echo \'source /tmp/inner.sh\' > /tmp/outer.sh\n' +
+      'source /tmp/outer.sh\n'
+    );
+    assert.strictEqual(stdout.trim(), '/tmp/inner.sh');
+  });
+
+  it('$BASH_LINENO in function', async () => {
+    const { stdout } = await runShell(
+      'f() { echo ${BASH_LINENO[0]}; }\nf\n'
+    );
+    const line = parseInt(stdout.trim());
+    assert.ok(!isNaN(line) && line >= 0 && line <= 3, `expected line 0-3, got ${line}`);
+  });
+
+  it('${#FUNCNAME[@]} returns call stack depth', async () => {
+    const { stdout } = await runShell('f() { echo ${#FUNCNAME[@]}; }; f\n');
+    const val = parseInt(stdout.trim());
+    assert.ok(val >= 2, `expected at least 2, got ${val}`);
+  });
 });
 
 describe('${!var} variable indirection', () => {

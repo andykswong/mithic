@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use crate::executor::expansion::{
     expand_tilde, literal_text, normalize_path, parse_array_subscript,
@@ -9,6 +10,12 @@ use crate::jobs::JobTable;
 use crate::options::ShellOptions;
 use crate::params::PositionalParams;
 use crate::runtime::{InputHandle, OutputHandle, ProcessHandle, Runtime, SpawnOpts};
+
+pub struct CallFrame {
+    pub function_name: String,
+    pub source_file: String,
+    pub call_line: u32,
+}
 
 pub struct Shell<R: Runtime> {
     pub(crate) rt: R,
@@ -50,6 +57,10 @@ pub struct Shell<R: Runtime> {
     /// Aliases for FDs that point to default stdout(1) or stderr(2) without explicit handles.
     /// e.g., `exec 3>&1` stores fd_aliases[3] = 1, meaning fd 3 writes to default stdout.
     pub(crate) fd_aliases: HashMap<u32, u32>,
+    pub(crate) call_stack: Vec<CallFrame>,
+    pub(crate) current_source_file: String,
+    pub(crate) start_time: Instant,
+    pub(crate) seconds_offset: i64,
 }
 
 impl<R: Runtime> Shell<R> {
@@ -98,6 +109,10 @@ impl<R: Runtime> Shell<R> {
             extra_fds: HashMap::new(),
             extra_input_fds: HashMap::new(),
             fd_aliases: HashMap::new(),
+            call_stack: Vec::new(),
+            current_source_file: String::new(),
+            start_time: Instant::now(),
+            seconds_offset: 0,
         }
     }
 
@@ -322,6 +337,7 @@ impl<R: Runtime> Shell<R> {
             ));
             return 127;
         }
+        self.current_source_file = resolved;
         let content = String::from_utf8_lossy(&bytes).to_string();
         self.run_string(&content)
     }
@@ -649,7 +665,7 @@ impl<R: Runtime> Shell<R> {
 
         let name = args[0].clone();
         if let Some(body) = self.functions.get(&name).cloned() {
-            self.exec_function_call(&args[1..], body)
+            self.exec_function_call(&name, &args[1..], body)
         } else if let Some(builtin_fn) = crate::builtins::lookup_builtin::<R>(&name) {
             builtin_fn(self, &name, &args[1..], stdin, stdout)
         } else {
@@ -738,6 +754,13 @@ impl<R: Runtime> Shell<R> {
                     self.rt.write_stderr(&format!("{}: {}: readonly variable\n", self.shell_name, lhs));
                     self.last_exit = 1;
                     return Some(1);
+                }
+                if lhs == "SECONDS" {
+                    if let Ok(n) = rhs.parse::<i64>() {
+                        let elapsed = self.start_time.elapsed().as_secs() as i64;
+                        self.seconds_offset = n - elapsed;
+                    }
+                    return Some(0);
                 }
                 self.env.insert(lhs.to_string(), ShellValue::Scalar(rhs.to_string()));
                 return Some(0);
@@ -922,7 +945,7 @@ impl<R: Runtime> Shell<R> {
             if args.is_empty() { continue; }
             let name = args[0].clone();
             if let Some(body) = self.functions.get(&name).cloned() {
-                let exit = self.exec_function_call(&args[1..], body);
+                let exit = self.exec_function_call(&name, &args[1..], body);
                 // Close pipe ends not consumed by spawn
                 if let Some(out) = stdout_opt { self.rt.pipe_close_write(out); }
                 if let Some(err) = stderr_opt { self.rt.pipe_close_write(err); }

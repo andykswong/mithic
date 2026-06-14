@@ -76,6 +76,14 @@ impl<R: Runtime> Shell<R> {
                 if subscript != "@" && subscript != "*" {
                     return None;
                 }
+                if let Some(special_elements) = self.get_special_array_elements(name) {
+                    if subscript == "*" {
+                        let joined: String = special_elements.join(&ifs_sep.to_string());
+                        return Some(vec![joined]);
+                    } else {
+                        return Some(special_elements);
+                    }
+                }
                 let elements = match self.env.get(name) {
                     Some(ShellValue::Array(elements)) => elements.clone(),
                     Some(ShellValue::Scalar(s)) => vec![s.clone()],
@@ -148,6 +156,32 @@ impl<R: Runtime> Shell<R> {
                 ((self.random_state >> 33) % 32768).to_string()
             }
             "LINENO" => self.current_line.to_string(),
+            "SECONDS" => {
+                let elapsed = self.start_time.elapsed().as_secs() as i64;
+                let val = elapsed + self.seconds_offset;
+                val.max(0).to_string()
+            }
+            "FUNCNAME" => {
+                if let Some(frame) = self.call_stack.last() {
+                    frame.function_name.clone()
+                } else {
+                    "main".to_string()
+                }
+            }
+            "BASH_SOURCE" => {
+                if let Some(frame) = self.call_stack.last() {
+                    frame.source_file.clone()
+                } else {
+                    self.current_source_file.clone()
+                }
+            }
+            "BASH_LINENO" => {
+                if let Some(frame) = self.call_stack.last() {
+                    frame.call_line.to_string()
+                } else {
+                    "0".to_string()
+                }
+            }
             "-" => {
                 let mut flags = String::new();
                 if self.is_interactive { flags.push('i'); }
@@ -240,6 +274,9 @@ impl<R: Runtime> Shell<R> {
         if let Some(inner) = raw.strip_prefix('#') {
             if let Some((arr_name, subscript)) = parse_array_subscript(inner) {
                 if subscript == "@" || subscript == "*" {
+                    if let Some(len) = self.special_array_len(arr_name) {
+                        return len.to_string();
+                    }
                     return match self.env.get(arr_name) {
                         Some(v) => v.len().to_string(),
                         None => "0".to_string(),
@@ -267,6 +304,13 @@ impl<R: Runtime> Shell<R> {
             }
             // ${#VAR} — length of scalar variable
             return self.expand_var(inner, true).len().to_string();
+        }
+
+        // Dynamic special arrays: FUNCNAME, BASH_SOURCE, BASH_LINENO
+        if let Some((arr_name, subscript)) = parse_array_subscript(raw) {
+            if let Some(result) = self.expand_special_array(arr_name, subscript) {
+                return result;
+            }
         }
 
         // ${arr[@]} or ${arr[*]} — all elements space-joined
@@ -683,6 +727,48 @@ impl<R: Runtime> Shell<R> {
                 }
             }
         }
+    }
+
+    fn get_special_array_elements(&self, name: &str) -> Option<Vec<String>> {
+        match name {
+            "FUNCNAME" => {
+                let mut elements: Vec<String> = self.call_stack.iter().rev()
+                    .map(|f| f.function_name.clone())
+                    .collect();
+                elements.push("main".to_string());
+                Some(elements)
+            }
+            "BASH_SOURCE" => {
+                let mut elements: Vec<String> = self.call_stack.iter().rev()
+                    .map(|f| f.source_file.clone())
+                    .collect();
+                elements.push(self.current_source_file.clone());
+                Some(elements)
+            }
+            "BASH_LINENO" => {
+                let mut elements: Vec<String> = self.call_stack.iter().rev()
+                    .map(|f| f.call_line.to_string())
+                    .collect();
+                elements.push("0".to_string());
+                Some(elements)
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn expand_special_array(&self, arr_name: &str, subscript: &str) -> Option<String> {
+        let elements = self.get_special_array_elements(arr_name)?;
+        if subscript == "@" || subscript == "*" {
+            Some(elements.join(" "))
+        } else if let Ok(idx) = subscript.parse::<usize>() {
+            Some(elements.get(idx).cloned().unwrap_or_default())
+        } else {
+            Some(String::new())
+        }
+    }
+
+    pub(crate) fn special_array_len(&self, arr_name: &str) -> Option<usize> {
+        self.get_special_array_elements(arr_name).map(|e| e.len())
     }
 
     pub(crate) fn exec_list_with_stdin(&mut self, list: List, stdin: InputHandle) -> u8 {

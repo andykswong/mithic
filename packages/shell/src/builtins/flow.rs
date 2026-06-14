@@ -443,10 +443,18 @@ fn exec_source<R: Runtime>(shell: &mut Shell<R>, file: &str) -> u8 {
     let script = String::from_utf8_lossy(&contents);
     let mut parser = Parser::new_with_options(&script, shell.options.posix, shell.options.extglob);
     if let Some(list) = parser.parse() {
+        shell.call_stack.push(crate::shell::CallFrame {
+            function_name: "source".to_string(),
+            source_file: path.clone(),
+            call_line: shell.current_line,
+        });
+        let prev_source_file = std::mem::replace(&mut shell.current_source_file, path);
         shell.in_function_depth += 1;
         let result = shell.exec_list(list);
         shell.in_function_depth -= 1;
         shell.return_requested = false;
+        shell.current_source_file = prev_source_file;
+        shell.call_stack.pop();
         result
     } else {
         0

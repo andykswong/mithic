@@ -423,7 +423,7 @@ impl<R: Runtime> Shell<R> {
         exit
     }
 
-    pub(crate) fn exec_function_call(&mut self, args: &[String], body: Command) -> u8 {
+    pub(crate) fn exec_function_call(&mut self, func_name: &str, args: &[String], body: Command) -> u8 {
         let funcnest: usize = self.env.get("FUNCNEST")
             .and_then(|v| v.as_scalar().parse().ok())
             .unwrap_or(1000);
@@ -434,6 +434,11 @@ impl<R: Runtime> Shell<R> {
             ));
             return 1;
         }
+        self.call_stack.push(crate::shell::CallFrame {
+            function_name: func_name.to_string(),
+            source_file: self.current_source_file.clone(),
+            call_line: self.current_line,
+        });
         self.params.push_frame(args.to_vec());
         self.in_function_depth += 1;
         self.local_scopes.push(std::collections::HashMap::new());
@@ -449,6 +454,7 @@ impl<R: Runtime> Shell<R> {
         self.in_function_depth -= 1;
         self.return_requested = false;
         self.params.pop_frame();
+        self.call_stack.pop();
         exit
     }
 }
