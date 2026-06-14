@@ -64,7 +64,7 @@ impl<R: Runtime> Shell<R> {
         }
         let name = args[0].clone();
         if let Some(body) = self.functions.get(&name).cloned() {
-            let exit = self.exec_function_call(&args[1..], body);
+            let exit = self.exec_function_call(&name, &args[1..], body);
             // Close pipe ends not consumed by spawn — signals EOF to downstream readers
             if let Some(out) = stdout_opt { self.rt.pipe_close_write(out); }
             if let Some(err) = stderr_opt { self.rt.pipe_close_write(err); }
