@@ -1,6 +1,6 @@
 use crate::runtime::Runtime;
 use crate::shell::Shell;
-use crate::executor::expansion::glob_match;
+use crate::executor::expansion::glob_match_ext;
 use crate::value::ShellValue;
 
 impl<R: Runtime> Shell<R> {
@@ -114,8 +114,8 @@ impl<R: Runtime> Shell<R> {
             let op = args[1].as_str().to_string();
             let right = args[2].clone();
             return match op.as_str() {
-                "==" | "=" => glob_match(&right, &left),
-                "!=" => !glob_match(&right, &left),
+                "==" | "=" => glob_match_ext(&right, &left, self.options.extglob),
+                "!=" => !glob_match_ext(&right, &left, self.options.extglob),
                 "<" => left < right,
                 ">" => left > right,
                 "-eq" => self.parse_int(&left) == self.parse_int(&right),

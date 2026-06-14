@@ -144,7 +144,7 @@ impl<R: Runtime> Shell<R> {
             return;
         }
         let content = String::from_utf8_lossy(&bytes).to_string();
-        let mut parser = Parser::new_with_mode(&content, self.options.posix);
+        let mut parser = Parser::new_with_options(&content, self.options.posix, self.options.extglob);
         if let Some(list) = parser.parse() {
             self.exec_list(list);
         }
@@ -187,7 +187,7 @@ impl<R: Runtime> Shell<R> {
                             if self.options.verbose {
                                 self.rt.write_stderr(&format!("{}\n", trimmed));
                             }
-                            let mut parser = Parser::new_with_mode(&trimmed, self.options.posix);
+                            let mut parser = Parser::new_with_options(&trimmed, self.options.posix, self.options.extglob);
                             let result = parser.parse();
                             for err in parser.errors() {
                                 self.rt.write_stderr(&format!(
@@ -253,7 +253,7 @@ impl<R: Runtime> Shell<R> {
                 self.rt.write_stderr(&format!("{}\n", trimmed));
             }
 
-            let mut parser = Parser::new_with_mode(&trimmed, self.options.posix);
+            let mut parser = Parser::new_with_options(&trimmed, self.options.posix, self.options.extglob);
             let result = parser.parse();
 
             if parser.is_incomplete() {
@@ -293,7 +293,7 @@ impl<R: Runtime> Shell<R> {
         if self.options.verbose {
             self.rt.write_stderr(&format!("{}\n", input.trim()));
         }
-        let mut parser = Parser::new_with_mode(input, self.options.posix);
+        let mut parser = Parser::new_with_options(input, self.options.posix, self.options.extglob);
         let result = parser.parse();
         let has_errors = !parser.errors().is_empty();
         for err in parser.errors() {
@@ -598,7 +598,7 @@ impl<R: Runtime> Shell<R> {
                             new_input.push(' ');
                             new_input.push_str(w);
                         }
-                        let mut parser = crate::parser::Parser::new_with_mode(&new_input, self.options.posix);
+                        let mut parser = crate::parser::Parser::new_with_options(&new_input, self.options.posix, self.options.extglob);
                         if let Some(list) = parser.parse() {
                             return self.exec_list(list);
                         }
@@ -1070,7 +1070,7 @@ impl<R: Runtime> Shell<R> {
     pub(crate) fn run_trap(&mut self, signal: &str) {
         if let Some(handler) = self.traps.get(signal).cloned() {
             if !handler.is_empty() {
-                let mut parser = Parser::new_with_mode(&handler, self.options.posix);
+                let mut parser = Parser::new_with_options(&handler, self.options.posix, self.options.extglob);
                 if let Some(list) = parser.parse() {
                     self.exec_list(list);
                 }

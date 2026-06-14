@@ -1,6 +1,6 @@
 use crate::brace::expand_braces;
 use crate::executor::expansion::{
-    expand_tilde, has_glob, glob_match, glob_replace_first, glob_replace_all,
+    expand_tilde, has_glob_ext, glob_match_ext, glob_replace_first, glob_replace_all,
     remove_shortest_prefix, remove_longest_prefix, remove_shortest_suffix, remove_longest_suffix,
     shell_substring, split_var_and_op, parse_array_subscript,
 };
@@ -37,13 +37,14 @@ impl<R: Runtime> Shell<R> {
         }
 
         let expanded = self.expand_word(w);
+        let extglob = self.options.extglob;
         // Only apply brace expansion when the word has unquoted parts containing braces.
         let has_unquoted_braces = w.parts().iter().any(|p| {
             matches!(p, WordPart::Literal(s) if s.contains('{') || s.contains('}'))
         });
         // Only apply glob expansion when the word has unquoted parts containing glob chars.
         let has_unquoted_globs = w.parts().iter().any(|p| {
-            matches!(p, WordPart::Literal(s) if has_glob(s))
+            matches!(p, WordPart::Literal(s) if has_glob_ext(s, extglob))
         });
 
         let brace_results = if has_unquoted_braces && !self.options.posix {
@@ -52,7 +53,7 @@ impl<R: Runtime> Shell<R> {
             vec![expanded]
         };
         brace_results.into_iter().flat_map(|s| {
-            if has_unquoted_globs && has_glob(&s) { self.expand_glob(&s) } else { vec![s] }
+            if has_unquoted_globs && has_glob_ext(&s, extglob) { self.expand_glob(&s) } else { vec![s] }
         }).collect()
     }
 
@@ -304,38 +305,38 @@ impl<R: Runtime> Shell<R> {
         if let Some(pat_rep) = op_and_rest.strip_prefix("//") {
             let val = self.expand_var(var_name, true);
             let (pat, rep) = pat_rep.split_once('/').unwrap_or((pat_rep, ""));
-            return glob_replace_all(&val, pat, rep);
+            return glob_replace_all(&val, pat, rep, self.options.extglob);
         }
 
         // ${VAR/pat/rep} — replace first occurrence (glob-based)
         if let Some(pat_rep) = op_and_rest.strip_prefix('/') {
             let val = self.expand_var(var_name, true);
             let (pat, rep) = pat_rep.split_once('/').unwrap_or((pat_rep, ""));
-            return glob_replace_first(&val, pat, rep);
+            return glob_replace_first(&val, pat, rep, self.options.extglob);
         }
 
         // ${VAR##pat} — remove longest matching prefix (check before single #)
         if let Some(pat) = op_and_rest.strip_prefix("##") {
             let val = self.expand_var(var_name, true);
-            return remove_longest_prefix(&val, pat);
+            return remove_longest_prefix(&val, pat, self.options.extglob);
         }
 
         // ${VAR#pat} — remove shortest matching prefix
         if let Some(pat) = op_and_rest.strip_prefix('#') {
             let val = self.expand_var(var_name, true);
-            return remove_shortest_prefix(&val, pat);
+            return remove_shortest_prefix(&val, pat, self.options.extglob);
         }
 
         // ${VAR%%pat} — remove longest matching suffix (check before single %)
         if let Some(pat) = op_and_rest.strip_prefix("%%") {
             let val = self.expand_var(var_name, true);
-            return remove_longest_suffix(&val, pat);
+            return remove_longest_suffix(&val, pat, self.options.extglob);
         }
 
         // ${VAR%pat} — remove shortest matching suffix
         if let Some(pat) = op_and_rest.strip_prefix('%') {
             let val = self.expand_var(var_name, true);
-            return remove_shortest_suffix(&val, pat);
+            return remove_shortest_suffix(&val, pat, self.options.extglob);
         }
 
         // ${VAR^^} — convert entire value to uppercase (check ^^ before ^)
@@ -472,6 +473,18 @@ impl<R: Runtime> Shell<R> {
     }
 
     pub(crate) fn expand_glob(&self, pattern: &str) -> Vec<String> {
+        let extglob = self.options.extglob;
+        let globstar = self.options.globstar;
+
+        // Check for globstar (**) in path
+        if globstar && pattern.contains("**") {
+            let result = self.expand_globstar(pattern);
+            if !result.is_empty() {
+                return result;
+            }
+            return vec![pattern.to_string()];
+        }
+
         let (dir_part, name_pat) = match pattern.rfind('/') {
             Some(pos) => (&pattern[..pos], &pattern[pos + 1..]),
             None => ("", pattern),
@@ -493,7 +506,7 @@ impl<R: Runtime> Shell<R> {
             .filter(|name| {
                 !name.starts_with('.') || name_pat.starts_with('.')
             })
-            .filter(|name| glob_match(name_pat, name))
+            .filter(|name| glob_match_ext(name_pat, name, extglob))
             .map(|name| {
                 if dir_part.is_empty() {
                     name
@@ -511,9 +524,110 @@ impl<R: Runtime> Shell<R> {
         }
     }
 
+    fn expand_globstar(&self, pattern: &str) -> Vec<String> {
+        let extglob = self.options.extglob;
+
+        // Split pattern on the first "**" occurrence
+        let parts: Vec<&str> = pattern.splitn(2, "**").collect();
+        if parts.len() != 2 { return Vec::new(); }
+
+        let prefix = parts[0]; // e.g., "" or "dir/"
+        let suffix = parts[1]; // e.g., "/*.rs" or "/subdir" or ""
+
+        // Resolve the base directory
+        let base_dir = if prefix.is_empty() || prefix == "./" {
+            self.cwd.clone()
+        } else {
+            let trimmed = prefix.trim_end_matches('/');
+            if trimmed.is_empty() { "/".to_string() } else { self.resolve_path(trimmed) }
+        };
+
+        let display_prefix = if prefix.is_empty() || prefix == "./" {
+            String::new()
+        } else {
+            prefix.to_string()
+        };
+
+        // Remove the leading "/" from suffix pattern if present
+        let suffix_pat = suffix.strip_prefix('/').unwrap_or(suffix);
+
+        // Recursively walk directories and collect all relative paths
+        let mut all_paths: Vec<String> = Vec::new();
+        self.walk_directory_recursive(&base_dir, "", &mut all_paths);
+
+        let mut matches: Vec<String> = Vec::new();
+
+        for path in &all_paths {
+            // Match suffix pattern against each discovered path
+            let matched = if suffix_pat.is_empty() {
+                true
+            } else {
+                glob_match_ext(suffix_pat, path, extglob)
+            };
+            if matched {
+                let full = if display_prefix.is_empty() {
+                    path.clone()
+                } else {
+                    format!("{}{}", display_prefix, path)
+                };
+                // Skip dotfiles at each level unless pattern starts with dot
+                if !path.split('/').any(|seg| !seg.is_empty() && seg.starts_with('.') && !suffix_pat.starts_with('.')) {
+                    matches.push(full);
+                }
+            }
+        }
+
+        // Also try matching the suffix directly in the base dir (** can match zero dirs)
+        if !suffix_pat.is_empty() {
+            let entries = self.rt.read_directory(&base_dir);
+            for name in entries {
+                if name.starts_with('.') && !suffix_pat.starts_with('.') { continue; }
+                if glob_match_ext(suffix_pat, &name, extglob) {
+                    let full = if display_prefix.is_empty() {
+                        name
+                    } else {
+                        format!("{}{}", display_prefix, name)
+                    };
+                    if !matches.contains(&full) {
+                        matches.push(full);
+                    }
+                }
+            }
+        }
+
+        matches.sort();
+        matches
+    }
+
+    fn walk_directory_recursive(&self, base: &str, relative: &str, results: &mut Vec<String>) {
+        use crate::runtime::FileType;
+
+        let dir_path = if relative.is_empty() {
+            base.to_string()
+        } else {
+            format!("{}/{}", base, relative)
+        };
+
+        let entries = self.rt.read_directory(&dir_path);
+        for name in entries {
+            if name.starts_with('.') { continue; }
+            let rel_path = if relative.is_empty() {
+                name.clone()
+            } else {
+                format!("{}/{}", relative, name)
+            };
+            results.push(rel_path.clone());
+
+            let full_path = format!("{}/{}", base, rel_path);
+            if self.rt.file_type(&full_path) == FileType::Directory {
+                self.walk_directory_recursive(base, &rel_path, results);
+            }
+        }
+    }
+
     pub(crate) fn exec_capturing(&mut self, raw: &str) -> String {
         let (inp, out) = self.rt.create_pipe();
-        let mut parser = Parser::new_with_mode(raw, self.options.posix);
+        let mut parser = Parser::new_with_options(raw, self.options.posix, self.options.extglob);
         if let Some(list) = parser.parse() {
             self.exec_list_with_stdout(list, out);
         } else {
@@ -563,7 +677,7 @@ impl<R: Runtime> Shell<R> {
                 let (inp, out) = self.rt.create_pipe();
                 self.rt.pipe_write(&out, &data);
                 self.rt.pipe_close_write(out);
-                let mut parser = crate::parser::Parser::new_with_mode(&raw, self.options.posix);
+                let mut parser = crate::parser::Parser::new_with_options(&raw, self.options.posix, self.options.extglob);
                 if let Some(list) = parser.parse() {
                     self.exec_list_with_stdin(list, inp);
                 }
