@@ -62,6 +62,8 @@ pub enum Token {
     FdNGtClose(u32),
     /// `N<` where N is a file descriptor number (> 0)
     FdNLt(u32),
+    /// `N<>` where N is a file descriptor number — bidirectional open
+    FdNLtGt(u32),
     /// End of input
     Eof,
 }
@@ -247,7 +249,12 @@ impl Lexer {
                 let fd = (d as u32) - ('0' as u32);
                 self.advance(); // digit
                 self.advance(); // '<'
-                Token::FdNLt(fd)
+                if self.peek() == Some('>') {
+                    self.advance(); // '>'
+                    Token::FdNLtGt(fd)
+                } else {
+                    Token::FdNLt(fd)
+                }
             }
             Some('(') => {
                 if self.peek2() == Some('(') {

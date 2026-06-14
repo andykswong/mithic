@@ -6,14 +6,14 @@
  */
 
 import type { FileSystemProvider } from '../vfs/provider.ts';
-import type { SocketAddress, SocketProvider, TcpSocket } from '../net/sockets.ts';
+import type { SocketAddress, SocketProvider, TcpSocket, UdpSocket } from '../net/sockets.ts';
 import type { HttpClient, HttpRequest } from '../net/http.ts';
 import type { FileHandle, OpenFlags } from '../vfs/provider.ts';
 import type { CallHandler } from './sync-bridge.ts';
 import type { InputStreamHandler, OutputStreamHandler } from './streams.ts';
 import {
   CALL_MASK, TYPE_MASK,
-  STDIN, STDOUT, STDERR,
+  STDIN, STDOUT, STDERR, SOCKET_UDP,
   INPUT_STREAM_READ, INPUT_STREAM_BLOCKING_READ, INPUT_STREAM_DISPOSE,
   OUTPUT_STREAM_WRITE, OUTPUT_STREAM_FLUSH, OUTPUT_STREAM_DISPOSE,
   FS_OPEN, FS_CLOSE, FS_READ, FS_WRITE, FS_STAT, FS_READDIR,
@@ -47,6 +47,7 @@ export function createCallHandler(options: CallHandlerOptions): CallHandler {
   const fileHandles = new Map<number, FileHandle>();
   const streamHandles = new Map<number, StreamHandle>();
   const socketHandles = new Map<number, TcpSocket>();
+  const udpHandles = new Map<number, UdpSocket>();
   let nextHandleId = 1;
 
   function requireFs(): FileSystemProvider {
@@ -220,15 +221,28 @@ export function createCallHandler(options: CallHandlerOptions): CallHandler {
 
       // ─── Socket calls ───────────────────────────────────────────────
       case SOCKET_CREATE: {
+        if (resourceType === SOCKET_UDP) {
+          const udpSocket = await requireSockets().createUdpSocket();
+          const udpId = allocId();
+          udpHandles.set(udpId, udpSocket);
+          return udpId;
+        }
         const socket = await requireSockets().createTcpSocket();
         const socketId = allocId();
         socketHandles.set(socketId, socket);
         return socketId;
       }
 
-      case SOCKET_BIND:
+      case SOCKET_BIND: {
+        if (resourceType === SOCKET_UDP) {
+          const udp = udpHandles.get(requireId(id));
+          if (!udp) throw new Error('invalid UDP socket handle');
+          await udp.bind((payload as { address: SocketAddress }).address);
+          return;
+        }
         await getSocket(id).bind((payload as { address: SocketAddress }).address);
         return;
+      }
 
       case SOCKET_CONNECT:
         await getSocket(id).connect((payload as { address: SocketAddress }).address);
@@ -245,13 +259,34 @@ export function createCallHandler(options: CallHandlerOptions): CallHandler {
         return acceptedId;
       }
 
-      case SOCKET_SEND:
+      case SOCKET_SEND: {
+        if (resourceType === SOCKET_UDP) {
+          const udp = udpHandles.get(requireId(id));
+          if (!udp) throw new Error('invalid UDP socket handle');
+          const { data, remoteAddress } = payload as { data: Uint8Array; remoteAddress: SocketAddress };
+          return udp.send(data, remoteAddress);
+        }
         return getSocket(id).send((payload as { data: Uint8Array }).data);
+      }
 
-      case SOCKET_RECV:
+      case SOCKET_RECV: {
+        if (resourceType === SOCKET_UDP) {
+          const udp = udpHandles.get(requireId(id));
+          if (!udp) throw new Error('invalid UDP socket handle');
+          return udp.receive((payload as { len: number }).len);
+        }
         return getSocket(id).receive((payload as { len: number }).len);
+      }
 
       case SOCKET_CLOSE: {
+        if (resourceType === SOCKET_UDP) {
+          const udp = udpHandles.get(requireId(id));
+          if (udp) {
+            await udp.close();
+            udpHandles.delete(requireId(id));
+          }
+          return;
+        }
         const socket = socketHandles.get(requireId(id));
         if (socket) {
           await socket.close();

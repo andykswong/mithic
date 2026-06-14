@@ -69,6 +69,8 @@ pub enum Redirect {
     FdDup(u32, u32),
     /// `N< file` — redirect fd N from file (N > 0)
     FdIn(u32, Word),
+    /// `N<> file` — open fd N for read and write
+    FdReadWrite(u32, Word),
     /// `N>&-` — close fd N
     FdClose(u32),
 }

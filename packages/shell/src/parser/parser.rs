@@ -746,6 +746,12 @@ impl Parser {
                     let w = self.parse_word_required();
                     redirects.push(Redirect::FdIn(fd, w));
                 }
+                Token::FdNLtGt(fd) => {
+                    let fd = *fd;
+                    self.advance();
+                    let w = self.parse_word_required();
+                    redirects.push(Redirect::FdReadWrite(fd, w));
+                }
                 _ => {
                     if let Some(w) = self.parse_word() {
                         words.push(w);
@@ -846,6 +852,12 @@ impl Parser {
                     self.advance();
                     let w = self.parse_word_required();
                     redirects.push(Redirect::FdIn(fd, w));
+                }
+                Token::FdNLtGt(fd) => {
+                    let fd = *fd;
+                    self.advance();
+                    let w = self.parse_word_required();
+                    redirects.push(Redirect::FdReadWrite(fd, w));
                 }
                 _ => break,
             }
@@ -950,6 +962,7 @@ fn token_to_text(tok: &Token) -> String {
         Token::FdNGtAmp(fd, target) => format!("{}>&{}", fd, target),
         Token::FdNGtClose(fd) => format!("{}>&-", fd),
         Token::FdNLt(fd) => format!("{}<", fd),
+        Token::FdNLtGt(fd) => format!("{}<>", fd),
         Token::Eof => String::new(),
     }
 }

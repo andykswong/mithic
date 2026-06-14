@@ -1,6 +1,6 @@
 import { type SyncInputStreamHandler, type SyncOutputStreamHandler, WorkerIo, createBlockingCall } from '@mithic/io/io';
-import { SyncBridgeFsProvider, createStdinHandler, createStdoutHandler, createStderrHandler } from '@mithic/io/io/providers/sync-bridge';
-import { SyncFileSystemRouter, DeviceFsProvider } from '@mithic/io/vfs';
+import { SyncBridgeFsProvider, SyncBridgeSocketProvider, createStdinHandler, createStdoutHandler, createStderrHandler } from '@mithic/io/io/providers/sync-bridge';
+import { SyncFileSystemRouter, DeviceFsProvider, NetworkDeviceFsProvider } from '@mithic/io/vfs';
 import { WASIShim } from '@mithic/wasip2';
 import { ComponentExit } from '@mithic/wasip2/cli/exit';
 import { Descriptor } from '@mithic/wasip2/filesystem/types';
@@ -126,6 +126,9 @@ export async function handleRunMessage(msg: RunMessage): Promise<void> {
         stdout: devStdoutHandler,
         stderr: devStderrHandler,
       }));
+      const syncSockets = new SyncBridgeSocketProvider(workerIo);
+      vfs.mount('/dev/tcp', new NetworkDeviceFsProvider<true>({ sockets: syncSockets, protocol: 'tcp' }));
+      vfs.mount('/dev/udp', new NetworkDeviceFsProvider<true>({ sockets: syncSockets, protocol: 'udp' }));
       preopens = { '/': new Descriptor(new SyncFsDescriptorHandler(vfs, '/')) };
     }
 

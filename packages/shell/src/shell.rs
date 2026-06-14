@@ -481,7 +481,10 @@ impl<R: Runtime> Shell<R> {
                             Redirect::FdClose(fd) => {
                                 match *fd {
                                     1 => { self.exec_stdout_path = None; }
-                                    _ => { self.extra_fds.remove(fd); }
+                                    _ => {
+                                        self.extra_fds.remove(fd);
+                                        self.extra_input_fds.remove(fd);
+                                    }
                                 }
                             }
                             Redirect::FdDup(fd, target) => {
@@ -532,6 +535,31 @@ impl<R: Runtime> Shell<R> {
                                     }
                                     None => {
                                         self.rt.write_stderr(&format!("{}: {}: No such file or directory\n", self.shell_name, expanded));
+                                        return 1;
+                                    }
+                                }
+                            }
+                            Redirect::FdReadWrite(fd, w) => {
+                                let expanded = self.expand_word(w);
+                                let path = self.resolve_path(&expanded);
+                                if self.is_network_redirect(&path) {
+                                    return 1;
+                                }
+                                match self.rt.open_file_write(&path, false) {
+                                    Some(wh) => {
+                                        self.extra_fds.insert(*fd, wh);
+                                    }
+                                    None => {
+                                        self.rt.write_stderr(&format!("{}: {}: cannot open for writing\n", self.shell_name, expanded));
+                                        return 1;
+                                    }
+                                }
+                                match self.rt.open_file_read(&path) {
+                                    Some(rh) => {
+                                        self.extra_input_fds.insert(*fd, rh);
+                                    }
+                                    None => {
+                                        self.rt.write_stderr(&format!("{}: {}: cannot open for reading\n", self.shell_name, expanded));
                                         return 1;
                                     }
                                 }

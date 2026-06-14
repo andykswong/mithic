@@ -245,12 +245,36 @@ impl<R: Runtime> Shell<R> {
                         }
                     }
                 }
+                Redirect::FdReadWrite(fd, w) => {
+                    let expanded = self.expand_word(w);
+                    let path = self.resolve_path(&expanded);
+                    if self.is_network_redirect(&path) { return false; }
+                    match self.rt.open_file_write(&path, false) {
+                        Some(wh) => {
+                            self.extra_fds.insert(*fd, wh);
+                        }
+                        None => {
+                            self.rt.write_stderr(&format!("{}: {}: cannot open for writing\n", self.shell_name, expanded));
+                            return false;
+                        }
+                    }
+                    match self.rt.open_file_read(&path) {
+                        Some(rh) => {
+                            self.extra_input_fds.insert(*fd, rh);
+                        }
+                        None => {
+                            self.rt.write_stderr(&format!("{}: {}: cannot open for reading\n", self.shell_name, expanded));
+                            return false;
+                        }
+                    }
+                }
                 Redirect::FdClose(fd) => {
                     match *fd {
                         1 => { *stdout = None; }
                         2 => { *stderr = None; }
                         _ => {
                             self.extra_fds.remove(fd);
+                            self.extra_input_fds.remove(fd);
                             self.fd_aliases.remove(fd);
                         }
                     }

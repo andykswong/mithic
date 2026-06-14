@@ -30,6 +30,7 @@ export class NetworkDeviceFsProvider<Sync extends boolean = boolean> implements 
   #nextFd = 200;
   #freeFds: number[] = [];
   #handles = new Map<number, SocketHandle<Sync>>();
+  #pathToFd = new Map<string, { fd: number; refCount: number }>();
 
   constructor(options: NetworkDeviceFsProviderOptions<Sync>) {
     this.#sockets = options.sockets;
@@ -40,6 +41,13 @@ export class NetworkDeviceFsProvider<Sync extends boolean = boolean> implements 
     const parsed = this.#parsePath(path);
     if (!parsed.port) {
       throw new FileSystemError('invalid', `Invalid network path: ${path} (expected <host>/<port>)`);
+    }
+
+    const normalizedPath = `${parsed.host}/${parsed.port}`;
+    const existing = this.#pathToFd.get(normalizedPath);
+    if (existing && this.#handles.has(existing.fd)) {
+      existing.refCount++;
+      return { fd: existing.fd, path, flags } as MaybePromise<FileHandle, Sync>;
     }
 
     const fd = this.#freeFds.length > 0 ? this.#freeFds.pop()! : this.#nextFd++;
@@ -65,6 +73,7 @@ export class NetworkDeviceFsProvider<Sync extends boolean = boolean> implements 
             return connectResult.then(() => {
               handle.tcpSocket = socket;
               this.#handles.set(fd, handle);
+              this.#pathToFd.set(normalizedPath, { fd, refCount: 1 });
               return { fd, path, flags } as FileHandle;
             }).catch((e: unknown) => {
               try { socket.close(); } catch { /* ignore */ }
@@ -73,6 +82,7 @@ export class NetworkDeviceFsProvider<Sync extends boolean = boolean> implements 
           }
           handle.tcpSocket = socket;
           this.#handles.set(fd, handle);
+          this.#pathToFd.set(normalizedPath, { fd, refCount: 1 });
           return { fd, path, flags } as MaybePromise<FileHandle, Sync>;
         }),
       ) as MaybePromise<FileHandle, Sync>;
@@ -90,6 +100,7 @@ export class NetworkDeviceFsProvider<Sync extends boolean = boolean> implements 
         return bindResult.then(() => {
           handle.udpSocket = socket;
           this.#handles.set(fd, handle);
+          this.#pathToFd.set(normalizedPath, { fd, refCount: 1 });
           return { fd, path, flags } as FileHandle;
         }).catch((e: unknown) => {
           try { socket.close(); } catch { /* ignore */ }
@@ -98,6 +109,7 @@ export class NetworkDeviceFsProvider<Sync extends boolean = boolean> implements 
       }
       handle.udpSocket = socket;
       this.#handles.set(fd, handle);
+      this.#pathToFd.set(normalizedPath, { fd, refCount: 1 });
       return { fd, path, flags } as MaybePromise<FileHandle, Sync>;
     }) as MaybePromise<FileHandle, Sync>;
   }
@@ -105,6 +117,13 @@ export class NetworkDeviceFsProvider<Sync extends boolean = boolean> implements 
   close(handle: FileHandle): MaybePromise<void, Sync> {
     const sock = this.#handles.get(handle.fd);
     if (!sock) return undefined as MaybePromise<void, Sync>;
+    const pathKey = `${sock.remoteHost}/${sock.remotePort}`;
+    const entry = this.#pathToFd.get(pathKey);
+    if (entry && entry.fd === handle.fd) {
+      entry.refCount--;
+      if (entry.refCount > 0) return undefined as MaybePromise<void, Sync>;
+      this.#pathToFd.delete(pathKey);
+    }
     this.#handles.delete(handle.fd);
     this.#freeFds.push(handle.fd);
     if (sock.tcpSocket) {
