@@ -21,7 +21,7 @@
 <li><strong>Process substitution</strong> — <code>&lt;(cmd)</code></li>
 <li><strong>Glob expansion</strong> — <code>*</code>, <code>?</code>, <code>[...]</code>, extglob (<code>?(pat)</code>, <code>*(pat)</code>, <code>+(pat)</code>, <code>@(pat)</code>, <code>!(pat)</code>), globstar (<code>**</code>)</li>
 <li><strong>Builtins</strong> — <code>cd</code>, <code>echo</code>, <code>export</code>, <code>unset</code>, <code>read</code>, <code>test</code>/<code>[</code>/<code>[[</code>, <code>declare</code>/<code>local</code>, <code>source</code>, <code>shopt</code>, <code>true</code>, <code>false</code></li>
-<li><strong>Special variables</strong> — <code>$BASH_SOURCE</code>, <code>$BASH_LINENO</code>, <code>$FUNCNAME</code> (array call stacks), <code>$SECONDS</code>, <code>$RANDOM</code>, <code>$LINENO</code>, <code>$PIPESTATUS</code></li>
+<li><strong>Special variables</strong> — <code>$BASH_SOURCE</code>, <code>$BASH_LINENO</code>, <code>$FUNCNAME</code> (array call stacks), <code>$SECONDS</code>, <code>$RANDOM</code>, <code>$LINENO</code>, <code>$PIPESTATUS</code>, <code>$SHLVL</code>, <code>$BASH_VERSION</code>, <code>$BASH_VERSINFO</code></li>
 <li><strong>Error handling</strong> — Arithmetic expansion errors abort the containing command; proper exit codes propagate through pipes, assignments, for/case/select</li>
 </ul>
 </li>
@@ -168,7 +168,7 @@ world shell {
 <h3 id="other" class="tsd-anchor-link">Other<a href="#other" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul>
 <li>No <code>/etc/profile</code> or <code>~/.bash_profile</code> sourcing (no login shell support) — <code>~/.bashrc</code> and <code>$ENV</code>/<code>$BASH_ENV</code> are sourced</li>
-<li>No <code>GLOBIGNORE</code> or <code>BASH_VERSINFO</code></li>
+<li>No <code>GLOBIGNORE</code></li>
 <li>History expansion limited to <code>!!</code>, <code>!N</code>, <code>!-N</code>, <code>!prefix</code> (no modifiers like <code>:p</code>, <code>:h</code>)</li>
 <li><code>read -t</code> (timeout) not supported — needs WASI poll-based timer</li>
 <li><code>fc</code> only supports <code>-l</code> (listing) — no re-edit mode</li>
