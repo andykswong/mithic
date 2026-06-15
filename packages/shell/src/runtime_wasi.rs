@@ -126,7 +126,7 @@ impl Io for WasiRuntime {
         self.reader.read_line()
     }
 
-    fn read_line_with_timeout(&mut self, timeout_ns: u64) -> Option<String> {
+    fn read_with_timeout(&mut self, timeout_ns: u64, delimiter: u8, max_bytes: Option<usize>) -> Option<String> {
         let stdin_stream = wasi_stdin::get_stdin();
         let timer_pollable = monotonic_clock::subscribe_duration(timeout_ns);
         let mut buf = Vec::new();
@@ -145,7 +145,12 @@ impl Io for WasiRuntime {
                         break;
                     }
                     buf.extend_from_slice(&bytes);
-                    if bytes.last() == Some(&b'\n') {
+                    if let Some(max) = max_bytes {
+                        if buf.len() >= max {
+                            break;
+                        }
+                    }
+                    if bytes.last() == Some(&delimiter) {
                         break;
                     }
                 }
@@ -323,6 +328,48 @@ impl ProcessMgr for WasiRuntime {
             None
         } else {
             Some(String::from_utf8_lossy(&buf).trim_end_matches('\n').to_string())
+        }
+    }
+
+    fn pipe_read_with_timeout(&mut self, handle: &InputHandle, timeout_ns: u64, delimiter: u8, max_bytes: Option<usize>) -> Option<String> {
+        let stream = match self.get_input(handle) {
+            Some(s) => s,
+            None => return Some(String::new()),
+        };
+        let timer_pollable = monotonic_clock::subscribe_duration(timeout_ns);
+        let mut buf = Vec::new();
+
+        loop {
+            let stream_pollable = stream.subscribe();
+            let ready = poll::poll(&[&stream_pollable, &timer_pollable]);
+
+            if ready.contains(&1) && !ready.contains(&0) {
+                return None;
+            }
+
+            match stream.read(1) {
+                Ok(bytes) => {
+                    if bytes.is_empty() {
+                        break;
+                    }
+                    buf.extend_from_slice(&bytes);
+                    if let Some(max) = max_bytes {
+                        if buf.len() >= max {
+                            break;
+                        }
+                    }
+                    if bytes.last() == Some(&delimiter) {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+
+        if buf.is_empty() {
+            Some(String::new())
+        } else {
+            Some(String::from_utf8_lossy(&buf).trim_end_matches(|c: char| c as u8 == delimiter).to_string())
         }
     }
 

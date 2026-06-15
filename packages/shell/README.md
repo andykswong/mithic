@@ -252,5 +252,4 @@ The shell has no readline library or terminal raw-mode support. This means:
 - No `/etc/profile` or `~/.bash_profile` sourcing (no login shell support) — `~/.bashrc` and `$ENV`/`$BASH_ENV` are sourced
 - No `GLOBIGNORE`
 - History expansion limited to `!!`, `!N`, `!-N`, `!prefix` (no modifiers like `:p`, `:h`)
-- `read -t` (timeout) not supported — needs WASI poll-based timer
 - `fc` only supports `-l` (listing) — no re-edit mode

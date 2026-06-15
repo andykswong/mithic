@@ -49,7 +49,7 @@ impl Io for TestRuntime {
         }
     }
 
-    fn read_line_with_timeout(&mut self, _timeout_ns: u64) -> Option<String> {
+    fn read_with_timeout(&mut self, _timeout_ns: u64, _delimiter: u8, _max_bytes: Option<usize>) -> Option<String> {
         self.read_line()
     }
 }
@@ -112,6 +112,10 @@ impl ProcessMgr for TestRuntime {
     }
 
     fn pipe_read_line(&mut self, _handle: &InputHandle) -> Option<String> {
+        None
+    }
+
+    fn pipe_read_with_timeout(&mut self, _handle: &InputHandle, _timeout_ns: u64, _delimiter: u8, _max_bytes: Option<usize>) -> Option<String> {
         None
     }
 

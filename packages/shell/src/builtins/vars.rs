@@ -281,39 +281,76 @@ fn exec_read<R: Runtime>(shell: &mut Shell<R>, args: &[String], stdin: Option<In
         shell.rt.write_stderr(p);
     }
 
-    let line = if let Some(ref h) = fd_input {
-        match shell.rt.pipe_read_line(h) {
-            Some(l) => l,
-            None => return 1,
+    // Helper closure: set all vars to empty and return timeout exit code
+    let set_vars_empty = |shell: &mut Shell<R>, var_names: &[&str], array_mode: bool| {
+        if array_mode {
+            let arr_name = var_names.first().map(|s| s.to_string()).unwrap_or_else(|| "REPLY".to_string());
+            shell.env.insert(arr_name, ShellValue::Array(Vec::new()));
+        } else {
+            for var_name in var_names {
+                shell.env.insert(var_name.to_string(), ShellValue::Scalar(String::new()));
+            }
+        }
+    };
+
+    let max_bytes = nchars;
+
+    // Read input: apply timeout uniformly to all sources when -t is specified
+    let (line, eof) = if let Some(ref h) = fd_input {
+        if let Some(ns) = timeout_ns {
+            match shell.rt.pipe_read_with_timeout(h, ns, delimiter, max_bytes) {
+                Some(l) => {
+                    let is_eof = l.is_empty();
+                    (l, is_eof)
+                }
+                None => {
+                    set_vars_empty(shell, &var_names, array_mode);
+                    return 142;
+                }
+            }
+        } else {
+            match shell.rt.pipe_read_line(h) {
+                Some(l) => (l, false),
+                None => return 1,
+            }
         }
     } else {
         match &stdin {
             Some(h) => {
-                match shell.rt.pipe_read_line(h) {
-                    Some(l) => l,
-                    None => return 1,
+                if let Some(ns) = timeout_ns {
+                    match shell.rt.pipe_read_with_timeout(h, ns, delimiter, max_bytes) {
+                        Some(l) => {
+                            let is_eof = l.is_empty();
+                            (l, is_eof)
+                        }
+                        None => {
+                            set_vars_empty(shell, &var_names, array_mode);
+                            return 142;
+                        }
+                    }
+                } else {
+                    match shell.rt.pipe_read_line(h) {
+                        Some(l) => (l, false),
+                        None => return 1,
+                    }
                 }
             }
             None => {
                 if let Some(ns) = timeout_ns {
-                    match shell.rt.read_line_with_timeout(ns) {
-                        Some(l) => l.trim_end_matches('\n').to_string(),
+                    match shell.rt.read_with_timeout(ns, delimiter, max_bytes) {
+                        Some(l) => {
+                            let is_eof = l.is_empty();
+                            let trimmed = l.trim_end_matches(|c: char| c as u8 == delimiter).to_string();
+                            (trimmed, is_eof)
+                        }
                         None => {
-                            let var_names_owned: Vec<String> = var_names.iter().map(|s| s.to_string()).collect();
-                            if array_mode {
-                                let arr_name = var_names_owned.first().cloned().unwrap_or_else(|| "REPLY".to_string());
-                                shell.env.insert(arr_name, ShellValue::Array(Vec::new()));
-                            } else {
-                                for var_name in &var_names_owned {
-                                    shell.env.insert(var_name.to_string(), ShellValue::Scalar(String::new()));
-                                }
-                            }
+                            set_vars_empty(shell, &var_names, array_mode);
                             return 142;
                         }
                     }
                 } else {
                     match shell.rt.read_line() {
-                        Some(l) => l.trim_end_matches('\n').to_string(),
+                        Some(l) => (l.trim_end_matches('\n').to_string(), false),
                         None => return 1,
                     }
                 }
@@ -323,7 +360,11 @@ fn exec_read<R: Runtime>(shell: &mut Shell<R>, args: &[String], stdin: Option<In
 
     let line = if raw { line } else { line.replace("\\\n", "") };
 
-    let line = if let Some(n) = nchars {
+    // When timeout read already used delimiter/max_bytes for stopping, no further truncation needed.
+    // For non-timeout paths, apply -N and -d post-processing.
+    let line = if timeout_ns.is_some() {
+        line
+    } else if let Some(n) = nchars {
         if n < line.len() { line[..n].to_string() } else { line }
     } else if delimiter != b'\n' {
         if let Some(pos) = line.as_bytes().iter().position(|&b| b == delimiter) {
@@ -364,7 +405,7 @@ fn exec_read<R: Runtime>(shell: &mut Shell<R>, args: &[String], stdin: Option<In
         }
     }
 
-    0
+    if eof { 1 } else { 0 }
 }
 
 fn exec_set<R: Runtime>(shell: &mut Shell<R>, args: &[String]) -> u8 {

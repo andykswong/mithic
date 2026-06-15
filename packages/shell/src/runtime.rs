@@ -27,9 +27,10 @@ pub trait Io {
     fn write_stdout(&self, data: &str);
     fn write_stderr(&self, data: &str);
     fn read_line(&mut self) -> Option<String>;
-    /// Read a line from stdin with a timeout in nanoseconds.
+    /// Read from stdin with a timeout in nanoseconds.
+    /// Reads byte-by-byte until `delimiter` is found, `max_bytes` is reached, or timeout fires.
     /// Returns Some(line) if data was read before timeout, None if timed out.
-    fn read_line_with_timeout(&mut self, timeout_ns: u64) -> Option<String>;
+    fn read_with_timeout(&mut self, timeout_ns: u64, delimiter: u8, max_bytes: Option<usize>) -> Option<String>;
 }
 
 // Sub-trait 2: Filesystem
@@ -58,6 +59,10 @@ pub trait ProcessMgr {
     fn pipe_read_all(&mut self, handle: InputHandle) -> Vec<u8>;
     /// Read a single line (up to `\n`) from a pipe input handle. Returns None on EOF.
     fn pipe_read_line(&mut self, handle: &InputHandle) -> Option<String>;
+    /// Read from a pipe with a timeout in nanoseconds.
+    /// Reads byte-by-byte until `delimiter` is found, `max_bytes` is reached, or timeout fires.
+    /// Returns Some(line) if data was read before timeout, None if timed out.
+    fn pipe_read_with_timeout(&mut self, handle: &InputHandle, timeout_ns: u64, delimiter: u8, max_bytes: Option<usize>) -> Option<String>;
     fn pipe_write(&mut self, handle: &OutputHandle, data: &[u8]);
     fn pipe_close_write(&mut self, handle: OutputHandle);
     fn pipe_close_read(&mut self, handle: InputHandle);
