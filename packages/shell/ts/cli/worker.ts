@@ -21,7 +21,7 @@ import { modules as jqModules } from '@mithic/jq/component';
 import { modules as curlModules } from '@mithic/curl/component';
 import { outputFromSharedBuffer } from '@mithic/process/io';
 import { runChmod } from '../commands/chmod.ts';
-import { runTimeout } from '../commands/timeout.ts';
+import { runTimeoutAsync } from '../commands/timeout.ts';
 import { Runtime } from '../runtime.ts';
 import { createWorkerStrategy } from '../worker-strategy.ts';
 import { createNodeVfs, mountNodeVfs, getNodeEnv } from './shared.ts';
@@ -185,7 +185,7 @@ function createWorker(file: string, name?: string): ProcessWorker | undefined {
           stderr[Symbol.dispose]();
         }
       };
-      return runTimeout(timeoutArgs, managerRef, undefined, writeErr);
+      return runTimeoutAsync(timeoutArgs, managerRef, undefined, writeErr);
     });
   }
   if (cmdName === 'chmod') {
