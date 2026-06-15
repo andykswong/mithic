@@ -70,12 +70,6 @@ export function poll<Sync extends boolean>(pollables: Pollable<Sync>[]): MaybePr
     ) as MaybePromise<Uint32Array, Sync>;
   }
 
-  // Sync optimized: 1 data + timer(s) -> single block call
-  if (dataIndices.length === 1 && minTimeout !== undefined) {
-    pollables[dataIndices[0]].block(minTimeout);
-    return new Uint32Array(scanReady(pollables));
-  }
-
   // Sync optimized: 0 data (only timers) -> block shortest timer
   if (dataIndices.length === 0 && minTimeout !== undefined) {
     const shortest = pollables.reduce((a, b) =>
