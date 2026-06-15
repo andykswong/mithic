@@ -2,6 +2,7 @@ import { Process, ProcessError, type ProcessManager, type ProcessWorker, type Ru
 import { createExitSlot, createSignalSlot, exitSlotFromBuffer, signalSlotFromBuffer } from '../io/slots.ts';
 import { createSharedPipeRaw, inputFromSharedBuffer, outputFromSharedBuffer, type SharedPipeHandle } from '../io/pipes.ts';
 import type { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
+import { Pollable } from '@mithic/wasip2/io/poll';
 
 interface ProcessEntry {
   pid: number;
@@ -147,6 +148,16 @@ export class WorkerProcessManager implements ProcessManager, Disposable {
           foreground.delete(proc);
           return Atomics.load(view, 0);
         });
+      },
+      subscribe() {
+        const view = new Int32Array(exitSlot.buffer);
+        return new Pollable(
+          () => Atomics.load(view, 0) !== -1,
+          (maxBlockMs?: number) => {
+            if (Atomics.load(view, 0) !== -1) return;
+            Atomics.wait(view, 0, -1, maxBlockMs);
+          },
+        );
       },
     });
 

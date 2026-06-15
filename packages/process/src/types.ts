@@ -4,6 +4,7 @@
  */
 
 import type { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
+import { Pollable } from '@mithic/wasip2/io/poll';
 
 export type Signal = 'sigterm' | 'sigkill' | 'sigint' | 'sigtstp' | 'sigcont' | 'signull';
 
@@ -73,6 +74,7 @@ export interface ProcessHandler {
   wait(): number | Promise<number>;
   tryWait(): number | undefined;
   waitAsync?(): Promise<number>;
+  subscribe?(): Pollable;
 }
 
 /**
@@ -114,6 +116,17 @@ export class Process {
 
   kill(signal: Signal = 'sigterm'): void {
     this.#handler.onKill?.(signal);
+  }
+
+  subscribe(): Pollable {
+    if (this.#handler.subscribe) return this.#handler.subscribe();
+    return new Pollable(
+      () => this.tryWait() !== undefined,
+      () => {
+        if (this.tryWait() !== undefined) return;
+        return this.waitAsync().then(() => {});
+      },
+    );
   }
 }
 

@@ -6,6 +6,7 @@ import { spawnWithPipes } from '../io/pipes.ts';
 import { WASIProcess } from '../instantiation.ts';
 import { createPipe } from '../io/pipes.ts';
 import { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
+import { Pollable } from '@mithic/wasip2/io/poll';
 
 describe('SimpleProcessManager', () => {
   it('spawn returns Process with correct pid', () => {
@@ -553,5 +554,61 @@ describe('WASIProcess', () => {
     const code = await proc.wait();
     assert.equal(code, 141);
     assert.ok(brokenPipe);
+  });
+});
+
+describe('SimpleProcessManager subscribe', () => {
+  it('subscribe returns a Pollable', () => {
+    const handler: CommandHandler = () => 0;
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('test', []);
+    const pollable = proc.subscribe();
+    assert.ok(pollable instanceof Pollable);
+  });
+
+  it('subscribe pollable is ready when sync handler completes', () => {
+    const handler: CommandHandler = () => 42;
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('test', []);
+    const pollable = proc.subscribe();
+    assert.equal(pollable.ready(), true);
+  });
+
+  it('subscribe pollable is not ready while async handler is running', () => {
+    const handler: CommandHandler = async () => {
+      await new Promise(r => setTimeout(r, 10000));
+      return 0;
+    };
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('sleep', []);
+    const pollable = proc.subscribe();
+    assert.equal(pollable.ready(), false);
+    proc.kill('sigterm');
+  });
+
+  it('subscribe pollable becomes ready when async handler completes', async () => {
+    const handler: CommandHandler = async () => {
+      await new Promise(r => setTimeout(r, 10));
+      return 0;
+    };
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('test', []);
+    const pollable = proc.subscribe();
+    assert.equal(pollable.ready(), false);
+    await pollable.block();
+    assert.equal(pollable.ready(), true);
+  });
+
+  it('subscribe pollable becomes ready when process is killed', async () => {
+    const handler: CommandHandler = async () => {
+      await new Promise(r => setTimeout(r, 10000));
+      return 0;
+    };
+    const mgr = new SimpleProcessManager({ commandResolver: () => handler });
+    const proc = mgr.spawn('test', []);
+    const pollable = proc.subscribe();
+    assert.equal(pollable.ready(), false);
+    proc.kill('sigterm');
+    assert.equal(pollable.ready(), true);
   });
 });

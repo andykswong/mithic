@@ -2,6 +2,7 @@ import type { BlockingCallFn } from '@mithic/io/io';
 import { Process, type ProcessManager, type SpawnOptions, type Signal, type PipeOptions, SIGNAL_NUMBER } from '../types.ts';
 import { createSharedPipeRaw, inputFromSharedBuffer, outputFromSharedBuffer, type SharedPipeHandle } from '../io/pipes.ts';
 import type { InputStream, OutputStream } from '@mithic/wasip2/io/streams';
+import { Pollable } from '@mithic/wasip2/io/poll';
 
 export const CALL_SPAWN = 10;
 
@@ -130,6 +131,15 @@ export class ProxyProcessManager implements ProcessManager {
       tryWait() {
         const code = Atomics.load(exitView, 0);
         return code === -1 ? undefined : code;
+      },
+      subscribe() {
+        return new Pollable(
+          () => Atomics.load(exitView, 0) !== -1,
+          (maxBlockMs?: number) => {
+            if (Atomics.load(exitView, 0) !== -1) return;
+            Atomics.wait(exitView, 0, -1, maxBlockMs);
+          },
+        );
       },
     });
 

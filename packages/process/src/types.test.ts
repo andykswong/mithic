@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { Process, SIGNAL_NUMBER, type ProcessHandler, type Signal } from './types.ts';
+import { Pollable } from '@mithic/wasip2/io/poll';
 
 describe('Process', () => {
   function createMockHandler(exitCode = 0) {
@@ -84,6 +85,36 @@ describe('Process', () => {
     });
     setTimeout(() => { exitCode = 7; }, 20);
     assert.equal(await proc.waitAsync(), 7);
+  });
+
+  it('subscribe() delegates to handler.subscribe', () => {
+    const mockPollable = new Pollable(() => true, () => {});
+    const proc = new Process(1, {
+      wait() { return 0; },
+      tryWait() { return 0; },
+      subscribe() { return mockPollable; },
+    });
+    const pollable = proc.subscribe();
+    assert.strictEqual(pollable, mockPollable);
+  });
+
+  it('subscribe() returns fallback pollable when handler lacks subscribe', () => {
+    const proc = new Process(1, {
+      wait() { return 0; },
+      tryWait() { return 42; },
+    });
+    const pollable = proc.subscribe();
+    assert.ok(pollable instanceof Pollable);
+    assert.equal(pollable.ready(), true);
+  });
+
+  it('subscribe() fallback pollable is not ready when process running', () => {
+    const proc = new Process(1, {
+      wait() { return 0; },
+      tryWait() { return undefined; },
+    });
+    const pollable = proc.subscribe();
+    assert.equal(pollable.ready(), false);
   });
 });
 

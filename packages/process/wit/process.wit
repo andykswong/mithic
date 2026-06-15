@@ -2,6 +2,7 @@ package mithic:process@0.1.0;
 
 interface types {
   use wasi:io/streams@0.2.6.{input-stream, output-stream};
+  use wasi:io/poll@0.2.6.{pollable};
   use wasi:filesystem/types@0.2.6.{descriptor};
 
   /// Handle to a running process (lifecycle only).
@@ -19,6 +20,9 @@ interface types {
 
     /// Send a signal to the process.
     kill: func(signal: signal) -> result<_, error-code>;
+
+    /// Returns a pollable that becomes ready when the process exits.
+    subscribe: func() -> pollable;
   }
 
   /// Options for spawning a process.

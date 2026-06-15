@@ -5,6 +5,7 @@
  */
 
 import { InputStream, OutputStream, type InputStreamHandler, type OutputStreamHandler } from '@mithic/wasip2/io/streams';
+import { Pollable } from '@mithic/wasip2/io/poll';
 import { Process, ProcessError, type SpawnOptions, type ProcessHandler, type Signal, type ProcessManager, SIGNAL_NUMBER } from '../types.ts';
 import { createPipe as createPipeImpl } from '../io/pipes.ts';
 import type { PipeOptions } from '../types.ts';
@@ -124,6 +125,7 @@ export class SimpleProcessManager implements ProcessManager {
     let done = false;
     let exitCode: number | undefined;
     let exitPromise: Promise<number> | undefined;
+    const exitListeners: (() => void)[] = [];
 
     const foreground = this.#foreground;
     const processHandler: ProcessHandler = {
@@ -135,6 +137,8 @@ export class SimpleProcessManager implements ProcessManager {
         killed = true;
         const sigNum = SIGNAL_NUMBER[signal];
         exitCode = 128 + sigNum;
+        for (const listener of exitListeners) listener();
+        exitListeners.length = 0;
       },
       wait(): number | Promise<number> {
         foreground.add(proc);
@@ -152,6 +156,17 @@ export class SimpleProcessManager implements ProcessManager {
         return exitCode ?? 0;
       },
       tryWait() { return exitCode; },
+      subscribe() {
+        return new Pollable(
+          () => done || killed,
+          () => {
+            if (done || killed) return;
+            return new Promise<void>(resolve => {
+              exitListeners.push(resolve);
+            });
+          },
+        );
+      },
     };
 
     const proc = new Process(pid, processHandler);
@@ -171,12 +186,16 @@ export class SimpleProcessManager implements ProcessManager {
       done = true;
       exitCode = result;
       this.table.remove(pid);
+      for (const listener of exitListeners) listener();
+      exitListeners.length = 0;
     } else {
       exitPromise = result.then(
         (code: number) => {
           done = true;
           if (!killed) exitCode = code ?? 0;
           this.table.remove(pid);
+          for (const listener of exitListeners) listener();
+          exitListeners.length = 0;
           return exitCode ?? 0;
         },
         (e: unknown) => {
@@ -186,6 +205,8 @@ export class SimpleProcessManager implements ProcessManager {
               ? (e as { code: number }).code : 1;
           }
           this.table.remove(pid);
+          for (const listener of exitListeners) listener();
+          exitListeners.length = 0;
           return exitCode ?? 0;
         },
       );
