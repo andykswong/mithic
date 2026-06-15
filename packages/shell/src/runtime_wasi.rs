@@ -2,10 +2,13 @@ use crate::bindings::mithic::process::manager as proc_manager;
 use crate::bindings::mithic::process::types::{
     InputStream, OutputStream, Process, SpawnOptions, Signal as WasiSignal,
 };
+use crate::bindings::wasi::clocks::monotonic_clock;
+use crate::bindings::wasi::cli::stdin as wasi_stdin;
 use crate::bindings::wasi::filesystem::types::{
     Descriptor, DescriptorFlags, OpenFlags, PathFlags,
 };
 use crate::bindings::wasi::filesystem::preopens;
+use crate::bindings::wasi::io::poll;
 use crate::runtime::{
     FileType, InputHandle, Io, Filesystem, OutputHandle, ProcessHandle,
     ProcessMgr, Signal, SpawnError, SpawnOpts,
@@ -121,6 +124,36 @@ impl Io for WasiRuntime {
 
     fn read_line(&mut self) -> Option<String> {
         self.reader.read_line()
+    }
+
+    fn read_line_with_timeout(&mut self, timeout_ns: u64) -> Option<String> {
+        let stdin_stream = wasi_stdin::get_stdin();
+        let timer_pollable = monotonic_clock::subscribe_duration(timeout_ns);
+        let mut buf = Vec::new();
+
+        loop {
+            let stdin_pollable = stdin_stream.subscribe();
+            let ready = poll::poll(&[&stdin_pollable, &timer_pollable]);
+
+            if ready.contains(&1) && !ready.contains(&0) {
+                return None;
+            }
+
+            match stdin_stream.read(1) {
+                Ok(bytes) => {
+                    if bytes.is_empty() {
+                        break;
+                    }
+                    buf.extend_from_slice(&bytes);
+                    if bytes.last() == Some(&b'\n') {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+
+        Some(String::from_utf8_lossy(&buf).into_owned())
     }
 }
 

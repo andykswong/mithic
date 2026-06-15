@@ -48,6 +48,10 @@ impl Io for TestRuntime {
             Some(lines.remove(0))
         }
     }
+
+    fn read_line_with_timeout(&mut self, _timeout_ns: u64) -> Option<String> {
+        self.read_line()
+    }
 }
 
 #[cfg(test)]

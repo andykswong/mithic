@@ -212,6 +212,7 @@ fn exec_read<R: Runtime>(shell: &mut Shell<R>, args: &[String], stdin: Option<In
     let mut delimiter: u8 = b'\n';
     let mut nchars: Option<usize> = None;
     let mut fd: Option<u32> = None;
+    let mut timeout_ns: Option<u64> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -234,6 +235,16 @@ fn exec_read<R: Runtime>(shell: &mut Shell<R>, args: &[String], stdin: Option<In
             "-u" => {
                 i += 1;
                 if i < args.len() { fd = args[i].parse().ok(); }
+            }
+            "-t" => {
+                i += 1;
+                if i < args.len() {
+                    if let Ok(secs) = args[i].parse::<f64>() {
+                        if secs >= 0.0 {
+                            timeout_ns = Some((secs * 1_000_000_000.0) as u64);
+                        }
+                    }
+                }
             }
             flag if flag.starts_with('-') && flag.len() > 1 => {
                 for ch in flag[1..].chars() {
@@ -284,9 +295,27 @@ fn exec_read<R: Runtime>(shell: &mut Shell<R>, args: &[String], stdin: Option<In
                 }
             }
             None => {
-                match shell.rt.read_line() {
-                    Some(l) => l.trim_end_matches('\n').to_string(),
-                    None => return 1,
+                if let Some(ns) = timeout_ns {
+                    match shell.rt.read_line_with_timeout(ns) {
+                        Some(l) => l.trim_end_matches('\n').to_string(),
+                        None => {
+                            let var_names_owned: Vec<String> = var_names.iter().map(|s| s.to_string()).collect();
+                            if array_mode {
+                                let arr_name = var_names_owned.first().cloned().unwrap_or_else(|| "REPLY".to_string());
+                                shell.env.insert(arr_name, ShellValue::Array(Vec::new()));
+                            } else {
+                                for var_name in &var_names_owned {
+                                    shell.env.insert(var_name.to_string(), ShellValue::Scalar(String::new()));
+                                }
+                            }
+                            return 142;
+                        }
+                    }
+                } else {
+                    match shell.rt.read_line() {
+                        Some(l) => l.trim_end_matches('\n').to_string(),
+                        None => return 1,
+                    }
                 }
             }
         }

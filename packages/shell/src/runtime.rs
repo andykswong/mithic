@@ -27,6 +27,9 @@ pub trait Io {
     fn write_stdout(&self, data: &str);
     fn write_stderr(&self, data: &str);
     fn read_line(&mut self) -> Option<String>;
+    /// Read a line from stdin with a timeout in nanoseconds.
+    /// Returns Some(line) if data was read before timeout, None if timed out.
+    fn read_line_with_timeout(&mut self, timeout_ns: u64) -> Option<String>;
 }
 
 // Sub-trait 2: Filesystem
