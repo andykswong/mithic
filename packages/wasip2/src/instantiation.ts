@@ -229,22 +229,24 @@ function createAsyncMonotonicClock() {
       const whenMs = Number(when / 1000n) / 1000;
       return new Pollable(
         () => nowMs() >= whenMs,
-        () => {
+        (_maxBlockMs?) => {
           const remaining = whenMs - nowMs();
           if (remaining <= 0) return;
           return new Promise<void>(resolve => setTimeout(resolve, remaining));
         },
+        () => Math.max(0, whenMs - nowMs()),
       );
     },
     subscribeDuration(duration: bigint): Pollable {
       const whenMs = nowMs() + Number(duration / 1000n) / 1000;
       return new Pollable(
         () => nowMs() >= whenMs,
-        () => {
+        (_maxBlockMs?) => {
           const remaining = whenMs - nowMs();
           if (remaining <= 0) return;
           return new Promise<void>(resolve => setTimeout(resolve, remaining));
         },
+        () => Math.max(0, whenMs - nowMs()),
       );
     },
   };

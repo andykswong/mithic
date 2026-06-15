@@ -620,9 +620,13 @@ export class TcpSocket<Sync extends boolean = boolean> {
         if (this.#state === 'listen-in-progress') return this.#listenDone;
         return true;
       },
-      pendingPromise
-        ? (() => pendingPromise) as () => MaybePromise<void, Sync>
-        : undefined,
+      (_maxBlockMs?) => {
+        if (this.#state === 'bind-in-progress' && this.#bindDone) return;
+        if (this.#state === 'connect-in-progress' && this.#connectDone) return;
+        if (this.#state === 'listen-in-progress' && this.#listenDone) return;
+        if (this.#state !== 'bind-in-progress' && this.#state !== 'connect-in-progress' && this.#state !== 'listen-in-progress') return;
+        return pendingPromise as MaybePromise<void, Sync>;
+      },
     );
   }
 

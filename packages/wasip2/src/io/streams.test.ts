@@ -162,7 +162,7 @@ describe('InputStream', () => {
   });
 
   it('subscribe returns handler pollable when provided', () => {
-    const customPollable = new Pollable(() => false);
+    const customPollable = new Pollable(() => false, () => {});
     const stream = new InputStream({
       read() { return undefined; },
       blockingRead(_len: number) {
@@ -459,7 +459,7 @@ describe('OutputStream', () => {
   });
 
   it('subscribe returns handler pollable when provided', () => {
-    const customPollable = new Pollable(() => false);
+    const customPollable = new Pollable(() => false, () => {});
     const stream = new OutputStream({
       write(_data: Uint8Array) {},
     }, () => customPollable);
@@ -493,16 +493,16 @@ describe('OutputStream', () => {
 
 describe('Pollable', () => {
   it('ready returns handler result', () => {
-    const alwaysReady = new Pollable(() => true);
+    const alwaysReady = new Pollable(() => true, () => {});
     strictEqual(alwaysReady.ready(), true);
 
-    const neverReady = new Pollable(() => false);
+    const neverReady = new Pollable(() => false, () => {});
     strictEqual(neverReady.ready(), false);
   });
 
-  it('default pollable is always ready', () => {
-    const p = new Pollable();
-    strictEqual(p.ready(), true);
+  it('timeoutMs returns undefined when not set', () => {
+    const p = new Pollable(() => true, () => {});
+    strictEqual(p.timeoutMs(), undefined);
   });
 });
 
@@ -672,9 +672,9 @@ describe('OutputStream.dup()', () => {
 
 describe('poll', () => {
   it('returns indices of ready pollables', () => {
-    const p1 = new Pollable(() => true);
-    const p2 = new Pollable(() => false);
-    const p3 = new Pollable(() => true);
+    const p1 = new Pollable(() => true, () => {});
+    const p2 = new Pollable(() => false, () => {});
+    const p3 = new Pollable(() => true, () => {});
 
     const result = poll([p1, p2, p3]) as Uint32Array;
     deepStrictEqual(Array.from(result), [0, 2]);

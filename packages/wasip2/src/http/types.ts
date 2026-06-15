@@ -258,7 +258,7 @@ function incomingBodyCreateFromBuffer(data: Uint8Array | undefined, trailers?: F
       offset += toRead;
       return slice;
     },
-  }, () => new Pollable(() => true));
+  }, () => new Pollable(() => true, () => {}));
 
   if (trailers) {
     internal.trailers = trailers;
@@ -755,7 +755,7 @@ export class FutureTrailers {
   }
 
   subscribe(): Pollable {
-    return new Pollable(() => true);
+    return new Pollable(() => true, () => {});
   }
 
   get(): { tag: 'ok'; val: { tag: 'ok'; val: Fields | undefined } } | { tag: 'err' } {
@@ -801,7 +801,10 @@ export class FutureIncomingResponse {
     const internal = this[INTERNAL];
     return new Pollable(
       () => internal.resolved,
-      internal.promise ? () => internal.promise! : undefined,
+      (_maxBlockMs?) => {
+        if (internal.resolved) return;
+        return internal.promise!;
+      },
     );
   }
 

@@ -2,44 +2,42 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { Pollable, poll } from './poll.ts';
 
+const noop = () => {};
+
 describe('Pollable', () => {
   it('ready() returns true when handler returns true', () => {
-    const p = new Pollable(() => true);
+    const p = new Pollable(() => true, noop);
     assert.equal(p.ready(), true);
   });
 
   it('ready() returns false when handler returns false', () => {
-    const p = new Pollable(() => false);
+    const p = new Pollable(() => false, noop);
     assert.equal(p.ready(), false);
   });
 
   it('block() returns immediately if ready', () => {
-    const p = new Pollable(() => true);
-    // Should not throw or hang
+    const p = new Pollable(() => true, noop);
     p.block();
   });
 
-  it('block() spins until ready (counter-based handler)', () => {
+  it('block() calls blockReady until ready (counter-based handler)', () => {
     let counter = 0;
-    const p = new Pollable(() => {
-      counter++;
-      return counter >= 5;
-    });
-    p.block();
-    assert.equal(counter, 5);
-  });
-
-  it('block() throws if pollable never becomes ready (timeout)', () => {
-    const p = new Pollable(() => false);
-    assert.throws(
-      () => p.block(),
-      /timed out/
+    const p = new Pollable(
+      () => counter >= 5,
+      () => { counter++; },
     );
+    p.block();
+    assert.ok(counter >= 5);
   });
 
-  it('default pollable (no handler) is always ready', () => {
-    const p = new Pollable();
-    assert.equal(p.ready(), true);
+  it('timeoutMs() returns undefined when not provided', () => {
+    const p = new Pollable(() => true, noop);
+    assert.equal(p.timeoutMs(), undefined);
+  });
+
+  it('timeoutMs() returns value when provided', () => {
+    const p = new Pollable(() => false, noop, () => 42);
+    assert.equal(p.timeoutMs(), 42);
   });
 });
 
@@ -49,46 +47,45 @@ describe('poll', () => {
   });
 
   it('poll([readyPollable]) returns [0]', () => {
-    const p = new Pollable(() => true);
+    const p = new Pollable(() => true, noop);
     const result = poll([p]) as Uint32Array;
     assert.deepEqual(Array.from(result), [0]);
   });
 
   it('poll([notReady, ready]) returns [1]', () => {
-    const p1 = new Pollable(() => false);
-    const p2 = new Pollable(() => true);
+    const p1 = new Pollable(() => false, noop);
+    const p2 = new Pollable(() => true, noop);
     const result = poll([p1, p2]) as Uint32Array;
     assert.deepEqual(Array.from(result), [1]);
   });
 
   it('poll([ready1, notReady, ready2]) returns [0, 2]', () => {
-    const p1 = new Pollable(() => true);
-    const p2 = new Pollable(() => false);
-    const p3 = new Pollable(() => true);
+    const p1 = new Pollable(() => true, noop);
+    const p2 = new Pollable(() => false, noop);
+    const p3 = new Pollable(() => true, noop);
     const result = poll([p1, p2, p3]) as Uint32Array;
     assert.deepEqual(Array.from(result), [0, 2]);
   });
 
-  it('poll with all not-ready eventually returns when one becomes ready', () => {
-    let callCount = 0;
-    const p1 = new Pollable(() => {
-      callCount++;
-      return callCount >= 3;
-    });
-    const p2 = new Pollable(() => false);
-    const result = poll([p1, p2]) as Uint32Array;
-    // p1 should become ready after block() calls it
-    assert.ok(Array.from(result).includes(0));
-  });
-
-  it('poll with single always-ready pollable returns [0]', () => {
-    const p = new Pollable();
+  it('poll with timer pollable blocks until ready', () => {
+    const start = performance.now();
+    const buf = new Int32Array(new SharedArrayBuffer(4));
+    const p = new Pollable(
+      () => performance.now() - start >= 5,
+      (maxBlockMs?: number) => {
+        const remaining = 5 - (performance.now() - start);
+        if (remaining <= 0) return;
+        const waitMs = maxBlockMs !== undefined ? Math.min(maxBlockMs, remaining) : remaining;
+        Atomics.wait(buf, 0, 0, waitMs);
+      },
+      () => Math.max(0, 5 - (performance.now() - start)),
+    );
     const result = poll([p]) as Uint32Array;
     assert.deepEqual(Array.from(result), [0]);
   });
 
   it('poll returns Uint32Array', () => {
-    const p = new Pollable(() => true);
+    const p = new Pollable(() => true, noop);
     const result = poll([p]);
     assert.ok(result instanceof Uint32Array);
   });
@@ -154,7 +151,7 @@ describe('poll (async pollables)', () => {
   });
 
   it('poll returns Uint32Array synchronously when fast-path hits (some ready)', () => {
-    const p1 = new Pollable(() => true);
+    const p1 = new Pollable(() => true, noop);
     const p2 = new Pollable(
       () => false,
       () => new Promise<void>(resolve => setTimeout(resolve, 100)),
@@ -197,7 +194,6 @@ describe('poll (async pollables)', () => {
       () => new Promise<void>(resolve => setTimeout(resolve, 100)),
     );
     const result = poll([p1, p2]);
-    // p1 should become ready from sync block, so result should be sync
     assert.ok(result instanceof Uint32Array);
     assert.ok(Array.from(result).includes(0));
   });
@@ -218,7 +214,6 @@ describe('poll async racing', () => {
     const result = poll([p1, p2]);
     assert.ok(result instanceof Promise);
     const indices = await result;
-    // p2 resolves first (10ms < 50ms)
     assert.ok(Array.from(indices).includes(1));
   });
 

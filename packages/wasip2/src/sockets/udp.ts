@@ -242,9 +242,11 @@ export class UdpSocket<Sync extends boolean = boolean> {
         if (this.#state === 'bind-in-progress') return this.#bindDone;
         return true;
       },
-      pendingPromise
-        ? (() => pendingPromise) as () => MaybePromise<void, Sync>
-        : undefined,
+      (_maxBlockMs?) => {
+        if (this.#state === 'bind-in-progress' && this.#bindDone) return;
+        if (this.#state !== 'bind-in-progress') return;
+        return pendingPromise as MaybePromise<void, Sync>;
+      },
     );
   }
 
@@ -300,7 +302,7 @@ export class IncomingDatagramStream {
   }
 
   subscribe(): Pollable {
-    return new Pollable(() => true);
+    return new Pollable(() => true, () => {});
   }
 
   [Symbol.dispose](): void {
@@ -362,7 +364,7 @@ export class OutgoingDatagramStream {
   }
 
   subscribe(): Pollable {
-    return new Pollable(() => true);
+    return new Pollable(() => true, () => {});
   }
 
   [Symbol.dispose](): void {

@@ -17,10 +17,12 @@ export function subscribeInstant(when: bigint): Pollable {
   const buf = new Int32Array(new SharedArrayBuffer(4));
   return new Pollable(
     () => nowMs() >= whenMs,
-    () => {
+    (maxBlockMs?) => {
       const remaining = whenMs - nowMs();
-      if (remaining > 0) Atomics.wait(buf, 0, 0, remaining);
+      if (remaining <= 0) return;
+      Atomics.wait(buf, 0, 0, maxBlockMs !== undefined ? Math.min(remaining, maxBlockMs) : remaining);
     },
+    () => Math.max(0, whenMs - nowMs()),
   );
 }
 

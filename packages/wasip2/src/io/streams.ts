@@ -7,6 +7,8 @@ import type { InputStreamHandler, OutputStreamHandler } from '@mithic/io/io';
 import type { IoError } from './error.ts';
 import { Pollable } from './poll.ts';
 
+const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
+
 export type { InputStreamHandler, OutputStreamHandler };
 
 export type StreamError =
@@ -95,7 +97,10 @@ export class InputStream<Sync extends boolean = boolean> {
     }
     const handler = this.#handler;
     return new Pollable(
-      () => handler.read(0) !== undefined
+      () => handler.read(0) !== undefined,
+      (maxBlockMs?) => {
+        Atomics.wait(sleepBuf, 0, 0, maxBlockMs ?? 1);
+      },
     );
   }
 
@@ -208,6 +213,9 @@ export class OutputStream<Sync extends boolean = boolean> {
     const handler = this.#handler;
     return new Pollable(
       () => !handler.checkWrite || handler.checkWrite() > 0,
+      (maxBlockMs?) => {
+        Atomics.wait(sleepBuf, 0, 0, maxBlockMs ?? 1);
+      },
     );
   }
 

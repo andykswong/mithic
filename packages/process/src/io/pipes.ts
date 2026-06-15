@@ -7,6 +7,8 @@ import { InputStream, OutputStream, type InputStreamHandler, type OutputStreamHa
 import { Pollable } from '@mithic/wasip2/io/poll';
 import type { Process, PipeOptions, SpawnOptions, ProcessManager } from '../types.ts';
 
+const pipeSleepBuf = new Int32Array(new SharedArrayBuffer(4));
+
 /**
  * Convenience helper: spawn a process with pipes pre-created for all three streams.
  * Returns the process plus the caller's ends of each pipe.
@@ -125,8 +127,18 @@ function createQueuePipe(bufferSize: number): { input: InputStream<true>; output
   }
 
   return {
-    input: new InputStream(inputHandler, () => new Pollable(() => queue.length > 0 || writerClosed)),
-    output: new OutputStream(outputHandler, () => new Pollable(() => readerClosed || buffered < bufferSize)),
+    input: new InputStream(inputHandler, () => new Pollable(
+      () => queue.length > 0 || writerClosed,
+      (maxBlockMs?: number) => {
+        Atomics.wait(pipeSleepBuf, 0, 0, maxBlockMs ?? 1);
+      },
+    )),
+    output: new OutputStream(outputHandler, () => new Pollable(
+      () => readerClosed || buffered < bufferSize,
+      (maxBlockMs?: number) => {
+        Atomics.wait(pipeSleepBuf, 0, 0, maxBlockMs ?? 1);
+      },
+    )),
   };
 }
 
@@ -289,7 +301,7 @@ export function createAsyncQueuePipe(bufferSize: number): { input: InputStream; 
       inputHandler,
       () => new Pollable(
         () => queue.length > 0 || writerClosed,
-        () => {
+        (_maxBlockMs?: number) => {
           if (queue.length > 0 || writerClosed) return;
           return new Promise<void>(resolve => {
             pendingNotifies.push(resolve);
@@ -301,7 +313,7 @@ export function createAsyncQueuePipe(bufferSize: number): { input: InputStream; 
       outputHandler,
       () => new Pollable(
         () => readerClosed || buffered < bufferSize,
-        () => {
+        (_maxBlockMs?: number) => {
           if (readerClosed || buffered < bufferSize) return;
           return new Promise<void>(resolve => {
             pendingWriters.push(resolve);
@@ -423,8 +435,22 @@ function createSharedPipe(bufferSize: number): { input: InputStream<true>; outpu
   }
 
   return {
-    input: new InputStream(inputHandler, () => new Pollable(() => available() > 0 || Atomics.load(control, WRITER_CLOSED) !== 0)),
-    output: new OutputStream(outputHandler, () => new Pollable(() => Atomics.load(control, READER_CLOSED) !== 0 || freeSpace() > 0)),
+    input: new InputStream(inputHandler, () => new Pollable(
+      () => available() > 0 || Atomics.load(control, WRITER_CLOSED) !== 0,
+      (maxBlockMs?: number) => {
+        if (available() > 0 || Atomics.load(control, WRITER_CLOSED) !== 0) return;
+        const snap = Atomics.load(control, WRITE_POS);
+        Atomics.wait(control, WRITE_POS, snap, maxBlockMs);
+      },
+    )),
+    output: new OutputStream(outputHandler, () => new Pollable(
+      () => Atomics.load(control, READER_CLOSED) !== 0 || freeSpace() > 0,
+      (maxBlockMs?: number) => {
+        if (Atomics.load(control, READER_CLOSED) !== 0 || freeSpace() > 0) return;
+        const snap = Atomics.load(control, READ_POS);
+        Atomics.wait(control, READ_POS, snap, maxBlockMs);
+      },
+    )),
   };
 }
 
@@ -498,7 +524,14 @@ export function inputFromSharedBuffer(buffer: SharedArrayBuffer, bufferSize: num
     },
   };
 
-  return new InputStream(inputHandler, () => new Pollable(() => available() > 0 || Atomics.load(control, WRITER_CLOSED) !== 0));
+  return new InputStream(inputHandler, () => new Pollable(
+    () => available() > 0 || Atomics.load(control, WRITER_CLOSED) !== 0,
+    (maxBlockMs?: number) => {
+      if (available() > 0 || Atomics.load(control, WRITER_CLOSED) !== 0) return;
+      const snap = Atomics.load(control, WRITE_POS);
+      Atomics.wait(control, WRITE_POS, snap, maxBlockMs);
+    },
+  ));
 }
 
 export function outputFromSharedBuffer(buffer: SharedArrayBuffer, bufferSize: number): OutputStream<true> {
@@ -546,9 +579,12 @@ export function outputFromSharedBuffer(buffer: SharedArrayBuffer, bufferSize: nu
     },
   };
 
-  const pollReady = () => Atomics.load(control, READER_CLOSED) !== 0 || freeSpace() > 0;
   return new OutputStream(outputHandler, () => new Pollable(
-    pollReady,
-    () => { while (!pollReady()) { Atomics.wait(control, READ_POS, Atomics.load(control, READ_POS), 100); } },
+    () => Atomics.load(control, READER_CLOSED) !== 0 || freeSpace() > 0,
+    (maxBlockMs?: number) => {
+      if (Atomics.load(control, READER_CLOSED) !== 0 || freeSpace() > 0) return;
+      const snap = Atomics.load(control, READ_POS);
+      Atomics.wait(control, READ_POS, snap, maxBlockMs);
+    },
   ));
 }

@@ -114,9 +114,10 @@ export class ResolveAddressStream<Sync extends boolean = boolean> {
     const resolvePromise = this.#resolvePromise;
     return new Pollable<Sync>(
       () => this.#resolved,
-      resolvePromise
-        ? (() => resolvePromise) as () => MaybePromise<void, Sync>
-        : undefined,
+      (_maxBlockMs?) => {
+        if (this.#resolved) return;
+        return resolvePromise as MaybePromise<void, Sync>;
+      },
     );
   }
 }
