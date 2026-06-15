@@ -20,7 +20,7 @@ describe('Pollable', () => {
     p.block();
   });
 
-  it('block() calls blockReady until ready (counter-based handler)', () => {
+  it('block() loops blockReady until ready when maxBlockMs is undefined', () => {
     let counter = 0;
     const p = new Pollable(
       () => counter >= 5,
@@ -28,6 +28,16 @@ describe('Pollable', () => {
     );
     p.block();
     assert.ok(counter >= 5);
+  });
+
+  it('block(maxBlockMs) calls blockReady once and returns', () => {
+    let counter = 0;
+    const p = new Pollable(
+      () => counter >= 5,
+      () => { counter++; },
+    );
+    p.block(1);
+    assert.equal(counter, 1);
   });
 
   it('timeoutMs() returns undefined when not provided', () => {
@@ -101,7 +111,7 @@ describe('Pollable (async blockReady)', () => {
     assert.ok(result instanceof Promise);
   });
 
-  it('block() returns void when blockReady returns void', () => {
+  it('block() returns void when blockReady makes pollable ready', () => {
     let ready = false;
     const p = new Pollable(
       () => ready,
@@ -225,5 +235,80 @@ describe('poll async racing', () => {
     const result = poll([p]);
     assert.ok(result instanceof Promise);
     await assert.rejects(result, /poll failed/);
+  });
+});
+
+describe('poll sync edge cases', () => {
+  it('sync data pollable fires before timer pollable (1 data + 1 timer)', () => {
+    const buf = new Int32Array(new SharedArrayBuffer(4));
+    let dataReady = false;
+    const data = new Pollable(
+      () => dataReady,
+      () => { dataReady = true; },
+    );
+    const start = performance.now();
+    const timer = new Pollable(
+      () => performance.now() - start >= 50,
+      (maxBlockMs?: number) => {
+        const remaining = 50 - (performance.now() - start);
+        if (remaining <= 0) return;
+        Atomics.wait(buf, 0, 0, maxBlockMs !== undefined ? Math.min(maxBlockMs, remaining) : remaining);
+      },
+      () => Math.max(0, 50 - (performance.now() - start)),
+    );
+    const result = poll([data, timer]) as Uint32Array;
+    assert.ok(Array.from(result).includes(0));
+    assert.ok(performance.now() - start < 40);
+  });
+
+  it('only timer pollables: shortest fires first', () => {
+    const buf = new Int32Array(new SharedArrayBuffer(4));
+    const start = performance.now();
+    const short = new Pollable(
+      () => performance.now() - start >= 5,
+      (maxBlockMs?: number) => {
+        const remaining = 5 - (performance.now() - start);
+        if (remaining <= 0) return;
+        Atomics.wait(buf, 0, 0, maxBlockMs !== undefined ? Math.min(maxBlockMs, remaining) : remaining);
+      },
+      () => Math.max(0, 5 - (performance.now() - start)),
+    );
+    const long = new Pollable(
+      () => performance.now() - start >= 100,
+      (maxBlockMs?: number) => {
+        const remaining = 100 - (performance.now() - start);
+        if (remaining <= 0) return;
+        Atomics.wait(buf, 0, 0, maxBlockMs !== undefined ? Math.min(maxBlockMs, remaining) : remaining);
+      },
+      () => Math.max(0, 100 - (performance.now() - start)),
+    );
+    const result = poll([short, long]) as Uint32Array;
+    assert.ok(Array.from(result).includes(0));
+    assert.ok(performance.now() - start < 50);
+  });
+
+  it('multiple data pollables: first to be ready is returned', () => {
+    let count1 = 0;
+    let count2 = 0;
+    const data1 = new Pollable(
+      () => count1 >= 2,
+      () => { count1++; },
+    );
+    const data2 = new Pollable(
+      () => count2 >= 10,
+      () => { count2++; },
+    );
+    const result = poll([data1, data2]) as Uint32Array;
+    assert.ok(Array.from(result).includes(0));
+  });
+
+  it('timeoutMs() === 0 means timer already expired (fast path catches it)', () => {
+    const p = new Pollable(
+      () => true,
+      noop,
+      () => 0,
+    );
+    const result = poll([p]) as Uint32Array;
+    assert.deepEqual(Array.from(result), [0]);
   });
 });
