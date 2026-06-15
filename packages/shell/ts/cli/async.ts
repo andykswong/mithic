@@ -13,6 +13,7 @@ import { SimpleProcessManager, type CommandHandler, type CommandResolver, type C
 import { COREUTILS_COMMANDS } from '@mithic/coreutils';
 import { JQ_COMMAND } from '@mithic/jq';
 import { CURL_COMMAND } from '@mithic/curl';
+import { runTimeoutAsync } from '../commands/timeout.ts';
 import { Runtime } from '../runtime.ts';
 import { createNodeVfs, mountNodeVfs, getNodeEnv } from './shared.ts';
 
@@ -115,8 +116,21 @@ const coreutilsHandler = createHandler(async () => coreutilsEntry as unknown as 
 const jqHandler = createHandler(async () => jqEntry as unknown as ComponentEntry);
 const curlHandler = createHandler(async () => curlEntry as unknown as ComponentEntry);
 
+const timeoutHandler: CommandHandler = async (args, ctx) => {
+  const timeoutArgs = args.slice(1);
+  const writeErr = (msg: string) => {
+    ctx.stderr.write(new TextEncoder().encode(msg));
+  };
+  return runTimeoutAsync(timeoutArgs, manager, {
+    stdin: ctx.stdin,
+    stdout: ctx.stdout,
+    stderr: ctx.stderr,
+  }, writeErr);
+};
+
 const commandResolver: CommandResolver = (file: string): CommandHandler | undefined => {
   const cmdName = file.includes('/') ? file.split('/').pop()! : file;
+  if (cmdName === 'timeout') return timeoutHandler;
   if (cmdName === 'sh' || cmdName === 'bash') return shellHandler;
   if (cmdName === JQ_COMMAND) return jqHandler;
   if (cmdName === CURL_COMMAND) return curlHandler;

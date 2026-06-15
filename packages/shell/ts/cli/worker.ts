@@ -11,7 +11,7 @@ import { InlineProcessWorker } from '@mithic/process/manager/inline-worker';
 import type { CompileResult } from '@mithic/process/component/compiler';
 import { createComponentCompiler } from '@mithic/process/component/compiler';
 import { CommandRegistry } from '@mithic/process/component/registry';
-import type { ProcessWorker } from '@mithic/process/types';
+import type { ProcessWorker, ProcessManager } from '@mithic/process/types';
 import { COREUTILS_COMMANDS } from '@mithic/coreutils';
 import { JQ_COMMAND } from '@mithic/jq';
 import { CURL_COMMAND } from '@mithic/curl';
@@ -21,6 +21,7 @@ import { modules as jqModules } from '@mithic/jq/component';
 import { modules as curlModules } from '@mithic/curl/component';
 import { outputFromSharedBuffer } from '@mithic/process/io';
 import { runChmod } from '../commands/chmod.ts';
+import { runTimeout } from '../commands/timeout.ts';
 import { Runtime } from '../runtime.ts';
 import { createWorkerStrategy } from '../worker-strategy.ts';
 import { createNodeVfs, mountNodeVfs, getNodeEnv } from './shared.ts';
@@ -168,8 +169,25 @@ function createScriptWorker(path: string, name?: string): ProcessWorker | undefi
   } catch { return undefined; }
 }
 
+let managerRef: ProcessManager;
+
 function createWorker(file: string, name?: string): ProcessWorker | undefined {
   const cmdName = file.includes('/') ? file.split('/').pop()! : file;
+  if (cmdName === 'timeout') {
+    return new InlineProcessWorker((opts) => {
+      const timeoutArgs = opts.args.slice(1);
+      const writeErr = (msg: string) => {
+        if (opts.inheritStderr) {
+          hostStderr.write(new TextEncoder().encode(msg));
+        } else {
+          const stderr = outputFromSharedBuffer(opts.stderrBuf, opts.stderrBufSize);
+          stderr.write(new TextEncoder().encode(msg));
+          stderr[Symbol.dispose]();
+        }
+      };
+      return runTimeout(timeoutArgs, managerRef, undefined, writeErr);
+    });
+  }
   if (cmdName === 'chmod') {
     return new InlineProcessWorker((opts) => {
       const chmodArgs = opts.args.slice(1);
@@ -224,6 +242,7 @@ const manager = createWorkerStrategy({
   createWorker,
   maxWorkers: 8,
 });
+managerRef = manager;
 
 const runtime = new Runtime({
   manager,
