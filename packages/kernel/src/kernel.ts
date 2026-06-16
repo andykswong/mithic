@@ -1,6 +1,7 @@
 import type {
   Capability,
   ProcessInit,
+  ProcessLimits,
   Signal,
   SyscallResponse,
   SyscallRequest,
@@ -24,6 +25,45 @@ export interface KernelOptions {
    * dynamic-import bootstrap when the host has no usable Worker (e.g. Node).
    */
   launcher?: GuestLauncher;
+  /**
+   * Optional launcher for runtimes where `capabilities.directPipes === false`
+   * (e.g. QuickJS). The kernel calls `relayLauncher.launchRelay()` instead of the
+   * normal port-transfer path, passing the kernel's SyscallDispatcher and pipe
+   * write/read hooks so the launcher can relay I/O over whatever bridge the backend
+   * supports (e.g. `__isola_syscall` in QuickJS).
+   * Required when using a non-transferable runtime backend.
+   */
+  relayLauncher?: RelayLauncher;
+}
+
+/**
+ * I/O relay context provided to a `RelayLauncher` for non-transferable backends.
+ * The launcher drives pipe data through these callbacks instead of transferring ports.
+ */
+export interface RelayContext {
+  code: string | URL;
+  init: ProcessInit;
+  dispatcher: SyscallDispatcher;
+  /** Push a chunk to stdout (fd 1). */
+  writeStdout(chunk: Uint8Array): void;
+  /** Push a chunk to stderr (fd 2). */
+  writeStderr(chunk: Uint8Array): void;
+  /** Close stdout (signals EOF). */
+  closeStdout(): void;
+  /** Close stderr (signals EOF). */
+  closeStderr(): void;
+  /** Notify the kernel that the process exited. */
+  notifyExit(code: number): void;
+}
+
+/**
+ * Launcher for runtime backends that cannot transfer MessagePorts
+ * (`capabilities.directPipes === false`, e.g. QuickJS).
+ * Drives I/O via the relay callbacks in {@link RelayContext} instead of ports.
+ */
+export interface RelayLauncher {
+  launchRelay(runtime: Runtime, ctx: RelayContext): Promise<ProcessHandle>;
+  kill?(runtime: Runtime, handle: ProcessHandle, signal: Signal): void;
 }
 
 export interface SpawnInit {
@@ -34,6 +74,7 @@ export interface SpawnInit {
   capabilities?: Capability[];
   captureStdout?: boolean;
   captureStderr?: boolean;
+  limits?: ProcessLimits;
 }
 
 export interface SpawnResult {
@@ -82,6 +123,7 @@ export class Kernel {
 
   #runtime: Runtime;
   #launcher: GuestLauncher;
+  #relayLauncher: RelayLauncher | undefined;
   #cwds = new Map<number, string>();
 
   constructor(options: KernelOptions) {
@@ -92,9 +134,14 @@ export class Kernel {
       cwdOf: (pid) => this.#cwds.get(pid) ?? '/',
     });
     this.#launcher = options.launcher ?? new DefaultGuestLauncher();
+    this.#relayLauncher = options.relayLauncher;
   }
 
   async spawn(code: string | URL, init: SpawnInit = {}): Promise<SpawnResult> {
+    // Non-transferable runtimes (e.g. QuickJS) use the relay path.
+    if (!this.#runtime.capabilities.directPipes) {
+      return this.#spawnRelay(code, init);
+    }
     if (!this.#runtime.capabilities.transferable) {
       throw new Error('Kernel currently requires a transferable runtime backend');
     }
@@ -160,6 +207,82 @@ export class Kernel {
         if (this.processes.get(pid)?.state !== 'DEAD') this.processes.markExit(pid, 1);
       }
     });
+
+    return { pid, stdout, stderr };
+  }
+
+  /**
+   * Relay spawn path for runtimes where `capabilities.directPipes === false`
+   * (e.g. QuickJS). Instead of transferring MessagePorts into the guest, the
+   * kernel keeps all pipe endpoints and relays data through the `RelayContext`
+   * callbacks that the launcher bridges to its backend-specific I/O mechanism.
+   *
+   * The relay captures stdout/stderr by accumulating chunks in a buffer and
+   * resolving the capture promise when `closeStdout()`/`closeStderr()` is called.
+   */
+  async #spawnRelay(code: string | URL, init: SpawnInit): Promise<SpawnResult> {
+    if (!this.#relayLauncher) {
+      throw new Error(
+        'Non-transferable runtime requires a relayLauncher (e.g. QuickJSGuestLauncher)'
+      );
+    }
+
+    const ppid = init.ppid ?? 0;
+    const pid = this.processes.allocate(ppid);
+    const cwd = init.cwd ?? '/';
+    this.#cwds.set(pid, cwd);
+
+    const requested = init.capabilities ?? [];
+    const granted = ppid === 0 ? requested : this.capabilities.narrow(ppid, requested);
+    this.capabilities.grant(pid, granted);
+
+    const processInit: ProcessInit = {
+      type: 'init',
+      entry: typeof code === 'string' ? 'inline' : code,
+      args: init.args ?? [],
+      env: init.env ?? {},
+      cwd,
+      pid,
+      ppid,
+      capabilities: granted,
+      limits: init.limits,
+      preopens: {
+        0: { type: 'pipe' },
+        1: { type: 'pipe' },
+        2: { type: 'pipe' },
+      },
+    };
+
+    // Collect stdout/stderr in-memory; resolve when the process closes the pipe.
+    const stdoutChunks: Uint8Array[] = [];
+    const stderrChunks: Uint8Array[] = [];
+    let stdoutResolve: ((v: Uint8Array) => void) | undefined;
+    let stderrResolve: ((v: Uint8Array) => void) | undefined;
+
+    const stdout: Promise<Uint8Array> | undefined = init.captureStdout
+      ? new Promise<Uint8Array>((res) => { stdoutResolve = res; })
+      : undefined;
+    const stderr: Promise<Uint8Array> | undefined = init.captureStderr
+      ? new Promise<Uint8Array>((res) => { stderrResolve = res; })
+      : undefined;
+
+    const dispatcher = this.dispatcher;
+
+    const relayCtx: RelayContext = {
+      code,
+      init: processInit,
+      dispatcher,
+      writeStdout(chunk) { stdoutChunks.push(chunk); },
+      writeStderr(chunk) { stderrChunks.push(chunk); },
+      closeStdout() { stdoutResolve?.(concat(stdoutChunks)); },
+      closeStderr() { stderrResolve?.(concat(stderrChunks)); },
+      notifyExit: (code) => { this.#exit(pid, code); },
+    };
+
+    this.processes.markReady(pid);
+
+    const handle = await this.#relayLauncher.launchRelay(this.#runtime, relayCtx);
+    this.#handles.set(pid, handle);
 
     return { pid, stdout, stderr };
   }
