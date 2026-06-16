@@ -73,6 +73,22 @@ test('comparison and logic', () => {
   expect(r('.a // "default"', { a: 5 })).toEqual([5]);
 });
 
+test('// alternative: substitutes on empty/null/false, keeps truthy', () => {
+  expect(r('empty // 2', null)).toEqual([2]);
+  expect(r('null // 2', null)).toEqual([2]);
+  expect(r('false // 2', null)).toEqual([2]);
+  expect(r('1 // 2', null)).toEqual([1]);
+  // streaming: keep all truthy lhs outputs; only substitute when NONE are truthy
+  expect(r('(1, false, 2) // 99', null)).toEqual([1, 2]);
+  expect(r('(false, null) // 99', null)).toEqual([99]);
+});
+
+test('// propagates a raised error from the lhs (does not swallow it)', () => {
+  expect(() => r('error("x") // 2', null)).toThrow();
+  // an error after some truthy output still propagates
+  expect(() => r('(1, error("x")) // 2', null)).toThrow();
+});
+
 test('string interpolation', () => {
   expect(r('"x=\\(.a)"', { a: 5 })).toEqual(['x=5']);
   expect(r('"\\(.a)+\\(.b)"', { a: 1, b: 2 })).toEqual(['1+2']);

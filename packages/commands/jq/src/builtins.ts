@@ -55,8 +55,8 @@ const SIMPLE: Record<string, SimpleFn> = {
   'tonumber/0': (input) => toNumber(input),
   'tojson/0': (input) => toJSON(input, 0),
   'fromjson/0': (input) => { if (typeof input !== 'string') throw err('fromjson requires a string'); return JSON.parse(input); },
-  'ascii_downcase/0': (input) => reqStr(input).toLowerCase(),
-  'ascii_upcase/0': (input) => reqStr(input).toUpperCase(),
+  'ascii_downcase/0': (input) => asciiCase(reqStr(input), false),
+  'ascii_upcase/0': (input) => asciiCase(reqStr(input), true),
   'explode/0': (input) => Array.from(reqStr(input)).map((c) => c.codePointAt(0)!),
   'implode/0': (input) => { if (!Array.isArray(input)) throw err('implode requires array'); return String.fromCodePoint(...(input as number[])); },
   'ltrimstr/1': (input, [p]) => (typeof input === 'string' && typeof p === 'string' && input.startsWith(p)) ? input.slice(p.length) : input,
@@ -101,17 +101,13 @@ const SIMPLE: Record<string, SimpleFn> = {
   'isnan/0': (input) => typeof input === 'number' && isNaN(input),
   'isnormal/0': (input) => typeof input === 'number' && isFinite(input) && input !== 0,
   'isvalid/1': () => true,
-  'splits/1': (input, [re]) => multi(splitStr(input, regexSplitToStr(re))),
+  'splits/1': (input, [re]) => multi([...regexSplit(input, re, undefined)]),
   'test/1': (input, [re]) => regexTest(input, re, undefined),
   'test/2': (input, [re, fl]) => regexTest(input, re, fl as string),
   'match/1': (input, [re]) => multi(regexMatch(input, re, undefined)),
   'match/2': (input, [re, fl]) => multi(regexMatch(input, re, fl as string)),
   'capture/1': (input, [re]) => regexCapture(input, re, undefined),
   'capture/2': (input, [re, fl]) => regexCapture(input, re, fl as string),
-  'sub/2': (input, [re, rep]) => regexSub(input, re, rep as string, undefined, false),
-  'gsub/2': (input, [re, rep]) => regexSub(input, re, rep as string, undefined, true),
-  'sub/3': (input, [re, rep, fl]) => regexSub(input, re, rep as string, fl as string, false),
-  'gsub/3': (input, [re, rep, fl]) => regexSub(input, re, rep as string, fl as string, true),
 };
 
 // builtins that re-enter the evaluator (need the arg NODES), keyed by name/arity.
@@ -124,7 +120,8 @@ const HIGHER = new Set([
   'first/0', 'first/1', 'last/0', 'last/1', 'nth/1', 'nth/2', 'limit/2',
   'paths/0', 'paths/1', 'del/1', 'until/2', 'while/2', 'repeat/1',
   'walk/1', 'halt/0', 'halt_error/0', 'halt_error/1',
-  'splits/2', 'indices/1', 'index/1', 'rindex/1',
+  'splits/2', 'split/2', 'indices/1', 'index/1', 'rindex/1',
+  'sub/2', 'gsub/2', 'sub/3', 'gsub/3',
   'objects/0', 'arrays/0', 'booleans/0', 'numbers/0',
   'strings/0', 'nulls/0', 'iterables/0', 'scalars/0', 'values/0',
   'combinations/0', 'getpath/1',
@@ -258,8 +255,8 @@ function* callHigher(name: string, args: Node[], input: unknown, env: Env, ctx: 
       yield fromEntries(mapped);
       return;
     }
-    case 'first/0': { const r = first(iter(input)); yield r.has ? r.value : err0(); return; }
-    case 'last/0': { if (!Array.isArray(input)) throw err(`Cannot index ${typeOf(input)}`); yield input.length ? input[input.length - 1] : null; return; }
+    case 'first/0': { if (!Array.isArray(input)) throw err(`Cannot index ${typeOf(input)} with number`); yield input.length ? input[0] : null; return; }
+    case 'last/0': { if (!Array.isArray(input)) throw err(`Cannot index ${typeOf(input)} with number`); yield input.length ? input[input.length - 1] : null; return; }
     case 'first/1': { const r = first(evalNode(a[0], input, env, ctx)); if (r.has) yield r.value; return; }
     case 'last/1': { let last: unknown; let has = false; for (const v of evalNode(a[0], input, env, ctx)) { last = v; has = true; } if (has) yield last; return; }
     case 'nth/1': { const n = reqNum(first(evalNode(a[0], input, env, ctx)).value); if (!Array.isArray(input)) throw err('Cannot index'); yield input[n] ?? null; return; }
@@ -314,7 +311,12 @@ function* callHigher(name: string, args: Node[], input: unknown, env: Env, ctx: 
     case 'index/1': { for (const x of evalNode(a[0], input, env, ctx)) { const r = indicesGeneric(input, x); yield r.length ? r[0] : null; } return; }
     case 'rindex/1': { for (const x of evalNode(a[0], input, env, ctx)) { const r = indicesGeneric(input, x); yield r.length ? r[r.length - 1] : null; } return; }
     case 'getpath/1': { for (const p of evalNode(a[0], input, env, ctx)) yield getPath(input, p as unknown[]); return; }
-    case 'splits/2': { for (const re of evalNode(a[0], input, env, ctx)) for (const fl of evalNode(a[1], input, env, ctx)) yield* splitStr(input, regexSplitToStr(re, fl as string)); return; }
+    case 'splits/2': { for (const re of evalNode(a[0], input, env, ctx)) for (const fl of evalNode(a[1], input, env, ctx)) yield* regexSplit(input, re, fl as string); return; }
+    case 'split/2': { for (const re of evalNode(a[0], input, env, ctx)) for (const fl of evalNode(a[1], input, env, ctx)) yield [...regexSplit(input, re, fl as string)]; return; }
+    case 'sub/2': { for (const re of evalNode(a[0], input, env, ctx)) yield* regexSub(input, re, a[1], undefined, false, env, ctx, evalNode); return; }
+    case 'gsub/2': { for (const re of evalNode(a[0], input, env, ctx)) yield* regexSub(input, re, a[1], undefined, true, env, ctx, evalNode); return; }
+    case 'sub/3': { for (const re of evalNode(a[0], input, env, ctx)) for (const fl of evalNode(a[2], input, env, ctx)) yield* regexSub(input, re, a[1], fl as string, false, env, ctx, evalNode); return; }
+    case 'gsub/3': { for (const re of evalNode(a[0], input, env, ctx)) for (const fl of evalNode(a[2], input, env, ctx)) yield* regexSub(input, re, a[1], fl as string, true, env, ctx, evalNode); return; }
     case 'combinations/0': { yield* combinations(input as unknown[][], 0, []); return; }
     case 'halt/0': throw err({ __halt: true, code: 0 });
     case 'halt_error/0': throw err({ __halt: true, code: 5, value: input });
@@ -322,8 +324,6 @@ function* callHigher(name: string, args: Node[], input: unknown, env: Env, ctx: 
   }
   throw err(`${name}/${args.length} is not defined`);
 }
-
-function err0(): never { throw err('Cannot iterate over null (null)'); }
 
 // ── assignment / update (`=`, `|=`, `+=`, …) ────────────────────────────────
 
@@ -524,6 +524,17 @@ function toNumber(v: unknown): number {
 }
 
 function reqStr(v: unknown): string { if (typeof v !== 'string') throw err(`${typeOf(v)} (${toStr(v)}) cannot be matched, as it is not a string`); return v; }
+/** Case-fold ONLY ASCII letters A-Z/a-z (jq's ascii_upcase/ascii_downcase). */
+function asciiCase(s: string, upper: boolean): string {
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (upper && c >= 0x61 && c <= 0x7a) out += String.fromCharCode(c - 0x20);
+    else if (!upper && c >= 0x41 && c <= 0x5a) out += String.fromCharCode(c + 0x20);
+    else out += s[i];
+  }
+  return out;
+}
 function reqStrArg(v: unknown): string { if (typeof v !== 'string') throw err('expected string argument'); return v; }
 function reqNum(v: unknown): number { if (typeof v !== 'number') throw err(`${typeOf(v)} (${toStr(v)}) number required`); return v; }
 
@@ -782,22 +793,53 @@ function regexCapture(input: unknown, re: unknown, fl: string | undefined): Reco
   return out;
 }
 
-function regexSub(input: unknown, re: unknown, rep: string, fl: string | undefined, global: boolean): string {
+/**
+ * `sub`/`gsub`: replace matches of `re` in the input string. The replacement
+ * `repNode` is a FILTER evaluated with each match's named-capture object as its
+ * input (so `.name`, `\(.name)`, etc. work). A replacement filter that yields
+ * multiple strings produces multiple result strings (cartesian over matches),
+ * matching jq's streaming semantics.
+ */
+function* regexSub(input: unknown, re: unknown, repNode: Node, fl: string | undefined, global: boolean, env: Env, ctx: Context, evalNode: EvalFn): Generator<string> {
   const s = reqStr(input);
-  const rx = compileRe(re, fl, global);
-  const doRep = (m: RegExpMatchArray): string => {
-    // jq replacement uses \(.name) interpolation over capture object; we support
-    // simple "\(.name)" / named templates by substituting capture names.
-    let r = rep;
-    if (m.groups) for (const [k, val] of Object.entries(m.groups)) r = r.replace(new RegExp('\\\\\\(\\.' + k + '\\)', 'g'), val ?? '');
-    return r;
+  const rx = compileRe(re, fl, true);
+  const matches: RegExpMatchArray[] = [];
+  for (const m of s.matchAll(rx)) {
+    matches.push(m);
+    if (!global) break;
+    if (m[0] === '') rx.lastIndex++; // avoid infinite loop on empty match
+  }
+  // Build the capture object for a match (named captures only, like `capture`).
+  const capObj = (m: RegExpMatchArray): Record<string, unknown> => {
+    const o: Record<string, unknown> = {};
+    if (m.groups) for (const [k, v] of Object.entries(m.groups)) o[k] = v ?? null;
+    return o;
   };
-  if (global) { let result = ''; let last = 0; for (const m of s.matchAll(rx)) { result += s.slice(last, m.index!) + doRep(m); last = m.index! + m[0].length; } result += s.slice(last); return result; }
-  const m = rx.exec(s); if (!m) return s; return s.slice(0, m.index) + doRep(m) + s.slice(m.index + m[0].length);
+  // Recursively assemble the output, expanding each match's replacement stream.
+  yield* build(0, 0, '');
+  function* build(mi: number, last: number, acc: string): Generator<string> {
+    if (mi >= matches.length) { yield acc + s.slice(last); return; }
+    const m = matches[mi];
+    const start = m.index!;
+    const between = acc + s.slice(last, start);
+    for (const rep of evalNode(repNode, capObj(m), env, ctx)) {
+      if (typeof rep !== 'string') throw err(`${typeOf(rep)} (${toStr(rep)}) cannot be used as a sub/gsub replacement`);
+      yield* build(mi + 1, start + m[0].length, between + rep);
+    }
+  }
 }
 
-function regexSplitToStr(re: unknown, fl?: string): string {
-  void fl; return re as string;
+/** Split a string on a REGEX (used by `splits/1`, `splits/2`, `split/2`). */
+function* regexSplit(input: unknown, re: unknown, fl: string | undefined): Generator<string> {
+  const s = reqStr(input);
+  const rx = compileRe(re, fl, true);
+  let last = 0;
+  for (const m of s.matchAll(rx)) {
+    if (m[0] === '') { rx.lastIndex++; continue; } // skip empty matches (avoid infinite splits)
+    yield s.slice(last, m.index!);
+    last = m.index! + m[0].length;
+  }
+  yield s.slice(last);
 }
 
 // ── @format encoders ─────────────────────────────────────────────────────────

@@ -239,14 +239,12 @@ export function* evalNode(node: Node, input: unknown, env: Env, ctx: Context): G
     }
 
     case 'alternative': {
-      // `a // b`: yield truthy outputs of a; if none (or all errored/falsy), yield b.
+      // `a // b`: yield the truthy outputs of `a`; if `a` produced no truthy
+      // value (it was empty, or emitted only `null`/`false`), yield `b`.
+      // A raised error from `a` PROPAGATES — it is not an "absence of value".
       let any = false;
-      try {
-        for (const v of evalNode(node.left, input, env, ctx)) {
-          if (truthy(v)) { any = true; yield v; }
-        }
-      } catch (e) {
-        if (!(e instanceof JQError)) throw e;
+      for (const v of evalNode(node.left, input, env, ctx)) {
+        if (truthy(v)) { any = true; yield v; }
       }
       if (!any) yield* evalNode(node.right, input, env, ctx);
       return;
