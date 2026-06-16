@@ -32,6 +32,8 @@ export const COMMAND_NAMES = [
   // encoding/misc batch
   'base64', 'base32', 'seq', 'yes', 'sleep', 'date', 'diff', 'echo', 'printf',
   'true', 'false', 'env', 'expr', 'tac', 'comm', 'shuf', 'cksum', 'sum',
+  // grep/sed batch
+  'grep', 'egrep', 'fgrep', 'sed',
 ] as const;
 
 export type CoreutilsCommandName = typeof COMMAND_NAMES[number];

@@ -20,6 +20,7 @@ const FS_RW = [{ type: 'fs' as const, paths: ['/'], operations: ['read' as const
 async function bootKernel(files: Record<string, string>): Promise<{
   spawn: (args: string[], cap?: boolean) => Promise<{ stdout: string; code: number }>;
   rwSpawn: (args: string[]) => Promise<{ stdout: string; code: number }>;
+  spawnRW: (args: string[]) => Promise<{ stdout: string; code: number }>;
   readFile: (path: string) => Promise<string>;
   exists: (path: string) => Promise<boolean>;
   pipeline: (stages: string[][]) => Promise<{ stdout: string; codes: number[] }>;
@@ -59,12 +60,32 @@ async function bootKernel(files: Record<string, string>): Promise<{
       const bytes = stdout ? await stdout : new Uint8Array();
       return { stdout: new TextDecoder().decode(bytes), code: exitCode };
     },
-    // Read a VFS file directly (to verify the side effects of a command).
+    // Alias kept for the grep/sed batch's tests.
+    async spawnRW(args) {
+      const code = resolveCommand(args[0], '/', {})!;
+      const { pid, stdout } = await kernel.spawn(code, { args, capabilities: FS_RW, captureStdout: true });
+      const { code: exitCode } = await kernel.wait(pid);
+      const bytes = stdout ? await stdout : new Uint8Array();
+      return { stdout: new TextDecoder().decode(bytes), code: exitCode };
+    },
+    // Read a VFS file directly (to verify the side effects of a command), chunked.
     async readFile(path) {
       const handle = await fs.open(path, { read: true });
-      const data = await fs.read(handle, 0, 1 << 20);
+      const chunks: Uint8Array[] = [];
+      let offset = 0;
+      for (;;) {
+        const chunk = await fs.read(handle, offset, 65536);
+        if (!chunk || chunk.byteLength === 0) break;
+        chunks.push(new Uint8Array(chunk));
+        offset += chunk.byteLength;
+      }
       await fs.close(handle);
-      return new TextDecoder().decode(data);
+      let total = 0;
+      for (const c of chunks) total += c.byteLength;
+      const buf = new Uint8Array(total);
+      let off = 0;
+      for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+      return new TextDecoder().decode(buf);
     },
     async exists(path) {
       try { await fs.stat(path); return true; } catch { return false; }
@@ -138,6 +159,49 @@ test('cat <file> | cat pipes through end-to-end (zero-hop pipeline)', async () =
   const out = await k.pipeline([['cat', '/p.txt'], ['cat']]);
   expect(out.stdout).toBe('piped\n');
   expect(out.codes).toEqual([0, 0]);
+}, 20000);
+
+test('cat <file> | grep matches lines end-to-end', async () => {
+  const k = await bootKernel({ '/log.txt': 'foo\nbar\nfoobar\nbaz\n' });
+  const out = await k.pipeline([['cat', '/log.txt'], ['grep', 'foo']]);
+  expect(out.stdout).toBe('foo\nfoobar\n');
+  expect(out.codes).toEqual([0, 0]);
+}, 20000);
+
+test('grep <file> directly reads and matches end-to-end', async () => {
+  const k = await bootKernel({ '/log.txt': 'alpha\nbeta\ngamma\n' });
+  const out = await k.spawn(['grep', '-n', 'al', '/log.txt']);
+  expect(out.stdout).toBe('1:alpha\n');
+  expect(out.code).toBe(0);
+}, 20000);
+
+test('grep -E alternation end-to-end', async () => {
+  const k = await bootKernel({ '/log.txt': 'cat\ndog\nbird\n' });
+  const out = await k.spawn(['egrep', 'cat|bird', '/log.txt']);
+  expect(out.stdout).toBe('cat\nbird\n');
+  expect(out.code).toBe(0);
+}, 20000);
+
+test('cat <file> | sed s/a/b/g substitutes end-to-end', async () => {
+  const k = await bootKernel({ '/in.txt': 'banana\napple\n' });
+  const out = await k.pipeline([['cat', '/in.txt'], ['sed', 's/a/b/g']]);
+  expect(out.stdout).toBe('bbnbnb\nbpple\n');
+  expect(out.codes).toEqual([0, 0]);
+}, 20000);
+
+test('sed <file> directly with address command end-to-end', async () => {
+  const k = await bootKernel({ '/in.txt': 'one\ntwo\nthree\n' });
+  const out = await k.spawn(['sed', '2d', '/in.txt']);
+  expect(out.stdout).toBe('one\nthree\n');
+  expect(out.code).toBe(0);
+}, 20000);
+
+test('sed -i writes back to the VFS file end-to-end', async () => {
+  const k = await bootKernel({ '/edit.txt': 'foo\nbar\nfoo\n' });
+  const out = await k.spawnRW(['sed', '-i', 's/foo/qux/', '/edit.txt']);
+  expect(out.code).toBe(0);
+  expect(out.stdout).toBe('');
+  expect(await k.readFile('/edit.txt')).toBe('qux\nbar\nqux\n');
 }, 20000);
 
 test('unknown command name resolves to undefined (kernel would ENOENT)', async () => {
