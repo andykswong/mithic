@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import { describe, it, before, after } from 'node:test';
+import { expect, describe, it, beforeAll, afterAll } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -10,12 +9,12 @@ describe('NodeFsProvider', () => {
   let tmpDir: string;
   let provider: NodeFsProvider;
 
-  before(async () => {
+  beforeAll(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vfs-node-test-'));
     provider = new NodeFsProvider({ root: tmpDir });
   });
 
-  after(async () => {
+  afterAll(async () => {
     await provider.dispose();
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
@@ -25,7 +24,7 @@ describe('NodeFsProvider', () => {
     const data = new TextEncoder().encode('Hello, Node.js!');
     await provider.write(handle, data, 0);
     const result = await provider.read(handle, 0, data.length);
-    assert.deepStrictEqual(result, data);
+    expect(result).toEqual(data);
     await provider.close(handle);
   });
 
@@ -37,8 +36,8 @@ describe('NodeFsProvider', () => {
     await provider.close(h2);
 
     const entries = await provider.readdir('/testdir');
-    assert.deepStrictEqual(entries.map(e => e.name), ['alpha.txt', 'beta.txt']);
-    assert.strictEqual(entries[0].type, 'file');
+    expect(entries.map(e => e.name)).toEqual(['alpha.txt', 'beta.txt']);
+    expect(entries[0].type).toBe('file');
   });
 
   it('should return correct stat for file', async () => {
@@ -48,17 +47,17 @@ describe('NodeFsProvider', () => {
     await provider.close(handle);
 
     const stat = await provider.stat('/statfile.txt');
-    assert.strictEqual(stat.type, 'file');
-    assert.strictEqual(stat.size, BigInt(data.length));
-    assert(stat.mtime instanceof Date);
-    assert(stat.atime instanceof Date);
-    assert(stat.ctime instanceof Date);
+    expect(stat.type).toBe('file');
+    expect(stat.size).toBe(BigInt(data.length));
+    expect(stat.mtime).toBeInstanceOf(Date);
+    expect(stat.atime).toBeInstanceOf(Date);
+    expect(stat.ctime).toBeInstanceOf(Date);
   });
 
   it('should return correct stat for directory', async () => {
     await provider.mkdir('/statdir');
     const stat = await provider.stat('/statdir');
-    assert.strictEqual(stat.type, 'directory');
+    expect(stat.type).toBe('directory');
   });
 
   it('should chmod and update mode', async () => {
@@ -67,7 +66,7 @@ describe('NodeFsProvider', () => {
 
     await provider.chmod('/chmodfile.txt', 0o755);
     const stat = await provider.stat('/chmodfile.txt');
-    assert.strictEqual(stat.mode & 0o777, 0o755);
+    expect(stat.mode & 0o777).toBe(0o755);
   });
 
   it('should symlink and readlink', async () => {
@@ -78,12 +77,12 @@ describe('NodeFsProvider', () => {
 
     await provider.symlink('./symtarget.txt', '/symlink.txt');
     const target = await provider.readlink('/symlink.txt');
-    assert.strictEqual(target, './symtarget.txt');
+    expect(target).toBe('./symtarget.txt');
 
     // Reading through symlink should work (stat with followSymlinks)
     const stat = await provider.stat('/symlink.txt', { followSymlinks: true });
-    assert.strictEqual(stat.type, 'file');
-    assert.strictEqual(stat.size, BigInt(data.length));
+    expect(stat.type).toBe('file');
+    expect(stat.size).toBe(BigInt(data.length));
   });
 
   it('should rename a file', async () => {
@@ -94,14 +93,13 @@ describe('NodeFsProvider', () => {
 
     await provider.rename('/oldname.txt', '/newname.txt');
 
-    await assert.rejects(
-      () => provider.stat('/oldname.txt'),
-      (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
-    );
+    await expect(
+      provider.stat('/oldname.txt'),
+    ).rejects.toSatisfy((err: unknown) => err instanceof FileSystemError && err.code === 'no-entry');
 
     const stat = await provider.stat('/newname.txt');
-    assert.strictEqual(stat.type, 'file');
-    assert.strictEqual(stat.size, BigInt(data.length));
+    expect(stat.type).toBe('file');
+    expect(stat.size).toBe(BigInt(data.length));
   });
 
   it('should unlink a file', async () => {
@@ -110,10 +108,9 @@ describe('NodeFsProvider', () => {
 
     await provider.unlink('/unlinkme.txt');
 
-    await assert.rejects(
-      () => provider.stat('/unlinkme.txt'),
-      (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
-    );
+    await expect(
+      provider.stat('/unlinkme.txt'),
+    ).rejects.toSatisfy((err: unknown) => err instanceof FileSystemError && err.code === 'no-entry');
   });
 
   it('should reject path traversal with ../', async () => {
@@ -121,24 +118,22 @@ describe('NodeFsProvider', () => {
     // /../../etc/passwd normalizes to /etc/passwd which resolves under root.
     // The provider should NOT grant access to files outside root.
     // After normalization, /../../etc/passwd -> <root>/etc/passwd which doesn't exist => no-entry.
-    await assert.rejects(
-      () => provider.stat('/../../etc/passwd'),
-      (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
-    );
+    await expect(
+      provider.stat('/../../etc/passwd'),
+    ).rejects.toSatisfy((err: unknown) => err instanceof FileSystemError && err.code === 'no-entry');
 
     // Verify that a path like /subdir/../../etc/hosts still resolves under root
     await provider.mkdir('/subdir');
-    await assert.rejects(
-      () => provider.stat('/subdir/../../etc/hosts'),
-      (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
-    );
+    await expect(
+      provider.stat('/subdir/../../etc/hosts'),
+    ).rejects.toSatisfy((err: unknown) => err instanceof FileSystemError && err.code === 'no-entry');
   });
 
   it('should open with create flag', async () => {
     const handle = await provider.open('/created.txt', { create: true, write: true });
     await provider.close(handle);
     const stat = await provider.stat('/created.txt');
-    assert.strictEqual(stat.type, 'file');
+    expect(stat.type).toBe('file');
   });
 
   it('should write at offset', async () => {
@@ -147,15 +142,14 @@ describe('NodeFsProvider', () => {
     await provider.write(handle, new TextEncoder().encode('BB'), 2);
 
     const content = await provider.read(handle, 0, 4);
-    assert.deepStrictEqual(content, new TextEncoder().encode('AABB'));
+    expect(content).toEqual(new TextEncoder().encode('AABB'));
     await provider.close(handle);
   });
 
   it('should reject symlink with relative target that escapes root', async () => {
-    await assert.rejects(
-      () => provider.symlink('../../etc/passwd', '/escape-relative-link'),
-      (err: unknown) => err instanceof FileSystemError && err.code === 'access'
-    );
+    await expect(
+      provider.symlink('../../etc/passwd', '/escape-relative-link'),
+    ).rejects.toSatisfy((err: unknown) => err instanceof FileSystemError && err.code === 'access');
   });
 
   it('should allow symlink with VFS-absolute target (stays within root)', async () => {
@@ -164,13 +158,12 @@ describe('NodeFsProvider', () => {
     await provider.close(handle);
     await provider.symlink('/symlink-target-file.txt', '/vfs-absolute-link');
     const target = await provider.readlink('/vfs-absolute-link');
-    assert.strictEqual(target, '/symlink-target-file.txt');
+    expect(target).toBe('/symlink-target-file.txt');
   });
 
   it('realpath rejects resolved path outside root', async () => {
-    await assert.rejects(
-      () => provider.realpath('/nonexistent-for-realpath'),
-      (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
-    );
+    await expect(
+      provider.realpath('/nonexistent-for-realpath'),
+    ).rejects.toSatisfy((err: unknown) => err instanceof FileSystemError && err.code === 'no-entry');
   });
 });
