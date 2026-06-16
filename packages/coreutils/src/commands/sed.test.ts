@@ -419,3 +419,65 @@ describe('sed negation', () => {
     expect(h.out()).toBe('a\nc\n');
   });
 });
+
+describe('sed cycle-engine edge cases (SED-1)', () => {
+  test('c ends the cycle: commands after c do not run on stale pattern', async () => {
+    const h = makeIO({ args: ['sed', '-n', '2{cFOO\np}'], stdinText: 'a\nb\nc\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('FOO\n');
+  });
+
+  test('empty regex // reuses the last regex in s///', async () => {
+    const h = makeIO({ args: ['sed', '/foo/s//bar/'], stdinText: 'foo\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('bar\n');
+  });
+
+  test('empty regex // reuses the last regex in an address', async () => {
+    const h = makeIO({ args: ['sed', '-n', '/b/p;//p'], stdinText: 'a\nb\nc\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('b\nb\n');
+  });
+
+  test('0,/re/ ends on the FIRST line matching re', async () => {
+    const h = makeIO({ args: ['sed', '-n', '0,/b/p'], stdinText: 'a\nb\nc\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\nb\n');
+  });
+
+  test('0,/re/ matching on the first line stops immediately', async () => {
+    const h = makeIO({ args: ['sed', '-n', '0,/a/p'], stdinText: 'a\nb\nc\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\n');
+  });
+
+  test('zero-length match does not over-fire (a*)', async () => {
+    const h = makeIO({ args: ['sed', 's/a*/-/g'], stdinText: 'aaa\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('-\n');
+  });
+
+  test('zero-length match interleaving (b*)', async () => {
+    const h = makeIO({ args: ['sed', 's/b*/-/g'], stdinText: 'abc\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('-a-c-\n');
+  });
+
+  test('q with exit code arg', async () => {
+    const h = makeIO({ args: ['sed', '2q5'], stdinText: 'a\nb\nc\n' });
+    expect(await sedCommand(h.io)).toBe(5);
+    expect(h.out()).toBe('a\nb\n');
+  });
+
+  test('Q quits without printing the current line', async () => {
+    const h = makeIO({ args: ['sed', '2Q5'], stdinText: 'a\nb\nc\n' });
+    expect(await sedCommand(h.io)).toBe(5);
+    expect(h.out()).toBe('a\n');
+  });
+
+  test('p honors a missing final newline', async () => {
+    const h = makeIO({ args: ['sed', '-n', 'p'], stdinText: 'a\nb' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\nb');
+  });
+});
