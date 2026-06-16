@@ -256,6 +256,50 @@ test('kernel relay SECURITY: fs syscall to an ungranted path is denied (EACCES) 
 }, 15000);
 
 /**
+ * REGRESSION (Fix 1): fs/pipe on the relay path must return ENOSYS and must NOT
+ * leak MessagePorts. The relay dispatcher drops the `transfer` list (it cannot
+ * transfer ports over the relay bridge), so any minted ports would be silently
+ * abandoned — live ports that are never closed. The kernel must intercept this,
+ * close any minted ports, and surface ENOSYS to the guest instead.
+ */
+test('kernel relay: fs/pipe returns ENOSYS and leaks no MessagePort', async () => {
+  const qjsRt = await QuickJSRuntime.create();
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+
+  const kernel = new Kernel({
+    runtime: qjsRt,
+    vfs,
+    relayLauncher: new QuickJSGuestLauncher(qjsRt),
+  });
+
+  // The guest attempts fs/pipe via the kernel relay and captures the error code.
+  const code = `
+    let result;
+    try {
+      __isola_syscall('fs/pipe', {});
+      result = 'NO_ERROR';
+    } catch (e) {
+      result = String(e.message || e);
+    }
+    __isola_syscall('pipe/write', { fd: 1, data: result });
+    __isola_syscall('process/exit', { code: 0 });
+  `;
+
+  const { pid, stdout } = await kernel.spawn(code, {
+    args: ['prog'],
+    capabilities: [],
+    captureStdout: true,
+  });
+
+  await kernel.wait(pid);
+  const out = new TextDecoder().decode(await stdout!);
+  // Must get ENOSYS — fs/pipe is unsupported on non-transferable (relay) backends.
+  expect(out).toContain('ENOSYS');
+  expect(out).not.toContain('NO_ERROR');
+}, 15000);
+
+/**
  * Control: a relay guest CAN access a GRANTED path — proves the kernel routing
  * isn't simply denying everything.
  */

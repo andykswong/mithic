@@ -254,6 +254,15 @@ export class Kernel {
 
     const stdio: MessagePort[] = [stdinReadPort, stdoutWritePort, stderrWritePort];
 
+    // Track injected write ports so #exit can signal EOF if the process exits
+    // without closing them (abnormal exit / crash). Only track ports that were
+    // injected (init.stdout / init.stderr) — kernel-owned pipes are drained
+    // via drainPort which handles EOF separately.
+    const injected: MessagePort[] = [];
+    if (init.stdout) injected.push(stdoutWritePort);
+    if (init.stderr) injected.push(stderrWritePort);
+    if (injected.length > 0) this.#injectedWritePorts.set(pid, injected);
+
     const processInit: ProcessInit = {
       type: 'init',
       entry: typeof code === 'string' ? 'inline' : code,
@@ -463,19 +472,41 @@ export class Kernel {
    * and dispatches through its own `SyscallDispatcher`, so all capability checks
    * run in-kernel — identical to the transfer path. The launcher can neither
    * forge the pid nor reach the dispatcher directly.
+   *
+   * If the dispatcher returns a non-empty `transfer` list (e.g. `fs/pipe` ports),
+   * those transferables cannot cross the relay bridge — the relay context has no
+   * postMessage transfer mechanism. Any minted ports MUST be closed here to avoid
+   * leaks, and ENOSYS is returned to the guest instead.
    */
   async #relaySyscall(
     pid: number,
     call: string,
     args: Record<string, unknown>
   ): Promise<RelaySyscallResult> {
-    const { response } = await this.dispatcher.dispatch(pid, { id: 0, call, args });
+    const { response, transfer } = await this.dispatcher.dispatch(pid, { id: 0, call, args });
+    // If the dispatch minted transferable ports (or other transferables), they
+    // cannot be delivered over the relay bridge. Close every minted MessagePort
+    // to prevent leaks and surface ENOSYS so the guest gets a clean error.
+    if (transfer && transfer.length > 0) {
+      for (const t of transfer) {
+        if (t instanceof MessagePort) t.close();
+      }
+      return { ok: false, error: { code: 'ENOSYS', message: `${call} unsupported on non-transferable backend` } };
+    }
     return response.ok
       ? { ok: true, result: response.result }
       : { ok: false, error: response.error };
   }
 
   #handles = new Map<number, ProcessHandle>();
+  /**
+   * Per-process injected stdio write ports that must be signalled on exit.
+   * When `spawn()` wires a pipeline stage (init.stdout is an injected write
+   * port), the kernel keeps a reference here so `#exit` can send EOF to the
+   * downstream reader if the process exits without closing its stdout.
+   * Map value: array of [port, label] pairs for debugging clarity.
+   */
+  #injectedWritePorts = new Map<number, MessagePort[]>();
 
   #wireControl(pid: number, kernelSide: MessagePort): void {
     kernelSide.start?.();
@@ -513,6 +544,24 @@ export class Kernel {
 
   #exit(pid: number, code: number): void {
     if (this.processes.get(pid)?.state === 'DEAD') return;
+    // Signal EOF on any injected write ports before the process is torn down.
+    // If a pipeline stage exits abnormally without closing its stdout, the
+    // downstream stage's portToReadable would hang forever waiting for an
+    // {type:'end'} message. Posting it here ensures downstream readers always
+    // observe end-of-stream even on an abnormal exit.
+    const injected = this.#injectedWritePorts.get(pid);
+    if (injected) {
+      this.#injectedWritePorts.delete(pid);
+      for (const port of injected) {
+        try {
+          port.postMessage({ type: 'end' });
+          port.close();
+        } catch {
+          // Port may already be closed/neutered (e.g. real Worker path where
+          // the port was transferred and the Worker was killed). Ignore.
+        }
+      }
+    }
     this.processes.markExit(pid, code);
     this.dispatcher.closeProcess(pid);
     this.capabilities.revoke(pid);
