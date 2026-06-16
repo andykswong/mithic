@@ -219,3 +219,55 @@ function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
     new Promise<T>((_, reject) => setTimeout(() => reject(new Error(msg)), ms)),
   ]);
 }
+
+// ── LIM-1: kernel-side wall-clock timeout watchdog (works on ANY backend) ────
+
+/**
+ * LIM-1 regression: Kernel.spawn never enforced `limits.timeoutMs`, and the
+ * Worker/iframe backends don't enforce timeouts themselves — so a caller passing
+ * `limits.timeoutMs` got a silent no-op and a runaway guest ran forever. The fix
+ * adds a kernel-side wall-clock watchdog that SIGKILLs an over-time process on
+ * ANY backend; its `wait()` then resolves with a nonzero status within a bound.
+ */
+test('LIM-1: a never-exiting process with limits.timeoutMs is killed by the kernel watchdog', async () => {
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = new Kernel({ runtime: new WorkerRuntime(), vfs });
+  // A guest that never calls g.exit() and never returns — it parks forever.
+  const code = `
+    import { createGuest } from '@mithic/guest-runtime';
+    export default async (boot) => {
+      createGuest(boot);
+      await new Promise(() => {}); // never resolves
+    };`;
+  const t0 = Date.now();
+  const { pid } = await kernel.spawn(code, {
+    args: ['hang'],
+    capabilities: [],
+    limits: { timeoutMs: 200 },
+  });
+
+  // The watchdog must fire and the wait must resolve nonzero within a bound.
+  const result = await withTimeout(kernel.wait(pid), 5000, 'watchdog never fired (LIM-1)');
+  const elapsed = Date.now() - t0;
+  expect(result.code).not.toBe(0);
+  // Killed reasonably close to the deadline, not after the test bound.
+  expect(elapsed).toBeLessThan(3000);
+}, 10000);
+
+test('LIM-1: a fast process that finishes before timeoutMs exits normally (watchdog cleared)', async () => {
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = new Kernel({ runtime: new WorkerRuntime(), vfs });
+  const code = `
+    import { createGuest } from '@mithic/guest-runtime';
+    export default async (boot) => { const g = createGuest(boot); g.exit(0); };`;
+  const { pid } = await kernel.spawn(code, {
+    args: ['quick'],
+    capabilities: [],
+    limits: { timeoutMs: 5000 },
+  });
+  const result = await withTimeout(kernel.wait(pid), 5000, 'fast process never exited (LIM-1)');
+  // Exited 0 on its own — the watchdog must NOT have killed it (137).
+  expect(result.code).toBe(0);
+}, 10000);

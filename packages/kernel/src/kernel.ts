@@ -390,6 +390,10 @@ export class Kernel {
       pid,
       ppid,
       capabilities: granted,
+      // LIM-1: thread limits into ProcessInit so a backend that CAN enforce
+      // memory/cpu (quickjs/ivm) sees them. The kernel-side watchdog enforces
+      // timeoutMs/maxOutputBytes regardless of backend.
+      limits: init.limits,
       preopens: {
         0: { type: 'pipe' },
         1: { type: 'pipe' },
@@ -409,6 +413,9 @@ export class Kernel {
     });
 
     this.#handles.set(pid, handle);
+
+    // LIM-1: arm the kernel-side wall-clock timeout watchdog (backend-agnostic).
+    this.#armWatchdog(pid, init.limits);
 
     // Surface bootstrap errors from the worker main channel as a crash exit.
     this.#runtime.onMessage(handle, (msg: unknown) => {
@@ -584,6 +591,9 @@ export class Kernel {
 
     const handle = await this.#relayLauncher.launchRelay(this.#runtime, relayCtx);
     this.#handles.set(pid, handle);
+
+    // LIM-1: arm the kernel-side wall-clock timeout watchdog (relay backend too).
+    this.#armWatchdog(pid, init.limits);
 
     return { pid, stdout, stderr };
   }
@@ -794,6 +804,42 @@ export class Kernel {
 
   #handles = new Map<number, ProcessHandle>();
   /**
+   * LIM-1: per-process wall-clock timeout watchdog timers. Started by `spawn`/
+   * `#spawnRelay` when `limits.timeoutMs` is set, cleared in `#exit`. Backend-
+   * agnostic — the kernel SIGKILLs an over-time process regardless of whether
+   * the runtime enforces timeouts itself (Worker/iframe do not).
+   */
+  #watchdogs = new Map<number, ReturnType<typeof setTimeout>>();
+
+  /**
+   * Arm a kernel-side wall-clock watchdog for `pid` if `limits.timeoutMs` is set.
+   * On expiry, if the process is still alive, SIGKILL it — its `wait()` then
+   * resolves with the SIGKILL exit status (137, nonzero). `unref()` (when
+   * available) keeps the timer from holding the event loop open. Idempotent
+   * per pid; cleared by `#clearWatchdog` on exit.
+   */
+  #armWatchdog(pid: number, limits: ProcessLimits | undefined): void {
+    const timeoutMs = limits?.timeoutMs;
+    if (timeoutMs === undefined || timeoutMs <= 0) return;
+    const timer = setTimeout(() => {
+      this.#watchdogs.delete(pid);
+      if (this.processes.get(pid)?.state !== 'DEAD') {
+        try { this.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+    }, timeoutMs);
+    (timer as { unref?: () => void }).unref?.();
+    this.#watchdogs.set(pid, timer);
+  }
+
+  /** Clear a process's timeout watchdog (on exit). */
+  #clearWatchdog(pid: number): void {
+    const timer = this.#watchdogs.get(pid);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.#watchdogs.delete(pid);
+    }
+  }
+  /**
    * Per-process injected stdio write ports that must be signalled on exit.
    * When `spawn()` wires a pipeline stage (init.stdout is an injected write
    * port), the kernel keeps a reference here so `#exit` can send EOF to the
@@ -841,6 +887,9 @@ export class Kernel {
 
   #exit(pid: number, code: number): void {
     if (this.processes.get(pid)?.state === 'DEAD') return;
+    // LIM-1: cancel the wall-clock watchdog (if any) so it cannot fire after the
+    // process has already exited (and cannot leak a timer / re-kill a reused pid).
+    this.#clearWatchdog(pid);
     // Signal EOF on any injected write ports before the process is torn down.
     // If a pipeline stage exits abnormally without closing its stdout, the
     // downstream stage's portToReadable would hang forever waiting for an
