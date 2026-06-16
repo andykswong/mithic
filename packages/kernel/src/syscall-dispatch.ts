@@ -56,7 +56,13 @@ interface PipeFd {
   port: MessagePort;
 }
 
-type FdEntry = OpenFile | PipeFd;
+/** A listener fd created by ipc/listen; closed via fs/close which unbinds the path. */
+interface ListenerFd {
+  kind: 'listener';
+  path: string;
+}
+
+type FdEntry = OpenFile | PipeFd | ListenerFd;
 
 /**
  * Routes filesystem syscalls (`fs/*`) through capability checks to the VFS
@@ -74,6 +80,12 @@ export class SyscallDispatcher {
   #fdTables = new Map<number, Map<number, FdEntry>>();
   /** pid -> next fd to allocate (file fds start above the reserved stdio range). */
   #nextFd = new Map<number, number>();
+  /**
+   * Listener fd -> pending connection queue.
+   * `ports`: remote ports already connected but not yet accepted.
+   * `waiters`: ipc/accept calls blocked waiting for the next connection.
+   */
+  #pendingConns = new Map<number, { ports: MessagePort[]; waiters: Array<(p: MessagePort) => void> }>();
 
   constructor(options: SyscallDispatcherOptions) {
     this.#vfs = options.vfs;
@@ -109,6 +121,12 @@ export class SyscallDispatcher {
           return res(ok(req.id, await this.#unlink(pid, req.args)));
         case 'fs/pipe':
           return this.#pipe(pid, req.id);
+        case 'ipc/listen':
+          return this.#ipcListen(pid, req.id, req.args);
+        case 'ipc/accept':
+          return this.#ipcAccept(pid, req.id, req.args);
+        case 'ipc/connect':
+          return this.#ipcConnect(pid, req.id, req.args);
         default:
           return res(fail(req.id, 'ENOSYS', `Unknown syscall: ${req.call}`));
       }
@@ -140,6 +158,102 @@ export class SyscallDispatcher {
       response: ok(id, { readfd, writefd }),
       transfer: [readPort, writePort],
     };
+  }
+
+  /**
+   * `ipc/listen {path}`: bind a named channel to this process.
+   *
+   * Capability-gated: the process must hold an ipc cap listing `path`.
+   * Returns `{fd}` — a listener fd. `fs/close` on it unbinds the path.
+   */
+  #ipcListen(pid: number, id: number, args: Record<string, unknown>): DispatchResult {
+    if (!this.#ipc) {
+      return res(fail(id, 'ENOSYS', 'ipc/listen unavailable: no IPC broker configured'));
+    }
+    const path = String(args.path ?? '');
+    if (!this.#caps.checkIpc(pid, path)) {
+      return res(fail(id, 'EACCES', `Permission denied: ${path}`));
+    }
+    this.#ipc.bind(path, pid);
+    const fd = this.#allocFd(pid);
+    this.#tableFor(pid).set(fd, { kind: 'listener', path });
+    this.#pendingConns.set(fd, { ports: [], waiters: [] });
+    return res(ok(id, { fd }));
+  }
+
+  /**
+   * `ipc/accept {fd}`: wait for the next connection on a listener fd.
+   *
+   * If a connection is already queued (a `connect` arrived before `accept`),
+   * it is dequeued immediately. Otherwise the call suspends until a peer
+   * calls `ipc/connect`. Returns `{connfd}` with the connection MessagePort
+   * transferred to the guest.
+   */
+  async #ipcAccept(pid: number, id: number, args: Record<string, unknown>): Promise<DispatchResult> {
+    const fd = Number(args.fd);
+    const entry = this.#tableFor(pid).get(fd);
+    if (!entry || entry.kind !== 'listener') {
+      return res(fail(id, 'EBADF', `Bad file descriptor: ${fd}`));
+    }
+    const queue = this.#pendingConns.get(fd);
+    if (!queue) {
+      return res(fail(id, 'EBADF', `Bad file descriptor: ${fd}`));
+    }
+    const port = await (
+      queue.ports.length > 0
+        ? Promise.resolve(queue.ports.shift()!)
+        : new Promise<MessagePort>((resolve) => { queue.waiters.push(resolve); })
+    );
+    const connfd = this.#allocFd(pid);
+    this.#tableFor(pid).set(connfd, { kind: 'pipe', port });
+    return { response: ok(id, { connfd }), transfer: [port] };
+  }
+
+  /**
+   * `ipc/connect {path}`: open a connection to a named channel listener.
+   *
+   * Capability-gated: the process must hold an ipc cap for `path`.
+   * If no listener is bound, returns ENOENT.
+   * Creates a MessageChannel; transfers port1 to the connecting process and
+   * queues port2 for the listener's next `ipc/accept`.
+   * Returns `{connfd}` with port1 transferred to the guest.
+   */
+  #ipcConnect(pid: number, id: number, args: Record<string, unknown>): DispatchResult {
+    if (!this.#ipc) {
+      return res(fail(id, 'ENOSYS', 'ipc/connect unavailable: no IPC broker configured'));
+    }
+    const path = String(args.path ?? '');
+    if (!this.#caps.checkIpc(pid, path)) {
+      return res(fail(id, 'EACCES', `Permission denied: ${path}`));
+    }
+    const listenerPid = this.#ipc.resolveListener(path);
+    if (listenerPid === undefined) {
+      return res(fail(id, 'ENOENT', `No listener on path: ${path}`));
+    }
+    const channel = new MessageChannel();
+    // port1 → connecting process (transferred to guest)
+    // port2 → queued for the listener's accept
+    const connfd = this.#allocFd(pid);
+    this.#tableFor(pid).set(connfd, { kind: 'pipe', port: channel.port1 });
+    this.#deliverToListener(listenerPid, channel.port2);
+    return { response: ok(id, { connfd }), transfer: [channel.port1] };
+  }
+
+  /** Push a remote port into the listener's queue or resolve a waiting accept. */
+  #deliverToListener(listenerPid: number, port: MessagePort): void {
+    const table = this.#fdTables.get(listenerPid);
+    if (!table) return;
+    for (const [fd, entry] of table) {
+      if (entry.kind !== 'listener') continue;
+      const queue = this.#pendingConns.get(fd);
+      if (!queue) continue;
+      if (queue.waiters.length > 0) {
+        queue.waiters.shift()!(port);
+      } else {
+        queue.ports.push(port);
+      }
+      return;
+    }
   }
 
   #resolvePath(pid: number, args: Record<string, unknown>): string {
@@ -191,9 +305,14 @@ export class SyscallDispatcher {
     const table = this.#tableFor(pid);
     const entry = table.get(fd);
     if (!entry) throw new BadFdError(fd);
-    // Pipe fds: the guest owns the transferred port, so the kernel just forgets
-    // the fd. File fds: release the VFS handle.
-    if (entry.kind !== 'pipe') void this.#vfs.close(entry.handle);
+    if (entry.kind === 'listener') {
+      // Unbind the named channel and discard any queued pending connections.
+      if (this.#ipc) this.#ipc.unbind(entry.path);
+      this.#pendingConns.delete(fd);
+    } else if (entry.kind !== 'pipe') {
+      // File fds: release the VFS handle. Pipe fds: guest owns the port, just forget.
+      void this.#vfs.close(entry.handle);
+    }
     table.delete(fd);
     return {};
   }
@@ -237,9 +356,8 @@ export class SyscallDispatcher {
     const fd = Number(args.fd);
     const entry = this.#tableFor(pid).get(fd);
     if (!entry) throw new BadFdError(fd);
-    // Pipe fds are serviced by the guest over the transferred port, not via the
-    // dispatcher's read/write path. A read/write syscall against one is a bug.
-    if (entry.kind === 'pipe') throw new BadFdError(fd);
+    // Pipe and listener fds are not serviced via the dispatcher's read/write path.
+    if (entry.kind === 'pipe' || entry.kind === 'listener') throw new BadFdError(fd);
     return entry;
   }
 
