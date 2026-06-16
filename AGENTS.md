@@ -6,6 +6,28 @@ Mithic is an isomorphic sandboxed WebAssembly shell runtime. It provides a shell
 
 ## Monorepo Structure
 
+The repo holds two generations of packages. The **Isola 2.0** packages (TypeScript,
+`2.0.0`, tested with Vitest) are the active line: a capability-based, multi-backend
+process kernel with GUI-capable sandboxes. The **WASM / WASI P2** packages are the
+original Mithic line and are currently **paused** (still build/test via `node --test`).
+
+### Isola 2.0 packages (active)
+
+```
+packages/
+├── protocol/       @mithic/protocol       — wire types: ProcessInit, Capability, SyscallRequest/Response, KernelEvent, pipe + errno protocol
+├── guest-runtime/  @mithic/guest-runtime  — in-sandbox guest API: createGuest(boot) → {syscall, stdio streams, onSignal, onDomEvent, exit}; Remote DOM client
+├── runtime/        @mithic/runtime        — pluggable execution backends: Worker, iframe (GUI/opaque-origin), QuickJS, isolated-vm
+├── kernel/         @mithic/kernel         — the Kernel: process lifecycle, IPC broker, capability manager, syscall dispatch, pipelines, Remote DOM host
+├── shell-js/       @mithic/shell-js       — POSIX-style shell interpreter (lexer/parser/expander/builtins/executor) running as a regular Isola process
+├── server/         @mithic/server         — host-side server integration
+└── examples/
+    ├── image-viewer/ @mithic/example-image-viewer — GUI Isola process: drop-zone + <img> rendered in its own sandboxed iframe DOM (manifest declares display:window, fs:/tmp)
+    └── notebook/     @mithic/example-notebook     — xterm.js shell notebook: boots Kernel + IframeRuntime, drives @mithic/shell-js, renders inline GUI processes
+```
+
+### WASM / WASI P2 packages (paused)
+
 ```
 packages/
 ├── io/             @mithic/io             — VFS router, providers, HTTP/sockets, sync-bridge
@@ -23,6 +45,8 @@ packages/
     ├── component-rust/ — Rust WASM component
     └── shell/    — xterm.js + Runtime
 ```
+
+> `@mithic/io`'s VFS (`@mithic/io/vfs`) is shared by both lines and is part of the Isola Vitest suite.
 
 ## Build & Test
 
