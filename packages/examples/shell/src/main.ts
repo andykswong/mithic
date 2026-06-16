@@ -1,0 +1,339 @@
+/**
+ * `@mithic/example-shell` — a real interactive browser terminal.
+ *
+ * An xterm.js front-end drives the JS `@mithic/shell` interpreter, which runs in
+ * the host page and forks external commands (the full `@mithic/coreutils` +
+ * `@mithic/jq` + `@mithic/curl` suite) as sandboxed guest processes through an
+ * `@mithic/kernel` {@link Kernel}. Everything runs identically in the browser, in
+ * Node, and under vitest's Chromium.
+ *
+ * WIRING (xterm <-> shell <-> kernel <-> commands):
+ *   - The xterm `Terminal` is the TTY. Keystrokes flow through a small line
+ *     editor (backspace, Enter, Up/Down history, Ctrl+C) that accumulates a
+ *     command line and, on Enter, hands it to the shell.
+ *   - The shell {@link Executor} runs builtins in-process and dispatches
+ *     externals via a {@link KernelClient} backed by the real kernel's
+ *     `spawn` / `runPipeline` / `wait`. Its `onStdout`/`onStderr` sinks write
+ *     straight back into the terminal.
+ *   - `resolveCommand` is the COMPOSED coreutils + jq + curl registry
+ *     ({@link createCommandSuite}); a name resolves to a `command:<name>`
+ *     sentinel that the kernel's {@link InProcessCommandLauncher} runs in-process
+ *     (see commands.ts for why URL-based Worker/iframe loading can't work in a
+ *     browser). So `seq 1 5 | awk '{s+=$1}END{print s}'` and `echo '{"a":1}' |
+ *     jq .a` run the REAL coreutils/jq guests end-to-end.
+ *   - Redirects and glob go through an {@link FsClient} backed directly by the
+ *     host VFS (a seeded MemoryFs), so `echo hi > /tmp/x; cat /tmp/x` and
+ *     `cat *.txt` work.
+ */
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import { Kernel } from '@mithic/kernel';
+import { WorkerRuntime } from '@mithic/runtime/backends/worker';
+import { FileSystemRouter, MemoryFsProvider } from '@mithic/io/vfs';
+import type { FileSystemProvider, FileHandle } from '@mithic/io/vfs';
+import { Executor, parse } from '@mithic/shell';
+import type {
+  KernelClient,
+  FsClient,
+  SpawnParams,
+  SpawnHandle,
+  PipelineStageParams,
+  PipelineRunResult,
+} from '@mithic/shell';
+import type { Capability } from '@mithic/protocol';
+import { createCommandSuite } from './commands.ts';
+
+/** Capabilities granted to every spawned command: read+write the whole VFS, and HTTP for curl. */
+const CHILD_CAPABILITIES: Capability[] = [
+  { type: 'fs', paths: ['/'], operations: ['read', 'write'] },
+  { type: 'net', origins: ['*'] },
+];
+
+/** Demo files seeded into the VFS so a fresh terminal has something to explore. */
+const SEED_FILES: Record<string, string> = {
+  '/welcome.txt': 'Welcome to the Mithic shell!\nEverything here runs sandboxed in your browser.\n',
+  '/fruits.txt': 'banana\napple\ncherry\napple\nbanana\napple\n',
+  '/data.json': '{"name":"mithic","stars":42,"tags":["wasm","shell","vfs"]}\n',
+  '/numbers.txt': '3\n1\n4\n1\n5\n9\n2\n6\n',
+  '/tmp/.keep': '',
+};
+
+/** A one-shot greeting + cheat-sheet printed at boot (a lightweight bashrc). */
+const BANNER = [
+  '\x1b[1;35mmithic shell\x1b[0m — a sandboxed POSIX-style shell in your browser',
+  '\x1b[2mThe coreutils + jq + curl suite runs as real sandboxed processes.\x1b[0m',
+  '',
+  '\x1b[2mTry:\x1b[0m',
+  "  \x1b[36mls\x1b[0m                                   list the seeded files",
+  "  \x1b[36mcat welcome.txt\x1b[0m",
+  "  \x1b[36mecho hi | grep h\x1b[0m",
+  "  \x1b[36msort fruits.txt | uniq -c\x1b[0m",
+  "  \x1b[36mseq 1 5 | awk '{s+=$1}END{print s}'\x1b[0m",
+  "  \x1b[36mcat data.json | jq .tags\x1b[0m",
+  '',
+].join('\r\n');
+
+export interface ShellApp {
+  terminal: Terminal;
+  kernel: Kernel;
+  /** Submit a full command line (without trailing newline) as if typed + Enter. */
+  submitLine(line: string): Promise<void>;
+  dispose(): void;
+}
+
+/**
+ * A {@link KernelClient} over the real {@link Kernel}. The shell executor calls
+ * this to fork externals; we delegate to `kernel.spawn` / `kernel.runPipeline`
+ * and grant each child the standard {@link CHILD_CAPABILITIES}. The executor has
+ * already resolved each command name to its `command:<name>` sentinel URL
+ * (`params.code`), which the kernel's {@link InProcessCommandLauncher} runs.
+ */
+function makeKernelClient(kernel: Kernel): KernelClient {
+  const enc = new TextEncoder();
+  return {
+    async spawn(params: SpawnParams): Promise<SpawnHandle> {
+      const { pid, stdout } = await kernel.spawn(params.code, {
+        args: params.args,
+        env: params.env,
+        cwd: params.cwd,
+        capabilities: CHILD_CAPABILITIES,
+        captureStdout: params.captureStdout,
+        captureStderr: params.captureStderr,
+        stdinData: params.stdinData !== undefined ? enc.encode(params.stdinData) : undefined,
+      });
+      return { pid, stdout };
+    },
+    async wait(pid: number) {
+      const { code } = await kernel.wait(pid);
+      return { pid, code };
+    },
+    async runPipeline(stages: PipelineStageParams[]): Promise<PipelineRunResult> {
+      const result = await kernel.runPipeline(
+        stages.map((s, i) => ({
+          code: s.code,
+          args: s.args,
+          env: s.env,
+          cwd: s.cwd,
+          capabilities: CHILD_CAPABILITIES,
+          captureStdout: i === stages.length - 1 ? s.captureStdout : false,
+          captureStderr: s.captureStderr,
+          stdinData: i === 0 && s.stdinData !== undefined ? enc.encode(s.stdinData) : undefined,
+        })),
+      );
+      return {
+        pids: result.pids,
+        exitCodes: result.exitCodes,
+        lastStdout: result.lastStdout,
+        stderr: result.stderr,
+      };
+    },
+  };
+}
+
+/**
+ * An {@link FsClient} backed directly by a host VFS provider — for shell
+ * redirects (`>`, `>>`, `<`) and glob/pathname expansion. Writes are buffered
+ * per synthetic fd and flushed to the VFS on close (mirroring the guest shell's
+ * `makeFsClient`, but talking to the provider directly instead of via syscalls).
+ */
+function makeFsClient(fs: FileSystemProvider): FsClient & { flush(): Promise<void> } {
+  const enc = new TextEncoder();
+  const dec = new TextDecoder();
+  interface Open { path: string; data: string; write: boolean; append: boolean }
+  const open = new Map<number, Open>();
+  let nextFd = 1000;
+  const pending: Array<Promise<unknown>> = [];
+
+  const readFile = async (path: string): Promise<string> => {
+    const h = (await fs.open(path, { read: true })) as FileHandle;
+    const chunks: Uint8Array[] = [];
+    let off = 0;
+    for (;;) {
+      const c = await fs.read(h, off, 65536);
+      if (!c || c.byteLength === 0) break;
+      chunks.push(new Uint8Array(c));
+      off += c.byteLength;
+    }
+    await fs.close(h);
+    let total = 0; for (const c of chunks) total += c.byteLength;
+    const buf = new Uint8Array(total); let o = 0;
+    for (const c of chunks) { buf.set(c, o); o += c.byteLength; }
+    return dec.decode(buf);
+  };
+
+  return {
+    async flush() { await Promise.all(pending); },
+    fsOpen(path, flags): number {
+      const fd = nextFd++;
+      open.set(fd, { path, data: '', write: !!flags.write, append: !!flags.append });
+      return fd;
+    },
+    fsWrite(fd, data): void {
+      const o = open.get(fd);
+      if (o) o.data += data;
+    },
+    async fsRead(fd): Promise<string> {
+      const o = open.get(fd);
+      if (!o) return '';
+      return readFile(o.path);
+    },
+    fsClose(fd): void {
+      const o = open.get(fd);
+      open.delete(fd);
+      if (o && (o.write || o.append)) {
+        pending.push((async () => {
+          const h = (await fs.open(o.path, {
+            write: !o.append, append: o.append, create: true, truncate: !o.append,
+          })) as FileHandle;
+          await fs.write(h, enc.encode(o.data), 0);
+          await fs.close(h);
+        })());
+      }
+    },
+    async fsReaddir(path): Promise<string[]> {
+      const entries = await fs.readdir(path);
+      return entries.map((e) => e.name);
+    },
+    async fsStat(path): Promise<{ dir: boolean } | undefined> {
+      try {
+        const s = await fs.stat(path);
+        return { dir: s.type === 'directory' };
+      } catch { return undefined; }
+    },
+  };
+}
+
+/**
+ * Boot the terminal app into `element`: a kernel with the composed command suite
+ * over a seeded MemoryFs, an xterm.js terminal, and the interactive REPL loop.
+ */
+export async function bootShell(element: HTMLElement): Promise<ShellApp> {
+  const suite = createCommandSuite();
+
+  const memfs = new MemoryFsProvider({ files: SEED_FILES });
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', memfs);
+
+  const kernel = new Kernel({
+    runtime: new WorkerRuntime(),
+    vfs,
+    // The kernel's command resolver (for any guest-driven process/spawn) and the
+    // launcher both route command names through the in-process suite.
+    resolveCommand: (name) => suite.resolve(name),
+    launcher: suite.launcher,
+  });
+
+  const terminal = new Terminal({
+    convertEol: true,
+    cursorBlink: true,
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: 14,
+    theme: { background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#f5e0dc' },
+  });
+  const fit = new FitAddon();
+  terminal.loadAddon(fit);
+  terminal.open(element);
+  try { fit.fit(); } catch { /* zero-size container in tests: ignore */ }
+
+  const onResize = (): void => { try { fit.fit(); } catch { /* ignore */ } };
+  if (typeof window !== 'undefined') window.addEventListener('resize', onResize);
+
+  // Shell state shared across command lines (cwd, env, vars persist in the REPL).
+  const context = { cwd: '/', env: { HOME: '/', PWD: '/', PATH: '/bin', SHELL: 'mithic-sh' } as Record<string, string> };
+  const kernelClient = makeKernelClient(kernel);
+  const fsClient = makeFsClient(memfs);
+
+  const PROMPT = '\x1b[1;32m$\x1b[0m ';
+  const prompt = (): void => terminal.write(PROMPT);
+
+  terminal.write(BANNER);
+  terminal.write('\r\n');
+  prompt();
+
+  // Run one command line through a fresh executor (sharing the persistent
+  // context/env so `cd`, var assignments, etc. carry across lines).
+  const submitLine = async (line: string): Promise<void> => {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) { prompt(); return; }
+    const executor = new Executor(kernelClient, context, {
+      resolve: (name) => suite.resolve(name),
+      fs: fsClient,
+      onStdout: (s) => terminal.write(s),
+      onStderr: (s) => terminal.write(s),
+    });
+    try {
+      await executor.run(parse(trimmed));
+      await fsClient.flush();
+    } catch (err) {
+      terminal.write(`shell: ${(err as Error).message}\r\n`);
+    }
+    prompt();
+  };
+
+  // ── line editor ──────────────────────────────────────────────────────────
+  let lineBuf = '';
+  const history: string[] = [];
+  let histIndex = 0; // points one past the last entry (= "new line")
+  let running = false;
+
+  const replaceLine = (next: string): void => {
+    // Erase current input, then write the replacement.
+    if (lineBuf.length > 0) terminal.write('\b'.repeat(lineBuf.length) + ' '.repeat(lineBuf.length) + '\b'.repeat(lineBuf.length));
+    lineBuf = next;
+    terminal.write(next);
+  };
+
+  const onData = terminal.onData((data: string) => {
+    if (running) return; // ignore input while a command is executing
+    // Handle multi-byte escape sequences (arrow keys) first.
+    if (data === '\x1b[A') { // Up
+      if (history.length > 0 && histIndex > 0) { histIndex--; replaceLine(history[histIndex]); }
+      return;
+    }
+    if (data === '\x1b[B') { // Down
+      if (histIndex < history.length) {
+        histIndex++;
+        replaceLine(histIndex === history.length ? '' : history[histIndex]);
+      }
+      return;
+    }
+    for (const ch of data) {
+      if (ch === '\r' || ch === '\n') {
+        terminal.write('\r\n');
+        const line = lineBuf;
+        lineBuf = '';
+        if (line.trim().length > 0) { history.push(line); }
+        histIndex = history.length;
+        running = true;
+        void submitLine(line).finally(() => { running = false; });
+      } else if (ch === '\x7f' || ch === '\b') { // Backspace
+        if (lineBuf.length > 0) { lineBuf = lineBuf.slice(0, -1); terminal.write('\b \b'); }
+      } else if (ch === '\x03') { // Ctrl+C — cancel the current line
+        terminal.write('^C\r\n');
+        lineBuf = '';
+        histIndex = history.length;
+        prompt();
+      } else if (ch >= ' ') {
+        lineBuf += ch;
+        terminal.write(ch);
+      }
+    }
+  });
+
+  return {
+    terminal,
+    kernel,
+    submitLine,
+    dispose() {
+      onData.dispose();
+      if (typeof window !== 'undefined') window.removeEventListener('resize', onResize);
+      terminal.dispose();
+    },
+  };
+}
+
+// Auto-boot when loaded as the page entry (index.html).
+if (typeof document !== 'undefined') {
+  const el = document.getElementById('terminal');
+  if (el) void bootShell(el);
+}

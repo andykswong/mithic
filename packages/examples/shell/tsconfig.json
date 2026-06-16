@@ -1,15 +1,14 @@
 {
+  "extends": "../../../tsconfig.json",
   "compilerOptions": {
-    "target": "ESNext",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "allowImportingTsExtensions": true,
-    "noEmit": true,
-    "isolatedModules": true
+    "lib": ["esnext", "dom"],
+    "types": ["node", "vite/client"],
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "emitDeclarationOnly": false,
+    "noEmit": true
   },
-  "include": ["src"]
+  "include": [
+    "./src"
+  ]
 }

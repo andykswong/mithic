@@ -1,15 +1,17 @@
 {
   "name": "@mithic/example-shell",
-  "version": "0.3.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "mithic shell example - xterm.js browser terminal with Runtime (pending re-adaptation)",
+  "description": "Mithic example — an xterm.js browser terminal running the @mithic/shell JS shell over a Kernel with the full coreutils + jq + curl command suite",
   "type": "module",
   "scripts": {
-    "clean": "rimraf dist",
-    "build": "echo 'pending xterm.js re-adaptation'",
-    "dev": "echo 'pending xterm.js re-adaptation'",
-    "start": "echo 'pending xterm.js re-adaptation'",
-    "test": "echo 'ok'"
+    "clean": "rimraf dist *.tsbuildinfo",
+    "build": "vite build",
+    "dev": "vite",
+    "start": "vite preview",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "repository": {
     "type": "git",
@@ -22,10 +24,15 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/io": "^2.0.0",
-    "@xterm/xterm": "^6.0",
-    "@xterm/addon-fit": "^0.11"
-  },
-  "devDependencies": {
+    "@mithic/coreutils": "2.0.0",
+    "@mithic/curl": "2.0.0",
+    "@mithic/guest-runtime": "2.0.0",
+    "@mithic/io": "2.0.0",
+    "@mithic/jq": "2.0.0",
+    "@mithic/kernel": "2.0.0",
+    "@mithic/runtime": "2.0.0",
+    "@mithic/shell": "2.0.0",
+    "@xterm/addon-fit": "^0.11",
+    "@xterm/xterm": "^6.0"
   }
 }
