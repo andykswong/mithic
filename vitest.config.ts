@@ -12,7 +12,7 @@ import { defineConfig } from 'vitest/config';
 // package `test` scripts and MUST NOT be picked up here — their suites are written
 // for node:test and fail under vitest. As each legacy area is migrated to vitest,
 // add its path to the allowlist below (e.g. Group C adds 'packages/io/src/vfs/**').
-const MITHIC_PACKAGES = '{protocol,runtime,guest-runtime,kernel,shell,server}';
+const MITHIC_PACKAGES = '{protocol,runtime,guest-runtime,kernel,shell,coreutils,server}';
 
 export default defineConfig({
   test: {

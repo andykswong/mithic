@@ -68,6 +68,7 @@
     "./packages/kernel",
     "./packages/io",
     "./packages/shell",
+    "./packages/coreutils",
     "./packages/server",
     "./packages/examples/shell",
     "./packages/examples/image-viewer",

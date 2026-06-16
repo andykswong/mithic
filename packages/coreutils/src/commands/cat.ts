@@ -1,0 +1,103 @@
+/**
+ * `cat` — concatenate files (or stdin) to stdout.
+ *
+ * THE TEMPLATE for a coreutils command. A command file:
+ *   1. imports the harness helpers it needs,
+ *   2. defines a pure {@link import('../harness.ts').CommandFn} (`(io) => exitCode`),
+ *   3. `export default defineCommand(catCommand);` to become a guest module.
+ *
+ * The repo's vite `preserveModules` build emits this 1:1 as `dist/commands/cat.js`,
+ * which {@link import('../resolver.ts').createCoreutilsResolver} hands to the kernel
+ * by URL. The kernel launches it as a sandboxed process; `createGuest` (inside
+ * `defineCommand`) wires stdio and the `fs/*` syscalls.
+ *
+ * Supported:
+ *   - operands: file paths to read in order; `-` (or none) reads stdin.
+ *   - `-n` / `--number`: number all output lines, 1-based, right-aligned in 6.
+ */
+import { defineCommand, parseArgs, readAll, writeBytes, writeLine } from '../harness.ts';
+import type { CommandFn, CommandIO } from '../harness.ts';
+
+/** Read a whole VFS file via the kernel `fs/*` syscalls into bytes. */
+async function readFile(io: CommandIO, path: string): Promise<Uint8Array> {
+  const { fd } = (await io.syscall('fs/open', { path, oflags: {} })) as { fd: number };
+  try {
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const chunk = (await io.syscall('fs/read', { fd, len: 65536 })) as Uint8Array;
+      if (!chunk || chunk.byteLength === 0) break;
+      chunks.push(chunk);
+      total += chunk.byteLength;
+    }
+    const out = new Uint8Array(total);
+    let off = 0;
+    for (const c of chunks) { out.set(c, off); off += c.byteLength; }
+    return out;
+  } finally {
+    await io.syscall('fs/close', { fd }).catch(() => { /* best effort */ });
+  }
+}
+
+const catCommand: CommandFn = async (io: CommandIO): Promise<number> => {
+  const { positionals, flags } = parseArgs(io.args.slice(1), {
+    boolean: ['n', 'number'],
+    alias: { number: 'n' },
+  });
+  const number = Boolean(flags.n);
+  const name = io.args[0] ?? 'cat';
+
+  // No operands → read stdin once. `-` operands also mean stdin.
+  const sources = positionals.length > 0 ? positionals : ['-'];
+
+  const out = io.stdout.getWriter();
+  const err = io.stderr.getWriter();
+  let exitCode = 0;
+  let lineNo = 1;
+
+  try {
+    for (const src of sources) {
+      let bytes: Uint8Array;
+      if (src === '-') {
+        bytes = await readAll(io.stdin);
+      } else {
+        try {
+          bytes = await readFile(io, src);
+        } catch (e) {
+          // Mirror coreutils: report per-file error, continue, exit non-zero.
+          const msg = (e as { message?: string }).message ?? 'No such file or directory';
+          await writeLine(err, `${name}: ${src}: ${msg}`);
+          exitCode = 1;
+          continue;
+        }
+      }
+
+      if (!number) {
+        await writeBytes(out, bytes);
+        continue;
+      }
+      // -n: number every line. Split on \n, preserving a trailing newline.
+      const text = new TextDecoder().decode(bytes);
+      if (text === '') continue;
+      const hasTrailing = text.endsWith('\n');
+      const body = hasTrailing ? text.slice(0, -1) : text;
+      const lines = body.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const prefix = String(lineNo++).padStart(6, ' ') + '\t';
+        const isLast = i === lines.length - 1;
+        const suffix = !isLast || hasTrailing ? '\n' : '';
+        await writeBytes(out, new TextEncoder().encode(prefix + lines[i] + suffix));
+      }
+    }
+  } finally {
+    await out.close().catch(() => { /* already closed */ });
+    await err.close().catch(() => { /* already closed */ });
+  }
+
+  return exitCode;
+};
+
+export default defineCommand(catCommand);
+
+// Exported for direct unit testing of the command logic without a kernel.
+export { catCommand };
