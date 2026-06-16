@@ -40,6 +40,26 @@ test('parses >| clobber-force redirect', () => {
   expect(r).toMatchObject({ op: '>|', target: 'out.txt' });
 });
 
+test('parses array literal assignment', () => {
+  const a = parse('arr=(a b c)').body[0].stages![0].assignments[0];
+  expect(a).toMatchObject({ name: 'arr', array: ['a', 'b', 'c'] });
+});
+
+test('parses array append assignment', () => {
+  const a = parse('arr+=(d e)').body[0].stages![0].assignments[0];
+  expect(a).toMatchObject({ name: 'arr', array: ['d', 'e'], append: true });
+});
+
+test('parses array element assignment', () => {
+  const a = parse('arr[2]=x').body[0].stages![0].assignments[0];
+  expect(a).toMatchObject({ name: 'arr', index: '2', value: 'x' });
+});
+
+test('subshell ( ) is still parsed as a subshell, not an array literal', () => {
+  const ast = parse('( echo hi )');
+  expect(ast.body[0].type).toBe('Subshell');
+});
+
 test('parses here-string', () => {
   const r = parse('cat <<< "hello"').body[0].stages![0].redirects[0];
   expect(r.op).toBe('<<<');

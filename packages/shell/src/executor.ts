@@ -96,6 +96,8 @@ export class Executor implements ShellEnv {
   private stdoutSink: (s: string) => void;
   private stderrSink: (s: string) => void;
   private functions = new Map<string, ShellFunction>();
+  /** Indexed arrays (`arr=(a b c)`), kept separate from scalar `context.env`. */
+  private arrays = new Map<string, string[]>();
   private localScopes: Array<Set<string>> = [];
   private localSaved: Array<Map<string, string | undefined>> = [];
   private jobs: Job[] = [];
@@ -127,6 +129,7 @@ export class Executor implements ShellEnv {
   get(name: string): string | undefined { return this.context.env[name]; }
   set(name: string, value: string): void { this.context.env[name] = value; }
   has(name: string): boolean { return name in this.context.env; }
+  getArray(name: string): string[] | undefined { return this.arrays.get(name); }
   get cwd(): string { return this.context.cwd; }
 
   getSpecial(name: string): string | undefined {
@@ -627,8 +630,15 @@ export class Executor implements ShellEnv {
   private async execSimple(cmd: SimpleCommand): Promise<number> {
     const expander = this.expander();
 
+    // Scalar prefix assignments become a temporary overlay for a command, or are
+    // applied to the env for a bare assignment. Array / element / append forms
+    // only make sense as bare assignments (handled below).
     const localEnv: Record<string, string> = {};
-    for (const a of cmd.assignments) localEnv[a.name] = await expander.expandToString(a.value);
+    for (const a of cmd.assignments) {
+      if (a.array === undefined && a.index === undefined && !a.append) {
+        localEnv[a.name] = await expander.expandToString(a.value);
+      }
+    }
 
     const hasCommand = cmd.name !== '';
     const argExpander = hasCommand && Object.keys(localEnv).length > 0
@@ -638,13 +648,10 @@ export class Executor implements ShellEnv {
     const { name, argv } = await this.expandCommand(cmd, argExpander);
 
     if (name === '') {
-      if (this.options.xtrace && Object.keys(localEnv).length > 0) {
-        this.writeStderr('+ ' + Object.entries(localEnv).map(([k, v]) => `${k}=${v}`).join(' ') + '\n');
+      if (this.options.xtrace && cmd.assignments.length > 0) {
+        this.writeStderr('+ ' + cmd.assignments.map((a) => `${a.name}=${a.value}`).join(' ') + '\n');
       }
-      for (const k of Object.keys(localEnv)) {
-        this.declareLocal(k);
-        this.context.env[k] = localEnv[k];
-      }
+      for (const a of cmd.assignments) await this.applyAssignment(a, expander);
       return 0;
     }
 
@@ -687,6 +694,39 @@ export class Executor implements ShellEnv {
     }
   }
 
+  /**
+   * Apply a (bare) assignment to persistent shell state, handling all forms:
+   *   - `name=v` / `name+=v`            scalar (append concatenates)
+   *   - `name=(w…)` / `name+=(w…)`      indexed array literal (append extends)
+   *   - `name[i]=v` / `name[i]+=v`      element assignment (append concatenates)
+   * Array element words are field-expanded (so `arr=($x)` splits), scalar values
+   * are expanded to a single string.
+   */
+  private async applyAssignment(a: { name: string; value: string; array?: string[]; index?: string; append?: boolean }, expander: Expander): Promise<void> {
+    this.declareLocal(a.name);
+    if (a.array !== undefined) {
+      const elems: string[] = [];
+      for (const w of a.array) elems.push(...await expander.expandWord(w));
+      const prev = a.append ? (this.arrays.get(a.name) ?? []) : [];
+      this.arrays.set(a.name, [...prev, ...elems]);
+      delete this.context.env[a.name];
+      return;
+    }
+    if (a.index !== undefined) {
+      const idx = parseInt(await expander.substituteOnly(a.index), 10) || 0;
+      const arr = this.arrays.get(a.name) ?? (this.context.env[a.name] !== undefined ? [this.context.env[a.name]] : []);
+      const val = await expander.expandToString(a.value);
+      arr[idx] = a.append ? (arr[idx] ?? '') + val : val;
+      this.arrays.set(a.name, arr);
+      delete this.context.env[a.name];
+      return;
+    }
+    // Scalar (possibly append). If the name currently holds an array, `name+=v`
+    // appends to element 0 in bash; we keep it simple and treat scalars only.
+    const val = await expander.expandToString(a.value);
+    this.context.env[a.name] = a.append ? (this.context.env[a.name] ?? '') + val : val;
+  }
+
   private withOverlay(overlay: Record<string, string>): ShellEnv {
     const env = { ...this.context.env, ...overlay };
     return {
@@ -700,6 +740,7 @@ export class Executor implements ShellEnv {
       statPath: (p) => this.statPath(p),
       cwd: this.context.cwd,
       nounset: () => this.nounset(),
+      getArray: (n) => this.arrays.get(n),
     };
   }
 
@@ -800,7 +841,13 @@ export class Executor implements ShellEnv {
 
   private async expandCommand(cmd: SimpleCommand, expander: Expander): Promise<{ name: string; argv: string[]; env: Record<string, string> }> {
     const env: Record<string, string> = {};
-    for (const a of cmd.assignments) env[a.name] = await expander.expandToString(a.value);
+    // Only scalar prefix assignments form the command-prefix env overlay; array /
+    // element / append forms are handled as bare assignments by the executor.
+    for (const a of cmd.assignments) {
+      if (a.array === undefined && a.index === undefined && !a.append) {
+        env[a.name] = await expander.expandToString(a.value);
+      }
+    }
     const nameFields = cmd.name === '' ? [] : await expander.expandWord(cmd.name);
     const name = nameFields[0] ?? '';
     const argv: string[] = [...nameFields.slice(1)];

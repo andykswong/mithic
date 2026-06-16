@@ -377,3 +377,69 @@ test('set -o lists option states', async () => {
   expect(out).toMatch(/pipefail\s+on/);
   expect(out).toMatch(/nounset\s+off/);
 });
+
+// ── indexed arrays ──────────────────────────────────────────────────────────
+
+test('array literal + element access ${arr[0]}', async () => {
+  const { out } = await run('arr=(a b c); echo ${arr[0]} ${arr[1]} ${arr[2]}');
+  expect(out.trim()).toBe('a b c');
+});
+
+test('bare $arr expands to element 0', async () => {
+  expect((await run('arr=(x y z); echo $arr')).out.trim()).toBe('x');
+});
+
+test('${arr[@]} expands to all elements (word-split)', async () => {
+  const { out } = await run('arr=(one two three); for x in ${arr[@]}; do echo $x; done');
+  expect(out).toBe('one\ntwo\nthree\n');
+});
+
+test('"${arr[@]}" preserves elements with spaces as separate words', async () => {
+  const { out } = await run('arr=(a b c); echo "${arr[@]}"');
+  expect(out.trim()).toBe('a b c');
+});
+
+test('${arr[*]} joins all elements', async () => {
+  expect((await run('arr=(a b c); echo "${arr[*]}"')).out.trim()).toBe('a b c');
+});
+
+test('${#arr[@]} is the element count', async () => {
+  expect((await run('arr=(a b c d); echo ${#arr[@]}')).out.trim()).toBe('4');
+});
+
+test('${#arr[1]} is the length of one element', async () => {
+  expect((await run('arr=(a bb ccc); echo ${#arr[1]}')).out.trim()).toBe('2');
+});
+
+test('${!arr[@]} lists the indices', async () => {
+  expect((await run('arr=(a b c); echo ${!arr[@]}')).out.trim()).toBe('0 1 2');
+});
+
+test('element assignment arr[2]=x', async () => {
+  const { out } = await run('arr=(a b c); arr[1]=B; echo ${arr[0]} ${arr[1]} ${arr[2]}');
+  expect(out.trim()).toBe('a B c');
+});
+
+test('append arr+=(d e)', async () => {
+  const { out } = await run('arr=(a b); arr+=(c d); echo ${arr[@]}; echo ${#arr[@]}');
+  expect(out).toBe('a b c d\n4\n');
+});
+
+test('array element via expansion index ${arr[$i]}', async () => {
+  expect((await run('arr=(a b c); i=2; echo ${arr[$i]}')).out.trim()).toBe('c');
+});
+
+test('out-of-range element is empty', async () => {
+  expect((await run('arr=(a b); echo "[${arr[9]}]"')).out.trim()).toBe('[]');
+});
+
+// ── ${!var} indirection ─────────────────────────────────────────────────────
+
+test('${!var} indirect expansion (value of the variable named by var)', async () => {
+  const { out } = await run('target=hello; ref=target; echo ${!ref}');
+  expect(out.trim()).toBe('hello');
+});
+
+test('${!var} with an unset indirection is empty', async () => {
+  expect((await run('ref=nope; echo "[${!ref}]"')).out.trim()).toBe('[]');
+});
