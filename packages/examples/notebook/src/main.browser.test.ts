@@ -1,16 +1,18 @@
 /**
- * Browser test for the xterm.js shell notebook (Group P.2), in real Chromium.
+ * Browser test for the xterm.js shell notebook, in real Chromium.
  *
- * Verifies the two capstone outcomes:
- *   1. xterm <-> shell round-trip: typing `echo hi | cat\n` runs the real
- *      shell interpreter (in-process builtin pipeline) and `hi` appears in
- *      the terminal buffer.
- *   2. Inline GUI: typing `open-image\n` spawns the image-viewer GUI process via
+ * Verifies the capstone outcomes end-to-end:
+ *   1. coreutils pipe — `echo hello | grep ell` -> hello
+ *   2. awk one-liner  — `seq 1 5 | awk '{s+=$1}END{print s}'` -> 15
+ *   3. jq one-liner   — `echo '{"a":1}' | jq .a` -> 1
+ *   4. builtin+state  — `cd /tmp` then `pwd` -> /tmp
+ *   5. inline GUI     — `open-image` spawns the image-viewer GUI process via
  *      Kernel + IframeRuntime in `display:inline`, mounting an iframe into the
  *      results pane.
  *
- * The shell is driven via xterm's `input()` (fires `onData` exactly like a real
- * keystroke). Reading the terminal buffer back asserts the output.
+ * Each external command (grep, seq, awk, jq) is a REAL @mithic/coreutils / jq
+ * guest run in-process by the kernel's InProcessCommandLauncher — not a stub.
+ * The shell is driven via xterm's `input()` (fires `onData` like a real keystroke).
  */
 import { afterEach, expect, test } from 'vitest';
 import { bootNotebook } from './main.ts';
@@ -29,6 +31,8 @@ afterEach(() => {
 function mount(): { termEl: HTMLElement; resultsEl: HTMLElement } {
   host = document.createElement('div');
   const termEl = document.createElement('div');
+  termEl.style.width = '640px';
+  termEl.style.height = '400px';
   const resultsEl = document.createElement('div');
   host.appendChild(termEl);
   host.appendChild(resultsEl);
@@ -46,23 +50,49 @@ function readBuffer(nb: Notebook): string {
   return lines.join('\n');
 }
 
+/** Let the async submitLine (executor.run + spawned guests) settle and xterm render. */
 async function flush(): Promise<void> {
-  // Let the async submitLine (executor.run) settle and xterm render.
-  for (let i = 0; i < 10; i++) await new Promise<void>((r) => setTimeout(r, 20));
+  for (let i = 0; i < 30; i++) await new Promise<void>((r) => setTimeout(r, 20));
 }
 
-test('notebook: echo hi | cat round-trips "hi" through the shell into the terminal', async () => {
+const T = 30000;
+
+test('coreutils pipe: echo hello | grep ell -> hello', async () => {
   const { termEl, resultsEl } = mount();
   nb = await bootNotebook(termEl, resultsEl);
-
-  // Type the command exactly as a user would, then press Enter.
-  nb.terminal.input('echo hi | cat\r', true);
+  nb.terminal.input('echo hello | grep ell\r', true);
   await flush();
+  expect(readBuffer(nb)).toContain('hello');
+}, T);
 
-  expect(readBuffer(nb)).toContain('hi');
-}, 20000);
+test('awk one-liner: seq 1 5 | awk sums to 15', async () => {
+  const { termEl, resultsEl } = mount();
+  nb = await bootNotebook(termEl, resultsEl);
+  nb.terminal.input('seq 1 5 | awk \'{s+=$1}END{print s}\'\r', true);
+  await flush();
+  // The prompt + echoed command also contain digits; assert the standalone 15 line.
+  expect(readBuffer(nb)).toMatch(/(^|\n)\s*15(\s|$)/);
+}, T);
 
-test('notebook: open-image spawns an inline image-viewer iframe in the results pane', async () => {
+test('jq one-liner: echo JSON | jq .a -> 1', async () => {
+  const { termEl, resultsEl } = mount();
+  nb = await bootNotebook(termEl, resultsEl);
+  nb.terminal.input('echo \'{"a":1}\' | jq .a\r', true);
+  await flush();
+  expect(readBuffer(nb)).toMatch(/(^|\n)\s*1(\s|$)/);
+}, T);
+
+test('builtin + persistent state: cd /tmp then pwd -> /tmp', async () => {
+  const { termEl, resultsEl } = mount();
+  nb = await bootNotebook(termEl, resultsEl);
+  nb.terminal.input('cd /tmp\r', true);
+  await flush();
+  nb.terminal.input('pwd\r', true);
+  await flush();
+  expect(readBuffer(nb)).toContain('/tmp');
+}, T);
+
+test('open-image spawns an inline image-viewer iframe in the results pane', async () => {
   const { termEl, resultsEl } = mount();
   nb = await bootNotebook(termEl, resultsEl);
 
@@ -77,4 +107,4 @@ test('notebook: open-image spawns an inline image-viewer iframe in the results p
   // Inline display => not display:none (hidden mode would be off-screen on body).
   expect((frames[0] as HTMLIFrameElement).style.display).not.toBe('none');
   expect(readBuffer(nb)).toContain('spawned image-viewer');
-}, 20000);
+}, T);

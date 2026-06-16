@@ -25,6 +25,7 @@
  *     host VFS (a seeded MemoryFs), so `echo hi > /tmp/x; cat /tmp/x` and
  *     `cat *.txt` work.
  */
+import '@xterm/xterm/css/xterm.css';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Kernel } from '@mithic/kernel';
