@@ -608,3 +608,120 @@ test('net/fetch with an invalid url returns EACCES (no origin → no capability)
   expect(res).toMatchObject({ ok: false, error: { code: 'EACCES' } });
   expect(calls).toHaveLength(0);
 });
+
+// ── SEC-1: SSRF via HTTP redirect — per-hop capability re-check ──────────────
+
+/**
+ * A scripted HTTP client that returns a queued sequence of responses, one per
+ * `send()`. Records every request URL it was asked to fetch. Used to model a
+ * server that 3xx-redirects to another origin.
+ */
+function scriptedClient(responses: HttpResponse[]): { client: HttpClient; urls: string[] } {
+  const urls: string[] = [];
+  let i = 0;
+  const client: HttpClient = {
+    send(req: HttpRequest): HttpResponse {
+      urls.push(req.url);
+      const r = responses[Math.min(i, responses.length - 1)];
+      i++;
+      return r;
+    },
+  };
+  return { client, urls };
+}
+
+test('SEC-1: net/fetch does NOT follow a 3xx redirect to an UNGRANTED origin — EACCES, no body leak', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  // Guest is granted ONLY origin A. The server at A redirects to evil origin B.
+  caps.grant(1, [{ type: 'net', origins: ['https://a.example.com'] }]);
+  const secret = new TextEncoder().encode('CLOUD-METADATA-SECRET');
+  const { client, urls } = scriptedClient([
+    { status: 302, headers: [['location', 'http://169.254.169.254/latest/meta-data/']], body: undefined },
+    // This would be the metadata body — it must NEVER reach the guest.
+    { status: 200, headers: [['content-type', 'text/plain']], body: secret },
+  ]);
+  const d = new SyscallDispatcher({ vfs: router, caps, cwdOf: () => '/', httpClient: client });
+
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'net/fetch',
+    args: { method: 'GET', url: 'https://a.example.com/redir', headers: [] },
+  })).response;
+
+  // The redirect target is ungranted → the dispatcher must NOT follow it.
+  expect(res).toMatchObject({ ok: false, error: { code: 'EACCES' } });
+  // The HTTP client must have been asked ONLY for the granted origin, never the
+  // metadata endpoint. No body from the ungranted origin ever fetched.
+  expect(urls).toEqual(['https://a.example.com/redir']);
+});
+
+test('SEC-1: net/fetch FOLLOWS a 3xx redirect to an ALSO-GRANTED origin and returns its body', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'net', origins: ['https://a.example.com', 'https://b.example.com'] }]);
+  const finalBody = new TextEncoder().encode('OK-FROM-B');
+  const { client, urls } = scriptedClient([
+    { status: 302, headers: [['location', 'https://b.example.com/landing']], body: undefined },
+    { status: 200, headers: [['content-type', 'text/plain']], body: finalBody },
+  ]);
+  const d = new SyscallDispatcher({ vfs: router, caps, cwdOf: () => '/', httpClient: client });
+
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'net/fetch',
+    args: { method: 'GET', url: 'https://a.example.com/redir', headers: [] },
+  })).response;
+
+  expect(res.ok).toBe(true);
+  const result = (res as { ok: true; result: { status: number; body?: Uint8Array } }).result;
+  expect(result.status).toBe(200);
+  expect(new TextDecoder().decode(result.body)).toBe('OK-FROM-B');
+  // Both hops went through the client because both origins are granted.
+  expect(urls).toEqual(['https://a.example.com/redir', 'https://b.example.com/landing']);
+});
+
+test('SEC-1: net/fetch caps redirect chains (ELOOP) instead of following forever', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'net', origins: ['https://a.example.com'] }]);
+  // Every response is a redirect back to a granted origin → infinite loop unless capped.
+  const { client, urls } = scriptedClient([
+    { status: 302, headers: [['location', 'https://a.example.com/again']], body: undefined },
+  ]);
+  const d = new SyscallDispatcher({ vfs: router, caps, cwdOf: () => '/', httpClient: client });
+
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'net/fetch',
+    args: { method: 'GET', url: 'https://a.example.com/start', headers: [] },
+  })).response;
+
+  expect(res.ok).toBe(false);
+  expect((res as { ok: false; error: { code: string } }).error.code).toBe('ELOOP');
+  // It must have stopped after a bounded number of hops, not run away.
+  expect(urls.length).toBeLessThanOrEqual(21);
+  expect(urls.length).toBeGreaterThan(1);
+});
+
+test('SEC-1: net/fetch requests redirect:manual from the HTTP client (no internal following)', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'net', origins: ['https://a.example.com'] }]);
+  const seen: HttpRequest[] = [];
+  const client: HttpClient = {
+    send(req: HttpRequest): HttpResponse {
+      seen.push(req);
+      return { status: 200, headers: [], body: undefined };
+    },
+  };
+  const d = new SyscallDispatcher({ vfs: router, caps, cwdOf: () => '/', httpClient: client });
+  await d.dispatch(1, {
+    id: 1,
+    call: 'net/fetch',
+    args: { method: 'GET', url: 'https://a.example.com/x', headers: [] },
+  });
+  // The dispatcher must instruct the client NOT to follow redirects itself, so
+  // the kernel can capability-check each hop.
+  expect(seen[0].redirect).toBe('manual');
+});

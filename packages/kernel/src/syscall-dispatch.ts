@@ -963,38 +963,98 @@ export class SyscallDispatcher {
     if (!this.#httpClient) {
       return fail(id, 'ENOSYS', 'net/fetch: no HTTP client configured');
     }
-    const url = String(args.url ?? '');
+    let url = String(args.url ?? '');
     // Capability gate FIRST — before any network access. An ungranted origin
     // (or an unparseable URL, which checkNet rejects) is EACCES.
     if (!this.#caps.checkNet(pid, url)) {
       return fail(id, 'EACCES', `Permission denied: ${url}`);
     }
-    const request: HttpRequest = {
-      method: typeof args.method === 'string' ? args.method : 'GET',
-      url,
-      headers: normalizeHeaders(args.headers),
-    };
-    const body = args.body;
-    if (body instanceof Uint8Array) request.body = body;
-    else if (body instanceof ArrayBuffer) request.body = new Uint8Array(body);
-    else if (typeof body === 'string') request.body = new TextEncoder().encode(body);
-    if (typeof args.timeoutMs === 'number') request.timeoutMs = args.timeoutMs;
+    let method = typeof args.method === 'string' ? args.method : 'GET';
+    const headers = normalizeHeaders(args.headers);
+    let body: Uint8Array | undefined;
+    const rawBody = args.body;
+    if (rawBody instanceof Uint8Array) body = rawBody;
+    else if (rawBody instanceof ArrayBuffer) body = new Uint8Array(rawBody);
+    else if (typeof rawBody === 'string') body = new TextEncoder().encode(rawBody);
+    const timeoutMs = typeof args.timeoutMs === 'number' ? args.timeoutMs : undefined;
 
-    let response: HttpResponse;
-    try {
-      response = await this.#httpClient.send(request);
-    } catch (err) {
-      // Transport-level failure (DNS, connection refused, timeout): the request
-      // was authorized but could not complete. Map to a network errno.
-      return fail(id, 'EHOSTUNREACH', messageOf(err));
+    // SEC-1: follow redirects HERE, re-checking the `net` capability against the
+    // target of every 3xx hop. The HTTP client is told `redirect:'manual'` so it
+    // returns the 3xx instead of following it internally — that prevents a guest
+    // granted origin A from being silently redirected to an ungranted origin B
+    // (cloud metadata, localhost, etc.) and receiving its body. A redirect to an
+    // UNGRANTED origin yields EACCES and the body is never fetched; the chain is
+    // capped at MAX_REDIRECT_HOPS (→ ELOOP) so a redirect cycle cannot hang.
+    for (let hop = 0; ; hop++) {
+      if (hop > MAX_REDIRECT_HOPS) {
+        return fail(id, 'ELOOP', `net/fetch: too many redirects (> ${MAX_REDIRECT_HOPS})`);
+      }
+      const request: HttpRequest = { method, url, headers, redirect: 'manual' };
+      if (body !== undefined) request.body = body;
+      if (timeoutMs !== undefined) request.timeoutMs = timeoutMs;
+
+      let response: HttpResponse;
+      try {
+        response = await this.#httpClient.send(request);
+      } catch (err) {
+        // Transport-level failure (DNS, connection refused, timeout): the request
+        // was authorized but could not complete. Map to a network errno.
+        return fail(id, 'EHOSTUNREACH', messageOf(err));
+      }
+
+      if (isRedirectStatus(response.status)) {
+        const location = headerValue(response.headers, 'location');
+        if (location !== undefined) {
+          let nextUrl: string;
+          try {
+            nextUrl = new URL(location, url).toString();
+          } catch {
+            return fail(id, 'EINVAL', `net/fetch: invalid redirect Location: ${location}`);
+          }
+          // Re-run the capability check against the REDIRECT TARGET. Denied →
+          // EACCES and we never fetch the target (no body from an ungranted
+          // origin ever reaches the guest).
+          if (!this.#caps.checkNet(pid, nextUrl)) {
+            return fail(id, 'EACCES', `Permission denied (redirect target): ${nextUrl}`);
+          }
+          url = nextUrl;
+          // Per HTTP semantics a 3xx commonly turns the method into GET and drops
+          // the body. Keep it simple and safe: redirect → GET, no body.
+          method = 'GET';
+          body = undefined;
+          continue;
+        }
+        // No Location header: surface the 3xx response as-is (can't follow).
+      }
+
+      const result: { status: number; headers: [string, string][]; body?: Uint8Array } = {
+        status: response.status,
+        headers: response.headers,
+      };
+      if (response.body) result.body = toTightView(response.body);
+      return ok(id, result);
     }
-    const result: { status: number; headers: [string, string][]; body?: Uint8Array } = {
-      status: response.status,
-      headers: response.headers,
-    };
-    if (response.body) result.body = toTightView(response.body);
-    return ok(id, result);
   }
+}
+
+/**
+ * Maximum number of redirect hops `net/fetch` will follow before failing with
+ * ELOOP. Each hop is capability-checked against the redirect target.
+ */
+const MAX_REDIRECT_HOPS = 20;
+
+/** True for HTTP status codes that carry a redirect (followed via Location). */
+function isRedirectStatus(status: number): boolean {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
+
+/** Case-insensitive lookup of a header value in a `[name, value][]` list. */
+function headerValue(headers: [string, string][], name: string): string | undefined {
+  const lower = name.toLowerCase();
+  for (const [k, v] of headers) {
+    if (k.toLowerCase() === lower) return v;
+  }
+  return undefined;
 }
 
 /** Coerce a raw `headers` arg into the `[name, value][]` shape the client wants. */

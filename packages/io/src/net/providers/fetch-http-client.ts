@@ -27,12 +27,15 @@ export class FetchHttpClient implements HttpClient {
       }
     }
 
-    // Create a Request object
+    // Create a Request object. `redirect` defaults to the platform default
+    // ('follow') unless the caller requests otherwise. The kernel passes
+    // 'manual' so it can capability-check each redirect hop (SSRF prevention).
     const headers = new Headers(request.headers);
     const fetchRequest = new Request(url, {
       method: request.method,
       headers,
       body: request.body as BodyInit | undefined,
+      redirect: request.redirect,
     });
 
     // Call fetch
