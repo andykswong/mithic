@@ -29,14 +29,16 @@ packages/
 ```shell
 npm install                  # installs deps + wasm-tools/wkg via cargo
 npm run build                # vite build across all workspaces
-npm test                     # node --test across all workspaces
+npm test                     # vitest run across all projects (node + browser)
+npm run test:node            # node-environment tests only
+npm run test:browser         # browser-mode tests (Chromium via Playwright)
 npm run lint                 # eslint
 npm run typecheck            # tsc --noEmit
 ```
 
 Individual package: run the same commands inside the package directory.
 
-Tests use Node.js built-in test runner (`node --test`) with built-in type striping for direct `.ts` execution. No transpile step needed for testing.
+Isola packages use **Vitest**. Node-environment unit/integration tests are `*.test.ts`; tests requiring a real browser (iframe sandboxing, DOM, MessagePort/ArrayBuffer transfer) are `*.browser.test.ts` and run in Chromium. Legacy Mithic packages may still use `node --test` until migrated.
 
 ## Key Conventions
 
