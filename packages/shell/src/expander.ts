@@ -61,7 +61,24 @@ export interface ShellEnv {
  */
 export class ExpansionError extends Error {}
 
-type Part = { text: string; quoted: boolean };
+/**
+ * A fragment of a word after substitution. `quoted` text is never word-split or
+ * glob-expanded. A `fieldBreak` part is a zero-width hard field boundary emitted
+ * between the elements of a `$@` / `${arr[@]}` expansion: it forces the field on
+ * its left to close even when adjacent (quoted) text would otherwise join — this
+ * is what gives `"pre$@post"` its bash boundary semantics (`prea`, `b`, `cpost`).
+ */
+type Part = { text: string; quoted: boolean; fieldBreak?: false } | { fieldBreak: true };
+
+/**
+ * Result of reading one `$…` / `${…}` construct. Either a single `value`, or a
+ * multi-element expansion (`fields`) for the `@`/`*`-forms. For `fields`, `join`
+ * is the IFS-join character when the form is `*` (one field), or undefined when
+ * the form is `@` (one field per element).
+ */
+type DollarResult =
+  | { value: string; next: number; fields?: undefined }
+  | { fields: string[]; join: string | undefined; next: number; value?: undefined };
 
 export class Expander {
   private env: ShellEnv;
@@ -75,9 +92,11 @@ export class Expander {
     // 1. Brace expansion (purely textual, pre-substitution).
     const braced = expandBraces(word);
     const out: string[] = [];
+    let anyEmptyByAt = false;
     for (const b of braced) {
       // 2. substitution → parts (tagged quoted/unquoted)
-      const parts = await this.substitute(b);
+      const { parts, emptiedByAt } = await this.substitute(b);
+      if (emptiedByAt && parts.length === 0) { anyEmptyByAt = true; continue; }
       // 3. word splitting (unquoted regions only)
       const fields = splitParts(parts);
       // 4. pathname expansion per field (unquoted only)
@@ -86,13 +105,17 @@ export class Expander {
         out.push(...globbed.fields);
       }
     }
-    return out.length > 0 ? out : [''];
+    // A word whose sole content was a `$@`/`${arr[@]}` that expanded to nothing
+    // contributes zero fields (bash). Other empty results keep the single-''
+    // field this expander historically produces.
+    if (out.length > 0) return out;
+    return anyEmptyByAt ? [] : [''];
   }
 
   /** Expand only $-substitutions (no brace, splitting, or glob). For here-doc lines. */
   async substituteOnly(text: string): Promise<string> {
-    const parts = await this.substitute(text);
-    return parts.map((p) => p.text).join('');
+    const { parts } = await this.substitute(text);
+    return partsText(parts);
   }
 
   /** Expand to a single joined string (no splitting/glob). For assignments, redirect targets. */
@@ -102,8 +125,8 @@ export class Expander {
     // meaningful way here; join is acceptable for the common single-result case.
     const pieces: string[] = [];
     for (const b of braced) {
-      const parts = await this.substitute(b);
-      pieces.push(parts.map((p) => p.text).join(''));
+      const { parts } = await this.substitute(b);
+      pieces.push(partsText(parts));
     }
     return pieces.join(' ');
   }
@@ -112,61 +135,135 @@ export class Expander {
    * Perform $-substitution over a brace-expanded word, producing tagged parts.
    * Tracks quoting so later word-splitting/glob only touch unquoted regions.
    */
-  private async substitute(word: string): Promise<Part[]> {
+  private async substitute(word: string): Promise<{ parts: Part[]; emptiedByAt: boolean }> {
     const parts: Part[] = [];
+    // The "open" word being assembled. `started` distinguishes an empty-but-real
+    // field (e.g. from `""`) from no field at all. `quoted` records whether the
+    // current open word's content is protected from later word-splitting.
     let pending = '';
-    const flush = (): void => { if (pending) { parts.push({ text: pending, quoted: false }); pending = ''; } };
-    const pushQuoted = (s: string): void => { flush(); parts.push({ text: s, quoted: true }); };
+    let started = false;
+    let quoted = false;
+    // True iff every contribution so far was an `@`-form that expanded to nothing
+    // (so the whole word collapses to zero fields, not one empty field).
+    let emptiedByAt = false;
+    let sawNonEmpty = false;
+    const closeWord = (): void => {
+      if (started) parts.push({ text: pending, quoted });
+      pending = ''; started = false; quoted = false;
+    };
+    const addText = (s: string, q: boolean): void => {
+      pending += s; started = true; sawNonEmpty = true; if (q) quoted = true;
+    };
+
+    /**
+     * Emit a `$@`/`${arr[@]}` (`join === undefined`) or `$*`/`${arr[*]}` (joined)
+     * expansion. The boundary rule for the `@`-form: the first element joins onto
+     * whatever precedes it, each subsequent element opens a NEW field (fieldBreak
+     * marker), and the last element is left open so trailing text joins onto it —
+     * giving `"pre$@post"` → `prea`, `b`, `cpost`. `q` protects the produced
+     * fields from word-splitting (the double-quoted case).
+     */
+    const emitFields = (fields: string[], join: string | undefined, q: boolean): void => {
+      if (join !== undefined) { addText(fields.join(join), q); return; }
+      if (fields.length === 0) { emptiedByAt = true; return; } // `@` with no elements
+      sawNonEmpty = true;
+      addText(fields[0], q);
+      for (let k = 1; k < fields.length; k++) {
+        closeWord();
+        parts.push({ fieldBreak: true });
+        addText(fields[k], q);
+      }
+    };
 
     let i = 0;
     const n = word.length;
     while (i < n) {
       const c = word[i];
 
-      if (c === '\\') {
-        pending += word[i + 1] ?? '';
-        i += word[i + 1] !== undefined ? 2 : 1;
-        continue;
-      }
+      if (c === '\\') { addText(word[i + 1] ?? '', false); i += word[i + 1] !== undefined ? 2 : 1; continue; }
 
       if (c === '\'') {
         i++;
         let inner = '';
         while (i < n && word[i] !== '\'') { inner += word[i]; i++; }
         i++;
-        pushQuoted(inner);
+        addText(inner, true);
         continue;
       }
 
       if (c === '"') {
         i++;
-        let inner = '';
+        // A double-quoted run is one field, EXCEPT when its sole content is a
+        // `"$@"`/`"${arr[@]}"` (which splits into per-element fields, or to NO
+        // field when empty). `producedThisRun` tracks whether this run emitted
+        // any real content; if not (and it wasn't an empty-@), it's a literal
+        // `""` → one empty quoted field.
+        let producedThisRun = false;
+        let emptyAtThisRun = false;
         while (i < n && word[i] !== '"') {
           if (word[i] === '\\') {
             const next = word[i + 1] ?? '';
-            if (next === '"' || next === '\\' || next === '$' || next === '`') { inner += next; i += 2; continue; }
-            inner += '\\'; i++; continue;
+            if (next === '"' || next === '\\' || next === '$' || next === '`') { addText(next, true); producedThisRun = true; i += 2; continue; }
+            addText('\\', true); producedThisRun = true; i++; continue;
           }
-          if (word[i] === '$') { const r = await this.readDollar(word, i); inner += r.value; i = r.next; continue; }
-          if (word[i] === '`') { const r = await this.readBacktick(word, i); inner += r.value; i = r.next; continue; }
-          inner += word[i]; i++;
+          if (word[i] === '$') {
+            const r = await this.readDollar(word, i);
+            if (r.fields !== undefined) {
+              emitFields(r.fields, r.join, true);
+              if (r.join === undefined && r.fields.length === 0) emptyAtThisRun = true; else producedThisRun = true;
+            } else { addText(r.value, true); producedThisRun = true; }
+            i = r.next; continue;
+          }
+          if (word[i] === '`') { const r = await this.readBacktick(word, i); addText(r.value, true); producedThisRun = true; i = r.next; continue; }
+          addText(word[i], true); producedThisRun = true; i++;
         }
         i++;
-        pushQuoted(inner);
+        // Force a (possibly empty) quoted field unless the whole run was an empty
+        // `"$@"` — `"" ` is still one empty field.
+        if (!emptyAtThisRun || producedThisRun) { started = true; quoted = true; }
         continue;
       }
 
-      if (c === '$') { const r = await this.readDollar(word, i); pending += r.value; i = r.next; continue; }
-      if (c === '`') { const r = await this.readBacktick(word, i); pending += r.value; i = r.next; continue; }
+      if (c === '$') {
+        const r = await this.readDollar(word, i);
+        if (r.fields !== undefined) emitFields(r.fields, r.join, false);
+        else addText(r.value, false);
+        i = r.next; continue;
+      }
+      if (c === '`') { const r = await this.readBacktick(word, i); addText(r.value, false); i = r.next; continue; }
 
-      pending += c; i++;
+      addText(c, false); i++;
     }
-    flush();
-    return parts.length > 0 ? parts : [{ text: '', quoted: false }];
+    closeWord();
+    // The word vanishes (zero fields) only when an `@`-form emptied it AND no
+    // other content was produced. Otherwise an empty word is one empty field.
+    if (parts.length === 0) {
+      if (emptiedByAt && !sawNonEmpty) return { parts: [], emptiedByAt: true };
+      return { parts: [{ text: '', quoted: false }], emptiedByAt: false };
+    }
+    return { parts, emptiedByAt: false };
+  }
+
+  /**
+   * Positional params when the env doesn't implement {@link ShellEnv.getPositional}:
+   * reconstruct from `$#` + `$1..$N` via {@link ShellEnv.getSpecial}.
+   */
+  private positionalFallback(): string[] {
+    const count = parseInt(this.env.getSpecial('#') ?? '0', 10) || 0;
+    const out: string[] = [];
+    for (let k = 1; k <= count; k++) out.push(this.env.getSpecial(String(k)) ?? '');
+    return out;
+  }
+
+  /** First character of IFS (the field separator used to join `$*`); default space. */
+  private ifsFirst(): string {
+    const ifs = this.env.get('IFS');
+    if (ifs === undefined) return ' ';
+    return ifs.length > 0 ? ifs[0] : ''; // empty IFS ⇒ no separator
   }
 
   /** Read a `$...` construct at word[i] === '$'. */
-  private async readDollar(word: string, i: number): Promise<{ value: string; next: number }> {
+  private async readDollar(word: string, i: number): Promise<DollarResult> {
     const n = word.length;
     const c1 = word[i + 1];
 
@@ -192,12 +289,19 @@ export class Expander {
     if (c1 === '{') {
       const end = findMatchingBrace(word, i + 2);
       const body = word.slice(i + 2, end);
-      const value = await this.paramExpansion(body);
-      return { value, next: end + 1 };
+      const result = await this.paramExpansion(body);
+      if (typeof result !== 'string') return { fields: result.fields, join: result.join, next: end + 1 };
+      return { value: result, next: end + 1 };
     }
 
-    // Special single-char params: ? # @ * $ ! 0 - ($- = current option flags)
-    if (c1 !== undefined && '?#@*$!0-'.includes(c1)) {
+    // $@ / $* — positional params as multiple fields (@) or one joined field (*).
+    if (c1 === '@' || c1 === '*') {
+      const pos = this.env.getPositional?.() ?? this.positionalFallback();
+      return { fields: pos, join: c1 === '*' ? this.ifsFirst() : undefined, next: i + 2 };
+    }
+
+    // Other special single-char params: ? # $ ! 0 - ($- = current option flags)
+    if (c1 !== undefined && '?#$!0-'.includes(c1)) {
       return { value: this.env.getSpecial(c1) ?? '', next: i + 2 };
     }
 
@@ -241,7 +345,11 @@ export class Expander {
     let out = '';
     let i = 0;
     while (i < expr.length) {
-      if (expr[i] === '$') { const r = await this.readDollar(expr, i); out += r.value; i = r.next; continue; }
+      if (expr[i] === '$') {
+        const r = await this.readDollar(expr, i);
+        out += r.fields !== undefined ? r.fields.join(r.join ?? ' ') : r.value;
+        i = r.next; continue;
+      }
       out += expr[i]; i++;
     }
     return out;
@@ -287,11 +395,19 @@ export class Expander {
     return parseInt(expanded.trim(), 10) || 0;
   }
 
-  /** Parse and apply a `${...}` parameter-expansion body. */
-  private async paramExpansion(body: string): Promise<string> {
-    // ${#name} / ${#name[subscript]} → length (element count for [@]/[*]).
+  /**
+   * Parse and apply a `${...}` parameter-expansion body. Returns a plain string,
+   * or a multi-field descriptor for the `@`/`*` array/positional forms (consumed
+   * by {@link readDollar} → {@link substitute} for field splitting).
+   */
+  private async paramExpansion(body: string): Promise<string | { fields: string[]; join: string | undefined }> {
+    // ${#@} / ${#*} → positional COUNT; ${#name[@]}/${#name[*]} → element count.
     if (body.startsWith('#') && body.length > 1) {
       const inner = body.slice(1);
+      if (inner === '@' || inner === '*') {
+        const pos = this.env.getPositional?.() ?? this.positionalFallback();
+        return String(pos.length);
+      }
       const sub = matchSubscript(inner);
       if (sub) {
         const arr = this.env.getArray?.(sub.name) ?? [];
@@ -318,11 +434,19 @@ export class Expander {
       // Fall through for unsupported ${!prefix*} name-matching (rare).
     }
 
+    // ${@} / ${*} bare positional forms (equivalent to $@ / $*).
+    if (body === '@' || body === '*') {
+      const pos = this.env.getPositional?.() ?? this.positionalFallback();
+      return { fields: pos, join: body === '*' ? this.ifsFirst() : undefined };
+    }
+
     // ${name[subscript]} array element / slice access.
     const subAccess = matchSubscript(body);
     if (subAccess && this.env.getArray?.(subAccess.name) !== undefined) {
       const arr = this.env.getArray(subAccess.name)!;
-      if (subAccess.subscript === '@' || subAccess.subscript === '*') return arr.join(' ');
+      if (subAccess.subscript === '@' || subAccess.subscript === '*') {
+        return { fields: arr, join: subAccess.subscript === '*' ? this.ifsFirst() : undefined };
+      }
       const idx = await this.resolveIndex(subAccess.subscript);
       return arr[idx] ?? '';
     }
@@ -708,11 +832,24 @@ function substitute(value: string, pat: string, repl: string, all: boolean): str
 
 // ── word splitting ───────────────────────────────────────────────────────────
 
+/** Join a part stream into a single string (for non-splitting contexts). */
+function partsText(parts: Part[]): string {
+  let s = '';
+  for (const p of parts) if (!p.fieldBreak) s += p.text;
+  return s;
+}
+
 function splitParts(parts: Part[]): string[] {
   const fields: string[] = [];
   let current = '';
   let started = false;
   for (const part of parts) {
+    if (part.fieldBreak) {
+      // Hard boundary between `$@`/`${arr[@]}` elements: close the field even
+      // when adjacent quoted text would otherwise join across it.
+      fields.push(current); current = ''; started = false;
+      continue;
+    }
     if (part.quoted) { current += part.text; started = true; continue; }
     const t = part.text;
     let k = 0;

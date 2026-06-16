@@ -196,3 +196,61 @@ test('<< heredoc into an external command passes the body as stdinData', async (
   expect(k.spawned).toHaveLength(1);
   expect(k.spawned[0].stdinData).toBe('hello bob\n');
 });
+
+// ── SH-1: argument forwarding via "$@" preserves field count ────────────────
+
+test('f "$@" forwards each positional as a separate argument ($# = 3)', async () => {
+  const k = mockKernel();
+  let out = '';
+  const ex = new Executor(k as any, { cwd: '/', env: {}, positional: ['a', 'b c', 'd'] }, {
+    onStdout: (s) => { out += s; },
+  });
+  const code = await ex.run(parse('f() { echo $#; }; f "$@"'));
+  expect(code).toBe(0);
+  expect(out.trim()).toBe('3');
+});
+
+test('f "$@" inside the callee sees the spaced arg intact ($2 = "b c")', async () => {
+  const k = mockKernel();
+  let out = '';
+  const ex = new Executor(k as any, { cwd: '/', env: {}, positional: ['a', 'b c', 'd'] }, {
+    onStdout: (s) => { out += s; },
+  });
+  const code = await ex.run(parse('f() { echo "$2"; }; f "$@"'));
+  expect(code).toBe(0);
+  expect(out.trim()).toBe('b c');
+});
+
+test('for x in "$@" iterates once per positional', async () => {
+  const k = mockKernel();
+  let out = '';
+  const ex = new Executor(k as any, { cwd: '/', env: {}, positional: ['a', 'b c', 'd'] }, {
+    onStdout: (s) => { out += s; },
+  });
+  const code = await ex.run(parse('for x in "$@"; do echo "[$x]"; done'));
+  expect(code).toBe(0);
+  expect(out).toBe('[a]\n[b c]\n[d]\n');
+});
+
+test('set -- a b c; echo ${#@} reports positional count (SH-2)', async () => {
+  const k = mockKernel();
+  let out = '';
+  const ex = new Executor(k as any, { cwd: '/', env: {} }, {
+    onStdout: (s) => { out += s; },
+  });
+  const code = await ex.run(parse('set -- a b c; echo ${#@}'));
+  expect(code).toBe(0);
+  expect(out.trim()).toBe('3');
+});
+
+test('set -- a b c; echo ${#*} reports positional count (SH-2)', async () => {
+  const k = mockKernel();
+  let out = '';
+  const ex = new Executor(k as any, { cwd: '/', env: {} }, {
+    onStdout: (s) => { out += s; },
+  });
+  const code = await ex.run(parse('set -- a b c; echo ${#*}'));
+  expect(code).toBe(0);
+  expect(out.trim()).toBe('3');
+});
+
