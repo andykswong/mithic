@@ -1,4 +1,5 @@
 import type { Capability } from '@mithic/protocol';
+import { normalizePath } from '@mithic/io/vfs';
 
 export type FsOperation = 'read' | 'write' | 'execute';
 
@@ -30,14 +31,17 @@ export class CapabilityManager {
   /**
    * Check filesystem access via longest-prefix path match. The matching `fs`
    * capability must also list the requested operation.
+   *
+   * Internally normalizes `absPath` (collapses `..`/`.` segments) before
+   * prefix-matching so callers cannot escape grants via path traversal.
    */
   checkFs(pid: number, absPath: string, op: FsOperation): boolean {
-    const normalized = normalize(absPath);
+    const normalized = normalizePath(absPath);
     let best: { len: number; ops: FsOperation[] } | undefined;
     for (const cap of this.#grants.get(pid) ?? []) {
       if (cap.type !== 'fs') continue;
       for (const granted of cap.paths) {
-        const prefix = normalize(granted);
+        const prefix = normalizePath(normalize(granted));
         if (pathHasPrefix(normalized, prefix) && (!best || prefix.length > best.len)) {
           best = { len: prefix.length, ops: cap.operations };
         }

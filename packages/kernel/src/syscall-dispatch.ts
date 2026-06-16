@@ -4,6 +4,15 @@ import { FileSystemError, normalizePath } from '@mithic/io/vfs';
 import type { FileSystemProvider, FileHandle, OpenFlags } from '@mithic/io/vfs';
 import type { CapabilityManager, FsOperation } from './capability-manager.ts';
 
+/** Thrown when a process references an fd it does not own (wrong pid or never opened). */
+class BadFdError extends Error {
+  readonly errno: ErrnoCode = 'EBADF';
+  constructor(fd: number) {
+    super(`Bad file descriptor: ${fd}`);
+    this.name = 'BadFdError';
+  }
+}
+
 /** AT_FDCWD: a dirfd meaning "resolve relative to the process cwd". */
 const AT_FDCWD = -100;
 
@@ -109,7 +118,10 @@ export class SyscallDispatcher {
     const offset = typeof args.offset === 'number' ? args.offset : entry.offset;
     const data = await this.#vfs.read(entry.handle, offset, len);
     if (typeof args.offset !== 'number') entry.offset += data.byteLength;
-    return data;
+    // Normalize views: if the VFS returned a subarray into a pooled buffer,
+    // copy into a tight Uint8Array so the caller can safely transfer .buffer
+    // without leaking pool bytes or using incorrect offsets.
+    return toTightView(data);
   }
 
   async #write(pid: number, args: Record<string, unknown>): Promise<{ written: number }> {
@@ -125,7 +137,7 @@ export class SyscallDispatcher {
     const fd = Number(args.fd);
     const table = this.#tableFor(pid);
     const entry = table.get(fd);
-    if (!entry) throw new FileSystemError('invalid', `Bad file descriptor: ${fd}`);
+    if (!entry) throw new BadFdError(fd);
     void this.#vfs.close(entry.handle);
     table.delete(fd);
     return {};
@@ -169,7 +181,7 @@ export class SyscallDispatcher {
   #fdOf(pid: number, args: Record<string, unknown>): OpenFile {
     const fd = Number(args.fd);
     const entry = this.#tableFor(pid).get(fd);
-    if (!entry) throw new FileSystemError('invalid', `Bad file descriptor: ${fd}`);
+    if (!entry) throw new BadFdError(fd);
     return entry;
   }
 
@@ -199,12 +211,24 @@ function toBytes(data: unknown): Uint8Array {
 }
 
 function errnoOf(err: unknown): ErrnoCode {
+  if (err instanceof BadFdError) return err.errno;
   if (err instanceof FileSystemError) return fsErrorToErrno(err.code);
   return 'EIO';
 }
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Return `view` if it already spans its entire backing buffer; otherwise copy
+ * into a fresh tight `Uint8Array`. This ensures the caller can safely transfer
+ * `.buffer` over `postMessage` without clobbering pooled buffers or sending
+ * wrong bytes when `byteOffset > 0`.
+ */
+function toTightView(view: Uint8Array): Uint8Array {
+  if (view.byteOffset === 0 && view.byteLength === view.buffer.byteLength) return view;
+  return new Uint8Array(view);
 }
 
 function ok(id: number, result: unknown): SyscallResponse {

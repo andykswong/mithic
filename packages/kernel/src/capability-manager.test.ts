@@ -28,3 +28,59 @@ test('net check matches origins', () => {
   expect(cm.checkNet(2, 'https://api.example.com/x')).toBe(true);
   expect(cm.checkNet(2, 'https://evil.com')).toBe(false);
 });
+
+// Fix 3: checkFs must collapse .. and . before prefix matching
+test('checkFs collapses .. — /tmp/../etc/passwd is denied with only /tmp grant', () => {
+  const cm = new CapabilityManager();
+  cm.grant(1, [{ type: 'fs', paths: ['/tmp'], operations: ['read'] }]);
+  expect(cm.checkFs(1, '/tmp/../etc/passwd', 'read')).toBe(false);
+});
+
+test('checkFs collapses . — /tmp/./sub is allowed with /tmp grant', () => {
+  const cm = new CapabilityManager();
+  cm.grant(1, [{ type: 'fs', paths: ['/tmp'], operations: ['read'] }]);
+  expect(cm.checkFs(1, '/tmp/./sub', 'read')).toBe(true);
+});
+
+// Fix 4: adversarial capability tests
+test('checkFs rejects prefix-escape siblings — /tmp grant does not authorize /tmp2/x or /tmpevil', () => {
+  const cm = new CapabilityManager();
+  cm.grant(1, [{ type: 'fs', paths: ['/tmp'], operations: ['read'] }]);
+  expect(cm.checkFs(1, '/tmp2/x', 'read')).toBe(false);
+  expect(cm.checkFs(1, '/tmpevil', 'read')).toBe(false);
+  expect(cm.checkFs(1, '/tmp', 'read')).toBe(true);
+  expect(cm.checkFs(1, '/tmp/safe', 'read')).toBe(true);
+});
+
+test('narrow rejects widening operation: parent read-only, child requests read+write', () => {
+  const cm = new CapabilityManager();
+  cm.grant(1, [{ type: 'fs', paths: ['/a'], operations: ['read'] }]);
+  expect(() =>
+    cm.narrow(1, [{ type: 'fs', paths: ['/a'], operations: ['read', 'write'] }]),
+  ).toThrow();
+});
+
+test('narrow rejects widening maxChildren beyond parent limit', () => {
+  const cm = new CapabilityManager();
+  cm.grant(1, [{ type: 'process', maxChildren: 2 }]);
+  expect(() =>
+    cm.narrow(1, [{ type: 'process', maxChildren: 10 }]),
+  ).toThrow();
+});
+
+test('narrow rejects widening maxChildren to unlimited when parent has a limit', () => {
+  const cm = new CapabilityManager();
+  cm.grant(1, [{ type: 'process', maxChildren: 2 }]);
+  // undefined = unlimited — must be rejected since parent is capped at 2
+  expect(() =>
+    cm.narrow(1, [{ type: 'process', maxChildren: undefined }]),
+  ).toThrow();
+});
+
+test('narrow rejects a foreign ipc channel not in parent grant', () => {
+  const cm = new CapabilityManager();
+  cm.grant(1, [{ type: 'ipc', channels: ['allowed-channel'] }]);
+  expect(() =>
+    cm.narrow(1, [{ type: 'ipc', channels: ['allowed-channel', 'evil-channel'] }]),
+  ).toThrow();
+});
