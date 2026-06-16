@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./display/remote-dom-host": {
+      "types": "./dist/display/remote-dom-host.d.ts",
+      "import": "./dist/display/remote-dom-host.js"
     }
   },
   "files": [

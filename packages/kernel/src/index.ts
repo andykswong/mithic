@@ -16,4 +16,4 @@ export type { Pipe, Connection } from './ipc-broker.ts';
 export { ProcessManager } from './process-manager.ts';
 export type { ProcessState, ProcessEntry, WaitResult, WaitStatus } from './process-manager.ts';
 export { SyscallDispatcher } from './syscall-dispatch.ts';
-export type { SyscallDispatcherOptions, SyscallRequestLike } from './syscall-dispatch.ts';
+export type { SyscallDispatcherOptions, SyscallRequestLike, DomMutateHandler } from './syscall-dispatch.ts';
