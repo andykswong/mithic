@@ -4,12 +4,6 @@ export interface Pipe {
   writePort: MessagePort;
 }
 
-/** A bidirectional connection: the two ends of a single MessageChannel. */
-export interface Connection {
-  localPort: MessagePort;
-  remotePort: MessagePort;
-}
-
 /**
  * Brokers inter-process communication primitives.
  *
@@ -17,6 +11,8 @@ export interface Connection {
  *   `port2` the writer. These are transferred into processes as stdio/pipe fds.
  * - Named channels model Unix-domain sockets living under `ipc/` in the VFS:
  *   a listener process `bind`s a path, peers `resolveListener` it, then connect.
+ *   The connection MessageChannel itself is minted by the SyscallDispatcher
+ *   (`ipc/connect`), not here — the broker only owns the path→pid registry.
  */
 export class IpcBroker {
   #registry = new Map<string, number>();
@@ -25,17 +21,6 @@ export class IpcBroker {
   createPipe(): Pipe {
     const channel = new MessageChannel();
     return { readPort: channel.port1, writePort: channel.port2 };
-  }
-
-  /**
-   * Open a connection toward a listener. Returns both ends of a MessageChannel;
-   * `localPort` stays with the connecting side, `remotePort` is delivered to the
-   * listener (`listenerPid`).
-   */
-  connect(listenerPid: number): Connection {
-    void listenerPid;
-    const channel = new MessageChannel();
-    return { localPort: channel.port1, remotePort: channel.port2 };
   }
 
   /** Register a named channel (Unix-domain socket) owned by a listener process. */

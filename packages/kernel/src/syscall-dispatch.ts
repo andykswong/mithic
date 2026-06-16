@@ -18,6 +18,16 @@ class BadFdError extends Error {
 /** AT_FDCWD: a dirfd meaning "resolve relative to the process cwd". */
 const AT_FDCWD = -100;
 
+/**
+ * Sentinel passed to a parked `ipc/accept` waiter when its listener is torn down
+ * (process death or `fs/close`). The accept path recognizes it and rejects with
+ * ECONNABORTED instead of treating it as a delivered connection port.
+ */
+const LISTENER_CLOSED = Symbol('listener-closed');
+
+/** A parked `ipc/accept` resolver: receives a delivered port or the closed sentinel. */
+type AcceptWaiter = (p: MessagePort | typeof LISTENER_CLOSED) => void;
+
 export interface SyscallRequestLike {
   id: number;
   call: string;
@@ -102,7 +112,7 @@ export class SyscallDispatcher {
    * `ports`: remote ports already connected but not yet accepted.
    * `waiters`: ipc/accept calls blocked waiting for the next connection.
    */
-  #pendingConns = new Map<number, { ports: MessagePort[]; waiters: Array<(p: MessagePort) => void> }>();
+  #pendingConns = new Map<number, { ports: MessagePort[]; waiters: AcceptWaiter[] }>();
 
   constructor(options: SyscallDispatcherOptions) {
     this.#vfs = options.vfs;
@@ -114,8 +124,39 @@ export class SyscallDispatcher {
 
   /** Discard a process's fd table (called on process exit). */
   closeProcess(pid: number): void {
+    const table = this.#fdTables.get(pid);
+    if (table) {
+      // Sweep every listener fd: close queued-but-unaccepted ports (else they
+      // leak) and reject any parked ipc/accept waiters (else they hang forever).
+      for (const [fd, entry] of table) {
+        if (entry.kind === 'listener') this.#teardownListener(fd);
+      }
+    }
     this.#fdTables.delete(pid);
     this.#nextFd.delete(pid);
+  }
+
+  /**
+   * Tear down a listener fd's pending-connection state: close all queued ports
+   * and settle all parked accept waiters. Used by both `closeProcess` (process
+   * death) and `#close` (explicit `fs/close` on a listener fd) so neither path
+   * leaks unaccepted ports or strands an awaiting `ipc/accept`.
+   */
+  #teardownListener(fd: number): void {
+    const queue = this.#pendingConns.get(fd);
+    if (!queue) return;
+    for (const port of queue.ports) {
+      try { port.close(); } catch { /* already neutered */ }
+    }
+    queue.ports.length = 0;
+    // Reject parked accept waiters so the awaiting guest call settles instead of
+    // hanging. The accept resolver expects a MessagePort; signal abort via a
+    // rejecting sentinel the accept path recognizes.
+    for (const waiter of queue.waiters) {
+      waiter(LISTENER_CLOSED);
+    }
+    queue.waiters.length = 0;
+    this.#pendingConns.delete(fd);
   }
 
   async dispatch(pid: number, req: SyscallRequestLike): Promise<DispatchResult> {
@@ -221,9 +262,15 @@ export class SyscallDispatcher {
     }
     const port = await (
       queue.ports.length > 0
-        ? Promise.resolve(queue.ports.shift()!)
-        : new Promise<MessagePort>((resolve) => { queue.waiters.push(resolve); })
+        ? Promise.resolve<MessagePort | typeof LISTENER_CLOSED>(queue.ports.shift()!)
+        : new Promise<MessagePort | typeof LISTENER_CLOSED>((resolve) => { queue.waiters.push(resolve); })
     );
+    // The listener was torn down (process death / fs/close) while we were parked.
+    // EBADF (connection aborted): the listener fd is gone, so the accept cannot
+    // complete — reject rather than hang.
+    if (port === LISTENER_CLOSED) {
+      return res(fail(id, 'EBADF', `Listener closed: fd ${fd}`));
+    }
     const connfd = this.#allocFd(pid);
     this.#tableFor(pid).set(connfd, { kind: 'pipe', port });
     return { response: ok(id, { connfd }), transfer: [port] };
@@ -255,16 +302,30 @@ export class SyscallDispatcher {
     // port2 → queued for the listener's accept
     const connfd = this.#allocFd(pid);
     this.#tableFor(pid).set(connfd, { kind: 'pipe', port: channel.port1 });
-    this.#deliverToListener(listenerPid, channel.port2);
+    if (!this.#deliverToListener(listenerPid, path, channel.port2)) {
+      // The path resolved to a listener pid, but that process no longer has a
+      // listener fd bound to THIS path (stale binding / race). Treat as ENOENT
+      // and discard the now-orphaned ports so neither end leaks.
+      this.#tableFor(pid).delete(connfd);
+      channel.port1.close();
+      channel.port2.close();
+      return res(fail(id, 'ENOENT', `No listener on path: ${path}`));
+    }
     return { response: ok(id, { connfd }), transfer: [channel.port1] };
   }
 
-  /** Push a remote port into the listener's queue or resolve a waiting accept. */
-  #deliverToListener(listenerPid: number, port: MessagePort): void {
+  /**
+   * Deliver `port` to the listener fd of `listenerPid` that is bound to `path`.
+   * Matching on path (not "first listener fd") ensures a process listening on
+   * multiple paths routes each connection to the correct accept queue.
+   * Resolves a waiting `ipc/accept` if one is parked, else queues the port.
+   * Returns true if delivered, false if no listener fd for `path` was found.
+   */
+  #deliverToListener(listenerPid: number, path: string, port: MessagePort): boolean {
     const table = this.#fdTables.get(listenerPid);
-    if (!table) return;
+    if (!table) return false;
     for (const [fd, entry] of table) {
-      if (entry.kind !== 'listener') continue;
+      if (entry.kind !== 'listener' || entry.path !== path) continue;
       const queue = this.#pendingConns.get(fd);
       if (!queue) continue;
       if (queue.waiters.length > 0) {
@@ -272,8 +333,9 @@ export class SyscallDispatcher {
       } else {
         queue.ports.push(port);
       }
-      return;
+      return true;
     }
+    return false;
   }
 
   #resolvePath(pid: number, args: Record<string, unknown>): string {
@@ -326,9 +388,10 @@ export class SyscallDispatcher {
     const entry = table.get(fd);
     if (!entry) throw new BadFdError(fd);
     if (entry.kind === 'listener') {
-      // Unbind the named channel and discard any queued pending connections.
+      // Unbind the named channel and tear down queued/parked connections:
+      // close unaccepted ports and reject any parked ipc/accept waiters.
       if (this.#ipc) this.#ipc.unbind(entry.path);
-      this.#pendingConns.delete(fd);
+      this.#teardownListener(fd);
     } else if (entry.kind !== 'pipe') {
       // File fds: release the VFS handle. Pipe fds: guest owns the port, just forget.
       void this.#vfs.close(entry.handle);

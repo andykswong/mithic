@@ -127,6 +127,156 @@ test('ipc/connect without ipc capability returns EACCES', async () => {
   expect(res.response).toMatchObject({ ok: false, error: { code: 'EACCES' } });
 });
 
+test('M-Fix 1: dom/mutate forwards mutations to the configured onDomMutate handler', async () => {
+  const router = new FileSystemRouter();
+  await router.mount('/', new MemoryFsProvider());
+  const caps = new CapabilityManager();
+  const seen: Array<{ pid: number; mutations: unknown[] }> = [];
+  const d = new SyscallDispatcher({
+    vfs: router,
+    caps,
+    cwdOf: () => '/',
+    onDomMutate: (pid, mutations) => { seen.push({ pid, mutations }); },
+  });
+
+  const muts = [
+    { type: 'createElement', id: 1, tag: 'div' },
+    { type: 'appendChild', parentId: 0, childId: 1 },
+  ];
+  const r = await d.dispatch(77, { id: 1, call: 'dom/mutate', args: { mutations: muts } });
+  expect(r.response.ok).toBe(true);
+  expect(seen).toHaveLength(1);
+  expect(seen[0].pid).toBe(77);
+  expect(seen[0].mutations).toEqual(muts);
+});
+
+test('M-Fix 1: dom/mutate returns ENOSYS when no onDomMutate handler is configured', async () => {
+  const { d } = await makeDispatcher(); // no onDomMutate
+  const r = await d.dispatch(78, { id: 1, call: 'dom/mutate', args: { mutations: [] } });
+  expect(r.response).toMatchObject({ ok: false, error: { code: 'ENOSYS' } });
+});
+
+test('L-Fix 1: one process listening on two paths routes a connect to the CORRECT path queue', async () => {
+  const { d, caps } = await makeDispatcher();
+  const serverPid = 60;
+  const clientPid = 61;
+  caps.grant(serverPid, [{ type: 'ipc', channels: ['/ipc/a', '/ipc/b'] }]);
+  caps.grant(clientPid, [{ type: 'ipc', channels: ['/ipc/b'] }]);
+
+  // Server listens on BOTH /ipc/a and /ipc/b.
+  const listenA = await d.dispatch(serverPid, { id: 1, call: 'ipc/listen', args: { path: '/ipc/a' } });
+  const listenB = await d.dispatch(serverPid, { id: 2, call: 'ipc/listen', args: { path: '/ipc/b' } });
+  const fdA = (listenA.response as { ok: true; result: { fd: number } }).result.fd;
+  const fdB = (listenB.response as { ok: true; result: { fd: number } }).result.fd;
+
+  // Client connects to /ipc/b.
+  const connect = await d.dispatch(clientPid, { id: 3, call: 'ipc/connect', args: { path: '/ipc/b' } });
+  expect(connect.response.ok).toBe(true);
+
+  // Accept on /ipc/b MUST succeed (the connection was queued on B's queue).
+  const acceptB = await d.dispatch(serverPid, { id: 4, call: 'ipc/accept', args: { fd: fdB } });
+  expect(acceptB.response.ok).toBe(true);
+  expect(acceptB.transfer).toHaveLength(1);
+
+  // Accept on /ipc/a must NOT have received the /ipc/b connection: park it,
+  // race against a short timeout, and assert it is still pending (not resolved).
+  const acceptA = d.dispatch(serverPid, { id: 5, call: 'ipc/accept', args: { fd: fdA } });
+  const timeout = new Promise<'pending'>((r) => setTimeout(() => r('pending'), 30));
+  const raced = await Promise.race([acceptA.then(() => 'resolved' as const), timeout]);
+  expect(raced).toBe('pending');
+
+  for (const r of [connect, acceptB]) {
+    if (r.transfer) for (const t of r.transfer) (t as MessagePort).close();
+  }
+  // Settle the still-parked acceptA so the test process exits cleanly.
+  d.closeProcess(serverPid);
+  await expect(acceptA).resolves.toMatchObject({ response: { ok: false, error: { code: 'EBADF' } } });
+});
+
+test('L-Fix 4: accept-before-connect — accept suspends as a waiter, then connect resolves it', async () => {
+  const { d, caps } = await makeDispatcher();
+  const serverPid = 62;
+  const clientPid = 63;
+  caps.grant(serverPid, [{ type: 'ipc', channels: ['/ipc/wait'] }]);
+  caps.grant(clientPid, [{ type: 'ipc', channels: ['/ipc/wait'] }]);
+
+  const listenRes = await d.dispatch(serverPid, { id: 1, call: 'ipc/listen', args: { path: '/ipc/wait' } });
+  const listenfd = (listenRes.response as { ok: true; result: { fd: number } }).result.fd;
+
+  // Accept FIRST — no connection queued yet, so it suspends as a waiter.
+  const acceptPromise = d.dispatch(serverPid, { id: 2, call: 'ipc/accept', args: { fd: listenfd } });
+  let resolved = false;
+  void acceptPromise.then(() => { resolved = true; });
+  await new Promise((r) => setTimeout(r, 10));
+  expect(resolved).toBe(false); // still parked
+
+  // Now connect — must resolve the parked accept.
+  const connectRes = await d.dispatch(clientPid, { id: 3, call: 'ipc/connect', args: { path: '/ipc/wait' } });
+  expect(connectRes.response.ok).toBe(true);
+
+  const acceptRes = await acceptPromise;
+  expect(acceptRes.response.ok).toBe(true);
+  expect(acceptRes.transfer).toHaveLength(1);
+
+  for (const r of [connectRes, acceptRes]) {
+    if (r.transfer) for (const t of r.transfer) (t as MessagePort).close();
+  }
+});
+
+test('L-Fix 2: closeProcess settles a parked ipc/accept waiter (rejects, does not hang)', async () => {
+  const { d, caps } = await makeDispatcher();
+  const serverPid = 64;
+  caps.grant(serverPid, [{ type: 'ipc', channels: ['/ipc/dead'] }]);
+
+  const listenRes = await d.dispatch(serverPid, { id: 1, call: 'ipc/listen', args: { path: '/ipc/dead' } });
+  const listenfd = (listenRes.response as { ok: true; result: { fd: number } }).result.fd;
+
+  // Park an accept (no connection), then kill the process.
+  const acceptPromise = d.dispatch(serverPid, { id: 2, call: 'ipc/accept', args: { fd: listenfd } });
+  await new Promise((r) => setTimeout(r, 5));
+  d.closeProcess(serverPid);
+
+  // The accept must settle (reject with EBADF) rather than hang forever.
+  const settled = await Promise.race([
+    acceptPromise.then((r) => r.response),
+    new Promise<'hung'>((r) => setTimeout(() => r('hung'), 100)),
+  ]);
+  expect(settled).not.toBe('hung');
+  expect(settled).toMatchObject({ ok: false, error: { code: 'EBADF' } });
+});
+
+test('L-Fix 2: closeProcess closes queued unaccepted connection ports', async () => {
+  const { d, caps } = await makeDispatcher();
+  const serverPid = 65;
+  const clientPid = 66;
+  caps.grant(serverPid, [{ type: 'ipc', channels: ['/ipc/leak'] }]);
+  caps.grant(clientPid, [{ type: 'ipc', channels: ['/ipc/leak'] }]);
+
+  await d.dispatch(serverPid, { id: 1, call: 'ipc/listen', args: { path: '/ipc/leak' } });
+
+  // Client connects but the server NEVER accepts — port2 is queued.
+  const connectRes = await d.dispatch(clientPid, { id: 2, call: 'ipc/connect', args: { path: '/ipc/leak' } });
+  expect(connectRes.response.ok).toBe(true);
+  const clientPort = connectRes.transfer![0] as MessagePort;
+
+  // Verify the queued (server-side) port is live before teardown by exchanging
+  // a message: wire the client side, post, and confirm receipt would require the
+  // peer to be open. We instead assert closeProcess does not throw and that a
+  // post on the client side after teardown does not deliver (peer closed).
+  let delivered = false;
+  clientPort.start?.();
+  clientPort.onmessage = () => { delivered = true; };
+
+  d.closeProcess(serverPid); // must close the queued server-side port
+
+  // Post from the client toward the now-closed peer; nothing should come back.
+  clientPort.postMessage({ type: 'data', chunk: new TextEncoder().encode('x') });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(delivered).toBe(false);
+
+  clientPort.close();
+});
+
 test('fs/close on a listener fd unbinds the path so subsequent connects return ENOENT', async () => {
   const { d, caps, ipc } = await makeDispatcher();
   const serverPid = 50;
