@@ -3,6 +3,7 @@ export const ERRNO_CODES = [
   'EINVAL', 'EIO', 'EISDIR', 'EMFILE', 'ENAMETOOLONG',
   'ENOENT', 'ENOSPC', 'ENOTDIR', 'ENOTEMPTY', 'EPERM',
   'EPIPE', 'ESRCH', 'ETIMEDOUT', 'EXDEV', 'EAGAIN', 'ENOSYS',
+  'ELOOP', 'EROFS',
 ] as const;
 export type ErrnoCode = typeof ERRNO_CODES[number];
 

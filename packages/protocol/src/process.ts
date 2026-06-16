@@ -9,14 +9,12 @@ export interface PreopenDescriptor {
   rights?: Partial<FdRights>;
 }
 
-export interface Capability {
-  type: 'fs' | 'net' | 'ipc' | 'process' | 'env';
-  paths?: string[];
-  operations?: ('read' | 'write' | 'execute')[];
-  origins?: string[];
-  channels?: string[];
-  maxChildren?: number;
-}
+export type Capability =
+  | { type: 'fs'; paths: string[]; operations: ('read' | 'write' | 'execute')[] }
+  | { type: 'net'; origins: string[] }
+  | { type: 'ipc'; channels: string[] }
+  | { type: 'process'; maxChildren?: number }
+  | { type: 'env' };
 
 export interface ProcessLimits {
   memoryMb?: number;
@@ -43,6 +41,16 @@ export interface ProcessInit {
 
 export interface ProcessReady { type: 'ready' }
 export interface ProcessExit { type: 'exit'; code: number }
+
+export function isProcessReady(x: unknown): x is ProcessReady {
+  return typeof x === 'object' && x !== null && (x as { type?: unknown }).type === 'ready';
+}
+
+export function isProcessExit(x: unknown): x is ProcessExit {
+  return typeof x === 'object' && x !== null
+    && (x as { type?: unknown }).type === 'exit'
+    && typeof (x as { code?: unknown }).code === 'number';
+}
 
 export type FdAction =
   | { action: 'inherit' }
