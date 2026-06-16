@@ -1,69 +1,26 @@
 import { expect, test } from 'vitest';
-import { initIsola } from './isola.ts';
+import { createGuest } from './isola.ts';
 
-function makeInitMessage() {
-  return {
-    type: 'init',
-    entry: 'test.wasm',
-    args: ['test', '--flag'],
-    env: { HOME: '/home/test', PATH: '/usr/bin' },
-    cwd: '/home/test',
-    pid: 42,
-    ppid: 1,
-    capabilities: [],
-  };
-}
-
-test('initIsola resolves with correct pid/ppid/args/env/cwd', async () => {
-  const { port1, port2 } = new MessageChannel();
-
-  const runtimeP = initIsola(port1);
-
-  // Send init message from "kernel"
-  port2.postMessage(makeInitMessage());
-
-  // Wait for ready
-  const ready = await new Promise<unknown>(resolve => {
-    port2.onmessage = (e) => resolve(e.data);
+test('createGuest exposes env/args/pid and stdio from init', async () => {
+  const { port1, port2 } = new MessageChannel();        // control port pair
+  const stdoutCh = new MessageChannel();
+  const guest = createGuest({
+    control: port2,
+    init: {
+      type: 'init', entry: 'inline', args: ['prog', 'a'], env: { FOO: 'bar' },
+      cwd: '/', pid: 9, ppid: 0, capabilities: [],
+    },
+    preopenPorts: { 1: stdoutCh.port1 },
   });
-  expect(ready).toEqual({ type: 'ready' });
-
-  const runtime = await runtimeP;
-  expect(runtime.pid).toBe(42);
-  expect(runtime.ppid).toBe(1);
-  expect(runtime.args).toEqual(['test', '--flag']);
-  expect(runtime.env).toEqual({ HOME: '/home/test', PATH: '/usr/bin' });
-  expect(runtime.cwd).toBe('/home/test');
-
-  port1.close(); port2.close();
-});
-
-test('initIsola syscall forwards to kernel and resolves', async () => {
-  const { port1, port2 } = new MessageChannel();
-  const runtimeP = initIsola(port1);
-
-  port2.postMessage(makeInitMessage());
-
-  // Consume ready
-  await new Promise<void>(resolve => {
-    port2.onmessage = (e) => {
-      if ((e.data as { type?: string }).type === 'ready') { resolve(); return; }
-      // Handle syscall
-      const req = e.data as { id: number; call: string };
-      port2.postMessage({ id: req.id, ok: true, result: { pid: 42 } });
-    };
-  });
-
-  const runtime = await runtimeP;
-
-  // Reset handler for syscalls
-  port2.onmessage = (e) => {
-    const req = e.data as { id: number; call: string };
-    port2.postMessage({ id: req.id, ok: true, result: { pid: 42 } });
-  };
-
-  const result = await runtime.syscall('process/getpid', {});
-  expect(result).toEqual({ pid: 42 });
-
-  port1.close(); port2.close();
+  expect(guest.pid).toBe(9);
+  expect(guest.args).toEqual(['prog', 'a']);
+  expect(guest.env.FOO).toBe('bar');
+  const w = guest.stdout.getWriter();
+  await w.write(new TextEncoder().encode('hi'));
+  const got: unknown[] = [];
+  stdoutCh.port2.onmessage = (e) => got.push(e.data);
+  stdoutCh.port2.start?.();
+  await new Promise(r => setTimeout(r, 20));
+  expect(got.some(m => (m as { type?: string }).type === 'data')).toBe(true);
+  port1.close();
 });

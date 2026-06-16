@@ -1,12 +1,17 @@
 import type { ProcessInit } from '@mithic/protocol';
-import { portToReadable, portToWritable } from './streams.ts';
-import { FdTable, makeDefaultEntry } from './fd-table.ts';
+import { isKernelEvent } from '@mithic/protocol';
 import { SyscallClient } from './syscall-client.ts';
-import { MessagePortTransport } from './transport.ts';
+import { portToReadable, portToWritable } from './streams.ts';
+import type { Transport } from './transport.ts';
 
-export interface IsolaRuntime {
+export interface GuestOptions {
+  control: MessagePort;
+  init: ProcessInit;
+  preopenPorts?: Record<number, MessagePort>;
+}
+
+export interface Guest {
   pid: number;
-  ppid: number;
   args: string[];
   env: Record<string, string>;
   cwd: string;
@@ -14,58 +19,50 @@ export interface IsolaRuntime {
   stdout: WritableStream<Uint8Array>;
   stderr: WritableStream<Uint8Array>;
   syscall(call: string, args: Record<string, unknown>): Promise<unknown>;
-  fdTable: FdTable;
+  onSignal(cb: (signal: string, payload?: unknown) => void): void;
+  exit(code: number): void;
 }
 
-export async function initIsola(port: MessagePort): Promise<IsolaRuntime> {
-  // Wait for ProcessInit message
-  const init = await new Promise<ProcessInit>((resolve) => {
-    port.onmessage = (e: MessageEvent) => {
-      const msg = e.data as unknown;
-      if (typeof msg === 'object' && msg !== null && 'type' in msg && (msg as { type: unknown }).type === 'init') {
-        resolve(msg as ProcessInit);
-      }
-    };
-    port.start?.();
-  });
+export function createGuest({ control, init, preopenPorts = {} }: GuestOptions): Guest {
+  const signalListeners: Array<(signal: string, payload?: unknown) => void> = [];
+  const responseListeners: Array<(msg: unknown) => void> = [];
 
-  // Create syscall transport (same port, reset handler)
-  const transport = new MessagePortTransport(port);
+  // Multiplex the control port: route syscall responses vs kernel events
+  control.start?.();
+  control.onmessage = (e: MessageEvent) => {
+    const msg = e.data as unknown;
+    if (isKernelEvent(msg)) {
+      if (msg.event === 'signal') {
+        const payload = msg.payload as { signal?: string; extra?: unknown } | undefined;
+        for (const cb of signalListeners) {
+          cb(payload?.signal ?? '', payload?.extra);
+        }
+      }
+    } else {
+      for (const cb of responseListeners) cb(msg);
+    }
+  };
+
+  // Build a transport that routes to/from our multiplexer
+  const transport: Transport = {
+    send(msg, transfer = []) { control.postMessage(msg, transfer as Transferable[]); },
+    onMessage(cb) { responseListeners.push(cb); },
+    close() { control.close(); },
+  };
+
   const client = new SyscallClient(transport);
 
-  const fdTable = new FdTable();
+  // Build stdio streams from preopen ports
+  const stdinPort = preopenPorts[0];
+  const stdoutPort = preopenPorts[1];
+  const stderrPort = preopenPorts[2];
 
-  // Set up stdio from preopens
-  const preopens = init.preopens ?? {};
-
-  // Default stdio streams - will be replaced if preopens provide ports
-  let stdin: ReadableStream<Uint8Array> = new ReadableStream({ start(c) { c.close(); } });
-  let stdout: WritableStream<Uint8Array> = new WritableStream();
-  let stderr: WritableStream<Uint8Array> = new WritableStream();
-
-  // Process preopens
-  for (const [fdStr, desc] of Object.entries(preopens)) {
-    const fd = Number(fdStr);
-    if (desc.type === 'pipe') {
-      fdTable.set(fd, makeDefaultEntry({
-        rights: {
-          read: desc.rights?.read ?? true,
-          write: desc.rights?.write ?? true,
-          seek: false,
-          stat: false,
-          truncate: false,
-        },
-        flags: { append: false, nonblock: false },
-      }));
-    }
-  }
-
-  // Notify ready
-  port.postMessage({ type: 'ready' });
+  const stdin = stdinPort ? portToReadable(stdinPort) : new ReadableStream<Uint8Array>();
+  const stdout = stdoutPort ? portToWritable(stdoutPort) : new WritableStream<Uint8Array>();
+  const stderr = stderrPort ? portToWritable(stderrPort) : new WritableStream<Uint8Array>();
 
   return {
     pid: init.pid,
-    ppid: init.ppid,
     args: init.args,
     env: init.env,
     cwd: init.cwd,
@@ -73,6 +70,10 @@ export async function initIsola(port: MessagePort): Promise<IsolaRuntime> {
     stdout,
     stderr,
     syscall: (call, args) => client.syscall(call, args),
-    fdTable,
+    onSignal(cb) { signalListeners.push(cb); },
+    exit(code) {
+      control.postMessage({ type: 'exit', code });
+      control.close();
+    },
   };
 }
