@@ -14,6 +14,10 @@
     "./backends/worker": {
       "types": "./dist/backends/worker.d.ts",
       "import": "./dist/backends/worker.js"
+    },
+    "./backends/ivm": {
+      "types": "./dist/backends/ivm.d.ts",
+      "import": "./dist/backends/ivm.js"
     }
   },
   "files": [
@@ -50,5 +54,8 @@
   },
   "devDependencies": {
     "@mithic/worker": "^0.1"
+  },
+  "optionalDependencies": {
+    "isolated-vm": "^5.0.4"
   }
 }
