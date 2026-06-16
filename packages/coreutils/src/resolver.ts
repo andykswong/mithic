@@ -22,7 +22,7 @@
  * corresponding `src/commands/<name>.ts` whose default export is
  * `defineCommand(fn)`. Later batches extend this list as they add commands.
  */
-export const COMMAND_NAMES = ['cat'] as const;
+export const COMMAND_NAMES = ['cat', 'grep', 'egrep', 'fgrep', 'sed'] as const;
 
 export type CoreutilsCommandName = typeof COMMAND_NAMES[number];
 
