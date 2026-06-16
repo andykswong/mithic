@@ -34,6 +34,8 @@ export const COMMAND_NAMES = [
   'true', 'false', 'env', 'expr', 'tac', 'comm', 'shuf', 'cksum', 'sum',
   // grep/sed batch
   'grep', 'egrep', 'fgrep', 'sed',
+  // awk
+  'awk',
 ] as const;
 
 export type CoreutilsCommandName = typeof COMMAND_NAMES[number];

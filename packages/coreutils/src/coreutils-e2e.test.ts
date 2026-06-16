@@ -204,6 +204,51 @@ test('sed -i writes back to the VFS file end-to-end', async () => {
   expect(await k.readFile('/edit.txt')).toBe('qux\nbar\nqux\n');
 }, 20000);
 
+// ── awk end-to-end (real Kernel) ────────────────────────────────────────────
+
+test('awk prints a field from piped input end-to-end', async () => {
+  const k = await bootKernel({});
+  const PRODUCER_AB = `import { createGuest } from '@mithic/guest-runtime';
+    export default async (boot) => {
+      const g = createGuest(boot);
+      const w = g.stdout.getWriter();
+      await w.write(new TextEncoder().encode('a b\\nc d\\n'));
+      await w.close();
+      g.exit(0);
+    };`;
+  const out = await k.producerInto(PRODUCER_AB, ['awk', '{print $2}']);
+  expect(out.stdout).toBe('b\nd\n');
+  expect(out.codes[out.codes.length - 1]).toBe(0);
+}, 20000);
+
+test('awk BEGIN/sum/END over a file end-to-end', async () => {
+  const k = await bootKernel({ '/nums.txt': '1\n2\n3\n4\n' });
+  const out = await k.spawn(['awk', 'BEGIN{s=0}{s+=$1}END{print s}', '/nums.txt']);
+  expect(out.stdout).toBe('10\n');
+  expect(out.code).toBe(0);
+}, 20000);
+
+test('awk -F field split end-to-end', async () => {
+  const k = await bootKernel({ '/csv.txt': 'alice,30\nbob,25\n' });
+  const out = await k.spawn(['awk', '-F,', '{print $1}', '/csv.txt']);
+  expect(out.stdout).toBe('alice\nbob\n');
+  expect(out.code).toBe(0);
+}, 20000);
+
+test('awk print > file writes the VFS end-to-end', async () => {
+  const k = await bootKernel({ '/in.txt': 'x\ny\n' });
+  const out = await k.spawnRW(['awk', '{ print $1 > "/awk-out.txt" }', '/in.txt']);
+  expect(out.code).toBe(0);
+  expect(await k.readFile('/awk-out.txt')).toBe('x\ny\n');
+}, 20000);
+
+test('cat <file> | awk gsub pipeline end-to-end', async () => {
+  const k = await bootKernel({ '/d.txt': 'foo\nfood\n' });
+  const out = await k.pipeline([['cat', '/d.txt'], ['awk', '{ gsub(/o/, "0"); print }']]);
+  expect(out.stdout).toBe('f00\nf00d\n');
+  expect(out.codes).toEqual([0, 0]);
+}, 20000);
+
 test('unknown command name resolves to undefined (kernel would ENOENT)', async () => {
   const resolve = createCoreutilsResolver();
   expect(resolve('definitely-not-a-command', '/', {})).toBeUndefined();
