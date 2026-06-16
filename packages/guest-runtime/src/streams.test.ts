@@ -172,3 +172,55 @@ test('backpressure: fast writer to a SLOW reader exhausts credit (desiredSize �
   port1.close();
   port2.close();
 }, 20000);
+
+// Fix 1 regression: parked writer wakes (rejects) when reader sends EPIPE
+test('Fix 1: parked writer rejects immediately when reader sends EPIPE', async () => {
+  const { port1, port2 } = new MessageChannel();
+  const writable = portToWritable(port1);
+  const writer = writable.getWriter();
+  port2.start?.();
+
+  // Write a large chunk — chunk size > 0 credit, so flush parks in creditWaiters.
+  // Use a size that triggers the PIPE_FLUSH_BYTES path (immediate flushNow call).
+  const { PIPE_FLUSH_BYTES } = await import('@mithic/protocol');
+  const chunk = new Uint8Array(PIPE_FLUSH_BYTES);
+  const writePromise = writer.write(chunk);
+  // Absorb the writer.closed rejection that fires when the stream errors.
+  writer.closed.catch(() => { /* stream errored — expected */ });
+
+  // After a tick, write is still pending (no credit granted).
+  await new Promise(r => setTimeout(r, 10));
+
+  // Peer sends EPIPE — parked writer must wake and reject.
+  port2.postMessage({ type: 'error', code: 'EPIPE' });
+
+  // Must settle within a reasonable time, not hang forever.
+  await expect(writePromise).rejects.toThrow('EPIPE');
+
+  port1.close();
+  port2.close();
+});
+
+// Fix 1 regression: parked writer wakes (rejects) when reader sends end
+test('Fix 1: parked writer rejects immediately when reader sends end', async () => {
+  const { port1, port2 } = new MessageChannel();
+  const writable = portToWritable(port1);
+  const writer = writable.getWriter();
+  port2.start?.();
+
+  const { PIPE_FLUSH_BYTES } = await import('@mithic/protocol');
+  const chunk = new Uint8Array(PIPE_FLUSH_BYTES);
+  const writePromise = writer.write(chunk);
+  // Absorb the writer.closed rejection that fires when the stream errors.
+  writer.closed.catch(() => { /* stream errored — expected */ });
+
+  await new Promise(r => setTimeout(r, 10));
+
+  // Peer closes/ends — parked writer must wake and reject with EPIPE.
+  port2.postMessage({ type: 'end' });
+
+  await expect(writePromise).rejects.toThrow('EPIPE');
+
+  port1.close();
+  port2.close();
+});

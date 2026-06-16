@@ -71,3 +71,37 @@ test('SyscallClient.close() rejects all pending syscalls with EPIPE', async () =
   await expect(pending).rejects.toMatchObject({ message: 'transport closed', code: 'EPIPE' });
   port2.close();
 });
+
+// Fix 2 regression: opt-in per-call timeout rejects with ETIMEDOUT
+test('Fix 2: syscall rejects with ETIMEDOUT when timeoutMs set and kernel never responds', async () => {
+  const { port1, port2 } = new MessageChannel();
+  // Kernel side: never responds.
+  port2.start?.();
+
+  const client = new SyscallClient(new MessagePortTransport(port1), { timeoutMs: 50 });
+
+  const start = Date.now();
+  await expect(client.syscall('op/hang', {})).rejects.toMatchObject({ code: 'ETIMEDOUT' });
+  // Should have rejected within ~200 ms (well above 50 ms but not a hang).
+  expect(Date.now() - start).toBeLessThan(1000);
+
+  port1.close();
+  port2.close();
+});
+
+// Fix 2 regression: without timeoutMs, behaviour is unchanged (resolves normally)
+test('Fix 2: without timeoutMs option, syscall resolves normally when kernel responds', async () => {
+  const { port1, port2 } = new MessageChannel();
+  const client = new SyscallClient(new MessagePortTransport(port1));
+
+  port2.onmessage = (e) => {
+    const req = e.data as { id: number };
+    port2.postMessage({ id: req.id, ok: true, result: { answer: 42 } });
+  };
+
+  const result = await client.syscall('op/echo', {});
+  expect(result).toEqual({ answer: 42 });
+
+  port1.close();
+  port2.close();
+});

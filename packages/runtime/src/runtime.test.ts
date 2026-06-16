@@ -49,3 +49,11 @@ test('worker and iframe support parallelism; quickjs does not', () => {
   expect(QUICKJS_CAPABILITIES.parallelism).toBe(false);
   expect(IVM_CAPABILITIES.parallelism).toBe(true);
 });
+
+// Fix 3: ivm only enforces wall-clock via context.eval({timeout}), not true
+// CPU metering (isolate.cpuTime). cpuLimit must be false to be honest.
+test('Fix 3: ivm cpuLimit is false (wall-clock timeout only, not true CPU metering)', () => {
+  expect(IVM_CAPABILITIES.cpuLimit).toBe(false);
+  // QuickJS uses an opcode-count interrupt handler — it is a CPU proxy.
+  expect(QUICKJS_CAPABILITIES.cpuLimit).toBe(true);
+});

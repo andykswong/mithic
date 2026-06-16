@@ -80,13 +80,26 @@ export const QUICKJS_CAPABILITIES: RuntimeCapabilities = {
   interruptible: true,
 };
 
+/**
+ * IVM (isolated-vm) backend capabilities.
+ *
+ * `cpuLimit: false` — isolated-vm's `context.eval({ timeout })` enforces a
+ * **wall-clock** deadline, not a CPU-time budget.  True CPU metering would
+ * require polling `isolate.cpuTime` in a separate timer loop or relying on
+ * `isolate.wallTime`, neither of which is currently wired.  Advertising
+ * `cpuLimit: true` would be dishonest; set it to false until real cpuTime
+ * enforcement is added.
+ *
+ * `memoryLimit: true` — enforced via the `memoryLimit` constructor option
+ * (hard V8 heap cap that terminates the isolate on OOM).
+ */
 export const IVM_CAPABILITIES: RuntimeCapabilities = {
   gui: false,
   transferable: false,
   directPipes: false,
   deterministic: false,
   memoryLimit: true,
-  cpuLimit: true,
+  cpuLimit: false,
   parallelism: true,
   interruptible: true,
 };

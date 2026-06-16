@@ -15,18 +15,31 @@ export function portToWritable(port: MessagePort): WritableStream<Uint8Array> {
   port.start?.();
   // Writer starts at 0 credit; the reader grants credit via PipeCredit messages.
   let credit = 0;
-  // Queue of waiters: each waiter blocks until enough credit is available.
-  const creditWaiters: Array<{ needed: number; resolve: () => void }> = [];
+  // Queue of waiters: each waiter blocks until enough credit is available or the
+  // pipe is broken. On EPIPE/end the reject path wakes them all immediately.
+  const creditWaiters: Array<{ needed: number; resolve: () => void; reject: (e: unknown) => void }> = [];
+
+  /** Wake all parked writers with an error (reader cancelled / pipe closed). */
+  function rejectAllWaiters(err: unknown): void {
+    const waiters = creditWaiters.splice(0);
+    for (const w of waiters) w.reject(err);
+  }
 
   port.onmessage = (e: MessageEvent) => {
     const msg = e.data as unknown;
-    if (isPipeMessage(msg) && msg.type === 'credit') {
+    if (!isPipeMessage(msg)) return;
+    if (msg.type === 'credit') {
       credit += msg.bytes;
       // Wake waiters whose needed credit is now satisfied, in FIFO order.
       while (creditWaiters.length > 0 && credit >= creditWaiters[0].needed) {
         const waiter = creditWaiters.shift()!;
         waiter.resolve();
       }
+    } else if (msg.type === 'end' || msg.type === 'error') {
+      // Reader cancelled or peer sent EPIPE — wake all parked writers so they
+      // don't hang forever waiting for credit that will never arrive.
+      const code = msg.type === 'error' ? msg.code : 'EPIPE';
+      rejectAllWaiters(Object.assign(new Error(code), { code }));
     }
   };
 
@@ -44,9 +57,10 @@ export function portToWritable(port: MessagePort): WritableStream<Uint8Array> {
     return (async () => {
       for (const chunk of chunks) {
         // Block until the reader has granted enough credit for this chunk.
+        // If the reader cancels or sends EPIPE, the promise rejects immediately.
         if (credit < chunk.byteLength) {
-          await new Promise<void>(resolve => {
-            creditWaiters.push({ needed: chunk.byteLength, resolve });
+          await new Promise<void>((resolve, reject) => {
+            creditWaiters.push({ needed: chunk.byteLength, resolve, reject });
           });
         }
         credit -= chunk.byteLength;
@@ -63,8 +77,8 @@ export function portToWritable(port: MessagePort): WritableStream<Uint8Array> {
       bufSize += chunk.byteLength;
       if (bufSize >= PIPE_FLUSH_BYTES) return flushNow();
       if (flushTimer === null) {
-        return new Promise<void>(resolve => {
-          flushTimer = setTimeout(() => { flushNow().then(resolve); }, PIPE_FLUSH_MS);
+        return new Promise<void>((resolve, reject) => {
+          flushTimer = setTimeout(() => { flushNow().then(resolve, reject); }, PIPE_FLUSH_MS);
         });
       }
       return Promise.resolve();

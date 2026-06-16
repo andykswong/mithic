@@ -84,14 +84,23 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
 
   const client = new SyscallClient(transport);
 
-  // Build stdio streams from preopen ports
+  // Build stdio streams from preopen ports.
+  // When a port is absent the fd is intentionally /dev/null-like:
+  //   stdin  → an immediately-closed ReadableStream (yields EOF on first read).
+  //   stdout/stderr → a null-sink WritableStream whose write() is a no-op,
+  //     analogous to writing to a closed/detached fd. This is intentional —
+  //     guest code that writes to stdout/stderr when those fds are not wired
+  //     (e.g. headless processes that only use syscalls) should not throw.
+  const nullSink = (): WritableStream<Uint8Array> =>
+    new WritableStream<Uint8Array>({ write() { /* /dev/null — intentional discard */ } });
+
   const stdinPort = preopenPorts[0];
   const stdoutPort = preopenPorts[1];
   const stderrPort = preopenPorts[2];
 
   const stdin = stdinPort ? portToReadable(stdinPort) : new ReadableStream<Uint8Array>();
-  const stdout = stdoutPort ? portToWritable(stdoutPort) : new WritableStream<Uint8Array>();
-  const stderr = stderrPort ? portToWritable(stderrPort) : new WritableStream<Uint8Array>();
+  const stdout = stdoutPort ? portToWritable(stdoutPort) : nullSink();
+  const stderr = stderrPort ? portToWritable(stderrPort) : nullSink();
 
   return {
     pid: init.pid,
