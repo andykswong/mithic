@@ -13,7 +13,7 @@ import type { PipeMessage } from '@mithic/protocol';
  */
 export function portToWritable(port: MessagePort): WritableStream<Uint8Array> {
   port.start?.();
-  let credit = 0;
+  let credit = INITIAL_CREDIT_BYTES;
   let creditResolve: (() => void) | null = null;
 
   port.onmessage = (e: MessageEvent) => {
