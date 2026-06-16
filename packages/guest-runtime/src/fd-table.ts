@@ -1,52 +1,39 @@
 import type { FdFlags, FdRights } from '@mithic/protocol';
 
 export interface FdEntry {
-  fd: number;
+  type: 'pipe' | 'file' | 'directory' | 'socket';
+  port: MessagePort;
   rights: FdRights;
   flags: FdFlags;
-  readable?: ReadableStream<Uint8Array>;
-  writable?: WritableStream<Uint8Array>;
 }
 
-const DEFAULT_RIGHTS: FdRights = { read: true, write: true, seek: true, stat: true, truncate: true };
-const DEFAULT_FLAGS: FdFlags = { append: false, nonblock: false };
-
 export class FdTable {
-  private entries = new Map<number, FdEntry>();
+  private table = new Map<number, FdEntry>();
   private nextFd = 3;
 
-  set(fd: number, entry: Omit<FdEntry, 'fd'>): void {
-    this.entries.set(fd, { fd, ...entry });
-    if (fd >= this.nextFd) this.nextFd = fd + 1;
-  }
-
-  get(fd: number): FdEntry | undefined {
-    return this.entries.get(fd);
-  }
-
-  alloc(entry: Omit<FdEntry, 'fd'>): number {
+  add(entry: FdEntry): number {
+    while (this.table.has(this.nextFd)) this.nextFd++;
     const fd = this.nextFd++;
-    this.entries.set(fd, { fd, ...entry });
+    this.table.set(fd, entry);
     return fd;
   }
 
-  close(fd: number): boolean {
-    return this.entries.delete(fd);
+  set(fd: number, entry: FdEntry): void {
+    this.table.set(fd, entry);
   }
 
-  has(fd: number): boolean {
-    return this.entries.has(fd);
+  get(fd: number): FdEntry | undefined {
+    return this.table.get(fd);
   }
 
-  get size(): number {
-    return this.entries.size;
+  close(fd: number): void {
+    this.table.delete(fd);
   }
-}
 
-export function makeDefaultEntry(overrides?: Partial<Omit<FdEntry, 'fd'>>): Omit<FdEntry, 'fd'> {
-  return {
-    rights: { ...DEFAULT_RIGHTS },
-    flags: { ...DEFAULT_FLAGS },
-    ...overrides,
-  };
+  detach(fd: number): MessagePort | undefined {
+    const entry = this.table.get(fd);
+    if (!entry) return undefined;
+    this.table.delete(fd);
+    return entry.port;
+  }
 }
