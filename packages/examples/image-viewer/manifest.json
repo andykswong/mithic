@@ -1,0 +1,15 @@
+{
+  "name": "image-viewer",
+  "version": "2.0.0",
+  "entry": "./dist/process.js",
+  "display": {
+    "mode": "window",
+    "defaultSize": [800, 600]
+  },
+  "capabilities": {
+    "fs": {
+      "paths": ["/tmp"],
+      "operations": ["read", "write"]
+    }
+  }
+}

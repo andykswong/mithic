@@ -84,6 +84,8 @@
     "./packages/server",
     "./packages/examples/component-js",
     "./packages/examples/component-rust",
-    "./packages/examples/shell"
+    "./packages/examples/shell",
+    "./packages/examples/image-viewer",
+    "./packages/examples/notebook"
   ]
 }

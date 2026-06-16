@@ -1,0 +1,40 @@
+{
+  "name": "@mithic/example-image-viewer",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Isola example — a GUI image-viewer process that renders a drop-zone + <img> in its own sandboxed iframe DOM",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/process.d.ts",
+      "import": "./dist/process.js"
+    },
+    "./manifest": "./manifest.json"
+  },
+  "files": [
+    "/dist",
+    "/manifest.json"
+  ],
+  "scripts": {
+    "clean": "rimraf dist *.tsbuildinfo",
+    "build": "vite build",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andykswong/mithic.git"
+  },
+  "author": "Andy K.S. Wong <andykswong@outlook.com>",
+  "license": "MIT",
+  "dependencies": {
+    "@mithic/guest-runtime": "2.0.0",
+    "@mithic/protocol": "2.0.0"
+  },
+  "devDependencies": {
+    "@mithic/io": "2.0.0",
+    "@mithic/kernel": "2.0.0",
+    "@mithic/runtime": "2.0.0"
+  }
+}

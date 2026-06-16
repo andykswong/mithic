@@ -118,6 +118,21 @@ export interface SpawnInit {
   stdin?: MessagePort;
   stdout?: MessagePort;
   stderr?: MessagePort;
+  /**
+   * GUI display placement for runtimes that render the guest (e.g. IframeRuntime).
+   * `mode: 'inline'` places a visible iframe sized `width`x`height`; the default
+   * `'hidden'` keeps it off-screen. Ignored by non-GUI runtimes. The kernel threads
+   * this straight through to the launcher and runtime — see {@link DisplayOptions}.
+   */
+  display?: DisplayOptions;
+}
+
+/** GUI display placement, mirroring `SpawnOptions.display` on the runtime. */
+export interface DisplayOptions {
+  mode: 'hidden' | 'inline' | 'window' | 'fullscreen';
+  width?: number;
+  height?: number;
+  title?: string;
 }
 
 export interface SpawnResult {
@@ -163,6 +178,8 @@ export interface LaunchContext {
   init: ProcessInit;
   control: MessagePort;
   stdio: MessagePort[];
+  /** GUI display placement forwarded to the runtime's `spawn` (see {@link DisplayOptions}). */
+  display?: DisplayOptions;
 }
 
 /** Starts a guest module against the kernel-built boot wiring. */
@@ -296,6 +313,7 @@ export class Kernel {
       init: processInit,
       control: guestControl,
       stdio,
+      display: init.display,
     });
 
     this.#handles.set(pid, handle);
@@ -658,6 +676,7 @@ export class DefaultGuestLauncher implements GuestLauncher {
       return runtime.spawn(ctx.code, {
         init: ctx.init,
         transfer: [ctx.control, ...ctx.stdio],
+        display: ctx.display,
       });
     }
     return this.#launchInProcess(runtime, ctx);

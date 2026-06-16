@@ -32,6 +32,8 @@ export default defineConfig({
           include: [
             `packages/${ISOLA_PACKAGES}/src/**/*.browser.test.ts`,
             'packages/io/src/vfs/**/*.browser.test.ts',
+            // Group P example packages (image-viewer GUI process + xterm notebook).
+            'packages/examples/{image-viewer,notebook}/src/**/*.browser.test.ts',
           ],
           exclude: ['**/node_modules/**', '**/dist/**'],
           browser: {

@@ -37,6 +37,18 @@ export class IframeRuntime implements Runtime {
 
   #nextId = 1;
   #processes = new Map<number, IframeEntry>();
+  /** DOM node visible (non-hidden) iframes are appended to. Defaults to document.body. */
+  #container: HTMLElement | undefined;
+
+  /**
+   * @param options.container Where visible (`display.mode !== 'hidden'`) iframes are
+   *   mounted. Defaults to `document.body`. Hidden iframes always go on `document.body`
+   *   off-screen. A host (e.g. the notebook) passes a results pane here so inline GUI
+   *   processes render in place.
+   */
+  constructor(options: { container?: HTMLElement } = {}) {
+    this.#container = options.container;
+  }
 
   async spawn(code: string | URL, options: SpawnOptions): Promise<ProcessHandle> {
     const id = this.#nextId++;
@@ -96,8 +108,11 @@ export class IframeRuntime implements Runtime {
     const entry: IframeEntry = { iframe, messageListener, callbacks };
     this.#processes.set(id, entry);
 
-    // Append to DOM so the iframe gets a browsing context and can execute scripts
-    document.body.appendChild(iframe);
+    // Append to DOM so the iframe gets a browsing context and can execute scripts.
+    // Hidden iframes always live off-screen on document.body; visible ones go into
+    // the configured container (defaults to document.body) so a host can place them.
+    const mount = displayMode === 'hidden' ? document.body : (this.#container ?? document.body);
+    mount.appendChild(iframe);
 
     // Wait for the iframe to load its srcdoc before posting messages
     await new Promise<void>((resolve) => {
