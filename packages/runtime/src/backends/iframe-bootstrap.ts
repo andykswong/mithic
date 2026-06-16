@@ -55,9 +55,19 @@ window.onmessage = (e) => {
       // We replace ALL occurrences of 'export default' since the guest string may
       // have multiple such patterns (prelude + actual export).
       let src = data.__isola_run;
-      // Replace 'export default' (anywhere in the code) with a globalThis assignment.
-      // Use a global regex to handle multiple occurrences.
-      src = src.replace(/\\bexport\\s+default\\s+/g, 'globalThis.__isola_default = ');
+      // Replace "export default" at statement position with a globalThis assignment so
+      // the code can be eval'd as a classic script.
+      //
+      // CONSTRAINT: This rewrite is valid only for controlled host-provided guest strings.
+      // The regex is anchored to line-start (^ in multiline mode) with optional leading
+      // whitespace so it does NOT match "export default" embedded mid-line inside a string
+      // literal or comment on the same line as other code.
+      // Example safe:     export default function() {}
+      // Example NOT hit:  const x = "export default x";  (mid-line, not at line start)
+      // If a guest contains "export default" at the start of a line inside a string,
+      // that guest code is not supported -- it must use a different string delimiter or
+      // set globalThis.__isola_default directly.
+      src = src.replace(/^[ \\t]*export\\s+default\\s+/mg, 'globalThis.__isola_default = ');
       // Also strip any remaining bare 'export { ... }' or 'export const' etc.
       // that might appear in ESM guest code — not expected in inline guest strings.
       (0, eval)(src);

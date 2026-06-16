@@ -45,13 +45,16 @@ export class IframeRuntime implements Runtime {
     if (typeof code === 'string') {
       codeStr = code;
     } else {
-      // URL reference: generate a dynamic import statement
-      codeStr = `
-        import mod from ${JSON.stringify(code instanceof URL ? code.href : String(code))};
+      // URL reference: generate a dynamic import expression wrapped in an async IIFE.
+      // A static `import mod from "..."` declaration is NOT valid inside eval(), so we
+      // use a dynamic `await import(url)` expression instead — matching worker.ts behavior.
+      const url = code instanceof URL ? code.href : String(code);
+      codeStr = `(async () => {
+        const mod = await import(${JSON.stringify(url)});
         if (typeof mod.default === 'function') {
           globalThis.__isola_default = mod.default;
         }
-      `;
+      })();`;
     }
 
     // Create the sandboxed iframe
@@ -78,8 +81,10 @@ export class IframeRuntime implements Runtime {
     // Listen for messages from this iframe; use window.onmessage filtering by source.
     // We capture the iframe reference in a closure so we can match the source.
     const messageListener = (e: MessageEvent) => {
-      // Only accept messages from this iframe's contentWindow
-      if (iframe.contentWindow && e.source !== iframe.contentWindow) return;
+      // Only accept messages from this iframe's contentWindow.
+      // If contentWindow is null (iframe not yet in DOM), reject all messages to
+      // avoid accidentally admitting messages from unrelated windows.
+      if (!iframe.contentWindow || e.source !== iframe.contentWindow) return;
       const msg = e.data as SyscallRequest;
       for (const cb of callbacks) {
         cb(msg);
