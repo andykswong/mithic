@@ -24,6 +24,23 @@ export interface QuickJSSpawnOptions extends SpawnOptions {
   onSyscall: (call: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>;
 }
 
+/**
+ * Approximate number of guest opcodes between interrupt-handler invocations.
+ * quickjs-emscripten invokes the interrupt handler periodically as the guest
+ * executes; this is the per-invocation opcode proxy used to derive an opcode
+ * budget from a `cpuMs` limit. It is intentionally a coarse proxy — QuickJS does
+ * not expose true CPU time.
+ */
+const INTERRUPT_OP_INTERVAL = 1000;
+
+/**
+ * Opcode budget per millisecond of `cpuMs`. A coarse proxy mapping the requested
+ * CPU-time budget onto an executed-opcode count, since quickjs-emscripten does
+ * not expose CPU time. Tuned so that a small `cpuMs` aborts a tight infinite
+ * loop while allowing normal short-lived guests to complete.
+ */
+const CPU_OPS_PER_MS = 100_000;
+
 /** Exit result returned by `waitExit`. */
 export interface ExitResult {
   code: number;
@@ -68,8 +85,13 @@ interface ProcessEntry {
  * assigns exit code 137.  **After OOM `qjsRuntime.dispose()` will abort the WASM
  * module** — we skip it and let the runtime be garbage-collected instead.
  *
- * Wall-clock limits are enforced by an `setInterruptHandler` that fires roughly
- * every 1000 ops and compares `Date.now()` against a deadline.
+ * CPU/wall-clock limits are both enforced by `setInterruptHandler`, which fires
+ * roughly every INTERRUPT_OP_INTERVAL opcodes. It (a) compares `Date.now()`
+ * against a `timeoutMs`-derived wall-clock deadline and (b) enforces a CPU-op
+ * budget derived from `cpuMs` (handler invocations × interval ≈ opcodes executed,
+ * aborting once the budget is exceeded). QuickJS exposes no true CPU-time counter,
+ * so the opcode count is a conservative proxy — this is what backs
+ * `QUICKJS_CAPABILITIES.cpuLimit === true`.
  *
  * ## Data crossing the boundary
  *
@@ -129,14 +151,25 @@ export class QuickJSRuntime implements Runtime {
       qjsRuntime.setMemoryLimit(limits.memoryMb * 1024 * 1024);
     }
 
-    // Wall-clock / interrupt handler — fires ~every 1000 ops.
+    // Interrupt handler enforces BOTH a wall-clock deadline (timeoutMs) AND a
+    // CPU-op budget derived from cpuMs. The handler fires roughly every
+    // INTERRUPT_OP_INTERVAL opcodes, so we count handler invocations and multiply
+    // by the interval to get an opcode-count proxy. cpuMs is converted to an
+    // opcode budget via CPU_OPS_PER_MS (a conservative proxy: real CPU time is not
+    // exposed by quickjs-emscripten, so we bound executed opcodes instead). This
+    // honors QUICKJS_CAPABILITIES.cpuLimit === true.
     const timeoutMs = limits?.timeoutMs ?? 0;
+    const cpuMs = limits?.cpuMs ?? 0;
     const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : 0;
-    if (deadline > 0) {
-      let opCount = 0;
+    const opBudget = cpuMs > 0 ? cpuMs * CPU_OPS_PER_MS : 0;
+    if (deadline > 0 || opBudget > 0) {
+      let invocations = 0;
       qjsRuntime.setInterruptHandler(() => {
-        opCount++;
-        if (opCount % 1000 === 0 && Date.now() > deadline) return true;
+        invocations++;
+        // Opcode-count-derived CPU budget: invocations * interval ≈ ops executed.
+        if (opBudget > 0 && invocations * INTERRUPT_OP_INTERVAL >= opBudget) return true;
+        // Wall-clock deadline, sampled periodically to keep the check cheap.
+        if (deadline > 0 && invocations % 1000 === 0 && Date.now() > deadline) return true;
         return false;
       });
     }
@@ -164,6 +197,15 @@ export class QuickJSRuntime implements Runtime {
         const args = typeof argsRaw === 'object' && argsRaw !== null
           ? (argsRaw as Record<string, unknown>)
           : {};
+        // QUICKJS_CAPABILITIES.transferable === false: there are no transferable
+        // MessagePorts in this backend, so port-based syscalls are unsupported.
+        // Reject them here in the backend rather than relying on the launcher.
+        if (call === 'fs/port') {
+          return jsonToHandle(ctx, {
+            ok: false,
+            error: { code: 'ENOSYS', message: 'fs/port unsupported: QuickJS backend has no transferable ports' },
+          });
+        }
         const response = await options.onSyscall(call, args);
         return jsonToHandle(ctx, response);
       }

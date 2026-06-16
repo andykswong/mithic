@@ -28,22 +28,43 @@ export interface KernelOptions {
   /**
    * Optional launcher for runtimes where `capabilities.directPipes === false`
    * (e.g. QuickJS). The kernel calls `relayLauncher.launchRelay()` instead of the
-   * normal port-transfer path, passing the kernel's SyscallDispatcher and pipe
-   * write/read hooks so the launcher can relay I/O over whatever bridge the backend
-   * supports (e.g. `__isola_syscall` in QuickJS).
+   * normal port-transfer path, passing pipe write/read hooks and a kernel-owned
+   * `onSyscall` callback so the launcher can relay I/O over whatever bridge the
+   * backend supports (e.g. `__isola_syscall` in QuickJS).
    * Required when using a non-transferable runtime backend.
    */
   relayLauncher?: RelayLauncher;
 }
 
 /**
+ * Result of routing a guest syscall through the kernel on the relay path.
+ * Mirrors the shape of {@link SyscallResponse} minus the request id, which the
+ * kernel owns internally.
+ */
+export type RelaySyscallResult =
+  | { ok: true; result: unknown }
+  | { ok: false; error: { code: string; message: string } };
+
+/**
  * I/O relay context provided to a `RelayLauncher` for non-transferable backends.
  * The launcher drives pipe data through these callbacks instead of transferring ports.
+ *
+ * SECURITY: the launcher is NEVER given the raw `SyscallDispatcher` or a pid it
+ * can pass to `dispatch`. Instead it relays the guest's raw syscall via
+ * {@link onSyscall}, which the KERNEL implements by routing through its dispatcher
+ * with the correct, kernel-owned pid. Capability enforcement therefore always runs
+ * inside the kernel, identically to the transfer path — a launcher cannot forge a
+ * pid or bypass capability checks.
  */
 export interface RelayContext {
   code: string | URL;
   init: ProcessInit;
-  dispatcher: SyscallDispatcher;
+  /**
+   * Route a guest syscall through the kernel. The kernel binds the correct pid
+   * internally and dispatches through its `SyscallDispatcher`, so all capability
+   * checks run in-kernel. The launcher supplies only the guest's raw `call`+`args`.
+   */
+  onSyscall(call: string, args: Record<string, unknown>): Promise<RelaySyscallResult>;
   /** Push a chunk to stdout (fd 1). */
   writeStdout(chunk: Uint8Array): void;
   /** Push a chunk to stderr (fd 2). */
@@ -254,8 +275,16 @@ export class Kernel {
     };
 
     // Collect stdout/stderr in-memory; resolve when the process closes the pipe.
+    // Bound total buffered bytes per stream to avoid an unbounded host-OOM vector:
+    // a runaway guest writing forever would otherwise grow host memory without limit.
+    // Mirrors the transfer path's `drainPort` credit bound (1<<24). Honors
+    // `init.limits?.maxOutputBytes` when set, else a 64MB default.
+    const maxOutputBytes = init.limits?.maxOutputBytes ?? RELAY_MAX_OUTPUT_BYTES;
     const stdoutChunks: Uint8Array[] = [];
     const stderrChunks: Uint8Array[] = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let outputOverflow = false;
     let stdoutResolve: ((v: Uint8Array) => void) | undefined;
     let stderrResolve: ((v: Uint8Array) => void) | undefined;
 
@@ -266,14 +295,43 @@ export class Kernel {
       ? new Promise<Uint8Array>((res) => { stderrResolve = res; })
       : undefined;
 
-    const dispatcher = this.dispatcher;
+    // Once either stream exceeds the cap, stop accumulating, flag overflow, and
+    // terminate the process so the guest cannot keep driving host allocations.
+    const onOverflow = (): void => {
+      if (outputOverflow) return;
+      outputOverflow = true;
+      // Resolve captures with whatever was buffered up to the cap (truncated).
+      stdoutResolve?.(concat(stdoutChunks));
+      stderrResolve?.(concat(stderrChunks));
+      this.kill(pid, 'SIGKILL');
+    };
 
     const relayCtx: RelayContext = {
       code,
       init: processInit,
-      dispatcher,
-      writeStdout(chunk) { stdoutChunks.push(chunk); },
-      writeStderr(chunk) { stderrChunks.push(chunk); },
+      onSyscall: (call, args) => this.#relaySyscall(pid, call, args),
+      writeStdout(chunk) {
+        if (outputOverflow) return;
+        if (stdoutBytes + chunk.byteLength > maxOutputBytes) {
+          const room = maxOutputBytes - stdoutBytes;
+          if (room > 0) { stdoutChunks.push(chunk.subarray(0, room)); stdoutBytes += room; }
+          onOverflow();
+          return;
+        }
+        stdoutChunks.push(chunk);
+        stdoutBytes += chunk.byteLength;
+      },
+      writeStderr(chunk) {
+        if (outputOverflow) return;
+        if (stderrBytes + chunk.byteLength > maxOutputBytes) {
+          const room = maxOutputBytes - stderrBytes;
+          if (room > 0) { stderrChunks.push(chunk.subarray(0, room)); stderrBytes += room; }
+          onOverflow();
+          return;
+        }
+        stderrChunks.push(chunk);
+        stderrBytes += chunk.byteLength;
+      },
       closeStdout() { stdoutResolve?.(concat(stdoutChunks)); },
       closeStderr() { stderrResolve?.(concat(stderrChunks)); },
       notifyExit: (code) => { this.#exit(pid, code); },
@@ -285,6 +343,24 @@ export class Kernel {
     this.#handles.set(pid, handle);
 
     return { pid, stdout, stderr };
+  }
+
+  /**
+   * Kernel-owned syscall routing for the relay path. The launcher passes the
+   * guest's raw `call`+`args`; the kernel binds the correct, kernel-owned `pid`
+   * and dispatches through its own `SyscallDispatcher`, so all capability checks
+   * run in-kernel — identical to the transfer path. The launcher can neither
+   * forge the pid nor reach the dispatcher directly.
+   */
+  async #relaySyscall(
+    pid: number,
+    call: string,
+    args: Record<string, unknown>
+  ): Promise<RelaySyscallResult> {
+    const res = await this.dispatcher.dispatch(pid, { id: 0, call, args });
+    return res.ok
+      ? { ok: true, result: res.result }
+      : { ok: false, error: res.error };
   }
 
   #handles = new Map<number, ProcessHandle>();
@@ -349,6 +425,14 @@ export class Kernel {
     }
   }
 }
+
+/**
+ * Default cap on total buffered relay output per stream (stdout/stderr) when
+ * `limits.maxOutputBytes` is unset. Matches the transfer path's drainPort credit
+ * bound (1<<24 = 16MiB)... but relays may legitimately produce more, so default
+ * to 64MiB. Beyond this the relay stops buffering and terminates the guest.
+ */
+const RELAY_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 function isSyscallRequestMsg(x: unknown): x is SyscallRequest {
   return typeof x === 'object' && x !== null

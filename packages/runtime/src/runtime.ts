@@ -59,6 +59,16 @@ export const IFRAME_CAPABILITIES: RuntimeCapabilities = {
   interruptible: false,
 };
 
+/**
+ * QuickJS (quickjs-emscripten) backend capabilities.
+ *
+ * - `transferable: false` / `directPipes: false`: no MessagePort transfer — the
+ *   kernel uses the relay path and routes syscalls in-kernel via `RelayContext.onSyscall`.
+ * - `memoryLimit: true`: enforced via `setMemoryLimit` (hard QuickJS heap cap).
+ * - `cpuLimit: true`: enforced via the interrupt handler, which honors BOTH a
+ *   wall-clock `timeoutMs` deadline AND a CPU-op budget derived from `cpuMs`
+ *   (opcode-count proxy, since QuickJS exposes no true CPU-time counter).
+ */
 export const QUICKJS_CAPABILITIES: RuntimeCapabilities = {
   gui: false,
   transferable: false,

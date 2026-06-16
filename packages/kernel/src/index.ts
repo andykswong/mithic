@@ -7,6 +7,7 @@ export type {
   GuestLauncher,
   RelayContext,
   RelayLauncher,
+  RelaySyscallResult,
 } from './kernel.ts';
 export { CapabilityManager } from './capability-manager.ts';
 export type { FsOperation } from './capability-manager.ts';

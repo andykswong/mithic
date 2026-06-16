@@ -1,9 +1,8 @@
 /**
- * H.3: Kernel integration over QuickJS + cross-backend parity
+ * H.3: Kernel integration over QuickJS + cross-backend smoke test
  *
- * Validates Open Question 9 (write-once-run-anywhere): the kernel can host guest
- * code on both the Worker backend (direct-port path) and the QuickJS backend
- * (relay path), producing identical stdout.
+ * The kernel can host guest code on both the Worker backend (direct-port path)
+ * and the QuickJS backend (relay path), producing identical stdout.
  *
  * QuickJS relay path:
  *   - `capabilities.directPipes === false` → kernel calls `#spawnRelay`
@@ -11,13 +10,9 @@
  *     `onSyscall` handler that bridges:
  *       pipe/write → relayCtx.writeStdout / writeStderr
  *       process/exit → relayCtx.notifyExit + close pipes
- *       fs/* → relayCtx.dispatcher
- *
- * Parity note:
- *   Worker guest code uses the `@mithic/guest-runtime` MessagePort API.
- *   QuickJS guest code calls `__isola_syscall` directly (no MessagePort).
- *   Both produce identical stdout output, validating the relay path correctness.
- *   Full write-once-run-anywhere requires a unified shim layer (future work).
+ *       fs/* / anything else → relayCtx.onSyscall (KERNEL-routed; the kernel binds
+ *         the pid and dispatches with in-kernel capability checks — the launcher
+ *         never touches the SyscallDispatcher or the pid)
  */
 import { expect, test } from 'vitest';
 import { Kernel } from './kernel.ts';
@@ -36,8 +31,9 @@ import { FileSystemRouter, MemoryFsProvider } from '@mithic/io/vfs';
  *   pipe/write  → writes to stdout (fd 1) or stderr (fd 2) via relay context
  *   process/exit → notifies exit and closes pipes
  *   process/getpid → returns pid from ProcessInit
- *   fs/*        → routes through kernel's SyscallDispatcher
- *   anything else → returns {} (ENOSYS at the guest level)
+ *   anything else (incl. fs/*) → routes through the KERNEL via `ctx.onSyscall`.
+ *     The kernel owns the pid and runs all capability checks; the launcher cannot
+ *     forge a pid or reach the SyscallDispatcher directly.
  */
 class QuickJSGuestLauncher implements RelayLauncher {
   #rt: QuickJSRuntime;
@@ -80,17 +76,12 @@ class QuickJSGuestLauncher implements RelayLauncher {
         case 'process/getpid':
           return { pid: ctx.init.pid };
 
-        default:
-          if (call.startsWith('fs/')) {
-            const res = await ctx.dispatcher.dispatch(ctx.init.pid, {
-              id: 0,
-              call,
-              args,
-            });
-            if (res.ok) return res.result as Record<string, unknown>;
-            throw new Error(res.error.message);
-          }
-          return {};
+        default: {
+          // KERNEL-routed: the kernel binds the pid and enforces capabilities.
+          const res = await ctx.onSyscall(call, args);
+          if (res.ok) return res.result as Record<string, unknown>;
+          throw new Error(`${res.error.code}: ${res.error.message}`);
+        }
       }
     };
 
@@ -148,7 +139,15 @@ test('kernel relay: quickjs process writes to stdout and exits 0', async () => {
   expect(new TextDecoder().decode(await stdout!)).toBe('hello\n');
 }, 15000);
 
-test('kernel parity: worker and quickjs produce identical stdout', async () => {
+// NOTE: This is NOT a true write-once-run-anywhere parity test. It runs the
+// in-process Worker fallback (Worker is undefined in this Node env, so
+// DefaultGuestLauncher uses its dynamic-import bootstrap — not a real Worker)
+// vs the QuickJS relay path, and the two backends execute DIFFERENT guest source
+// (Worker uses @mithic/guest-runtime MessagePorts; QuickJS uses __isola_syscall).
+// It's a useful smoke test that both transports yield the same bytes for
+// equivalent programs, but it does not prove a single artifact runs unchanged on
+// both. True cross-transport parity requires a unified guest shim layer (future).
+test('kernel smoke: inprocess-worker and quickjs-relay produce identical stdout (NOT true WORA parity)', async () => {
   // ----- Worker backend (existing transferable path) -----
   const { WorkerRuntime } = await import('@mithic/runtime/backends/worker');
   const workerVfs = new FileSystemRouter();
@@ -204,3 +203,134 @@ test('kernel parity: worker and quickjs produce identical stdout', async () => {
   expect(qjsOut).toBe('hello\n');
   expect(qjsOut).toBe(workerOut); // parity assertion
 }, 20000);
+
+/**
+ * SECURITY REGRESSION (Fix 1): capability enforcement must hold on the relay path
+ * exactly as it does on the transfer path. The kernel — not the launcher — routes
+ * syscalls and binds the pid, so a relay guest hitting an UNGRANTED path is denied
+ * (EACCES) by the in-kernel dispatcher even though the launcher only relays raw
+ * call+args. If the dispatcher were exposed to the launcher, this guarantee would
+ * depend on launcher discipline; it must not.
+ */
+test('kernel relay SECURITY: fs syscall to an ungranted path is denied (EACCES) by the kernel', async () => {
+  const qjsRt = await QuickJSRuntime.create();
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  // A secret area the guest is NOT granted access to. The capability check runs
+  // before any VFS access, so existence is irrelevant to the denial — but we
+  // create it to make the intent (the guest is reaching for real data) explicit.
+  await vfs.mkdir('/secret');
+
+  const kernel = new Kernel({
+    runtime: qjsRt,
+    vfs,
+    relayLauncher: new QuickJSGuestLauncher(qjsRt),
+  });
+
+  // Guest is granted fs access ONLY to /allowed, then tries to stat /secret.
+  // The launcher relays the raw fs/stat via ctx.onSyscall; the kernel dispatches
+  // it against the guest's grants and denies it. The guest reports the errno.
+  const code = `
+    let result;
+    try {
+      __isola_syscall('fs/stat', { path: '/secret/key.txt' });
+      result = 'NO_ERROR';
+    } catch (e) {
+      result = String(e.message || e);
+    }
+    __isola_syscall('pipe/write', { fd: 1, data: result });
+    __isola_syscall('process/exit', { code: 0 });
+  `;
+
+  const { pid, stdout } = await kernel.spawn(code, {
+    args: ['prog'],
+    capabilities: [{ type: 'fs', paths: ['/allowed'], operations: ['read', 'write'] }],
+    captureStdout: true,
+  });
+
+  await kernel.wait(pid);
+  const out = new TextDecoder().decode(await stdout!);
+  // Kernel denied the ungranted access with EACCES — capability enforcement held.
+  expect(out).toContain('EACCES');
+  expect(out).not.toContain('NO_ERROR');
+}, 15000);
+
+/**
+ * Control: a relay guest CAN access a GRANTED path — proves the kernel routing
+ * isn't simply denying everything.
+ */
+test('kernel relay: fs syscall to a granted path succeeds', async () => {
+  const qjsRt = await QuickJSRuntime.create();
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  await vfs.mkdir('/allowed');
+
+  const kernel = new Kernel({
+    runtime: qjsRt,
+    vfs,
+    relayLauncher: new QuickJSGuestLauncher(qjsRt),
+  });
+
+  // Stat a granted, existing directory — capability check passes, VFS succeeds.
+  const code = `
+    let result;
+    try {
+      __isola_syscall('fs/stat', { path: '/allowed' });
+      result = 'OK';
+    } catch (e) {
+      result = String(e.message || e);
+    }
+    __isola_syscall('pipe/write', { fd: 1, data: result });
+    __isola_syscall('process/exit', { code: 0 });
+  `;
+
+  const { pid, stdout } = await kernel.spawn(code, {
+    args: ['prog'],
+    capabilities: [{ type: 'fs', paths: ['/allowed'], operations: ['read', 'write'] }],
+    captureStdout: true,
+  });
+
+  await kernel.wait(pid);
+  expect(new TextDecoder().decode(await stdout!)).toBe('OK');
+}, 15000);
+
+/**
+ * MEMORY-BOUND REGRESSION (Fix 2): the relay must NOT accumulate unbounded stdout.
+ * A guest writing past the cap is truncated at the cap and the process is killed,
+ * so host memory cannot grow without limit. Here we set a tiny maxOutputBytes and
+ * have the guest write well beyond it in a loop.
+ */
+test('kernel relay: stdout is bounded at maxOutputBytes (no unbounded host growth)', async () => {
+  const qjsRt = await QuickJSRuntime.create();
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+
+  const kernel = new Kernel({
+    runtime: qjsRt,
+    vfs,
+    relayLauncher: new QuickJSGuestLauncher(qjsRt),
+  });
+
+  const cap = 1024; // 1 KiB cap
+  // Write 200 chunks of 100 bytes = ~20 KiB, far past the 1 KiB cap.
+  const code = `
+    const chunk = 'x'.repeat(100);
+    for (let i = 0; i < 200; i++) {
+      __isola_syscall('pipe/write', { fd: 1, data: chunk });
+    }
+    __isola_syscall('process/exit', { code: 0 });
+  `;
+
+  const { pid, stdout } = await kernel.spawn(code, {
+    args: ['prog'],
+    capabilities: [],
+    captureStdout: true,
+    limits: { maxOutputBytes: cap },
+  });
+
+  await kernel.wait(pid);
+  const out = await stdout!;
+  // Captured output is truncated at the cap — not the full ~20 KiB the guest tried.
+  expect(out.byteLength).toBeLessThanOrEqual(cap);
+  expect(out.byteLength).toBeGreaterThan(0);
+}, 15000);
