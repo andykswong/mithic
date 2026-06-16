@@ -1,2 +1,0 @@
-[overrides]
-"mithic:process" = { path = "../process/wit" }

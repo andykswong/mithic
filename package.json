@@ -8,7 +8,6 @@
     "node": ">=26.0"
   },
   "scripts": {
-    "prepare": "rustup target add wasm32-wasip2 && cargo install wasm-tools wkg --root .",
     "prepublishOnly": "npm run clean && npm run build && npm test && npm run doc",
     "build": "npm run build --ws --if-present",
     "clean": "npm run clean --ws --if-present && rimraf docs/api *.tsbuildinfo target/",
@@ -41,11 +40,6 @@
     "url": "https://github.com/andykswong/mithic/issues"
   },
   "homepage": "https://github.com/andykswong/mithic",
-  "dependencies": {
-    "@mithic/io": "^2.0.0",
-    "@mithic/process": "^0.1",
-    "@mithic/wasip2": "^0.1"
-  },
   "devDependencies": {
     "@eslint/js": "^10.0",
     "@stylistic/eslint-plugin": "^5.0",
@@ -73,17 +67,8 @@
     "./packages/runtime",
     "./packages/kernel",
     "./packages/io",
-    "./packages/wasip2",
-    "./packages/process",
-    "./packages/wasm-transpile",
-    "./packages/coreutils",
-    "./packages/commands/jq",
-    "./packages/commands/curl",
-    "./packages/shell",
     "./packages/shell-js",
     "./packages/server",
-    "./packages/examples/component-js",
-    "./packages/examples/component-rust",
     "./packages/examples/shell",
     "./packages/examples/image-viewer",
     "./packages/examples/notebook"

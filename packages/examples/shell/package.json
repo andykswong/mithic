@@ -2,13 +2,13 @@
   "name": "@mithic/example-shell",
   "version": "0.3.0",
   "private": true,
-  "description": "mithic shell example - xterm.js browser terminal with Runtime",
+  "description": "mithic shell example - xterm.js browser terminal with Runtime (pending re-adaptation)",
   "type": "module",
   "scripts": {
     "clean": "rimraf dist",
-    "build": "vite build",
-    "dev": "vite",
-    "start": "vite preview",
+    "build": "echo 'pending xterm.js re-adaptation'",
+    "dev": "echo 'pending xterm.js re-adaptation'",
+    "start": "echo 'pending xterm.js re-adaptation'",
     "test": "echo 'ok'"
   },
   "repository": {
@@ -23,12 +23,6 @@
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
     "@mithic/io": "^2.0.0",
-    "@mithic/process": "^0.1",
-    "@mithic/shell": "^0.1",
-    "@mithic/coreutils": "^0.1",
-    "@mithic/wasip2": "^0.1",
-    "@mithic/wasm-transpile": "0.1",
-    "@mithic/example-rust-component": "^0.3",
     "@xterm/xterm": "^6.0",
     "@xterm/addon-fit": "^0.11"
   },

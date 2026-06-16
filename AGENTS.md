@@ -2,16 +2,9 @@
 
 ## Project Overview
 
-Mithic is an isomorphic sandboxed WebAssembly shell runtime. It provides a shell execution layer, process management with piped I/O, and WASI Preview 2 runtime with virtual file system (VFS) and resource adapters — running identically in the browser and on native platforms.
+Mithic (Isola 2.0) is a capability-based sandboxed process kernel with GUI-capable sandboxes, running identically in the browser and on native platforms.
 
 ## Monorepo Structure
-
-The repo holds two generations of packages. The **Isola 2.0** packages (TypeScript,
-`2.0.0`, tested with Vitest) are the active line: a capability-based, multi-backend
-process kernel with GUI-capable sandboxes. The **WASM / WASI P2** packages are the
-original Mithic line and are currently **paused** (still build/test via `node --test`).
-
-### Isola 2.0 packages (active)
 
 ```
 packages/
@@ -21,32 +14,15 @@ packages/
 ├── kernel/         @mithic/kernel         — the Kernel: process lifecycle, IPC broker, capability manager, syscall dispatch, pipelines, Remote DOM host
 ├── shell-js/       @mithic/shell-js       — POSIX-style shell interpreter (lexer/parser/expander/builtins/executor) running as a regular Isola process
 ├── server/         @mithic/server         — host-side server integration
-└── examples/
-    ├── image-viewer/ @mithic/example-image-viewer — GUI Isola process: drop-zone + <img> rendered in its own sandboxed iframe DOM (manifest declares display:window, fs:/tmp)
-    └── notebook/     @mithic/example-notebook     — xterm.js shell notebook: boots Kernel + IframeRuntime, drives @mithic/shell-js, renders inline GUI processes
-```
-
-### WASM / WASI P2 packages (paused)
-
-```
-packages/
-├── io/             @mithic/io             — VFS router, providers, HTTP/sockets, sync-bridge
-├── wasip2/         @mithic/wasip2         — WASI P2 shim (thin adapter over @mithic/io)
-├── process/        @mithic/process        — mithic:process WIT, Process spawn, Worker-per-process execution, SharedPipe, CompilerBridge for dynamic WASM
-├── shell/          @mithic/shell          — Rust WASM shell: POSIX-compatible WASI P2 component
-├── commands/
-│   ├── jq/         @mithic/jq             — jq JSON processor WASM component
-│   └── curl/       @mithic/curl           — curl HTTP client WASM component (wasi:http)
-├── coreutils/      @mithic/coreutils      — BusyBox-style Unix coreutils WASM component (36 commands)
-├── wasm-transpile/ @mithic/wasm-transpile — WASM component transpiler (JCO wrapper + asyncify JSPI polyfill)
+├── io/             @mithic/io             — VFS router, providers, HTTP/sockets (VFS used by Isola Vitest suite)
 ├── worker/         @mithic/worker         — Web Worker polyfill for Node.js (isomorphic new Worker())
 └── examples/
-    ├── component-js/  — JS WASM component (ComponentizeJS)
-    ├── component-rust/ — Rust WASM component
-    └── shell/    — xterm.js + Runtime
+    ├── shell/        @mithic/example-shell        — xterm.js terminal (pending re-adaptation to Isola JS shell)
+    ├── image-viewer/ @mithic/example-image-viewer — GUI Isola process: drop-zone + <img> rendered in its own sandboxed iframe DOM
+    └── notebook/     @mithic/example-notebook     — xterm.js shell notebook: boots Kernel + IframeRuntime, drives @mithic/shell-js
 ```
 
-> `@mithic/io`'s VFS (`@mithic/io/vfs`) is shared by both lines and is part of the Isola Vitest suite.
+> The original WASM/WASI P2 packages (shell, coreutils, jq, curl, wasip2, process, wasm-transpile) are removed from this branch. They are preserved on the `wasm` branch (and `origin/main`).
 
 ## Build & Test
 
@@ -86,24 +62,6 @@ Isola packages use **Vitest**. Node-environment unit/integration tests are `*.te
   
   Example: `WASIShim` owns its stdio streams and exposes them as `borrow()` to WASM guests. The handler disposes the shim in its `finally` block, which drops the owned streams and propagates EOF/broken-pipe.
 
-## WASM Transpilation
-
-All packages that produce WASM components use `@mithic/wasm-transpile` for JCO transpilation:
-- **CLI**: `wasm-transpile component.wasm -o ./dist --variants sync,jspi,asyncify` (also supports `--async-imports` and `--async-exports` for custom async functions)
-- **Programmatic**: `transpileComponent()` / `transpileToFiles()` from `@mithic/wasm-transpile`
-- **Multi-variant builds**: shell, coreutils, and example packages produce deduplicated variants via `--variants`. Package exports: `./component` (sync), `./component/jspi`, `./component/asyncify`, `./component/core/*`, `./component/core-asyncify/*`
-- Shell, coreutils, and example packages call `wasm-transpile` in their `"transpile"` npm script
-- The `examples/component-js` package uses `jco componentize` CLI for JS→WASM then `wasm-transpile` for transpilation
-
-### Bin Scripts
-
-Packages with CLI binaries use a `bin/` wrapper pattern for portability:
-```
-bin/wasm-transpile.js   ← #!/usr/bin/env node + import '../dist/cli.js'
-bin/mithic-shell.js     ← #!/usr/bin/env node + import '../dist/ts/cli/index.js'
-```
-The wrapper is executable and has the shebang; the built `dist/` code does not. This avoids permission issues when npm links the bin.
-
 ## When Editing
 
 **The one rule: `npm run build` before ANY test run or verification. No exceptions.**
@@ -127,5 +85,4 @@ The verification sequence is always run from the **monorepo root**: `npm run bui
 
 ### Other guidelines
 
-- For both `@mithic/wasip2` and `@mithic/process`, WIT definitions are the source of truth for interfaces. Each package provides `./instantiation` exporting a helper class (`WASIShim` / `WASIProcess`) that configures and returns the import object for WASM component instantiation.
 - Prefer editing existing files over creating new ones.

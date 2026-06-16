@@ -1,6 +1,0 @@
-[package]
-name = "mithic_example_cli"
-edition = "2024"
-publish = false
-
-[dependencies]
