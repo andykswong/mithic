@@ -23,6 +23,10 @@ const CLASS_MEMBERS: Record<string, () => string[]> = {
   space: () => [' ', '\t', '\n', '\r', '\v', '\f'],
   blank: () => [' ', '\t'],
   punct: () => [...'!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'],
+  xdigit: () => [...rangeChars('0', '9'), ...rangeChars('A', 'F'), ...rangeChars('a', 'f')],
+  cntrl: () => [...rangeChars('\x00', '\x1f'), '\x7f'],
+  print: () => rangeChars('\x20', '\x7e'),
+  graph: () => rangeChars('\x21', '\x7e'),
 };
 
 function rangeChars(from: string, to: string): string[] {
@@ -47,7 +51,16 @@ export function expandSet(set: string): string[] {
     // Escape sequences
     if (set[i] === '\\' && i + 1 < set.length) {
       const n = set[i + 1];
-      const map: Record<string, string> = { n: '\n', t: '\t', r: '\r', '\\': '\\', f: '\f', v: '\v' };
+      // Octal escape `\NNN` (1-3 octal digits), e.g. `\101` → 'A', `\0` → NUL.
+      if (n >= '0' && n <= '7') {
+        let oct = '';
+        let j = i + 1;
+        while (j < set.length && j < i + 4 && set[j] >= '0' && set[j] <= '7') { oct += set[j]; j++; }
+        out.push(String.fromCharCode(parseInt(oct, 8) & 0xff));
+        i = j;
+        continue;
+      }
+      const map: Record<string, string> = { n: '\n', t: '\t', r: '\r', '\\': '\\', f: '\f', v: '\v', a: '\x07', b: '\b' };
       out.push(map[n] ?? n);
       i += 2;
       continue;
