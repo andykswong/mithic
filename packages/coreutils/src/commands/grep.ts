@@ -217,7 +217,7 @@ function buildMatcher(o: GrepOptions): CompiledMatcher {
   const wrap = (raw: string): string => {
     let body: string;
     if (o.syntax === 'fixed') body = escapeRegExp(raw);
-    else if (o.syntax === 'ere') body = raw;
+    else if (o.syntax === 'ere') body = compilePattern(raw, { syntax: 'ere' }).source;
     else body = compilePattern(raw, { syntax: 'bre' }).source; // reuse BRE→ERE translation
     if (o.line) return `(?:${body})`;
     if (o.word) return `(?:${body})`;
