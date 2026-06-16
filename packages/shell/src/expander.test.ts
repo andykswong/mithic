@@ -216,6 +216,18 @@ test('"$*" via ${*} brace form joins into one field', async () => {
   expect(await e.expandWord('"${*}"')).toEqual(['a b c d']);
 });
 
+test('${#@} and ${#*} return positional count, not joined-string length (SH-2)', async () => {
+  const e = new Expander(mkPositional(['a', 'bb', 'ccc'])); // joined length would be 8
+  expect(await e.expandWord('${#@}')).toEqual(['3']);
+  expect(await e.expandWord('${#*}')).toEqual(['3']);
+});
+
+test('${#arr[@]} and ${#arr[*]} return element count', async () => {
+  const e = E({}, { getArray: (n) => (n === 'a' ? ['1', '2 3', '4'] : undefined) });
+  expect(await e.expandWord('${#a[@]}')).toEqual(['3']);
+  expect(await e.expandWord('${#a[*]}')).toEqual(['3']);
+});
+
 test('"${arr[@]}" expands to one field per element (embedded spaces kept)', async () => {
   const e = E({}, { getArray: (n) => (n === 'a' ? ['1', '2 3', '4'] : undefined) });
   expect(await e.expandWord('"${a[@]}"')).toEqual(['1', '2 3', '4']);

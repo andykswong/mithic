@@ -232,3 +232,25 @@ test('for x in "$@" iterates once per positional', async () => {
   expect(out).toBe('[a]\n[b c]\n[d]\n');
 });
 
+test('set -- a b c; echo ${#@} reports positional count (SH-2)', async () => {
+  const k = mockKernel();
+  let out = '';
+  const ex = new Executor(k as any, { cwd: '/', env: {} }, {
+    onStdout: (s) => { out += s; },
+  });
+  const code = await ex.run(parse('set -- a b c; echo ${#@}'));
+  expect(code).toBe(0);
+  expect(out.trim()).toBe('3');
+});
+
+test('set -- a b c; echo ${#*} reports positional count (SH-2)', async () => {
+  const k = mockKernel();
+  let out = '';
+  const ex = new Executor(k as any, { cwd: '/', env: {} }, {
+    onStdout: (s) => { out += s; },
+  });
+  const code = await ex.run(parse('set -- a b c; echo ${#*}'));
+  expect(code).toBe(0);
+  expect(out.trim()).toBe('3');
+});
+

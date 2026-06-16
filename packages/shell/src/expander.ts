@@ -401,9 +401,13 @@ export class Expander {
    * by {@link readDollar} → {@link substitute} for field splitting).
    */
   private async paramExpansion(body: string): Promise<string | { fields: string[]; join: string | undefined }> {
-    // ${#name} / ${#name[subscript]} → length (element count for [@]/[*]).
+    // ${#@} / ${#*} → positional COUNT; ${#name[@]}/${#name[*]} → element count.
     if (body.startsWith('#') && body.length > 1) {
       const inner = body.slice(1);
+      if (inner === '@' || inner === '*') {
+        const pos = this.env.getPositional?.() ?? this.positionalFallback();
+        return String(pos.length);
+      }
       const sub = matchSubscript(inner);
       if (sub) {
         const arr = this.env.getArray?.(sub.name) ?? [];
