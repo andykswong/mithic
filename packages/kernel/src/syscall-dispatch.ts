@@ -2,6 +2,7 @@ import type { SyscallResponse, ErrnoCode, SpawnArgs } from '@mithic/protocol';
 import { fsErrorToErrno } from '@mithic/protocol';
 import { FileSystemError, normalizePath } from '@mithic/io/vfs';
 import type { FileSystemProvider, FileHandle, OpenFlags } from '@mithic/io/vfs';
+import type { HttpClient, HttpRequest, HttpResponse } from '@mithic/io/net';
 import type { CapabilityManager, FsOperation } from './capability-manager.ts';
 import type { IpcBroker } from './ipc-broker.ts';
 import type { WaitResult } from './process-manager.ts';
@@ -160,6 +161,15 @@ export interface SyscallDispatcherOptions {
    * uses. Unset = the syscall is a no-op success (the guest's own exit path runs).
    */
   exitProcess?: (pid: number, code: number) => void;
+  /**
+   * HTTP client backing the capability-gated `net/fetch` syscall. The dispatcher
+   * checks the caller's `net` capability for the request ORIGIN (via
+   * `caps.checkNet`) BEFORE ever touching this client; a guest can never reach an
+   * origin it lacks capability for. Injectable so tests pass a mock and hosts
+   * default to `globalThis.fetch` (via `FetchHttpClient`). Unset = `net/fetch`
+   * returns ENOSYS (network disabled).
+   */
+  httpClient?: HttpClient;
 }
 
 /**
@@ -215,6 +225,7 @@ export class SyscallDispatcher {
   #ppidOf: ((pid: number) => number) | undefined;
   #chdir: ((pid: number, path: string) => void) | undefined;
   #exitProcess: ((pid: number, code: number) => void) | undefined;
+  #httpClient: HttpClient | undefined;
   /** pid -> (fd -> open file or pipe end). */
   #fdTables = new Map<number, Map<number, FdEntry>>();
   /** pid -> next fd to allocate (file fds start above the reserved stdio range). */
@@ -240,6 +251,7 @@ export class SyscallDispatcher {
     this.#ppidOf = options.ppidOf;
     this.#chdir = options.chdir;
     this.#exitProcess = options.exitProcess;
+    this.#httpClient = options.httpClient;
   }
 
   /** Discard a process's fd table (called on process exit). */
@@ -322,6 +334,8 @@ export class SyscallDispatcher {
           return this.#ipcConnect(pid, req.id, req.args);
         case 'dom/mutate':
           return res(ok(req.id, this.#domMutate(pid, req.args)));
+        case 'net/fetch':
+          return res(await this.#netFetch(pid, req.id, req.args));
         case 'process/spawn':
           return await this.#spawn(pid, req.id, req.args, ports);
         case 'process/pipeline':
@@ -803,6 +817,69 @@ export class SyscallDispatcher {
     this.#onDomMutate(pid, mutations as DomMutation[]);
     return {};
   }
+
+  /**
+   * `net/fetch {method, url, headers?, body?, timeoutMs?}`: perform an HTTP
+   * request on behalf of a guest — the ONLY network surface a sandboxed process
+   * gets. The guest never holds a socket or `fetch`; everything funnels through
+   * here so the kernel can enforce capabilities.
+   *
+   * SECURITY (the key property): the request ORIGIN is checked against the
+   * caller's `net` capability via {@link CapabilityManager.checkNet} BEFORE the
+   * injected {@link HttpClient} is ever invoked. An ungranted origin — or a URL
+   * with no parseable origin — yields EACCES and the HTTP client is not called,
+   * so a guest cannot reach an origin it lacks capability for. With no client
+   * configured the syscall returns ENOSYS (network disabled).
+   *
+   * Returns `{status, headers, body}`. A client/transport failure maps to
+   * EHOSTUNREACH so the guest can surface a connection error (curl exit 7).
+   */
+  async #netFetch(pid: number, id: number, args: Record<string, unknown>): Promise<SyscallResponse> {
+    if (!this.#httpClient) {
+      return fail(id, 'ENOSYS', 'net/fetch: no HTTP client configured');
+    }
+    const url = String(args.url ?? '');
+    // Capability gate FIRST — before any network access. An ungranted origin
+    // (or an unparseable URL, which checkNet rejects) is EACCES.
+    if (!this.#caps.checkNet(pid, url)) {
+      return fail(id, 'EACCES', `Permission denied: ${url}`);
+    }
+    const request: HttpRequest = {
+      method: typeof args.method === 'string' ? args.method : 'GET',
+      url,
+      headers: normalizeHeaders(args.headers),
+    };
+    const body = args.body;
+    if (body instanceof Uint8Array) request.body = body;
+    else if (body instanceof ArrayBuffer) request.body = new Uint8Array(body);
+    else if (typeof body === 'string') request.body = new TextEncoder().encode(body);
+    if (typeof args.timeoutMs === 'number') request.timeoutMs = args.timeoutMs;
+
+    let response: HttpResponse;
+    try {
+      response = await this.#httpClient.send(request);
+    } catch (err) {
+      // Transport-level failure (DNS, connection refused, timeout): the request
+      // was authorized but could not complete. Map to a network errno.
+      return fail(id, 'EHOSTUNREACH', messageOf(err));
+    }
+    const result: { status: number; headers: [string, string][]; body?: Uint8Array } = {
+      status: response.status,
+      headers: response.headers,
+    };
+    if (response.body) result.body = toTightView(response.body);
+    return ok(id, result);
+  }
+}
+
+/** Coerce a raw `headers` arg into the `[name, value][]` shape the client wants. */
+function normalizeHeaders(raw: unknown): [string, string][] {
+  if (!Array.isArray(raw)) return [];
+  const out: [string, string][] = [];
+  for (const pair of raw) {
+    if (Array.isArray(pair) && pair.length >= 2) out.push([String(pair[0]), String(pair[1])]);
+  }
+  return out;
 }
 
 /** Coerce raw syscall args into a validated {@link SpawnArgs}, or undefined. */

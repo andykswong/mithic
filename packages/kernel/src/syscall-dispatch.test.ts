@@ -413,3 +413,112 @@ test('Fix 3: process/pipeline with 2 stages succeeds when maxChildren:2', async 
   })).response;
   expect(res.ok).toBe(true);
 });
+
+// ── net/fetch syscall ──────────────────────────────────────────────────────
+
+import type { HttpClient, HttpRequest, HttpResponse } from '@mithic/io/net';
+
+/** A tiny recording HTTP client for dispatcher tests (no real network). */
+function recordingClient(response: HttpResponse): { client: HttpClient; calls: HttpRequest[] } {
+  const calls: HttpRequest[] = [];
+  const client: HttpClient = {
+    send(req: HttpRequest): HttpResponse { calls.push(req); return response; },
+  };
+  return { client, calls };
+}
+
+function netSetup(opts: { caps?: Parameters<CapabilityManager['grant']>[1]; response?: HttpResponse } = {}) {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, opts.caps ?? [{ type: 'net', origins: ['https://api.example.com'] }]);
+  const { client, calls } = recordingClient(
+    opts.response ?? { status: 200, headers: [['content-type', 'text/plain']], body: new TextEncoder().encode('hi') },
+  );
+  const d = new SyscallDispatcher({ vfs: router, caps, cwdOf: () => '/', httpClient: client });
+  return { d, calls };
+}
+
+test('net/fetch on a granted origin performs the request and returns status/headers/body', async () => {
+  const { d, calls } = netSetup();
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'net/fetch',
+    args: { method: 'GET', url: 'https://api.example.com/data', headers: [] },
+  })).response;
+  expect(res.ok).toBe(true);
+  const result = (res as { ok: true; result: { status: number; headers: [string, string][]; body?: Uint8Array } }).result;
+  expect(result.status).toBe(200);
+  expect(result.headers).toEqual([['content-type', 'text/plain']]);
+  expect(new TextDecoder().decode(result.body)).toBe('hi');
+  expect(calls).toHaveLength(1);
+  expect(calls[0].url).toBe('https://api.example.com/data');
+  expect(calls[0].method).toBe('GET');
+});
+
+test('net/fetch to an origin NOT granted returns EACCES (capability gating)', async () => {
+  const { d, calls } = netSetup();
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'net/fetch',
+    args: { method: 'GET', url: 'https://evil.example.org/steal', headers: [] },
+  })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EACCES' } });
+  // The HTTP client must NEVER be invoked for an ungranted origin.
+  expect(calls).toHaveLength(0);
+});
+
+test('net/fetch with no http client configured returns ENOSYS', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'net', origins: ['https://api.example.com'] }]);
+  const d = new SyscallDispatcher({ vfs: router, caps, cwdOf: () => '/' });
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'net/fetch',
+    args: { method: 'GET', url: 'https://api.example.com/x', headers: [] },
+  })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'ENOSYS' } });
+});
+
+test('net/fetch forwards method, headers, and body to the http client', async () => {
+  const { d, calls } = netSetup();
+  await d.dispatch(1, {
+    id: 1,
+    call: 'net/fetch',
+    args: {
+      method: 'POST',
+      url: 'https://api.example.com/post',
+      headers: [['content-type', 'application/json']],
+      body: new TextEncoder().encode('{"a":1}'),
+    },
+  });
+  expect(calls[0].method).toBe('POST');
+  expect(calls[0].headers).toEqual([['content-type', 'application/json']]);
+  expect(new TextDecoder().decode(calls[0].body)).toBe('{"a":1}');
+});
+
+test('net/fetch maps an http client failure to a kernel error (EHOSTUNREACH)', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'net', origins: ['https://api.example.com'] }]);
+  const client: HttpClient = { send() { throw new Error('connection refused'); } };
+  const d = new SyscallDispatcher({ vfs: router, caps, cwdOf: () => '/', httpClient: client });
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'net/fetch',
+    args: { method: 'GET', url: 'https://api.example.com/x', headers: [] },
+  })).response;
+  expect(res.ok).toBe(false);
+  expect((res as { ok: false; error: { code: string } }).error.code).toBe('EHOSTUNREACH');
+});
+
+test('net/fetch with an invalid url returns EACCES (no origin → no capability)', async () => {
+  const { d, calls } = netSetup();
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'net/fetch',
+    args: { method: 'GET', url: 'not a url', headers: [] },
+  })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EACCES' } });
+  expect(calls).toHaveLength(0);
+});
