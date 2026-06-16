@@ -67,6 +67,7 @@
     "vitest": "^3.2.6"
   },
   "workspaces": [
+    "./packages/protocol",
     "./packages/worker",
     "./packages/io",
     "./packages/wasip2",

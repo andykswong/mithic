@@ -1,0 +1,20 @@
+{
+  "name": "@mithic/protocol",
+  "version": "2.0.0",
+  "description": "Isola IPC protocol — message types, errno codes, syscall names",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": "./dist/index.js" },
+  "files": ["/dist"],
+  "scripts": {
+    "clean": "rimraf dist *.tsbuildinfo",
+    "prebuild": "npm run lint",
+    "build": "vite build",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "license": "MIT"
+}
