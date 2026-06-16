@@ -1,9 +1,10 @@
-import type { SyscallResponse, ErrnoCode } from '@mithic/protocol';
+import type { SyscallResponse, ErrnoCode, SpawnArgs } from '@mithic/protocol';
 import { fsErrorToErrno } from '@mithic/protocol';
 import { FileSystemError, normalizePath } from '@mithic/io/vfs';
 import type { FileSystemProvider, FileHandle, OpenFlags } from '@mithic/io/vfs';
 import type { CapabilityManager, FsOperation } from './capability-manager.ts';
 import type { IpcBroker } from './ipc-broker.ts';
+import type { WaitResult } from './process-manager.ts';
 import type { DomMutation } from '@mithic/guest-runtime/remote-dom';
 
 /** Thrown when a process references an fd it does not own (wrong pid or never opened). */
@@ -42,6 +43,74 @@ export interface SyscallRequestLike {
  */
 export type DomMutateHandler = (pid: number, mutations: DomMutation[]) => void;
 
+/**
+ * Result of the kernel creating a child for a `process/spawn` syscall.
+ * `pipes` mirrors {@link SpawnResult.pipes}; `transfer` carries the GUEST-side
+ * pipe ports the kernel minted for `action:'pipe'` fds, which the dispatcher
+ * forwards to the parent in the response transfer list.
+ */
+export interface SpawnChildResult {
+  pid: number;
+  pipes?: Record<number, 'transferred'>;
+  transfer?: Transferable[];
+}
+
+/**
+ * Narrow callback the kernel hands the dispatcher so `process/spawn` can create
+ * a child WITHOUT the dispatcher ever touching the raw {@link Kernel}. The
+ * dispatcher has already done the in-kernel capability check and resolved the
+ * command name to `code`; the kernel narrows caps, sets ppid, applies the fd
+ * actions, spawns the guest, and returns the new pid (+ any pipe ports).
+ *
+ * SECURITY: this is the only spawn surface exposed to the dispatcher. It cannot
+ * forge a parent pid (the dispatcher passes the kernel-owned `parentPid` it was
+ * invoked with) and the kernel always NARROWS the child's caps from the parent.
+ */
+export type SpawnChild = (
+  parentPid: number,
+  code: string | URL,
+  args: SpawnArgs,
+  /**
+   * Guest-supplied stdio ports keyed by child fd. The guest transfers these in
+   * the `process/spawn` request (e.g. a pipe end it minted via `fs/pipe`) and
+   * maps each to a child fd via the `portFds` arg. The kernel injects them as
+   * the child's stdin (fd 0, read end) / stdout/stderr (fd 1/2, write ends),
+   * enabling guest-orchestrated zero-hop pipelines.
+   */
+  injectedPorts: Map<number, MessagePort>,
+) => Promise<SpawnChildResult>;
+
+/** Narrow callback to await a child's exit (delegates to ProcessManager.wait). */
+export type WaitChild = (pid: number) => Promise<WaitResult>;
+
+/** One stage of a guest-requested pipeline (command name/path + argv + env). */
+export interface PipelineStageSpec {
+  path: string;
+  argv: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+}
+
+/** Result of running a guest-requested pipeline: per-stage codes + last stdout. */
+export interface PipelineChildResult {
+  exitCodes: number[];
+  /** Captured stdout bytes of the final stage. */
+  lastStdout: Uint8Array;
+}
+
+/**
+ * Narrow callback the kernel hands the dispatcher to run a multi-stage pipeline
+ * with zero-hop inter-stage pipes, proper ppid wiring, per-stage capability
+ * NARROWING from the parent, and command-name resolution. Captures the final
+ * stage's stdout and returns it so the dispatcher can hand the bytes back to the
+ * guest (which writes them to its own stdout). Like {@link SpawnChild}, this is
+ * the only pipeline surface exposed — the dispatcher never touches the Kernel.
+ */
+export type PipelineChild = (
+  parentPid: number,
+  stages: Array<{ code: string | URL; spec: PipelineStageSpec }>,
+) => Promise<PipelineChildResult>;
+
 export interface SyscallDispatcherOptions {
   vfs: FileSystemProvider;
   caps: CapabilityManager;
@@ -56,6 +125,32 @@ export interface SyscallDispatcherOptions {
    * When unset, `dom/mutate` returns ENOSYS.
    */
   onDomMutate?: DomMutateHandler;
+  /**
+   * Resolve a bare command NAME (e.g. `cat`) to spawnable guest code. Absolute
+   * paths and URLs bypass the resolver (used directly). When the resolver
+   * returns `undefined` for a bare name, `process/spawn` yields ENOENT.
+   * Unset = no name resolution (only paths/URLs spawnable).
+   */
+  resolveCommand?: (name: string, cwd: string, env: Record<string, string>) => string | URL | undefined;
+  /**
+   * Kernel-provided spawn callback. When unset, `process/spawn` returns ENOSYS.
+   * See {@link SpawnChild} — the dispatcher only ever calls this, never the Kernel.
+   */
+  spawnChild?: SpawnChild;
+  /** Kernel-provided wait callback for `process/wait`. Unset = ENOSYS. */
+  waitChild?: WaitChild;
+  /** Kernel-provided multi-stage pipeline runner for `process/pipeline`. Unset = ENOSYS. */
+  pipelineChild?: PipelineChild;
+  /** Resolve a process's parent pid (for `process/getppid` and wait ownership). */
+  ppidOf?: (pid: number) => number;
+  /** Change a process's cwd (for `process/chdir`). Unset = ENOSYS. */
+  chdir?: (pid: number, path: string) => void;
+  /**
+   * Trigger a process's exit (for the `process/exit` SYSCALL form). Routes to
+   * the same teardown path the control-port `{type:'exit'}` lifecycle message
+   * uses. Unset = the syscall is a no-op success (the guest's own exit path runs).
+   */
+  exitProcess?: (pid: number, code: number) => void;
 }
 
 /**
@@ -103,6 +198,13 @@ export class SyscallDispatcher {
   #cwdOf: (pid: number) => string;
   #ipc: IpcBroker | undefined;
   #onDomMutate: DomMutateHandler | undefined;
+  #resolveCommand: SyscallDispatcherOptions['resolveCommand'];
+  #spawnChild: SpawnChild | undefined;
+  #waitChild: WaitChild | undefined;
+  #pipelineChild: PipelineChild | undefined;
+  #ppidOf: ((pid: number) => number) | undefined;
+  #chdir: ((pid: number, path: string) => void) | undefined;
+  #exitProcess: ((pid: number, code: number) => void) | undefined;
   /** pid -> (fd -> open file or pipe end). */
   #fdTables = new Map<number, Map<number, FdEntry>>();
   /** pid -> next fd to allocate (file fds start above the reserved stdio range). */
@@ -120,6 +222,13 @@ export class SyscallDispatcher {
     this.#cwdOf = options.cwdOf;
     this.#ipc = options.ipc;
     this.#onDomMutate = options.onDomMutate;
+    this.#resolveCommand = options.resolveCommand;
+    this.#spawnChild = options.spawnChild;
+    this.#waitChild = options.waitChild;
+    this.#pipelineChild = options.pipelineChild;
+    this.#ppidOf = options.ppidOf;
+    this.#chdir = options.chdir;
+    this.#exitProcess = options.exitProcess;
   }
 
   /** Discard a process's fd table (called on process exit). */
@@ -134,6 +243,7 @@ export class SyscallDispatcher {
     }
     this.#fdTables.delete(pid);
     this.#nextFd.delete(pid);
+    this.#liveChildPids.delete(pid);
   }
 
   /**
@@ -159,7 +269,11 @@ export class SyscallDispatcher {
     this.#pendingConns.delete(fd);
   }
 
-  async dispatch(pid: number, req: SyscallRequestLike): Promise<DispatchResult> {
+  async dispatch(
+    pid: number,
+    req: SyscallRequestLike,
+    ports?: readonly MessagePort[],
+  ): Promise<DispatchResult> {
     try {
       switch (req.call) {
         case 'fs/open':
@@ -188,6 +302,22 @@ export class SyscallDispatcher {
           return this.#ipcConnect(pid, req.id, req.args);
         case 'dom/mutate':
           return res(ok(req.id, this.#domMutate(pid, req.args)));
+        case 'process/spawn':
+          return this.#spawn(pid, req.id, req.args, ports);
+        case 'process/pipeline':
+          return res(await this.#pipeline(pid, req.id, req.args));
+        case 'process/wait':
+          return res(ok(req.id, await this.#wait(pid, req.args)));
+        case 'process/exit':
+          return res(ok(req.id, this.#processExit(pid, req.args)));
+        case 'process/getpid':
+          return res(ok(req.id, { pid }));
+        case 'process/getppid':
+          return res(ok(req.id, { ppid: this.#ppidOf?.(pid) ?? 0 }));
+        case 'process/getcwd':
+          return res(ok(req.id, { cwd: this.#cwdOf(pid) }));
+        case 'process/chdir':
+          return res(ok(req.id, this.#chdirCall(pid, req.args)));
         default:
           return res(fail(req.id, 'ENOSYS', `Unknown syscall: ${req.call}`));
       }
@@ -219,6 +349,165 @@ export class SyscallDispatcher {
       response: ok(id, { readfd, writefd }),
       transfer: [readPort, writePort],
     };
+  }
+
+  /**
+   * `process/spawn {path, argv, env?, cwd?, fds?}`: create a child process.
+   *
+   * Capability-gated IN-KERNEL: the caller must hold a `process` capability
+   * (honoring `maxChildren` against its live child count). The command NAME is
+   * resolved to spawnable guest code: absolute paths (`/…`) and URLs are used
+   * directly; bare names go through the injected `resolveCommand`. An unresolved
+   * name yields ENOENT. Actual child creation is delegated to the kernel's
+   * narrow {@link SpawnChild} callback — the dispatcher never touches the Kernel.
+   */
+  async #spawn(
+    pid: number,
+    id: number,
+    args: Record<string, unknown>,
+    ports?: readonly MessagePort[],
+  ): Promise<DispatchResult> {
+    if (!this.#spawnChild) {
+      this.#closePorts(ports);
+      return res(fail(id, 'ENOSYS', 'process/spawn: no spawn handler configured'));
+    }
+    const childCount = this.#liveChildPids.get(pid)?.size ?? 0;
+    if (!this.#caps.checkProcess(pid, childCount)) {
+      this.#closePorts(ports);
+      return res(fail(id, 'EPERM', 'process/spawn: missing process capability or child limit reached'));
+    }
+    const spawnArgs = normalizeSpawnArgs(args);
+    if (!spawnArgs) {
+      this.#closePorts(ports);
+      return res(fail(id, 'EINVAL', 'process/spawn: invalid arguments'));
+    }
+    const cwd = spawnArgs.cwd ?? this.#cwdOf(pid);
+    const env = spawnArgs.env ?? {};
+    const code = this.#resolveCode(spawnArgs.path, spawnArgs.argv, cwd, env);
+    if (code === undefined) {
+      this.#closePorts(ports);
+      return res(fail(id, 'ENOENT', `command not found: ${spawnArgs.path}`));
+    }
+    // Map transferred ports to child fds. `portFds[i]` is the child fd for
+    // `ports[i]` (positional). Used by the guest to inject pipe ends it minted.
+    const injectedPorts = new Map<number, MessagePort>();
+    const portFds = Array.isArray(args.portFds) ? args.portFds.map(Number) : [];
+    if (ports) {
+      for (let i = 0; i < ports.length; i++) {
+        const fd = portFds[i];
+        if (typeof fd === 'number') injectedPorts.set(fd, ports[i]);
+      }
+    }
+    const child = await this.#spawnChild(pid, code, spawnArgs, injectedPorts);
+    // Track the child so future maxChildren checks see the live count.
+    const liveSet = this.#liveChildPids.get(pid);
+    if (liveSet) liveSet.add(child.pid);
+    else this.#liveChildPids.set(pid, new Set([child.pid]));
+    const response = ok(id, child.pipes ? { pid: child.pid, pipes: child.pipes } : { pid: child.pid });
+    return child.transfer && child.transfer.length > 0
+      ? { response, transfer: child.transfer }
+      : { response };
+  }
+
+  /**
+   * Resolve a command spec to spawnable guest code. Absolute paths and URLs are
+   * used directly (a `string` URL becomes a `URL`); bare names defer to
+   * `resolveCommand`. Returns `undefined` when a bare name has no resolver match.
+   */
+  #resolveCode(path: string, argv: string[], cwd: string, env: Record<string, string>): string | URL | undefined {
+    if (path.includes('://')) return new URL(path);
+    if (path.startsWith('/') || path.startsWith('./') || path.startsWith('../')) return path;
+    const name = path || argv[0] || '';
+    return this.#resolveCommand?.(name, cwd, env);
+  }
+
+  /**
+   * `process/pipeline {stages}`: run a multi-stage pipeline of external commands
+   * with zero-hop inter-stage pipes. Capability-gated identically to
+   * `process/spawn` (the caller needs a `process` cap). Each stage's command name
+   * is resolved to guest code; an unresolved name yields ENOENT. The final
+   * stage's stdout is captured and returned as `stdout` bytes so the calling
+   * guest (the shell) can write it to its own stdout. Per-stage caps are NARROWED
+   * from the parent inside the kernel's pipeline runner.
+   */
+  async #pipeline(pid: number, id: number, args: Record<string, unknown>): Promise<SyscallResponse> {
+    if (!this.#pipelineChild) {
+      return fail(id, 'ENOSYS', 'process/pipeline: no pipeline handler configured');
+    }
+    if (!this.#caps.checkProcess(pid)) {
+      return fail(id, 'EPERM', 'process/pipeline: missing process capability');
+    }
+    const rawStages = Array.isArray(args.stages) ? args.stages : undefined;
+    if (!rawStages || rawStages.length === 0) {
+      return fail(id, 'EINVAL', 'process/pipeline: stages must be a non-empty array');
+    }
+    const resolved: Array<{ code: string | URL; spec: PipelineStageSpec }> = [];
+    for (const raw of rawStages) {
+      const r = raw as Record<string, unknown>;
+      const path = typeof r.path === 'string' ? r.path : '';
+      const argv = Array.isArray(r.argv) ? r.argv.map(String) : [];
+      const env = (r.env && typeof r.env === 'object' ? r.env : {}) as Record<string, string>;
+      const cwd = typeof r.cwd === 'string' ? r.cwd : this.#cwdOf(pid);
+      const code = this.#resolveCode(path, argv, cwd, env);
+      if (code === undefined) {
+        return fail(id, 'ENOENT', `command not found: ${path}`);
+      }
+      resolved.push({ code, spec: { path, argv, env, cwd } });
+    }
+    const result = await this.#pipelineChild(pid, resolved);
+    return ok(id, { exitCodes: result.exitCodes, stdout: result.lastStdout });
+  }
+
+  /**
+   * `process/wait {pid}`: await a child's exit. Ownership-gated — a process may
+   * only wait its own children (ppid check). Waiting a non-child / unknown pid
+   * returns the no-child sentinel (ECHILD-style) rather than hanging.
+   */
+  async #wait(pid: number, args: Record<string, unknown>): Promise<WaitResult> {
+    const target = Number(args.pid);
+    if (!this.#waitChild) {
+      return { pid: target, status: 'no-child', code: -1 };
+    }
+    // Ownership: only wait a child whose ppid is this process. If we can't
+    // determine parentage, fall through to waitChild (ProcessManager handles
+    // unknown pids with the no-child sentinel — never hangs).
+    if (this.#ppidOf && this.#ppidOf(target) !== pid) {
+      return { pid: target, status: 'no-child', code: -1 };
+    }
+    const result = await this.#waitChild(target);
+    this.#liveChildPids.get(pid)?.delete(target);
+    return result;
+  }
+
+  /**
+   * `process/exit {code}` as a SYSCALL. Routes to the kernel's exit teardown so
+   * a guest that calls `mithic.syscall('process/exit', {code})` exits identically
+   * to one that posts the `{type:'exit'}` lifecycle message. When no
+   * `exitProcess` handler is wired, this is a harmless success (the guest's own
+   * `guest.exit()` control-port path still drives teardown).
+   */
+  #processExit(pid: number, args: Record<string, unknown>): Record<string, never> {
+    const code = Number(args.code ?? 0);
+    this.#exitProcess?.(pid, code);
+    return {};
+  }
+
+  #chdirCall(pid: number, args: Record<string, unknown>): { cwd: string } {
+    if (!this.#chdir) {
+      throw new FileSystemError('unsupported', 'process/chdir: no chdir handler configured');
+    }
+    const path = normalizePath(String(args.path ?? '/'));
+    this.#chdir(pid, path);
+    return { cwd: path };
+  }
+
+  /** pid -> set of its live (spawned, not-yet-waited) child pids. */
+  #liveChildPids = new Map<number, Set<number>>();
+
+  /** Close any ports a rejected `process/spawn` received, so none leak. */
+  #closePorts(ports?: readonly MessagePort[]): void {
+    if (!ports) return;
+    for (const p of ports) { try { p.close(); } catch { /* already neutered */ } }
   }
 
   /**
@@ -475,6 +764,18 @@ export class SyscallDispatcher {
     this.#onDomMutate(pid, mutations as DomMutation[]);
     return {};
   }
+}
+
+/** Coerce raw syscall args into a validated {@link SpawnArgs}, or undefined. */
+function normalizeSpawnArgs(args: Record<string, unknown>): SpawnArgs | undefined {
+  const path = typeof args.path === 'string' ? args.path : undefined;
+  const argv = Array.isArray(args.argv) ? args.argv.map(String) : undefined;
+  if (path === undefined || argv === undefined) return undefined;
+  const out: SpawnArgs = { path, argv };
+  if (args.env && typeof args.env === 'object') out.env = args.env as Record<string, string>;
+  if (typeof args.cwd === 'string') out.cwd = args.cwd;
+  if (args.fds && typeof args.fds === 'object') out.fds = args.fds as SpawnArgs['fds'];
+  return out;
 }
 
 function needsWrite(oflags: OpenFlags): boolean {

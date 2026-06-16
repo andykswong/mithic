@@ -1,6 +1,26 @@
 import { expect, test } from 'vitest';
 import { CapabilityManager } from './capability-manager.ts';
 
+test('checkProcess: true only when a process cap is held', () => {
+  const cm = new CapabilityManager();
+  cm.grant(1, [{ type: 'process' }]);
+  cm.grant(2, [{ type: 'fs', paths: ['/'], operations: ['read'] }]);
+  expect(cm.checkProcess(1)).toBe(true);
+  expect(cm.checkProcess(2)).toBe(false);
+  expect(cm.checkProcess(99)).toBe(false);
+});
+
+test('checkProcess honors maxChildren when a current child count is supplied', () => {
+  const cm = new CapabilityManager();
+  cm.grant(1, [{ type: 'process', maxChildren: 2 }]);
+  expect(cm.checkProcess(1, 0)).toBe(true);
+  expect(cm.checkProcess(1, 1)).toBe(true);
+  expect(cm.checkProcess(1, 2)).toBe(false);
+  // No maxChildren = unlimited.
+  cm.grant(2, [{ type: 'process' }]);
+  expect(cm.checkProcess(2, 1000)).toBe(true);
+});
+
 test('grants fs read on an allowed prefix, denies outside', () => {
   const cm = new CapabilityManager();
   cm.grant(1, [{ type: 'fs', paths: ['/tmp'], operations: ['read', 'write'] }]);

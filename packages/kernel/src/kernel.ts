@@ -1,8 +1,10 @@
 import type {
   Capability,
+  FdAction,
   ProcessInit,
   ProcessLimits,
   Signal,
+  SpawnArgs,
   SyscallRequest,
 } from '@mithic/protocol';
 import { isProcessExit, isProcessReady, isSyscallResponse } from '@mithic/protocol';
@@ -13,7 +15,12 @@ import { IpcBroker } from './ipc-broker.ts';
 import { ProcessManager } from './process-manager.ts';
 import type { WaitResult } from './process-manager.ts';
 import { SyscallDispatcher } from './syscall-dispatch.ts';
-import type { DomMutateHandler } from './syscall-dispatch.ts';
+import type {
+  DomMutateHandler,
+  SpawnChildResult,
+  PipelineStageSpec,
+  PipelineChildResult,
+} from './syscall-dispatch.ts';
 
 export interface KernelOptions {
   runtime: Runtime;
@@ -32,6 +39,14 @@ export interface KernelOptions {
    * dynamic-import bootstrap when the host has no usable Worker (e.g. Node).
    */
   launcher?: GuestLauncher;
+  /**
+   * Resolve a bare command NAME (e.g. `cat`) to spawnable guest code for the
+   * `process/spawn` syscall. Absolute paths (`/…`, `./…`) and URLs bypass this
+   * and are spawned directly; a bare name with no resolver match yields ENOENT.
+   * The kernel OWNS what commands exist — guests spawn by name and the kernel
+   * resolves. Unset = only paths/URLs are spawnable by guests.
+   */
+  resolveCommand?: (name: string, cwd: string, env: Record<string, string>) => string | URL | undefined;
   /**
    * Optional launcher for runtimes where `capabilities.directPipes === false`
    * (e.g. QuickJS). The kernel calls `relayLauncher.launchRelay()` instead of the
@@ -150,6 +165,8 @@ export interface PipelineStage {
   env?: Record<string, string>;
   cwd?: string;
   capabilities?: Capability[];
+  /** Parent pid for each stage (default 0 = kernel). Set for guest-requested pipelines. */
+  ppid?: number;
   limits?: ProcessLimits;
   /** Capture this stage's stdout. Only meaningful on the final stage (others are piped). */
   captureStdout?: boolean;
@@ -219,6 +236,18 @@ export class Kernel {
       cwdOf: (pid) => this.#cwds.get(pid) ?? '/',
       ipc: this.ipc,
       onDomMutate: options.onDomMutate,
+      resolveCommand: options.resolveCommand,
+      // Narrow spawn surface: the dispatcher gets ONLY this callback, never the
+      // raw Kernel. It cannot forge a parent pid (the kernel-owned pid it was
+      // dispatched with is passed straight through) and the kernel always
+      // narrows the child's caps from the parent in #spawnChild.
+      spawnChild: (parentPid, code, args, injectedPorts) =>
+        this.#spawnChild(parentPid, code, args, injectedPorts),
+      pipelineChild: (parentPid, stages) => this.#pipelineChild(parentPid, stages),
+      waitChild: (pid) => this.wait(pid),
+      ppidOf: (pid) => this.processes.get(pid)?.ppid ?? 0,
+      chdir: (pid, path) => { this.#cwds.set(pid, path); },
+      exitProcess: (pid, code) => { this.#exit(pid, code); },
     });
     this.#launcher = options.launcher ?? new DefaultGuestLauncher();
     this.#relayLauncher = options.relayLauncher;
@@ -265,7 +294,15 @@ export class Kernel {
     } else {
       const stdoutPipe = this.ipc.createPipe();
       stdoutWritePort = stdoutPipe.writePort;
-      stdout = init.captureStdout ? drainPort(stdoutPipe.readPort) : undefined;
+      if (init.captureStdout) {
+        stdout = drainPort(stdoutPipe.readPort);
+      } else {
+        // Not captured and kernel-owned: drain-and-discard so the guest's writer
+        // gets credit and never blocks (a /dev/null fd). Without this, a child
+        // spawned with default stdio that writes to fd 1 would stall on the first
+        // write (no reader → no credit) and never reach exit.
+        void drainPort(stdoutPipe.readPort);
+      }
     }
 
     let stderrWritePort: MessagePort;
@@ -275,7 +312,12 @@ export class Kernel {
     } else {
       const stderrPipe = this.ipc.createPipe();
       stderrWritePort = stderrPipe.writePort;
-      stderr = init.captureStderr ? drainPort(stderrPipe.readPort) : undefined;
+      if (init.captureStderr) {
+        stderr = drainPort(stderrPipe.readPort);
+      } else {
+        // /dev/null discard drain (see stdout above): keeps the writer unblocked.
+        void drainPort(stderrPipe.readPort);
+      }
     }
 
     const stdio: MessagePort[] = [stdinReadPort, stdoutWritePort, stderrWritePort];
@@ -357,6 +399,7 @@ export class Kernel {
           env: stage.env,
           cwd: stage.cwd,
           capabilities: stage.capabilities,
+          ppid: stage.ppid,
           limits: stage.limits,
           captureStderr: stage.captureStderr,
           // Stage i (i>0) reads from the read end of pipe i-1.
@@ -494,6 +537,148 @@ export class Kernel {
   }
 
   /**
+   * Create a child process for a guest's `process/spawn` syscall. This is the
+   * ONLY spawn surface exposed (via a narrow callback) to the SyscallDispatcher.
+   *
+   * Capability narrowing: the child inherits the PARENT's capabilities, narrowed
+   * (a child can only ever hold a subset — `spawn()` runs them through
+   * `capabilities.narrow(parentPid, …)`). A guest cannot widen a child's grants.
+   *
+   * fd actions (`SpawnArgs.fds`) are applied to wire the child's stdio:
+   *   - `pipe`   — the kernel mints a fresh pipe. The child gets the guest-side
+   *                end (fd 0 → read end; fd 1/2 → write end); the OTHER end is
+   *                transferred back to the PARENT in `SpawnResult.pipes` so the
+   *                parent can drive the child's stdin / drain its stdout/stderr.
+   *   - `dup2` from an injected port — the guest passed a MessagePort it owns
+   *                (e.g. a pipe end from `fs/pipe`) for this fd; the kernel uses
+   *                it directly as the child's stdio (zero-hop guest↔guest pipe).
+   *   - `inherit` / unset — the child gets a fresh kernel-owned stdio pipe (its
+   *                output is not connected to the parent unless captured).
+   *   - `close`  — the fd is left unwired (guest sees /dev/null semantics).
+   *   - `open`   — DEFERRED: an fd backed by a VFS file open is not yet wired;
+   *                treated as `inherit` for now (no silent data loss — the child
+   *                simply gets a default stdio pipe).
+   */
+  async #spawnChild(
+    parentPid: number,
+    code: string | URL,
+    args: SpawnArgs,
+    injectedPorts: Map<number, MessagePort>,
+  ): Promise<SpawnChildResult> {
+    const fds = args.fds ?? {};
+    const init: SpawnInit = {
+      args: args.argv,
+      env: args.env,
+      cwd: args.cwd ?? this.#cwds.get(parentPid) ?? '/',
+      ppid: parentPid,
+      // Child inherits the parent's caps; spawn() narrows them against the
+      // parent (a no-op for an equal set, but the narrow path is what enforces
+      // that a child can never hold more than its parent).
+      capabilities: this.capabilities.capabilities(parentPid),
+    };
+
+    // Parent-facing pipe ports to transfer back, and the pipes map for the result.
+    const transfer: Transferable[] = [];
+    const pipes: Record<number, 'transferred'> = {};
+
+    for (const [fdStr, action] of Object.entries(fds)) {
+      const fd = Number(fdStr);
+      this.#applyFdAction(fd, action, init, injectedPorts, transfer, pipes);
+    }
+
+    const { pid } = await this.spawn(code, init);
+
+    const result: SpawnChildResult = { pid };
+    if (Object.keys(pipes).length > 0) result.pipes = pipes;
+    if (transfer.length > 0) result.transfer = transfer;
+    return result;
+  }
+
+  /**
+   * Apply a single {@link FdAction} for the child's fd, mutating `init` to inject
+   * the child-side stdio port and pushing any parent-facing pipe ports into
+   * `transfer` / recording them in `pipes`.
+   */
+  #applyFdAction(
+    fd: number,
+    action: FdAction,
+    init: SpawnInit,
+    injectedPorts: Map<number, MessagePort>,
+    transfer: Transferable[],
+    pipes: Record<number, 'transferred'>,
+  ): void {
+    switch (action.action) {
+      case 'pipe': {
+        const pipe = this.ipc.createPipe();
+        if (fd === 0) {
+          // Child reads stdin: child gets read end; parent gets write end.
+          init.stdin = pipe.readPort;
+          transfer.push(pipe.writePort);
+        } else {
+          // Child writes (fd 1/2): child gets write end; parent gets read end.
+          if (fd === 1) init.stdout = pipe.writePort;
+          else if (fd === 2) init.stderr = pipe.writePort;
+          transfer.push(pipe.readPort);
+        }
+        pipes[fd] = 'transferred';
+        break;
+      }
+      case 'dup2': {
+        // The guest injected a port it owns for this fd (port-based dup2).
+        const port = injectedPorts.get(fd);
+        if (!port) break; // No port supplied: leave unwired (close-like).
+        if (fd === 0) init.stdin = port;
+        else if (fd === 1) init.stdout = port;
+        else if (fd === 2) init.stderr = port;
+        break;
+      }
+      case 'inherit':
+      case 'open':
+      case 'close':
+      default:
+        // inherit/open/close: leave the child with default kernel-owned stdio
+        // (spawn() mints fresh pipes for any fd not injected here). Injected
+        // ports already in `injectedPorts` for this fd are wired too.
+        if (injectedPorts.has(fd)) {
+          const port = injectedPorts.get(fd)!;
+          if (fd === 0) init.stdin = port;
+          else if (fd === 1) init.stdout = port;
+          else if (fd === 2) init.stderr = port;
+        }
+        break;
+    }
+  }
+
+  /**
+   * Run a guest-requested multi-stage pipeline (the `process/pipeline` syscall),
+   * reusing the zero-hop {@link runPipeline} data path but with the CALLER as the
+   * parent: every stage gets `ppid = parentPid` and its caps NARROWED from the
+   * parent (children can only narrow). The final stage's stdout is captured and
+   * returned to the dispatcher, which hands the bytes to the calling guest.
+   */
+  async #pipelineChild(
+    parentPid: number,
+    stages: Array<{ code: string | URL; spec: PipelineStageSpec }>,
+  ): Promise<PipelineChildResult> {
+    const parentCaps = this.capabilities.capabilities(parentPid);
+    const parentCwd = this.#cwds.get(parentPid) ?? '/';
+    const result = await this.runPipeline(
+      stages.map(({ code, spec }, i) => ({
+        code,
+        args: spec.argv,
+        env: spec.env,
+        cwd: spec.cwd ?? parentCwd,
+        // Children narrow from the parent; runPipeline → spawn applies the narrow.
+        capabilities: parentCaps,
+        ppid: parentPid,
+        captureStdout: i === stages.length - 1,
+      })),
+    );
+    const lastStdout = result.lastStdout ? await result.lastStdout : new Uint8Array();
+    return { exitCodes: result.exitCodes, lastStdout };
+  }
+
+  /**
    * Kernel-owned syscall routing for the relay path. The launcher passes the
    * guest's raw `call`+`args`; the kernel binds the correct, kernel-owned `pid`
    * and dispatches through its own `SyscallDispatcher`, so all capability checks
@@ -550,7 +735,10 @@ export class Kernel {
       // A syscall response from the guest would be malformed here; the guest
       // sends REQUESTS. Discriminate a request: it has id + call + args.
       if (isSyscallRequestMsg(msg)) {
-        void this.dispatcher.dispatch(pid, msg).then(({ response, transfer }) => {
+        // A guest may transfer ports with a syscall (e.g. injecting a pipe end
+        // it owns into a `process/spawn` fd). Forward them to the dispatcher.
+        const inPorts = e.ports && e.ports.length > 0 ? e.ports : undefined;
+        void this.dispatcher.dispatch(pid, msg, inPorts).then(({ response, transfer }) => {
           // The dispatcher may attach transferables (e.g. fs/pipe ports). It also
           // may return a Uint8Array result whose buffer should be transferred.
           const list = transfer

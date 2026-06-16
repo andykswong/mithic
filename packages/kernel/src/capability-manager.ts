@@ -63,6 +63,21 @@ export class CapabilityManager {
     return false;
   }
 
+  /**
+   * Check whether a process may spawn children: it must hold a `process`
+   * capability. When `currentChildren` is supplied and the held capability sets
+   * `maxChildren`, the spawn is denied once the live child count reaches the cap.
+   * A `process` cap without `maxChildren` permits unlimited children.
+   */
+  checkProcess(pid: number, currentChildren?: number): boolean {
+    for (const cap of this.#grants.get(pid) ?? []) {
+      if (cap.type !== 'process') continue;
+      if (cap.maxChildren === undefined) return true;
+      if (currentChildren === undefined || currentChildren < cap.maxChildren) return true;
+    }
+    return false;
+  }
+
   /** Check IPC access by exact channel match. */
   checkIpc(pid: number, channel: string): boolean {
     for (const cap of this.#grants.get(pid) ?? []) {
