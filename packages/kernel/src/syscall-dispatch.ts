@@ -119,6 +119,15 @@ export interface SyscallDispatcherOptions {
   /** IPC broker used to mint pipes for the `fs/pipe` syscall. Optional for fs-only setups. */
   ipc?: IpcBroker;
   /**
+   * Whether the runtime backend can transfer MessagePorts into guest sandboxes.
+   * Defaults to `true` (transferable backends, e.g. Worker/iframe).
+   * Set to `false` for relay backends (e.g. QuickJS): `process/spawn` with any
+   * `pipe` fd action is rejected up-front (ENOSYS) WITHOUT spawning the child,
+   * avoiding an orphan that would result from creating the child first and then
+   * failing in the relay postMessage path.
+   */
+  directPipes?: boolean;
+  /**
    * Optional handler for `dom/mutate` syscalls from guest processes.
    * When set, the kernel forwards batched DomMutation records from the guest
    * to this handler which routes them to the appropriate RemoteDomHost.
@@ -197,6 +206,7 @@ export class SyscallDispatcher {
   #caps: CapabilityManager;
   #cwdOf: (pid: number) => string;
   #ipc: IpcBroker | undefined;
+  #directPipes: boolean;
   #onDomMutate: DomMutateHandler | undefined;
   #resolveCommand: SyscallDispatcherOptions['resolveCommand'];
   #spawnChild: SpawnChild | undefined;
@@ -221,6 +231,7 @@ export class SyscallDispatcher {
     this.#caps = options.caps;
     this.#cwdOf = options.cwdOf;
     this.#ipc = options.ipc;
+    this.#directPipes = options.directPipes ?? true;
     this.#onDomMutate = options.onDomMutate;
     this.#resolveCommand = options.resolveCommand;
     this.#spawnChild = options.spawnChild;
@@ -244,6 +255,15 @@ export class SyscallDispatcher {
     this.#fdTables.delete(pid);
     this.#nextFd.delete(pid);
     this.#liveChildPids.delete(pid);
+    // Fix 1: When a child self-exits (without the parent calling process/wait),
+    // remove it from the parent's live-child set so maxChildren accounting stays
+    // accurate. Without this, a parent's liveChildPids set only shrinks via
+    // process/wait — children that exit on their own permanently consume a slot
+    // and the parent gets locked out after N total spawns even with zero live kids.
+    const parentPid = this.#ppidOf?.(pid);
+    if (parentPid !== undefined) {
+      this.#liveChildPids.get(parentPid)?.delete(pid);
+    }
   }
 
   /**
@@ -303,7 +323,7 @@ export class SyscallDispatcher {
         case 'dom/mutate':
           return res(ok(req.id, this.#domMutate(pid, req.args)));
         case 'process/spawn':
-          return this.#spawn(pid, req.id, req.args, ports);
+          return await this.#spawn(pid, req.id, req.args, ports);
         case 'process/pipeline':
           return res(await this.#pipeline(pid, req.id, req.args));
         case 'process/wait':
@@ -388,6 +408,20 @@ export class SyscallDispatcher {
       this.#closePorts(ports);
       return res(fail(id, 'ENOENT', `command not found: ${spawnArgs.path}`));
     }
+    // Fix 2: Reject pipe-fd spawns on relay (non-transferable) backends BEFORE
+    // creating the child. On relay backends the kernel cannot transfer
+    // MessagePorts back to the parent, so a 'pipe' fd action cannot be fulfilled.
+    // Failing here (before #spawnChild) prevents an orphan child from being
+    // created only to have the relay path close the ports and return ENOSYS anyway.
+    if (!this.#directPipes && spawnArgs.fds) {
+      const hasPipeFd = Object.values(spawnArgs.fds).some(
+        (a) => (a as { action?: string }).action === 'pipe',
+      );
+      if (hasPipeFd) {
+        this.#closePorts(ports);
+        return res(fail(id, 'ENOSYS', 'process/spawn: pipe fd actions require a transferable runtime backend'));
+      }
+    }
     // Map transferred ports to child fds. `portFds[i]` is the child fd for
     // `ports[i]` (positional). Used by the guest to inject pipe ends it minted.
     const injectedPorts = new Map<number, MessagePort>();
@@ -434,12 +468,17 @@ export class SyscallDispatcher {
     if (!this.#pipelineChild) {
       return fail(id, 'ENOSYS', 'process/pipeline: no pipeline handler configured');
     }
-    if (!this.#caps.checkProcess(pid)) {
-      return fail(id, 'EPERM', 'process/pipeline: missing process capability');
-    }
     const rawStages = Array.isArray(args.stages) ? args.stages : undefined;
     if (!rawStages || rawStages.length === 0) {
       return fail(id, 'EINVAL', 'process/pipeline: stages must be a non-empty array');
+    }
+    // Fix 3: enforce maxChildren for process/pipeline. A pipeline with N stages
+    // transiently spawns N children. Check that the current live-child count plus
+    // the stage count does not exceed the parent's maxChildren cap. This prevents
+    // a guest from bypassing the process cap by routing spawns through pipeline.
+    const currentChildren = this.#liveChildPids.get(pid)?.size ?? 0;
+    if (!this.#caps.checkProcess(pid, currentChildren + rawStages.length - 1)) {
+      return fail(id, 'EPERM', 'process/pipeline: missing process capability or child limit reached');
     }
     const resolved: Array<{ code: string | URL; spec: PipelineStageSpec }> = [];
     for (const raw of rawStages) {
@@ -792,6 +831,10 @@ function toBytes(data: unknown): Uint8Array {
 function errnoOf(err: unknown): ErrnoCode {
   if (err instanceof BadFdError) return err.errno;
   if (err instanceof FileSystemError) return fsErrorToErrno(err.code);
+  // Structured errors with an explicit POSIX errno code (e.g. from #applyFdAction).
+  if (err && typeof err === 'object' && 'errno' in err && typeof (err as { errno: unknown }).errno === 'string') {
+    return (err as { errno: ErrnoCode }).errno;
+  }
   return 'EIO';
 }
 

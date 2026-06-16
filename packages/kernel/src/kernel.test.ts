@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
 import { Kernel } from './kernel.ts';
+import type { SpawnChildResult } from './syscall-dispatch.ts';
 import { SyscallDispatcher } from './syscall-dispatch.ts';
 import { CapabilityManager } from './capability-manager.ts';
 import { WorkerRuntime } from '@mithic/runtime/backends/worker';
@@ -65,3 +66,99 @@ test('fs/read with a subarray view delivers the correct bytes', async () => {
   expect(result.byteOffset).toBe(0);
   expect(result.byteLength).toBe(result.buffer.byteLength);
 });
+
+// ── Fix 4 regression: fd > 2 port injection / pipe actions must not leak ────
+
+/**
+ * Fix 4 regression: a process/spawn with a `pipe` fd action on fd 3 must return
+ * EINVAL and must NOT leave a leaked MessagePort (no silent discard of minted ports).
+ * The kernel rejects unsupported fd>2 pipe/dup2 actions with a clear error before
+ * any orphan child or orphan port can be created.
+ */
+test('Fix 4: process/spawn with pipe action on fd 3 returns EINVAL (no orphan/leak)', async () => {
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = new Kernel({ runtime: new WorkerRuntime(), vfs });
+
+  const parentPid = kernel.processes.allocate(0);
+  kernel.processes.markReady(parentPid);
+  kernel.capabilities.grant(parentPid, [{ type: 'process' }]);
+
+  // Register a resolver so the command is found (ENOENT would hide the real error).
+  const NOOP_CMD = `import { createGuest } from '@mithic/guest-runtime';
+    export default async (boot) => { const g = createGuest(boot); g.exit(0); };`;
+  const kernelWithResolver = new Kernel({
+    runtime: new WorkerRuntime(),
+    vfs,
+    resolveCommand: (name) => name === 'noop' ? NOOP_CMD : undefined,
+  });
+
+  const parentPid2 = kernelWithResolver.processes.allocate(0);
+  kernelWithResolver.processes.markReady(parentPid2);
+  kernelWithResolver.capabilities.grant(parentPid2, [{ type: 'process' }]);
+
+  const countBefore = kernelWithResolver.processes.list().length;
+
+  const { response } = await kernelWithResolver.dispatcher.dispatch(parentPid2, {
+    id: 1,
+    call: 'process/spawn',
+    args: { path: 'noop', argv: ['noop'], fds: { 3: { action: 'pipe' } } },
+  });
+
+  // Must be rejected with EINVAL.
+  expect(response).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
+
+  // No orphan child should have been created — process table count must not grow.
+  const countAfter = kernelWithResolver.processes.list().length;
+  expect(countAfter).toBe(countBefore);
+}, 10000);
+
+/**
+ * Fix 4 regression: a process/spawn with a `dup2` injection on fd 3 returns
+ * EINVAL and closes the injected port (no silent leak).
+ */
+test('Fix 4: process/spawn with dup2 injection on fd 3 returns EINVAL and closes the port', async () => {
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+
+  const NOOP_CMD = `import { createGuest } from '@mithic/guest-runtime';
+    export default async (boot) => { const g = createGuest(boot); g.exit(0); };`;
+  const kernel = new Kernel({
+    runtime: new WorkerRuntime(),
+    vfs,
+    resolveCommand: (name) => name === 'noop' ? NOOP_CMD : undefined,
+  });
+
+  const parentPid = kernel.processes.allocate(0);
+  kernel.processes.markReady(parentPid);
+  kernel.capabilities.grant(parentPid, [{ type: 'process' }]);
+
+  // Create a port to inject at fd 3 via portFds + fds:{3:{action:'dup2'}}.
+  const chan = new MessageChannel();
+  const injectedPort = chan.port1;
+  chan.port2.close();
+
+  const countBefore = kernel.processes.list().length;
+
+  // Transfer the port in via portFds with an explicit dup2 fd action for fd 3.
+  const { response } = await kernel.dispatcher.dispatch(
+    parentPid,
+    {
+      id: 1,
+      call: 'process/spawn',
+      args: {
+        path: 'noop', argv: ['noop'],
+        fds: { 3: { action: 'dup2' } },
+        portFds: [3],
+      },
+    },
+    [injectedPort],
+  );
+
+  // Must be rejected with EINVAL.
+  expect(response).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
+
+  // No orphan child should have been created.
+  const countAfter = kernel.processes.list().length;
+  expect(countAfter).toBe(countBefore);
+}, 10000);

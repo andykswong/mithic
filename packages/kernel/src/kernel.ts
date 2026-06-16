@@ -235,6 +235,7 @@ export class Kernel {
       caps: this.capabilities,
       cwdOf: (pid) => this.#cwds.get(pid) ?? '/',
       ipc: this.ipc,
+      directPipes: options.runtime.capabilities.directPipes,
       onDomMutate: options.onDomMutate,
       resolveCommand: options.resolveCommand,
       // Narrow spawn surface: the dispatcher gets ONLY this callback, never the
@@ -598,6 +599,13 @@ export class Kernel {
    * Apply a single {@link FdAction} for the child's fd, mutating `init` to inject
    * the child-side stdio port and pushing any parent-facing pipe ports into
    * `transfer` / recording them in `pipes`.
+   *
+   * Only stdio fds 0/1/2 are supported for port injection and pipe actions.
+   * fd >= 3 with a `pipe` or `dup2` action is not yet wired into the child's
+   * preopen table; the kernel rejects such actions with EINVAL (pipe: both
+   * freshly minted ports are closed to avoid a leak; dup2: the injected port is
+   * closed). This is a deliberate, documented limitation — callers must not pass
+   * fd >= 3 until the preopen-for-arbitrary-fds path is implemented.
    */
   #applyFdAction(
     fd: number,
@@ -609,6 +617,16 @@ export class Kernel {
   ): void {
     switch (action.action) {
       case 'pipe': {
+        // Fix 4: fd >= 3 pipe actions are unsupported — the kernel has no path
+        // to wire an arbitrary fd into a child's preopen table yet. Reject here
+        // (throw so #spawnChild propagates EINVAL back to the dispatcher) rather
+        // than silently minting and leaking two MessagePorts.
+        if (fd > 2) {
+          throw Object.assign(
+            new Error(`process/spawn: pipe fd action on fd ${fd} is not supported (only fd 0–2)`),
+            { errno: 'EINVAL' as const },
+          );
+        }
         const pipe = this.ipc.createPipe();
         if (fd === 0) {
           // Child reads stdin: child gets read end; parent gets write end.
@@ -627,6 +645,17 @@ export class Kernel {
         // The guest injected a port it owns for this fd (port-based dup2).
         const port = injectedPorts.get(fd);
         if (!port) break; // No port supplied: leave unwired (close-like).
+        // Fix 4: fd >= 3 dup2 injection is unsupported — close the port so it
+        // does not leak, then reject. The port was extracted from injectedPorts
+        // which means it came from the guest's transfer list; the kernel is now
+        // its owner and must close it if it cannot wire it.
+        if (fd > 2) {
+          try { port.close(); } catch { /* already closed */ }
+          throw Object.assign(
+            new Error(`process/spawn: dup2 fd injection on fd ${fd} is not supported (only fd 0–2)`),
+            { errno: 'EINVAL' as const },
+          );
+        }
         if (fd === 0) init.stdin = port;
         else if (fd === 1) init.stdout = port;
         else if (fd === 2) init.stderr = port;

@@ -235,3 +235,181 @@ test('process/chdir updates the cwd via the chdir callback', async () => {
   expect(res).toMatchObject({ ok: true, result: { cwd: '/tmp' } });
   expect(stored).toBe('/tmp');
 });
+
+// ── Regression tests for process/spawn correctness fixes ────────────────────
+
+/**
+ * Fix 1 regression: a process with maxChildren:2 should be able to spawn again
+ * after a child self-exits (without being waited), because closeProcess() now
+ * removes the child from the parent's liveChildPids set on self-exit.
+ * Previously, only process/wait shrank the live set, causing premature lockout.
+ */
+test('Fix 1: maxChildren slot freed when child self-exits without being waited', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  // Parent pid=1 with maxChildren:2.
+  caps.grant(1, [{ type: 'process', maxChildren: 2 }]);
+
+  // Track which children have been spawned so we can simulate self-exit.
+  const spawnedPids: number[] = [];
+  let nextChildPid = 100;
+
+  const spawnChild: SpawnChild = async () => {
+    const pid = nextChildPid++;
+    spawnedPids.push(pid);
+    return { pid };
+  };
+
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/',
+    resolveCommand: () => 'CMD',
+    spawnChild,
+    ppidOf: (pid) => (spawnedPids.includes(pid) ? 1 : 0),
+  });
+
+  // Spawn two children — fills maxChildren:2.
+  const r1 = (await d.dispatch(1, { id: 1, call: 'process/spawn', args: { path: 'cmd', argv: ['cmd'] } })).response;
+  expect(r1.ok).toBe(true);
+  const r2 = (await d.dispatch(1, { id: 2, call: 'process/spawn', args: { path: 'cmd', argv: ['cmd'] } })).response;
+  expect(r2.ok).toBe(true);
+
+  // Third spawn must fail: limit reached.
+  const r3 = (await d.dispatch(1, { id: 3, call: 'process/spawn', args: { path: 'cmd', argv: ['cmd'] } })).response;
+  expect(r3).toMatchObject({ ok: false, error: { code: 'EPERM' } });
+
+  // Simulate child 100 self-exiting (closeProcess called by the kernel's #exit).
+  d.closeProcess(100);
+
+  // Now a new spawn must SUCCEED — the slot was freed by the self-exit.
+  const r4 = (await d.dispatch(1, { id: 4, call: 'process/spawn', args: { path: 'cmd', argv: ['cmd'] } })).response;
+  expect(r4.ok).toBe(true);
+});
+
+/**
+ * Fix 2 regression: on a non-transferable (relay) backend (directPipes:false),
+ * process/spawn with a 'pipe' fd action must return ENOSYS WITHOUT creating a
+ * child (no orphan). Verified by asserting the spawnChild callback is never called.
+ */
+test('Fix 2: relay backend process/spawn with pipe fd returns ENOSYS without spawning orphan', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'process' }]);
+
+  let spawnCalled = false;
+  const spawnChild: SpawnChild = async () => {
+    spawnCalled = true;
+    return { pid: 42 };
+  };
+
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/',
+    resolveCommand: () => 'CMD',
+    spawnChild,
+    directPipes: false, // relay backend: cannot transfer ports
+  });
+
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'process/spawn',
+    args: { path: 'cmd', argv: ['cmd'], fds: { 1: { action: 'pipe' } } },
+  })).response;
+
+  expect(res).toMatchObject({ ok: false, error: { code: 'ENOSYS' } });
+  // The critical assertion: no child was created — spawnChild must not have been called.
+  expect(spawnCalled).toBe(false);
+});
+
+/**
+ * Fix 2 extra: relay backend without pipe fds still works (ENOSYS is specific
+ * to pipe actions, not all spawns on relay backends).
+ */
+test('Fix 2: relay backend process/spawn without pipe fds succeeds', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'process' }]);
+
+  const spawnChild: SpawnChild = async () => ({ pid: 42 });
+
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/',
+    resolveCommand: () => 'CMD',
+    spawnChild,
+    directPipes: false,
+  });
+
+  // spawn without any pipe fds — should succeed.
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'process/spawn',
+    args: { path: 'cmd', argv: ['cmd'] },
+  })).response;
+  expect(res).toMatchObject({ ok: true, result: { pid: 42 } });
+});
+
+/**
+ * Fix 3 regression: process/pipeline with more stages than remaining maxChildren
+ * slots must be rejected (EPERM) without running any stages.
+ * Previously, pipeline bypassed maxChildren by not passing currentChildren to
+ * checkProcess, so a guest could spawn unlimited children via pipeline.
+ */
+test('Fix 3: process/pipeline with 3 stages rejected when maxChildren:2', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'process', maxChildren: 2 }]);
+
+  let pipelineRan = false;
+  const pipelineChild = async () => {
+    pipelineRan = true;
+    return { exitCodes: [], lastStdout: new Uint8Array() };
+  };
+
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/',
+    resolveCommand: (name) => name,
+    pipelineChild,
+  });
+
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'process/pipeline',
+    args: {
+      stages: [
+        { path: 'cmd1', argv: ['cmd1'] },
+        { path: 'cmd2', argv: ['cmd2'] },
+        { path: 'cmd3', argv: ['cmd3'] },
+      ],
+    },
+  })).response;
+
+  expect(res).toMatchObject({ ok: false, error: { code: 'EPERM' } });
+  expect(pipelineRan).toBe(false);
+});
+
+/**
+ * Fix 3 extra: a 2-stage pipeline with maxChildren:2 must still succeed.
+ */
+test('Fix 3: process/pipeline with 2 stages succeeds when maxChildren:2', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'process', maxChildren: 2 }]);
+
+  const pipelineChild = async () => ({ exitCodes: [0, 0], lastStdout: new Uint8Array() });
+
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/',
+    resolveCommand: (name) => name,
+    pipelineChild,
+  });
+
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'process/pipeline',
+    args: {
+      stages: [
+        { path: 'cmd1', argv: ['cmd1'] },
+        { path: 'cmd2', argv: ['cmd2'] },
+      ],
+    },
+  })).response;
+  expect(res.ok).toBe(true);
+});
