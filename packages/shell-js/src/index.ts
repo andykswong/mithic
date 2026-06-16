@@ -25,6 +25,7 @@ export { Executor } from './executor.ts';
 export type { ShellContext, ExecutorOptions, CommandResolver } from './executor.ts';
 export type {
   KernelClient,
+  FsClient,
   SpawnParams,
   SpawnHandle,
   PipelineStageParams,

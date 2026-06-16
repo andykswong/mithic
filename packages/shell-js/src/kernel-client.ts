@@ -63,3 +63,37 @@ export interface KernelClient {
    */
   runPipeline?(stages: PipelineStageParams[]): Promise<PipelineRunResult>;
 }
+
+/**
+ * Minimal VFS client for redirect execution. The executor uses this to open,
+ * write, read, and close files when executing redirect operators (>, >>, <).
+ *
+ * In the real guest, these map to `isola.syscall('fs/open' | 'fs/write' |
+ * 'fs/read' | 'fs/close', ...)`. In unit tests, supply an in-memory mock.
+ */
+export interface FsClient {
+  /**
+   * Open (or create) a file. Returns a numeric file descriptor.
+   * @param path  Absolute path to the file.
+   * @param flags Open flags — at most one of `write`, `append`, `read` is true.
+   */
+  fsOpen(
+    path: string,
+    flags: {
+      read?: boolean;
+      write?: boolean;
+      append?: boolean;
+      create?: boolean;
+      truncate?: boolean;
+    },
+  ): number;
+
+  /** Write a string to an open fd. */
+  fsWrite(fd: number, data: string): void;
+
+  /** Read the entire contents of an open fd as a string. */
+  fsRead(fd: number): string;
+
+  /** Flush and close an open fd. */
+  fsClose(fd: number): void;
+}

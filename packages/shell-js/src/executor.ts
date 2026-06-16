@@ -1,9 +1,27 @@
-import type { Program, SimpleCommand, Statement } from './ast.ts';
+/**
+ * KNOWN LIMITATIONS (as of J.7)
+ *
+ * (a) External command spawning: the executor's spawn path is fully implemented
+ *     and mock-tested, but is unreachable from a real guest. Spawning external
+ *     (non-builtin) commands requires a `process/spawn` kernel syscall that does
+ *     not yet exist in the Isola 2.0 kernel. It will land in a future kernel
+ *     milestone; until then only builtins are executable from a real shell guest.
+ *
+ * (b) `$?` / `$PIPESTATUS`, glob expansion, brace expansion, shell functions,
+ *     and job control are deferred to J.8.
+ *
+ * (c) Input redirects (`<`), heredocs (`<<`), and fd-dup redirects (`2>`, etc.)
+ *     are deferred to J.8. Attempting to use them raises an explicit error;
+ *     they are never silently dropped.
+ */
+
+import type { Program, Redirect, SimpleCommand, Statement } from './ast.ts';
 import { parse } from './parser.ts';
 import { Expander } from './expander.ts';
 import { isBuiltin, runBuiltin } from './builtins.ts';
 import type { BuiltinContext } from './builtins.ts';
 import type {
+  FsClient,
   KernelClient,
   PipelineStageParams,
   SpawnParams,
@@ -30,6 +48,16 @@ export interface ExecutorOptions {
   onStdout?: (s: string) => void;
   /** stderr sink. Defaults to the host `process.stderr`. */
   onStderr?: (s: string) => void;
+  /**
+   * VFS client for redirect execution (>, >>, <). When provided the executor
+   * routes redirected I/O through this client instead of the normal stdout/stdin
+   * streams. In the real guest these calls go through `isola.syscall('fs/*')`;
+   * in unit tests supply an in-memory mock.
+   *
+   * Unsupported redirect operators (<, <<, fd-dup) throw an explicit error even
+   * when `fs` is absent — they are never silently dropped.
+   */
+  fs?: FsClient;
 }
 
 /** Thrown internally by the `exit` builtin to unwind the executor. */
@@ -45,6 +73,7 @@ export class Executor {
   readonly context: ShellContext;
   private kernel: KernelClient;
   private resolve: CommandResolver;
+  private fs: FsClient | undefined;
   private lastStatus = 0;
   private exiting: number | undefined;
   private stdoutSink: (s: string) => void;
@@ -57,6 +86,7 @@ export class Executor {
     // kernel/launcher performs the real lookup. A custom resolver (e.g. the E2E
     // resolver mapping names to inline guest source) overrides this.
     this.resolve = options.resolve ?? ((name) => name);
+    this.fs = options.fs;
     this.stdoutSink = options.onStdout ?? ((s) => {
       if (typeof process !== 'undefined' && process.stdout) process.stdout.write(s);
     });
@@ -197,6 +227,10 @@ export class Executor {
 
   /** Execute a single simple command: builtin in-process, else spawn. */
   private async execSimple(cmd: SimpleCommand): Promise<number> {
+    // Validate redirects early — fail loudly for unsupported operators rather
+    // than silently dropping them.
+    this.validateRedirects(cmd.redirects);
+
     const expander = new Expander(this.context.env);
 
     // Apply assignments. With no command word, they mutate the shell env; with a
@@ -206,7 +240,21 @@ export class Executor {
       localEnv[a.name] = expander.expandToString(a.value);
     }
 
-    const { name, argv } = this.expandCommand(cmd, expander);
+    // ── Fix 1: expand command args against the effective env ─────────────────
+    // When prefix assignments accompany a command word (e.g. `FOO=bar echo $FOO`),
+    // the assigned values must be visible to that command's own arg expansion.
+    // Build the effective env (base + prefix overlay) FIRST, then expand.
+    // Pure assignments (no command) continue to use the base env for expansion
+    // because their RHS is evaluated sequentially and persisted below.
+    const hasCommand = cmd.name !== '';
+    const expandEnv = hasCommand && Object.keys(localEnv).length > 0
+      ? { ...this.context.env, ...localEnv }
+      : this.context.env;
+    const argExpander = hasCommand && Object.keys(localEnv).length > 0
+      ? new Expander(expandEnv)
+      : expander;
+
+    const { name, argv } = this.expandCommand(cmd, argExpander);
 
     if (name === '') {
       // Pure assignment: persist into the shell env.
@@ -215,10 +263,13 @@ export class Executor {
     }
 
     if (isBuiltin(name)) {
+      // Resolve redirect targets using the effective env.
+      const redirectSink = this.buildRedirectSink(cmd.redirects, argExpander);
+
       // Builtins see the assignments merged into the live env for the call.
       const saved = { ...this.context.env };
       Object.assign(this.context.env, localEnv);
-      const status = await this.runBuiltinCommand(name, argv);
+      const status = await this.runBuiltinCommand(name, argv, { write: redirectSink ?? undefined });
       // export/unset/cd are meant to persist; restore only the temporary
       // assignment overlay that the builtin didn't itself intend to change is
       // out of scope for the minimal shell — builtins operate on the live env.
@@ -229,10 +280,16 @@ export class Executor {
         }
         for (const k of Object.keys(saved)) this.context.env[k] = saved[k];
       }
+      if (redirectSink) redirectSink.close();
       return status;
     }
 
     // External command: resolve to guest code and spawn.
+    //
+    // DEFERRED (J.7): spawning external commands requires a `process/spawn`
+    // kernel syscall that does not yet exist in the Isola 2.0 kernel. The spawn
+    // path below is implemented and mock-tested but is unreachable from a real
+    // guest until that syscall lands. See also Fix 3 comment below.
     const code = this.resolve(name);
     if (code === undefined) {
       return 127; // command not found
@@ -281,6 +338,68 @@ export class Executor {
     // Reflect any cwd change the builtin made back onto the shell context.
     this.context.cwd = ctx.cwd;
     return status;
+  }
+
+  /**
+   * Validate that all redirects in a command are ones we handle. Throws a
+   * clear error for unsupported operators so they are never silently dropped.
+   *
+   * Supported: `>` (truncate-write), `>>` (append-write).
+   * Not yet supported: `<` (stdin redirect), fd-dup (`2>`), heredoc (`<<`).
+   */
+  private validateRedirects(redirects: Redirect[]): void {
+    for (const r of redirects) {
+      if (r.op !== '>' && r.op !== '>>') {
+        throw new Error(
+          `shell: unsupported redirect operator '${r.op}' — input redirects (<) and ` +
+          'heredocs (<<) are not yet implemented (deferred to J.8)',
+        );
+      }
+    }
+  }
+
+  /**
+   * Build a write-sink that captures builtin stdout and flushes it to the
+   * redirect target file(s). Returns `null` when there are no output redirects.
+   *
+   * Only the LAST `>` / `>>` redirect targeting stdout (fd 1, the default) is
+   * applied here (POSIX: later redirects shadow earlier ones). The returned
+   * object has a `close()` method the caller MUST invoke after the builtin
+   * completes so the fd is flushed and closed.
+   */
+  private buildRedirectSink(
+    redirects: Redirect[],
+    expander: Expander,
+  ): ((s: string) => void) & { close(): void } | null {
+    // Pick the last stdout redirect (op `>` or `>>`).
+    let last: Redirect | undefined;
+    for (const r of redirects) {
+      if (r.op === '>' || r.op === '>>') last = r;
+    }
+    if (!last) return null;
+
+    const fs = this.fs;
+    if (!fs) {
+      // No FsClient provided. Surface a clear error rather than silently
+      // writing to stdout — this would be wrong behaviour that's hard to debug.
+      throw new Error(
+        `shell: redirect '${last.op} ${last.target}' requires an FsClient ` +
+        '(pass \'fs\' in ExecutorOptions)',
+      );
+    }
+
+    const path = expander.expandToString(last.target);
+    const append = last.op === '>>';
+    const fd = fs.fsOpen(path, {
+      write: !append,
+      append,
+      create: true,
+      truncate: !append,
+    });
+
+    const sink = (s: string) => fs.fsWrite(fd, s);
+    sink.close = () => fs.fsClose(fd);
+    return sink;
   }
 
   protected writeStdout(s: string): void {
