@@ -5,7 +5,8 @@ export interface Transport {
 }
 
 export class MessagePortTransport implements Transport {
-  constructor(private port: MessagePort) { this.port.start?.(); }
+  private port: MessagePort;
+  constructor(port: MessagePort) { this.port = port; this.port.start?.(); }
   send(msg: unknown, transfer: Transferable[] = []): void { this.port.postMessage(msg, transfer); }
   onMessage(cb: (msg: unknown) => void): void { this.port.onmessage = (e) => cb(e.data); }
   close(): void { this.port.close(); }
