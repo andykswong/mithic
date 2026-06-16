@@ -1,5 +1,4 @@
-import { describe, it, beforeEach } from 'node:test';
-import assert from 'node:assert/strict';
+import { expect, describe, it, beforeEach } from 'vitest';
 import { OPFSProvider, type OPFSStorageManager } from './opfs.ts';
 
 // ─── Minimal in-memory OPFS mock ─────────────────────────────────────────────
@@ -145,17 +144,17 @@ describe('OPFSProvider', () => {
     it('creates a file and reads it back', async () => {
       const handle = await provider.open('/test.txt', { create: true, write: true });
       const written = await provider.write(handle, new TextEncoder().encode('hello'), 0);
-      assert.equal(written, 5);
+      expect(written).toBe(5);
       await provider.close(handle);
 
       const readHandle = await provider.open('/test.txt', { read: true });
       const data = await provider.read(readHandle, 0, 10);
-      assert.equal(new TextDecoder().decode(data), 'hello');
+      expect(new TextDecoder().decode(data)).toBe('hello');
       await provider.close(readHandle);
     });
 
     it('throws for non-existent file without create', async () => {
-      await assert.rejects(() => provider.open('/nonexistent.txt', { read: true }));
+      await expect(provider.open('/nonexistent.txt', { read: true })).rejects.toThrow();
     });
   });
 
@@ -166,14 +165,14 @@ describe('OPFSProvider', () => {
       await provider.close(handle);
 
       const stat = await provider.stat('/stat-test.txt');
-      assert.equal(stat.type, 'file');
-      assert.equal(stat.size, 3n);
+      expect(stat.type).toBe('file');
+      expect(stat.size).toBe(3n);
     });
 
     it('returns directory stat', async () => {
       await provider.mkdir('/testdir');
       const stat = await provider.stat('/testdir');
-      assert.equal(stat.type, 'directory');
+      expect(stat.type).toBe('directory');
     });
   });
 
@@ -181,7 +180,7 @@ describe('OPFSProvider', () => {
     it('creates directory and lists it', async () => {
       await provider.mkdir('/mydir');
       const entries = await provider.readdir('/');
-      assert.ok(entries.some(e => e.name === 'mydir' && e.type === 'directory'));
+      expect(entries.some(e => e.name === 'mydir' && e.type === 'directory')).toBe(true);
     });
   });
 
@@ -192,7 +191,7 @@ describe('OPFSProvider', () => {
       await provider.close(handle);
 
       await provider.unlink('/del.txt');
-      await assert.rejects(() => provider.stat('/del.txt'));
+      await expect(provider.stat('/del.txt')).rejects.toThrow();
     });
   });
 
@@ -200,7 +199,7 @@ describe('OPFSProvider', () => {
     it('removes empty directory', async () => {
       await provider.mkdir('/emptydir');
       await provider.rmdir('/emptydir');
-      await assert.rejects(() => provider.stat('/emptydir'));
+      await expect(provider.stat('/emptydir')).rejects.toThrow();
     });
   });
 
@@ -212,8 +211,8 @@ describe('OPFSProvider', () => {
 
       await provider.rename('/old.txt', '/new.txt');
       const stat = await provider.stat('/new.txt');
-      assert.equal(stat.type, 'file');
-      assert.equal(stat.size, 4n);
+      expect(stat.type).toBe('file');
+      expect(stat.size).toBe(4n);
     });
   });
 
@@ -225,7 +224,7 @@ describe('OPFSProvider', () => {
       await provider.close(handle);
 
       const stat = await provider.stat('/trunc.txt');
-      assert.equal(stat.size, 5n);
+      expect(stat.size).toBe(5n);
     });
   });
 });

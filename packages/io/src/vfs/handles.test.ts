@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import { describe, it, beforeEach } from 'node:test';
+import { expect, describe, it, beforeEach } from 'vitest';
 import { MemoryFsProvider } from './providers/memory.ts';
 import { FileSystemRouter } from './router.ts';
 import { VFSDirectoryHandle } from './handles.ts';
@@ -17,36 +16,34 @@ describe('VFS Handles', () => {
   describe('VFSDirectoryHandle.getFileHandle', () => {
     it('should create a file with create option', async () => {
       const fileHandle = await root.getFileHandle('test.txt', { create: true });
-      assert.strictEqual(fileHandle.kind, 'file');
-      assert.strictEqual(fileHandle.name, 'test.txt');
+      expect(fileHandle.kind).toBe('file');
+      expect(fileHandle.name).toBe('test.txt');
     });
 
     it('should throw NotFoundError without create if file missing', async () => {
-      await assert.rejects(
-        () => root.getFileHandle('nonexistent.txt'),
-        (err: unknown) => (err as DOMException).name === 'NotFoundError'
-      );
+      await expect(
+        root.getFileHandle('nonexistent.txt'),
+      ).rejects.toSatisfy((err: unknown) => (err as DOMException).name === 'NotFoundError');
     });
 
     it('should return existing file handle without create', async () => {
       await root.getFileHandle('existing.txt', { create: true });
       const handle = await root.getFileHandle('existing.txt');
-      assert.strictEqual(handle.name, 'existing.txt');
+      expect(handle.name).toBe('existing.txt');
     });
   });
 
   describe('VFSDirectoryHandle.getDirectoryHandle', () => {
     it('should create a directory with create option', async () => {
       const dirHandle = await root.getDirectoryHandle('subdir', { create: true });
-      assert.strictEqual(dirHandle.kind, 'directory');
-      assert.strictEqual(dirHandle.name, 'subdir');
+      expect(dirHandle.kind).toBe('directory');
+      expect(dirHandle.name).toBe('subdir');
     });
 
     it('should throw NotFoundError without create if directory missing', async () => {
-      await assert.rejects(
-        () => root.getDirectoryHandle('nodir'),
-        (err: unknown) => (err as DOMException).name === 'NotFoundError'
-      );
+      await expect(
+        root.getDirectoryHandle('nodir'),
+      ).rejects.toSatisfy((err: unknown) => (err as DOMException).name === 'NotFoundError');
     });
   });
 
@@ -62,11 +59,11 @@ describe('VFS Handles', () => {
       }
 
       const names = entries.map(([name]) => name).sort();
-      assert.deepStrictEqual(names, ['a.txt', 'b.txt', 'c']);
+      expect(names).toEqual(['a.txt', 'b.txt', 'c']);
 
       const types = new Map(entries.map(([name, handle]) => [name, handle.kind]));
-      assert.strictEqual(types.get('a.txt'), 'file');
-      assert.strictEqual(types.get('c'), 'directory');
+      expect(types.get('a.txt')).toBe('file');
+      expect(types.get('c')).toBe('directory');
     });
   });
 
@@ -80,11 +77,11 @@ describe('VFS Handles', () => {
 
       const fileHandle = await root.getFileHandle('data.txt');
       const file = await fileHandle.getFile();
-      assert.strictEqual(file.name, 'data.txt');
-      assert.strictEqual(file.size, content.length);
+      expect(file.name).toBe('data.txt');
+      expect(file.size).toBe(content.length);
 
       const text = await file.text();
-      assert.strictEqual(text, 'file contents here');
+      expect(text).toBe('file contents here');
     });
   });
 
@@ -99,7 +96,7 @@ describe('VFS Handles', () => {
       // Verify data persisted
       const file = await fileHandle.getFile();
       const text = await file.text();
-      assert.strictEqual(text, 'hello writable');
+      expect(text).toBe('hello writable');
     });
 
     it('should support write with keepExistingData', async () => {
@@ -117,7 +114,7 @@ describe('VFS Handles', () => {
 
       const file = await fileHandle.getFile();
       const text = await file.text();
-      assert.strictEqual(text, 'XYCDEF');
+      expect(text).toBe('XYCDEF');
     });
   });
 
@@ -126,10 +123,9 @@ describe('VFS Handles', () => {
       await root.getFileHandle('remove-me.txt', { create: true });
       await root.removeEntry('remove-me.txt');
 
-      await assert.rejects(
-        () => root.getFileHandle('remove-me.txt'),
-        (err: unknown) => (err as DOMException).name === 'NotFoundError'
-      );
+      await expect(
+        root.getFileHandle('remove-me.txt'),
+      ).rejects.toSatisfy((err: unknown) => (err as DOMException).name === 'NotFoundError');
     });
 
     it('should remove directory recursively', async () => {
@@ -138,10 +134,9 @@ describe('VFS Handles', () => {
 
       await root.removeEntry('deep', { recursive: true });
 
-      await assert.rejects(
-        () => root.getDirectoryHandle('deep'),
-        (err: unknown) => (err as DOMException).name === 'NotFoundError'
-      );
+      await expect(
+        root.getDirectoryHandle('deep'),
+      ).rejects.toSatisfy((err: unknown) => (err as DOMException).name === 'NotFoundError');
     });
   });
 
@@ -152,19 +147,19 @@ describe('VFS Handles', () => {
       const file = await sub2.getFileHandle('deep.txt', { create: true });
 
       const result = await root.resolve(file);
-      assert.deepStrictEqual(result, ['dir1', 'dir2', 'deep.txt']);
+      expect(result).toEqual(['dir1', 'dir2', 'deep.txt']);
     });
 
     it('should return empty array for same entry', async () => {
       const result = await root.resolve(root);
-      assert.deepStrictEqual(result, []);
+      expect(result).toEqual([]);
     });
 
     it('should return null for non-descendant', async () => {
       const other = new VFSDirectoryHandle(router, '/other');
       const sub = await root.getDirectoryHandle('inside', { create: true });
       const result = await other.resolve(sub);
-      assert.strictEqual(result, null);
+      expect(result).toBeNull();
     });
   });
 
@@ -173,8 +168,8 @@ describe('VFS Handles', () => {
       await root.getDirectoryHandle('statdir', { create: true });
       const dirHandle = await root.getDirectoryHandle('statdir');
       const stat = await dirHandle.stat();
-      assert.strictEqual(stat.type, 'directory');
-      assert.strictEqual(stat.mode, 0o755);
+      expect(stat.type).toBe('directory');
+      expect(stat.mode).toBe(0o755);
     });
 
     it('should return FileStat for file', async () => {
@@ -184,8 +179,8 @@ describe('VFS Handles', () => {
 
       const fileHandle = await root.getFileHandle('statfile.txt');
       const stat = await fileHandle.stat();
-      assert.strictEqual(stat.type, 'file');
-      assert.strictEqual(stat.size, 9n);
+      expect(stat.type).toBe('file');
+      expect(stat.size).toBe(9n);
     });
   });
 
@@ -198,7 +193,7 @@ describe('VFS Handles', () => {
       await fileHandle.chmod(0o600);
 
       const stat = await fileHandle.stat();
-      assert.strictEqual(stat.mode, 0o600);
+      expect(stat.mode).toBe(0o600);
     });
   });
 });

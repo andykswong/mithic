@@ -21,7 +21,7 @@ export default defineConfig({
       {
         test: {
           name: 'node',
-          include: [`packages/${ISOLA_PACKAGES}/src/**/*.test.ts`],
+          include: [`packages/${ISOLA_PACKAGES}/src/**/*.test.ts`, 'packages/io/src/vfs/**/*.test.ts'],
           exclude: ['**/*.browser.test.ts', '**/node_modules/**', '**/dist/**'],
           environment: 'node',
         },

@@ -1,7 +1,12 @@
-import assert from 'node:assert/strict';
-import { describe, it, beforeEach } from 'node:test';
+import { expect, describe, it, beforeEach } from 'vitest';
 import { MemoryFsProvider } from './memory.ts';
 import { FileSystemError } from '../provider.ts';
+
+function expectThrows<T extends Error = Error>(fn: () => unknown): T {
+  let err: T | undefined;
+  expect(() => { try { fn(); } catch (e) { err = e as T; throw e; } }).toThrow();
+  return err!;
+}
 
 describe('MemoryFsProvider', () => {
   let fs: MemoryFsProvider;
@@ -16,7 +21,7 @@ describe('MemoryFsProvider', () => {
       const data = new TextEncoder().encode('Hello, World!');
       await fs.write(handle, data, 0);
       const result = await fs.read(handle, 0, data.length);
-      assert.deepStrictEqual(result, data);
+      expect(result).toEqual(data);
       await fs.close(handle);
     });
   });
@@ -29,11 +34,11 @@ describe('MemoryFsProvider', () => {
       await fs.write(handle, data1, 0);
       await fs.write(handle, data2, 2);
       const result = await fs.read(handle, 0, 5);
-      assert.deepStrictEqual(result, new Uint8Array([1, 2, 10, 20, 30]));
+      expect(result).toEqual(new Uint8Array([1, 2, 10, 20, 30]));
 
       // Read with offset
       const partial = await fs.read(handle, 2, 2);
-      assert.deepStrictEqual(partial, new Uint8Array([10, 20]));
+      expect(partial).toEqual(new Uint8Array([10, 20]));
       await fs.close(handle);
     });
   });
@@ -49,8 +54,8 @@ describe('MemoryFsProvider', () => {
       await fs.close(h3);
 
       const entries = await fs.readdir('/mydir');
-      assert.deepStrictEqual(entries.map(e => e.name), ['alpha.txt', 'mid.txt', 'zebra.txt']);
-      assert.strictEqual(entries[0].type, 'file');
+      expect(entries.map(e => e.name)).toEqual(['alpha.txt', 'mid.txt', 'zebra.txt']);
+      expect(entries[0].type).toBe('file');
     });
   });
 
@@ -62,20 +67,20 @@ describe('MemoryFsProvider', () => {
       await fs.close(handle);
 
       const stat = await fs.stat('/info.txt');
-      assert.strictEqual(stat.type, 'file');
-      assert.strictEqual(stat.size, BigInt(data.length));
-      assert.strictEqual(stat.mode, 0o644);
-      assert(stat.mtime instanceof Date);
-      assert(stat.atime instanceof Date);
-      assert(stat.ctime instanceof Date);
-      assert.strictEqual(stat.linkCount, 1n);
+      expect(stat.type).toBe('file');
+      expect(stat.size).toBe(BigInt(data.length));
+      expect(stat.mode).toBe(0o644);
+      expect(stat.mtime).toBeInstanceOf(Date);
+      expect(stat.atime).toBeInstanceOf(Date);
+      expect(stat.ctime).toBeInstanceOf(Date);
+      expect(stat.linkCount).toBe(1n);
     });
 
     it('should return directory type for directories', async () => {
       await fs.mkdir('/testdir');
       const stat = await fs.stat('/testdir');
-      assert.strictEqual(stat.type, 'directory');
-      assert.strictEqual(stat.mode, 0o755);
+      expect(stat.type).toBe('directory');
+      expect(stat.mode).toBe(0o755);
     });
   });
 
@@ -90,26 +95,25 @@ describe('MemoryFsProvider', () => {
 
       // stat with followSymlinks (default) resolves to file
       const stat = await fs.stat('/link.txt');
-      assert.strictEqual(stat.type, 'file');
-      assert.strictEqual(stat.size, BigInt(data.length));
+      expect(stat.type).toBe('file');
+      expect(stat.size).toBe(BigInt(data.length));
 
       // stat without followSymlinks returns symlink
       const linkStat = await fs.stat('/link.txt', { followSymlinks: false });
-      assert.strictEqual(linkStat.type, 'symlink');
+      expect(linkStat.type).toBe('symlink');
 
       // readlink returns target
       const target = await fs.readlink('/link.txt');
-      assert.strictEqual(target, '/target.txt');
+      expect(target).toBe('/target.txt');
     });
 
     it('should detect symlink loops', async () => {
       await fs.symlink('/b', '/a');
       await fs.symlink('/a', '/b');
 
-      assert.throws(
-        () => fs.stat('/a'),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'loop'
-      );
+      const err = expectThrows<FileSystemError>(() => fs.stat('/a'));
+      expect(err).toBeInstanceOf(FileSystemError);
+      expect(err.code).toBe('loop');
     });
   });
 
@@ -119,12 +123,12 @@ describe('MemoryFsProvider', () => {
       await fs.close(handle);
 
       const statBefore = await fs.stat('/chmod.txt');
-      assert.strictEqual(statBefore.mode, 0o644);
+      expect(statBefore.mode).toBe(0o644);
 
       await fs.chmod('/chmod.txt', 0o755);
       const statAfter = await fs.stat('/chmod.txt');
-      assert.strictEqual(statAfter.mode, 0o755);
-      assert(statAfter.ctime >= statBefore.ctime);
+      expect(statAfter.mode).toBe(0o755);
+      expect(statAfter.ctime >= statBefore.ctime).toBe(true);
     });
   });
 
@@ -134,19 +138,17 @@ describe('MemoryFsProvider', () => {
       await fs.close(handle);
 
       await fs.unlink('/remove.txt');
-      assert.throws(
-        () => fs.stat('/remove.txt'),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
-      );
+      const err = expectThrows<FileSystemError>(() => fs.stat('/remove.txt'));
+      expect(err).toBeInstanceOf(FileSystemError);
+      expect(err.code).toBe('no-entry');
     });
 
     it('should rmdir an empty directory', async () => {
       await fs.mkdir('/emptydir');
       await fs.rmdir('/emptydir');
-      assert.throws(
-        () => fs.stat('/emptydir'),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
-      );
+      const err = expectThrows<FileSystemError>(() => fs.stat('/emptydir'));
+      expect(err).toBeInstanceOf(FileSystemError);
+      expect(err.code).toBe('no-entry');
     });
 
     it('should fail rmdir on non-empty directory', async () => {
@@ -154,10 +156,9 @@ describe('MemoryFsProvider', () => {
       const h = await fs.open('/fulldir/child.txt', { create: true, write: true });
       await fs.close(h);
 
-      assert.throws(
-        () => fs.rmdir('/fulldir'),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'not-empty'
-      );
+      const err = expectThrows<FileSystemError>(() => fs.rmdir('/fulldir'));
+      expect(err).toBeInstanceOf(FileSystemError);
+      expect(err.code).toBe('not-empty');
     });
   });
 
@@ -170,14 +171,13 @@ describe('MemoryFsProvider', () => {
 
       await fs.rename('/old.txt', '/new.txt');
 
-      assert.throws(
-        () => fs.stat('/old.txt'),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
-      );
+      const err = expectThrows<FileSystemError>(() => fs.stat('/old.txt'));
+      expect(err).toBeInstanceOf(FileSystemError);
+      expect(err.code).toBe('no-entry');
 
       const stat = await fs.stat('/new.txt');
-      assert.strictEqual(stat.type, 'file');
-      assert.strictEqual(stat.size, BigInt(data.length));
+      expect(stat.type).toBe('file');
+      expect(stat.size).toBe(BigInt(data.length));
     });
   });
 
@@ -186,7 +186,7 @@ describe('MemoryFsProvider', () => {
       const handle = await fs.open('/created.txt', { create: true, write: true });
       await fs.close(handle);
       const stat = await fs.stat('/created.txt');
-      assert.strictEqual(stat.type, 'file');
+      expect(stat.type).toBe('file');
     });
 
     it('should truncate file with truncate flag', async () => {
@@ -196,7 +196,7 @@ describe('MemoryFsProvider', () => {
 
       const h2 = await fs.open('/trunc.txt', { truncate: true, write: true });
       const data = await fs.read(h2, 0, 100);
-      assert.strictEqual(data.length, 0);
+      expect(data.length).toBe(0);
       await fs.close(h2);
     });
 
@@ -204,17 +204,15 @@ describe('MemoryFsProvider', () => {
       const h = await fs.open('/exclusive.txt', { create: true, write: true });
       await fs.close(h);
 
-      assert.throws(
-        () => fs.open('/exclusive.txt', { create: true, exclusive: true }),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'exist'
-      );
+      const err = expectThrows<FileSystemError>(() => fs.open('/exclusive.txt', { create: true, exclusive: true }));
+      expect(err).toBeInstanceOf(FileSystemError);
+      expect(err.code).toBe('exist');
     });
 
     it('should fail without create flag if file does not exist', async () => {
-      assert.throws(
-        () => fs.open('/nonexistent.txt', { read: true }),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
-      );
+      const err = expectThrows<FileSystemError>(() => fs.open('/nonexistent.txt', { read: true }));
+      expect(err).toBeInstanceOf(FileSystemError);
+      expect(err.code).toBe('no-entry');
     });
   });
 
@@ -224,7 +222,7 @@ describe('MemoryFsProvider', () => {
       const data = new TextEncoder().encode('handle data');
       await fs.write(handle, data, 0);
       const result = await fs.read(handle, 0, data.length);
-      assert.deepStrictEqual(result, data);
+      expect(result).toEqual(data);
       await fs.close(handle);
     });
 
@@ -233,10 +231,9 @@ describe('MemoryFsProvider', () => {
       await fs.write(handle, new TextEncoder().encode('data'), 0);
       await fs.close(handle);
 
-      assert.throws(
-        () => fs.read(handle, 0, 4),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'invalid'
-      );
+      const err = expectThrows<FileSystemError>(() => fs.read(handle, 0, 4));
+      expect(err).toBeInstanceOf(FileSystemError);
+      expect(err.code).toBe('invalid');
     });
   });
 
@@ -251,14 +248,14 @@ describe('MemoryFsProvider', () => {
       });
 
       const stat1 = await provider.stat('/a/b/c.txt');
-      assert.strictEqual(stat1.type, 'file');
+      expect(stat1.type).toBe('file');
 
       const stat2 = await provider.stat('/x.bin');
-      assert.strictEqual(stat2.size, 3n);
+      expect(stat2.size).toBe(3n);
 
       const stat3 = await provider.stat('/custom.txt');
-      assert.strictEqual(stat3.mode, 0o600);
-      assert.strictEqual(stat3.mtime.getTime(), 1000);
+      expect(stat3.mode).toBe(0o600);
+      expect(stat3.mtime.getTime()).toBe(1000);
     });
   });
 
@@ -281,8 +278,8 @@ describe('MemoryFsProvider', () => {
       const content2 = await fs.read(h2, 0, 100);
       await fs.close(h2);
 
-      assert.deepStrictEqual(content1, data);
-      assert.deepStrictEqual(content2, data);
+      expect(content1).toEqual(data);
+      expect(content2).toEqual(data);
     });
 
     it('should share the same underlying data after modification', async () => {
@@ -302,7 +299,7 @@ describe('MemoryFsProvider', () => {
       const content = await fs.read(h2, 0, 100);
       await fs.close(h2);
 
-      assert.deepStrictEqual(content, new TextEncoder().encode('world'));
+      expect(content).toEqual(new TextEncoder().encode('world'));
     });
   });
 
@@ -316,8 +313,8 @@ describe('MemoryFsProvider', () => {
       await fs.utimes('/utimes.txt', newAtime, newMtime);
 
       const stat = await fs.stat('/utimes.txt');
-      assert.strictEqual(stat.atime.getTime(), 2000000000);
-      assert.strictEqual(stat.mtime.getTime(), 3000000000);
+      expect(stat.atime.getTime()).toBe(2000000000);
+      expect(stat.mtime.getTime()).toBe(3000000000);
     });
   });
 
@@ -330,7 +327,7 @@ describe('MemoryFsProvider', () => {
       await fs.symlink('/real', '/alias');
 
       const resolved = await fs.realpath('/alias/file.txt');
-      assert.strictEqual(resolved, '/real/file.txt');
+      expect(resolved).toBe('/real/file.txt');
     });
 
     it('should return the same path for a path with no symlinks', async () => {
@@ -339,7 +336,7 @@ describe('MemoryFsProvider', () => {
       await fs.close(handle);
 
       const resolved = await fs.realpath('/plain/doc.txt');
-      assert.strictEqual(resolved, '/plain/doc.txt');
+      expect(resolved).toBe('/plain/doc.txt');
     });
   });
 
@@ -347,9 +344,9 @@ describe('MemoryFsProvider', () => {
     it('should create a fifo node and stat returns type fifo', () => {
       fs.mkfifo('/myfifo');
       const stat = fs.stat('/myfifo');
-      assert.strictEqual(stat.type, 'fifo');
-      assert.strictEqual(stat.size, 0n);
-      assert.strictEqual(stat.mode, 0o644);
+      expect(stat.type).toBe('fifo');
+      expect(stat.size).toBe(0n);
+      expect(stat.mode).toBe(0o644);
     });
 
     it('should write to fifo and read dequeues data', () => {
@@ -361,10 +358,10 @@ describe('MemoryFsProvider', () => {
       fs.write(handle, data2, 0);
 
       const read1 = fs.read(handle, 0, 1024);
-      assert.deepStrictEqual(read1, data1);
+      expect(read1).toEqual(data1);
 
       const read2 = fs.read(handle, 0, 1024);
-      assert.deepStrictEqual(read2, data2);
+      expect(read2).toEqual(data2);
 
       fs.close(handle);
     });
@@ -373,41 +370,38 @@ describe('MemoryFsProvider', () => {
       fs.mkfifo('/empty-pipe');
       const handle = fs.open('/empty-pipe', { read: true });
       const data = fs.read(handle, 0, 1024);
-      assert.strictEqual(data.length, 0);
+      expect(data.length).toBe(0);
       fs.close(handle);
     });
 
     it('should throw if path already exists', () => {
       fs.mkfifo('/existing-fifo');
-      assert.throws(
-        () => fs.mkfifo('/existing-fifo'),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'exist'
-      );
+      const err = expectThrows<FileSystemError>(() => fs.mkfifo('/existing-fifo'));
+      expect(err).toBeInstanceOf(FileSystemError);
+      expect(err.code).toBe('exist');
     });
 
     it('should throw if parent directory does not exist', () => {
-      assert.throws(
-        () => fs.mkfifo('/nonexistent/fifo'),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
-      );
+      const err = expectThrows<FileSystemError>(() => fs.mkfifo('/nonexistent/fifo'));
+      expect(err).toBeInstanceOf(FileSystemError);
+      expect(err.code).toBe('no-entry');
     });
 
     it('should be removable with unlink', () => {
       fs.mkfifo('/removable-fifo');
       fs.unlink('/removable-fifo');
-      assert.throws(
-        () => fs.stat('/removable-fifo'),
-        (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry'
-      );
+      const err = expectThrows<FileSystemError>(() => fs.stat('/removable-fifo'));
+      expect(err).toBeInstanceOf(FileSystemError);
+      expect(err.code).toBe('no-entry');
     });
 
     it('should appear in readdir listings', () => {
       fs.mkdir('/fifodir');
       fs.mkfifo('/fifodir/mypipe');
       const entries = fs.readdir('/fifodir');
-      assert.strictEqual(entries.length, 1);
-      assert.strictEqual(entries[0].name, 'mypipe');
-      assert.strictEqual(entries[0].type, 'fifo');
+      expect(entries.length).toBe(1);
+      expect(entries[0].name).toBe('mypipe');
+      expect(entries[0].type).toBe('fifo');
     });
   });
 
@@ -419,7 +413,7 @@ describe('MemoryFsProvider', () => {
       await fs.truncate(handle, 5);
 
       const content = await fs.read(handle, 0, 100);
-      assert.deepStrictEqual(content, new TextEncoder().encode('Hello'));
+      expect(content).toEqual(new TextEncoder().encode('Hello'));
       await fs.close(handle);
     });
 
@@ -430,12 +424,12 @@ describe('MemoryFsProvider', () => {
       await fs.truncate(handle, 5);
 
       const content = await fs.read(handle, 0, 5);
-      assert.strictEqual(content.length, 5);
-      assert.strictEqual(content[0], 72); // 'H'
-      assert.strictEqual(content[1], 105); // 'i'
-      assert.strictEqual(content[2], 0);
-      assert.strictEqual(content[3], 0);
-      assert.strictEqual(content[4], 0);
+      expect(content.length).toBe(5);
+      expect(content[0]).toBe(72); // 'H'
+      expect(content[1]).toBe(105); // 'i'
+      expect(content[2]).toBe(0);
+      expect(content[3]).toBe(0);
+      expect(content[4]).toBe(0);
       await fs.close(handle);
     });
   });
@@ -449,7 +443,7 @@ describe('MemoryFsProvider', () => {
       await fs.write(handle, new TextEncoder().encode('BB'), 2);
 
       const content = await fs.read(handle, 0, 4);
-      assert.deepStrictEqual(content, new TextEncoder().encode('AABB'));
+      expect(content).toEqual(new TextEncoder().encode('AABB'));
       await fs.close(handle);
     });
 
@@ -460,14 +454,14 @@ describe('MemoryFsProvider', () => {
       await fs.write(handle, new TextEncoder().encode('CD'), 5);
 
       const content = await fs.read(handle, 0, 7);
-      assert.strictEqual(content.length, 7);
-      assert.strictEqual(content[0], 65); // 'A'
-      assert.strictEqual(content[1], 66); // 'B'
-      assert.strictEqual(content[2], 0);  // zero-filled gap
-      assert.strictEqual(content[3], 0);
-      assert.strictEqual(content[4], 0);
-      assert.strictEqual(content[5], 67); // 'C'
-      assert.strictEqual(content[6], 68); // 'D'
+      expect(content.length).toBe(7);
+      expect(content[0]).toBe(65); // 'A'
+      expect(content[1]).toBe(66); // 'B'
+      expect(content[2]).toBe(0);  // zero-filled gap
+      expect(content[3]).toBe(0);
+      expect(content[4]).toBe(0);
+      expect(content[5]).toBe(67); // 'C'
+      expect(content[6]).toBe(68); // 'D'
       await fs.close(handle);
     });
   });
@@ -478,7 +472,7 @@ describe('MemoryFsProvider', () => {
       await fs.write(handle, new TextEncoder().encode('abcdefgh'), 0);
 
       const content = await fs.read(handle, 3, 3);
-      assert.deepStrictEqual(content, new TextEncoder().encode('def'));
+      expect(content).toEqual(new TextEncoder().encode('def'));
       await fs.close(handle);
     });
 
@@ -487,7 +481,7 @@ describe('MemoryFsProvider', () => {
       await fs.write(handle, new TextEncoder().encode('short'), 0);
 
       const content = await fs.read(handle, 100, 10);
-      assert.strictEqual(content.length, 0);
+      expect(content.length).toBe(0);
       await fs.close(handle);
     });
   });
@@ -503,13 +497,13 @@ describe('MemoryFsProvider', () => {
       await fs.write(handle, data, 0);
 
       const result = await fs.read(handle, 0, size);
-      assert.strictEqual(result.length, size);
-      assert.deepStrictEqual(result, data);
+      expect(result.length).toBe(size);
+      expect(result).toEqual(data);
 
       // Verify stat shows correct size
       await fs.close(handle);
       const stat = await fs.stat('/large.bin');
-      assert.strictEqual(stat.size, BigInt(size));
+      expect(stat.size).toBe(BigInt(size));
     });
 
     it('should handle reading a partial chunk from a large file', async () => {
@@ -523,8 +517,8 @@ describe('MemoryFsProvider', () => {
 
       // Read 1000 bytes starting at offset 5000
       const result = await fs.read(handle, 5000, 1000);
-      assert.strictEqual(result.length, 1000);
-      assert.deepStrictEqual(result, data.slice(5000, 6000));
+      expect(result.length).toBe(1000);
+      expect(result).toEqual(data.slice(5000, 6000));
       await fs.close(handle);
     });
   });

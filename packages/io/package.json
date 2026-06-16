@@ -1,6 +1,6 @@
 {
   "name": "@mithic/io",
-  "version": "0.4.0",
+  "version": "2.0.0",
   "description": "mithic I/O engine - file system, network providers, sync-bridge",
   "type": "module",
   "sideEffects": false,
