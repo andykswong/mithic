@@ -102,6 +102,9 @@ test('string ops', () => {
   expect(r1('startswith("foo")', 'foobar')).toBe(true);
   expect(r1('endswith("bar")', 'foobar')).toBe(true);
   expect(r1('split(",")', 'a,b,c')).toEqual(['a', 'b', 'c']);
+  // split/1 is LITERAL: a regex metachar splits on the literal string
+  expect(r1('split(".")', 'a.b.c')).toEqual(['a', 'b', 'c']);
+  expect(r1('split("x")', 'a1b22c')).toEqual(['a1b22c']);
   expect(r1('join(",")', ['a', 'b', 'c'])).toBe('a,b,c');
   expect(r1('explode', 'AB')).toEqual([65, 66]);
   expect(r1('implode', [65, 66])).toBe('AB');
@@ -114,6 +117,26 @@ test('regex test/match/capture/sub/gsub', () => {
   expect(r1('capture("(?<num>[0-9]+)")', 'abc123')).toEqual({ num: '123' });
   expect(r1('sub("[0-9]+"; "N")', 'a1b2')).toBe('aNb2');
   expect(r1('gsub("[0-9]+"; "N")', 'a1b2')).toBe('aNbN');
+});
+
+test('sub/gsub replacement is a filter over the capture object', () => {
+  // `.c+.c` evaluated against the named-capture object {c:"l"}
+  expect(r1('sub("(?<c>l)"; .c+.c)', 'hello')).toBe('helllo');
+  expect(r1('gsub("(?<c>l)"; .c+.c)', 'hello')).toBe('hellllo');
+  // \( ... ) interpolation referencing captures
+  expect(r1('sub("(?<x>\\\\w+)"; "[\\(.x)]")', 'hello world')).toBe('[hello] world');
+  expect(r1('gsub("(?<x>.)"; .x + "!")', 'abc')).toBe('a!b!c!');
+  // reorder multiple named captures
+  expect(r1('sub("(?<y>\\\\d+)-(?<m>\\\\d+)-(?<d>\\\\d+)"; .m+"/"+.d+"/"+.y)', '2023-01-15')).toBe('01/15/2023');
+});
+
+test('splits/1 and split/2 split on REGEX (not literal)', () => {
+  expect(r1('[splits("[0-9]+")]', 'a1b22c')).toEqual(['a', 'b', 'c']);
+  // split/2 (split(re; flags)) is regex and returns an array
+  expect(r1('split("[0-9]+"; "")', 'a1b22c')).toEqual(['a', 'b', 'c']);
+  expect(r1('[split("[0-9]+"; "")]', 'a1b22c')).toEqual([['a', 'b', 'c']]);
+  // case-insensitive regex split via flags
+  expect(r1('split("X"; "i")', 'aXbxc')).toEqual(['a', 'b', 'c']);
 });
 
 test('paths / getpath / setpath / del / delpaths', () => {
