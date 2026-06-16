@@ -4,6 +4,7 @@ import { FileSystemError, normalizePath } from '@mithic/io/vfs';
 import type { FileSystemProvider, FileHandle, OpenFlags } from '@mithic/io/vfs';
 import type { CapabilityManager, FsOperation } from './capability-manager.ts';
 import type { IpcBroker } from './ipc-broker.ts';
+import type { DomMutation } from '@mithic/guest-runtime/remote-dom';
 
 /** Thrown when a process references an fd it does not own (wrong pid or never opened). */
 class BadFdError extends Error {
@@ -23,6 +24,14 @@ export interface SyscallRequestLike {
   args: Record<string, unknown>;
 }
 
+/**
+ * Handler for `dom/mutate` syscalls. The kernel calls this with the originating
+ * pid and the batch of mutation records. The handler is responsible for
+ * forwarding them to the appropriate {@link RemoteDomHost} instance.
+ * If not configured, `dom/mutate` returns ENOSYS.
+ */
+export type DomMutateHandler = (pid: number, mutations: DomMutation[]) => void;
+
 export interface SyscallDispatcherOptions {
   vfs: FileSystemProvider;
   caps: CapabilityManager;
@@ -30,6 +39,13 @@ export interface SyscallDispatcherOptions {
   cwdOf: (pid: number) => string;
   /** IPC broker used to mint pipes for the `fs/pipe` syscall. Optional for fs-only setups. */
   ipc?: IpcBroker;
+  /**
+   * Optional handler for `dom/mutate` syscalls from guest processes.
+   * When set, the kernel forwards batched DomMutation records from the guest
+   * to this handler which routes them to the appropriate RemoteDomHost.
+   * When unset, `dom/mutate` returns ENOSYS.
+   */
+  onDomMutate?: DomMutateHandler;
 }
 
 /**
@@ -70,6 +86,7 @@ export class SyscallDispatcher {
   #caps: CapabilityManager;
   #cwdOf: (pid: number) => string;
   #ipc: IpcBroker | undefined;
+  #onDomMutate: DomMutateHandler | undefined;
   /** pid -> (fd -> open file or pipe end). */
   #fdTables = new Map<number, Map<number, FdEntry>>();
   /** pid -> next fd to allocate (file fds start above the reserved stdio range). */
@@ -80,6 +97,7 @@ export class SyscallDispatcher {
     this.#caps = options.caps;
     this.#cwdOf = options.cwdOf;
     this.#ipc = options.ipc;
+    this.#onDomMutate = options.onDomMutate;
   }
 
   /** Discard a process's fd table (called on process exit). */
@@ -109,6 +127,8 @@ export class SyscallDispatcher {
           return res(ok(req.id, await this.#unlink(pid, req.args)));
         case 'fs/pipe':
           return this.#pipe(pid, req.id);
+        case 'dom/mutate':
+          return res(ok(req.id, this.#domMutate(pid, req.args)));
         default:
           return res(fail(req.id, 'ENOSYS', `Unknown syscall: ${req.call}`));
       }
@@ -254,6 +274,25 @@ export class SyscallDispatcher {
     const next = this.#nextFd.get(pid) ?? 3;
     this.#nextFd.set(pid, next + 1);
     return next;
+  }
+
+  /**
+   * `dom/mutate`: forward a batch of DomMutation records from the guest to the
+   * registered DomMutateHandler. If no handler is configured, returns ENOSYS.
+   * The mutations array is validated to be an array before forwarding; individual
+   * record validation is the responsibility of RemoteDomHost (which enforces the
+   * allowlist and silently drops invalid records).
+   */
+  #domMutate(pid: number, args: Record<string, unknown>): Record<string, never> {
+    if (!this.#onDomMutate) {
+      throw new FileSystemError('unsupported', 'dom/mutate: no DOM handler configured');
+    }
+    const mutations = args.mutations;
+    if (!Array.isArray(mutations)) {
+      throw new FileSystemError('invalid', 'dom/mutate: mutations must be an array');
+    }
+    this.#onDomMutate(pid, mutations as DomMutation[]);
+    return {};
   }
 }
 

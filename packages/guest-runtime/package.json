@@ -8,7 +8,8 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./streams": { "types": "./dist/streams.d.ts", "import": "./dist/streams.js" }
+    "./streams": { "types": "./dist/streams.d.ts", "import": "./dist/streams.js" },
+    "./remote-dom": { "types": "./dist/remote-dom.d.ts", "import": "./dist/remote-dom.js" }
   },
   "files": ["/dist"],
   "scripts": {
