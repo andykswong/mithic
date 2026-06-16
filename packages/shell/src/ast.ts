@@ -1,24 +1,36 @@
 /**
  * Shell AST node definitions.
  *
- * A {@link Program} is a list of {@link Statement}s. The minimal viable grammar
- * covers pipelines of simple commands with redirects and assignment prefixes,
- * plus `if`/`while` compound commands. Lists are joined by `;`, `&&`, `||`.
+ * A {@link Program} is a list of {@link Statement}s. The grammar covers
+ * pipelines of simple commands with redirects and assignment prefixes, plus
+ * compound commands: `if`/`while`/`until`/`for`/`case`, function definitions,
+ * and subshell/group commands. Lists are joined by `;`, `&&`, `||`.
  *
- * To keep node access ergonomic (and to compile the spec's structural test
- * accesses without casts), every statement shares one {@link Statement}
- * interface discriminated by `type`; members not relevant to a given `type`
- * are simply absent at runtime but optionally typed here.
+ * Every statement shares one {@link Statement} interface discriminated by
+ * `type`; members not relevant to a given `type` are absent at runtime but
+ * optionally typed here.
  */
 
-export type RedirectOp = '>' | '>>' | '<';
+export type RedirectOp =
+  | '>'      // truncate stdout (or fd)
+  | '>>'     // append stdout (or fd)
+  | '<'      // stdin from file
+  | '<<'     // here-doc
+  | '<<<'    // here-string
+  | '>&'     // duplicate / merge fd (e.g. 2>&1, >&2)
+  | '&>';    // redirect both stdout+stderr
 
 export interface Redirect {
   op: RedirectOp;
   /** Optional source fd (e.g. `2>` → fd 2). Defaults per op. */
   fd?: number;
-  /** Raw target word (subject to expansion at execution time). */
+  /** Raw target word (subject to expansion at execution time). For `>&` the
+   *  target is the destination fd as a string (e.g. `"1"`) or `"-"` to close. */
   target: string;
+  /** For here-docs/here-strings: the literal body (here-doc) or word (here-string). */
+  hereDoc?: string;
+  /** For here-docs: whether the delimiter was quoted (suppresses expansion). */
+  hereDocQuoted?: boolean;
 }
 
 export interface Assignment {
@@ -37,21 +49,43 @@ export interface SimpleCommand {
   assignments: Assignment[];
 }
 
-export type StatementType = 'Pipeline' | 'If' | 'While' | 'And' | 'Or';
+export type StatementType =
+  | 'Pipeline'
+  | 'If'
+  | 'While'
+  | 'For'
+  | 'Case'
+  | 'And'
+  | 'Or'
+  | 'Function'
+  | 'Subshell'
+  | 'Group'
+  | 'Arithmetic'
+  | 'Cond';      // [[ ... ]]
+
+/** One `case` clause: patterns (|-separated) → body. */
+export interface CaseClause {
+  patterns: string[];
+  body: Statement[];
+}
 
 export interface Statement {
   type: StatementType;
   /** Pipeline: pipe stages, left to right. */
-  stages: SimpleCommand[];
+  stages?: SimpleCommand[];
   /** Pipeline: terminated with `&` (background). */
   background?: boolean;
+  /** Pipeline: negated with leading `!`. */
+  negate?: boolean;
+  /** Redirects attached to a compound command (e.g. `while ...; done > f`). */
+  redirects?: Redirect[];
   /** If/While: condition list. */
   condition?: Statement[];
   /** If: then-branch. */
   then?: Statement[];
   /** If: else-branch. */
   else?: Statement[];
-  /** While: loop body. */
+  /** While/For: loop body. */
   body?: Statement[];
   /** While: `until` inverts the condition. */
   until?: boolean;
@@ -59,6 +93,24 @@ export interface Statement {
   left?: Statement;
   /** And/Or: right operand. */
   right?: Statement;
+  /** For: loop variable name. */
+  varName?: string;
+  /** For: word list to iterate (raw, pre-expansion). Absent ⇒ `"$@"`. */
+  words?: string[];
+  /** For: true when this is an arithmetic C-style for (uses arith fields). */
+  arithFor?: boolean;
+  /** Case: the word being matched (raw). */
+  caseWord?: string;
+  /** Case: clauses. */
+  clauses?: CaseClause[];
+  /** Function: name. */
+  funcName?: string;
+  /** Function: body (a group/compound). */
+  funcBody?: Statement[];
+  /** Arithmetic command `(( expr ))` / Cond `[[ ... ]]`: raw expression text. */
+  expr?: string;
+  /** Cond `[[ ... ]]`: tokenized words. */
+  condWords?: string[];
 }
 
 export interface Program {
