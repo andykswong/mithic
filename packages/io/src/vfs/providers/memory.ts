@@ -60,7 +60,7 @@ const encoder = new TextEncoder();
 /**
  * In-memory filesystem provider with full Unix semantics.
  */
-export class MemoryFsProvider implements FileSystemProvider<true> {
+export class MemoryFsProvider implements FileSystemProvider {
   private root: MemDirectoryEntry;
   private handles = new Map<number, OpenFileHandle>();
   private nextFd = 3; // 0, 1, 2 reserved for stdio

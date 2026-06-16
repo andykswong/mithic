@@ -1,7 +1,7 @@
 import { expect, describe, it, beforeEach } from 'vitest';
 import { DeviceFsProvider } from './device.ts';
 import { FileSystemError } from '../provider.ts';
-import type { SyncOutputStreamHandler } from '../../io/streams.ts';
+import type { StdoutHandler } from './device.ts';
 
 function expectThrows<T extends Error = Error>(fn: () => unknown): T {
   let err: T | undefined;
@@ -15,10 +15,10 @@ describe('DeviceFsProvider', () => {
 
   beforeEach(() => {
     stdoutBuffer = [];
-    const stdoutHandler: SyncOutputStreamHandler = {
+    const stdoutHandler: StdoutHandler = {
       write(data: Uint8Array) { stdoutBuffer.push(data); },
     };
-    const stderrHandler: SyncOutputStreamHandler = {
+    const stderrHandler: StdoutHandler = {
       write() {},
     };
     dev = new DeviceFsProvider({
