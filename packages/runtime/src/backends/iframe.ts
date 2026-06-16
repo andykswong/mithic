@@ -1,0 +1,154 @@
+import type { SyscallRequest, SyscallResponse, KernelEvent, Signal } from '@mithic/protocol';
+import {
+  IFRAME_CAPABILITIES,
+  type Runtime,
+  type RuntimeCapabilities,
+  type ProcessHandle,
+  type SpawnOptions,
+} from '../runtime.ts';
+import { buildSrcdoc } from './iframe-bootstrap.ts';
+
+interface IframeEntry {
+  iframe: HTMLIFrameElement;
+  messageListener: (e: MessageEvent) => void;
+  callbacks: ((msg: SyscallRequest) => void)[];
+}
+
+/**
+ * IframeRuntime spawns guest code inside a sandboxed <iframe> element.
+ *
+ * The iframe is created with `sandbox="allow-scripts"` — no `allow-same-origin` —
+ * so the guest runs in an opaque origin and cannot access parent DOM or storage.
+ *
+ * Communication protocol (matches WorkerRuntime exactly):
+ *  1. spawn() posts { __isola_init, ports } with transferList to the iframe's contentWindow
+ *  2. spawn() posts { __isola_run: codeStr } to trigger evaluation
+ *  3. Inbound messages from the iframe are routed to onMessage() callbacks
+ *  4. postMessage() sends a message down to the iframe
+ *  5. kill() / dispose() removes the iframe from the DOM
+ *
+ * Display modes:
+ *  - 'hidden' (default): iframe is appended to document.body with display:none
+ *  - 'inline': iframe is appended to document.body, sized per options.display
+ *  - 'window' / 'fullscreen': treated same as inline for now
+ */
+export class IframeRuntime implements Runtime {
+  readonly capabilities: RuntimeCapabilities = IFRAME_CAPABILITIES;
+
+  #nextId = 1;
+  #processes = new Map<number, IframeEntry>();
+
+  async spawn(code: string | URL, options: SpawnOptions): Promise<ProcessHandle> {
+    const id = this.#nextId++;
+
+    let codeStr: string;
+    if (typeof code === 'string') {
+      codeStr = code;
+    } else {
+      // URL reference: generate a dynamic import statement
+      codeStr = `
+        import mod from ${JSON.stringify(code instanceof URL ? code.href : String(code))};
+        if (typeof mod.default === 'function') {
+          globalThis.__isola_default = mod.default;
+        }
+      `;
+    }
+
+    // Create the sandboxed iframe
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('sandbox', 'allow-scripts');
+    iframe.srcdoc = buildSrcdoc();
+
+    // Apply display mode styling
+    const displayMode = options.display?.mode ?? 'hidden';
+    if (displayMode === 'hidden') {
+      iframe.style.display = 'none';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = 'none';
+      iframe.style.position = 'absolute';
+    } else {
+      iframe.style.width = options.display?.width != null ? `${options.display.width}px` : '100%';
+      iframe.style.height = options.display?.height != null ? `${options.display.height}px` : '100%';
+      iframe.style.border = 'none';
+    }
+
+    const callbacks: ((msg: SyscallRequest) => void)[] = [];
+
+    // Listen for messages from this iframe; use window.onmessage filtering by source.
+    // We capture the iframe reference in a closure so we can match the source.
+    const messageListener = (e: MessageEvent) => {
+      // Only accept messages from this iframe's contentWindow
+      if (iframe.contentWindow && e.source !== iframe.contentWindow) return;
+      const msg = e.data as SyscallRequest;
+      for (const cb of callbacks) {
+        cb(msg);
+      }
+    };
+
+    window.addEventListener('message', messageListener);
+
+    const entry: IframeEntry = { iframe, messageListener, callbacks };
+    this.#processes.set(id, entry);
+
+    // Append to DOM so the iframe gets a browsing context and can execute scripts
+    document.body.appendChild(iframe);
+
+    // Wait for the iframe to load its srcdoc before posting messages
+    await new Promise<void>((resolve) => {
+      if (iframe.contentDocument?.readyState === 'complete') {
+        resolve();
+        return;
+      }
+      iframe.addEventListener('load', () => resolve(), { once: true });
+    });
+
+    // Deliver boot object: __isola_init + transfer list [controlPort, stdinPort, stdoutPort, stderrPort, ...]
+    if (options.transfer && options.transfer.length > 0) {
+      iframe.contentWindow!.postMessage(
+        { __isola_init: options.init, ports: options.transfer },
+        '*',
+        options.transfer as Transferable[],
+      );
+    }
+
+    iframe.contentWindow!.postMessage({ __isola_run: codeStr }, '*');
+
+    return { id };
+  }
+
+  kill(handle: ProcessHandle, _signal: Signal): void {
+    this.#removeProcess(handle.id);
+  }
+
+  postMessage(handle: ProcessHandle, msg: SyscallResponse | KernelEvent, transfer?: Transferable[]): void {
+    const entry = this.#processes.get(handle.id);
+    if (entry?.iframe.contentWindow) {
+      entry.iframe.contentWindow.postMessage(msg, '*', transfer ?? []);
+    }
+  }
+
+  onMessage(handle: ProcessHandle, cb: (msg: SyscallRequest) => void): void {
+    const entry = this.#processes.get(handle.id);
+    if (entry) {
+      entry.callbacks.push(cb);
+    }
+  }
+
+  isAlive(handle: ProcessHandle): boolean {
+    return this.#processes.has(handle.id);
+  }
+
+  dispose(handle: ProcessHandle): void {
+    this.#removeProcess(handle.id);
+  }
+
+  #removeProcess(id: number): void {
+    const entry = this.#processes.get(id);
+    if (entry) {
+      window.removeEventListener('message', entry.messageListener);
+      entry.iframe.remove();
+      this.#processes.delete(id);
+    }
+  }
+}

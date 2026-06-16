@@ -18,6 +18,10 @@
     "./backends/quickjs": {
       "types": "./dist/backends/quickjs.d.ts",
       "import": "./dist/backends/quickjs.js"
+    },
+    "./backends/iframe": {
+      "types": "./dist/backends/iframe.d.ts",
+      "import": "./dist/backends/iframe.js"
     }
   },
   "files": [
