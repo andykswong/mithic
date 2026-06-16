@@ -27,6 +27,9 @@ export default defineConfig({
         },
       },
       {
+        // Pre-bundle xterm so the notebook browser test doesn't trigger a mid-run
+        // Vite dep re-optimization (which warns and can re-run the test).
+        optimizeDeps: { include: ['@xterm/xterm'] },
         test: {
           name: 'browser',
           include: [
