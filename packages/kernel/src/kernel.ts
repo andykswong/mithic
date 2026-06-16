@@ -331,6 +331,11 @@ export class Kernel {
       // no producer; supply `stdinData` (e.g. an empty buffer) to deliver EOF.
     }
 
+    // CAP-2: cap captured output and replenish credit as chunks are consumed so
+    // the writer never permanently stalls (which previously hung the capture
+    // promise and `wait()`). `maxOutputBytes` defaults to a sane 64MiB.
+    const maxOutputBytes = init.limits?.maxOutputBytes ?? KERNEL_MAX_OUTPUT_BYTES;
+
     let stdoutWritePort: MessagePort;
     let stdout: Promise<Uint8Array> | undefined;
     if (init.stdout) {
@@ -339,13 +344,14 @@ export class Kernel {
       const stdoutPipe = this.ipc.createPipe();
       stdoutWritePort = stdoutPipe.writePort;
       if (init.captureStdout) {
-        stdout = drainPort(stdoutPipe.readPort);
+        stdout = this.#drainPort(stdoutPipe.readPort, maxOutputBytes, pid);
       } else {
         // Not captured and kernel-owned: drain-and-discard so the guest's writer
         // gets credit and never blocks (a /dev/null fd). Without this, a child
         // spawned with default stdio that writes to fd 1 would stall on the first
-        // write (no reader → no credit) and never reach exit.
-        void drainPort(stdoutPipe.readPort);
+        // write (no reader → no credit) and never reach exit. No cap kill here:
+        // a discarded stream is bounded by replenishment, not buffering.
+        void this.#drainPort(stdoutPipe.readPort, Infinity);
       }
     }
 
@@ -357,10 +363,10 @@ export class Kernel {
       const stderrPipe = this.ipc.createPipe();
       stderrWritePort = stderrPipe.writePort;
       if (init.captureStderr) {
-        stderr = drainPort(stderrPipe.readPort);
+        stderr = this.#drainPort(stderrPipe.readPort, maxOutputBytes, pid);
       } else {
         // /dev/null discard drain (see stdout above): keeps the writer unblocked.
-        void drainPort(stderrPipe.readPort);
+        void this.#drainPort(stderrPipe.readPort, Infinity);
       }
     }
 
@@ -860,6 +866,76 @@ export class Kernel {
     this.#cwds.delete(pid);
   }
 
+  /**
+   * Drain a kernel-side pipe READ port to EOF and concatenate the bytes,
+   * enforcing a bounded `maxOutputBytes` so a guest writing without bound cannot
+   * (a) hang the capture promise or (b) grow host memory without limit.
+   *
+   * CAP-2: the previous implementation granted a fixed credit window ONCE and
+   * never replenished — a guest writing past it exhausted the writer's credit,
+   * `write()` stalled forever, and this promise never resolved (hanging `wait()`
+   * and any pipeline). Now we:
+   *   - grant an initial credit window, and REPLENISH credit as each chunk is
+   *     consumed, so the writer keeps flowing and never permanently stalls;
+   *   - accumulate up to `maxOutputBytes` (truncating the chunk that crosses it);
+   *   - on overflow, resolve with the truncated bytes, send EOF semantics by
+   *     closing the port, and — when a `pid` is supplied — SIGKILL the process so
+   *     it cannot keep driving host allocations. The promise ALWAYS resolves.
+   * Pass `maxOutputBytes = Infinity` for a discard drain (no cap, no kill): the
+   * writer is kept unblocked purely by credit replenishment.
+   */
+  #drainPort(readPort: MessagePort, maxOutputBytes: number, pid?: number): Promise<Uint8Array> {
+    return new Promise<Uint8Array>((resolve, reject) => {
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      let settled = false;
+      readPort.start?.();
+      // Sliding credit window. Grant a generous initial window, then REPLENISH
+      // credit as bytes are consumed so a writer producing more than one window
+      // keeps flowing (CAP-2: the previous code granted once and hung past it).
+      // The window is large enough (16MiB) that a single large chunk up to that
+      // size flows without a per-chunk-vs-window deadlock; replenishment then
+      // sustains unbounded total throughput up to `maxOutputBytes`.
+      const window = 1 << 24; // 16MiB window
+      readPort.postMessage({ type: 'credit', bytes: window });
+      const finish = (value: Uint8Array): void => {
+        if (settled) return;
+        settled = true;
+        try { readPort.close(); } catch { /* already closed */ }
+        resolve(value);
+      };
+      readPort.onmessage = (e: MessageEvent) => {
+        const msg = e.data as { type?: string; chunk?: Uint8Array; code?: string };
+        if (msg?.type === 'data' && msg.chunk) {
+          if (settled) return;
+          const chunk = msg.chunk;
+          if (total + chunk.byteLength > maxOutputBytes) {
+            // Overflow: keep only what fits, truncate, resolve, and kill the guest.
+            const room = Math.max(0, maxOutputBytes - total);
+            if (room > 0) { chunks.push(chunk.subarray(0, room)); total += room; }
+            finish(concat(chunks));
+            if (pid !== undefined) {
+              try { this.kill(pid, 'SIGKILL'); } catch { /* already dead */ }
+            }
+            return;
+          }
+          chunks.push(chunk);
+          total += chunk.byteLength;
+          // Replenish credit for the bytes we just consumed so the writer can
+          // continue (this is what prevents the >window stall / hang).
+          readPort.postMessage({ type: 'credit', bytes: chunk.byteLength });
+        } else if (msg?.type === 'end') {
+          finish(concat(chunks));
+        } else if (msg?.type === 'error') {
+          if (settled) return;
+          settled = true;
+          try { readPort.close(); } catch { /* already closed */ }
+          reject(new Error(msg.code ?? 'EPIPE'));
+        }
+      };
+    });
+  }
+
   /** Wait for a process to exit and reap it. */
   wait(pid: number): Promise<WaitResult> {
     return this.processes.wait(pid);
@@ -889,33 +965,19 @@ export class Kernel {
  */
 const RELAY_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
+/**
+ * Default cap on captured (transfer-path) output per stream when
+ * `limits.maxOutputBytes` is unset. Beyond this the capture is truncated, the
+ * promise resolves, and the producing process is killed (CAP-2). 64MiB matches
+ * the relay path's default.
+ */
+const KERNEL_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
+
 function isSyscallRequestMsg(x: unknown): x is SyscallRequest {
   return typeof x === 'object' && x !== null
     && 'id' in x && typeof (x as { id: unknown }).id === 'number'
     && 'call' in x && typeof (x as { call: unknown }).call === 'string'
     && 'args' in x;
-}
-
-/** Read a kernel-side pipe read-port to EOF and concatenate the bytes. */
-function drainPort(readPort: MessagePort): Promise<Uint8Array> {
-  return new Promise<Uint8Array>((resolve, reject) => {
-    const chunks: Uint8Array[] = [];
-    readPort.start?.();
-    // Grant generous credit upfront so the writer never stalls.
-    readPort.postMessage({ type: 'credit', bytes: 1 << 24 });
-    readPort.onmessage = (e: MessageEvent) => {
-      const msg = e.data as { type?: string; chunk?: Uint8Array; code?: string };
-      if (msg?.type === 'data' && msg.chunk) {
-        chunks.push(msg.chunk);
-      } else if (msg?.type === 'end') {
-        readPort.close();
-        resolve(concat(chunks));
-      } else if (msg?.type === 'error') {
-        readPort.close();
-        reject(new Error(msg.code ?? 'EPIPE'));
-      }
-    };
-  });
 }
 
 /**
