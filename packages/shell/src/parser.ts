@@ -451,7 +451,10 @@ function extractHereDocs(input: string): { src: string; heredocs: Map<number, He
   let id = 0;
   for (let li = 0; li < lines.length; li++) {
     let line = lines[li];
-    const re = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/g;
+    // `<<` or `<<-`, but NOT `<<<` (here-string). The lookbehind/lookahead pair
+    // ensures we match a real here-doc `<<` and never the inner `<<` of a `<<<`
+    // here-string (which would leave a stray `<` and a bogus heredoc delimiter).
+    const re = /(?<!<)<<(?!<)-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/g;
     const pending: Array<{ delim: string; quoted: boolean; strip: boolean; hid: number }> = [];
     line = line.replace(re, (full, q, delim) => {
       const strip = full.startsWith('<<-');

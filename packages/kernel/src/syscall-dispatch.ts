@@ -90,6 +90,8 @@ export interface PipelineStageSpec {
   argv: string[];
   env?: Record<string, string>;
   cwd?: string;
+  /** Inline stdin for the FIRST stage (a `<` / `<<<` redirect source). */
+  stdinData?: Uint8Array;
 }
 
 /** Result of running a guest-requested pipeline: per-stage codes + last stdout. */
@@ -521,7 +523,8 @@ export class SyscallDispatcher {
       if (code === undefined) {
         return fail(id, 'ENOENT', `command not found: ${path}`);
       }
-      resolved.push({ code, spec: { path, argv, env, cwd } });
+      const stdinData = r.stdinData instanceof Uint8Array ? r.stdinData : undefined;
+      resolved.push({ code, spec: { path, argv, env, cwd, stdinData } });
     }
     const result = await this.#pipelineChild(pid, resolved);
     return ok(id, { exitCodes: result.exitCodes, stdout: result.lastStdout });

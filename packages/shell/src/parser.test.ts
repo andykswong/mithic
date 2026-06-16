@@ -40,6 +40,14 @@ test('parses here-string', () => {
   expect(r.op).toBe('<<<');
 });
 
+test('here-string with a single quoted word is NOT mis-extracted as a here-doc', () => {
+  // Regression: `<<< "foobar"` once matched the here-doc extractor's `<<DELIM`
+  // pattern (delim=foobar), turning it into a `<` + bogus `__HEREDOC__` token.
+  const r = parse('grep oo <<< "foobar"').body[0].stages![0].redirects[0];
+  expect(r.op).toBe('<<<');
+  expect(r.target).toBe('"foobar"');
+});
+
 test('parses here-doc body', () => {
   const ast = parse('cat <<EOF\nline1\nline2\nEOF\n');
   const r = ast.body[0].stages![0].redirects[0];

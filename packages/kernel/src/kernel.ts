@@ -146,6 +146,15 @@ export interface SpawnInit {
   stdout?: MessagePort;
   stderr?: MessagePort;
   /**
+   * Inline stdin payload. When set (and `stdin` is NOT injected), the kernel
+   * mints the stdin pipe, gives the child the read end, then writes these bytes
+   * into the write end and closes it (EOF). Used for `cmd < file` / `cmd <<<`
+   * where the shell has the stdin content in hand and the child must NOT block
+   * waiting for a stdin that no peer stage will ever produce. Ignored when an
+   * external `stdin` port is injected (the peer owns that stream).
+   */
+  stdinData?: Uint8Array;
+  /**
    * GUI display placement for runtimes that render the guest (e.g. IframeRuntime).
    * `mode: 'inline'` places a visible iframe sized `width`x`height`; the default
    * `'hidden'` keeps it off-screen. Ignored by non-GUI runtimes. The kernel threads
@@ -184,6 +193,12 @@ export interface PipelineStage {
   captureStdout?: boolean;
   /** Capture this stage's stderr (each stage keeps its own stderr). */
   captureStderr?: boolean;
+  /**
+   * Inline stdin for this stage. Only honored on the FIRST stage (later stages
+   * read from the previous stage's pipe). Used for `cmd < file` / `cmd <<<` so
+   * the head of the pipeline gets its redirect content and an EOF.
+   */
+  stdinData?: Uint8Array;
 }
 
 export interface PipelineResult {
@@ -299,7 +314,22 @@ export class Kernel {
     // guest — that's the zero-hop pipeline path where the peer stage owns the
     // other end. The kernel does not retain a read end for an injected stream, so
     // capture is only possible for kernel-owned (minted) streams.
-    const stdinReadPort = init.stdin ?? this.ipc.createPipe().readPort;
+    // stdin: an injected port (pipeline peer) wins. Otherwise mint a pipe and,
+    // if the caller supplied inline `stdinData`, feed those bytes into the write
+    // end and close it (EOF) so a stdin-reading child does not block forever.
+    let stdinReadPort: MessagePort;
+    if (init.stdin) {
+      stdinReadPort = init.stdin;
+    } else {
+      const stdinPipe = this.ipc.createPipe();
+      stdinReadPort = stdinPipe.readPort;
+      if (init.stdinData !== undefined) {
+        feedPort(stdinPipe.writePort, init.stdinData);
+      }
+      // else: legacy behavior — the kernel-owned write end is left unattached.
+      // A child that reads stdin with neither an injected peer nor stdinData has
+      // no producer; supply `stdinData` (e.g. an empty buffer) to deliver EOF.
+    }
 
     let stdoutWritePort: MessagePort;
     let stdout: Promise<Uint8Array> | undefined;
@@ -416,8 +446,10 @@ export class Kernel {
           ppid: stage.ppid,
           limits: stage.limits,
           captureStderr: stage.captureStderr,
-          // Stage i (i>0) reads from the read end of pipe i-1.
+          // Stage i (i>0) reads from the read end of pipe i-1. The FIRST stage
+          // may instead be fed inline `stdinData` (a redirect source).
           stdin: i > 0 ? pipes[i - 1].readPort : undefined,
+          stdinData: i === 0 ? stage.stdinData : undefined,
           // Stage i (i<last) writes into the write end of pipe i.
           stdout: !isLast ? pipes[i].writePort : undefined,
           // Final stage may capture stdout (it keeps a kernel-owned stdout pipe).
@@ -714,6 +746,8 @@ export class Kernel {
         capabilities: parentCaps,
         ppid: parentPid,
         captureStdout: i === stages.length - 1,
+        // Only the first stage may carry an inline stdin (redirect source).
+        stdinData: i === 0 ? spec.stdinData : undefined,
       })),
     );
     const lastStdout = result.lastStdout ? await result.lastStdout : new Uint8Array();
@@ -882,6 +916,41 @@ function drainPort(readPort: MessagePort): Promise<Uint8Array> {
       }
     };
   });
+}
+
+/**
+ * Write `data` into a kernel-owned pipe WRITE port using the credit protocol the
+ * guest's readable side speaks, then send EOF. The reader (the child's stdin
+ * stream) grants credit before any bytes may be sent; we park until enough
+ * credit arrives, emit the (single) data chunk, then `end`. An empty buffer
+ * sends EOF immediately. If the reader cancels (EPIPE) we just stop. Fire and
+ * forget: the kernel does not await stdin delivery (the child drains at its own
+ * pace), but errors are swallowed so a closed reader never rejects unhandled.
+ */
+function feedPort(writePort: MessagePort, data: Uint8Array): void {
+  writePort.start?.();
+  let credit = 0;
+  let sent = false;
+  const trySend = (): void => {
+    if (sent) return;
+    if (data.byteLength === 0 || credit >= data.byteLength) {
+      sent = true;
+      if (data.byteLength > 0) writePort.postMessage({ type: 'data', chunk: data });
+      writePort.postMessage({ type: 'end' });
+      writePort.close();
+    }
+  };
+  writePort.onmessage = (e: MessageEvent): void => {
+    const msg = e.data as { type?: string; bytes?: number };
+    if (msg?.type === 'credit') { credit += msg.bytes ?? 0; trySend(); }
+    else if (msg?.type === 'error' || msg?.type === 'end') {
+      // Reader cancelled / closed: stop without sending.
+      sent = true;
+      try { writePort.close(); } catch { /* already closed */ }
+    }
+  };
+  // Empty payload: deliver EOF immediately without waiting for credit.
+  if (data.byteLength === 0) trySend();
 }
 
 function concat(chunks: Uint8Array[]): Uint8Array {

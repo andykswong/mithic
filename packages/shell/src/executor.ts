@@ -526,13 +526,18 @@ export class Executor implements ShellEnv {
       return status;
     }
 
+    // A `<` / `<<` / `<<<` redirect on the FIRST stage becomes that stage's
+    // inline stdin (later stages read the previous stage's pipe). Without this a
+    // stdin-reading head (`grep foo < file | sort`) would block.
+    const headStdin = await this.resolveStdin(stages[0].redirects);
+
     const stageParams: PipelineStageParams[] = [];
     for (let i = 0; i < expanded.length; i++) {
       const { name, argv, env } = expanded[i];
       const isLast = i === expanded.length - 1;
       const code = this.resolve(name);
       if (code === undefined) { this.writeStderr(`shell: ${name}: command not found\n`); this.pipeStatus = [127]; return 127; }
-      stageParams.push({ code, args: [name, ...argv], env: { ...this.context.env, ...env }, cwd: this.context.cwd, captureStdout: isLast });
+      stageParams.push({ code, args: [name, ...argv], env: { ...this.context.env, ...env }, cwd: this.context.cwd, captureStdout: isLast, stdinData: i === 0 ? headStdin : undefined });
     }
 
     if (this.kernel.runPipeline) {
@@ -765,7 +770,7 @@ function builtinShadowsExternal(name: string, argv: string[]): boolean {
 }
 
 function toSpawnParams(p: PipelineStageParams): SpawnParams {
-  return { code: p.code, args: p.args, env: p.env, cwd: p.cwd, captureStdout: p.captureStdout, captureStderr: p.captureStderr };
+  return { code: p.code, args: p.args, env: p.env, cwd: p.cwd, captureStdout: p.captureStdout, captureStderr: p.captureStderr, stdinData: p.stdinData };
 }
 
 function describeStages(stages: SimpleCommand[]): string {
