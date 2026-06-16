@@ -1,0 +1,94 @@
+import { expect, test, describe } from 'vitest';
+import { base32Command } from './base32.ts';
+import { b32Encode, b32Decode } from './base32.ts';
+import type { CommandIO } from '../harness.ts';
+
+function makeIO(opts: { args: string[]; stdinText?: string; stdinBytes?: Uint8Array }) {
+  const enc = new TextEncoder();
+  const bytes = opts.stdinBytes ?? enc.encode(opts.stdinText ?? '');
+  const stdin = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(bytes); c.close(); } });
+  const outChunks: Uint8Array[] = [];
+  const errChunks: Uint8Array[] = [];
+  const stdout = new WritableStream<Uint8Array>({ write(c) { outChunks.push(c); } });
+  const stderr = new WritableStream<Uint8Array>({ write(c) { errChunks.push(c); } });
+  const decode = (chunks: Uint8Array[]): string => {
+    let t = 0; for (const c of chunks) t += c.byteLength;
+    const b = new Uint8Array(t); let o = 0;
+    for (const c of chunks) { b.set(c, o); o += c.byteLength; }
+    return new TextDecoder().decode(b);
+  };
+  const concat = (chunks: Uint8Array[]): Uint8Array => {
+    let t = 0; for (const c of chunks) t += c.byteLength;
+    const b = new Uint8Array(t); let o = 0;
+    for (const c of chunks) { b.set(c, o); o += c.byteLength; }
+    return b;
+  };
+  return {
+    io: { args: opts.args, env: {}, cwd: '/', stdin, stdout, stderr, syscall: async () => ({}) } as CommandIO,
+    outText: () => decode(outChunks),
+    out: () => concat(outChunks),
+    err: () => decode(errChunks),
+  };
+}
+
+describe('b32Encode / b32Decode roundtrip', () => {
+  test('empty', () => {
+    expect(b32Encode(new Uint8Array(), 76)).toBe('');
+    expect(b32Decode('')).toEqual(new Uint8Array());
+  });
+
+  test('single byte "f" → MY======', () => {
+    expect(b32Encode(new TextEncoder().encode('f'), 0)).toBe('MY======');
+    expect(new TextDecoder().decode(b32Decode('MY======')!)).toBe('f');
+  });
+
+  test('"fo" → MZXQ====', () => {
+    expect(b32Encode(new TextEncoder().encode('fo'), 0)).toBe('MZXQ====');
+    expect(new TextDecoder().decode(b32Decode('MZXQ====')!)).toBe('fo');
+  });
+
+  test('"foo" → MZXW6===', () => {
+    expect(b32Encode(new TextEncoder().encode('foo'), 0)).toBe('MZXW6===');
+    expect(new TextDecoder().decode(b32Decode('MZXW6===')!)).toBe('foo');
+  });
+
+  test('"foob" → MZXW6YQ=', () => {
+    expect(b32Encode(new TextEncoder().encode('foob'), 0)).toBe('MZXW6YQ=');
+    expect(new TextDecoder().decode(b32Decode('MZXW6YQ=')!)).toBe('foob');
+  });
+
+  test('"foobar" → MZXW6YTBOI======', () => {
+    expect(b32Encode(new TextEncoder().encode('foobar'), 0)).toBe('MZXW6YTBOI======');
+    expect(new TextDecoder().decode(b32Decode('MZXW6YTBOI======')!)).toBe('foobar');
+  });
+
+  test('decode is case-insensitive', () => {
+    expect(new TextDecoder().decode(b32Decode('mzxw6===')!)).toBe('foo');
+  });
+});
+
+describe('base32 command', () => {
+  test('encodes stdin', async () => {
+    const h = makeIO({ args: ['base32'], stdinText: 'foo' });
+    expect(await base32Command(h.io)).toBe(0);
+    expect(h.outText()).toBe('MZXW6===\n');
+  });
+
+  test('-d decodes', async () => {
+    const h = makeIO({ args: ['base32', '-d'], stdinText: 'MZXW6===\n' });
+    expect(await base32Command(h.io)).toBe(0);
+    expect(new TextDecoder().decode(h.out())).toBe('foo');
+  });
+
+  test('-d invalid input exits 1', async () => {
+    const h = makeIO({ args: ['base32', '-d'], stdinText: 'not-valid-base32-!!!' });
+    expect(await base32Command(h.io)).toBe(1);
+    expect(h.err()).toContain('invalid');
+  });
+
+  test('-w 0 no wrap', async () => {
+    const h = makeIO({ args: ['base32', '-w', '0'], stdinText: 'foobar' });
+    await base32Command(h.io);
+    expect(h.outText()).not.toContain('\n');
+  });
+});

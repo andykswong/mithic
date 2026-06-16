@@ -29,6 +29,9 @@ export const COMMAND_NAMES = [
   // file-operation batch
   'ls', 'cp', 'mv', 'rm', 'mkdir', 'rmdir', 'ln', 'touch', 'chmod',
   'readlink', 'basename', 'dirname', 'find', 'mktemp', 'stat', 'pwd', 'realpath',
+  // encoding/misc batch
+  'base64', 'base32', 'seq', 'yes', 'sleep', 'date', 'diff', 'echo', 'printf',
+  'true', 'false', 'env', 'expr', 'tac', 'comm', 'shuf', 'cksum', 'sum',
 ] as const;
 
 export type CoreutilsCommandName = typeof COMMAND_NAMES[number];
