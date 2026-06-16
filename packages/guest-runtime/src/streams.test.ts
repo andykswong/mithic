@@ -2,6 +2,8 @@ import { expect, test } from 'vitest';
 import { INITIAL_CREDIT_BYTES } from '@mithic/protocol';
 import { portToReadable, portToWritable } from './streams.ts';
 
+const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 test('portToWritable + portToReadable round-trip small chunk', async () => {
   const { port1, port2 } = new MessageChannel();
   const writable = portToWritable(port1);
@@ -111,3 +113,62 @@ test('writer blocks exhausted credit mid-stream and resumes on replenishment', a
   port1.close();
   port2.close();
 });
+
+test('backpressure: fast writer to a SLOW reader exhausts credit (desiredSize ≤ 0)', async () => {
+  // 1MB through a 64KB-window pipe to a consumer that reads slowly. The writer's
+  // desiredSize must go ≤ 0 (credit exhausted) well before all bytes are drained,
+  // and every byte must still arrive.
+  const { port1, port2 } = new MessageChannel();
+  const writable = portToWritable(port1);
+  const readable = portToReadable(port2);
+
+  const writer = writable.getWriter();
+  const reader = readable.getReader();
+
+  const total = 1024 * 1024;
+  const chunkSize = 64 * 1024;
+  const chunks = total / chunkSize;
+
+  let minDesiredSize = Infinity;
+  let received = 0;
+  let sawBackpressure = false;
+
+  const producer = (async () => {
+    for (let i = 0; i < chunks; i++) {
+      // Apply backpressure: await readiness, but sample desiredSize first so we
+      // can observe it dropping ≤ 0 while a prior write is still in flight to the
+      // slow reader.
+      const ds = writer.desiredSize ?? 0;
+      if (ds < minDesiredSize) minDesiredSize = ds;
+      if (ds <= 0 && received < total) sawBackpressure = true;
+      // Do NOT await each write: let writes queue so desiredSize can go negative
+      // as the underlying credit-gated sink stalls. Honor `ready` for backpressure.
+      void writer.write(new Uint8Array(chunkSize));
+      const ds2 = writer.desiredSize ?? 0;
+      if (ds2 < minDesiredSize) minDesiredSize = ds2;
+      if (ds2 <= 0 && received < total) sawBackpressure = true;
+      await writer.ready;
+    }
+    await writer.close();
+  })();
+
+  const consumer = (async () => {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      await delay(2); // slow drain
+    }
+  })();
+
+  await Promise.all([producer, consumer]);
+
+  expect(received).toBe(total);
+  // The writer must have hit backpressure: at some point desiredSize ≤ 0 while
+  // the consumer had not yet drained everything.
+  expect(minDesiredSize).toBeLessThanOrEqual(0);
+  expect(sawBackpressure).toBe(true);
+
+  port1.close();
+  port2.close();
+}, 20000);

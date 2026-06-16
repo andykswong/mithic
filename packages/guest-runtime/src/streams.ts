@@ -87,11 +87,42 @@ export function portToWritable(port: MessagePort): WritableStream<Uint8Array> {
 
 /**
  * Wraps a MessagePort (readable side) as a ReadableStream<Uint8Array>.
- * Sends credit to the writable side automatically.
+ *
+ * Flow control is a sliding credit window of {@link INITIAL_CREDIT_BYTES}. The
+ * reader grants the writer permission to send at most `window` bytes ahead of
+ * what the consumer has actually drained:
+ *
+ *   - On the first `pull()` the reader opens the window: grants `window` bytes.
+ *   - Each arriving `data` chunk consumes outstanding credit (`granted` rises by
+ *     the chunk size as it lands; really it was pre-granted, so we track it as
+ *     "in flight").
+ *   - Every subsequent `pull()` (the stream asks for more because the consumer
+ *     drained a chunk) replenishes ONLY the bytes the consumer has consumed
+ *     since the last grant — never a fresh flat window. So a SLOW consumer that
+ *     stops pulling stops replenishing, the writer exhausts its credit, and its
+ *     `desiredSize` goes ≤0 — genuine backpressure.
+ *
+ * This replaces the previous (broken) behavior where every `pull()` posted a
+ * flat `INITIAL_CREDIT_BYTES`, letting a fast writer to a slow reader grant
+ * unbounded credit and never block.
  */
 export function portToReadable(port: MessagePort): ReadableStream<Uint8Array> {
   port.start?.();
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+  const window = INITIAL_CREDIT_BYTES;
+  // Credit currently granted to the writer but not yet consumed by the consumer.
+  let outstanding = 0;
+  // Bytes that arrived and the consumer has pulled (drained) but we have not yet
+  // credited back to the writer. Accumulated across pulls; flushed as a grant.
+  let consumedUncredited = 0;
+  let opened = false;
+
+  function grant(bytes: number): void {
+    if (bytes <= 0) return;
+    outstanding += bytes;
+    const credit: PipeMessage = { type: 'credit', bytes };
+    port.postMessage(credit);
+  }
 
   return new ReadableStream<Uint8Array>({
     start(ctrl) {
@@ -100,6 +131,9 @@ export function portToReadable(port: MessagePort): ReadableStream<Uint8Array> {
         const msg = e.data as unknown;
         if (!isPipeMessage(msg)) return;
         if (msg.type === 'data') {
+          // This chunk used up part of the granted window.
+          outstanding -= msg.chunk.byteLength;
+          consumedUncredited += msg.chunk.byteLength;
           controller!.enqueue(msg.chunk);
         } else if (msg.type === 'end') {
           controller!.close();
@@ -111,9 +145,20 @@ export function portToReadable(port: MessagePort): ReadableStream<Uint8Array> {
       };
     },
     pull() {
-      // Send initial credit to unblock the writable side
-      const credit: PipeMessage = { type: 'credit', bytes: INITIAL_CREDIT_BYTES };
-      port.postMessage(credit);
+      if (!opened) {
+        // First demand: open the window. Nothing consumed yet, so just grant it.
+        opened = true;
+        consumedUncredited = 0;
+        grant(window);
+        return;
+      }
+      // Replenish only what the consumer has actually drained since the last
+      // grant, capped so total outstanding never exceeds the window. A slow
+      // consumer (no pulls) grants nothing → writer blocks.
+      const room = window - outstanding;
+      const replenish = Math.min(consumedUncredited, room);
+      consumedUncredited -= replenish;
+      grant(replenish);
     },
     cancel() {
       const msg: PipeMessage = { type: 'error', code: 'EPIPE' };
