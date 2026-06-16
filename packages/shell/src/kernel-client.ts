@@ -17,6 +17,8 @@ export interface SpawnParams {
   cwd?: string;
   captureStdout?: boolean;
   captureStderr?: boolean;
+  /** Inline stdin contents to feed the child (e.g. from a `<` redirect). */
+  stdinData?: string;
   /** Injected stdio ports for manual pipe wiring (zero-hop dup2). */
   stdin?: MessagePort;
   stdout?: MessagePort;
@@ -92,8 +94,14 @@ export interface FsClient {
   fsWrite(fd: number, data: string): void;
 
   /** Read the entire contents of an open fd as a string. */
-  fsRead(fd: number): string;
+  fsRead(fd: number): string | Promise<string>;
 
   /** Flush and close an open fd. */
   fsClose(fd: number): void;
+
+  /** List directory entries (names only). Optional — enables glob expansion. */
+  fsReaddir?(path: string): string[] | Promise<string[]>;
+
+  /** Stat a path. Optional — enables `[[ -f ]]`/`-d` and glob directory descent. */
+  fsStat?(path: string): { dir: boolean } | undefined | Promise<{ dir: boolean } | undefined>;
 }
