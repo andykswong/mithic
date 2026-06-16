@@ -60,8 +60,8 @@ const BREAK = Symbol('break');
 const CONTINUE = Symbol('continue');
 const NEXT = Symbol('next');
 const NEXTFILE = Symbol('nextfile');
-class ExitSignal { constructor(public code: number) {} }
-class ReturnSignal { constructor(public value: Value) {} }
+class ExitSignal { code: number; constructor(code: number) { this.code = code; } }
+class ReturnSignal { value: Value; constructor(value: Value) { this.value = value; } }
 
 type ArrayVal = Map<string, Value>;
 /** A scalar variable or an associative array. */
@@ -600,7 +600,7 @@ export class Interpreter {
       }
       case 'substr': {
         const s = this.valToStr(this.eval(args[0]));
-        let m = Math.trunc(toNum(this.eval(args[1])));
+        const m = Math.trunc(toNum(this.eval(args[1])));
         // awk substr is 1-based; positions < 1 count from before the string.
         let len = args.length >= 3 ? Math.trunc(toNum(this.eval(args[2]))) : Infinity;
         let start = m - 1;

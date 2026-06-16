@@ -201,7 +201,7 @@ function formatOne(
 
 /** Ensure a 2-digit exponent like C printf (`1e+5` → `1e+05`). */
 function fixExp(s: string, e: string): string {
-  return s.replace(new RegExp(`[eE]([+-])(\\d+)`), (_m, sign: string, digits: string) =>
+  return s.replace(/[eE]([+-])(\d+)/, (_m, sign: string, digits: string) =>
     e + sign + (digits.length < 2 ? digits.padStart(2, '0') : digits));
 }
 

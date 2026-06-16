@@ -393,7 +393,7 @@ class Parser {
     // Concatenation continues while the next token can begin a (non-operator)
     // operand. We must NOT treat a leading `-`/`+` as concat (it's additive),
     // nor `in`, comparison, `?`, etc.
-    while (this.startsConcatOperand(ctx)) {
+    while (this.startsConcatOperand()) {
       parts.push(this.parsePipeGetline(ctx));
     }
     return parts.length === 1 ? parts[0] : { type: 'concat', parts };
@@ -423,7 +423,7 @@ class Parser {
   }
 
   /** Whether the current token can begin a concatenated operand. */
-  private startsConcatOperand(ctx: ExprCtx): boolean {
+  private startsConcatOperand(): boolean {
     const t = this.peek();
     if (t.type === 'num' || t.type === 'str' || t.type === 'regex'
       || t.type === 'name' || t.type === 'func_name' || t.type === 'builtin') return true;
