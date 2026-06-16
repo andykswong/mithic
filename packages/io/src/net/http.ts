@@ -6,6 +6,15 @@ export interface HttpRequest {
   headers: [string, string][];
   body?: Uint8Array;
   timeoutMs?: number;
+  /**
+   * Redirect handling, mirroring the Fetch API `RequestInit.redirect`.
+   * `'manual'` makes the client return a 3xx response WITHOUT following it, so a
+   * caller (the kernel) can capability-check the redirect target before deciding
+   * to follow. `'follow'` lets the client follow internally. Defaults to
+   * `'follow'` for backward compatibility, but the kernel always passes
+   * `'manual'` to prevent SSRF via cross-origin redirects.
+   */
+  redirect?: 'follow' | 'manual' | 'error';
 }
 
 export interface HttpResponse {

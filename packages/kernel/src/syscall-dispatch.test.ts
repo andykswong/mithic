@@ -186,6 +186,134 @@ test('fs/chmod outside a granted prefix returns EACCES', async () => {
   expect(res).toMatchObject({ ok: false, error: { code: 'EACCES' } });
 });
 
+// ── SEC-2: symlink escape past the fs capability prefix ─────────────────────
+
+/**
+ * Build a dispatcher whose VFS contains a granted `/work` prefix and an
+ * ungranted `/etc` prefix, with a symlink `/work/escape` → `/etc/passwd`
+ * planted INSIDE the grant pointing OUTSIDE it. The process holds rw on `/work`
+ * only. The capability check must canonicalize through the symlink and DENY
+ * access to the escaped (ungranted) target.
+ */
+async function symlinkEscapeSetup() {
+  const router = new FileSystemRouter();
+  const provider = new MemoryFsProvider({
+    files: {
+      '/work/inside.txt': 'inside-data',
+      '/etc/passwd': 'root:x:0:0:SECRET',
+    },
+  });
+  await router.mount('/', provider);
+  // The symlink lives inside the grant but targets outside it.
+  await provider.symlink('/etc/passwd', '/work/escape');
+  // A legitimate in-prefix symlink: /work/legit → /work/inside.txt
+  await provider.symlink('/work/inside.txt', '/work/legit');
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'fs', paths: ['/work'], operations: ['read', 'write'] }]);
+  return new SyscallDispatcher({ vfs: router, caps, cwdOf: () => '/' });
+}
+
+test('SEC-2: fs/open of an in-grant symlink that escapes the prefix is EACCES', async () => {
+  const d = await symlinkEscapeSetup();
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'fs/open',
+    args: { dirfd: -100, path: '/work/escape', oflags: { read: true } },
+  })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EACCES' } });
+});
+
+test('SEC-2: fs/stat (follow) of an escaping symlink is EACCES (no leak of target type/size)', async () => {
+  const d = await symlinkEscapeSetup();
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'fs/stat',
+    args: { path: '/work/escape' },
+  })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EACCES' } });
+});
+
+test('SEC-2: reading a fd opened via an escaping symlink never yields the target bytes', async () => {
+  const d = await symlinkEscapeSetup();
+  // Open must be denied; if it somehow opened, the bytes would be the secret.
+  const open = (await d.dispatch(1, {
+    id: 1,
+    call: 'fs/open',
+    args: { dirfd: -100, path: '/work/escape', oflags: { read: true } },
+  })).response;
+  expect(open.ok).toBe(false);
+  expect((open as { ok: false; error: { code: string } }).error.code).toBe('EACCES');
+});
+
+test('SEC-2: a legitimate in-prefix symlink still resolves and opens', async () => {
+  const d = await symlinkEscapeSetup();
+  const open = (await d.dispatch(1, {
+    id: 1,
+    call: 'fs/open',
+    args: { dirfd: -100, path: '/work/legit', oflags: { read: true } },
+  })).response;
+  expect(open.ok).toBe(true);
+  const fd = (open as { ok: true; result: { fd: number } }).result.fd;
+  const read = (await d.dispatch(1, { id: 2, call: 'fs/read', args: { fd, len: 11 } })).response;
+  expect(new TextDecoder().decode((read as { ok: true; result: Uint8Array }).result)).toBe('inside-data');
+});
+
+test('SEC-2: lstat (followSymlinks:false) of the escaping link still works (inspects the link itself)', async () => {
+  const d = await symlinkEscapeSetup();
+  // lstat does NOT follow the final component, so it inspects /work/escape (the
+  // link), which is inside the grant — this must be allowed and report 'symlink'.
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'fs/stat',
+    args: { path: '/work/escape', followSymlinks: false },
+  })).response;
+  expect(res.ok).toBe(true);
+  expect((res as { ok: true; result: { type: string } }).result.type).toBe('symlink');
+});
+
+test('SEC-2: readlink of the escaping link works (reads the link, does not follow it)', async () => {
+  const d = await symlinkEscapeSetup();
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'fs/readlink',
+    args: { path: '/work/escape' },
+  })).response;
+  expect(res.ok).toBe(true);
+  expect((res as { ok: true; result: { target: string } }).result.target).toBe('/etc/passwd');
+});
+
+test('SEC-2: a symlink CYCLE does not hang — bounded resolution yields an error', async () => {
+  const router = new FileSystemRouter();
+  const provider = new MemoryFsProvider({ files: { '/work/.keep': '' } });
+  await router.mount('/', provider);
+  // /work/a → /work/b → /work/a (cycle, both inside the grant).
+  await provider.symlink('/work/b', '/work/a');
+  await provider.symlink('/work/a', '/work/b');
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'fs', paths: ['/work'], operations: ['read', 'write'] }]);
+  const d = new SyscallDispatcher({ vfs: router, caps, cwdOf: () => '/' });
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'fs/open',
+    args: { dirfd: -100, path: '/work/a', oflags: { read: true } },
+  })).response;
+  // Must settle (no hang) with a clean error — ELOOP from the VFS realpath bound.
+  expect(res.ok).toBe(false);
+  expect(['ELOOP', 'ENOENT', 'EIO']).toContain((res as { ok: false; error: { code: string } }).error.code);
+});
+
+test('SEC-2: opening a NEW file (create) inside the grant is unaffected by canonicalization', async () => {
+  const d = await symlinkEscapeSetup();
+  // The path does not exist yet; realpath of a non-existent leaf must not block
+  // a legitimate create inside the grant.
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'fs/open',
+    args: { dirfd: -100, path: '/work/new.txt', oflags: { write: true, create: true } },
+  })).response;
+  expect(res.ok).toBe(true);
+});
+
 // ── process/* syscalls ────────────────────────────────────────────────────
 
 function processSetup(opts: {
@@ -607,4 +735,121 @@ test('net/fetch with an invalid url returns EACCES (no origin → no capability)
   })).response;
   expect(res).toMatchObject({ ok: false, error: { code: 'EACCES' } });
   expect(calls).toHaveLength(0);
+});
+
+// ── SEC-1: SSRF via HTTP redirect — per-hop capability re-check ──────────────
+
+/**
+ * A scripted HTTP client that returns a queued sequence of responses, one per
+ * `send()`. Records every request URL it was asked to fetch. Used to model a
+ * server that 3xx-redirects to another origin.
+ */
+function scriptedClient(responses: HttpResponse[]): { client: HttpClient; urls: string[] } {
+  const urls: string[] = [];
+  let i = 0;
+  const client: HttpClient = {
+    send(req: HttpRequest): HttpResponse {
+      urls.push(req.url);
+      const r = responses[Math.min(i, responses.length - 1)];
+      i++;
+      return r;
+    },
+  };
+  return { client, urls };
+}
+
+test('SEC-1: net/fetch does NOT follow a 3xx redirect to an UNGRANTED origin — EACCES, no body leak', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  // Guest is granted ONLY origin A. The server at A redirects to evil origin B.
+  caps.grant(1, [{ type: 'net', origins: ['https://a.example.com'] }]);
+  const secret = new TextEncoder().encode('CLOUD-METADATA-SECRET');
+  const { client, urls } = scriptedClient([
+    { status: 302, headers: [['location', 'http://169.254.169.254/latest/meta-data/']], body: undefined },
+    // This would be the metadata body — it must NEVER reach the guest.
+    { status: 200, headers: [['content-type', 'text/plain']], body: secret },
+  ]);
+  const d = new SyscallDispatcher({ vfs: router, caps, cwdOf: () => '/', httpClient: client });
+
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'net/fetch',
+    args: { method: 'GET', url: 'https://a.example.com/redir', headers: [] },
+  })).response;
+
+  // The redirect target is ungranted → the dispatcher must NOT follow it.
+  expect(res).toMatchObject({ ok: false, error: { code: 'EACCES' } });
+  // The HTTP client must have been asked ONLY for the granted origin, never the
+  // metadata endpoint. No body from the ungranted origin ever fetched.
+  expect(urls).toEqual(['https://a.example.com/redir']);
+});
+
+test('SEC-1: net/fetch FOLLOWS a 3xx redirect to an ALSO-GRANTED origin and returns its body', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'net', origins: ['https://a.example.com', 'https://b.example.com'] }]);
+  const finalBody = new TextEncoder().encode('OK-FROM-B');
+  const { client, urls } = scriptedClient([
+    { status: 302, headers: [['location', 'https://b.example.com/landing']], body: undefined },
+    { status: 200, headers: [['content-type', 'text/plain']], body: finalBody },
+  ]);
+  const d = new SyscallDispatcher({ vfs: router, caps, cwdOf: () => '/', httpClient: client });
+
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'net/fetch',
+    args: { method: 'GET', url: 'https://a.example.com/redir', headers: [] },
+  })).response;
+
+  expect(res.ok).toBe(true);
+  const result = (res as { ok: true; result: { status: number; body?: Uint8Array } }).result;
+  expect(result.status).toBe(200);
+  expect(new TextDecoder().decode(result.body)).toBe('OK-FROM-B');
+  // Both hops went through the client because both origins are granted.
+  expect(urls).toEqual(['https://a.example.com/redir', 'https://b.example.com/landing']);
+});
+
+test('SEC-1: net/fetch caps redirect chains (ELOOP) instead of following forever', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'net', origins: ['https://a.example.com'] }]);
+  // Every response is a redirect back to a granted origin → infinite loop unless capped.
+  const { client, urls } = scriptedClient([
+    { status: 302, headers: [['location', 'https://a.example.com/again']], body: undefined },
+  ]);
+  const d = new SyscallDispatcher({ vfs: router, caps, cwdOf: () => '/', httpClient: client });
+
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'net/fetch',
+    args: { method: 'GET', url: 'https://a.example.com/start', headers: [] },
+  })).response;
+
+  expect(res.ok).toBe(false);
+  expect((res as { ok: false; error: { code: string } }).error.code).toBe('ELOOP');
+  // It must have stopped after a bounded number of hops, not run away.
+  expect(urls.length).toBeLessThanOrEqual(21);
+  expect(urls.length).toBeGreaterThan(1);
+});
+
+test('SEC-1: net/fetch requests redirect:manual from the HTTP client (no internal following)', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'net', origins: ['https://a.example.com'] }]);
+  const seen: HttpRequest[] = [];
+  const client: HttpClient = {
+    send(req: HttpRequest): HttpResponse {
+      seen.push(req);
+      return { status: 200, headers: [], body: undefined };
+    },
+  };
+  const d = new SyscallDispatcher({ vfs: router, caps, cwdOf: () => '/', httpClient: client });
+  await d.dispatch(1, {
+    id: 1,
+    call: 'net/fetch',
+    args: { method: 'GET', url: 'https://a.example.com/x', headers: [] },
+  });
+  // The dispatcher must instruct the client NOT to follow redirects itself, so
+  // the kernel can capability-check each hop.
+  expect(seen[0].redirect).toBe('manual');
 });

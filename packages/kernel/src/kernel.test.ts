@@ -162,3 +162,112 @@ test('Fix 4: process/spawn with dup2 injection on fd 3 returns EINVAL and closes
   const countAfter = kernel.processes.list().length;
   expect(countAfter).toBe(countBefore);
 }, 10000);
+
+// ── CAP-2: captured stdout must not hang when the guest writes past the cap ──
+
+/**
+ * CAP-2 regression: the transfer-path capture (`drainPort`) granted a fixed
+ * 16MiB credit ONCE and never replenished. A guest writing more than that
+ * exhausted the writer's credit, its `write()` stalled forever, and the capture
+ * promise never resolved — `wait()`/the pipeline hung. The fix replenishes
+ * credit as chunks are consumed and enforces a bounded `maxOutputBytes` cap:
+ * the capture promise ALWAYS resolves (truncated at the cap), and the process
+ * is killed so it cannot keep driving host allocations.
+ */
+test('CAP-2: captured stdout past the cap resolves (truncated) and does not hang', async () => {
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = new Kernel({ runtime: new WorkerRuntime(), vfs });
+  // Guest writes 4 chunks of 256 KiB = 1 MiB total to stdout, never closing
+  // before the cap is hit. With a 512 KiB cap the writer would historically
+  // stall after exhausting credit; the fix must still resolve the capture.
+  const code = `
+    import { createGuest } from '@mithic/guest-runtime';
+    export default async (boot) => {
+      const g = createGuest(boot);
+      const w = g.stdout.getWriter();
+      // Fresh buffer per write — the pipe transfers large buffers, so a reused
+      // buffer would be detached after the first write (a guest must not reuse).
+      for (let i = 0; i < 8; i++) {
+        await w.write(new Uint8Array(256 * 1024).fill(65));
+      }
+      try { await w.close(); } catch {}
+      g.exit(0);
+    };`;
+  const { pid, stdout } = await kernel.spawn(code, {
+    args: ['flood'],
+    capabilities: [],
+    captureStdout: true,
+    limits: { maxOutputBytes: 512 * 1024 },
+  });
+
+  // The capture promise MUST resolve (bounded) rather than hang forever.
+  const captured = await withTimeout(stdout!, 12000, 'captured stdout never resolved (CAP-2 hang)');
+  // Truncated at the cap (allow the exact cap; never the full 1 MiB).
+  expect(captured.byteLength).toBeLessThanOrEqual(512 * 1024);
+  expect(captured.byteLength).toBeGreaterThan(0);
+
+  // wait() must settle too.
+  const w = await withTimeout(kernel.wait(pid), 12000, 'wait() never settled (CAP-2 hang)');
+  expect(typeof w.code).toBe('number');
+}, 20000);
+
+/** Reject after `ms` so a hung promise fails the test instead of timing out the runner. */
+function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(msg)), ms)),
+  ]);
+}
+
+// ── LIM-1: kernel-side wall-clock timeout watchdog (works on ANY backend) ────
+
+/**
+ * LIM-1 regression: Kernel.spawn never enforced `limits.timeoutMs`, and the
+ * Worker/iframe backends don't enforce timeouts themselves — so a caller passing
+ * `limits.timeoutMs` got a silent no-op and a runaway guest ran forever. The fix
+ * adds a kernel-side wall-clock watchdog that SIGKILLs an over-time process on
+ * ANY backend; its `wait()` then resolves with a nonzero status within a bound.
+ */
+test('LIM-1: a never-exiting process with limits.timeoutMs is killed by the kernel watchdog', async () => {
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = new Kernel({ runtime: new WorkerRuntime(), vfs });
+  // A guest that never calls g.exit() and never returns — it parks forever.
+  const code = `
+    import { createGuest } from '@mithic/guest-runtime';
+    export default async (boot) => {
+      createGuest(boot);
+      await new Promise(() => {}); // never resolves
+    };`;
+  const t0 = Date.now();
+  const { pid } = await kernel.spawn(code, {
+    args: ['hang'],
+    capabilities: [],
+    limits: { timeoutMs: 200 },
+  });
+
+  // The watchdog must fire and the wait must resolve nonzero within a bound.
+  const result = await withTimeout(kernel.wait(pid), 5000, 'watchdog never fired (LIM-1)');
+  const elapsed = Date.now() - t0;
+  expect(result.code).not.toBe(0);
+  // Killed reasonably close to the deadline, not after the test bound.
+  expect(elapsed).toBeLessThan(3000);
+}, 10000);
+
+test('LIM-1: a fast process that finishes before timeoutMs exits normally (watchdog cleared)', async () => {
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = new Kernel({ runtime: new WorkerRuntime(), vfs });
+  const code = `
+    import { createGuest } from '@mithic/guest-runtime';
+    export default async (boot) => { const g = createGuest(boot); g.exit(0); };`;
+  const { pid } = await kernel.spawn(code, {
+    args: ['quick'],
+    capabilities: [],
+    limits: { timeoutMs: 5000 },
+  });
+  const result = await withTimeout(kernel.wait(pid), 5000, 'fast process never exited (LIM-1)');
+  // Exited 0 on its own — the watchdog must NOT have killed it (137).
+  expect(result.code).toBe(0);
+}, 10000);
