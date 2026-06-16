@@ -16,6 +16,7 @@ import { createGuest } from '@mithic/guest-runtime';
 import type { Guest } from '@mithic/guest-runtime';
 import { Executor } from './executor.ts';
 import type {
+  FsClient,
   KernelClient,
   PipelineRunResult,
   PipelineStageParams,
@@ -23,6 +24,86 @@ import type {
   SpawnParams,
 } from './kernel-client.ts';
 import { parse } from './parser.ts';
+
+/**
+ * Build an {@link FsClient} over the guest `fs/*` syscalls. Used for redirect
+ * I/O and glob/pathname expansion. Best-effort: when the shell lacks a `vfs`
+ * capability, the syscalls reject and the adapter surfaces the error to the
+ * caller (redirects fail loudly; glob falls back to the literal pattern).
+ *
+ * The adapter is intentionally synchronous-looking for fsOpen/fsWrite/fsClose
+ * (queuing async syscalls and tracking the pending chain) but exposes async
+ * fsRead/fsReaddir/fsStat where the executor awaits results.
+ */
+function makeFsClient(guest: Guest): FsClient & { flush(): Promise<void> } {
+  const buffers = new Map<number, string>();
+  let synthFd = 1000;
+  const pending: Array<Promise<unknown>> = [];
+
+  const client: FsClient & { flush(): Promise<void> } = {
+    flush: async () => { await Promise.all(pending); },
+    fsOpen(path, flags): number {
+      const fd = synthFd++;
+      buffers.set(fd, '');
+      // record open intent; actual write happens on close for write modes
+      metaOf(buffers).set(fd, { path, flags });
+      return fd;
+    },
+    fsWrite(fd, data): void {
+      buffers.set(fd, (buffers.get(fd) ?? '') + data);
+    },
+    async fsRead(fd): Promise<string> {
+      const meta = metaOf(buffers).get(fd);
+      if (!meta) return '';
+      const open = (await guest.syscall('fs/open', { path: meta.path, oflags: { read: true } })) as { fd: number };
+      const chunks: Uint8Array[] = [];
+      for (;;) {
+        const r = (await guest.syscall('fs/read', { fd: open.fd, len: 65536 })) as { data: Uint8Array };
+        if (!r.data || r.data.byteLength === 0) break;
+        chunks.push(r.data);
+      }
+      await guest.syscall('fs/close', { fd: open.fd });
+      let total = 0; for (const c of chunks) total += c.byteLength;
+      const buf = new Uint8Array(total); let off = 0;
+      for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+      return new TextDecoder().decode(buf);
+    },
+    fsClose(fd): void {
+      const meta = metaOf(buffers).get(fd);
+      const data = buffers.get(fd) ?? '';
+      buffers.delete(fd);
+      if (meta && (meta.flags.write || meta.flags.append)) {
+        const p = (async () => {
+          const open = (await guest.syscall('fs/open', {
+            path: meta.path,
+            oflags: { write: !meta.flags.append, append: meta.flags.append, create: true, truncate: !meta.flags.append },
+          })) as { fd: number };
+          await guest.syscall('fs/write', { fd: open.fd, data: new TextEncoder().encode(data) });
+          await guest.syscall('fs/close', { fd: open.fd });
+        })();
+        pending.push(p);
+      }
+    },
+    async fsReaddir(path): Promise<string[]> {
+      const r = (await guest.syscall('fs/readdir', { path })) as { entries?: Array<{ name: string } | string> };
+      const entries = r.entries ?? [];
+      return entries.map((e) => (typeof e === 'string' ? e : e.name));
+    },
+    async fsStat(path): Promise<{ dir: boolean } | undefined> {
+      try {
+        const r = (await guest.syscall('fs/stat', { path })) as { type?: string; isDir?: boolean };
+        return { dir: r.isDir ?? (r.type === 'dir') };
+      } catch { return undefined; }
+    },
+  };
+  return client;
+}
+
+function metaOf(buffers: Map<number, string>): Map<number, { path: string; flags: { read?: boolean; write?: boolean; append?: boolean; create?: boolean; truncate?: boolean } }> {
+  const b = buffers as Map<number, string> & { _meta?: Map<number, { path: string; flags: { read?: boolean; write?: boolean; append?: boolean; create?: boolean; truncate?: boolean } }> };
+  if (!b._meta) b._meta = new Map();
+  return b._meta;
+}
 
 /**
  * Build a real {@link KernelClient} backed by the guest's `process/*` syscalls.
@@ -110,18 +191,32 @@ export default async function main(boot: unknown): Promise<void> {
   let code = 0;
   try {
     // Script source: argv[1] (argv[0] is the program name), else read stdin.
-    const script = guest.args.length > 1 ? guest.args.slice(1).join(' ') : await readAll(guest);
+    // Remaining argv become positional params ($1..). With `-c SCRIPT a b`, the
+    // POSIX convention applies; here we keep it simple: argv[1] is the script,
+    // argv[2..] are positionals.
+    const fromArgs = guest.args.length > 1;
+    const script = fromArgs ? guest.args[1] : await readAll(guest);
+    const positional = fromArgs ? guest.args.slice(2) : [];
+    const fsClient = makeFsClient(guest);
 
     const executor = new Executor(
       makeKernelClient(guest),
-      { cwd: guest.cwd, env: { ...guest.env } },
+      {
+        cwd: guest.cwd,
+        env: { ...guest.env },
+        positional,
+        name: guest.args[0] ?? 'sh',
+        pid: guest.pid,
+      },
       // The shell resolves bare command names by deferring to the KERNEL: it
       // passes the name straight through as spawnable "code" and the kernel's
       // command resolver maps it (or returns ENOENT). The shell does not itself
-      // enumerate external commands.
-      { onStdout, onStderr, resolve: (name) => name },
+      // enumerate external commands. The FsClient adapter routes redirect I/O
+      // and glob through the guest's fs/* syscalls (best-effort; needs a vfs cap).
+      { onStdout, onStderr, resolve: (name) => name, fs: fsClient },
     );
     code = await executor.run(parse(script));
+    await fsClient.flush();
   } catch (err) {
     onStderr(`shell: ${(err as Error).message}\n`);
     code = 1;
