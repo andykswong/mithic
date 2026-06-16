@@ -24,7 +24,11 @@
  */
 export const COMMAND_NAMES = [
   'cat',
+  // text-processing batch
   'head', 'tail', 'wc', 'tr', 'rev', 'cut', 'paste', 'uniq', 'sort', 'tee', 'nl', 'fold',
+  // file-operation batch
+  'ls', 'cp', 'mv', 'rm', 'mkdir', 'rmdir', 'ln', 'touch', 'chmod',
+  'readlink', 'basename', 'dirname', 'find', 'mktemp', 'stat', 'pwd', 'realpath',
 ] as const;
 
 export type CoreutilsCommandName = typeof COMMAND_NAMES[number];
