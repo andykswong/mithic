@@ -11,7 +11,7 @@
  *   - It runs on the same JS thread, so no Worker is required (works in any Node
  *     process without --experimental-worker or special flags).
  *
- * Guest code uses `__isola_syscall` directly (the relay protocol), not
+ * Guest code uses `__mithic_syscall` directly (the relay protocol), not
  * `@mithic/guest-runtime`'s MessagePort path. This matches the QuickJS contract.
  *
  * ## Pool
@@ -129,7 +129,7 @@ class QuickJSRelayLauncher implements RelayLauncher {
 // ---------------------------------------------------------------------------
 
 export interface ExecRequest {
-  /** Guest source code (QuickJS relay: uses __isola_syscall directly). */
+  /** Guest source code (QuickJS relay: uses __mithic_syscall directly). */
   code: string;
   /**
    * stdin is reserved for future use.  Passing it currently returns 400.

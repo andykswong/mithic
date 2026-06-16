@@ -1,12 +1,12 @@
 import { defineConfig } from 'vitest/config';
 
-// Vitest is the test runner for the Isola (Mithic 2.0) packages.
+// Vitest is the test runner for the Mithic (Mithic 2.0) packages.
 //
 // Two project types:
-//  - "node":    runs *.test.ts in Node (replaces `node --test` for Isola packages)
+//  - "node":    runs *.test.ts in Node (replaces `node --test` for Mithic packages)
 //  - "browser": runs *.browser.test.ts in real Chromium (iframe/DOM/transfer)
 //
-// IMPORTANT: the include globs are an explicit ALLOWLIST of Isola packages, not a
+// IMPORTANT: the include globs are an explicit ALLOWLIST of Mithic packages, not a
 // blanket `packages/*` sweep. Legacy Mithic packages (io, wasip2, process, shell,
 // coreutils, jq, curl, worker, examples) still use `node --test` via their own
 // package `test` scripts and MUST NOT be picked up here — their suites are written

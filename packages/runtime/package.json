@@ -1,7 +1,7 @@
 {
   "name": "@mithic/runtime",
   "version": "2.0.0",
-  "description": "Isola runtime abstraction — backend interface, backend selection, and Worker backend",
+  "description": "Mithic runtime abstraction — backend interface, backend selection, and Worker backend",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.js",

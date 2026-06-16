@@ -98,9 +98,9 @@ const http = new SyncBridgeHttpClient(io);     // implements SyncHttpClient
 
 ## Cross-Platform Requirements
 
-### Browser: SharedArrayBuffer and Cross-Origin Isolation
+### Browser: SharedArrayBuffer and Cross-Origin Mithiction
 
-The sync-bridge relies on `SharedArrayBuffer` and `Atomics` for synchronous cross-thread communication. Browsers require **Cross-Origin Isolation** headers for `SharedArrayBuffer` to be available:
+The sync-bridge relies on `SharedArrayBuffer` and `Atomics` for synchronous cross-thread communication. Browsers require **Cross-Origin Mithiction** headers for `SharedArrayBuffer` to be available:
 
 ```
 Cross-Origin-Opener-Policy: same-origin

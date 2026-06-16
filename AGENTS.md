@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Mithic (Isola 2.0) is a capability-based sandboxed process kernel with GUI-capable sandboxes, running identically in the browser and on native platforms.
+Mithic (Mithic 2.0) is a capability-based sandboxed process kernel with GUI-capable sandboxes, running identically in the browser and on native platforms.
 
 ## Monorepo Structure
 
@@ -12,13 +12,13 @@ packages/
 ├── guest-runtime/  @mithic/guest-runtime  — in-sandbox guest API: createGuest(boot) → {syscall, stdio streams, onSignal, onDomEvent, exit}; Remote DOM client
 ├── runtime/        @mithic/runtime        — pluggable execution backends: Worker, iframe (GUI/opaque-origin), QuickJS, isolated-vm
 ├── kernel/         @mithic/kernel         — the Kernel: process lifecycle, IPC broker, capability manager, syscall dispatch, pipelines, Remote DOM host
-├── shell-js/       @mithic/shell-js       — POSIX-style shell interpreter (lexer/parser/expander/builtins/executor) running as a regular Isola process
+├── shell-js/       @mithic/shell-js       — POSIX-style shell interpreter (lexer/parser/expander/builtins/executor) running as a regular Mithic process
 ├── server/         @mithic/server         — host-side server integration
-├── io/             @mithic/io             — VFS router, providers, HTTP/sockets (VFS used by Isola Vitest suite)
+├── io/             @mithic/io             — VFS router, providers, HTTP/sockets (VFS used by Mithic Vitest suite)
 ├── worker/         @mithic/worker         — Web Worker polyfill for Node.js (isomorphic new Worker())
 └── examples/
-    ├── shell/        @mithic/example-shell        — xterm.js terminal (pending re-adaptation to Isola JS shell)
-    ├── image-viewer/ @mithic/example-image-viewer — GUI Isola process: drop-zone + <img> rendered in its own sandboxed iframe DOM
+    ├── shell/        @mithic/example-shell        — xterm.js terminal (pending re-adaptation to Mithic JS shell)
+    ├── image-viewer/ @mithic/example-image-viewer — GUI Mithic process: drop-zone + <img> rendered in its own sandboxed iframe DOM
     └── notebook/     @mithic/example-notebook     — xterm.js shell notebook: boots Kernel + IframeRuntime, drives @mithic/shell-js
 ```
 
@@ -38,7 +38,7 @@ npm run typecheck            # tsc --noEmit
 
 Individual package: run the same commands inside the package directory.
 
-Isola packages use **Vitest**. Node-environment unit/integration tests are `*.test.ts`; tests requiring a real browser (iframe sandboxing, DOM, MessagePort/ArrayBuffer transfer) are `*.browser.test.ts` and run in Chromium. Legacy Mithic packages may still use `node --test` until migrated.
+Mithic packages use **Vitest**. Node-environment unit/integration tests are `*.test.ts`; tests requiring a real browser (iframe sandboxing, DOM, MessagePort/ArrayBuffer transfer) are `*.browser.test.ts` and run in Chromium. Legacy Mithic packages may still use `node --test` until migrated.
 
 ## Key Conventions
 

@@ -4,8 +4,8 @@ import { QuickJSRuntime } from './quickjs.ts';
 test('quickjs process performs an async syscall via the asyncified bridge', async () => {
   const rt = await QuickJSRuntime.create();
   const code = `
-    const r = await __isola_syscall('process/getpid', {});
-    __isola_done(r.pid);
+    const r = await __mithic_syscall('process/getpid', {});
+    __mithic_done(r.pid);
   `;
   let resolved: number | undefined;
   rt.onResult((v) => { resolved = v as number; });
@@ -35,8 +35,8 @@ test('fs/port returns ENOSYS from the backend without calling onSyscall', async 
   const rt = await QuickJSRuntime.create();
   let onSyscallCalled = false;
   const code = `
-    const r = await __isola_syscall('fs/port', { fd: 3 });
-    __isola_done(r);
+    const r = await __mithic_syscall('fs/port', { fd: 3 });
+    __mithic_done(r);
   `;
   let result: unknown;
   rt.onResult((v) => { result = v; });

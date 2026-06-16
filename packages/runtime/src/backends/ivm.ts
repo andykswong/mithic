@@ -91,11 +91,11 @@ export class IvmRuntime implements Runtime {
     const entry: IvmEntry = { isolate, context, messageListeners: [] };
     this.#processes.set(id, entry);
 
-    // Inject __isola_syscall as an async Callback so guest code can post
+    // Inject __mithic_syscall as an async Callback so guest code can post
     // SyscallRequests back to the host. The callback is exposed on the global
-    // as `__isola_syscall(jsonMsg)`.
+    // as `__mithic_syscall(jsonMsg)`.
     await context.global.set(
-      '__isola_syscall',
+      '__mithic_syscall',
       new this.#ivm.Callback(
         (jsonMsg: string) => {
           try {
@@ -131,7 +131,7 @@ export class IvmRuntime implements Runtime {
   postMessage(_handle: ProcessHandle, _msg: SyscallResponse | KernelEvent, _transfer?: Transferable[]): void {
     // isolated-vm does not support Transferable ports; postMessage is a no-op for
     // directPipes=false. Callers that need bidirectional IPC should use syscall responses
-    // encoded as JSON passed through __isola_syscall callbacks.
+    // encoded as JSON passed through __mithic_syscall callbacks.
   }
 
   onMessage(handle: ProcessHandle, cb: (msg: SyscallRequest) => void): void {

@@ -1,5 +1,5 @@
 /**
- * `@mithic/example-image-viewer` — a GUI image-viewer Isola process.
+ * `@mithic/example-image-viewer` — a GUI image-viewer Mithic process.
  *
  * This is an **iframe process**: the kernel launches it via the GUI-capable
  * `IframeRuntime`, so the guest runs inside a real (sandboxed, opaque-origin)

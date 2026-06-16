@@ -1,6 +1,6 @@
 # @mithic/kernel
 
-The Isola kernel: a singleton that ties together process lifecycle, IPC,
+The Mithic kernel: a singleton that ties together process lifecycle, IPC,
 capabilities, and syscall dispatch over a pluggable runtime backend. It is the
 trust boundary — every guest syscall is routed through the kernel's dispatcher,
 where capability checks run, regardless of which backend the guest runs on.

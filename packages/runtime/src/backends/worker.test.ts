@@ -5,11 +5,11 @@ import { WorkerRuntime, BOOTSTRAP_SOURCE, type WorkerFactory, type WorkerLike } 
 
 /**
  * A test factory that creates MockWorkers and simulates the bootstrap protocol:
- * - Listens for `{ __isola_init, ports }` messages and stores boot state
- * - Listens for `{ __isola_run: string }` messages from the runtime
+ * - Listens for `{ __mithic_init, ports }` messages and stores boot state
+ * - Listens for `{ __mithic_run: string }` messages from the runtime
  * - Evaluates the guest code in a minimal scope with `self.__post` and `onmessage`
- * - Calls `__isola_default(boot)` if set, otherwise `__isola_main()` for backward compat
- * - Routes inbound (non-run, non-init) messages to `__isola_recv`
+ * - Calls `__mithic_default(boot)` if set, otherwise `__mithic_main()` for backward compat
+ * - Routes inbound (non-run, non-init) messages to `__mithic_recv`
  */
 function makeTestFactory(): WorkerFactory {
   return {
@@ -30,22 +30,22 @@ function makeTestFactory(): WorkerFactory {
           const data = e.data;
           if (data != null && typeof data === 'object') {
             const d = data as Record<string, unknown>;
-            if ('__isola_init' in d) {
+            if ('__mithic_init' in d) {
               // Reconstruct the boot object exactly as BOOTSTRAP_SOURCE does
               const ports = Array.isArray(d['ports']) ? d['ports'] as unknown[] : [];
               const preopenPorts: Record<number, unknown> = {};
               for (let i = 1; i < ports.length; i++) {
                 if (ports[i] != null) preopenPorts[i - 1] = ports[i];
               }
-              pendingBoot = { control: ports[0], init: d['__isola_init'], preopenPorts };
+              pendingBoot = { control: ports[0], init: d['__mithic_init'], preopenPorts };
               return;
             }
-            if ('__isola_run' in d && typeof d['__isola_run'] === 'string') {
+            if ('__mithic_run' in d && typeof d['__mithic_run'] === 'string') {
               // Evaluate guest code in a scope that provides self.__post
               const guestScope = {
-                __isola_main: null as (() => void) | null,
-                __isola_recv: null as ((msg: unknown) => void) | null,
-                __isola_default: null as ((boot: unknown) => Promise<void> | void) | null,
+                __mithic_main: null as (() => void) | null,
+                __mithic_recv: null as ((msg: unknown) => void) | null,
+                __mithic_default: null as ((boot: unknown) => Promise<void> | void) | null,
               };
 
               // The __post function sends to the host (outer side)
@@ -53,8 +53,8 @@ function makeTestFactory(): WorkerFactory {
                 __post: (msg: unknown) => { inner.postMessage(msg); },
               };
 
-              // Run guest code: it may set globalThis.__isola_main, __isola_recv, or __isola_default
-              const guestCode = d['__isola_run'] as string;
+              // Run guest code: it may set globalThis.__mithic_main, __mithic_recv, or __mithic_default
+              const guestCode = d['__mithic_run'] as string;
               try {
                 new Function(
                   'globalThis', 'self',
@@ -62,18 +62,18 @@ function makeTestFactory(): WorkerFactory {
                 )(guestScope, selfObj);
               } catch { /* ignore eval errors in tests */ }
 
-              isoDefault = guestScope.__isola_default;
-              isoMain = guestScope.__isola_main;
-              isoRecv = guestScope.__isola_recv;
+              isoDefault = guestScope.__mithic_default;
+              isoMain = guestScope.__mithic_main;
+              isoRecv = guestScope.__mithic_recv;
 
               if (typeof isoDefault === 'function') {
                 Promise.resolve(isoDefault(pendingBoot)).then(() => {
-                  isoRecv = guestScope.__isola_recv;
+                  isoRecv = guestScope.__mithic_recv;
                 }).catch(() => { /* ignore */ });
               } else if (typeof isoMain === 'function') {
                 try { isoMain(); } catch { /* ignore */ }
                 // After main(), capture any updated recv
-                isoRecv = guestScope.__isola_recv;
+                isoRecv = guestScope.__mithic_recv;
               }
               return;
             }
@@ -95,7 +95,7 @@ function makeTestFactory(): WorkerFactory {
 test('worker backend spawns a process that posts a syscall request', async () => {
   const rt = new WorkerRuntime(makeTestFactory());
 
-  const code = 'globalThis.__isola_main = () => { self.__post({ id: 1, call: \'process/getpid\', args: {} }); };';
+  const code = 'globalThis.__mithic_main = () => { self.__post({ id: 1, call: \'process/getpid\', args: {} }); };';
 
   const received: unknown[] = [];
   const handle = await rt.spawn(code, {
@@ -114,7 +114,7 @@ test('worker backend spawns a process that posts a syscall request', async () =>
 test('isAlive returns true for live process and false after dispose', async () => {
   const rt = new WorkerRuntime(makeTestFactory());
 
-  const code = 'globalThis.__isola_main = () => {};';
+  const code = 'globalThis.__mithic_main = () => {};';
   const handle = await rt.spawn(code, {
     init: { type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 2, ppid: 0, capabilities: [] },
   });
@@ -127,7 +127,7 @@ test('isAlive returns true for live process and false after dispose', async () =
 test('kill terminates worker and isAlive returns false', async () => {
   const rt = new WorkerRuntime(makeTestFactory());
 
-  const code = 'globalThis.__isola_main = () => {};';
+  const code = 'globalThis.__mithic_main = () => {};';
   const handle = await rt.spawn(code, {
     init: { type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 3, ppid: 0, capabilities: [] },
   });
@@ -140,11 +140,11 @@ test('kill terminates worker and isAlive returns false', async () => {
 test('postMessage sends a message to the worker recv hook', async () => {
   const rt = new WorkerRuntime(makeTestFactory());
 
-  // Guest sets __isola_recv after __isola_main runs;
+  // Guest sets __mithic_recv after __mithic_main runs;
   // recv echoes inbound messages back to the host via __post
   const code = `
-    globalThis.__isola_main = () => {
-      globalThis.__isola_recv = (msg) => {
+    globalThis.__mithic_main = () => {
+      globalThis.__mithic_recv = (msg) => {
         self.__post({ id: 99, call: 'echo', args: { got: msg } });
       };
     };
@@ -171,12 +171,12 @@ test('postMessage sends a message to the worker recv hook', async () => {
 
 test('BOOTSTRAP_SOURCE contains expected protocol hooks', () => {
   expect(BOOTSTRAP_SOURCE).toContain('__post');
-  expect(BOOTSTRAP_SOURCE).toContain('__isola_run');
-  expect(BOOTSTRAP_SOURCE).toContain('__isola_main');
-  expect(BOOTSTRAP_SOURCE).toContain('__isola_recv');
-  expect(BOOTSTRAP_SOURCE).toContain('__isola_init');
-  expect(BOOTSTRAP_SOURCE).toContain('__isola_default');
-  expect(BOOTSTRAP_SOURCE).toContain('__isola_boot');
+  expect(BOOTSTRAP_SOURCE).toContain('__mithic_run');
+  expect(BOOTSTRAP_SOURCE).toContain('__mithic_main');
+  expect(BOOTSTRAP_SOURCE).toContain('__mithic_recv');
+  expect(BOOTSTRAP_SOURCE).toContain('__mithic_init');
+  expect(BOOTSTRAP_SOURCE).toContain('__mithic_default');
+  expect(BOOTSTRAP_SOURCE).toContain('__mithic_boot');
 });
 
 test('per-instance id counters are independent', async () => {
@@ -184,7 +184,7 @@ test('per-instance id counters are independent', async () => {
   const rt2 = new WorkerRuntime(makeTestFactory());
 
   const init = { type: 'init' as const, entry: 'inline' as const, args: [], env: {}, cwd: '/', pid: 10, ppid: 0, capabilities: [] };
-  const code = 'globalThis.__isola_main = () => {};';
+  const code = 'globalThis.__mithic_main = () => {};';
 
   const h1a = await rt1.spawn(code, { init });
   const h1b = await rt1.spawn(code, { init });
@@ -206,7 +206,7 @@ test('init handshake delivers boot object to default-export guest', async () => 
 
   // Guest uses the new default-export convention; captures boot and posts it back
   const code = `
-    globalThis.__isola_default = async (boot) => {
+    globalThis.__mithic_default = async (boot) => {
       self.__post({ id: 7, call: 'boot-check', args: {
         hasControl: boot != null && 'control' in boot,
         hasInit: boot != null && 'init' in boot,

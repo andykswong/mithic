@@ -1,6 +1,6 @@
 # @mithic/runtime
 
-Pluggable execution backends for Isola guests. A `Runtime` is where a guest
+Pluggable execution backends for Mithic guests. A `Runtime` is where a guest
 module actually runs; the kernel talks to all of them through one interface
 (`spawn` / `kill` / `postMessage` / `onMessage`), so the same kernel works over
 a Web Worker, a sandboxed iframe, QuickJS, or isolated-vm.

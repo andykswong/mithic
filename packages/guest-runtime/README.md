@@ -1,6 +1,6 @@
 # @mithic/guest-runtime
 
-The Isola guest-side runtime. Runs **inside** the sandboxed process (Worker,
+The Mithic guest-side runtime. Runs **inside** the sandboxed process (Worker,
 iframe, QuickJS, or isolated-vm). It wires the host-supplied `MessagePort`
 control channel into the typed `Guest` interface that application code and WASM
 shims depend on.

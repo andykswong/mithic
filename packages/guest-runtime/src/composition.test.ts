@@ -26,7 +26,7 @@
 import { expect, test } from 'vitest';
 import { BOOTSTRAP_SOURCE } from '@mithic/runtime/backends/worker';
 import type { ProcessInit } from '@mithic/protocol';
-import { createGuest } from './isola.ts';
+import { createGuest } from './guest.ts';
 import { portToReadable } from './streams.ts';
 
 /**
@@ -45,8 +45,8 @@ test('BOOTSTRAP_SOURCE shape matches buildBoot construction', () => {
   // Confirm the boot object construction is consistent with the bootstrap source.
   expect(BOOTSTRAP_SOURCE).toContain('preopenPorts[i - 1] = ports[i]');
   expect(BOOTSTRAP_SOURCE).toContain('control: ports[0]');
-  expect(BOOTSTRAP_SOURCE).toContain('__isola_init');
-  expect(BOOTSTRAP_SOURCE).toContain('__isola_default');
+  expect(BOOTSTRAP_SOURCE).toContain('__mithic_init');
+  expect(BOOTSTRAP_SOURCE).toContain('__mithic_default');
 });
 
 test('guest syscall+stdout composition: createGuest wired via WorkerRuntime boot shape', async () => {

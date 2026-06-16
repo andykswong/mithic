@@ -68,7 +68,7 @@ export interface KernelClient {
  * Minimal VFS client for redirect execution. The executor uses this to open,
  * write, read, and close files when executing redirect operators (>, >>, <).
  *
- * In the real guest, these map to `isola.syscall('fs/open' | 'fs/write' |
+ * In the real guest, these map to `mithic.syscall('fs/open' | 'fs/write' |
  * 'fs/read' | 'fs/close', ...)`. In unit tests, supply an in-memory mock.
  */
 export interface FsClient {

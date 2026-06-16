@@ -1,7 +1,7 @@
 /**
  * `@mithic/example-notebook` — an xterm.js shell notebook frontend.
  *
- * This is the capstone integration: a browser page that boots an Isola
+ * This is the capstone integration: a browser page that boots an Mithic
  * {@link Kernel}, renders an xterm.js terminal, runs the `@mithic/shell-js`
  * shell wired to that terminal, and renders GUI processes (the image-viewer)
  * inline as placed iframes.

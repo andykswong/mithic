@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { INITIAL_CREDIT_BYTES } from '@mithic/protocol';
-import { createGuest } from './isola.ts';
+import { createGuest } from './guest.ts';
 import { MutationSerializer } from './remote-dom.ts';
 
 function makeGuest(preopenPorts?: Record<number, MessagePort>) {

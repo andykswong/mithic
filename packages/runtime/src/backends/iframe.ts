@@ -21,8 +21,8 @@ interface IframeEntry {
  * so the guest runs in an opaque origin and cannot access parent DOM or storage.
  *
  * Communication protocol (matches WorkerRuntime exactly):
- *  1. spawn() posts { __isola_init, ports } with transferList to the iframe's contentWindow
- *  2. spawn() posts { __isola_run: codeStr } to trigger evaluation
+ *  1. spawn() posts { __mithic_init, ports } with transferList to the iframe's contentWindow
+ *  2. spawn() posts { __mithic_run: codeStr } to trigger evaluation
  *  3. Inbound messages from the iframe are routed to onMessage() callbacks
  *  4. postMessage() sends a message down to the iframe
  *  5. kill() / dispose() removes the iframe from the DOM
@@ -64,7 +64,7 @@ export class IframeRuntime implements Runtime {
       codeStr = `(async () => {
         const mod = await import(${JSON.stringify(url)});
         if (typeof mod.default === 'function') {
-          globalThis.__isola_default = mod.default;
+          globalThis.__mithic_default = mod.default;
         }
       })();`;
     }
@@ -123,16 +123,16 @@ export class IframeRuntime implements Runtime {
       iframe.addEventListener('load', () => resolve(), { once: true });
     });
 
-    // Deliver boot object: __isola_init + transfer list [controlPort, stdinPort, stdoutPort, stderrPort, ...]
+    // Deliver boot object: __mithic_init + transfer list [controlPort, stdinPort, stdoutPort, stderrPort, ...]
     if (options.transfer && options.transfer.length > 0) {
       iframe.contentWindow!.postMessage(
-        { __isola_init: options.init, ports: options.transfer },
+        { __mithic_init: options.init, ports: options.transfer },
         '*',
         options.transfer as Transferable[],
       );
     }
 
-    iframe.contentWindow!.postMessage({ __isola_run: codeStr }, '*');
+    iframe.contentWindow!.postMessage({ __mithic_run: codeStr }, '*');
 
     return { id };
   }

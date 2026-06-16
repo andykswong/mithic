@@ -1,9 +1,9 @@
 /**
- * Shell process entry — the guest module that runs inside an Isola sandbox.
+ * Shell process entry — the guest module that runs inside an Mithic sandbox.
  *
  * The kernel launches this with the script to execute passed as a guest
  * argument (argv[1]) or, failing that, read from stdin. It builds an
- * {@link Executor} whose stdout sink writes to the guest's `isola.stdout`
+ * {@link Executor} whose stdout sink writes to the guest's `mithic.stdout`
  * stream, runs the parsed program, and exits with the program's status.
  *
  * KernelClient note: the current kernel exposes no process-spawn syscall, so a

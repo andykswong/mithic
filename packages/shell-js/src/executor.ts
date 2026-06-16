@@ -4,7 +4,7 @@
  * (a) External command spawning: the executor's spawn path is fully implemented
  *     and mock-tested, but is unreachable from a real guest. Spawning external
  *     (non-builtin) commands requires a `process/spawn` kernel syscall that does
- *     not yet exist in the Isola 2.0 kernel. It will land in a future kernel
+ *     not yet exist in the Mithic 2.0 kernel. It will land in a future kernel
  *     milestone; until then only builtins are executable from a real shell guest.
  *
  * (b) `$?` / `$PIPESTATUS`, glob expansion, brace expansion, shell functions,
@@ -51,7 +51,7 @@ export interface ExecutorOptions {
   /**
    * VFS client for redirect execution (>, >>, <). When provided the executor
    * routes redirected I/O through this client instead of the normal stdout/stdin
-   * streams. In the real guest these calls go through `isola.syscall('fs/*')`;
+   * streams. In the real guest these calls go through `mithic.syscall('fs/*')`;
    * in unit tests supply an in-memory mock.
    *
    * Unsupported redirect operators (<, <<, fd-dup) throw an explicit error even
@@ -287,7 +287,7 @@ export class Executor {
     // External command: resolve to guest code and spawn.
     //
     // DEFERRED (J.7): spawning external commands requires a `process/spawn`
-    // kernel syscall that does not yet exist in the Isola 2.0 kernel. The spawn
+    // kernel syscall that does not yet exist in the Mithic 2.0 kernel. The spawn
     // path below is implemented and mock-tested but is unreachable from a real
     // guest until that syscall lands. See also Fix 3 comment below.
     const code = this.resolve(name);

@@ -1,6 +1,6 @@
 # @mithic/server
 
-Isola HTTP API server. Exposes sandboxed process execution over a single
+Mithic HTTP API server. Exposes sandboxed process execution over a single
 `POST /exec` Hono endpoint. Each request spawns a fresh QuickJS isolate,
 captures stdout/stderr, enforces resource limits, and returns the result as
 JSON — with no shared state between calls.
@@ -28,7 +28,7 @@ serve({ fetch: app.fetch, port: 3000 });
 ```jsonc
 // Request
 {
-  "code": "const r = __isola_syscall(JSON.stringify({id:1,call:'process/getpid',args:{}})); globalThis.__isola_syscall(JSON.stringify({id:2,call:'process/exit',args:{code:0}}))",
+  "code": "const r = __mithic_syscall(JSON.stringify({id:1,call:'process/getpid',args:{}})); globalThis.__mithic_syscall(JSON.stringify({id:2,call:'process/exit',args:{code:0}}))",
   "env": { "FOO": "bar" },
   "limits": {
     "timeoutMs": 5000,

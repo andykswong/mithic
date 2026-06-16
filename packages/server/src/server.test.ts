@@ -2,7 +2,7 @@
  * @mithic/server — POST /exec integration tests
  *
  * Uses Hono's `app.request()` (no real TCP socket) to drive the HTTP handler.
- * Guest code uses the QuickJS relay protocol (`__isola_syscall` directly).
+ * Guest code uses the QuickJS relay protocol (`__mithic_syscall` directly).
  *
  * ## Backend: QuickJS
  * All tests use the QuickJS relay backend (default for @mithic/server) because:
@@ -33,8 +33,8 @@ describe('POST /exec', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         code: `
-          __isola_syscall('pipe/write', { fd: 1, data: 'hello from server\\n' });
-          __isola_syscall('process/exit', { code: 0 });
+          __mithic_syscall('pipe/write', { fd: 1, data: 'hello from server\\n' });
+          __mithic_syscall('process/exit', { code: 0 });
         `,
       }),
     });
@@ -54,9 +54,9 @@ describe('POST /exec', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         code: `
-          const env = __isola_init.env;
-          __isola_syscall('pipe/write', { fd: 1, data: env.GREETING });
-          __isola_syscall('process/exit', { code: 0 });
+          const env = __mithic_init.env;
+          __mithic_syscall('pipe/write', { fd: 1, data: env.GREETING });
+          __mithic_syscall('process/exit', { code: 0 });
         `,
         env: { GREETING: 'howdy' },
       }),
@@ -76,8 +76,8 @@ describe('POST /exec', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         code: `
-          __isola_syscall('pipe/write', { fd: 2, data: 'fail' });
-          __isola_syscall('process/exit', { code: 42 });
+          __mithic_syscall('pipe/write', { fd: 2, data: 'fail' });
+          __mithic_syscall('process/exit', { code: 42 });
         `,
       }),
     });
@@ -169,8 +169,8 @@ describe('POST /exec', () => {
       body: JSON.stringify({
         // Write a small amount — maxOutputBytes is set to 1 byte so this overflows.
         code: `
-          __isola_syscall('pipe/write', { fd: 1, data: 'hello world' });
-          __isola_syscall('process/exit', { code: 0 });
+          __mithic_syscall('pipe/write', { fd: 1, data: 'hello world' });
+          __mithic_syscall('process/exit', { code: 0 });
         `,
         limits: { maxOutputBytes: 1 },
       }),
@@ -217,7 +217,7 @@ describe('POST /exec', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         code: `
-          __isola_syscall('process/exit', { code: 0 });
+          __mithic_syscall('process/exit', { code: 0 });
         `,
         limits: { timeoutMs: -100 },
       }),
@@ -237,7 +237,7 @@ describe('POST /exec', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         code: `
-          __isola_syscall('process/exit', { code: 0 });
+          __mithic_syscall('process/exit', { code: 0 });
         `,
         limits: { memoryMb: 0 },
       }),
@@ -257,7 +257,7 @@ describe('POST /exec', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         code: `
-          __isola_syscall('process/exit', { code: 0 });
+          __mithic_syscall('process/exit', { code: 0 });
         `,
         stdin: 'some input',
       }),

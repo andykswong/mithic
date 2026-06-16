@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MutationSerializer, VNode } from './remote-dom.ts';
-import type { Guest } from './isola.ts';
+import type { Guest } from './guest.ts';
 
 // ---------------------------------------------------------------------------
 // Minimal stub guest — syscall never actually called in these unit tests

@@ -1,6 +1,6 @@
 # @mithic/shell-js
 
-A POSIX-style shell interpreter that runs as a regular Isola process. It is a
+A POSIX-style shell interpreter that runs as a regular Mithic process. It is a
 plain TypeScript shell — lexer, parser, expander, builtins, and executor — that
 reads a script, runs it, and writes to its stdio streams like any other guest.
 

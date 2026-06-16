@@ -12,13 +12,13 @@ import {
 /** Extended spawn options for the QuickJS backend. */
 export interface QuickJSSpawnOptions extends SpawnOptions {
   /**
-   * Called by the asyncify bridge when the guest invokes `__isola_syscall(call, args)`.
+   * Called by the asyncify bridge when the guest invokes `__mithic_syscall(call, args)`.
    * Returns a plain object that is JSON-cloned back into the guest.
    *
    * The asyncified bridge suspends the WASM call stack while awaiting this handler
    * and resumes it with the serialised result.  From the guest's perspective the
-   * call is synchronous: `const r = __isola_syscall(call, args)`.  Using
-   * `await __isola_syscall(...)` also works because `await <non-Promise>` in an
+   * call is synchronous: `const r = __mithic_syscall(call, args)`.  Using
+   * `await __mithic_syscall(...)` also works because `await <non-Promise>` in an
    * async context resolves via a QJS microtask, driven by the event-loop pump.
    */
   onSyscall: (call: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>;
@@ -72,13 +72,13 @@ interface ProcessEntry {
  *
  * ## Asyncify syscall bridge
  *
- * `__isola_syscall(call, args)` is injected as an asyncified function via
+ * `__mithic_syscall(call, args)` is injected as an asyncified function via
  * `newAsyncifiedFunction`.  Asyncify instrumentation in the WASM module suspends
- * the entire guest call stack when `__isola_syscall` is invoked, yields control
+ * the entire guest call stack when `__mithic_syscall` is invoked, yields control
  * to the JS event loop so the host `onSyscall` handler can `await` its work, then
  * resumes the WASM stack with the serialised response.  From the guest's perspective
- * the call appears synchronous: `const r = __isola_syscall(call, args)`.
- * Using `await __isola_syscall(...)` also works — `await <non-Promise>` schedules
+ * the call appears synchronous: `const r = __mithic_syscall(call, args)`.
+ * Using `await __mithic_syscall(...)` also works — `await <non-Promise>` schedules
  * a QJS microtask that the host pumps via `executePendingJobs`.
  *
  * The host pumps `runtime.executePendingJobs()` in a `setImmediate` loop after
@@ -124,7 +124,7 @@ export class QuickJSRuntime implements Runtime {
   }
 
   /**
-   * Register a callback invoked whenever guest code calls `__isola_done(value)`.
+   * Register a callback invoked whenever guest code calls `__mithic_done(value)`.
    * Fires for every subsequent spawn.
    */
   onResult(cb: (v: unknown) => void): void {
@@ -207,9 +207,9 @@ export class QuickJSRuntime implements Runtime {
 
     const resultCallbacks = this.#resultCallbacks;
 
-    // __isola_syscall: asyncified bridge — WASM stack suspends; JS awaits; stack resumes.
+    // __mithic_syscall: asyncified bridge — WASM stack suspends; JS awaits; stack resumes.
     const syscallFn = ctx.newAsyncifiedFunction(
-      '__isola_syscall',
+      '__mithic_syscall',
       async (callHandle: QuickJSHandle, argsHandle: QuickJSHandle): Promise<QuickJSHandle> => {
         const call = ctx.getString(callHandle);
         const argsRaw = ctx.dump(argsHandle);
@@ -229,26 +229,26 @@ export class QuickJSRuntime implements Runtime {
         return jsonToHandle(ctx, response);
       }
     );
-    ctx.setProp(ctx.global, '__isola_syscall', syscallFn);
+    ctx.setProp(ctx.global, '__mithic_syscall', syscallFn);
     syscallFn.dispose();
 
-    // __isola_done(value): logical completion; fires all onResult callbacks.
-    const doneFn = ctx.newFunction('__isola_done', (valueHandle: QuickJSHandle) => {
+    // __mithic_done(value): logical completion; fires all onResult callbacks.
+    const doneFn = ctx.newFunction('__mithic_done', (valueHandle: QuickJSHandle) => {
       const value = ctx.dump(valueHandle);
       for (const cb of resultCallbacks) cb(value);
       return ctx.undefined;
     });
-    ctx.setProp(ctx.global, '__isola_done', doneFn);
+    ctx.setProp(ctx.global, '__mithic_done', doneFn);
     doneFn.dispose();
 
-    // __isola_post(msg): general outbound hook — no transferable ports, no-op.
-    const postFn = ctx.newFunction('__isola_post', (_: QuickJSHandle) => ctx.undefined);
-    ctx.setProp(ctx.global, '__isola_post', postFn);
+    // __mithic_post(msg): general outbound hook — no transferable ports, no-op.
+    const postFn = ctx.newFunction('__mithic_post', (_: QuickJSHandle) => ctx.undefined);
+    ctx.setProp(ctx.global, '__mithic_post', postFn);
     postFn.dispose();
 
-    // __isola_init: expose ProcessInit for guests that inspect boot metadata.
+    // __mithic_init: expose ProcessInit for guests that inspect boot metadata.
     const initHandle = jsonToHandle(ctx, init as unknown as Record<string, unknown>);
-    ctx.setProp(ctx.global, '__isola_init', initHandle);
+    ctx.setProp(ctx.global, '__mithic_init', initHandle);
     initHandle.dispose();
 
     // Resolve code string.
@@ -260,7 +260,7 @@ export class QuickJSRuntime implements Runtime {
     }
 
     // Wrap in async IIFE to support top-level `await` in guest code.
-    const wrappedCode = `(async function __isola_run() {\n${codeStr}\n})()`;
+    const wrappedCode = `(async function __mithic_run() {\n${codeStr}\n})()`;
 
     // Drive the QJS event loop: pump microtasks until the queue is empty.
     const driveLoop = (): void => {
@@ -330,7 +330,7 @@ export class QuickJSRuntime implements Runtime {
       try { result.value.dispose(); } catch { /* ignore */ }
       driveLoop();
 
-      // After pumping, mark exit 0 on the next tick (lets __isola_done fire first).
+      // After pumping, mark exit 0 on the next tick (lets __mithic_done fire first).
       setImmediate(() => {
         driveLoop();
         setImmediate(() => {

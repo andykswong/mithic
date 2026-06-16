@@ -37,7 +37,7 @@ export interface KernelOptions {
    * (e.g. QuickJS). The kernel calls `relayLauncher.launchRelay()` instead of the
    * normal port-transfer path, passing pipe write/read hooks and a kernel-owned
    * `onSyscall` callback so the launcher can relay I/O over whatever bridge the
-   * backend supports (e.g. `__isola_syscall` in QuickJS).
+   * backend supports (e.g. `__mithic_syscall` in QuickJS).
    * Required when using a non-transferable runtime backend.
    */
   relayLauncher?: RelayLauncher;
@@ -189,7 +189,7 @@ export interface GuestLauncher {
 }
 
 /**
- * The Isola kernel: a singleton that ties together process lifecycle, IPC,
+ * The Mithic kernel: a singleton that ties together process lifecycle, IPC,
  * capabilities, and syscall dispatch over a pluggable {@link Runtime} backend.
  *
  * Control-plane wiring (transferable backends): the kernel mints a control
@@ -320,7 +320,7 @@ export class Kernel {
 
     // Surface bootstrap errors from the worker main channel as a crash exit.
     this.#runtime.onMessage(handle, (msg: unknown) => {
-      if (msg && typeof msg === 'object' && '__isola_error' in msg) {
+      if (msg && typeof msg === 'object' && '__mithic_error' in msg) {
         if (this.processes.get(pid)?.state !== 'DEAD') this.processes.markExit(pid, 1);
       }
     });
@@ -713,7 +713,7 @@ async function loadGuestDefault(code: string | URL): Promise<GuestDefault> {
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const { pathToFileURL } = await import('node:url');
-  const dir = await mkdtemp(join(tmpdir(), 'isola-guest-'));
+  const dir = await mkdtemp(join(tmpdir(), 'mithic-guest-'));
   const file = join(dir, 'guest.mjs');
   await writeFile(file, code);
   const mod = await import(pathToFileURL(file).href);

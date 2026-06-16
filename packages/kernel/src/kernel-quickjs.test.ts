@@ -121,11 +121,11 @@ test('kernel relay: quickjs process writes to stdout and exits 0', async () => {
     relayLauncher: new QuickJSGuestLauncher(qjsRt),
   });
 
-  // Guest code uses __isola_syscall directly — no MessagePorts needed.
+  // Guest code uses __mithic_syscall directly — no MessagePorts needed.
   // Writes stdout as a UTF-8 string; the relay converts it to bytes.
   const code = `
-    __isola_syscall('pipe/write', { fd: 1, data: 'hello\\n' });
-    __isola_syscall('process/exit', { code: 0 });
+    __mithic_syscall('pipe/write', { fd: 1, data: 'hello\\n' });
+    __mithic_syscall('process/exit', { code: 0 });
   `;
 
   const { pid, stdout } = await kernel.spawn(code, {
@@ -143,7 +143,7 @@ test('kernel relay: quickjs process writes to stdout and exits 0', async () => {
 // in-process Worker fallback (Worker is undefined in this Node env, so
 // DefaultGuestLauncher uses its dynamic-import bootstrap — not a real Worker)
 // vs the QuickJS relay path, and the two backends execute DIFFERENT guest source
-// (Worker uses @mithic/guest-runtime MessagePorts; QuickJS uses __isola_syscall).
+// (Worker uses @mithic/guest-runtime MessagePorts; QuickJS uses __mithic_syscall).
 // It's a useful smoke test that both transports yield the same bytes for
 // equivalent programs, but it does not prove a single artifact runs unchanged on
 // both. True cross-transport parity requires a unified guest shim layer (future).
@@ -183,8 +183,8 @@ test('kernel smoke: inprocess-worker and quickjs-relay produce identical stdout 
   });
 
   const qjsCode = `
-    __isola_syscall('pipe/write', { fd: 1, data: 'hello\\n' });
-    __isola_syscall('process/exit', { code: 0 });
+    __mithic_syscall('pipe/write', { fd: 1, data: 'hello\\n' });
+    __mithic_syscall('process/exit', { code: 0 });
   `;
 
   const qjsSpawn = await qjsKernel.spawn(qjsCode, {
@@ -196,7 +196,7 @@ test('kernel smoke: inprocess-worker and quickjs-relay produce identical stdout 
   const qjsOut = new TextDecoder().decode(await qjsSpawn.stdout!);
 
   // Both backends produce the same output.
-  // NOTE: The guest code strings differ because QuickJS uses __isola_syscall
+  // NOTE: The guest code strings differ because QuickJS uses __mithic_syscall
   // directly (no MessagePorts) while Worker guests use @mithic/guest-runtime.
   // Full write-once-run-anywhere requires a unified guest shim layer (future).
   expect(workerOut).toBe('hello\n');
@@ -233,13 +233,13 @@ test('kernel relay SECURITY: fs syscall to an ungranted path is denied (EACCES) 
   const code = `
     let result;
     try {
-      __isola_syscall('fs/stat', { path: '/secret/key.txt' });
+      __mithic_syscall('fs/stat', { path: '/secret/key.txt' });
       result = 'NO_ERROR';
     } catch (e) {
       result = String(e.message || e);
     }
-    __isola_syscall('pipe/write', { fd: 1, data: result });
-    __isola_syscall('process/exit', { code: 0 });
+    __mithic_syscall('pipe/write', { fd: 1, data: result });
+    __mithic_syscall('process/exit', { code: 0 });
   `;
 
   const { pid, stdout } = await kernel.spawn(code, {
@@ -277,13 +277,13 @@ test('kernel relay: fs/pipe returns ENOSYS and leaks no MessagePort', async () =
   const code = `
     let result;
     try {
-      __isola_syscall('fs/pipe', {});
+      __mithic_syscall('fs/pipe', {});
       result = 'NO_ERROR';
     } catch (e) {
       result = String(e.message || e);
     }
-    __isola_syscall('pipe/write', { fd: 1, data: result });
-    __isola_syscall('process/exit', { code: 0 });
+    __mithic_syscall('pipe/write', { fd: 1, data: result });
+    __mithic_syscall('process/exit', { code: 0 });
   `;
 
   const { pid, stdout } = await kernel.spawn(code, {
@@ -319,13 +319,13 @@ test('kernel relay: fs syscall to a granted path succeeds', async () => {
   const code = `
     let result;
     try {
-      __isola_syscall('fs/stat', { path: '/allowed' });
+      __mithic_syscall('fs/stat', { path: '/allowed' });
       result = 'OK';
     } catch (e) {
       result = String(e.message || e);
     }
-    __isola_syscall('pipe/write', { fd: 1, data: result });
-    __isola_syscall('process/exit', { code: 0 });
+    __mithic_syscall('pipe/write', { fd: 1, data: result });
+    __mithic_syscall('process/exit', { code: 0 });
   `;
 
   const { pid, stdout } = await kernel.spawn(code, {
@@ -360,9 +360,9 @@ test('kernel relay: stdout is bounded at maxOutputBytes (no unbounded host growt
   const code = `
     const chunk = 'x'.repeat(100);
     for (let i = 0; i < 200; i++) {
-      __isola_syscall('pipe/write', { fd: 1, data: chunk });
+      __mithic_syscall('pipe/write', { fd: 1, data: chunk });
     }
-    __isola_syscall('process/exit', { code: 0 });
+    __mithic_syscall('process/exit', { code: 0 });
   `;
 
   const { pid, stdout } = await kernel.spawn(code, {

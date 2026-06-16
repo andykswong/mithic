@@ -1,5 +1,5 @@
-export { createGuest } from './isola.ts';
-export type { Guest, GuestOptions } from './isola.ts';
+export { createGuest } from './guest.ts';
+export type { Guest, GuestOptions } from './guest.ts';
 export { FdTable } from './fd-table.ts';
 export type { FdEntry } from './fd-table.ts';
 export { SyscallClient } from './syscall-client.ts';

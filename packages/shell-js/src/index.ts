@@ -1,6 +1,6 @@
 /**
  * `@mithic/shell-js` — a POSIX-style shell interpreter that runs as a regular
- * Isola process.
+ * Mithic process.
  *
  * Public surface:
  *   - the lexer / parser / expander / builtins / executor building blocks, and

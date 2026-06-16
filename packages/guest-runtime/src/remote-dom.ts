@@ -10,11 +10,11 @@
  * changes (via an explicit commit model — no MutationObserver needed in a headless env)
  * and emits batched DomMutation records that the host applies to a real DOM container.
  *
- * Guest → Host communication: `isola.syscall('dom/mutate', { mutations })`.
+ * Guest → Host communication: `mithic.syscall('dom/mutate', { mutations })`.
  * Host → Guest event forwarding: kernel events with `event: 'dom/event'`.
  */
 
-import type { Guest, GuestDomEventPayload } from './isola.ts';
+import type { Guest, GuestDomEventPayload } from './guest.ts';
 
 // ---------------------------------------------------------------------------
 // Mutation record types

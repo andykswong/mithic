@@ -1,6 +1,6 @@
 # @mithic/protocol
 
-Wire-protocol types shared across the Isola runtime. This package is pure type
+Wire-protocol types shared across the Mithic runtime. This package is pure type
 and guard definitions — the single source of truth for the messages that flow
 between the kernel, a runtime backend, and a sandboxed guest.
 

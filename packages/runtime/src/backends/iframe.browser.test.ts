@@ -253,10 +253,10 @@ test('IframeRuntime: isAlive returns true then false after dispose', async () =>
 test('IframeRuntime: postMessage delivers message to guest recv hook', async () => {
   const rt = new IframeRuntime();
 
-  // Guest installs __isola_recv and echoes messages back via parent.postMessage
+  // Guest installs __mithic_recv and echoes messages back via parent.postMessage
   const code = /* js */`
     export default async (_boot) => {
-      globalThis.__isola_recv = (msg) => {
+      globalThis.__mithic_recv = (msg) => {
         window.parent.postMessage({ id: 50, call: 'echo', args: { got: msg } }, '*');
       };
     };
@@ -277,7 +277,7 @@ test('IframeRuntime: postMessage delivers message to guest recv hook', async () 
   const handle = await rt.spawn(code, { init });
   rt.onMessage(handle, (m) => received.push(m));
 
-  // Wait for guest to install __isola_recv
+  // Wait for guest to install __mithic_recv
   await new Promise<void>((r) => setTimeout(r, 300));
 
   rt.postMessage(handle, { id: 42, ok: true, result: 'ping' });
@@ -301,14 +301,14 @@ test('IframeRuntime: URL spawn generates dynamic import() — not a bare static 
   // parent). Actual URL-spawn browser smoke test is therefore omitted; this unit assertion
   // validates the generated code shape instead.
   //
-  // We reach into the private spawn() logic by inspecting the __isola_run message that
+  // We reach into the private spawn() logic by inspecting the __mithic_run message that
   // would be sent — but since we can't intercept that without a real DOM, we instead
   // replicate the generation logic from iframe.ts here for assertion purposes.
   const url = 'https://example.com/guest.js';
   const generated = `(async () => {
         const mod = await import(${JSON.stringify(url)});
         if (typeof mod.default === 'function') {
-          globalThis.__isola_default = mod.default;
+          globalThis.__mithic_default = mod.default;
         }
       })();`;
 

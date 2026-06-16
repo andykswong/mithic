@@ -1,7 +1,7 @@
 {
   "name": "@mithic/shell-js",
   "version": "2.0.0",
-  "description": "Isola POSIX-style shell — a TypeScript shell interpreter running as a regular Isola process",
+  "description": "Mithic POSIX-style shell — a TypeScript shell interpreter running as a regular Mithic process",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.js",
@@ -29,7 +29,7 @@
   },
   "keywords": [
     "mithic",
-    "isola",
+    "mithic",
     "shell",
     "posix",
     "typescript"

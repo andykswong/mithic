@@ -2,7 +2,7 @@
   "name": "@mithic/example-notebook",
   "version": "2.0.0",
   "private": true,
-  "description": "Isola example — an xterm.js shell notebook frontend that boots a Kernel and drives the @mithic/shell-js process",
+  "description": "Mithic example — an xterm.js shell notebook frontend that boots a Kernel and drives the @mithic/shell-js process",
   "type": "module",
   "scripts": {
     "clean": "rimraf dist *.tsbuildinfo",
