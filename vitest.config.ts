@@ -29,7 +29,10 @@ export default defineConfig({
       {
         test: {
           name: 'browser',
-          include: [`packages/${ISOLA_PACKAGES}/src/**/*.browser.test.ts`],
+          include: [
+            `packages/${ISOLA_PACKAGES}/src/**/*.browser.test.ts`,
+            'packages/io/src/vfs/**/*.browser.test.ts',
+          ],
           exclude: ['**/node_modules/**', '**/dist/**'],
           browser: {
             enabled: true,

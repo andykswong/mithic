@@ -16,7 +16,8 @@
     "./net/providers/node-socket-provider": "./dist/net/providers/node-socket-provider.js",
     "./vfs": "./dist/vfs/index.js",
     "./vfs/providers/node-fs": "./dist/vfs/providers/node-fs.js",
-    "./vfs/providers/opfs": "./dist/vfs/providers/opfs.js"
+    "./vfs/providers/opfs": "./dist/vfs/providers/opfs.js",
+    "./vfs/providers/caching": "./dist/vfs/providers/caching.js"
   },
   "files": [
     "/dist"
