@@ -166,3 +166,33 @@ test('redirect target path is expanded from env', async () => {
   await ex.run(parse('echo hi > $OUTFILE'));
   expect(fs.files.get('/tmp/env-out.txt')).toBe('hi\n');
 });
+
+// ── Fix: stdin redirect / here-string into an EXTERNAL command wires stdinData ──
+
+test('< file into an external command passes file contents as spawn stdinData', async () => {
+  const k = mockKernel();
+  const fs = mockFs();
+  fs.files.set('/tmp/in.txt', 'line1\nline2\n');
+  // `grepx` is external (not a builtin) so it spawns; the redirect must arrive
+  // as stdinData on the spawn params (otherwise the child would block on stdin).
+  const ex = new Executor(k as any, { cwd: '/', env: {} }, { fs, resolve: (n) => n });
+  await ex.run(parse('grepx < /tmp/in.txt'));
+  expect(k.spawned).toHaveLength(1);
+  expect(k.spawned[0].stdinData).toBe('line1\nline2\n');
+});
+
+test('<<< here-string into an external command passes the word + newline as stdinData', async () => {
+  const k = mockKernel();
+  const ex = new Executor(k as any, { cwd: '/', env: {} }, { resolve: (n) => n });
+  await ex.run(parse('grepx <<< "data here"'));
+  expect(k.spawned).toHaveLength(1);
+  expect(k.spawned[0].stdinData).toBe('data here\n');
+});
+
+test('<< heredoc into an external command passes the body as stdinData', async () => {
+  const k = mockKernel();
+  const ex = new Executor(k as any, { cwd: '/', env: { U: 'bob' } }, { resolve: (n) => n });
+  await ex.run(parse('grepx <<EOF\nhello $U\nEOF'));
+  expect(k.spawned).toHaveLength(1);
+  expect(k.spawned[0].stdinData).toBe('hello bob\n');
+});

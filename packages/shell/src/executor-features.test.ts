@@ -268,9 +268,178 @@ test('[[ string == glob ]]', async () => {
   expect((await run('[[ foobar == foo* ]]; echo $?')).out.trim()).toBe('0');
 });
 
+// ── cat: coreutils-shadowing builtin (operands → spawn external) ────────────
+
+test('cat WITH file operands spawns the external (does not use the builtin)', async () => {
+  const k = mockKernel();
+  let out = '';
+  const ex = new Executor(k as any, { cwd: '/', env: {} }, {
+    onStdout: (s) => { out += s; },
+    resolve: (name) => name,
+  });
+  await ex.run(parse('cat /a.txt'));
+  // The external `cat` was spawned with the file operand…
+  expect(k.spawned).toHaveLength(1);
+  expect(k.spawned[0].args).toEqual(['cat', '/a.txt']);
+  // …and the builtin (stdin passthrough) did NOT run.
+  expect(out).toBe('');
+});
+
+test('bare cat (no operands) runs the builtin stdin passthrough, no spawn', async () => {
+  const k = mockKernel();
+  let out = '';
+  const ex = new Executor(k as any, { cwd: '/', env: {} }, {
+    onStdout: (s) => { out += s; },
+    resolve: (name) => name,
+  });
+  await ex.run(parse('echo hello | cat'));
+  // Pure builtin pipeline — nothing spawned.
+  expect(k.spawned).toHaveLength(0);
+  expect(out).toBe('hello\n');
+});
+
+test('cat in a pipeline WITH operands spawns the external stage', async () => {
+  const k = mockKernel();
+  const ex = new Executor(k as any, { cwd: '/', env: {} }, { resolve: (name) => name });
+  await ex.run(parse('cat /a.txt | sort'));
+  // `cat /a.txt` shadows out of the builtin path, so the whole pipeline spawns.
+  expect(k.spawned).toHaveLength(2);
+  expect(k.spawned[0].args).toEqual(['cat', '/a.txt']);
+});
+
 // ── shift / getopts ────────────────────────────────────────────────────────
 
 test('shift drops positional params', async () => {
   const { out } = await run('echo $1; shift; echo $1', { positional: ['a', 'b', 'c'] });
   expect(out).toBe('a\nb\n');
+});
+
+// ── set options: -u / -x / -o pipefail / noclobber / $- ─────────────────────
+
+test('set -u (nounset): expanding an unset var errors and aborts nonzero', async () => {
+  const { code, err } = await run('set -u; echo $UNDEFINED_VAR; echo after');
+  expect(code).not.toBe(0);
+  expect(err).toMatch(/UNDEFINED_VAR/);
+});
+
+test('set -u allows set vars and ${var:-default}', async () => {
+  expect((await run('set -u; X=hi; echo $X')).out.trim()).toBe('hi');
+  expect((await run('set -u; echo ${MISSING:-fallback}')).out.trim()).toBe('fallback');
+});
+
+test('set +u re-enables unset expansion to empty', async () => {
+  const { out, code } = await run('set -u; set +u; echo "[$NOPE]"');
+  expect(code).toBe(0);
+  expect(out.trim()).toBe('[]');
+});
+
+test('set -x (xtrace): prints each command to stderr prefixed with +', async () => {
+  const { out, err } = await run('set -x; echo hello');
+  expect(out.trim()).toBe('hello');
+  expect(err).toContain('+ echo hello');
+});
+
+test('set -o pipefail: pipeline status is the last NONZERO stage', async () => {
+  // false | true: without pipefail the status is the last stage (0). With
+  // pipefail it is the last nonzero stage (1).
+  expect((await run('false | true; echo $?')).out.trim()).toBe('0');
+  expect((await run('set -o pipefail; false | true; echo $?')).out.trim()).toBe('1');
+});
+
+test('set -o pipefail: all-zero pipeline still returns 0', async () => {
+  expect((await run('set -o pipefail; true | true; echo $?')).out.trim()).toBe('0');
+});
+
+test('noclobber: > refuses to overwrite an existing file; >| forces', async () => {
+  const fs = mockFs({ '/exists.txt': 'old\n' });
+  const r1 = await run('set -C; echo new > /exists.txt; echo "rc=$?"', {}, fs);
+  expect(r1.out.trim()).toBe('rc=1');
+  expect(fs.files.get('/exists.txt')).toBe('old\n'); // untouched
+  const r2 = await run('set -C; echo new >| /exists.txt; echo done', {}, fs);
+  expect(fs.files.get('/exists.txt')).toBe('new\n'); // forced overwrite
+  expect(r2.code).toBe(0);
+});
+
+test('noclobber: > to a NEW file still works', async () => {
+  const fs = mockFs();
+  await run('set -C; echo fresh > /new.txt', {}, fs);
+  expect(fs.files.get('/new.txt')).toBe('fresh\n');
+});
+
+test('$- reflects enabled short flags', async () => {
+  const { out } = await run('set -eux; echo "[$-]"');
+  // Order is canonical (e, u, x). The xtrace line also prints to stderr.
+  expect(out).toMatch(/\[.*e.*u.*x.*\]/);
+});
+
+test('set -o lists option states', async () => {
+  const { out } = await run('set -o pipefail; set -o');
+  expect(out).toMatch(/pipefail\s+on/);
+  expect(out).toMatch(/nounset\s+off/);
+});
+
+// ── indexed arrays ──────────────────────────────────────────────────────────
+
+test('array literal + element access ${arr[0]}', async () => {
+  const { out } = await run('arr=(a b c); echo ${arr[0]} ${arr[1]} ${arr[2]}');
+  expect(out.trim()).toBe('a b c');
+});
+
+test('bare $arr expands to element 0', async () => {
+  expect((await run('arr=(x y z); echo $arr')).out.trim()).toBe('x');
+});
+
+test('${arr[@]} expands to all elements (word-split)', async () => {
+  const { out } = await run('arr=(one two three); for x in ${arr[@]}; do echo $x; done');
+  expect(out).toBe('one\ntwo\nthree\n');
+});
+
+test('"${arr[@]}" preserves elements with spaces as separate words', async () => {
+  const { out } = await run('arr=(a b c); echo "${arr[@]}"');
+  expect(out.trim()).toBe('a b c');
+});
+
+test('${arr[*]} joins all elements', async () => {
+  expect((await run('arr=(a b c); echo "${arr[*]}"')).out.trim()).toBe('a b c');
+});
+
+test('${#arr[@]} is the element count', async () => {
+  expect((await run('arr=(a b c d); echo ${#arr[@]}')).out.trim()).toBe('4');
+});
+
+test('${#arr[1]} is the length of one element', async () => {
+  expect((await run('arr=(a bb ccc); echo ${#arr[1]}')).out.trim()).toBe('2');
+});
+
+test('${!arr[@]} lists the indices', async () => {
+  expect((await run('arr=(a b c); echo ${!arr[@]}')).out.trim()).toBe('0 1 2');
+});
+
+test('element assignment arr[2]=x', async () => {
+  const { out } = await run('arr=(a b c); arr[1]=B; echo ${arr[0]} ${arr[1]} ${arr[2]}');
+  expect(out.trim()).toBe('a B c');
+});
+
+test('append arr+=(d e)', async () => {
+  const { out } = await run('arr=(a b); arr+=(c d); echo ${arr[@]}; echo ${#arr[@]}');
+  expect(out).toBe('a b c d\n4\n');
+});
+
+test('array element via expansion index ${arr[$i]}', async () => {
+  expect((await run('arr=(a b c); i=2; echo ${arr[$i]}')).out.trim()).toBe('c');
+});
+
+test('out-of-range element is empty', async () => {
+  expect((await run('arr=(a b); echo "[${arr[9]}]"')).out.trim()).toBe('[]');
+});
+
+// ── ${!var} indirection ─────────────────────────────────────────────────────
+
+test('${!var} indirect expansion (value of the variable named by var)', async () => {
+  const { out } = await run('target=hello; ref=target; echo ${!ref}');
+  expect(out.trim()).toBe('hello');
+});
+
+test('${!var} with an unset indirection is empty', async () => {
+  expect((await run('ref=nope; echo "[${!ref}]"')).out.trim()).toBe('[]');
 });

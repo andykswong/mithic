@@ -48,7 +48,18 @@ export interface ShellEnv {
   statPath?(path: string): Promise<{ dir: boolean } | undefined>;
   /** Current working directory, for relative glob resolution. Optional. */
   cwd?: string;
+  /** True when `set -u` is active: expanding an unset variable is an error. */
+  nounset?(): boolean;
+  /** Read an indexed array's elements (undefined ⇒ not an array). Optional. */
+  getArray?(name: string): string[] | undefined;
 }
+
+/**
+ * Thrown by the expander for a fatal expansion error — `set -u` on an unset
+ * variable, or `${var:?msg}` on a null/unset variable. The executor catches it,
+ * writes the message to stderr, and aborts the script with a nonzero status.
+ */
+export class ExpansionError extends Error {}
 
 type Part = { text: string; quoted: boolean };
 
@@ -185,8 +196,8 @@ export class Expander {
       return { value, next: end + 1 };
     }
 
-    // Special single-char params: ? # @ * $ ! 0
-    if (c1 !== undefined && '?#@*$!0'.includes(c1)) {
+    // Special single-char params: ? # @ * $ ! 0 - ($- = current option flags)
+    if (c1 !== undefined && '?#@*$!0-'.includes(c1)) {
       return { value: this.env.getSpecial(c1) ?? '', next: i + 2 };
     }
 
@@ -203,7 +214,10 @@ export class Expander {
       name += word[j]; j++;
     }
     if (name === '') return { value: '$', next: i + 1 };
-    return { value: this.resolveVar(name), next: j };
+    // A bare `$arr` reference to an indexed array yields element 0 (bash).
+    const arr = this.env.getArray?.(name);
+    if (arr !== undefined) return { value: arr[0] ?? '', next: j };
+    return { value: this.resolveVarStrict(name), next: j };
   }
 
   /** Read a `` `cmd` `` backtick substitution at word[i] === '`'. */
@@ -250,12 +264,67 @@ export class Expander {
     return this.env.getSpecial(name) ?? '';
   }
 
+  /**
+   * Resolve a BARE `$name` / `${name}` reference, honoring `set -u` (nounset):
+   * an unset variable throws (the shell aborts). Default/alternate forms
+   * (`${name:-…}`, `${name+…}`, …) use {@link resolveVar} instead, since they
+   * legitimately handle the unset case themselves.
+   */
+  private resolveVarStrict(name: string): string {
+    const v = this.env.get(name);
+    if (v !== undefined) return v;
+    const special = this.env.getSpecial(name);
+    if (special !== undefined) return special;
+    if (this.env.nounset?.()) {
+      throw new ExpansionError(`${name}: unbound variable`);
+    }
+    return '';
+  }
+
+  /** Expand an array subscript expression (may contain `$i`) to an integer. */
+  private async resolveIndex(subscript: string): Promise<number> {
+    const expanded = await this.substituteOnly(subscript);
+    return parseInt(expanded.trim(), 10) || 0;
+  }
+
   /** Parse and apply a `${...}` parameter-expansion body. */
   private async paramExpansion(body: string): Promise<string> {
-    // ${#name} → length
+    // ${#name} / ${#name[subscript]} → length (element count for [@]/[*]).
     if (body.startsWith('#') && body.length > 1) {
-      const name = body.slice(1);
-      return String(this.resolveVar(name).length);
+      const inner = body.slice(1);
+      const sub = matchSubscript(inner);
+      if (sub) {
+        const arr = this.env.getArray?.(sub.name) ?? [];
+        if (sub.subscript === '@' || sub.subscript === '*') return String(arr.length);
+        const idx = await this.resolveIndex(sub.subscript);
+        return String((arr[idx] ?? '').length);
+      }
+      return String(this.resolveVar(inner).length);
+    }
+
+    // ${!name[@]} / ${!name[*]} → array indices; ${!var} → indirect expansion.
+    if (body.startsWith('!') && body.length > 1) {
+      const inner = body.slice(1);
+      const sub = matchSubscript(inner);
+      if (sub && (sub.subscript === '@' || sub.subscript === '*')) {
+        const arr = this.env.getArray?.(sub.name) ?? [];
+        return arr.map((_, i) => i).join(' ');
+      }
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(inner)) {
+        // Indirection: the value of the variable NAMED by `inner`.
+        const target = this.resolveVar(inner);
+        return target === '' ? '' : this.resolveVar(target);
+      }
+      // Fall through for unsupported ${!prefix*} name-matching (rare).
+    }
+
+    // ${name[subscript]} array element / slice access.
+    const subAccess = matchSubscript(body);
+    if (subAccess && this.env.getArray?.(subAccess.name) !== undefined) {
+      const arr = this.env.getArray(subAccess.name)!;
+      if (subAccess.subscript === '@' || subAccess.subscript === '*') return arr.join(' ');
+      const idx = await this.resolveIndex(subAccess.subscript);
+      return arr[idx] ?? '';
     }
 
     // Find the operator. Operators: :- := :? :+ - = ? + # ## % %% / // : (substring)
@@ -263,7 +332,12 @@ export class Expander {
     if (!m) return this.resolveVar(body);
     const name = m[1];
     const rest = m[2];
-    if (rest === '') return this.resolveVar(name);
+    if (rest === '') {
+      // A bare ${arr} (no subscript) on an array → element 0 (bash semantics).
+      const arr = this.env.getArray?.(name);
+      if (arr !== undefined) return arr[0] ?? '';
+      return this.resolveVarStrict(name);
+    }
 
     const set = this.env.has(name) || this.env.getSpecial(name) !== undefined;
     const value = this.resolveVar(name);
@@ -277,7 +351,7 @@ export class Expander {
         case '-': return unsetOrEmpty ? arg : value;
         case '+': return unsetOrEmpty ? '' : arg;
         case '=': if (unsetOrEmpty) { this.env.set(name, arg); return arg; } return value;
-        case '?': if (unsetOrEmpty) throw new Error(arg || `${name}: parameter null or not set`); return value;
+        case '?': if (unsetOrEmpty) throw new ExpansionError(arg || `${name}: parameter null or not set`); return value;
       }
     }
     // ${var-word} ${var=word} ${var?word} ${var+word} (only-unset variants)
@@ -288,7 +362,7 @@ export class Expander {
         case '-': return set ? value : arg;
         case '+': return set ? arg : '';
         case '=': if (!set) { this.env.set(name, arg); return arg; } return value;
-        case '?': if (!set) throw new Error(arg || `${name}: parameter not set`); return value;
+        case '?': if (!set) throw new ExpansionError(arg || `${name}: parameter not set`); return value;
       }
     }
 
@@ -375,6 +449,13 @@ export class Expander {
     }
     return out;
   }
+}
+
+/** Parse a `name[subscript]` form (the whole string), e.g. `arr[0]`, `arr[@]`. */
+function matchSubscript(s: string): { name: string; subscript: string } | undefined {
+  const m = /^([A-Za-z_][A-Za-z0-9_]*)\[(.*)\]$/s.exec(s);
+  if (!m) return undefined;
+  return { name: m[1], subscript: m[2] };
 }
 
 function joinPath(dir: string, name: string): string {

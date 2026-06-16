@@ -35,9 +35,42 @@ test('parses input redirect and fd-dup', () => {
   expect(r3).toMatchObject({ op: '>', fd: 2, target: 'err' });
 });
 
+test('parses >| clobber-force redirect', () => {
+  const r = parse('echo x >| out.txt').body[0].stages![0].redirects[0];
+  expect(r).toMatchObject({ op: '>|', target: 'out.txt' });
+});
+
+test('parses array literal assignment', () => {
+  const a = parse('arr=(a b c)').body[0].stages![0].assignments[0];
+  expect(a).toMatchObject({ name: 'arr', array: ['a', 'b', 'c'] });
+});
+
+test('parses array append assignment', () => {
+  const a = parse('arr+=(d e)').body[0].stages![0].assignments[0];
+  expect(a).toMatchObject({ name: 'arr', array: ['d', 'e'], append: true });
+});
+
+test('parses array element assignment', () => {
+  const a = parse('arr[2]=x').body[0].stages![0].assignments[0];
+  expect(a).toMatchObject({ name: 'arr', index: '2', value: 'x' });
+});
+
+test('subshell ( ) is still parsed as a subshell, not an array literal', () => {
+  const ast = parse('( echo hi )');
+  expect(ast.body[0].type).toBe('Subshell');
+});
+
 test('parses here-string', () => {
   const r = parse('cat <<< "hello"').body[0].stages![0].redirects[0];
   expect(r.op).toBe('<<<');
+});
+
+test('here-string with a single quoted word is NOT mis-extracted as a here-doc', () => {
+  // Regression: `<<< "foobar"` once matched the here-doc extractor's `<<DELIM`
+  // pattern (delim=foobar), turning it into a `<` + bogus `__HEREDOC__` token.
+  const r = parse('grep oo <<< "foobar"').body[0].stages![0].redirects[0];
+  expect(r.op).toBe('<<<');
+  expect(r.target).toBe('"foobar"');
 });
 
 test('parses here-doc body', () => {

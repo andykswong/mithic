@@ -181,27 +181,52 @@ test('multi-stage pipe: producer | grep x | sort | head -n 2', async () => {
   expect(out.code).toBe(0);
 }, T);
 
-// KNOWN GAP — see report. A single EXTERNAL command fed by a `<` redirect (or
-// here-string) hangs: the shell's `makeKernelClient.spawn` issues a one-stage
-// `process/pipeline` and never delivers `params.stdinData` to the child, so the
-// child blocks on stdin forever. Pipelines work (inter-stage pipes); only
-// stdin-from-redirect into a lone external is broken. Marked `fails` so the
-// suite stays green AND flips red the moment it's fixed (then drop `.fails`).
-test.fails('KNOWN GAP: input redirect into a lone external (grep < file) — stdinData dropped', async () => {
+// FIXED — a single EXTERNAL command fed by a `<` redirect (or here-string) now
+// gets its stdin: the shell forwards `stdinData` to the one-stage
+// `process/pipeline` and the kernel writes it into the child's stdin and closes
+// it (EOF), so the child reads the redirect content and terminates (no hang).
+test('input redirect into a lone external (grep < file) feeds stdin', async () => {
   const k = await bootShell({ '/log.txt': 'foo\nbar\nfoobar\n' });
   const out = await k.run('grep foo < /log.txt');
   expect(out.stdout).toBe('foo\nfoobar\n');
   expect(out.code).toBe(0);
-}, 8000);
+}, T);
 
-// KNOWN GAP — see report. `cat` is a shell BUILTIN that only echoes stdin; it
-// ignores file operands entirely (`builtins.ts` `case 'cat'`). So `cat <file>`
-// and `cat *.txt` print nothing even though the external coreutils `cat` would
-// read them. Marked `fails` to document + guard the gap.
-test.fails('KNOWN GAP: builtin cat ignores file operands (cat <file> reads nothing)', async () => {
+test('here-string into a lone external (grep <<<) feeds stdin', async () => {
+  const k = await bootShell();
+  const out = await k.run('grep oo <<< "foobar"');
+  expect(out.stdout).toBe('foobar\n');
+  expect(out.code).toBe(0);
+}, T);
+
+test('heredoc into a lone external (grep <<EOF) feeds stdin', async () => {
+  const k = await bootShell();
+  const out = await k.run('grep foo <<EOF\nalpha\nfoobar\nbeta\nEOF');
+  expect(out.stdout).toBe('foobar\n');
+  expect(out.code).toBe(0);
+}, T);
+
+// FIXED — `cat` is a coreutils-shadowing builtin: with NO operands it runs the
+// in-process builtin (stdin passthrough), but WITH file operands it falls
+// through to spawn the external coreutils `cat`, which reads the files.
+test('cat with file operands spawns the external coreutils cat', async () => {
   const k = await bootShell({ '/a.txt': 'AAA\n' });
   const out = await k.run('cat /a.txt');
   expect(out.stdout).toBe('AAA\n');
+}, T);
+
+test('cat *.txt globs then spawns external cat over the matches', async () => {
+  const k = await bootShell({ '/a.txt': 'AAA\n', '/b.txt': 'BBB\n', '/c.md': 'CCC\n' });
+  const out = await k.run('cd / && cat *.txt');
+  expect(out.stdout).toBe('AAA\nBBB\n');
+  expect(out.code).toBe(0);
+}, T);
+
+test('bare cat (no operands) still runs the builtin stdin passthrough', async () => {
+  const k = await bootShell();
+  const out = await k.run('echo piped | cat');
+  expect(out.stdout).toBe('piped\n');
+  expect(out.code).toBe(0);
 }, T);
 
 test('exit code: grep with no match returns 1', async () => {

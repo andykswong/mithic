@@ -342,9 +342,7 @@ class Parser {
     let nameSet = false;
 
     while (this.atType('WORD') && !nameSet && isAssignment(this.peek()!.value)) {
-      const word = this.next()!;
-      const eq = word.value.indexOf('=');
-      assignments.push({ name: word.value.slice(0, eq), value: word.raw.slice(word.raw.indexOf('=') + 1) });
+      assignments.push(this.parseAssignmentWord());
     }
 
     for (;;) {
@@ -363,8 +361,49 @@ class Parser {
     return { type: 'SimpleCommand', name, args, redirects, assignments };
   }
 
+  /**
+   * Parse an assignment prefix word. Handles scalar (`x=v`), append (`x+=v`),
+   * element (`a[i]=v`, `a[i]+=v`), and array-literal (`a=(w1 w2)`, `a+=(w)`)
+   * forms. The leading `(` of an array literal is a separate LPAREN token, so on
+   * `name=`/`name+=` immediately followed by LPAREN we consume the parenthesized
+   * word list as the array elements.
+   */
+  private parseAssignmentWord(): Assignment {
+    const word = this.next()!;
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)(\[([^\]]*)\])?(\+?)=(.*)$/s.exec(word.raw);
+    if (!m) {
+      // Shouldn't happen (isAssignment gated), but degrade gracefully.
+      const eq = word.value.indexOf('=');
+      return { name: word.value.slice(0, eq), value: word.raw.slice(word.raw.indexOf('=') + 1) };
+    }
+    const name = m[1];
+    const index = m[3];
+    const append = m[4] === '+';
+    const rhs = m[5];
+    // Array literal: `name=(` — the value text after `=` is empty and the next
+    // token is `(`. Collect the word list up to the matching `)`.
+    if (rhs === '' && index === undefined && this.atType('LPAREN')) {
+      this.next(); // (
+      const elems: string[] = [];
+      while (this.peek() && !this.atType('RPAREN')) {
+        // Word list may span newlines inside the parens.
+        if (this.atType('NEWLINE')) { this.next(); continue; }
+        const t = this.next()!;
+        elems.push(t.raw);
+      }
+      if (this.atType('RPAREN')) this.next();
+      const arr: Assignment = { name, value: '', array: elems };
+      if (append) arr.append = true;
+      return arr;
+    }
+    const out: Assignment = { name, value: rhs };
+    if (index !== undefined) out.index = index;
+    if (append) out.append = true;
+    return out;
+  }
+
   private isRedirectToken(type: TokenType): boolean {
-    return type === 'GREAT' || type === 'GREATGREAT' || type === 'LESS'
+    return type === 'GREAT' || type === 'GREATGREAT' || type === 'GREATPIPE' || type === 'LESS'
       || type === 'LESSLESS' || type === 'LESSLESSDASH' || type === 'LESSLESSLESS'
       || type === 'GREATAMP' || type === 'AMPGREAT' || type === 'AMPGREATGREAT';
   }
@@ -382,6 +421,7 @@ class Parser {
     const fd = opTok.fd;
     switch (opTok.type) {
       case 'GREAT': return this.targetRedirect('>', fd);
+      case 'GREATPIPE': return this.targetRedirect('>|', fd);
       case 'GREATGREAT': return this.targetRedirect('>>', fd);
       case 'LESS': return this.targetRedirect('<', fd);
       case 'LESSLESSLESS': return this.hereString();
@@ -430,9 +470,9 @@ class Parser {
 }
 
 function isAssignment(word: string): boolean {
-  const eq = word.indexOf('=');
-  if (eq <= 0) return false;
-  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(word.slice(0, eq));
+  // Scalar `x=`, append `x+=`, element `a[i]=` / `a[i]+=` (array literal `a=(…)`
+  // also starts with `a=`/`a+=` and is detected via the trailing LPAREN token).
+  return /^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=/.test(word);
 }
 
 function isName(word: string): boolean {
@@ -451,7 +491,10 @@ function extractHereDocs(input: string): { src: string; heredocs: Map<number, He
   let id = 0;
   for (let li = 0; li < lines.length; li++) {
     let line = lines[li];
-    const re = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/g;
+    // `<<` or `<<-`, but NOT `<<<` (here-string). The lookbehind/lookahead pair
+    // ensures we match a real here-doc `<<` and never the inner `<<` of a `<<<`
+    // here-string (which would leave a stray `<` and a bogus heredoc delimiter).
+    const re = /(?<!<)<<(?!<)-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/g;
     const pending: Array<{ delim: string; quoted: boolean; strip: boolean; hid: number }> = [];
     line = line.replace(re, (full, q, delim) => {
       const strip = full.startsWith('<<-');

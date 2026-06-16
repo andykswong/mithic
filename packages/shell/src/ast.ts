@@ -13,6 +13,7 @@
 
 export type RedirectOp =
   | '>'      // truncate stdout (or fd)
+  | '>|'     // truncate stdout, forcing past noclobber (set -C)
   | '>>'     // append stdout (or fd)
   | '<'      // stdin from file
   | '<<'     // here-doc
@@ -37,6 +38,15 @@ export interface Assignment {
   name: string;
   /** Raw assignment value (subject to expansion at execution time). */
   value: string;
+  /**
+   * Array-literal element words (raw), present for `name=(a b c)`. When set, the
+   * assignment defines an indexed array rather than a scalar (`value` is unused).
+   */
+  array?: string[];
+  /** Element index word (raw) for `name[index]=value`. Subject to expansion. */
+  index?: string;
+  /** `+=` append form (`name+=v`, `name+=(d)`, `name[i]+=v`). */
+  append?: boolean;
 }
 
 export interface SimpleCommand {

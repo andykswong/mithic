@@ -20,10 +20,10 @@
 
 import type { Program, Redirect, SimpleCommand, Statement } from './ast.ts';
 import { parse } from './parser.ts';
-import { Expander } from './expander.ts';
+import { Expander, ExpansionError } from './expander.ts';
 import type { ShellEnv } from './expander.ts';
-import { isBuiltin, runBuiltin } from './builtins.ts';
-import type { BuiltinContext, ShellState } from './builtins.ts';
+import { isBuiltin, runBuiltin, OPTION_FLAGS } from './builtins.ts';
+import type { BuiltinContext, ShellState, ShellOptionName } from './builtins.ts';
 import type {
   FsClient,
   KernelClient,
@@ -81,6 +81,8 @@ class FuncReturn extends Error {
   code: number;
   constructor(code: number) { super('return'); this.code = code; }
 }
+/** A redirect that cannot be performed (e.g. noclobber refusing to overwrite). */
+class RedirectError extends Error {}
 
 export class Executor implements ShellEnv {
   readonly context: ShellContext;
@@ -94,11 +96,20 @@ export class Executor implements ShellEnv {
   private stdoutSink: (s: string) => void;
   private stderrSink: (s: string) => void;
   private functions = new Map<string, ShellFunction>();
+  /** Indexed arrays (`arr=(a b c)`), kept separate from scalar `context.env`. */
+  private arrays = new Map<string, string[]>();
   private localScopes: Array<Set<string>> = [];
   private localSaved: Array<Map<string, string | undefined>> = [];
   private jobs: Job[] = [];
   private nextJobId = 1;
-  private errExit = false;
+  /** `set` options. errexit aborts on nonzero; the rest per their POSIX meaning. */
+  private options: Record<ShellOptionName, boolean> = {
+    errexit: false,
+    nounset: false,
+    xtrace: false,
+    pipefail: false,
+    noclobber: false,
+  };
 
   constructor(kernel: KernelClient, context: ShellContext, options: ExecutorOptions = {}) {
     this.kernel = kernel;
@@ -118,6 +129,7 @@ export class Executor implements ShellEnv {
   get(name: string): string | undefined { return this.context.env[name]; }
   set(name: string, value: string): void { this.context.env[name] = value; }
   has(name: string): boolean { return name in this.context.env; }
+  getArray(name: string): string[] | undefined { return this.arrays.get(name); }
   get cwd(): string { return this.context.cwd; }
 
   getSpecial(name: string): string | undefined {
@@ -126,6 +138,7 @@ export class Executor implements ShellEnv {
       case '#': return String((this.context.positional ?? []).length);
       case '$': return String(this.context.pid ?? 0);
       case '!': return String(this.lastBgPid);
+      case '-': return this.currentFlags();
       case '0': return this.context.name ?? 'sh';
       case '@':
       case '*': return (this.context.positional ?? []).join(' ');
@@ -139,6 +152,18 @@ export class Executor implements ShellEnv {
   }
 
   getPositional(): string[] { return this.context.positional ?? []; }
+
+  /** True when `set -u` (nounset) is active — the expander errors on unset vars. */
+  nounset(): boolean { return this.options.nounset; }
+
+  /** The short-flag letters of currently-enabled options, for `$-`. */
+  private currentFlags(): string {
+    let s = '';
+    for (const [ch, long] of Object.entries(OPTION_FLAGS)) {
+      if (this.options[long]) s += ch;
+    }
+    return s;
+  }
 
   async runCommandSub(src: string): Promise<string> {
     let out = '';
@@ -181,7 +206,10 @@ export class Executor implements ShellEnv {
       declareLocal: (name) => this.declareLocal(name),
       waitJob: (id) => this.waitForJob(id),
       waitAll: () => this.waitAllJobs(),
-      setErrExit: (v) => { this.errExit = v; },
+      setErrExit: (v) => { this.options.errexit = v; },
+      setOption: (name, value) => { this.options[name] = value; },
+      getOption: (name) => this.options[name],
+      listOptions: () => (Object.keys(this.options) as ShellOptionName[]).map((k) => [k, this.options[k]] as [ShellOptionName, boolean]),
     };
   }
 
@@ -200,9 +228,20 @@ export class Executor implements ShellEnv {
   async run(program: Program, nested = false): Promise<number> {
     try {
       for (const stmt of program.body) {
-        this.lastStatus = await this.execStatement(stmt);
+        try {
+          this.lastStatus = await this.execStatement(stmt);
+        } catch (e) {
+          if (e instanceof ExpansionError) {
+            // `set -u` unbound var / `${v:?}` — write to stderr and abort nonzero.
+            this.writeStderr(`shell: ${e.message}\n`);
+            this.lastStatus = 1;
+            if (!nested) { this.exiting = 1; return 1; }
+            return 1;
+          }
+          throw e;
+        }
         if (this.exiting !== undefined) return this.exiting;
-        if (this.errExit && this.lastStatus !== 0 && !nested) {
+        if (this.options.errexit && this.lastStatus !== 0 && !nested) {
           this.exiting = this.lastStatus;
           return this.lastStatus;
         }
@@ -399,7 +438,13 @@ export class Executor implements ShellEnv {
   private async withRedirects(stmt: Statement, fn: () => Promise<number>): Promise<number> {
     const redirects = stmt.redirects;
     if (!redirects || redirects.length === 0) return fn();
-    const restore = await this.applyRedirects(redirects);
+    let restore: () => void;
+    try {
+      restore = await this.applyRedirects(redirects);
+    } catch (e) {
+      if (e instanceof RedirectError) { this.writeStderr(`shell: ${e.message}\n`); return 1; }
+      throw e;
+    }
     try { return await fn(); } finally { restore(); }
   }
 
@@ -428,6 +473,15 @@ export class Executor implements ShellEnv {
 
       const path = await exp.expandToString(r.target);
       const append = r.op === '>>';
+      // noclobber (`set -C`): a plain `>` must not overwrite an EXISTING regular
+      // file. `>|` forces past it; `>>` (append) is exempt; a new file is fine.
+      if (this.options.noclobber && r.op === '>' && path !== '/dev/null'
+        && path !== '/dev/stdout' && path !== '/dev/stderr') {
+        const stat = await this.statPath(this.absPath(path));
+        if (stat !== undefined && !stat.dir) {
+          throw new RedirectError(`${path}: cannot overwrite existing file`);
+        }
+      }
       const sink = this.makeFileSink(path, append, closers);
       if (r.op === '&>') { this.stdoutSink = sink; this.stderrSink = sink; }
       else if (fd === 2) this.stderrSink = sink;
@@ -508,7 +562,11 @@ export class Executor implements ShellEnv {
     const expanded: Array<{ name: string; argv: string[]; env: Record<string, string> }> = [];
     for (const s of stages) expanded.push(await this.expandCommand(s, expander));
 
-    if (expanded.every((e) => isBuiltin(e.name) || this.functions.has(e.name))) {
+    if (this.options.xtrace) {
+      for (const e of expanded) this.writeStderr('+ ' + [e.name, ...e.argv].join(' ') + '\n');
+    }
+
+    if (expanded.every((e) => (isBuiltin(e.name) && builtinShadowsExternal(e.name, e.argv)) || this.functions.has(e.name))) {
       let stdin = '';
       let status = 0;
       const codes: number[] = [];
@@ -523,8 +581,13 @@ export class Executor implements ShellEnv {
         stdin = captured;
       }
       this.pipeStatus = codes;
-      return status;
+      return this.pipelineStatus(codes, status);
     }
+
+    // A `<` / `<<` / `<<<` redirect on the FIRST stage becomes that stage's
+    // inline stdin (later stages read the previous stage's pipe). Without this a
+    // stdin-reading head (`grep foo < file | sort`) would block.
+    const headStdin = await this.resolveStdin(stages[0].redirects);
 
     const stageParams: PipelineStageParams[] = [];
     for (let i = 0; i < expanded.length; i++) {
@@ -532,29 +595,50 @@ export class Executor implements ShellEnv {
       const isLast = i === expanded.length - 1;
       const code = this.resolve(name);
       if (code === undefined) { this.writeStderr(`shell: ${name}: command not found\n`); this.pipeStatus = [127]; return 127; }
-      stageParams.push({ code, args: [name, ...argv], env: { ...this.context.env, ...env }, cwd: this.context.cwd, captureStdout: isLast });
+      stageParams.push({ code, args: [name, ...argv], env: { ...this.context.env, ...env }, cwd: this.context.cwd, captureStdout: isLast, stdinData: i === 0 ? headStdin : undefined });
     }
 
     if (this.kernel.runPipeline) {
       const result = await this.kernel.runPipeline(stageParams);
       if (result.lastStdout) await this.writeCaptured(result.lastStdout);
       this.pipeStatus = result.exitCodes;
-      return result.exitCodes[result.exitCodes.length - 1] ?? 0;
+      return this.pipelineStatus(result.exitCodes, result.exitCodes[result.exitCodes.length - 1] ?? 0);
     }
 
     const handles = await Promise.all(stageParams.map((p) => this.kernel.spawn(toSpawnParams(p))));
     const last = handles[handles.length - 1];
     if (last?.stdout) await this.writeCaptured(last.stdout);
     const waits = await Promise.all(handles.map((h) => this.kernel.wait(h.pid)));
-    this.pipeStatus = waits.map((w) => w.code);
-    return waits[waits.length - 1]?.code ?? 0;
+    const codes = waits.map((w) => w.code);
+    this.pipeStatus = codes;
+    return this.pipelineStatus(codes, codes[codes.length - 1] ?? 0);
+  }
+
+  /**
+   * A pipeline's exit status. Normally the LAST stage's code; under `set -o
+   * pipefail` it is the LAST NON-ZERO stage's code (0 only if every stage
+   * succeeded). `lastCode` is the pre-computed last-stage code.
+   */
+  private pipelineStatus(codes: number[], lastCode: number): number {
+    if (!this.options.pipefail) return lastCode;
+    for (let i = codes.length - 1; i >= 0; i--) {
+      if (codes[i] !== 0) return codes[i];
+    }
+    return 0;
   }
 
   private async execSimple(cmd: SimpleCommand): Promise<number> {
     const expander = this.expander();
 
+    // Scalar prefix assignments become a temporary overlay for a command, or are
+    // applied to the env for a bare assignment. Array / element / append forms
+    // only make sense as bare assignments (handled below).
     const localEnv: Record<string, string> = {};
-    for (const a of cmd.assignments) localEnv[a.name] = await expander.expandToString(a.value);
+    for (const a of cmd.assignments) {
+      if (a.array === undefined && a.index === undefined && !a.append) {
+        localEnv[a.name] = await expander.expandToString(a.value);
+      }
+    }
 
     const hasCommand = cmd.name !== '';
     const argExpander = hasCommand && Object.keys(localEnv).length > 0
@@ -564,23 +648,36 @@ export class Executor implements ShellEnv {
     const { name, argv } = await this.expandCommand(cmd, argExpander);
 
     if (name === '') {
-      for (const k of Object.keys(localEnv)) {
-        this.declareLocal(k);
-        this.context.env[k] = localEnv[k];
+      if (this.options.xtrace && cmd.assignments.length > 0) {
+        this.writeStderr('+ ' + cmd.assignments.map((a) => `${a.name}=${a.value}`).join(' ') + '\n');
       }
+      for (const a of cmd.assignments) await this.applyAssignment(a, expander);
       return 0;
+    }
+
+    if (this.options.xtrace) {
+      this.writeStderr('+ ' + [name, ...argv].join(' ') + '\n');
     }
 
     // stdin from input redirects
     const stdin = await this.resolveStdin(cmd.redirects);
 
-    // Apply output redirects around the command.
-    const restore = cmd.redirects.length ? await this.applyRedirects(cmd.redirects) : undefined;
+    // Apply output redirects around the command. A refused redirect (noclobber)
+    // aborts the command with status 1 — it never runs.
+    let restore: (() => void) | undefined;
+    if (cmd.redirects.length) {
+      try {
+        restore = await this.applyRedirects(cmd.redirects);
+      } catch (e) {
+        if (e instanceof RedirectError) { this.writeStderr(`shell: ${e.message}\n`); return 1; }
+        throw e;
+      }
+    }
     try {
       if (this.functions.has(name)) {
         return await this.callFunction(name, argv, localEnv);
       }
-      if (isBuiltin(name)) {
+      if (isBuiltin(name) && builtinShadowsExternal(name, argv)) {
         const saved = { ...this.context.env };
         Object.assign(this.context.env, localEnv);
         const status = await this.dispatch(name, argv, { stdin });
@@ -597,6 +694,39 @@ export class Executor implements ShellEnv {
     }
   }
 
+  /**
+   * Apply a (bare) assignment to persistent shell state, handling all forms:
+   *   - `name=v` / `name+=v`            scalar (append concatenates)
+   *   - `name=(w…)` / `name+=(w…)`      indexed array literal (append extends)
+   *   - `name[i]=v` / `name[i]+=v`      element assignment (append concatenates)
+   * Array element words are field-expanded (so `arr=($x)` splits), scalar values
+   * are expanded to a single string.
+   */
+  private async applyAssignment(a: { name: string; value: string; array?: string[]; index?: string; append?: boolean }, expander: Expander): Promise<void> {
+    this.declareLocal(a.name);
+    if (a.array !== undefined) {
+      const elems: string[] = [];
+      for (const w of a.array) elems.push(...await expander.expandWord(w));
+      const prev = a.append ? (this.arrays.get(a.name) ?? []) : [];
+      this.arrays.set(a.name, [...prev, ...elems]);
+      delete this.context.env[a.name];
+      return;
+    }
+    if (a.index !== undefined) {
+      const idx = parseInt(await expander.substituteOnly(a.index), 10) || 0;
+      const arr = this.arrays.get(a.name) ?? (this.context.env[a.name] !== undefined ? [this.context.env[a.name]] : []);
+      const val = await expander.expandToString(a.value);
+      arr[idx] = a.append ? (arr[idx] ?? '') + val : val;
+      this.arrays.set(a.name, arr);
+      delete this.context.env[a.name];
+      return;
+    }
+    // Scalar (possibly append). If the name currently holds an array, `name+=v`
+    // appends to element 0 in bash; we keep it simple and treat scalars only.
+    const val = await expander.expandToString(a.value);
+    this.context.env[a.name] = a.append ? (this.context.env[a.name] ?? '') + val : val;
+  }
+
   private withOverlay(overlay: Record<string, string>): ShellEnv {
     const env = { ...this.context.env, ...overlay };
     return {
@@ -609,6 +739,8 @@ export class Executor implements ShellEnv {
       listDir: (p) => this.listDir(p),
       statPath: (p) => this.statPath(p),
       cwd: this.context.cwd,
+      nounset: () => this.nounset(),
+      getArray: (n) => this.arrays.get(n),
     };
   }
 
@@ -709,7 +841,13 @@ export class Executor implements ShellEnv {
 
   private async expandCommand(cmd: SimpleCommand, expander: Expander): Promise<{ name: string; argv: string[]; env: Record<string, string> }> {
     const env: Record<string, string> = {};
-    for (const a of cmd.assignments) env[a.name] = await expander.expandToString(a.value);
+    // Only scalar prefix assignments form the command-prefix env overlay; array /
+    // element / append forms are handled as bare assignments by the executor.
+    for (const a of cmd.assignments) {
+      if (a.array === undefined && a.index === undefined && !a.append) {
+        env[a.name] = await expander.expandToString(a.value);
+      }
+    }
     const nameFields = cmd.name === '' ? [] : await expander.expandWord(cmd.name);
     const name = nameFields[0] ?? '';
     const argv: string[] = [...nameFields.slice(1)];
@@ -747,8 +885,25 @@ export class Executor implements ShellEnv {
   protected writeStderr(s: string): void { this.stderrSink(s); }
 }
 
+/**
+ * "Coreutils-shadowing" builtins: commands that exist BOTH as an in-process
+ * builtin and as a spawnable external coreutils command. The builtin runs ONLY
+ * when it behaves identically to the external — otherwise the executor falls
+ * through to spawn the real external so file operands etc. are honored.
+ *
+ * `cat`: the builtin only echoes stdin. With NO operands that matches the
+ * external's `cat` (stdin passthrough), so the builtin runs. WITH file operands
+ * the builtin would print nothing, so we spawn the external coreutils `cat`,
+ * which reads the files. A host with no coreutils loses `cat file` (acceptable:
+ * the shell is meant to be used WITH coreutils), but `echo x | cat` still works.
+ */
+function builtinShadowsExternal(name: string, argv: string[]): boolean {
+  if (name === 'cat') return argv.length === 0;
+  return true;
+}
+
 function toSpawnParams(p: PipelineStageParams): SpawnParams {
-  return { code: p.code, args: p.args, env: p.env, cwd: p.cwd, captureStdout: p.captureStdout, captureStderr: p.captureStderr };
+  return { code: p.code, args: p.args, env: p.env, cwd: p.cwd, captureStdout: p.captureStdout, captureStderr: p.captureStderr, stdinData: p.stdinData };
 }
 
 function describeStages(stages: SimpleCommand[]): string {

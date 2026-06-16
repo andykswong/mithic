@@ -58,9 +58,13 @@ function makeFsClient(guest: Guest): FsClient & { flush(): Promise<void> } {
       const open = (await guest.syscall('fs/open', { path: meta.path, oflags: { read: true } })) as { fd: number };
       const chunks: Uint8Array[] = [];
       for (;;) {
-        const r = (await guest.syscall('fs/read', { fd: open.fd, len: 65536 })) as { data: Uint8Array };
-        if (!r.data || r.data.byteLength === 0) break;
-        chunks.push(r.data);
+        // `fs/read` resolves to a `Uint8Array` of bytes DIRECTLY (not a `{ data }`
+        // wrapper). Tolerate both shapes so reading a `<` redirect source returns
+        // the file contents instead of an empty string.
+        const r = await guest.syscall('fs/read', { fd: open.fd, len: 65536 });
+        const data = (r instanceof Uint8Array ? r : (r as { data?: Uint8Array } | undefined)?.data) ?? undefined;
+        if (!data || data.byteLength === 0) break;
+        chunks.push(data);
       }
       await guest.syscall('fs/close', { fd: open.fd });
       let total = 0; for (const c of chunks) total += c.byteLength;
@@ -151,8 +155,21 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
       const [name, ...rest] = params.args ?? [];
       const pid = synthPid--;
       try {
+        // Forward inline stdin (a `<` / `<<` / `<<<` redirect source) as the
+        // first (only) stage's `stdinData` so the kernel feeds it to the child
+        // and closes stdin (EOF). Without this a stdin-reading external (e.g.
+        // `grep foo < file`) blocks forever waiting for an EOF that never comes.
+        const stage: Record<string, unknown> = {
+          path: params.code instanceof URL ? params.code.href : String(params.code),
+          argv: [name, ...rest],
+          env: params.env,
+          cwd: params.cwd,
+        };
+        if (params.stdinData !== undefined) {
+          stage.stdinData = new TextEncoder().encode(params.stdinData);
+        }
         const r = (await guest.syscall('process/pipeline', {
-          stages: [{ path: params.code instanceof URL ? params.code.href : String(params.code), argv: [name, ...rest], env: params.env, cwd: params.cwd }],
+          stages: [stage],
         })) as { exitCodes: number[]; stdout: Uint8Array };
         exitCodes.set(pid, r.exitCodes[r.exitCodes.length - 1] ?? 0);
         return { pid, stdout: Promise.resolve(r.stdout) };
@@ -170,12 +187,17 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
       const pids = stages.map(() => synthPid--);
       try {
         const r = (await guest.syscall('process/pipeline', {
-          stages: stages.map((s) => ({
-            path: s.code instanceof URL ? s.code.href : String(s.code),
-            argv: s.args ?? [],
-            env: s.env,
-            cwd: s.cwd,
-          })),
+          stages: stages.map((s) => {
+            const stage: Record<string, unknown> = {
+              path: s.code instanceof URL ? s.code.href : String(s.code),
+              argv: s.args ?? [],
+              env: s.env,
+              cwd: s.cwd,
+            };
+            // First-stage stdin redirect (later stages read the inter-stage pipe).
+            if (s.stdinData !== undefined) stage.stdinData = new TextEncoder().encode(s.stdinData);
+            return stage;
+          }),
         })) as { exitCodes: number[]; stdout: Uint8Array };
         return {
           pids,

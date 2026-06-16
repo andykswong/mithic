@@ -39,6 +39,8 @@ export interface PipelineStageParams {
   cwd?: string;
   captureStdout?: boolean;
   captureStderr?: boolean;
+  /** Inline stdin for the FIRST stage (a `<` / `<<` / `<<<` redirect source). */
+  stdinData?: string;
 }
 
 export interface PipelineRunResult {

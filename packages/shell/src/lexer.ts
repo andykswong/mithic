@@ -20,6 +20,7 @@ export type TokenType =
   | 'PIPE'
   | 'GREAT'        // > or N>
   | 'GREATGREAT'   // >> or N>>
+  | 'GREATPIPE'    // >| (clobber-force, overrides noclobber)
   | 'LESS'         // < or N<
   | 'LESSLESS'     // <<
   | 'LESSLESSDASH' // <<-
@@ -70,6 +71,7 @@ function matchOperator(input: string, i: number): OpMatch | undefined {
   if (s.startsWith('&&', i)) return { type: 'AND_IF', len: 2 };
   if (s.startsWith('||', i)) return { type: 'OR_IF', len: 2 };
   if (s.startsWith('>>', i)) return { type: 'GREATGREAT', len: 2 };
+  if (s.startsWith('>|', i)) return { type: 'GREATPIPE', len: 2 };
   if (s.startsWith('<<', i)) return { type: 'LESSLESS', len: 2 };
   if (s.startsWith('>&', i)) return { type: 'GREATAMP', len: 2 };
   if (s.startsWith('&>', i)) return { type: 'AMPGREAT', len: 2 };

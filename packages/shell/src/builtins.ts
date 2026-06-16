@@ -17,7 +17,24 @@ export interface ShellState {
   waitAll(): Promise<number>;
   /** Toggle `set -e` errexit. */
   setErrExit(v: boolean): void;
+  /** Set a shell option by its long name (errexit, nounset, xtrace, pipefail, noclobber). */
+  setOption(name: ShellOptionName, value: boolean): void;
+  /** Read a shell option's current value. */
+  getOption(name: ShellOptionName): boolean;
+  /** All options as [longName, enabled] pairs in canonical order. */
+  listOptions(): Array<[ShellOptionName, boolean]>;
 }
+
+/** Long names of the shell options toggled via `set`. */
+export type ShellOptionName = 'errexit' | 'nounset' | 'xtrace' | 'pipefail' | 'noclobber';
+
+/** Map of `set -X` short flags ↔ long option names. */
+export const OPTION_FLAGS: Record<string, ShellOptionName> = {
+  e: 'errexit',
+  u: 'nounset',
+  x: 'xtrace',
+  C: 'noclobber',
+};
 
 /** Mutable shell state + I/O hooks a builtin operates on. */
 export interface BuiltinContext {
@@ -175,19 +192,8 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       return runRead(args, ctx);
     }
 
-    case 'set': {
-      for (const arg of args) {
-        if (arg === '-e') ctx.state?.setErrExit(true);
-        else if (arg === '+e') ctx.state?.setErrExit(false);
-        else if (arg === '--') { /* positional set below */ }
-      }
-      const ddIdx = args.indexOf('--');
-      if (ddIdx >= 0) ctx.state?.setPositional(args.slice(ddIdx + 1));
-      else if (args.length > 0 && !args[0].startsWith('-') && !args[0].startsWith('+')) {
-        ctx.state?.setPositional(args);
-      }
-      return 0;
-    }
+    case 'set':
+      return runSet(args, ctx);
 
     case 'cat':
       ctx.write(ctx.stdin ?? '');
@@ -276,6 +282,67 @@ function parseJobSpec(arg?: string): number | undefined {
   if (arg === undefined) return undefined;
   if (arg.startsWith('%')) return parseInt(arg.slice(1), 10);
   return parseInt(arg, 10);
+}
+
+/**
+ * `set` — toggle shell options and/or set positional params.
+ *
+ *   set -e/-u/-x/-C  +e/+u/+x/+C   short option flags (errexit, nounset,
+ *                                  xtrace, noclobber)
+ *   set -o NAME / +o NAME          long option by name (also pipefail)
+ *   set -o / set +o                list option states (`+o` as re-settable cmds)
+ *   set -- a b c                   replace positional params
+ *   set a b c                      replace positional params (no leading dash)
+ */
+function runSet(args: string[], ctx: BuiltinContext): number {
+  const st = ctx.state;
+  let i = 0;
+  for (; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--') { st?.setPositional(args.slice(i + 1)); return 0; }
+    if (arg !== '' && (arg[0] === '-' || arg[0] === '+')) {
+      const enable = arg[0] === '-';
+      const body = arg.slice(1);
+      if (body === 'o' || body === '') {
+        // `-o NAME` / `+o NAME`, or bare `-o`/`+o` to list.
+        const name = args[i + 1];
+        if (name === undefined) { listOptions(ctx, enable); return 0; }
+        if (!setLongOption(ctx, name, enable)) {
+          errOut(ctx, `shell: set: ${name}: invalid option name\n`);
+          return 2;
+        }
+        i++; // consumed NAME
+        continue;
+      }
+      // Cluster of short flags, e.g. `-eux`.
+      for (const ch of body) {
+        const long = OPTION_FLAGS[ch];
+        if (!long) { errOut(ctx, `shell: set: -${ch}: invalid option\n`); return 2; }
+        st?.setOption(long, enable);
+      }
+      continue;
+    }
+    // First non-flag operand: the rest are positional params.
+    st?.setPositional(args.slice(i));
+    return 0;
+  }
+  return 0;
+}
+
+function setLongOption(ctx: BuiltinContext, name: string, value: boolean): boolean {
+  const valid = ['errexit', 'nounset', 'xtrace', 'pipefail', 'noclobber'];
+  if (!valid.includes(name)) return false;
+  ctx.state?.setOption(name as ShellOptionName, value);
+  return true;
+}
+
+function listOptions(ctx: BuiltinContext, dashForm: boolean): void {
+  const opts = ctx.state?.listOptions() ?? [];
+  for (const [name, on] of opts) {
+    // `set -o` prints `name<TAB>on|off`; `set +o` prints re-settable commands.
+    if (dashForm) ctx.write(`${name}\t${on ? 'on' : 'off'}\n`);
+    else ctx.write(`set ${on ? '-o' : '+o'} ${name}\n`);
+  }
 }
 
 /** getopts OPTSTRING NAME — POSIX option parser using OPTIND/OPTARG in env. */

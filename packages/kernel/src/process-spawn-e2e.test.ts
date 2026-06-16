@@ -218,3 +218,43 @@ test('process/spawn fd pipe-back: parent drains a child stdout pipe (dispatcher 
   });
   expect(new TextDecoder().decode(bytes)).toBe('piped');
 }, 20000);
+
+test('kernel.spawn feeds stdinData into a stdin-reading child (no hang, gets EOF)', async () => {
+  const kernel = await makeKernel();
+  // `upper` reads stdin to EOF. With stdinData supplied, the kernel writes the
+  // bytes into the child's stdin pipe and closes it (EOF) — so the child does
+  // not block. Without this fix the child would hang waiting for stdin.
+  const { pid, stdout } = await kernel.spawn(UPPER_CMD, {
+    args: ['upper'],
+    capabilities: [{ type: 'process' }],
+    captureStdout: true,
+    stdinData: new TextEncoder().encode('hello stdin'),
+  });
+  const { code } = await kernel.wait(pid);
+  expect(code).toBe(0);
+  expect(new TextDecoder().decode(await stdout!)).toBe('HELLO STDIN');
+}, 20000);
+
+test('process/pipeline forwards first-stage stdinData (grep-like child < data)', async () => {
+  const kernel = await makeKernel();
+  // A single-stage pipeline where the only stage reads stdin. The shell uses
+  // exactly this shape for `cmd < file` / `cmd <<< str`. stdinData must reach
+  // the child's stdin and close it so the child terminates.
+  const parent = parentGuest(`
+    const r = await g.syscall('process/pipeline', { stages: [
+      { path: 'upper', argv: ['upper'], stdinData: new TextEncoder().encode('from redirect') },
+    ]});
+    const out = g.stdout.getWriter();
+    await out.write(r.stdout);
+    await out.close();
+    g.exit(r.exitCodes[r.exitCodes.length - 1] ?? 0);
+  `);
+  const { pid, stdout } = await kernel.spawn(parent, {
+    args: ['parent'],
+    capabilities: [{ type: 'process' }],
+    captureStdout: true,
+  });
+  const { code } = await kernel.wait(pid);
+  expect(code).toBe(0);
+  expect(new TextDecoder().decode(await stdout!)).toBe('FROM REDIRECT');
+}, 20000);
