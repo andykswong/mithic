@@ -68,6 +68,7 @@
   },
   "workspaces": [
     "./packages/protocol",
+    "./packages/guest-runtime",
     "./packages/worker",
     "./packages/io",
     "./packages/wasip2",
