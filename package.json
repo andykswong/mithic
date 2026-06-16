@@ -70,6 +70,7 @@
     "./packages/shell",
     "./packages/coreutils",
     "./packages/commands/jq",
+    "./packages/commands/curl",
     "./packages/server",
     "./packages/examples/shell",
     "./packages/examples/image-viewer",

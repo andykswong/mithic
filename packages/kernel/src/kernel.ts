@@ -10,6 +10,8 @@ import type {
 import { isProcessExit, isProcessReady, isSyscallResponse } from '@mithic/protocol';
 import type { Runtime, ProcessHandle } from '@mithic/runtime';
 import type { FileSystemProvider } from '@mithic/io/vfs';
+import type { HttpClient } from '@mithic/io/net';
+import { FetchHttpClient } from '@mithic/io/net';
 import { CapabilityManager } from './capability-manager.ts';
 import { IpcBroker } from './ipc-broker.ts';
 import { ProcessManager } from './process-manager.ts';
@@ -47,6 +49,16 @@ export interface KernelOptions {
    * resolves. Unset = only paths/URLs are spawnable by guests.
    */
   resolveCommand?: (name: string, cwd: string, env: Record<string, string>) => string | URL | undefined;
+  /**
+   * HTTP client backing the capability-gated `net/fetch` syscall. The kernel
+   * checks the calling process's `net` capability for the request ORIGIN before
+   * the client is ever invoked, so a guest can never reach an origin it lacks
+   * capability for. Injectable so tests pass a mock ({@link MockHttpClient}) and
+   * production passes `globalThis.fetch` via the default {@link FetchHttpClient}.
+   * Defaults to a new `FetchHttpClient()`. Pass a no-op/disabled client (or wire
+   * a network-less dispatcher directly) to disable network entirely.
+   */
+  httpClient?: HttpClient;
   /**
    * Optional launcher for runtimes where `capabilities.directPipes === false`
    * (e.g. QuickJS). The kernel calls `relayLauncher.launchRelay()` instead of the
@@ -238,6 +250,7 @@ export class Kernel {
       directPipes: options.runtime.capabilities.directPipes,
       onDomMutate: options.onDomMutate,
       resolveCommand: options.resolveCommand,
+      httpClient: options.httpClient ?? new FetchHttpClient(),
       // Narrow spawn surface: the dispatcher gets ONLY this callback, never the
       // raw Kernel. It cannot forge a parent pid (the kernel-owned pid it was
       // dispatched with is passed straight through) and the kernel always
