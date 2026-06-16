@@ -709,14 +709,110 @@ export class SyscallDispatcher {
     return normalizePath(cwd.endsWith('/') ? cwd + path : cwd + '/' + path);
   }
 
+  /**
+   * SEC-2: capability check for an operation that FOLLOWS symlinks (open/read/
+   * stat/readdir/mkdir/unlink/.../realpath). `checkFs` only normalizes lexically
+   * (`..`/`.`), so a symlink planted INSIDE a granted prefix that points OUTSIDE
+   * it would pass the lexical check while the provider follows it past the
+   * boundary — an escape. We canonicalize the path through the VFS `realpath`
+   * (which resolves symlinks, bounded against cycles) and check the capability
+   * against the CANONICAL path.
+   *
+   * If the leaf does not exist yet (a create, or a parent-only operation),
+   * `realpath` of the full path fails; we fall back to canonicalizing the parent
+   * directory and re-appending the lexical basename, so legitimate creates inside
+   * a grant are unaffected. If even the parent cannot be canonicalized, we fall
+   * back to the lexical path (the existing `..`/`.` protection still applies) —
+   * there is no symlink to escape through in that case.
+   *
+   * Returns the path that passed (canonical when available) or throws
+   * FileSystemError('access') when the capability check fails. The returned path
+   * is what the VFS operation should run against to avoid a TOCTOU re-resolution.
+   */
+  async #canonicalCheckedPath(pid: number, lexicalPath: string, op: FsOperation): Promise<string> {
+    const canonical = await this.#canonicalize(lexicalPath);
+    if (!this.#caps.checkFs(pid, canonical, op)) {
+      throw new FileSystemError('access', `Permission denied: ${canonical}`);
+    }
+    return canonical;
+  }
+
+  /**
+   * Resolve `lexicalPath` to its canonical (symlink-free) form via the VFS
+   * `realpath`. Falls back to canonicalizing the parent dir + lexical basename
+   * when the leaf is missing, then to the lexical path. A symlink cycle (the VFS
+   * realpath throws 'loop'/ELOOP) propagates so the operation fails cleanly
+   * rather than the capability check silently passing. When the provider has no
+   * `realpath`, the lexical path is used (the lexical `..` protection still
+   * applies; without realpath there is no symlink resolution to exploit here).
+   */
+  async #canonicalize(lexicalPath: string): Promise<string> {
+    if (!this.#vfs.realpath) return lexicalPath;
+    try {
+      return await this.#vfs.realpath(lexicalPath);
+    } catch (err) {
+      // A symlink cycle must NOT be swallowed — propagate so the op fails (ELOOP)
+      // instead of falling through to a lexical check that could pass.
+      if (err instanceof FileSystemError && err.code === 'loop') throw err;
+      // Leaf missing (e.g. create): canonicalize the PARENT dir and re-attach the
+      // lexical basename. This still resolves any symlink in the ancestor path
+      // (so an escaping parent symlink is caught) while permitting new leaves.
+      const slash = lexicalPath.lastIndexOf('/');
+      if (slash > 0) {
+        const parent = lexicalPath.slice(0, slash);
+        const base = lexicalPath.slice(slash + 1);
+        try {
+          const realParent = await this.#vfs.realpath(parent);
+          return normalizePath(realParent + '/' + base);
+        } catch (parentErr) {
+          if (parentErr instanceof FileSystemError && parentErr.code === 'loop') throw parentErr;
+          // Parent also unresolvable: nothing to follow — use the lexical path.
+          return lexicalPath;
+        }
+      }
+      return lexicalPath;
+    }
+  }
+
+  /**
+   * SEC-2: capability check for an operation that inspects/creates the LINK
+   * itself and does NOT follow the final component (lstat, symlink, readlink).
+   * The final component must be checked WITHOUT following it (else creating a
+   * symlink, or reading one that escapes, would be wrongly resolved). We
+   * canonicalize only the PARENT directory (resolving any symlink in the ancestor
+   * path) and check the canonical-parent + lexical basename. This still catches
+   * an escaping ancestor symlink while correctly treating the leaf as a link.
+   */
+  async #linkCheckedPath(pid: number, lexicalPath: string, op: FsOperation): Promise<string> {
+    let checkPath = lexicalPath;
+    if (this.#vfs.realpath) {
+      const slash = lexicalPath.lastIndexOf('/');
+      if (slash > 0) {
+        const parent = lexicalPath.slice(0, slash);
+        const base = lexicalPath.slice(slash + 1);
+        try {
+          const realParent = await this.#vfs.realpath(parent);
+          checkPath = normalizePath(realParent + '/' + base);
+        } catch (err) {
+          if (err instanceof FileSystemError && err.code === 'loop') throw err;
+          // Parent missing/unresolvable: fall back to lexical (no symlink to follow).
+        }
+      }
+    }
+    if (!this.#caps.checkFs(pid, checkPath, op)) {
+      throw new FileSystemError('access', `Permission denied: ${checkPath}`);
+    }
+    return checkPath;
+  }
+
   async #open(pid: number, args: Record<string, unknown>): Promise<{ fd: number }> {
     const absPath = this.#resolvePath(pid, args);
     const oflags = (args.oflags ?? {}) as OpenFlags;
     const op: FsOperation = needsWrite(oflags) ? 'write' : 'read';
-    if (!this.#caps.checkFs(pid, absPath, op)) {
-      throw new FileSystemError('access', `Permission denied: ${absPath}`);
-    }
-    const handle = await this.#vfs.open(absPath, oflags);
+    // SEC-2: canonicalize through symlinks and check the CANONICAL path so an
+    // in-grant symlink that escapes the prefix cannot be opened.
+    const canonical = await this.#canonicalCheckedPath(pid, absPath, op);
+    const handle = await this.#vfs.open(canonical, oflags);
     const fd = this.#allocFd(pid);
     this.#tableFor(pid).set(fd, { handle, offset: 0 });
     return { fd };
@@ -763,12 +859,15 @@ export class SyscallDispatcher {
 
   async #stat(pid: number, args: Record<string, unknown>): Promise<unknown> {
     const absPath = this.#resolvePath(pid, args);
-    if (!this.#caps.checkFs(pid, absPath, 'read')) {
-      throw new FileSystemError('access', `Permission denied: ${absPath}`);
-    }
     // `followSymlinks: false` requests lstat semantics (stat the link itself).
     const followSymlinks = args.followSymlinks !== false;
-    const stat = await this.#vfs.stat(absPath, { followSymlinks });
+    // SEC-2: a following stat must be gated on the CANONICAL target (an escaping
+    // symlink leaks the out-of-grant target's type/size otherwise). An lstat
+    // inspects the link itself — gate on the canonical-parent + lexical leaf.
+    const checkPath = followSymlinks
+      ? await this.#canonicalCheckedPath(pid, absPath, 'read')
+      : await this.#linkCheckedPath(pid, absPath, 'read');
+    const stat = await this.#vfs.stat(checkPath, { followSymlinks });
     // Numbers cross the structured-clone boundary cleanly; BigInts in some
     // realms do not, so coerce size/linkCount the guest cares about.
     return { ...stat, size: Number(stat.size), linkCount: Number(stat.linkCount) };
@@ -776,36 +875,33 @@ export class SyscallDispatcher {
 
   async #readdir(pid: number, args: Record<string, unknown>): Promise<unknown> {
     const absPath = this.#resolvePath(pid, args);
-    if (!this.#caps.checkFs(pid, absPath, 'read')) {
-      throw new FileSystemError('access', `Permission denied: ${absPath}`);
-    }
-    return await this.#vfs.readdir(absPath);
+    // readdir follows symlinks to the directory — gate on the canonical target.
+    const canonical = await this.#canonicalCheckedPath(pid, absPath, 'read');
+    return await this.#vfs.readdir(canonical);
   }
 
   async #mkdir(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
     const absPath = this.#resolvePath(pid, args);
-    if (!this.#caps.checkFs(pid, absPath, 'write')) {
-      throw new FileSystemError('access', `Permission denied: ${absPath}`);
-    }
-    await this.#vfs.mkdir(absPath);
+    // mkdir creates a new leaf; the ancestor path may contain symlinks — gate on
+    // the canonical-parent + lexical leaf so an escaping ancestor is caught.
+    const checkPath = await this.#linkCheckedPath(pid, absPath, 'write');
+    await this.#vfs.mkdir(checkPath);
     return {};
   }
 
   async #unlink(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
     const absPath = this.#resolvePath(pid, args);
-    if (!this.#caps.checkFs(pid, absPath, 'write')) {
-      throw new FileSystemError('access', `Permission denied: ${absPath}`);
-    }
-    await this.#vfs.unlink(absPath);
+    // unlink removes the link/file itself (does not follow the final symlink) —
+    // gate on canonical-parent + lexical leaf.
+    const checkPath = await this.#linkCheckedPath(pid, absPath, 'write');
+    await this.#vfs.unlink(checkPath);
     return {};
   }
 
   async #rmdir(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
     const absPath = this.#resolvePath(pid, args);
-    if (!this.#caps.checkFs(pid, absPath, 'write')) {
-      throw new FileSystemError('access', `Permission denied: ${absPath}`);
-    }
-    await this.#vfs.rmdir(absPath);
+    const checkPath = await this.#linkCheckedPath(pid, absPath, 'write');
+    await this.#vfs.rmdir(checkPath);
     return {};
   }
 
@@ -817,10 +913,12 @@ export class SyscallDispatcher {
   async #rename(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
     const oldPath = this.#resolvePath(pid, args);
     const newPath = this.#resolvePath(pid, { ...args, path: args.newPath });
-    if (!this.#caps.checkFs(pid, oldPath, 'write') || !this.#caps.checkFs(pid, newPath, 'write')) {
-      throw new FileSystemError('access', `Permission denied: ${oldPath} -> ${newPath}`);
-    }
-    await this.#vfs.rename(oldPath, newPath);
+    // rename operates on the entries themselves (renaming a symlink renames the
+    // link, not its target), but ancestor symlinks must be resolved — gate both
+    // on canonical-parent + lexical leaf.
+    const oldCheck = await this.#linkCheckedPath(pid, oldPath, 'write');
+    const newCheck = await this.#linkCheckedPath(pid, newPath, 'write');
+    await this.#vfs.rename(oldCheck, newCheck);
     return {};
   }
 
@@ -832,19 +930,22 @@ export class SyscallDispatcher {
   async #symlink(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
     const linkPath = this.#resolvePath(pid, args);
     const target = String(args.target ?? '');
-    if (!this.#caps.checkFs(pid, linkPath, 'write')) {
-      throw new FileSystemError('access', `Permission denied: ${linkPath}`);
-    }
-    await this.#vfs.symlink(target, linkPath);
+    // Creating a symlink writes the LINK at linkPath (the final component must not
+    // be followed). Gate on canonical-parent + lexical leaf. NOTE: this gates only
+    // WHERE the link is created — the target is not resolved here (targets may be
+    // relative/dangling). Reads THROUGH the link are gated at open/stat time via
+    // canonicalization, so a link to an ungranted target cannot be used to escape.
+    const checkPath = await this.#linkCheckedPath(pid, linkPath, 'write');
+    await this.#vfs.symlink(target, checkPath);
     return {};
   }
 
   async #readlink(pid: number, args: Record<string, unknown>): Promise<{ target: string }> {
     const absPath = this.#resolvePath(pid, args);
-    if (!this.#caps.checkFs(pid, absPath, 'read')) {
-      throw new FileSystemError('access', `Permission denied: ${absPath}`);
-    }
-    const target = await this.#vfs.readlink(absPath);
+    // readlink reads the LINK itself (does not follow the final component) — gate
+    // on canonical-parent + lexical leaf, not the (possibly escaping) target.
+    const checkPath = await this.#linkCheckedPath(pid, absPath, 'read');
+    const target = await this.#vfs.readlink(checkPath);
     return { target };
   }
 
@@ -855,19 +956,19 @@ export class SyscallDispatcher {
   async #link(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
     const linkPath = this.#resolvePath(pid, args);
     const target = this.#resolvePath(pid, { ...args, path: args.target });
-    if (!this.#caps.checkFs(pid, target, 'read') || !this.#caps.checkFs(pid, linkPath, 'write')) {
-      throw new FileSystemError('access', `Permission denied: ${target} -> ${linkPath}`);
-    }
-    await this.#vfs.link(target, linkPath);
+    // A hard link's target is canonicalized (an escaping target symlink must not
+    // let a guest hard-link an out-of-grant inode); the new link path is a leaf.
+    const targetCheck = await this.#canonicalCheckedPath(pid, target, 'read');
+    const linkCheck = await this.#linkCheckedPath(pid, linkPath, 'write');
+    await this.#vfs.link(targetCheck, linkCheck);
     return {};
   }
 
   async #chmod(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
     const absPath = this.#resolvePath(pid, args);
-    if (!this.#caps.checkFs(pid, absPath, 'write')) {
-      throw new FileSystemError('access', `Permission denied: ${absPath}`);
-    }
-    await this.#vfs.chmod(absPath, Number(args.mode ?? 0));
+    // chmod follows symlinks — gate on the canonical target.
+    const canonical = await this.#canonicalCheckedPath(pid, absPath, 'write');
+    await this.#vfs.chmod(canonical, Number(args.mode ?? 0));
     return {};
   }
 
@@ -878,13 +979,12 @@ export class SyscallDispatcher {
    */
   async #utimes(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
     const absPath = this.#resolvePath(pid, args);
-    if (!this.#caps.checkFs(pid, absPath, 'write')) {
-      throw new FileSystemError('access', `Permission denied: ${absPath}`);
-    }
     const now = Date.now();
     const atime = new Date(typeof args.atime === 'number' ? args.atime : now);
     const mtime = new Date(typeof args.mtime === 'number' ? args.mtime : now);
-    await this.#vfs.utimes(absPath, atime, mtime);
+    // utimes follows symlinks — gate on the canonical target.
+    const canonical = await this.#canonicalCheckedPath(pid, absPath, 'write');
+    await this.#vfs.utimes(canonical, atime, mtime);
     return {};
   }
 
@@ -895,11 +995,10 @@ export class SyscallDispatcher {
    */
   async #realpath(pid: number, args: Record<string, unknown>): Promise<{ path: string }> {
     const absPath = this.#resolvePath(pid, args);
-    if (!this.#caps.checkFs(pid, absPath, 'read')) {
-      throw new FileSystemError('access', `Permission denied: ${absPath}`);
-    }
-    const resolved = this.#vfs.realpath ? await this.#vfs.realpath(absPath) : absPath;
-    return { path: resolved };
+    // realpath REVEALS the canonical (symlink-resolved) path — gate on the
+    // canonical target so it cannot disclose a path outside the grant.
+    const canonical = await this.#canonicalCheckedPath(pid, absPath, 'read');
+    return { path: canonical };
   }
 
   #fdOf(pid: number, args: Record<string, unknown>): OpenFile {

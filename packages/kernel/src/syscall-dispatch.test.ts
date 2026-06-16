@@ -186,6 +186,134 @@ test('fs/chmod outside a granted prefix returns EACCES', async () => {
   expect(res).toMatchObject({ ok: false, error: { code: 'EACCES' } });
 });
 
+// ── SEC-2: symlink escape past the fs capability prefix ─────────────────────
+
+/**
+ * Build a dispatcher whose VFS contains a granted `/work` prefix and an
+ * ungranted `/etc` prefix, with a symlink `/work/escape` → `/etc/passwd`
+ * planted INSIDE the grant pointing OUTSIDE it. The process holds rw on `/work`
+ * only. The capability check must canonicalize through the symlink and DENY
+ * access to the escaped (ungranted) target.
+ */
+async function symlinkEscapeSetup() {
+  const router = new FileSystemRouter();
+  const provider = new MemoryFsProvider({
+    files: {
+      '/work/inside.txt': 'inside-data',
+      '/etc/passwd': 'root:x:0:0:SECRET',
+    },
+  });
+  await router.mount('/', provider);
+  // The symlink lives inside the grant but targets outside it.
+  await provider.symlink('/etc/passwd', '/work/escape');
+  // A legitimate in-prefix symlink: /work/legit → /work/inside.txt
+  await provider.symlink('/work/inside.txt', '/work/legit');
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'fs', paths: ['/work'], operations: ['read', 'write'] }]);
+  return new SyscallDispatcher({ vfs: router, caps, cwdOf: () => '/' });
+}
+
+test('SEC-2: fs/open of an in-grant symlink that escapes the prefix is EACCES', async () => {
+  const d = await symlinkEscapeSetup();
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'fs/open',
+    args: { dirfd: -100, path: '/work/escape', oflags: { read: true } },
+  })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EACCES' } });
+});
+
+test('SEC-2: fs/stat (follow) of an escaping symlink is EACCES (no leak of target type/size)', async () => {
+  const d = await symlinkEscapeSetup();
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'fs/stat',
+    args: { path: '/work/escape' },
+  })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EACCES' } });
+});
+
+test('SEC-2: reading a fd opened via an escaping symlink never yields the target bytes', async () => {
+  const d = await symlinkEscapeSetup();
+  // Open must be denied; if it somehow opened, the bytes would be the secret.
+  const open = (await d.dispatch(1, {
+    id: 1,
+    call: 'fs/open',
+    args: { dirfd: -100, path: '/work/escape', oflags: { read: true } },
+  })).response;
+  expect(open.ok).toBe(false);
+  expect((open as { ok: false; error: { code: string } }).error.code).toBe('EACCES');
+});
+
+test('SEC-2: a legitimate in-prefix symlink still resolves and opens', async () => {
+  const d = await symlinkEscapeSetup();
+  const open = (await d.dispatch(1, {
+    id: 1,
+    call: 'fs/open',
+    args: { dirfd: -100, path: '/work/legit', oflags: { read: true } },
+  })).response;
+  expect(open.ok).toBe(true);
+  const fd = (open as { ok: true; result: { fd: number } }).result.fd;
+  const read = (await d.dispatch(1, { id: 2, call: 'fs/read', args: { fd, len: 11 } })).response;
+  expect(new TextDecoder().decode((read as { ok: true; result: Uint8Array }).result)).toBe('inside-data');
+});
+
+test('SEC-2: lstat (followSymlinks:false) of the escaping link still works (inspects the link itself)', async () => {
+  const d = await symlinkEscapeSetup();
+  // lstat does NOT follow the final component, so it inspects /work/escape (the
+  // link), which is inside the grant — this must be allowed and report 'symlink'.
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'fs/stat',
+    args: { path: '/work/escape', followSymlinks: false },
+  })).response;
+  expect(res.ok).toBe(true);
+  expect((res as { ok: true; result: { type: string } }).result.type).toBe('symlink');
+});
+
+test('SEC-2: readlink of the escaping link works (reads the link, does not follow it)', async () => {
+  const d = await symlinkEscapeSetup();
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'fs/readlink',
+    args: { path: '/work/escape' },
+  })).response;
+  expect(res.ok).toBe(true);
+  expect((res as { ok: true; result: { target: string } }).result.target).toBe('/etc/passwd');
+});
+
+test('SEC-2: a symlink CYCLE does not hang — bounded resolution yields an error', async () => {
+  const router = new FileSystemRouter();
+  const provider = new MemoryFsProvider({ files: { '/work/.keep': '' } });
+  await router.mount('/', provider);
+  // /work/a → /work/b → /work/a (cycle, both inside the grant).
+  await provider.symlink('/work/b', '/work/a');
+  await provider.symlink('/work/a', '/work/b');
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'fs', paths: ['/work'], operations: ['read', 'write'] }]);
+  const d = new SyscallDispatcher({ vfs: router, caps, cwdOf: () => '/' });
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'fs/open',
+    args: { dirfd: -100, path: '/work/a', oflags: { read: true } },
+  })).response;
+  // Must settle (no hang) with a clean error — ELOOP from the VFS realpath bound.
+  expect(res.ok).toBe(false);
+  expect(['ELOOP', 'ENOENT', 'EIO']).toContain((res as { ok: false; error: { code: string } }).error.code);
+});
+
+test('SEC-2: opening a NEW file (create) inside the grant is unaffected by canonicalization', async () => {
+  const d = await symlinkEscapeSetup();
+  // The path does not exist yet; realpath of a non-existent leaf must not block
+  // a legitimate create inside the grant.
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'fs/open',
+    args: { dirfd: -100, path: '/work/new.txt', oflags: { write: true, create: true } },
+  })).response;
+  expect(res.ok).toBe(true);
+});
+
 // ── process/* syscalls ────────────────────────────────────────────────────
 
 function processSetup(opts: {
