@@ -11,17 +11,34 @@ import {
  * Bootstrap script injected into every worker.
  * Exposes:
  *  - `self.__post(msg)` — sends a SyscallRequest to the host
- *  - inbound `{ __isola_run: string }` — evaluates guest code and calls __isola_main()
+ *  - inbound `{ __isola_init: ProcessInit, ports: Transferable[] }` — stores the boot object for guest delivery
+ *  - inbound `{ __isola_run: string }` — evaluates guest code; calls its default export with boot if available,
+ *    otherwise falls back to calling __isola_main() for backward compatibility
  *  - inbound other messages — delivered to __isola_recv() if set
+ *
+ * Boot object delivered to the guest default export:
+ *   { control: ports[0], init: ProcessInit, preopenPorts: { 0: ports[1], 1: ports[2], 2: ports[3], ... } }
+ * Non-null entries in ports[1..] are keyed by their 0-based index (stdin=0, stdout=1, stderr=2).
  */
 export const BOOTSTRAP_SOURCE = /* js */`
 self.__post = (msg) => { postMessage(msg); };
+let __isola_boot = null;
 onmessage = (e) => {
   const data = e.data;
-  if (data && typeof data === 'object' && '__isola_run' in data && typeof data.__isola_run === 'string') {
+  if (data && typeof data === 'object' && '__isola_init' in data) {
+    const ports = Array.isArray(data.ports) ? data.ports : [];
+    const preopenPorts = {};
+    for (let i = 1; i < ports.length; i++) {
+      if (ports[i] != null) preopenPorts[i - 1] = ports[i];
+    }
+    __isola_boot = { control: ports[0], init: data.__isola_init, preopenPorts };
+  } else if (data && typeof data === 'object' && '__isola_run' in data && typeof data.__isola_run === 'string') {
     (0, eval)(data.__isola_run);
+    const defaultExport = globalThis.__isola_default;
     const main = globalThis.__isola_main;
-    if (typeof main === 'function') {
+    if (typeof defaultExport === 'function') {
+      Promise.resolve(defaultExport(__isola_boot)).catch((err) => postMessage({ __isola_error: String(err) }));
+    } else if (typeof main === 'function') {
       try { main(); } catch (err) { postMessage({ __isola_error: String(err) }); }
     }
   } else {
@@ -66,11 +83,10 @@ function defaultWorkerFactory(): WorkerFactory {
   };
 }
 
-let _nextId = 1;
-
 export class WorkerRuntime implements Runtime {
   readonly capabilities: RuntimeCapabilities = WORKER_CAPABILITIES;
 
+  #nextId = 1;
   #processes = new Map<number, WorkerEntry>();
   #factory: WorkerFactory;
 
@@ -78,8 +94,8 @@ export class WorkerRuntime implements Runtime {
     this.#factory = factory ?? defaultWorkerFactory();
   }
 
-  async spawn(code: string | URL, _options: SpawnOptions): Promise<ProcessHandle> {
-    const id = _nextId++;
+  async spawn(code: string | URL, options: SpawnOptions): Promise<ProcessHandle> {
+    const id = this.#nextId++;
 
     let codeStr: string;
     if (typeof code === 'string') {
@@ -99,6 +115,11 @@ export class WorkerRuntime implements Runtime {
       }
     };
 
+    // Deliver boot object: __isola_init + transfer list [controlPort, stdinPort, stdoutPort, stderrPort, ...extra]
+    if (options.transfer && options.transfer.length > 0) {
+      worker.postMessage({ __isola_init: options.init, ports: options.transfer }, options.transfer);
+    }
+
     worker.postMessage({ __isola_run: codeStr });
 
     return { id };
@@ -108,6 +129,7 @@ export class WorkerRuntime implements Runtime {
     const entry = this.#processes.get(handle.id);
     if (entry) {
       entry.worker.terminate();
+      this.#processes.delete(handle.id);
     }
   }
 

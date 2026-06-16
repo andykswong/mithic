@@ -49,5 +49,6 @@
     "@mithic/protocol": "2.0.0"
   },
   "devDependencies": {
+    "@mithic/worker": "^0.1"
   }
 }
