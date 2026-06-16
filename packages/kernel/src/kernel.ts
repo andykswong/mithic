@@ -3,7 +3,6 @@ import type {
   ProcessInit,
   ProcessLimits,
   Signal,
-  SyscallResponse,
   SyscallRequest,
 } from '@mithic/protocol';
 import { isProcessExit, isProcessReady, isSyscallResponse } from '@mithic/protocol';
@@ -96,6 +95,21 @@ export interface SpawnInit {
   captureStdout?: boolean;
   captureStderr?: boolean;
   limits?: ProcessLimits;
+  /**
+   * Pre-wired stdio ports (dup2-style fd injection, tech design §3.6). When set,
+   * the kernel transfers these GUEST-side ports as the guest's preopens instead
+   * of minting fresh internal pipes:
+   *   - `stdin`  — a pipe READ end the guest reads from (fd 0).
+   *   - `stdout` — a pipe WRITE end the guest writes to (fd 1).
+   *   - `stderr` — a pipe WRITE end the guest writes to (fd 2).
+   * Used by {@link Kernel.runPipeline} to connect stage i's stdout to stage i+1's
+   * stdin with a single zero-hop MessageChannel (no kernel relay in the data path).
+   * A supplied `stdout`/`stderr` cannot be captured (`captureStdout`/`captureStderr`
+   * is ignored for an injected stream, since the kernel does not own its read end).
+   */
+  stdin?: MessagePort;
+  stdout?: MessagePort;
+  stderr?: MessagePort;
 }
 
 export interface SpawnResult {
@@ -104,6 +118,31 @@ export interface SpawnResult {
   stdout?: Promise<Uint8Array>;
   /** Resolves to captured stderr bytes if `captureStderr` was set. */
   stderr?: Promise<Uint8Array>;
+}
+
+/** One stage of a pipeline. `captureStdout` is only honored for the LAST stage. */
+export interface PipelineStage {
+  code: string | URL;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  capabilities?: Capability[];
+  limits?: ProcessLimits;
+  /** Capture this stage's stdout. Only meaningful on the final stage (others are piped). */
+  captureStdout?: boolean;
+  /** Capture this stage's stderr (each stage keeps its own stderr). */
+  captureStderr?: boolean;
+}
+
+export interface PipelineResult {
+  /** PID of each stage, in order. */
+  pids: number[];
+  /** Exit code of each stage, in order. */
+  exitCodes: number[];
+  /** Captured stdout of the final stage if it set `captureStdout`. */
+  lastStdout?: Promise<Uint8Array>;
+  /** Captured stderr per stage where `captureStderr` was set. */
+  stderr: Array<Promise<Uint8Array> | undefined>;
 }
 
 /**
@@ -153,6 +192,7 @@ export class Kernel {
       vfs: options.vfs,
       caps: this.capabilities,
       cwdOf: (pid) => this.#cwds.get(pid) ?? '/',
+      ipc: this.ipc,
     });
     this.#launcher = options.launcher ?? new DefaultGuestLauncher();
     this.#relayLauncher = options.relayLauncher;
@@ -185,14 +225,34 @@ export class Kernel {
     // stdio pipes. Guest preopen indices: 0=stdin, 1=stdout, 2=stderr.
     // stdin: guest reads (read end); kernel keeps write end.
     // stdout/stderr: guest writes (write end); kernel keeps read end.
-    const stdinPipe = this.ipc.createPipe();
-    const stdoutPipe = this.ipc.createPipe();
-    const stderrPipe = this.ipc.createPipe();
+    //
+    // An injected port (init.stdin/stdout/stderr) is transferred straight to the
+    // guest — that's the zero-hop pipeline path where the peer stage owns the
+    // other end. The kernel does not retain a read end for an injected stream, so
+    // capture is only possible for kernel-owned (minted) streams.
+    const stdinReadPort = init.stdin ?? this.ipc.createPipe().readPort;
 
-    const stdio: MessagePort[] = [stdinPipe.readPort, stdoutPipe.writePort, stderrPipe.writePort];
+    let stdoutWritePort: MessagePort;
+    let stdout: Promise<Uint8Array> | undefined;
+    if (init.stdout) {
+      stdoutWritePort = init.stdout;
+    } else {
+      const stdoutPipe = this.ipc.createPipe();
+      stdoutWritePort = stdoutPipe.writePort;
+      stdout = init.captureStdout ? drainPort(stdoutPipe.readPort) : undefined;
+    }
 
-    const stdout = init.captureStdout ? drainPort(stdoutPipe.readPort) : undefined;
-    const stderr = init.captureStderr ? drainPort(stderrPipe.readPort) : undefined;
+    let stderrWritePort: MessagePort;
+    let stderr: Promise<Uint8Array> | undefined;
+    if (init.stderr) {
+      stderrWritePort = init.stderr;
+    } else {
+      const stderrPipe = this.ipc.createPipe();
+      stderrWritePort = stderrPipe.writePort;
+      stderr = init.captureStderr ? drainPort(stderrPipe.readPort) : undefined;
+    }
+
+    const stdio: MessagePort[] = [stdinReadPort, stdoutWritePort, stderrWritePort];
 
     const processInit: ProcessInit = {
       type: 'init',
@@ -230,6 +290,58 @@ export class Kernel {
     });
 
     return { pid, stdout, stderr };
+  }
+
+  /**
+   * Run a pipeline of `cmd1 | cmd2 | … | cmdN` stages with zero-hop data flow.
+   *
+   * For N stages the kernel mints N-1 pipes. Stage i's stdout WRITE end and stage
+   * i+1's stdin READ end are the two ends of one MessageChannel, transferred
+   * directly into the respective guests — the bytes hop guest→guest with no kernel
+   * relay in the data path (the kernel only ever touches the control plane).
+   * This is dup2 fd wiring per tech design §3.6.
+   *
+   * All stages are spawned concurrently (a pipeline runs its members in parallel,
+   * connected by pipes), then the kernel awaits every stage's exit and collects
+   * the exit codes in order. The final stage's stdout can be captured.
+   */
+  async runPipeline(stages: PipelineStage[]): Promise<PipelineResult> {
+    if (stages.length === 0) throw new Error('runPipeline requires at least one stage');
+
+    // Mint the inter-stage pipes: pipe i connects stage i (stdout) → stage i+1 (stdin).
+    const pipes = Array.from({ length: stages.length - 1 }, () => this.ipc.createPipe());
+
+    const pids: number[] = [];
+    const stderr: Array<Promise<Uint8Array> | undefined> = [];
+    const spawned = await Promise.all(
+      stages.map((stage, i) => {
+        const isLast = i === stages.length - 1;
+        const init: SpawnInit = {
+          args: stage.args,
+          env: stage.env,
+          cwd: stage.cwd,
+          capabilities: stage.capabilities,
+          limits: stage.limits,
+          captureStderr: stage.captureStderr,
+          // Stage i (i>0) reads from the read end of pipe i-1.
+          stdin: i > 0 ? pipes[i - 1].readPort : undefined,
+          // Stage i (i<last) writes into the write end of pipe i.
+          stdout: !isLast ? pipes[i].writePort : undefined,
+          // Final stage may capture stdout (it keeps a kernel-owned stdout pipe).
+          captureStdout: isLast ? stage.captureStdout : false,
+        };
+        return this.spawn(stage.code, init);
+      })
+    );
+
+    for (const s of spawned) { pids.push(s.pid); stderr.push(s.stderr); }
+    const lastStdout = spawned[spawned.length - 1]?.stdout;
+
+    // Await every stage and collect exit codes in stage order.
+    const waits = await Promise.all(pids.map((pid) => this.wait(pid)));
+    const exitCodes = waits.map((w) => w.code);
+
+    return { pids, exitCodes, lastStdout, stderr };
   }
 
   /**
@@ -357,10 +469,10 @@ export class Kernel {
     call: string,
     args: Record<string, unknown>
   ): Promise<RelaySyscallResult> {
-    const res = await this.dispatcher.dispatch(pid, { id: 0, call, args });
-    return res.ok
-      ? { ok: true, result: res.result }
-      : { ok: false, error: res.error };
+    const { response } = await this.dispatcher.dispatch(pid, { id: 0, call, args });
+    return response.ok
+      ? { ok: true, result: response.result }
+      : { ok: false, error: response.error };
   }
 
   #handles = new Map<number, ProcessHandle>();
@@ -380,12 +492,15 @@ export class Kernel {
       // A syscall response from the guest would be malformed here; the guest
       // sends REQUESTS. Discriminate a request: it has id + call + args.
       if (isSyscallRequestMsg(msg)) {
-        void this.dispatcher.dispatch(pid, msg).then((res: SyscallResponse) => {
-          // The dispatcher result may carry a Uint8Array; transfer its buffer.
-          const transfer = res.ok && res.result instanceof Uint8Array
-            ? [res.result.buffer as ArrayBuffer]
-            : undefined;
-          kernelSide.postMessage(res, transfer ?? []);
+        void this.dispatcher.dispatch(pid, msg).then(({ response, transfer }) => {
+          // The dispatcher may attach transferables (e.g. fs/pipe ports). It also
+          // may return a Uint8Array result whose buffer should be transferred.
+          const list = transfer
+            ? transfer
+            : response.ok && response.result instanceof Uint8Array
+              ? [response.result.buffer as ArrayBuffer]
+              : [];
+          kernelSide.postMessage(response, list);
         });
         return;
       }

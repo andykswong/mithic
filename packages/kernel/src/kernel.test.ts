@@ -51,11 +51,11 @@ test('fs/read with a subarray view delivers the correct bytes', async () => {
   caps.grant(1, [{ type: 'fs', paths: ['/'], operations: ['read'] }]);
   const d = new SyscallDispatcher({ vfs: stubVfs as unknown as FileSystemProvider, caps, cwdOf: () => '/' });
 
-  const open = await d.dispatch(1, { id: 1, call: 'fs/open', args: { dirfd: -100, path: '/file', oflags: { read: true } } });
+  const open = (await d.dispatch(1, { id: 1, call: 'fs/open', args: { dirfd: -100, path: '/file', oflags: { read: true } } })).response;
   expect(open.ok).toBe(true);
   const fd = (open as { ok: true; result: { fd: number } }).result.fd;
 
-  const readRes = await d.dispatch(1, { id: 2, call: 'fs/read', args: { fd, len: 5 } });
+  const readRes = (await d.dispatch(1, { id: 2, call: 'fs/read', args: { fd, len: 5 } })).response;
   expect(readRes.ok).toBe(true);
   const result = (readRes as { ok: true; result: Uint8Array }).result;
   expect(new TextDecoder().decode(result)).toBe('world');

@@ -3,6 +3,7 @@ import { fsErrorToErrno } from '@mithic/protocol';
 import { FileSystemError, normalizePath } from '@mithic/io/vfs';
 import type { FileSystemProvider, FileHandle, OpenFlags } from '@mithic/io/vfs';
 import type { CapabilityManager, FsOperation } from './capability-manager.ts';
+import type { IpcBroker } from './ipc-broker.ts';
 
 /** Thrown when a process references an fd it does not own (wrong pid or never opened). */
 class BadFdError extends Error {
@@ -27,12 +28,35 @@ export interface SyscallDispatcherOptions {
   caps: CapabilityManager;
   /** Resolve a process's current working directory. */
   cwdOf: (pid: number) => string;
+  /** IPC broker used to mint pipes for the `fs/pipe` syscall. Optional for fs-only setups. */
+  ipc?: IpcBroker;
+}
+
+/**
+ * Result of dispatching a syscall: the wire {@link SyscallResponse} plus any
+ * Transferable objects (e.g. the two MessagePorts of an `fs/pipe`) that the
+ * control-plane transport must move into the guest's realm. The transport
+ * inspects `transfer` and passes it to `postMessage` so ownership of the ports
+ * is handed to the guest rather than copied.
+ */
+export interface DispatchResult {
+  response: SyscallResponse;
+  transfer?: Transferable[];
 }
 
 interface OpenFile {
+  kind?: 'file';
   handle: FileHandle;
   offset: number;
 }
+
+/** A pipe end held in the fd table (the port is owned by the guest after transfer). */
+interface PipeFd {
+  kind: 'pipe';
+  port: MessagePort;
+}
+
+type FdEntry = OpenFile | PipeFd;
 
 /**
  * Routes filesystem syscalls (`fs/*`) through capability checks to the VFS
@@ -45,8 +69,9 @@ export class SyscallDispatcher {
   #vfs: FileSystemProvider;
   #caps: CapabilityManager;
   #cwdOf: (pid: number) => string;
-  /** pid -> (fd -> open file). */
-  #fdTables = new Map<number, Map<number, OpenFile>>();
+  #ipc: IpcBroker | undefined;
+  /** pid -> (fd -> open file or pipe end). */
+  #fdTables = new Map<number, Map<number, FdEntry>>();
   /** pid -> next fd to allocate (file fds start above the reserved stdio range). */
   #nextFd = new Map<number, number>();
 
@@ -54,6 +79,7 @@ export class SyscallDispatcher {
     this.#vfs = options.vfs;
     this.#caps = options.caps;
     this.#cwdOf = options.cwdOf;
+    this.#ipc = options.ipc;
   }
 
   /** Discard a process's fd table (called on process exit). */
@@ -62,31 +88,58 @@ export class SyscallDispatcher {
     this.#nextFd.delete(pid);
   }
 
-  async dispatch(pid: number, req: SyscallRequestLike): Promise<SyscallResponse> {
+  async dispatch(pid: number, req: SyscallRequestLike): Promise<DispatchResult> {
     try {
       switch (req.call) {
         case 'fs/open':
-          return ok(req.id, await this.#open(pid, req.args));
+          return res(ok(req.id, await this.#open(pid, req.args)));
         case 'fs/read':
-          return ok(req.id, await this.#read(pid, req.args));
+          return res(ok(req.id, await this.#read(pid, req.args)));
         case 'fs/write':
-          return ok(req.id, await this.#write(pid, req.args));
+          return res(ok(req.id, await this.#write(pid, req.args)));
         case 'fs/close':
-          return ok(req.id, this.#close(pid, req.args));
+          return res(ok(req.id, this.#close(pid, req.args)));
         case 'fs/stat':
-          return ok(req.id, await this.#stat(pid, req.args));
+          return res(ok(req.id, await this.#stat(pid, req.args)));
         case 'fs/readdir':
-          return ok(req.id, await this.#readdir(pid, req.args));
+          return res(ok(req.id, await this.#readdir(pid, req.args)));
         case 'fs/mkdir':
-          return ok(req.id, await this.#mkdir(pid, req.args));
+          return res(ok(req.id, await this.#mkdir(pid, req.args)));
         case 'fs/unlink':
-          return ok(req.id, await this.#unlink(pid, req.args));
+          return res(ok(req.id, await this.#unlink(pid, req.args)));
+        case 'fs/pipe':
+          return this.#pipe(pid, req.id);
         default:
-          return fail(req.id, 'ENOSYS', `Unknown syscall: ${req.call}`);
+          return res(fail(req.id, 'ENOSYS', `Unknown syscall: ${req.call}`));
       }
     } catch (err) {
-      return fail(req.id, errnoOf(err), messageOf(err));
+      return res(fail(req.id, errnoOf(err), messageOf(err)));
     }
+  }
+
+  /**
+   * `fs/pipe`: mint a fresh MessageChannel pipe and hand BOTH ends to the guest,
+   * registering them in the guest's kernel-side fd table as pipe fds.
+   *   - `readfd`  → the read end (`readPort`); guest reads from it.
+   *   - `writefd` → the write end (`writePort`); guest writes to it.
+   * The two ports are returned in the {@link DispatchResult.transfer} list so the
+   * control transport moves (not copies) them into the guest's realm. The guest
+   * wraps `readPort` with `portToReadable` and `writePort` with `portToWritable`.
+   */
+  #pipe(pid: number, id: number): DispatchResult {
+    if (!this.#ipc) {
+      return res(fail(id, 'ENOSYS', 'fs/pipe unavailable: no IPC broker configured'));
+    }
+    const { readPort, writePort } = this.#ipc.createPipe();
+    const readfd = this.#allocFd(pid);
+    const writefd = this.#allocFd(pid);
+    const table = this.#tableFor(pid);
+    table.set(readfd, { kind: 'pipe', port: readPort });
+    table.set(writefd, { kind: 'pipe', port: writePort });
+    return {
+      response: ok(id, { readfd, writefd }),
+      transfer: [readPort, writePort],
+    };
   }
 
   #resolvePath(pid: number, args: Record<string, unknown>): string {
@@ -138,7 +191,9 @@ export class SyscallDispatcher {
     const table = this.#tableFor(pid);
     const entry = table.get(fd);
     if (!entry) throw new BadFdError(fd);
-    void this.#vfs.close(entry.handle);
+    // Pipe fds: the guest owns the transferred port, so the kernel just forgets
+    // the fd. File fds: release the VFS handle.
+    if (entry.kind !== 'pipe') void this.#vfs.close(entry.handle);
     table.delete(fd);
     return {};
   }
@@ -182,10 +237,13 @@ export class SyscallDispatcher {
     const fd = Number(args.fd);
     const entry = this.#tableFor(pid).get(fd);
     if (!entry) throw new BadFdError(fd);
+    // Pipe fds are serviced by the guest over the transferred port, not via the
+    // dispatcher's read/write path. A read/write syscall against one is a bug.
+    if (entry.kind === 'pipe') throw new BadFdError(fd);
     return entry;
   }
 
-  #tableFor(pid: number): Map<number, OpenFile> {
+  #tableFor(pid: number): Map<number, FdEntry> {
     let table = this.#fdTables.get(pid);
     if (!table) { table = new Map(); this.#fdTables.set(pid, table); }
     return table;
@@ -229,6 +287,10 @@ function messageOf(err: unknown): string {
 function toTightView(view: Uint8Array): Uint8Array {
   if (view.byteOffset === 0 && view.byteLength === view.buffer.byteLength) return view;
   return new Uint8Array(view);
+}
+
+function res(response: SyscallResponse, transfer?: Transferable[]): DispatchResult {
+  return transfer ? { response, transfer } : { response };
 }
 
 function ok(id: number, result: unknown): SyscallResponse {
