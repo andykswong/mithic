@@ -6,17 +6,26 @@
  *
  * Addresses: line `N`, last line `$`, regex `/re/`, ranges `N,M` and
  * `/re1/,/re2/`. A range starts when its first address matches and stays active
- * through the line where the second matches (GNU semantics).
+ * through the line where the second matches (GNU semantics). GNU extensions:
+ * step `first~step` (e.g. `1~2` = odd lines, `0~3` = 3,6,9…), `addr,+N`
+ * (N lines after the start match) and `addr,~N` (until the next line whose
+ * number is a multiple of N).
  *
  * Commands: `s/pat/repl/flags` (flags `g` global, `i`/`I` ignore-case, `p`
  * print, and a numeric Nth-occurrence), with `&` (whole match) and `\1..\9`
  * (capture groups) in the replacement; `p` print, `d` delete, `q` quit,
  * `=` print line number, `a TEXT` append, `i TEXT` insert, `c TEXT` change,
- * `y/abc/xyz/` transliterate.
+ * `y/abc/xyz/` transliterate; brace groups `{ … }` (address-gated, nestable);
+ * hold space `h H g G x`; multi-line `N D P`; branching `b t T` with `:label`.
+ *
+ * The executor is a proper cycle engine: for each input line (a "cycle") it runs
+ * a program-counter loop over the parsed command list, so `b`/`t`/`T` can jump,
+ * `D` can restart the cycle, and brace blocks can be skipped when their address
+ * does not match.
  *
  * Regex syntax defaults to BRE; `-E`/`-r` selects ERE (see `_regex.ts` for the
  * honest BRE↔ERE translation). `.` does not match newline (sed pattern space is
- * normally one line).
+ * normally one line, though `N` can make it multi-line).
  */
 import { defineCommand, readAllText, writeBytes, writeLine } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
@@ -28,12 +37,21 @@ import type { RegexSyntax } from './_regex.ts';
 type Address =
   | { kind: 'line'; n: number }
   | { kind: 'last' }
-  | { kind: 'regex'; re: RegExp };
+  | { kind: 'regex'; re: RegExp }
+  | { kind: 'step'; first: number; step: number };
+
+/** Trailing form of a range's second address: a plain address, `+N`, or `~N`. */
+type EndAddress =
+  | Address
+  | { kind: 'plus'; n: number }
+  | { kind: 'multiple'; n: number };
 
 interface AddressSpec {
   /** undefined = every line; one = single address; two = range. */
   start?: Address;
-  end?: Address;
+  end?: EndAddress;
+  /** `!` negation — the command runs when the address does NOT match. */
+  negate?: boolean;
 }
 
 interface Subst {
@@ -48,13 +66,30 @@ interface Subst {
 type Command =
   | (AddressSpec & Subst)
   | (AddressSpec & { type: 'p' })
+  | (AddressSpec & { type: 'P' })
   | (AddressSpec & { type: 'd' })
+  | (AddressSpec & { type: 'D' })
   | (AddressSpec & { type: 'q' })
   | (AddressSpec & { type: '=' })
   | (AddressSpec & { type: 'a'; text: string })
   | (AddressSpec & { type: 'i'; text: string })
   | (AddressSpec & { type: 'c'; text: string })
-  | (AddressSpec & { type: 'y'; from: string; to: string });
+  | (AddressSpec & { type: 'y'; from: string; to: string })
+  | (AddressSpec & { type: 'h' })
+  | (AddressSpec & { type: 'H' })
+  | (AddressSpec & { type: 'g' })
+  | (AddressSpec & { type: 'G' })
+  | (AddressSpec & { type: 'x' })
+  | (AddressSpec & { type: 'n' })
+  | (AddressSpec & { type: 'N' })
+  | (AddressSpec & { type: 'b'; label: string })
+  | (AddressSpec & { type: 't'; label: string })
+  | (AddressSpec & { type: 'T'; label: string })
+  | (AddressSpec & { type: ':'; label: string })
+  // Brace group markers. `{` carries the address that gates the block and the
+  // index of its matching `}`; `}` is an inert terminator the PC steps over.
+  | (AddressSpec & { type: '{'; close: number })
+  | { type: '}' };
 
 interface SedConfig {
   suppress: boolean;
@@ -129,70 +164,140 @@ class ScriptParser {
     return compilePattern(pat, { syntax: this.#syntax, flags });
   }
 
-  /** Parse the joined script text into a list of commands. */
+  /**
+   * Parse the joined script text into a flat command list. Brace groups become a
+   * `{` marker (with its address and the index of the matching `}`) followed by
+   * the inner commands and a `}` marker, so the executor's PC loop can skip a
+   * whole block by jumping to `close + 1`.
+   */
   parse(script: string): Command[] {
     const cmds: Command[] = [];
+    const openStack: number[] = [];
     let i = 0;
     const n = script.length;
     while (i < n) {
       // Skip separators / whitespace between commands.
       while (i < n && (script[i] === ';' || script[i] === '\n' || script[i] === ' ' || script[i] === '\t')) i++;
       if (i >= n) break;
+      if (script[i] === '}') {
+        const open = openStack.pop();
+        if (open === undefined) throw new Error('unexpected `}\'');
+        const close = cmds.length;
+        cmds.push({ type: '}' });
+        (cmds[open] as { close: number }).close = close;
+        i++;
+        continue;
+      }
       const r = this.#parseOne(script, i);
+      if (r.cmd.type === '{') openStack.push(cmds.length);
       cmds.push(r.cmd);
       i = r.next;
     }
+    if (openStack.length > 0) throw new Error('unmatched `{\'');
     return cmds;
   }
 
-  #parseAddress(script: string, i: number): { addr?: Address; next: number } {
+  #parseSingleAddress(script: string, i: number): { addr?: Address; next: number } {
     const c = script[i];
     if (c === '$') return { addr: { kind: 'last' }, next: i + 1 };
     if (c >= '0' && c <= '9') {
       let j = i;
       while (j < script.length && script[j] >= '0' && script[j] <= '9') j++;
-      return { addr: { kind: 'line', n: Number(script.slice(i, j)) }, next: j };
+      const first = Number(script.slice(i, j));
+      // GNU step address `first~step`.
+      if (script[j] === '~') {
+        let k = j + 1;
+        while (k < script.length && script[k] >= '0' && script[k] <= '9') k++;
+        const step = Number(script.slice(j + 1, k));
+        return { addr: { kind: 'step', first, step }, next: k };
+      }
+      return { addr: { kind: 'line', n: first }, next: j };
     }
-    if (c === '/') {
+    if (c === '/' || c === '\\') {
+      // `/re/` or `\cREc` (custom delimiter introduced by a backslash).
+      let delim = '/';
       let j = i + 1;
+      if (c === '\\') { delim = script[i + 1]; j = i + 2; }
       let pat = '';
-      while (j < script.length && script[j] !== '/') {
-        if (script[j] === '\\' && j + 1 < script.length) { pat += script[j] + script[j + 1]; j += 2; continue; }
+      while (j < script.length && script[j] !== delim) {
+        if (script[j] === '\\' && j + 1 < script.length) {
+          if (script[j + 1] === delim) { pat += delim; j += 2; continue; }
+          pat += script[j] + script[j + 1];
+          j += 2;
+          continue;
+        }
         pat += script[j];
         j++;
       }
-      if (script[j] !== '/') throw new Error('unterminated address regex');
+      if (script[j] !== delim) throw new Error('unterminated address regex');
       return { addr: { kind: 'regex', re: this.#compile(pat) }, next: j + 1 };
     }
     return { next: i };
   }
 
-  #parseOne(script: string, start: number): { cmd: Command; next: number } {
+  #parseAddressSpec(script: string, start: number): { spec: AddressSpec; next: number } {
     let i = start;
     const spec: AddressSpec = {};
-    const a1 = this.#parseAddress(script, i);
+    const a1 = this.#parseSingleAddress(script, i);
     if (a1.addr) {
       spec.start = a1.addr;
       i = a1.next;
       if (script[i] === ',') {
         i++;
-        const a2 = this.#parseAddress(script, i);
-        if (!a2.addr) throw new Error('expected second address');
-        spec.end = a2.addr;
-        i = a2.next;
+        // `addr,+N` and `addr,~N` (GNU relative ends).
+        if (script[i] === '+' || script[i] === '~') {
+          const kind = script[i] === '+' ? 'plus' : 'multiple';
+          let j = i + 1;
+          while (j < script.length && script[j] >= '0' && script[j] <= '9') j++;
+          spec.end = { kind, n: Number(script.slice(i + 1, j)) };
+          i = j;
+        } else {
+          const a2 = this.#parseSingleAddress(script, i);
+          if (!a2.addr) throw new Error('expected second address');
+          spec.end = a2.addr;
+          i = a2.next;
+        }
       }
     }
+    // Optional `!` negation, possibly preceded by spaces.
     while (script[i] === ' ' || script[i] === '\t') i++;
+    if (script[i] === '!') { spec.negate = true; i++; while (script[i] === ' ' || script[i] === '\t') i++; }
+    return { spec, next: i };
+  }
+
+  #parseOne(script: string, start: number): { cmd: Command; next: number } {
+    const a = this.#parseAddressSpec(script, start);
+    const spec = a.spec;
+    let i = a.next;
     const cmdChar = script[i];
     if (cmdChar === undefined) throw new Error('missing command');
     i++;
     switch (cmdChar) {
+      case '{': return { cmd: { ...spec, type: '{', close: -1 }, next: i };
       case 's': return this.#parseSubst(script, i, spec);
       case 'y': return this.#parseTransliterate(script, i, spec);
       case 'p': return { cmd: { ...spec, type: 'p' }, next: i };
+      case 'P': return { cmd: { ...spec, type: 'P' }, next: i };
       case 'd': return { cmd: { ...spec, type: 'd' }, next: i };
+      case 'D': return { cmd: { ...spec, type: 'D' }, next: i };
       case 'q': return { cmd: { ...spec, type: 'q' }, next: i };
       case '=': return { cmd: { ...spec, type: '=' }, next: i };
+      case 'h': return { cmd: { ...spec, type: 'h' }, next: i };
+      case 'H': return { cmd: { ...spec, type: 'H' }, next: i };
+      case 'g': return { cmd: { ...spec, type: 'g' }, next: i };
+      case 'G': return { cmd: { ...spec, type: 'G' }, next: i };
+      case 'x': return { cmd: { ...spec, type: 'x' }, next: i };
+      case 'n': return { cmd: { ...spec, type: 'n' }, next: i };
+      case 'N': return { cmd: { ...spec, type: 'N' }, next: i };
+      case 'b': case 't': case 'T': {
+        const l = this.#parseLabel(script, i);
+        return { cmd: { ...spec, type: cmdChar, label: l.label }, next: l.next };
+      }
+      case ':': {
+        const l = this.#parseLabel(script, i);
+        if (l.label === '') throw new Error('":" lacks a label');
+        return { cmd: { ...spec, type: ':', label: l.label }, next: l.next };
+      }
       case 'a': case 'i': case 'c': {
         const t = this.#parseText(script, i);
         return { cmd: { ...spec, type: cmdChar, text: t.text }, next: t.next };
@@ -200,6 +305,17 @@ class ScriptParser {
       default:
         throw new Error(`unknown command: \`${cmdChar}'`);
     }
+  }
+
+  /** Parse a branch/label name: runs to `;`, `}`, newline, or end. */
+  #parseLabel(script: string, i: number): { label: string; next: number } {
+    while (script[i] === ' ' || script[i] === '\t') i++;
+    let label = '';
+    while (i < script.length && script[i] !== ';' && script[i] !== '\n' && script[i] !== '}') {
+      label += script[i];
+      i++;
+    }
+    return { label: label.trim(), next: i };
   }
 
   /** Parse the text argument of a/i/c. Supports `a\<newline>text` and `a text`. */
@@ -250,9 +366,9 @@ class ScriptParser {
     };
     const pattern = readField();
     const replacement = readField();
-    // Flags up to a separator.
+    // Flags up to a separator (`;`, newline, or a closing brace).
     let flags = '';
-    while (i < script.length && script[i] !== ';' && script[i] !== '\n') {
+    while (i < script.length && script[i] !== ';' && script[i] !== '\n' && script[i] !== '}') {
       flags += script[i];
       i++;
     }
@@ -358,9 +474,31 @@ function transliterate(line: string, from: string, to: string): string {
   return out;
 }
 
-/** Tracks whether each ranged command is currently "inside" its range. */
-interface RangeState { active: boolean }
+/** Per-(command,scope) range tracking: whether the range is currently active. */
+interface RangeState {
+  active: boolean;
+  /** For `+N` / line ends, the input line number at which the range closes. */
+  endLine: number;
+}
 
+/** Whether a single address matches the current line. */
+function matchOne(a: Address, lineno: number, line: string, lastLineno: number): boolean {
+  switch (a.kind) {
+    case 'line': return lineno === a.n;
+    case 'last': return lineno === lastLineno;
+    case 'regex': return a.re.test(line);
+    case 'step':
+      // GNU `first~step`: matches first, first+step, first+2*step … For step<=0
+      // GNU treats it as a plain `first` line address.
+      if (a.step <= 0) return lineno === a.first;
+      return lineno >= a.first && (lineno - a.first) % a.step === 0;
+  }
+}
+
+/**
+ * Decide whether `spec` selects the current line. Range state mutates `rng`.
+ * Negation is applied after the range/address decision.
+ */
 function addressActive(
   spec: AddressSpec,
   lineno: number,
@@ -368,25 +506,54 @@ function addressActive(
   lastLineno: number,
   rng: RangeState,
 ): boolean {
-  if (!spec.start) return true;
-  const matchOne = (a: Address): boolean => {
-    if (a.kind === 'line') return lineno === a.n;
-    if (a.kind === 'last') return lineno === lastLineno;
-    return a.re.test(line);
-  };
-  if (!spec.end) return matchOne(spec.start);
-  // Range semantics.
-  if (!rng.active) {
-    if (matchOne(spec.start)) {
-      rng.active = true;
-      // A numeric end already passed → single line only.
-      if (spec.end.kind === 'line' && spec.end.n <= lineno) rng.active = false;
-      return true;
-    }
-    return false;
+  let result: boolean;
+  if (!spec.start) {
+    result = true;
+  } else if (!spec.end) {
+    result = matchOne(spec.start, lineno, line, lastLineno);
+  } else {
+    result = rangeActive(spec, lineno, line, lastLineno, rng);
   }
-  // Inside the range: this line is included; check whether the range ends here.
-  if (matchOne(spec.end)) rng.active = false;
+  return spec.negate ? !result : result;
+}
+
+function rangeActive(
+  spec: AddressSpec,
+  lineno: number,
+  line: string,
+  lastLineno: number,
+  rng: RangeState,
+): boolean {
+  const end = spec.end!;
+  if (!rng.active) {
+    if (!matchOne(spec.start!, lineno, line, lastLineno)) return false;
+    rng.active = true;
+    // Establish where this range closes.
+    if (end.kind === 'line') {
+      if (end.n <= lineno) rng.active = false; // already past → single line
+      else rng.endLine = end.n;
+    } else if (end.kind === 'plus') {
+      if (end.n <= 0) rng.active = false;
+      else rng.endLine = lineno + end.n;
+    } else if (end.kind === 'multiple') {
+      // `addr,~N`: ends at the next line that is a multiple of N (>= current+1).
+      if (end.n <= 0) { rng.active = false; }
+      else {
+        let e = lineno - (lineno % end.n) + end.n;
+        if (e <= lineno) e += end.n;
+        rng.endLine = e;
+      }
+    } else {
+      rng.endLine = -1; // regex / last → checked by matching, not a number
+    }
+    return true;
+  }
+  // Inside the range: this line is included; decide whether it ends here.
+  if (end.kind === 'line' || end.kind === 'plus' || end.kind === 'multiple') {
+    if (rng.endLine >= 0 && lineno >= rng.endLine) rng.active = false;
+  } else if (matchOne(end, lineno, line, lastLineno)) {
+    rng.active = false;
+  }
   return true;
 }
 
@@ -395,60 +562,202 @@ interface ApplyResult {
   quit: boolean;
 }
 
+/** Mutable per-run execution state shared across cycles. */
+interface ExecState {
+  hold: string;
+  /** Set when any `s///` succeeds; cleared on a new input line or a `t`/`T`. */
+  substMade: boolean;
+}
+
 function applyScript(text: string, cmds: Command[], suppress: boolean): ApplyResult {
   const hasTrailing = text.endsWith('\n');
   const lines = text === '' ? [] : (hasTrailing ? text.slice(0, -1) : text).split('\n');
   const lastLineno = lines.length;
-  const ranges: RangeState[] = cmds.map(() => ({ active: false }));
+  const ranges: RangeState[] = cmds.map(() => ({ active: false, endLine: -1 }));
 
-  let out = '';
+  // Map label name → command index for branch targets.
+  const labels = new Map<string, number>();
+  for (let ci = 0; ci < cmds.length; ci++) {
+    const cmd = cmds[ci];
+    if (cmd.type === ':') labels.set(cmd.label, ci);
+  }
+
+  const st: ExecState = { hold: '', substMade: false };
+  const outParts: string[] = [];
   let quit = false;
-  const emit = (s: string): void => { out += s + '\n'; };
 
-  for (let idx = 0; idx < lines.length; idx++) {
-    const lineno = idx + 1;
-    let s = lines[idx];
-    let deleted = false;
+  // Emit a finished line into output, honoring the input's trailing-newline
+  // convention only for the final input line.
+  const emitLine = (s: string, isLastInput: boolean): void => {
+    if (isLastInput && !hasTrailing) outParts.push(s);
+    else outParts.push(s + '\n');
+  };
+  // Auxiliary output (p, =, a/i/c, etc.) always carries a newline.
+  const emitAux = (s: string): void => { outParts.push(s + '\n'); };
+
+  // Pointer-based reader so `N`/`n` can pull the next input line.
+  let lineIdx = 0;
+  const nextInput = (): string | undefined => (lineIdx < lines.length ? lines[lineIdx++] : undefined);
+
+  // `pattern`/`lineno` are the live pattern space. A `D` restart re-enters the
+  // cycle loop WITHOUT consuming new input by leaving `carry` set.
+  let pattern = '';
+  let lineno = 0;
+  let carry: string | null = null;
+
+  while (true) {
+    if (carry !== null) {
+      // `D` restart: reuse the remaining pattern space and the current line number.
+      pattern = carry;
+      carry = null;
+    } else {
+      const s0 = nextInput();
+      if (s0 === undefined) break;
+      pattern = s0;
+      lineno = lineIdx; // 1-based: we just consumed lines[lineIdx-1]
+      st.substMade = false;
+    }
+
+    // A pattern space is "the last input line" when no further input remains.
+    const isLast = (): boolean => lineIdx >= lines.length && carry === null;
+
     const appendQueue: string[] = [];
+    let deleted = false; // suppress the end-of-cycle auto-print
+    let pc = 0;
+    let restart = false; // `D` requested a cycle restart with the carried pattern
 
-    for (let ci = 0; ci < cmds.length; ci++) {
-      const cmd = cmds[ci];
-      if (!addressActive(cmd, lineno, s, lastLineno, ranges[ci])) continue;
+    // Inner program-counter loop over the command list.
+    while (pc < cmds.length) {
+      const cmd = cmds[pc];
+      if (cmd.type === '}') { pc++; continue; }
+      if (cmd.type === ':') { pc++; continue; }
+
+      const active = addressActive(cmd, lineno, pattern, lastLineno, ranges[pc]);
+
+      if (cmd.type === '{') {
+        // Address-gated block: enter when active, else jump past the matching `}`.
+        if (active) pc++;
+        else pc = cmd.close + 1;
+        continue;
+      }
+
+      if (!active) { pc++; continue; }
+
       switch (cmd.type) {
         case 's': {
-          const r = applySubst(s, cmd);
-          s = r.result;
-          if (r.changed && cmd.print) emit(s);
+          const r = applySubst(pattern, cmd);
+          pattern = r.result;
+          if (r.changed) { st.substMade = true; if (cmd.print) emitAux(pattern); }
           break;
         }
-        case 'p': emit(s); break;
-        case 'd': deleted = true; break;
-        case 'q': quit = true; break;
-        case '=': emit(String(lineno)); break;
-        case 'y': s = transliterate(s, cmd.from, cmd.to); break;
-        case 'a': appendQueue.push(cmd.text); break;
-        case 'i': emit(cmd.text); break;
-        case 'c':
-          // GNU `c` deletes the line(s); for a range it prints text once at the
-          // end of the range. We approximate the common single-address case:
-          // delete the line and emit the text in its place.
-          deleted = true;
-          emit(cmd.text);
+        case 'p': emitAux(pattern); break;
+        case 'P': {
+          const nl = pattern.indexOf('\n');
+          emitAux(nl >= 0 ? pattern.slice(0, nl) : pattern);
           break;
+        }
+        case 'd': deleted = true; break;
+        case 'D': {
+          const nl = pattern.indexOf('\n');
+          if (nl < 0) { deleted = true; break; }
+          // Delete up to and including the first newline; restart the cycle on
+          // the remaining pattern space WITHOUT reading new input.
+          carry = pattern.slice(nl + 1);
+          restart = true;
+          deleted = true; // no auto-print of the consumed portion
+          break;
+        }
+        case 'q': quit = true; break;
+        case '=': emitAux(String(lineno)); break;
+        case 'y': pattern = transliterate(pattern, cmd.from, cmd.to); break;
+        case 'a': appendQueue.push(cmd.text); break;
+        case 'i': emitAux(cmd.text); break;
+        case 'c': {
+          // GNU `c`: on a single address (or a non-range) emit the text and
+          // delete the line. On a RANGE, emit once at the END of the range only
+          // — i.e. only when the range has just closed (`ranges[pc].active` is
+          // false after `addressActive` evaluated this line).
+          deleted = true;
+          const isRange = cmd.end !== undefined;
+          if (!isRange || !ranges[pc].active) emitAux(cmd.text);
+          break;
+        }
+        case 'h': st.hold = pattern; break;
+        case 'H': st.hold = st.hold + '\n' + pattern; break;
+        case 'g': pattern = st.hold; break;
+        case 'G': pattern = pattern + '\n' + st.hold; break;
+        case 'x': { const t = pattern; pattern = st.hold; st.hold = t; break; }
+        case 'n': {
+          // Print current pattern (unless -n), then load the next input line.
+          if (!suppress) emitLine(pattern, isLast());
+          for (const a of appendQueue) emitAux(a);
+          appendQueue.length = 0;
+          const nx = nextInput();
+          if (nx === undefined) { deleted = true; quit = true; break; }
+          pattern = nx;
+          lineno = lineIdx;
+          break;
+        }
+        case 'N': {
+          const nx = nextInput();
+          if (nx === undefined) {
+            // GNU: at EOF, fall through to end the cycle (the pattern space is
+            // still auto-printed unless -n). POSIX would discard; we follow GNU.
+            break;
+          }
+          pattern = pattern + '\n' + nx;
+          lineno = lineIdx;
+          break;
+        }
+        case 'b': {
+          if (cmd.label === '') { pc = cmds.length; continue; }
+          const t = labels.get(cmd.label);
+          if (t === undefined) throw new Error(`can't find label for jump to \`${cmd.label}'`);
+          pc = t;
+          continue;
+        }
+        case 't': {
+          if (st.substMade) {
+            st.substMade = false;
+            if (cmd.label === '') { pc = cmds.length; continue; }
+            const t = labels.get(cmd.label);
+            if (t === undefined) throw new Error(`can't find label for jump to \`${cmd.label}'`);
+            pc = t;
+            continue;
+          }
+          break;
+        }
+        case 'T': {
+          if (!st.substMade) {
+            if (cmd.label === '') { pc = cmds.length; continue; }
+            const t = labels.get(cmd.label);
+            if (t === undefined) throw new Error(`can't find label for jump to \`${cmd.label}'`);
+            pc = t;
+            continue;
+          }
+          st.substMade = false;
+          break;
+        }
       }
+
+      if (restart) break;
       if (deleted && cmd.type === 'd') break;
       if (quit) break;
+      pc++;
     }
 
-    if (!deleted && !suppress) {
-      // Preserve the original trailing-newline behavior for the last line.
-      if (lineno === lastLineno && !hasTrailing) out += s;
-      else out += s + '\n';
+    if (restart) {
+      // Flush any queued appends from this pass, then re-run with the carry.
+      for (const a of appendQueue) emitAux(a);
+      continue;
     }
-    for (const a of appendQueue) emit(a);
+
+    if (!deleted && !suppress) emitLine(pattern, isLast());
+    for (const a of appendQueue) emitAux(a);
     if (quit) break;
   }
-  return { output: out, quit };
+
+  return { output: outParts.join(''), quit };
 }
 
 // ── file I/O ────────────────────────────────────────────────────────────────────
@@ -513,7 +822,13 @@ const sedCommand: CommandFn = async (io: CommandIO): Promise<number> => {
 
     if (cfg.files.length === 0) {
       const text = await readAllText(io.stdin);
-      const r = applyScript(text, cmds, cfg.suppress);
+      let r: ApplyResult;
+      try {
+        r = applyScript(text, cmds, cfg.suppress);
+      } catch (e) {
+        await writeLine(err, `${name}: ${(e as Error).message}`);
+        return 1;
+      }
       await writeBytes(out, enc.encode(r.output));
       return 0;
     }
@@ -528,7 +843,13 @@ const sedCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         exitCode = 2;
         continue;
       }
-      const r = applyScript(text, cmds, cfg.suppress);
+      let r: ApplyResult;
+      try {
+        r = applyScript(text, cmds, cfg.suppress);
+      } catch (e) {
+        await writeLine(err, `${name}: ${(e as Error).message}`);
+        return 1;
+      }
       if (cfg.inPlace) {
         try {
           await writeFileText(io, path, r.output);

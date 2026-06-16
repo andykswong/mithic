@@ -248,3 +248,174 @@ describe('sed flags & files', () => {
     expect(h.out()).toBe('Xaa');
   });
 });
+
+describe('sed brace groups', () => {
+  test('address-gated block runs only inside range', async () => {
+    const h = makeIO({ args: ['sed', '-n', '2,3{p}'], stdinText: 'a\nb\nc\nd\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('b\nc\n');
+  });
+
+  test('multiple commands in a block', async () => {
+    const h = makeIO({ args: ['sed', '-n', '/foo/{s/o/0/g;p}'], stdinText: 'foo\nbar\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('f00\n');
+  });
+
+  test('block skipped when address does not match', async () => {
+    const h = makeIO({ args: ['sed', '/zzz/{s/a/X/}'], stdinText: 'aaa\nbbb\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('aaa\nbbb\n');
+  });
+
+  test('nested blocks', async () => {
+    const h = makeIO({ args: ['sed', '-n', '1,3{/b/{p}}'], stdinText: 'a\nb\nbc\nbd\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('b\nbc\n');
+  });
+
+  test('block with newline-separated commands', async () => {
+    const h = makeIO({ args: ['sed', '-n', '1{\np\n}'], stdinText: 'x\ny\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('x\n');
+  });
+});
+
+describe('sed hold space', () => {
+  test('h then g copies via hold', async () => {
+    const h = makeIO({ args: ['sed', '-n', '1h;2{g;p}'], stdinText: 'first\nsecond\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('first\n');
+  });
+
+  test('x exchanges pattern and hold', async () => {
+    // Line1: x swaps empty hold in, hold=line1. Line2: x swaps line1 in.
+    const h = makeIO({ args: ['sed', 'x'], stdinText: 'a\nb\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('\na\n');
+  });
+
+  test('H appends to hold with newline; G appends hold to pattern', async () => {
+    const h = makeIO({ args: ['sed', '-n', '1!H;$!d;x;s/\\n/,/g;p'], stdinText: 'a\nb\nc\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    // hold collects "\nb\nc" (line1 not H'd), x brings it to pattern; commas join.
+    expect(h.out()).toBe(',b,c\n');
+  });
+
+  test('tac via sed: 1!G;h;$!d reverses lines', async () => {
+    const h = makeIO({ args: ['sed', '1!G;h;$!d'], stdinText: 'a\nb\nc\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('c\nb\na\n');
+  });
+});
+
+describe('sed branching', () => {
+  test('b to label skips intervening commands', async () => {
+    const h = makeIO({ args: ['sed', 'bskip;s/a/X/;:skip'], stdinText: 'aaa\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('aaa\n');
+  });
+
+  test('b with no label ends the script (skips later cmds)', async () => {
+    const h = makeIO({ args: ['sed', '/foo/b;s/./X/'], stdinText: 'foo\nbar\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('foo\nXar\n');
+  });
+
+  test('t branches only after a successful s///', async () => {
+    const h = makeIO({ args: ['sed', 's/a/X/;ttaken;s/b/Y/;:taken'], stdinText: 'ab\ncb\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    // line1: a→X succeeds, t taken, b not changed. line2: no a, b→Y.
+    expect(h.out()).toBe('Xb\ncY\n');
+  });
+
+  test('T branches when NO s/// succeeded', async () => {
+    const h = makeIO({ args: ['sed', 's/a/X/;Tnone;s/$/!/;:none'], stdinText: 'a\nb\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    // line1: a→X succeeds, T not taken, append !. line2: no a, T taken, skip.
+    expect(h.out()).toBe('X!\nb\n');
+  });
+
+  test('loop with t: collapse runs of spaces to one', async () => {
+    const h = makeIO({ args: ['sed', ':a;s/  / /;ta'], stdinText: 'x      y\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('x y\n');
+  });
+});
+
+describe('sed N/D/P multiline', () => {
+  test('N joins next line into pattern space', async () => {
+    const h = makeIO({ args: ['sed', 'N;s/\\n/ /'], stdinText: 'a\nb\nc\nd\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a b\nc d\n');
+  });
+
+  test('P prints first line of pattern space', async () => {
+    const h = makeIO({ args: ['sed', '-n', 'N;P'], stdinText: 'a\nb\nc\nd\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\nc\n');
+  });
+
+  test('N;P;D sliding window (join pairs idiom retains all lines)', async () => {
+    // The classic "$!N;/\n/P;D" style: P prints first, D deletes & restarts.
+    const h = makeIO({ args: ['sed', 'N;P;D'], stdinText: '1\n2\n3\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('1\n2\n3\n');
+  });
+
+  test('D restarts cycle: squeeze blank lines (cat -s idiom)', async () => {
+    // Canonical GNU idiom combining brace group + N + D.
+    const h = makeIO({ args: ['sed', '/^$/{N;/^\\n$/D}'], stdinText: 'a\n\n\n\nb\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\n\nb\n');
+  });
+});
+
+describe('sed step & relative addresses', () => {
+  test('1~2 matches odd lines', async () => {
+    const h = makeIO({ args: ['sed', '-n', '1~2p'], stdinText: 'a\nb\nc\nd\ne\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\nc\ne\n');
+  });
+
+  test('0~3 matches every third line', async () => {
+    const h = makeIO({ args: ['sed', '-n', '0~3p'], stdinText: 'a\nb\nc\nd\ne\nf\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('c\nf\n');
+  });
+
+  test('addr,+N selects N lines after the match', async () => {
+    const h = makeIO({ args: ['sed', '-n', '/b/,+1p'], stdinText: 'a\nb\nc\nd\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('b\nc\n');
+  });
+
+  test('addr,~N runs until line multiple of N', async () => {
+    const h = makeIO({ args: ['sed', '-n', '2,~3p'], stdinText: 'a\nb\nc\nd\ne\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    // starts at 2, ends at next multiple of 3 = line 3.
+    expect(h.out()).toBe('b\nc\n');
+  });
+});
+
+describe('sed c on a range emits once', () => {
+  test('c over a range emits change text once at range end', async () => {
+    const h = makeIO({ args: ['sed', '2,3c CHANGED'], stdinText: 'a\nb\nc\nd\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\nCHANGED\nd\n');
+  });
+
+  test('c on a single line still emits per matching line', async () => {
+    const h = makeIO({ args: ['sed', '/x/c Y'], stdinText: 'x\nx\nz\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('Y\nY\nz\n');
+  });
+});
+
+describe('sed negation', () => {
+  test('addr! runs command on non-matching lines', async () => {
+    const h = makeIO({ args: ['sed', '-n', '2!p'], stdinText: 'a\nb\nc\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\nc\n');
+  });
+});
