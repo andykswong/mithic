@@ -5,6 +5,8 @@ export type {
   SpawnResult,
   LaunchContext,
   GuestLauncher,
+  RelayContext,
+  RelayLauncher,
 } from './kernel.ts';
 export { CapabilityManager } from './capability-manager.ts';
 export type { FsOperation } from './capability-manager.ts';

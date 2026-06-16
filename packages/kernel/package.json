@@ -41,8 +41,8 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/protocol": "2.0.0",
     "@mithic/io": "^2.0.0",
+    "@mithic/protocol": "2.0.0",
     "@mithic/runtime": "2.0.0"
   },
   "devDependencies": {
