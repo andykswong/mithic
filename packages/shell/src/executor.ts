@@ -1,18 +1,17 @@
 /**
- * KNOWN LIMITATIONS (as of J.7)
+ * External command spawning is LIVE: non-builtin commands fork CHILD processes
+ * via the kernel's `process/spawn` / `process/pipeline` syscalls (see the shell
+ * guest's KernelClient in `process.ts`). Builtins still run in-process
+ * (builtin-first dispatch); only non-builtins spawn. The kernel owns command
+ * resolution — the shell spawns by NAME and the kernel maps it to guest code.
  *
- * (a) External command spawning: the executor's spawn path is fully implemented
- *     and mock-tested, but is unreachable from a real guest. Spawning external
- *     (non-builtin) commands requires a `process/spawn` kernel syscall that does
- *     not yet exist in the Mithic 2.0 kernel. It will land in a future kernel
- *     milestone; until then only builtins are executable from a real shell guest.
+ * STILL DEFERRED:
  *
- * (b) `$?` / `$PIPESTATUS`, glob expansion, brace expansion, shell functions,
- *     and job control are deferred to J.8.
+ * (a) `$?` / `$PIPESTATUS`, glob expansion, brace expansion, shell functions,
+ *     and job control.
  *
- * (c) Input redirects (`<`), heredocs (`<<`), and fd-dup redirects (`2>`, etc.)
- *     are deferred to J.8. Attempting to use them raises an explicit error;
- *     they are never silently dropped.
+ * (b) Input redirects (`<`), heredocs (`<<`), and fd-dup redirects (`2>`, etc.).
+ *     Attempting to use them raises an explicit error; never silently dropped.
  */
 
 import type { Program, Redirect, SimpleCommand, Statement } from './ast.ts';
@@ -172,9 +171,9 @@ export class Executor {
     const expanded = stages.map((s) => this.expandCommand(s, expander));
 
     // If EVERY stage is a builtin, run the pipeline in-process: each stage's
-    // captured stdout becomes the next stage's stdin. This is the realistic E2E
-    // path for the current kernel, which exposes no process-spawn syscall — the
-    // shell guest cannot fork children, so builtin pipelines run internally.
+    // captured stdout becomes the next stage's stdin. Builtins always run
+    // in-process (they mutate shell state); only pipelines containing a
+    // non-builtin fork child processes via the kernel (see below).
     if (expanded.every((e) => isBuiltin(e.name))) {
       let stdin = '';
       let status = 0;
@@ -199,6 +198,7 @@ export class Executor {
     const stageParams: PipelineStageParams[] = [];
     for (let i = 0; i < expanded.length; i++) {
       const { name, argv, env } = expanded[i];
+      const isLast = i === expanded.length - 1;
       const code = this.resolve(name);
       if (code === undefined) {
         this.writeStderr(`shell: ${name}: command not found\n`);
@@ -209,11 +209,14 @@ export class Executor {
         args: [name, ...argv],
         env: { ...this.context.env, ...env },
         cwd: this.context.cwd,
+        // Capture the final stage's stdout so the shell can forward it to its own.
+        captureStdout: isLast,
       });
     }
 
     if (this.kernel.runPipeline) {
       const result = await this.kernel.runPipeline(stageParams);
+      if (result.lastStdout) await this.writeCaptured(result.lastStdout);
       return result.exitCodes[result.exitCodes.length - 1] ?? 0;
     }
 
@@ -221,6 +224,8 @@ export class Executor {
     const handles = await Promise.all(
       stageParams.map((p) => this.kernel.spawn(toSpawnParams(p))),
     );
+    const last = handles[handles.length - 1];
+    if (last?.stdout) await this.writeCaptured(last.stdout);
     const waits = await Promise.all(handles.map((h) => this.kernel.wait(h.pid)));
     return waits[waits.length - 1]?.code ?? 0;
   }
@@ -284,12 +289,10 @@ export class Executor {
       return status;
     }
 
-    // External command: resolve to guest code and spawn.
-    //
-    // DEFERRED (J.7): spawning external commands requires a `process/spawn`
-    // kernel syscall that does not yet exist in the Mithic 2.0 kernel. The spawn
-    // path below is implemented and mock-tested but is unreachable from a real
-    // guest until that syscall lands. See also Fix 3 comment below.
+    // External command: resolve the name (the shell defers to the kernel's
+    // command resolver — `resolve` just passes the name through) and spawn a
+    // child via the KernelClient, which issues the `process/spawn` family of
+    // syscalls. The child's stdout is captured and forwarded to the shell's own.
     const code = this.resolve(name);
     if (code === undefined) {
       return 127; // command not found
@@ -299,9 +302,11 @@ export class Executor {
       args: [name, ...argv],
       env: { ...this.context.env, ...localEnv },
       cwd: this.context.cwd,
-      captureStdout: false,
+      captureStdout: true,
     };
     const handle = await this.kernel.spawn(params);
+    // Forward the child's captured stdout to the shell's stdout, then reap it.
+    if (handle.stdout) await this.writeCaptured(handle.stdout);
     const { code: status } = await this.kernel.wait(handle.pid);
     return status;
   }
@@ -400,6 +405,12 @@ export class Executor {
     const sink = (s: string) => fs.fsWrite(fd, s);
     sink.close = () => fs.fsClose(fd);
     return sink;
+  }
+
+  /** Decode captured child stdout bytes and forward them to the shell's stdout. */
+  private async writeCaptured(bytes: Promise<Uint8Array>): Promise<void> {
+    const out = await bytes;
+    if (out.byteLength > 0) this.writeStdout(new TextDecoder().decode(out));
   }
 
   protected writeStdout(s: string): void {

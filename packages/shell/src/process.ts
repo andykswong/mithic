@@ -6,27 +6,78 @@
  * {@link Executor} whose stdout sink writes to the guest's `mithic.stdout`
  * stream, runs the parsed program, and exits with the program's status.
  *
- * KernelClient note: the current kernel exposes no process-spawn syscall, so a
- * shell guest cannot fork children. The executor therefore runs builtins (incl.
- * `echo`/`cat`) in-process and wires pipelines internally. The KernelClient here
- * is a stub whose `spawn` rejects — external-command pipelines aren't reachable
- * yet (they will be once a `process/spawn` syscall lands).
+ * External commands: the shell forks CHILD processes via the kernel's
+ * `process/spawn` / `process/pipeline` syscalls (see {@link makeKernelClient}).
+ * Builtins still run in-process (builtin-first dispatch); only non-builtins
+ * spawn. The kernel OWNS what commands exist — the shell spawns by NAME and the
+ * kernel's command resolver maps it to guest code (or returns ENOENT).
  */
 import { createGuest } from '@mithic/guest-runtime';
 import type { Guest } from '@mithic/guest-runtime';
 import { Executor } from './executor.ts';
-import type { KernelClient } from './kernel-client.ts';
+import type {
+  KernelClient,
+  PipelineRunResult,
+  PipelineStageParams,
+  SpawnHandle,
+  SpawnParams,
+} from './kernel-client.ts';
 import { parse } from './parser.ts';
 
-/** A KernelClient stub for guests that cannot spawn (no process syscall yet). */
-const NO_SPAWN_CLIENT: KernelClient = {
-  async spawn() {
-    throw Object.assign(new Error('process/spawn unsupported in this sandbox'), { code: 'ENOSYS' });
-  },
-  async wait(pid: number) {
-    return { pid, code: 0 };
-  },
-};
+/**
+ * Build a real {@link KernelClient} backed by the guest's `process/*` syscalls.
+ *
+ * - `spawn` runs a single external command as a one-stage `process/pipeline`,
+ *   capturing its stdout (the kernel returns the bytes), so the executor can
+ *   write the child's output to the shell's own stdout.
+ * - `runPipeline` issues a single `process/pipeline` syscall; the kernel wires
+ *   the stages with zero-hop pipes, narrows each child's caps from the shell,
+ *   resolves command names, and captures the final stage's stdout.
+ * - `wait` returns the exit code recorded by the preceding spawn (the pipeline
+ *   syscall already awaited the child's exit).
+ *
+ * Command NAME resolution is delegated to the kernel: the shell passes the bare
+ * name as `path` and the kernel's resolver maps it (the shell does NOT itself
+ * know what external commands exist).
+ */
+function makeKernelClient(guest: Guest): KernelClient {
+  // pid -> exit code, recorded as each spawn/pipeline completes so a following
+  // wait(pid) can report it without a second syscall.
+  const exitCodes = new Map<number, number>();
+  let synthPid = -1; // synthetic pids for spawns (the syscall returns bytes, not a live pid).
+
+  return {
+    async spawn(params: SpawnParams): Promise<SpawnHandle> {
+      const [name, ...rest] = params.args ?? [];
+      const r = (await guest.syscall('process/pipeline', {
+        stages: [{ path: params.code instanceof URL ? params.code.href : String(params.code), argv: [name, ...rest], env: params.env, cwd: params.cwd }],
+      })) as { exitCodes: number[]; stdout: Uint8Array };
+      const pid = synthPid--;
+      exitCodes.set(pid, r.exitCodes[r.exitCodes.length - 1] ?? 0);
+      return { pid, stdout: Promise.resolve(r.stdout) };
+    },
+    async wait(pid: number) {
+      return { pid, code: exitCodes.get(pid) ?? 0 };
+    },
+    async runPipeline(stages: PipelineStageParams[]): Promise<PipelineRunResult> {
+      const r = (await guest.syscall('process/pipeline', {
+        stages: stages.map((s) => ({
+          path: s.code instanceof URL ? s.code.href : String(s.code),
+          argv: s.args ?? [],
+          env: s.env,
+          cwd: s.cwd,
+        })),
+      })) as { exitCodes: number[]; stdout: Uint8Array };
+      const pids = stages.map(() => synthPid--);
+      return {
+        pids,
+        exitCodes: r.exitCodes,
+        lastStdout: Promise.resolve(r.stdout),
+        stderr: stages.map(() => undefined),
+      };
+    },
+  };
+}
 
 /** Read the guest's stdin stream fully into a string. */
 async function readAll(guest: Guest): Promise<string> {
@@ -62,9 +113,13 @@ export default async function main(boot: unknown): Promise<void> {
     const script = guest.args.length > 1 ? guest.args.slice(1).join(' ') : await readAll(guest);
 
     const executor = new Executor(
-      NO_SPAWN_CLIENT,
+      makeKernelClient(guest),
       { cwd: guest.cwd, env: { ...guest.env } },
-      { onStdout, onStderr },
+      // The shell resolves bare command names by deferring to the KERNEL: it
+      // passes the name straight through as spawnable "code" and the kernel's
+      // command resolver maps it (or returns ENOENT). The shell does not itself
+      // enumerate external commands.
+      { onStdout, onStderr, resolve: (name) => name },
     );
     code = await executor.run(parse(script));
   } catch (err) {

@@ -12,7 +12,9 @@ reads a script, runs it, and writes to its stdio streams like any other guest.
   `export`, `echo`, `printf`, `cat`, `test`/`[`, `true`, `false`, …).
 - `Executor` — runs a parsed `Program` against a `KernelClient`, wiring pipelines
   and redirects; builtin pipelines (e.g. `echo hi | cat`) run in-process.
-- `runScript(src)` — boots a real kernel + runtime and runs a script end-to-end.
+- `runScript(src, { commands })` — boots a real kernel + runtime and runs a
+  script end-to-end; `commands` registers external (non-builtin) commands the
+  shell can spawn by name.
 
 ## Quick start
 
@@ -35,7 +37,19 @@ const executor = new Executor(kernelClient, { cwd: '/', env: {} }, {
 await executor.run(parse('echo hi | cat'));
 ```
 
-> **Known limitation:** spawning EXTERNAL (non-builtin) commands needs a
-> `process/spawn` kernel syscall that does not exist yet, so a real shell guest
-> can currently only run builtins. The executor's external-spawn path is
-> implemented and mock-tested, ready for that syscall.
+### External commands
+
+Non-builtin commands fork CHILD processes via the kernel's `process/spawn` /
+`process/pipeline` syscalls. Builtins still run in-process (builtin-first
+dispatch); only non-builtins spawn. The kernel owns command resolution — the
+shell spawns by NAME and the kernel maps it to spawnable guest code (an
+unknown name yields ENOENT). Register external commands when booting:
+
+```ts
+const { stdout } = await runScript('greet world | upper', {
+  commands: { greet: GREET_GUEST_CODE, upper: UPPER_GUEST_CODE },
+});
+```
+
+> **Still deferred:** `$?` / `$PIPESTATUS`, glob/brace expansion, shell
+> functions, job control, and input redirects (`<`, `<<`, fd-dup).

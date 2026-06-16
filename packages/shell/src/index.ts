@@ -39,6 +39,16 @@ export interface RunScriptResult {
 }
 
 /**
+ * Options for {@link runScript}. `commands` registers inline guest programs the
+ * shell can spawn by name as external (non-builtin) commands — the kernel's
+ * command resolver maps each name to the supplied spawnable code.
+ */
+export interface RunScriptOptions {
+  /** Map of external command name → spawnable guest code (inline ESM source or URL). */
+  commands?: Record<string, string | URL>;
+}
+
+/**
  * Boot a real {@link Kernel} over a {@link WorkerRuntime} and run a shell script
  * end-to-end, returning the shell's captured stdout and exit code.
  *
@@ -47,8 +57,13 @@ export interface RunScriptResult {
  * environment `Worker` is undefined, so the kernel's in-process launcher runs the
  * guest on the same thread — which is fine: the shell's interpreter logic is what
  * this exercises. The script is passed as a guest argument.
+ *
+ * The shell is granted a `process` capability so it can fork children; external
+ * commands registered via `options.commands` are resolved by the kernel's
+ * command resolver and spawned through the `process/spawn` / `process/pipeline`
+ * syscalls.
  */
-export async function runScript(src: string): Promise<RunScriptResult> {
+export async function runScript(src: string, options: RunScriptOptions = {}): Promise<RunScriptResult> {
   const [{ Kernel }, { WorkerRuntime }, { FileSystemRouter, MemoryFsProvider }] = await Promise.all([
     import('@mithic/kernel'),
     import('@mithic/runtime/backends/worker'),
@@ -57,7 +72,15 @@ export async function runScript(src: string): Promise<RunScriptResult> {
 
   const vfs = new FileSystemRouter();
   await vfs.mount('/', new MemoryFsProvider());
-  const kernel = new Kernel({ runtime: new WorkerRuntime(), vfs });
+
+  const commands = options.commands ?? {};
+  const kernel = new Kernel({
+    runtime: new WorkerRuntime(),
+    vfs,
+    // The kernel OWNS what external commands exist: it resolves a bare name to
+    // the registered inline guest code, or returns undefined → ENOENT.
+    resolveCommand: (name) => commands[name],
+  });
 
   // The built guest entry. Resolves to packages/shell/dist/process.js whether
   // this module runs from src (vitest) or dist (published).
@@ -65,6 +88,7 @@ export async function runScript(src: string): Promise<RunScriptResult> {
 
   const { pid, stdout } = await kernel.spawn(guestUrl, {
     args: ['shell', src],
+    capabilities: [{ type: 'process' }],
     captureStdout: true,
   });
   const { code } = await kernel.wait(pid);
