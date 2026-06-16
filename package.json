@@ -80,6 +80,7 @@
     "./packages/commands/jq",
     "./packages/commands/curl",
     "./packages/shell",
+    "./packages/shell-js",
     "./packages/examples/component-js",
     "./packages/examples/component-rust",
     "./packages/examples/shell"

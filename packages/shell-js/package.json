@@ -1,0 +1,52 @@
+{
+  "name": "@mithic/shell-js",
+  "version": "2.0.0",
+  "description": "Isola POSIX-style shell — a TypeScript shell interpreter running as a regular Isola process",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "/dist"
+  ],
+  "scripts": {
+    "clean": "rimraf dist *.tsbuildinfo",
+    "prebuild": "npm run lint",
+    "build": "vite build",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andykswong/mithic.git"
+  },
+  "keywords": [
+    "mithic",
+    "isola",
+    "shell",
+    "posix",
+    "typescript"
+  ],
+  "author": "Andy K.S. Wong <andykswong@outlook.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/andykswong/mithic/issues"
+  },
+  "homepage": "https://github.com/andykswong/mithic",
+  "dependencies": {
+    "@mithic/protocol": "2.0.0",
+    "@mithic/guest-runtime": "2.0.0"
+  },
+  "devDependencies": {
+    "@mithic/io": "2.0.0",
+    "@mithic/kernel": "2.0.0",
+    "@mithic/runtime": "2.0.0"
+  }
+}
