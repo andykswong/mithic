@@ -32,9 +32,9 @@ interface ImageViewerHandle {
 
 /**
  * Render the drop-zone + preview <img> into `doc.body` and wire the file-drop
- * flow. Returns a small handle so a test harness inside the guest can drive a
- * synthetic drop without a real pointer interaction. Pure DOM, no I/O — exported
- * so it can be unit-tested in a plain document as well.
+ * flow. Returns a handle so the caller (or an in-iframe test harness) can drive
+ * a synthetic drop without a real pointer interaction. Pure DOM, no I/O.
+ * Exported for reuse by callers that need programmatic access to the viewer.
  */
 export function renderImageViewer(
   doc: Document,
@@ -87,12 +87,9 @@ export default async function main(boot: unknown): Promise<void> {
   const encoder = new TextEncoder();
   const emit = (line: string): Promise<void> => writer.write(encoder.encode(`${line}\n`));
 
-  const handle = renderImageViewer(document, (url) => {
+  renderImageViewer(document, (url) => {
     void emit(`img-rendered:${url}`);
   });
-  // Expose the handle so an in-iframe test harness can trigger a synthetic drop
-  // (the opaque-origin sandbox prevents the host from dispatching it externally).
-  (globalThis as { __imageViewer?: ImageViewerHandle }).__imageViewer = handle;
 
   await emit('ready');
 
