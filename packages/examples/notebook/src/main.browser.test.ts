@@ -3,7 +3,7 @@
  *
  * Verifies the two capstone outcomes:
  *   1. xterm <-> shell round-trip: typing `echo hi | cat\n` runs the real
- *      shell-js interpreter (in-process builtin pipeline) and `hi` appears in
+ *      shell interpreter (in-process builtin pipeline) and `hi` appears in
  *      the terminal buffer.
  *   2. Inline GUI: typing `open-image\n` spawns the image-viewer GUI process via
  *      Kernel + IframeRuntime in `display:inline`, mounting an iframe into the

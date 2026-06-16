@@ -2,14 +2,14 @@
  * `@mithic/example-notebook` — an xterm.js shell notebook frontend.
  *
  * This is the capstone integration: a browser page that boots an Mithic
- * {@link Kernel}, renders an xterm.js terminal, runs the `@mithic/shell-js`
+ * {@link Kernel}, renders an xterm.js terminal, runs the `@mithic/shell`
  * shell wired to that terminal, and renders GUI processes (the image-viewer)
  * inline as placed iframes.
  *
  * Wiring (xterm <-> shell):
  *   - Keystrokes from xterm's `onData` accumulate into a line buffer; Enter
  *     submits the line.
- *   - The submitted line is fed to the shell-js {@link Executor} (the real shell
+ *   - The submitted line is fed to the shell {@link Executor} (the real shell
  *     interpreter) whose `onStdout`/`onStderr` sinks write straight back into the
  *     terminal. `echo hi | cat` therefore round-trips entirely through the
  *     shell's in-process builtin pipeline.
@@ -18,19 +18,19 @@
  *     {@link IframeRuntime} mounts the resulting iframe into the results pane.
  *
  * DEFERRED — shell-driven external spawn:
- *   The shell-js shell can only run builtins in-process; spawning an EXTERNAL
+ *   The shell shell can only run builtins in-process; spawning an EXTERNAL
  *   process (so the SHELL itself launches the image-viewer) needs a
  *   `process/spawn` kernel syscall that does not exist yet. Until it lands, the
  *   notebook intercepts `open-image` at the frontend and spawns the GUI directly
  *   via the kernel — which still proves inline GUI rendering end-to-end. See the
- *   shell-js executor header (KNOWN LIMITATIONS) for the syscall status.
+ *   shell executor header (KNOWN LIMITATIONS) for the syscall status.
  */
 import { Terminal } from '@xterm/xterm';
 import { Kernel } from '@mithic/kernel';
 import { IframeRuntime } from '@mithic/runtime/backends/iframe';
 import { FileSystemRouter, MemoryFsProvider } from '@mithic/io/vfs';
-import { Executor, parse } from '@mithic/shell-js';
-import type { KernelClient } from '@mithic/shell-js';
+import { Executor, parse } from '@mithic/shell';
+import type { KernelClient } from '@mithic/shell';
 
 /* eslint-disable @stylistic/indent -- embedded guest JS string */
 /** Inline guest source for the image-viewer (opaque-origin iframe cannot import @mithic/*). */

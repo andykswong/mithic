@@ -12,7 +12,7 @@ import { defineConfig } from 'vitest/config';
 // package `test` scripts and MUST NOT be picked up here — their suites are written
 // for node:test and fail under vitest. As each legacy area is migrated to vitest,
 // add its path to the allowlist below (e.g. Group C adds 'packages/io/src/vfs/**').
-const ISOLA_PACKAGES = '{protocol,runtime,guest-runtime,kernel,shell-js,server}';
+const MITHIC_PACKAGES = '{protocol,runtime,guest-runtime,kernel,shell,server}';
 
 export default defineConfig({
   test: {
@@ -21,7 +21,7 @@ export default defineConfig({
       {
         test: {
           name: 'node',
-          include: [`packages/${ISOLA_PACKAGES}/src/**/*.test.ts`, 'packages/io/src/vfs/**/*.test.ts'],
+          include: [`packages/${MITHIC_PACKAGES}/src/**/*.test.ts`, 'packages/io/src/vfs/**/*.test.ts'],
           exclude: ['**/*.browser.test.ts', '**/node_modules/**', '**/dist/**'],
           environment: 'node',
         },
@@ -33,7 +33,7 @@ export default defineConfig({
         test: {
           name: 'browser',
           include: [
-            `packages/${ISOLA_PACKAGES}/src/**/*.browser.test.ts`,
+            `packages/${MITHIC_PACKAGES}/src/**/*.browser.test.ts`,
             'packages/io/src/vfs/**/*.browser.test.ts',
             // Group P example packages (image-viewer GUI process + xterm notebook).
             'packages/examples/{image-viewer,notebook}/src/**/*.browser.test.ts',

@@ -67,7 +67,7 @@
     "./packages/runtime",
     "./packages/kernel",
     "./packages/io",
-    "./packages/shell-js",
+    "./packages/shell",
     "./packages/server",
     "./packages/examples/shell",
     "./packages/examples/image-viewer",

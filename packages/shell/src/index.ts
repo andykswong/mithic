@@ -1,5 +1,5 @@
 /**
- * `@mithic/shell-js` — a POSIX-style shell interpreter that runs as a regular
+ * `@mithic/shell` — a POSIX-style shell interpreter that runs as a regular
  * Mithic process.
  *
  * Public surface:
@@ -59,7 +59,7 @@ export async function runScript(src: string): Promise<RunScriptResult> {
   await vfs.mount('/', new MemoryFsProvider());
   const kernel = new Kernel({ runtime: new WorkerRuntime(), vfs });
 
-  // The built guest entry. Resolves to packages/shell-js/dist/process.js whether
+  // The built guest entry. Resolves to packages/shell/dist/process.js whether
   // this module runs from src (vitest) or dist (published).
   const guestUrl = new URL('../dist/process.js', import.meta.url);
 

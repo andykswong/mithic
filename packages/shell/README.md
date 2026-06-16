@@ -1,4 +1,4 @@
-# @mithic/shell-js
+# @mithic/shell
 
 A POSIX-style shell interpreter that runs as a regular Mithic process. It is a
 plain TypeScript shell — lexer, parser, expander, builtins, and executor — that
@@ -17,7 +17,7 @@ reads a script, runs it, and writes to its stdio streams like any other guest.
 ## Quick start
 
 ```ts
-import { runScript } from '@mithic/shell-js';
+import { runScript } from '@mithic/shell';
 
 const { stdout, code } = await runScript('echo hello | cat');
 // stdout === 'hello\n', code === 0
@@ -26,7 +26,7 @@ const { stdout, code } = await runScript('echo hello | cat');
 ### Driving the executor directly (e.g. an interactive terminal)
 
 ```ts
-import { Executor, parse } from '@mithic/shell-js';
+import { Executor, parse } from '@mithic/shell';
 
 const executor = new Executor(kernelClient, { cwd: '/', env: {} }, {
   onStdout: (s) => term.write(s),

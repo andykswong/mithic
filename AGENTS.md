@@ -12,14 +12,14 @@ packages/
 ├── guest-runtime/  @mithic/guest-runtime  — in-sandbox guest API: createGuest(boot) → {syscall, stdio streams, onSignal, onDomEvent, exit}; Remote DOM client
 ├── runtime/        @mithic/runtime        — pluggable execution backends: Worker, iframe (GUI/opaque-origin), QuickJS, isolated-vm
 ├── kernel/         @mithic/kernel         — the Kernel: process lifecycle, IPC broker, capability manager, syscall dispatch, pipelines, Remote DOM host
-├── shell-js/       @mithic/shell-js       — POSIX-style shell interpreter (lexer/parser/expander/builtins/executor) running as a regular Mithic process
+├── shell/          @mithic/shell       — POSIX-style shell interpreter (lexer/parser/expander/builtins/executor) running as a regular Mithic process
 ├── server/         @mithic/server         — host-side server integration
 ├── io/             @mithic/io             — VFS router, providers, HTTP/sockets (VFS used by Mithic Vitest suite)
 ├── worker/         @mithic/worker         — Web Worker polyfill for Node.js (isomorphic new Worker())
 └── examples/
     ├── shell/        @mithic/example-shell        — xterm.js terminal (pending re-adaptation to Mithic JS shell)
     ├── image-viewer/ @mithic/example-image-viewer — GUI Mithic process: drop-zone + <img> rendered in its own sandboxed iframe DOM
-    └── notebook/     @mithic/example-notebook     — xterm.js shell notebook: boots Kernel + IframeRuntime, drives @mithic/shell-js
+    └── notebook/     @mithic/example-notebook     — xterm.js shell notebook: boots Kernel + IframeRuntime, drives @mithic/shell
 ```
 
 > The original WASM/WASI P2 packages (shell, coreutils, jq, curl, wasip2, process, wasm-transpile) are removed from this branch. They are preserved on the `wasm` branch (and `origin/main`).
