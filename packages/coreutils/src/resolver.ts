@@ -36,6 +36,8 @@ export const COMMAND_NAMES = [
   'grep', 'egrep', 'fgrep', 'sed',
   // awk
   'awk',
+  // xargs
+  'xargs',
 ] as const;
 
 export type CoreutilsCommandName = typeof COMMAND_NAMES[number];
