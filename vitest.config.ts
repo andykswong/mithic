@@ -21,7 +21,11 @@ export default defineConfig({
       {
         test: {
           name: 'node',
-          include: [`packages/${MITHIC_PACKAGES}/src/**/*.test.ts`, 'packages/io/src/vfs/**/*.test.ts'],
+          include: [
+            `packages/${MITHIC_PACKAGES}/src/**/*.test.ts`,
+            'packages/io/src/vfs/**/*.test.ts',
+            'packages/commands/*/src/**/*.test.ts',
+          ],
           exclude: ['**/*.browser.test.ts', '**/node_modules/**', '**/dist/**'],
           environment: 'node',
         },
@@ -35,6 +39,7 @@ export default defineConfig({
           include: [
             `packages/${MITHIC_PACKAGES}/src/**/*.browser.test.ts`,
             'packages/io/src/vfs/**/*.browser.test.ts',
+            'packages/commands/*/src/**/*.browser.test.ts',
             // Group P example packages (image-viewer GUI process + xterm notebook).
             'packages/examples/{image-viewer,notebook}/src/**/*.browser.test.ts',
           ],

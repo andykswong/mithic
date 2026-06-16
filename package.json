@@ -69,6 +69,7 @@
     "./packages/io",
     "./packages/shell",
     "./packages/coreutils",
+    "./packages/commands/curl",
     "./packages/server",
     "./packages/examples/shell",
     "./packages/examples/image-viewer",
