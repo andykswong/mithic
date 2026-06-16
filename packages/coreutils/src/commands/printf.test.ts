@@ -41,6 +41,31 @@ describe('sprintfAll', () => {
   });
   test('\\n in format', () => expect(sprintfAll('a\\nb', [])).toBe('a\nb'));
   test('\\t in format', () => expect(sprintfAll('a\\tb', [])).toBe('a\tb'));
+
+  test('%d parses 0x hex args', () => expect(sprintfAll('%d', ['0xff'])).toBe('255'));
+  test('%d parses leading-zero octal args', () => expect(sprintfAll('%d', ['010'])).toBe('8'));
+  test('%d parses \'c char-code args', () => expect(sprintfAll('%d', ['\'A'])).toBe('65'));
+  test('%x parses 0x hex args', () => expect(sprintfAll('%x', ['0x10'])).toBe('10'));
+  test('%o parses hex arg', () => expect(sprintfAll('%o', ['0x8'])).toBe('10'));
+  test('%u parses octal arg', () => expect(sprintfAll('%u', ['010'])).toBe('8'));
+
+  test('%g uses scientific for large exponent', () => {
+    expect(sprintfAll('%g', ['1000000'])).toBe('1e+06');
+  });
+  test('%g uses scientific for small exponent', () => {
+    expect(sprintfAll('%g', ['0.00001'])).toBe('1e-05');
+  });
+  test('%g stays fixed within range', () => {
+    expect(sprintfAll('%g', ['100000'])).toBe('100000');
+    expect(sprintfAll('%g', ['0.0001'])).toBe('0.0001');
+  });
+  test('%g strips trailing zeros', () => {
+    expect(sprintfAll('%g', ['1.5'])).toBe('1.5');
+    expect(sprintfAll('%g', ['3'])).toBe('3');
+  });
+  test('%G uppercases exponent', () => {
+    expect(sprintfAll('%G', ['1000000'])).toBe('1E+06');
+  });
 });
 
 describe('printf command', () => {
