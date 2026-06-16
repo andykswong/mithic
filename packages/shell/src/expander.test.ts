@@ -150,6 +150,92 @@ test('quoted command sub is NOT word-split', async () => {
   expect(await e.expandWord('"$(echo)"')).toEqual(['a b c']);
 });
 
+// ── $@ / $* / ${arr[@]} field semantics (SH-1) ───────────────────────────────
+
+/** ShellEnv with positional params wired through getSpecial + getPositional. */
+function mkPositional(pos: string[], hooks: Partial<ShellEnv> = {}): ShellEnv {
+  return mkEnv({}, {
+    getSpecial: (n) => {
+      if (n === '@' || n === '*') return pos.join(' ');
+      if (n === '#') return String(pos.length);
+      if (/^[1-9][0-9]*$/.test(n)) return pos[parseInt(n, 10) - 1];
+      return undefined;
+    },
+    getPositional: () => pos,
+    ...hooks,
+  });
+}
+
+test('"$@" expands to one field per positional (no splitting within)', async () => {
+  const e = new Expander(mkPositional(['a', 'b c', 'd']));
+  expect(await e.expandWord('"$@"')).toEqual(['a', 'b c', 'd']);
+});
+
+test('unquoted $@ field-splits each positional', async () => {
+  const e = new Expander(mkPositional(['a', 'b c', 'd']));
+  expect(await e.expandWord('$@')).toEqual(['a', 'b', 'c', 'd']);
+});
+
+test('"$*" joins all positionals into a single field (first char of IFS)', async () => {
+  const e = new Expander(mkPositional(['a', 'b c', 'd']));
+  expect(await e.expandWord('"$*"')).toEqual(['a b c d']);
+});
+
+test('"$@" with no positionals expands to zero fields', async () => {
+  const e = new Expander(mkPositional([]));
+  expect(await e.expandWord('"$@"')).toEqual([]);
+});
+
+test('"$@" with one positional yields one field', async () => {
+  const e = new Expander(mkPositional(['only']));
+  expect(await e.expandWord('"$@"')).toEqual(['only']);
+});
+
+test('"pre$@post" boundary: pre joins first, post joins last', async () => {
+  const e = new Expander(mkPositional(['a', 'b', 'c']));
+  expect(await e.expandWord('"pre$@post"')).toEqual(['prea', 'b', 'cpost']);
+});
+
+test('"pre$@post" with single positional joins both sides into one field', async () => {
+  const e = new Expander(mkPositional(['x']));
+  expect(await e.expandWord('"pre$@post"')).toEqual(['prexpost']);
+});
+
+test('"pre$@post" with no positionals yields the concatenated literal', async () => {
+  const e = new Expander(mkPositional([]));
+  expect(await e.expandWord('"pre$@post"')).toEqual(['prepost']);
+});
+
+test('"$@" via ${@} brace form preserves fields', async () => {
+  const e = new Expander(mkPositional(['a', 'b c', 'd']));
+  expect(await e.expandWord('"${@}"')).toEqual(['a', 'b c', 'd']);
+});
+
+test('"$*" via ${*} brace form joins into one field', async () => {
+  const e = new Expander(mkPositional(['a', 'b c', 'd']));
+  expect(await e.expandWord('"${*}"')).toEqual(['a b c d']);
+});
+
+test('"${arr[@]}" expands to one field per element (embedded spaces kept)', async () => {
+  const e = E({}, { getArray: (n) => (n === 'a' ? ['1', '2 3', '4'] : undefined) });
+  expect(await e.expandWord('"${a[@]}"')).toEqual(['1', '2 3', '4']);
+});
+
+test('unquoted ${arr[@]} field-splits each element', async () => {
+  const e = E({}, { getArray: (n) => (n === 'a' ? ['1', '2 3', '4'] : undefined) });
+  expect(await e.expandWord('${a[@]}')).toEqual(['1', '2', '3', '4']);
+});
+
+test('"${arr[*]}" joins all elements into one field', async () => {
+  const e = E({}, { getArray: (n) => (n === 'a' ? ['1', '2 3', '4'] : undefined) });
+  expect(await e.expandWord('"${a[*]}"')).toEqual(['1 2 3 4']);
+});
+
+test('"pre${arr[@]}post" boundary semantics', async () => {
+  const e = E({}, { getArray: (n) => (n === 'a' ? ['1', '2', '3'] : undefined) });
+  expect(await e.expandWord('"pre${a[@]}post"')).toEqual(['pre1', '2', '3post']);
+});
+
 // ── glob ──────────────────────────────────────────────────────────────────
 
 test('glob * matches files in a directory', async () => {
