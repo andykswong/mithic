@@ -39,8 +39,14 @@ export function looksNumeric(v: Value): boolean {
  * (default `%.6g`). `ofmt` lets `print` pass OFMT while concat passes CONVFMT.
  */
 export function numToStr(n: number, fmt = '%.6g'): string {
-  if (Number.isInteger(n) && Math.abs(n) < 1e16) return String(n);
   if (!Number.isFinite(n)) return n > 0 ? 'inf' : (n < 0 ? '-inf' : 'nan');
+  // Integral values print as full integers (no exponent), matching gawk. For
+  // magnitudes within the exactly-representable range `String` is exact; beyond
+  // 2^53 `toFixed(0)` still renders the full (rounded) decimal expansion rather
+  // than switching to scientific notation the way `String` does at 1e21.
+  if (Number.isInteger(n)) {
+    return Math.abs(n) < 1e21 ? n.toFixed(0) : String(n);
+  }
   return sprintf(fmt, [n]);
 }
 

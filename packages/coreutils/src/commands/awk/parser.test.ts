@@ -196,6 +196,20 @@ describe('awk parser — statements', () => {
     expect((s as { redirect?: unknown }).redirect).toBeUndefined();
   });
 
+  test('parenthesized printf argument list', () => {
+    // `printf("%d %d\n",1,2)` — the parens wrap the whole arg list.
+    expect(stmts('printf("%d %d\\n",1,2)')[0])
+      .toMatchObject({ type: 'printf', args: [{}, {}, {}] });
+  });
+
+  test('parenthesized print argument list', () => {
+    expect(stmts('print(a,b)')[0]).toMatchObject({ type: 'print', args: [{}, {}] });
+  });
+
+  test('parenthesized list still allows (a,b) in arr', () => {
+    expect(expr('(a, b) in arr')).toMatchObject({ type: 'in', array: 'arr' });
+  });
+
   test('delete element and whole array', () => {
     expect(stmts('delete a[i]')[0]).toMatchObject({ type: 'delete', name: 'a', indices: [{}] });
     expect(stmts('delete a')[0]).toMatchObject({ type: 'delete', name: 'a' });

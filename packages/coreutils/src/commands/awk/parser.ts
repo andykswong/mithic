@@ -282,14 +282,19 @@ class Parser {
 
   private parsePrint(): Stmt {
     const kind = this.next().value as 'print' | 'printf';
-    const args: Expr[] = [];
+    let args: Expr[] = [];
     // `print` with no args prints `$0`. Otherwise parse a comma list with `>`
     // suppressed (so it can be a redirect).
     if (this.startsExpr() && !this.isRedirect()) {
-      args.push(this.parseExpr({ noIn: false, noGt: true }));
-      while (this.accept('op', ',')) {
-        this.optNewlines();
+      const grouped = this.tryParenArgList();
+      if (grouped) {
+        args = grouped;
+      } else {
         args.push(this.parseExpr({ noIn: false, noGt: true }));
+        while (this.accept('op', ',')) {
+          this.optNewlines();
+          args.push(this.parseExpr({ noIn: false, noGt: true }));
+        }
       }
     }
     let redirect: Redirect | undefined;
@@ -307,6 +312,39 @@ class Parser {
 
   private isRedirect(): boolean {
     return this.isOp('>') || this.isOp('>>') || this.isOp('|');
+  }
+
+  /**
+   * Recognize `print(a, b, ...)` / `printf(fmt, a, ...)` where the parentheses
+   * wrap the entire argument list. We only accept this when the leading `(`
+   * holds a comma-separated list whose closing `)` is followed by a print
+   * terminator or redirect (so it isn't `(a,b) in arr`, `(a)(b)` concat, or
+   * `(a > b)` grouped comparison). On any mismatch we backtrack and return
+   * undefined so the normal comma-list path handles it.
+   */
+  private tryParenArgList(): Expr[] | undefined {
+    if (!this.isOp('(')) return undefined;
+    const save = this.pos;
+    this.next(); // '('
+    const list: Expr[] = [this.parseExpr({ noIn: false, noGt: false })];
+    while (this.accept('op', ',')) {
+      this.optNewlines();
+      list.push(this.parseExpr({ noIn: false, noGt: false }));
+    }
+    // Need a closing `)` and more than one element to be a wrapped arg list.
+    if (list.length < 2 || !this.isOp(')')) { this.pos = save; return undefined; }
+    this.next(); // ')'
+    // `(a, b) in arr` is a membership test, not a print arg list.
+    if (this.isKw('in')) { this.pos = save; return undefined; }
+    // The `)` must end the print args: only a terminator or redirect may follow.
+    if (this.is('newline') || this.isOp(';') || this.isOp('}')
+      || this.atEof() || this.isRedirect()) {
+      return list;
+    }
+    // Anything else (concat, operator, etc.) means the parens were a grouped
+    // sub-expression of a larger first argument — fall back.
+    this.pos = save;
+    return undefined;
   }
 
   // ── expressions ──────────────────────────────────────────────────────────────
