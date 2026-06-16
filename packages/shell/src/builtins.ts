@@ -434,13 +434,216 @@ function evalTest(args: string[]): boolean {
   return false;
 }
 
+/**
+ * GNU/bash-compatible printf. Supports:
+ *   - conversions: %s %b %c %d %i %u %o %x %X %f %e %E %g %G %%
+ *   - flags `-` (left), `+` (sign), space, `0` (zero-pad), `#` (alt)
+ *   - width and precision, including `*` taking them from args
+ *   - format-string recycling: extra args reapply the format
+ *   - escapes in the format: \n \t \r \\ \a \b \f \v \" \xNN \0nnn \nnn
+ *   - %b interprets escapes in the ARGUMENT
+ *   - integer args: leading-`'`/`"` char code, 0x hex, 0 octal, or decimal
+ */
 function formatPrintf(format: string, args: string[]): string {
-  const fmt = format.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r');
+  const fmt = interpretEscapes(format, /*octalBackslashZero*/ true);
+  let out = '';
   let argi = 0;
-  return fmt.replace(/%[sd%]/g, (m) => {
-    if (m === '%%') return '%';
-    const v = args[argi++] ?? '';
-    if (m === '%d') return String(parseInt(v, 10) || 0);
-    return v;
-  });
+  const nextArg = (): string => args[argi++] ?? '';
+  // A single pass over the format; repeat while args remain and the format
+  // consumed at least one conversion (recycling). `consumedConversion` guards
+  // against infinite loops on formats with no conversions.
+  do {
+    const startArgi = argi;
+    let consumedConversion = false;
+    let i = 0;
+    while (i < fmt.length) {
+      const c = fmt[i];
+      if (c !== '%') { out += c; i++; continue; }
+      if (fmt[i + 1] === '%') { out += '%'; i += 2; continue; }
+      // Parse a conversion spec: %[flags][width][.precision]conv
+      const m = /^%([-+ 0#]*)(\*|\d+)?(?:\.(\*|\d+))?([sbcdiuoxXeEfgG])/.exec(fmt.slice(i));
+      if (!m) { out += c; i++; continue; } // lone % with no valid conversion
+      consumedConversion = true;
+      const [whole, flags] = m;
+      let width = m[2];
+      let prec = m[3];
+      if (width === '*') width = String(parseInt(nextArg(), 10) || 0);
+      if (prec === '*') prec = String(parseInt(nextArg(), 10) || 0);
+      const conv = m[4];
+      out += formatOne(conv, flags, width ? parseInt(width, 10) : undefined,
+        prec !== undefined ? parseInt(prec, 10) : undefined, nextArg());
+      i += whole.length;
+    }
+    if (!consumedConversion) break;           // no conversions ⇒ print once
+    if (argi === startArgi) break;            // conversions but consumed no args ⇒ stop
+  } while (argi < args.length);
+  return out;
+}
+
+/** Format a single conversion. `arg` is the raw string argument. */
+function formatOne(conv: string, flags: string, width: number | undefined, prec: number | undefined, arg: string): string {
+  const left = flags.includes('-');
+  const zero = flags.includes('0') && !left;
+  const plus = flags.includes('+');
+  const space = flags.includes(' ');
+  const alt = flags.includes('#');
+
+  let body: string;
+  let signPrefix = '';
+
+  switch (conv) {
+    case 's': {
+      body = arg;
+      if (prec !== undefined) body = body.slice(0, prec);
+      return pad(body, width, left, false);
+    }
+    case 'b': {
+      body = interpretEscapes(arg, /*octalBackslashZero*/ false);
+      if (prec !== undefined) body = body.slice(0, prec);
+      return pad(body, width, left, false);
+    }
+    case 'c': {
+      body = arg.slice(0, 1);
+      return pad(body, width, left, false);
+    }
+    case 'd': case 'i': case 'u': {
+      let v = parseIntArg(arg);
+      if (conv === 'u' && v < 0) v = v >>> 0;
+      const neg = v < 0;
+      let digits = Math.abs(v).toString(10);
+      if (prec !== undefined) { digits = digits.padStart(prec, '0'); if (prec === 0 && v === 0) digits = ''; }
+      signPrefix = neg ? '-' : plus ? '+' : space ? ' ' : '';
+      body = digits;
+      return padNum(signPrefix, body, width, left, zero && prec === undefined);
+    }
+    case 'o': case 'x': case 'X': {
+      let v = parseIntArg(arg);
+      if (v < 0) v = v >>> 0;
+      let digits = v.toString(conv === 'o' ? 8 : 16);
+      if (conv === 'X') digits = digits.toUpperCase();
+      if (prec !== undefined) { digits = digits.padStart(prec, '0'); if (prec === 0 && v === 0) digits = ''; }
+      let altPrefix = '';
+      if (alt && v !== 0) altPrefix = conv === 'o' ? '0' : conv === 'x' ? '0x' : '0X';
+      body = digits;
+      return padNum(altPrefix, body, width, left, zero && prec === undefined);
+    }
+    case 'f': case 'e': case 'E': case 'g': case 'G': {
+      const num = parseFloatArg(arg);
+      const p = prec ?? 6;
+      let s: string;
+      if (conv === 'f') s = Math.abs(num).toFixed(p);
+      else if (conv === 'e' || conv === 'E') s = formatExp(Math.abs(num), p, conv === 'E');
+      else s = formatG(Math.abs(num), prec === undefined ? 6 : (prec === 0 ? 1 : prec), conv === 'G', alt);
+      const neg = num < 0 || Object.is(num, -0);
+      signPrefix = neg ? '-' : plus ? '+' : space ? ' ' : '';
+      body = s;
+      return padNum(signPrefix, body, width, left, zero);
+    }
+    default:
+      return '';
+  }
+}
+
+/** Left/right pad a plain string to `width`. */
+function pad(s: string, width: number | undefined, left: boolean, _zero: boolean): string {
+  if (width === undefined || s.length >= width) return s;
+  const fill = ' '.repeat(width - s.length);
+  return left ? s + fill : fill + s;
+}
+
+/** Pad a numeric body that has a sign/prefix, honoring zero-fill between them. */
+function padNum(prefix: string, body: string, width: number | undefined, left: boolean, zero: boolean): string {
+  const total = prefix.length + body.length;
+  if (width === undefined || total >= width) return prefix + body;
+  const fillLen = width - total;
+  if (left) return prefix + body + ' '.repeat(fillLen);
+  if (zero) return prefix + '0'.repeat(fillLen) + body;
+  return ' '.repeat(fillLen) + prefix + body;
+}
+
+/** `%e` formatting: mantissa + e±NN (≥2 exponent digits). */
+function formatExp(n: number, prec: number, upper: boolean): string {
+  let s = n.toExponential(prec); // e.g. "1.234500e+4"
+  s = s.replace(/e([+-])(\d)$/, 'e$10$2'); // pad exponent to 2 digits
+  return upper ? s.toUpperCase() : s;
+}
+
+/** `%g` formatting: shortest of %e/%f, trailing zeros trimmed unless `#`. */
+function formatG(n: number, sig: number, upper: boolean, alt: boolean): string {
+  if (n === 0) return alt ? '0.' + '0'.repeat(Math.max(0, sig - 1)) : '0';
+  const exp = Math.floor(Math.log10(n));
+  let s: string;
+  if (exp < -4 || exp >= sig) {
+    s = formatExp(n, sig - 1, upper);
+    if (!alt) s = s.replace(/\.?0+e/, 'e');
+  } else {
+    s = n.toFixed(Math.max(0, sig - 1 - exp));
+    if (!alt && s.includes('.')) s = s.replace(/\.?0+$/, '');
+  }
+  return s;
+}
+
+/** Parse a printf integer argument: `'c` char code, 0x hex, 0 octal, decimal. */
+function parseIntArg(arg: string): number {
+  const s = arg.trim();
+  if (s[0] === '\'' || s[0] === '"') return s.codePointAt(1) ?? 0;
+  if (/^[+-]?0[xX][0-9a-fA-F]+$/.test(s)) return parseInt(s, 16);
+  if (/^[+-]?0[0-7]+$/.test(s)) return parseInt(s, 8);
+  const v = parseInt(s, 10);
+  return Number.isNaN(v) ? 0 : v;
+}
+
+function parseFloatArg(arg: string): number {
+  const s = arg.trim();
+  if (s[0] === '\'' || s[0] === '"') return s.codePointAt(1) ?? 0;
+  const v = parseFloat(s);
+  return Number.isNaN(v) ? 0 : v;
+}
+
+/**
+ * Interpret backslash escapes. When `octalBackslashZero` is true (printf format
+ * strings), octal is written `\0nnn`; for `%b` arguments it is `\nnn`.
+ */
+function interpretEscapes(s: string, octalBackslashZero: boolean): string {
+  let out = '';
+  let i = 0;
+  while (i < s.length) {
+    if (s[i] !== '\\') { out += s[i]; i++; continue; }
+    const next = s[i + 1];
+    switch (next) {
+      case 'n': out += '\n'; i += 2; continue;
+      case 't': out += '\t'; i += 2; continue;
+      case 'r': out += '\r'; i += 2; continue;
+      case 'a': out += '\x07'; i += 2; continue;
+      case 'b': out += '\b'; i += 2; continue;
+      case 'f': out += '\f'; i += 2; continue;
+      case 'v': out += '\v'; i += 2; continue;
+      case '\\': out += '\\'; i += 2; continue;
+      case '"': out += '"'; i += 2; continue;
+      case 'x': {
+        const m = /^[0-9a-fA-F]{1,2}/.exec(s.slice(i + 2));
+        if (m) { out += String.fromCharCode(parseInt(m[0], 16)); i += 2 + m[0].length; continue; }
+        out += '\\x'; i += 2; continue;
+      }
+      default: break;
+    }
+    // Octal in a printf FORMAT: `\0nnn` (1–3 octal digits after the 0) or, as a
+    // GNU extension, a bare `\nnn`.
+    if (octalBackslashZero && next === '0') {
+      const m = /^[0-7]{1,3}/.exec(s.slice(i + 2));
+      const oct = m ? m[0] : '';
+      out += String.fromCharCode(parseInt(oct || '0', 8));
+      i += 2 + oct.length; continue;
+    }
+    // Octal in a `%b` argument: `\nnn` (and `\0nnn`). Also bare `\nnn` in formats.
+    if (/[0-7]/.test(next ?? '')) {
+      const m = /^[0-7]{1,3}/.exec(s.slice(i + 1));
+      const oct = m ? m[0] : '0';
+      out += String.fromCharCode(parseInt(oct, 8));
+      i += 1 + oct.length; continue;
+    }
+    // Unknown escape: keep the backslash literally.
+    out += '\\'; i += 1;
+  }
+  return out;
 }
