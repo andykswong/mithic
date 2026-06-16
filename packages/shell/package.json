@@ -67,7 +67,7 @@
   "dependencies": {
     "@mithic/coreutils": "^0.1",
     "@mithic/curl": "^0.1",
-    "@mithic/io": "^0.4",
+    "@mithic/io": "^2.0.0",
     "@mithic/jq": "^0.1",
     "@mithic/process": "^0.1",
     "@mithic/wasm-transpile": "0.1",

@@ -22,7 +22,7 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/io": "^0.4",
+    "@mithic/io": "^2.0.0",
     "@mithic/process": "^0.1",
     "@mithic/shell": "^0.1",
     "@mithic/coreutils": "^0.1",

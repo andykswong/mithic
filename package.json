@@ -42,7 +42,7 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/io": "^0.4",
+    "@mithic/io": "^2.0.0",
     "@mithic/process": "^0.1",
     "@mithic/wasip2": "^0.1"
   },

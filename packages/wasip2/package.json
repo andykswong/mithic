@@ -75,7 +75,7 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/io": "^0.4"
+    "@mithic/io": "^2.0.0"
   },
   "devDependencies": {
   }
