@@ -76,10 +76,49 @@ describe('sort', () => {
     expect(h.err()).toContain('sort:');
   });
 
+  test('-k2,2r per-key reverse', async () => {
+    const h = makeIO({ args: ['sort', '-t', ',', '-k2,2r'], stdinText: 'x,a\ny,c\nz,b\n' });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('y,c\nz,b\nx,a\n');
+  });
+
+  test('multiple -k keys applied in order', async () => {
+    const h = makeIO({ args: ['sort', '-t', ',', '-k1,1', '-k2,2n'], stdinText: 'b,2\na,10\na,2\nb,1\n' });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a,2\na,10\nb,1\nb,2\n');
+  });
+
+  test('per-key numeric with reverse on second key', async () => {
+    const h = makeIO({ args: ['sort', '-t', ',', '-k1,1', '-k2,2nr'], stdinText: 'a,1\na,3\na,2\n' });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a,3\na,2\na,1\n');
+  });
+
+  test('end column .C limits the key span', async () => {
+    // `-k1.2,1.2r`: the key is ONLY the 2nd char (both 'a'), so they tie on the
+    // key and fall back to ascending whole-line order. Contrast with `-k1.2r`
+    // (next test) whose key runs to end-of-field and so differs.
+    const h = makeIO({ args: ['sort', '-k1.2,1.2r'], stdinText: 'xab\nxaa\n' });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('xaa\nxab\n');
+  });
+
+  test('without end column the key runs to end of field', async () => {
+    const h = makeIO({ args: ['sort', '-k1.2r'], stdinText: 'xab\nxaa\n' });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('xab\nxaa\n');
+  });
+
   describe('parseKey', () => {
     test('field only', () => { expect(parseKey('2')).toMatchObject({ startField: 2, startChar: 1 }); });
     test('field.char with end+numeric', () => {
       expect(parseKey('2.3,4n')).toMatchObject({ startField: 2, startChar: 3, endField: 4, numeric: true });
+    });
+    test('per-key reverse flag', () => {
+      expect(parseKey('2,2r')).toMatchObject({ startField: 2, endField: 2, reverse: true });
+    });
+    test('end char offset', () => {
+      expect(parseKey('1.1,1.3')).toMatchObject({ startField: 1, startChar: 1, endField: 1, endChar: 3 });
     });
   });
 });
