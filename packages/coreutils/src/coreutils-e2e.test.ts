@@ -204,6 +204,20 @@ test('sed -i writes back to the VFS file end-to-end', async () => {
   expect(await k.readFile('/edit.txt')).toBe('qux\nbar\nqux\n');
 }, 20000);
 
+test('sed tac-via-hold-space (1!G;h;$!d) reverses lines end-to-end', async () => {
+  const k = await bootKernel({ '/in.txt': 'a\nb\nc\n' });
+  const out = await k.spawn(['sed', '1!G;h;$!d', '/in.txt']);
+  expect(out.stdout).toBe('c\nb\na\n');
+  expect(out.code).toBe(0);
+}, 20000);
+
+test('sed brace group with address gating end-to-end', async () => {
+  const k = await bootKernel({ '/in.txt': 'one\ntwo\nthree\nfour\n' });
+  const out = await k.spawn(['sed', '-n', '2,3{p}', '/in.txt']);
+  expect(out.stdout).toBe('two\nthree\n');
+  expect(out.code).toBe(0);
+}, 20000);
+
 // ── awk end-to-end (real Kernel) ────────────────────────────────────────────
 
 test('awk prints a field from piped input end-to-end', async () => {
