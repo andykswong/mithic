@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
 import { run } from './engine.ts';
+import { formatNumber, toJSON } from './values.ts';
 
 const r = (prog: string, input: unknown, opts?: Parameters<typeof run>[2]): unknown[] => run(prog, input, opts);
 const r1 = (prog: string, input: unknown, opts?: Parameters<typeof run>[2]): unknown => run(prog, input, opts)[0];
@@ -160,6 +161,44 @@ test('first / last / nth / limit / empty', () => {
   expect(r1('nth(1; .[])', [1, 2, 3])).toBe(2);
   expect(r('limit(2; .[])', [1, 2, 3, 4])).toEqual([1, 2]);
   expect(r('empty', null)).toEqual([]);
+});
+
+test('first/last (0-arg) yield null on empty array', () => {
+  expect(r('first', [])).toEqual([null]);
+  expect(r('last', [])).toEqual([null]);
+  expect(r1('first', [1, 2, 3])).toBe(1);
+  expect(r1('last', [1, 2, 3])).toBe(3);
+});
+
+test('ascii_downcase/ascii_upcase only transform ASCII letters', () => {
+  expect(r1('ascii_upcase', 'café')).toBe('CAFé');
+  expect(r1('ascii_downcase', 'CAFÉ')).toBe('cafÉ');
+  expect(r1('ascii_upcase', 'hello123')).toBe('HELLO123');
+  expect(r1('ascii_downcase', 'HELLO123')).toBe('hello123');
+  // non-ASCII is left untouched, ASCII around it still changes
+  expect(r1('ascii_upcase', 'aÆb')).toBe('AÆB');
+});
+
+test('number formatting matches jq 1.7', () => {
+  // integers print without a decimal point
+  expect(formatNumber(3)).toBe('3');
+  expect(formatNumber(3.0)).toBe('3');
+  expect(formatNumber(100000)).toBe('100000');
+  expect(formatNumber(-42)).toBe('-42');
+  expect(formatNumber(0)).toBe('0');
+  // very large / very small use exponent notation (lowercase e, signed, >=2 digits)
+  expect(formatNumber(1e20)).toBe('1e+20');
+  expect(formatNumber(1e100)).toBe('1e+100');
+  expect(formatNumber(1.5e-10)).toBe('1.5e-10');
+  // ordinary decimals print normally
+  expect(formatNumber(2.5)).toBe('2.5');
+  expect(formatNumber(0.1)).toBe('0.1');
+  expect(formatNumber(1234567.89)).toBe('1234567.89');
+  // NaN / Infinity render as null (jq)
+  expect(formatNumber(Infinity)).toBe('null');
+  expect(formatNumber(NaN)).toBe('null');
+  // round-trips through JSON output
+  expect(toJSON([1e20, 3.0, 1.5e-10])).toBe('[1e+20,3,1.5e-10]');
 });
 
 test('tojson / fromjson', () => {

@@ -55,8 +55,8 @@ const SIMPLE: Record<string, SimpleFn> = {
   'tonumber/0': (input) => toNumber(input),
   'tojson/0': (input) => toJSON(input, 0),
   'fromjson/0': (input) => { if (typeof input !== 'string') throw err('fromjson requires a string'); return JSON.parse(input); },
-  'ascii_downcase/0': (input) => reqStr(input).toLowerCase(),
-  'ascii_upcase/0': (input) => reqStr(input).toUpperCase(),
+  'ascii_downcase/0': (input) => asciiCase(reqStr(input), false),
+  'ascii_upcase/0': (input) => asciiCase(reqStr(input), true),
   'explode/0': (input) => Array.from(reqStr(input)).map((c) => c.codePointAt(0)!),
   'implode/0': (input) => { if (!Array.isArray(input)) throw err('implode requires array'); return String.fromCodePoint(...(input as number[])); },
   'ltrimstr/1': (input, [p]) => (typeof input === 'string' && typeof p === 'string' && input.startsWith(p)) ? input.slice(p.length) : input,
@@ -255,8 +255,8 @@ function* callHigher(name: string, args: Node[], input: unknown, env: Env, ctx: 
       yield fromEntries(mapped);
       return;
     }
-    case 'first/0': { const r = first(iter(input)); yield r.has ? r.value : err0(); return; }
-    case 'last/0': { if (!Array.isArray(input)) throw err(`Cannot index ${typeOf(input)}`); yield input.length ? input[input.length - 1] : null; return; }
+    case 'first/0': { if (!Array.isArray(input)) throw err(`Cannot index ${typeOf(input)} with number`); yield input.length ? input[0] : null; return; }
+    case 'last/0': { if (!Array.isArray(input)) throw err(`Cannot index ${typeOf(input)} with number`); yield input.length ? input[input.length - 1] : null; return; }
     case 'first/1': { const r = first(evalNode(a[0], input, env, ctx)); if (r.has) yield r.value; return; }
     case 'last/1': { let last: unknown; let has = false; for (const v of evalNode(a[0], input, env, ctx)) { last = v; has = true; } if (has) yield last; return; }
     case 'nth/1': { const n = reqNum(first(evalNode(a[0], input, env, ctx)).value); if (!Array.isArray(input)) throw err('Cannot index'); yield input[n] ?? null; return; }
@@ -324,8 +324,6 @@ function* callHigher(name: string, args: Node[], input: unknown, env: Env, ctx: 
   }
   throw err(`${name}/${args.length} is not defined`);
 }
-
-function err0(): never { throw err('Cannot iterate over null (null)'); }
 
 // ── assignment / update (`=`, `|=`, `+=`, …) ────────────────────────────────
 
@@ -526,6 +524,17 @@ function toNumber(v: unknown): number {
 }
 
 function reqStr(v: unknown): string { if (typeof v !== 'string') throw err(`${typeOf(v)} (${toStr(v)}) cannot be matched, as it is not a string`); return v; }
+/** Case-fold ONLY ASCII letters A-Z/a-z (jq's ascii_upcase/ascii_downcase). */
+function asciiCase(s: string, upper: boolean): string {
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (upper && c >= 0x61 && c <= 0x7a) out += String.fromCharCode(c - 0x20);
+    else if (!upper && c >= 0x41 && c <= 0x5a) out += String.fromCharCode(c + 0x20);
+    else out += s[i];
+  }
+  return out;
+}
 function reqStrArg(v: unknown): string { if (typeof v !== 'string') throw err('expected string argument'); return v; }
 function reqNum(v: unknown): number { if (typeof v !== 'number') throw err(`${typeOf(v)} (${toStr(v)}) number required`); return v; }
 

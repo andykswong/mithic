@@ -111,11 +111,61 @@ export function toJSON(v: unknown, indent: number | string = 0, sortKeys = false
   return enc(v, 0);
 }
 
-/** Format a number the way jq does (integers without `.0`, NaN/Inf → null). */
+/**
+ * Format a number the way jq 1.7 does. jq renders doubles with a David-Gay
+ * `g_fmt`-style formatter over the shortest round-tripping digit string:
+ * integers print without a decimal point, while sufficiently large/small
+ * magnitudes switch to exponential notation (`1e+20`, `1.5e-10`). NaN/Inf → null.
+ *
+ * We derive the shortest significant digits and decimal-point position from JS's
+ * own shortest representation (`Number.prototype.toString`, which is shortest
+ * round-trip), then apply jq's g_fmt decision: exponential when
+ * `decpt <= -4 || decpt > ndigits + 15`.
+ */
 export function formatNumber(n: number): string {
   if (!isFinite(n)) return 'null';
-  if (Number.isInteger(n)) return String(n);
-  return String(n);
+  if (n === 0) return Object.is(n, -0) ? '-0' : '0';
+
+  const sign = n < 0 ? '-' : '';
+  const str = Math.abs(n).toString();
+
+  // Extract shortest significant digits `s` and `decpt` = number of digits to
+  // the left of the decimal point (value = 0.s × 10^decpt).
+  let s: string;
+  let decpt: number;
+  const e = /^(\d+)(?:\.(\d+))?e([+-]\d+)$/.exec(str);
+  if (e) {
+    const intp = e[1];
+    const frac = e[2] ?? '';
+    const exp = parseInt(e[3], 10);
+    s = (intp + frac).replace(/0+$/, '') || '0';
+    decpt = exp + intp.length;
+  } else {
+    const d = /^(\d+)(?:\.(\d+))?$/.exec(str)!;
+    const intp = d[1];
+    const frac = d[2] ?? '';
+    if (intp === '0') {
+      let lead = 0;
+      while (lead < frac.length && frac[lead] === '0') lead++;
+      s = frac.slice(lead).replace(/0+$/, '') || '0';
+      decpt = -lead;
+    } else {
+      s = (intp + frac).replace(/0+$/, '') || '0';
+      decpt = intp.length;
+    }
+  }
+
+  const ndig = s.length;
+  // jq g_fmt: use exponential when the point is far left or far right.
+  if (decpt <= -4 || decpt > ndig + 15) {
+    const mant = s.length > 1 ? s[0] + '.' + s.slice(1) : s;
+    const exp = decpt - 1;
+    const es = (exp < 0 ? '-' : '+') + String(Math.abs(exp)).padStart(2, '0');
+    return sign + mant + 'e' + es;
+  }
+  if (decpt <= 0) return sign + '0.' + '0'.repeat(-decpt) + s;
+  if (decpt >= ndig) return sign + s + '0'.repeat(decpt - ndig);
+  return sign + s.slice(0, decpt) + '.' + s.slice(decpt);
 }
 
 /** Render a value as a jq "string" — strings pass through, others are tojson. */
