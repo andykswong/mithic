@@ -46,6 +46,24 @@ function mockFs() {
       if (entry.mode !== 'r') files.set(entry.path, entry.buf);
       openFiles.delete(fd);
     },
+    fsReaddir(path: string): string[] {
+      const prefix = path === '/' ? '/' : path.replace(/\/$/, '') + '/';
+      const names = new Set<string>();
+      for (const p of files.keys()) {
+        if (p.startsWith(prefix)) {
+          const rest = p.slice(prefix.length);
+          const slash = rest.indexOf('/');
+          names.add(slash >= 0 ? rest.slice(0, slash) : rest);
+        }
+      }
+      return [...names];
+    },
+    fsStat(path: string): { dir: boolean } | undefined {
+      if (files.has(path)) return { dir: false };
+      const prefix = path.replace(/\/$/, '') + '/';
+      for (const p of files.keys()) if (p.startsWith(prefix)) return { dir: true };
+      return undefined;
+    },
   };
 }
 
@@ -130,12 +148,15 @@ test('echo world >> /tmp/out.txt appends to existing file', async () => {
   expect(fs.files.get('/tmp/out.txt')).toBe('hello\nworld\n');
 });
 
-test('< input redirect raises explicit unsupported-redirect error', async () => {
+test('< input redirect feeds file into command stdin', async () => {
   const k = mockKernel();
   const fs = mockFs();
   fs.files.set('/tmp/in.txt', 'data\n');
-  const ex = new Executor(k as any, { cwd: '/', env: {} }, { fs });
-  await expect(ex.run(parse('cat < /tmp/in.txt'))).rejects.toThrow(/unsupported redirect/i);
+  let out = '';
+  const ex = new Executor(k as any, { cwd: '/', env: {} }, { fs, onStdout: (s) => { out += s; } });
+  const code = await ex.run(parse('cat < /tmp/in.txt'));
+  expect(code).toBe(0);
+  expect(out).toBe('data\n');
 });
 
 test('redirect target path is expanded from env', async () => {

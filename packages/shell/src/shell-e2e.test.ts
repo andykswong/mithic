@@ -76,3 +76,50 @@ test('an unknown external command reports command-not-found behavior', async () 
   // The pipeline/spawn surfaces a non-zero status for an unresolved command.
   expect(out.code).not.toBe(0);
 }, 20000);
+
+// ── New interpreter features, end-to-end through the real kernel ─────────────
+
+test('command substitution end-to-end', async () => {
+  const out = await runScript('echo "result: $(echo nested)"');
+  expect(out.stdout.trim()).toBe('result: nested');
+}, 20000);
+
+test('arithmetic expansion end-to-end', async () => {
+  const out = await runScript('echo $(( 6 * 7 ))');
+  expect(out.stdout.trim()).toBe('42');
+}, 20000);
+
+test('brace expansion end-to-end', async () => {
+  const out = await runScript('echo {a,b}{1,2}');
+  expect(out.stdout.trim()).toBe('a1 a2 b1 b2');
+}, 20000);
+
+test('for loop end-to-end', async () => {
+  const out = await runScript('for x in one two three; do echo $x; done');
+  expect(out.stdout).toBe('one\ntwo\nthree\n');
+}, 20000);
+
+test('function with local and return end-to-end', async () => {
+  const out = await runScript('f() { local v=hi; echo $v; return 2; }; f; echo $?');
+  expect(out.stdout).toBe('hi\n2\n');
+}, 20000);
+
+test('parameter expansion default end-to-end', async () => {
+  const out = await runScript('echo ${UNSET:-fallback}');
+  expect(out.stdout.trim()).toBe('fallback');
+}, 20000);
+
+test('$? and $PIPESTATUS end-to-end', async () => {
+  const out = await runScript('false; echo $?');
+  expect(out.stdout.trim()).toBe('1');
+}, 20000);
+
+test('case statement end-to-end', async () => {
+  const out = await runScript('case hello in h*) echo matched ;; *) echo no ;; esac');
+  expect(out.stdout.trim()).toBe('matched');
+}, 20000);
+
+test('here-string end-to-end', async () => {
+  const out = await runScript('cat <<< "piped in"');
+  expect(out.stdout.trim()).toBe('piped in');
+}, 20000);
