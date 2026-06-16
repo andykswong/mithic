@@ -85,14 +85,21 @@ function makeFsClient(guest: Guest): FsClient & { flush(): Promise<void> } {
       }
     },
     async fsReaddir(path): Promise<string[]> {
-      const r = (await guest.syscall('fs/readdir', { path })) as { entries?: Array<{ name: string } | string> };
-      const entries = r.entries ?? [];
-      return entries.map((e) => (typeof e === 'string' ? e : e.name));
+      // `fs/readdir` resolves to a `DirEntry[]` (array of `{ name, type }`)
+      // directly — NOT a `{ entries }` wrapper. Tolerate both shapes plus bare
+      // string entries so glob/pathname expansion sees real directory contents.
+      const r = await guest.syscall('fs/readdir', { path });
+      const entries = (Array.isArray(r) ? r : (r as { entries?: unknown }).entries) as
+        | Array<{ name: string } | string>
+        | undefined;
+      return (entries ?? []).map((e) => (typeof e === 'string' ? e : e.name));
     },
     async fsStat(path): Promise<{ dir: boolean } | undefined> {
       try {
         const r = (await guest.syscall('fs/stat', { path })) as { type?: string; isDir?: boolean };
-        return { dir: r.isDir ?? (r.type === 'dir') };
+        // `fs/stat` reports the VFS `DescriptorType` — a directory is `'directory'`
+        // (not `'dir'`). Honor an explicit `isDir` if present, else match the type.
+        return { dir: r.isDir ?? (r.type === 'directory' || r.type === 'dir') };
       } catch { return undefined; }
     },
   };
@@ -121,41 +128,71 @@ function metaOf(buffers: Map<number, string>): Map<number, { path: string; flags
  * name as `path` and the kernel's resolver maps it (the shell does NOT itself
  * know what external commands exist).
  */
-function makeKernelClient(guest: Guest): KernelClient {
+function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelClient {
   // pid -> exit code, recorded as each spawn/pipeline completes so a following
   // wait(pid) can report it without a second syscall.
   const exitCodes = new Map<number, number>();
   let synthPid = -1; // synthetic pids for spawns (the syscall returns bytes, not a live pid).
 
+  // A command NAME the kernel can't resolve rejects the `process/pipeline`
+  // syscall with ENOENT. The shell delegates resolution to the kernel
+  // (`resolve` always returns the bare name), so this rejection IS the
+  // "command not found" signal. Map it to exit 127 and a stderr line instead of
+  // letting it throw out of `executor.run()` — otherwise an unknown command
+  // would abort the whole script rather than failing just that command.
+  const isNotFound = (e: unknown): boolean => {
+    const msg = (e as { message?: string })?.message ?? String(e);
+    const code = (e as { code?: string; errno?: string }).code ?? (e as { errno?: string }).errno;
+    return code === 'ENOENT' || /command not found|ENOENT|no such/i.test(msg);
+  };
+
   return {
     async spawn(params: SpawnParams): Promise<SpawnHandle> {
       const [name, ...rest] = params.args ?? [];
-      const r = (await guest.syscall('process/pipeline', {
-        stages: [{ path: params.code instanceof URL ? params.code.href : String(params.code), argv: [name, ...rest], env: params.env, cwd: params.cwd }],
-      })) as { exitCodes: number[]; stdout: Uint8Array };
       const pid = synthPid--;
-      exitCodes.set(pid, r.exitCodes[r.exitCodes.length - 1] ?? 0);
-      return { pid, stdout: Promise.resolve(r.stdout) };
+      try {
+        const r = (await guest.syscall('process/pipeline', {
+          stages: [{ path: params.code instanceof URL ? params.code.href : String(params.code), argv: [name, ...rest], env: params.env, cwd: params.cwd }],
+        })) as { exitCodes: number[]; stdout: Uint8Array };
+        exitCodes.set(pid, r.exitCodes[r.exitCodes.length - 1] ?? 0);
+        return { pid, stdout: Promise.resolve(r.stdout) };
+      } catch (e) {
+        if (!isNotFound(e)) throw e;
+        onStderr(`shell: ${name}: command not found\n`);
+        exitCodes.set(pid, 127);
+        return { pid, stdout: Promise.resolve(new Uint8Array()) };
+      }
     },
     async wait(pid: number) {
       return { pid, code: exitCodes.get(pid) ?? 0 };
     },
     async runPipeline(stages: PipelineStageParams[]): Promise<PipelineRunResult> {
-      const r = (await guest.syscall('process/pipeline', {
-        stages: stages.map((s) => ({
-          path: s.code instanceof URL ? s.code.href : String(s.code),
-          argv: s.args ?? [],
-          env: s.env,
-          cwd: s.cwd,
-        })),
-      })) as { exitCodes: number[]; stdout: Uint8Array };
       const pids = stages.map(() => synthPid--);
-      return {
-        pids,
-        exitCodes: r.exitCodes,
-        lastStdout: Promise.resolve(r.stdout),
-        stderr: stages.map(() => undefined),
-      };
+      try {
+        const r = (await guest.syscall('process/pipeline', {
+          stages: stages.map((s) => ({
+            path: s.code instanceof URL ? s.code.href : String(s.code),
+            argv: s.args ?? [],
+            env: s.env,
+            cwd: s.cwd,
+          })),
+        })) as { exitCodes: number[]; stdout: Uint8Array };
+        return {
+          pids,
+          exitCodes: r.exitCodes,
+          lastStdout: Promise.resolve(r.stdout),
+          stderr: stages.map(() => undefined),
+        };
+      } catch (e) {
+        if (!isNotFound(e)) throw e;
+        onStderr('shell: command not found\n');
+        return {
+          pids,
+          exitCodes: stages.map(() => 127),
+          lastStdout: Promise.resolve(new Uint8Array()),
+          stderr: stages.map(() => undefined),
+        };
+      }
     },
   };
 }
@@ -200,7 +237,7 @@ export default async function main(boot: unknown): Promise<void> {
     const fsClient = makeFsClient(guest);
 
     const executor = new Executor(
-      makeKernelClient(guest),
+      makeKernelClient(guest, onStderr),
       {
         cwd: guest.cwd,
         env: { ...guest.env },
