@@ -97,11 +97,13 @@ describe('CachingProvider', () => {
       await writeFile(cache, '/partial.txt', 'abcdefgh');
       await readFile(cache, '/partial.txt'); // populate cache
 
+      const callsBefore = remote.readCalls;
       const handle = await cache.open('/partial.txt', { read: true });
       const slice = await cache.read(handle, 2, 4);
       await cache.close(handle);
       expect(dec.decode(slice)).toBe('cdef');
-      expect(remote.readCalls).toBe(remote.readCalls); // no extra remote reads
+      // No extra remote reads — served from cache
+      expect(remote.readCalls).toBe(callsBefore);
     });
   });
 
@@ -119,19 +121,34 @@ describe('CachingProvider', () => {
       expect(dec.decode(data)).toBe('updated');
     });
 
-    it('subsequent read after write returns new data without extra remote reads', async () => {
-      await writeFile(cache, '/cache-update.txt', 'v1');
+    it('subsequent read after write (no truncate) returns new data without extra remote reads', async () => {
+      await writeFile(cache, '/cache-update.txt', 'v1v1');
       await readFile(cache, '/cache-update.txt'); // populate cache
 
-      // Write new data through cache (write-through also updates cached entry)
-      const handle = await cache.open('/cache-update.txt', { write: true, truncate: true });
-      await cache.write(handle, enc.encode('v2'), 0);
+      // Write new data through cache WITHOUT truncate — write-through patches the cached entry
+      const handle = await cache.open('/cache-update.txt', { write: true });
+      await cache.write(handle, enc.encode('v2v2'), 0);
       await cache.close(handle);
 
       const callsBefore = remote.readCalls;
       const result = await readFile(cache, '/cache-update.txt');
-      // Cache was updated by write-through, so no additional remote read needed
+      // Cache was updated by write-through (no truncate = no eviction), so no extra remote read
       expect(remote.readCalls).toBe(callsBefore);
+      expect(result).toBe('v2v2');
+    });
+
+    it('subsequent read after open+truncate+write returns correct data (cache evicted on truncate)', async () => {
+      await writeFile(cache, '/cache-trunc.txt', 'v1');
+      await readFile(cache, '/cache-trunc.txt'); // populate cache
+
+      // open({truncate:true}) evicts the cache entry (Fix 1). The following write goes
+      // to the remote but does not find a cache entry to patch, so the next read will
+      // fetch from remote once — that is the correct and expected behavior.
+      const handle = await cache.open('/cache-trunc.txt', { write: true, truncate: true });
+      await cache.write(handle, enc.encode('v2'), 0);
+      await cache.close(handle);
+
+      const result = await readFile(cache, '/cache-trunc.txt');
       expect(result).toBe('v2');
     });
   });
@@ -159,10 +176,27 @@ describe('CachingProvider', () => {
       // Cache was evicted on unlink, so a remote read is needed on first access
       expect(remote.readCalls).toBeGreaterThan(callsBefore);
     });
+
+    it('evicts cache on unlink even with non-normalized path', async () => {
+      await cache.mkdir('/dir');
+      await writeFile(cache, '/dir/file.txt', 'data');
+      await readFile(cache, '/dir/file.txt'); // populate cache
+
+      // Unlink with non-normalized path that resolves to the same entry
+      await cache.unlink('/dir//file.txt');
+
+      // Should be evicted; recreate with new content
+      await writeFile(cache, '/dir/file.txt', 'fresh');
+      const callsBefore = remote.readCalls;
+      const result = await readFile(cache, '/dir/file.txt');
+      expect(result).toBe('fresh');
+      // Must have gone to remote (cache was evicted by the non-normalized unlink)
+      expect(remote.readCalls).toBeGreaterThan(callsBefore);
+    });
   });
 
   describe('invalidation on rename', () => {
-    it('evicts old path and new path from cache on rename', async () => {
+    it('evicts old path and new path from cache on file rename', async () => {
       await writeFile(cache, '/old-name.txt', 'content');
       await readFile(cache, '/old-name.txt'); // populate cache for old path
 
@@ -177,6 +211,136 @@ describe('CachingProvider', () => {
       expect(result).toBe('content');
       // Cache had no entry for new-name — remote was consulted
       expect(remote.readCalls).toBeGreaterThan(callsBefore);
+    });
+
+    it('evicts all descendant cache entries when a directory is renamed (Fix 2)', async () => {
+      // Setup: create a directory with a file inside, cache the file
+      await cache.mkdir('/dir');
+      await writeFile(cache, '/dir/file.txt', 'inside dir');
+      await readFile(cache, '/dir/file.txt'); // populate cache for /dir/file.txt
+
+      // Rename the directory — moves /dir → /newdir (and /dir/file.txt → /newdir/file.txt)
+      await cache.rename('/dir', '/newdir');
+
+      // The stale cache entry for /dir/file.txt must be gone.
+      // Re-create /dir and write DIFFERENT content directly to remote at /dir/file.txt.
+      // If the old stale cache entry is still alive, a cache read would return 'inside dir'.
+      // If it was properly evicted, a read must go to the remote and return 'stale-test'.
+      remote.mkdir('/dir');
+      const h = remote.open('/dir/file.txt', { create: true, write: true });
+      remote.write(h, enc.encode('stale-test'), 0);
+      remote.close(h);
+
+      const callsBefore = remote.readCalls;
+      const result = await readFile(cache, '/dir/file.txt');
+      // If cache was NOT evicted, result would be 'inside dir' (stale). Must be 'stale-test'.
+      expect(result).toBe('stale-test');
+      // Must have gone to remote (cache evicted)
+      expect(remote.readCalls).toBeGreaterThan(callsBefore);
+    });
+  });
+
+  describe('open with truncate flag invalidates cache (Fix 1)', () => {
+    it('open({truncate:true}) evicts stale cache so subsequent write+read returns correct data', async () => {
+      // Populate cache with 'hello' (5 bytes)
+      await writeFile(cache, '/trunc.txt', 'hello');
+      await readFile(cache, '/trunc.txt'); // ensures cache entry exists
+
+      // Now open with truncate (simulates writeFile pattern)
+      const handle = await cache.open('/trunc.txt', { write: true, truncate: true });
+      // Write 'hi' (2 bytes) at offset 0
+      await cache.write(handle, enc.encode('hi'), 0);
+      await cache.close(handle);
+
+      // Read back through cache — must be 'hi', NOT 'hillo' (stale patch of 'hello')
+      const viaCache = await readFile(cache, '/trunc.txt');
+      expect(viaCache).toBe('hi');
+
+      // Also verify remote has correct data
+      const h = remote.open('/trunc.txt', { read: true });
+      const raw = remote.read(h, 0, 65536);
+      remote.close(h);
+      expect(dec.decode(raw)).toBe('hi');
+    });
+
+    it('writeFile pattern (open create+write+truncate) leaves cache coherent', async () => {
+      // Simulate two sequential writeFile calls — classic overwrite scenario
+      await writeFile(cache, '/overwrite.txt', 'longer content here');
+      await readFile(cache, '/overwrite.txt'); // populate cache
+
+      // Second writeFile overwrites with shorter content
+      await writeFile(cache, '/overwrite.txt', 'short');
+
+      const result = await readFile(cache, '/overwrite.txt');
+      expect(result).toBe('short');
+
+      // Remote must also have correct data
+      const h = remote.open('/overwrite.txt', { read: true });
+      const raw = remote.read(h, 0, 65536);
+      remote.close(h);
+      expect(dec.decode(raw)).toBe('short');
+    });
+  });
+
+  describe('append-mode write coherence (Fix 3)', () => {
+    it('append-mode write does not corrupt the cache', async () => {
+      // Populate cache with 'hello' (5 bytes)
+      await writeFile(cache, '/append.txt', 'hello');
+      await readFile(cache, '/append.txt'); // populate cache
+
+      // Open in append mode and write '!'
+      const handle = await cache.open('/append.txt', { append: true, write: true });
+      await cache.write(handle, enc.encode('!'), 0); // offset ignored in append mode
+      await cache.close(handle);
+
+      // Read back through cache — must match remote ('hello!')
+      const viaCache = await readFile(cache, '/append.txt');
+
+      // Also read directly from remote to get the ground truth
+      const h = remote.open('/append.txt', { read: true });
+      const raw = remote.read(h, 0, 65536);
+      remote.close(h);
+      const viaRemote = dec.decode(raw);
+
+      expect(viaRemote).toBe('hello!');
+      expect(viaCache).toBe('hello!');
+    });
+
+    it('cache is coherent after multiple appends', async () => {
+      await writeFile(cache, '/multi-append.txt', 'abc');
+      await readFile(cache, '/multi-append.txt');
+
+      const h1 = await cache.open('/multi-append.txt', { append: true, write: true });
+      await cache.write(h1, enc.encode('d'), 0);
+      await cache.close(h1);
+
+      const h2 = await cache.open('/multi-append.txt', { append: true, write: true });
+      await cache.write(h2, enc.encode('e'), 0);
+      await cache.close(h2);
+
+      const result = await readFile(cache, '/multi-append.txt');
+      expect(result).toBe('abcde');
+    });
+  });
+
+  describe('realpath optional chaining (Fix 4)', () => {
+    it('realpath does not throw when remote has no realpath method', async () => {
+      // Build a minimal remote that explicitly lacks a realpath method
+      const minimalRemote = new MemoryFsProvider();
+      // Cast through unknown to satisfy TypeScript while stripping the method
+      const remoteWithoutRealpath = minimalRemote as unknown as MemoryFsProvider;
+      (remoteWithoutRealpath as { realpath: unknown }).realpath = undefined;
+
+      const noRealpathCache = new CachingProvider(remoteWithoutRealpath);
+      // Must NOT throw — should gracefully return undefined
+      const result = await noRealpathCache.realpath?.('/some/path');
+      expect(result).toBeUndefined();
+    });
+
+    it('realpath delegates to remote when remote has realpath', async () => {
+      await writeFile(cache, '/real.txt', 'x');
+      const result = await cache.realpath?.('/real.txt');
+      expect(result).toBe('/real.txt');
     });
   });
 

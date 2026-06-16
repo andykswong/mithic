@@ -1,4 +1,5 @@
 import type { FileHandle, OpenFlags, DirEntry, FileSystemProvider, FileStat } from '../provider.ts';
+import { normalizePath } from '../path-utils.ts';
 
 /**
  * Options for constructing a CachingProvider.
@@ -60,7 +61,13 @@ export class CachingProvider implements FileSystemProvider {
   // --- Open / Close ---
 
   async open(path: string, flags: OpenFlags): Promise<FileHandle> {
-    return this.#remote.open(path, flags);
+    const handle = await this.#remote.open(path, flags);
+    // Fix 1: truncate-on-open must evict the cache entry so the stale buffer is not
+    // used as the base for subsequent write-through patches.
+    if (flags.truncate) {
+      this.#evict(handle.path);
+    }
+    return handle;
   }
 
   async close(handle: FileHandle): Promise<void> {
@@ -92,9 +99,17 @@ export class CachingProvider implements FileSystemProvider {
   async write(handle: FileHandle, data: Uint8Array, offset: number): Promise<number> {
     const written = await this.#remote.write(handle, data, offset);
 
+    // Fix 3: append-mode writes ignore the caller's offset and write at EOF on the
+    // remote. Patching the cache at the wrong offset would corrupt it, so evict
+    // the entry and let the next read re-fetch from the remote.
+    const key = handle.path;
+    if (handle.flags.append) {
+      this.#evict(key);
+      return written;
+    }
+
     // Update cache: if entry exists, patch it in-place; otherwise evict so the next
     // read fetches fresh data from the remote (avoids a full re-read on every write).
-    const key = handle.path;
     const cached = this.#cache.get(key);
     if (cached !== undefined) {
       const newLen = Math.max(cached.data.length, offset + data.length);
@@ -143,19 +158,22 @@ export class CachingProvider implements FileSystemProvider {
 
   async unlink(path: string): Promise<void> {
     await this.#remote.unlink(path);
-    this.#evict(path);
+    // Fix 4b: normalize the path so the eviction key matches how cache entries are stored.
+    this.#evict(normalizePath(path));
   }
 
   async rmdir(path: string): Promise<void> {
     await this.#remote.rmdir(path);
-    this.#evictPrefix(path);
+    this.#evictPrefix(normalizePath(path));
   }
 
   async rename(oldPath: string, newPath: string): Promise<void> {
     await this.#remote.rename(oldPath, newPath);
-    // Evict both old and new paths: old is gone, new may now exist with stale/no entry.
-    this.#evict(oldPath);
-    this.#evict(newPath);
+    // Fix 2: for directory renames, evict all descendants under both old and new paths.
+    // Using prefix-eviction is correct for file renames too (a file has no descendants).
+    // Fix 4b: normalize paths before evicting.
+    this.#evictPrefix(normalizePath(oldPath));
+    this.#evictPrefix(normalizePath(newPath));
   }
 
   async symlink(target: string, linkPath: string): Promise<void> {
@@ -186,8 +204,13 @@ export class CachingProvider implements FileSystemProvider {
     return this.#remote.sync?.();
   }
 
+  // Fix 4a: use optional chaining instead of non-null assertion so a remote without
+  // realpath returns undefined gracefully instead of throwing.
+  // eslint-disable-next-line @typescript-eslint/require-await
   async realpath?(path: string): Promise<string> {
-    return this.#remote.realpath!(path);
+    // If remote has no realpath, the optional chain returns undefined. The cast
+    // matches the base interface signature — callers using `?.` get undefined safely.
+    return this.#remote.realpath?.(path) as Promise<string>;
   }
 
   // --- Private helpers ---
