@@ -50,10 +50,66 @@ function parseNextConversion(fmt: string, pos: number): [ConvSpec, number] | nul
   return [{ flags, width, precision, spec }, i];
 }
 
+/**
+ * Parse an integer argument the way C/POSIX printf does for `%d %i %u %o %x`:
+ *   - a leading `'` or `"` means "the numeric code of the next character"
+ *     (`'A` → 65);
+ *   - `0x`/`0X` prefix → hexadecimal;
+ *   - a leading `0` (with more digits) → octal;
+ *   - otherwise decimal (with optional sign).
+ * Invalid input yields 0 (GNU prints a diagnostic; we follow the value).
+ */
+function parseIntArg(raw: string): number {
+  const s = raw.trim();
+  if (s === '') return 0;
+  if (s[0] === '\'' || s[0] === '"') {
+    // Character-code form; use the first code point after the quote.
+    return s.length > 1 ? s.codePointAt(1)! : 0;
+  }
+  let sign = 1;
+  let body = s;
+  if (body[0] === '+' || body[0] === '-') { if (body[0] === '-') sign = -1; body = body.slice(1); }
+  let n: number;
+  if (/^0[xX][0-9a-fA-F]+$/.test(body)) n = parseInt(body, 16);
+  else if (/^0[0-7]+$/.test(body)) n = parseInt(body, 8);
+  else n = parseInt(body, 10);
+  return isNaN(n) ? 0 : sign * n;
+}
+
 function pad(s: string, width: number, flags: string, padChar = ' '): string {
   if (width <= 0 || s.length >= width) return s;
   const p = padChar.repeat(width - s.length);
   return flags.includes('-') ? s + p : p + s;
+}
+
+/** Force a C-style 2-digit minimum exponent (`1e+6` → `1e+06`). */
+function fixExp(s: string): string {
+  return s.replace(/[eE]([+-])(\d+)/, (_m, sign: string, digits: string) =>
+    'e' + sign + (digits.length < 2 ? digits.padStart(2, '0') : digits));
+}
+
+/**
+ * C `%g` for a non-negative value `n`: precision `prec` significant digits
+ * (0 → 1). Uses `%e` when the decimal exponent is < -4 or >= prec, else `%f`.
+ * Trailing zeros are stripped unless the `#` (alt) flag is set.
+ */
+function formatG(n: number, prec: number, upper: boolean, alt: boolean): string {
+  const p = prec === 0 ? 1 : prec;
+  let body: string;
+  if (n === 0) {
+    body = '0';
+  } else {
+    const exp = Math.floor(Math.log10(n));
+    if (exp < -4 || exp >= p) {
+      body = n.toExponential(p - 1);
+      if (!alt) body = body.replace(/\.?0+e/, 'e');
+      body = fixExp(body);
+    } else {
+      body = n.toFixed(Math.max(0, p - 1 - exp));
+      if (!alt && body.includes('.')) body = body.replace(/\.?0+$/, '');
+    }
+  }
+  return upper ? body.toUpperCase() : body;
 }
 
 function applyConversion(spec: ConvSpec, args: string[], argIdx: number): [string, number] {
@@ -90,8 +146,7 @@ function applyConversion(spec: ConvSpec, args: string[], argIdx: number): [strin
     }
     case 'c': out = pad(rawArg[0] ?? '\0', width ?? 0, flags); break;
     case 'd': case 'i': {
-      let n = parseInt(rawArg, 10);
-      if (isNaN(n)) n = 0;
+      const n = parseIntArg(rawArg);
       let ns = String(Math.abs(n));
       if (precision !== null) ns = ns.padStart(precision, '0');
       const sign = n < 0 ? '-' : (plus ? '+' : (space ? ' ' : ''));
@@ -108,8 +163,7 @@ function applyConversion(spec: ConvSpec, args: string[], argIdx: number): [strin
       break;
     }
     case 'u': {
-      let n = parseInt(rawArg, 10);
-      if (isNaN(n)) n = 0;
+      let n = parseIntArg(rawArg);
       if (n < 0) n = n >>> 0; // treat as unsigned 32-bit
       let ns = String(n);
       if (precision !== null) ns = ns.padStart(precision, '0');
@@ -117,8 +171,7 @@ function applyConversion(spec: ConvSpec, args: string[], argIdx: number): [strin
       break;
     }
     case 'o': {
-      let n = parseInt(rawArg, 10);
-      if (isNaN(n)) n = 0;
+      let n = parseIntArg(rawArg);
       if (n < 0) n = n >>> 0;
       let ns = n.toString(8);
       if (alt && !ns.startsWith('0')) ns = '0' + ns;
@@ -127,8 +180,7 @@ function applyConversion(spec: ConvSpec, args: string[], argIdx: number): [strin
       break;
     }
     case 'x': case 'X': {
-      let n = parseInt(rawArg, 10);
-      if (isNaN(n)) n = 0;
+      let n = parseIntArg(rawArg);
       if (n < 0) n = n >>> 0;
       let ns = n.toString(16);
       if (s === 'X') ns = ns.toUpperCase();
@@ -159,9 +211,9 @@ function applyConversion(spec: ConvSpec, args: string[], argIdx: number): [strin
       let n = parseFloat(rawArg);
       if (isNaN(n)) n = 0;
       const p = precision !== null ? precision : 6;
-      let ns = parseFloat(n.toPrecision(p || 1)).toString();
-      if (s === 'G') ns = ns.toUpperCase();
-      if (plus && n >= 0) ns = '+' + ns;
+      let ns = formatG(Math.abs(n), p, s === 'G', alt);
+      const sign = n < 0 ? '-' : (plus ? '+' : (space ? ' ' : ''));
+      ns = sign + ns;
       out = pad(ns, width ?? 0, flags, zeroPad ? '0' : ' ');
       break;
     }

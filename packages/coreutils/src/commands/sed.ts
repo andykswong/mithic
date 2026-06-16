@@ -37,7 +37,8 @@ import type { RegexSyntax } from './_regex.ts';
 type Address =
   | { kind: 'line'; n: number }
   | { kind: 'last' }
-  | { kind: 'regex'; re: RegExp }
+  // `re` is undefined for the empty `//` form, which reuses the last regex.
+  | { kind: 'regex'; re?: RegExp }
   | { kind: 'step'; first: number; step: number };
 
 /** Trailing form of a range's second address: a plain address, `+N`, or `~N`. */
@@ -56,7 +57,10 @@ interface AddressSpec {
 
 interface Subst {
   type: 's';
-  re: RegExp; // compiled with 'g' always; we control occurrence ourselves
+  // `re` is undefined for an empty `s//repl/` pattern, which reuses the last
+  // regex resolved during execution; otherwise it is compiled with 'g'.
+  re?: RegExp;
+  ignoreCase: boolean; // needed to rebuild the empty-pattern regex from lastRegex
   replacement: string;
   global: boolean;
   nth: number; // replace the Nth occurrence (1-based); 0 = first only unless global
@@ -69,7 +73,8 @@ type Command =
   | (AddressSpec & { type: 'P' })
   | (AddressSpec & { type: 'd' })
   | (AddressSpec & { type: 'D' })
-  | (AddressSpec & { type: 'q' })
+  | (AddressSpec & { type: 'q'; code: number })
+  | (AddressSpec & { type: 'Q'; code: number })
   | (AddressSpec & { type: '=' })
   | (AddressSpec & { type: 'a'; text: string })
   | (AddressSpec & { type: 'i'; text: string })
@@ -230,7 +235,8 @@ class ScriptParser {
         j++;
       }
       if (script[j] !== delim) throw new Error('unterminated address regex');
-      return { addr: { kind: 'regex', re: this.#compile(pat) }, next: j + 1 };
+      // An empty pattern (`//`) reuses the last regex at execution time.
+      return { addr: { kind: 'regex', re: pat === '' ? undefined : this.#compile(pat) }, next: j + 1 };
     }
     return { next: i };
   }
@@ -280,7 +286,13 @@ class ScriptParser {
       case 'P': return { cmd: { ...spec, type: 'P' }, next: i };
       case 'd': return { cmd: { ...spec, type: 'd' }, next: i };
       case 'D': return { cmd: { ...spec, type: 'D' }, next: i };
-      case 'q': return { cmd: { ...spec, type: 'q' }, next: i };
+      case 'q': case 'Q': {
+        // Optional exit-code argument: `q5` / `Q5`.
+        let j = i;
+        while (j < script.length && script[j] >= '0' && script[j] <= '9') j++;
+        const code = j > i ? Number(script.slice(i, j)) : 0;
+        return { cmd: { ...spec, type: cmdChar, code }, next: j };
+      }
       case '=': return { cmd: { ...spec, type: '=' }, next: i };
       case 'h': return { cmd: { ...spec, type: 'h' }, next: i };
       case 'H': return { cmd: { ...spec, type: 'H' }, next: i };
@@ -377,8 +389,11 @@ class ScriptParser {
     const print = /p/.test(flags);
     const nthMatch = flags.match(/(\d+)/);
     const nth = nthMatch ? Number(nthMatch[1]) : 0;
-    const re = compilePattern(pattern, { syntax: this.#syntax, flags: 'g' + (ignoreCase ? 'i' : '') });
-    return { cmd: { ...spec, type: 's', re, replacement, global, nth, print }, next: i };
+    // An empty pattern (`s//repl/`) reuses the last regex at execution time.
+    const re = pattern === ''
+      ? undefined
+      : compilePattern(pattern, { syntax: this.#syntax, flags: 'g' + (ignoreCase ? 'i' : '') });
+    return { cmd: { ...spec, type: 's', re, ignoreCase, replacement, global, nth, print }, next: i };
   }
 
   #parseTransliterate(script: string, i: number, spec: AddressSpec): { cmd: Command; next: number } {
@@ -438,8 +453,14 @@ function buildReplacement(replacement: string, m: RegExpExecArray): string {
   return out;
 }
 
-function applySubst(line: string, cmd: Subst): { result: string; changed: boolean } {
-  cmd.re.lastIndex = 0;
+function applySubst(line: string, cmd: Subst, st: ExecState): { result: string; changed: boolean } {
+  // Resolve the (possibly empty `//`) pattern; an empty pattern reuses the last
+  // regex but applies this command's own flags (g/i). We always need a `g` copy
+  // so we can walk occurrences ourselves.
+  const base = resolveRegex(cmd.re, st);
+  const flags = base.flags.includes('g') ? base.flags : base.flags + 'g';
+  const re = cmd.re ? base : new RegExp(base.source, flags);
+  re.lastIndex = 0;
   let out = '';
   let last = 0;
   let occurrence = 0;
@@ -447,19 +468,28 @@ function applySubst(line: string, cmd: Subst): { result: string; changed: boolea
   // Which occurrences to replace: if nth>0, replace nth (and onward if global);
   // else first only (unless global → all).
   const minOcc = cmd.nth > 0 ? cmd.nth : 1;
+  let prevEnd = -1; // end index of the previous (replaced) match, for zero-width guard
   let m: RegExpExecArray | null;
-  while ((m = cmd.re.exec(line)) !== null) {
-    occurrence++;
+  while ((m = re.exec(line)) !== null) {
     const matchStart = m.index;
     const matchEnd = m.index + m[0].length;
+    // Skip an empty match immediately adjacent to a previous match's end: e.g.
+    // `s/a*/-/g` on `aaa` must not fire a second empty match at position 3.
+    if (m[0].length === 0 && matchStart === prevEnd) {
+      re.lastIndex++;
+      if (re.lastIndex > line.length) break;
+      continue;
+    }
+    occurrence++;
     const replace = occurrence >= minOcc && (cmd.global || occurrence === minOcc);
     if (replace) {
       out += line.slice(last, matchStart) + buildReplacement(cmd.replacement, m);
       last = matchEnd;
       changed = true;
+      prevEnd = matchEnd;
       if (!cmd.global) break;
     }
-    if (m[0].length === 0) cmd.re.lastIndex++;
+    if (m[0].length === 0) re.lastIndex++;
   }
   out += line.slice(last);
   return { result: out, changed };
@@ -479,14 +509,16 @@ interface RangeState {
   active: boolean;
   /** For `+N` / line ends, the input line number at which the range closes. */
   endLine: number;
+  /** `0,/re/` only: set once the range has opened so it never re-opens. */
+  started?: boolean;
 }
 
 /** Whether a single address matches the current line. */
-function matchOne(a: Address, lineno: number, line: string, lastLineno: number): boolean {
+function matchOne(a: Address, lineno: number, line: string, lastLineno: number, st: ExecState): boolean {
   switch (a.kind) {
     case 'line': return lineno === a.n;
     case 'last': return lineno === lastLineno;
-    case 'regex': return a.re.test(line);
+    case 'regex': return resolveRegex(a.re, st).test(line);
     case 'step':
       // GNU `first~step`: matches first, first+step, first+2*step … For step<=0
       // GNU treats it as a plain `first` line address.
@@ -505,14 +537,15 @@ function addressActive(
   line: string,
   lastLineno: number,
   rng: RangeState,
+  st: ExecState,
 ): boolean {
   let result: boolean;
   if (!spec.start) {
     result = true;
   } else if (!spec.end) {
-    result = matchOne(spec.start, lineno, line, lastLineno);
+    result = matchOne(spec.start, lineno, line, lastLineno, st);
   } else {
-    result = rangeActive(spec, lineno, line, lastLineno, rng);
+    result = rangeActive(spec, lineno, line, lastLineno, rng, st);
   }
   return spec.negate ? !result : result;
 }
@@ -523,10 +556,30 @@ function rangeActive(
   line: string,
   lastLineno: number,
   rng: RangeState,
+  st: ExecState,
 ): boolean {
   const end = spec.end!;
+  const start = spec.start!;
+  // GNU `0,/re/`: the range is active from the very first line and may end on
+  // the FIRST line that matches the end regex (including line 1 itself).
+  const zeroStart = start.kind === 'line' && start.n === 0;
   if (!rng.active) {
-    if (!matchOne(spec.start!, lineno, line, lastLineno)) return false;
+    // A `0,/re/` range opens at most once: after it closes it never re-opens.
+    if (zeroStart && !rng.started) {
+      rng.started = true;
+      // Activate without requiring a start match; fall through to test the end
+      // on this very line below.
+      rng.active = true;
+      rng.endLine = -1;
+      if (end.kind === 'line' || end.kind === 'plus' || end.kind === 'multiple') {
+        // Numeric end relative to line 0: behaves like a plain `1,N` range.
+        if (end.kind === 'line') { if (end.n <= lineno) rng.active = false; else rng.endLine = end.n; }
+      } else if (matchOne(end, lineno, line, lastLineno, st)) {
+        rng.active = false;
+      }
+      return true;
+    }
+    if (!matchOne(start, lineno, line, lastLineno, st)) return false;
     rng.active = true;
     // Establish where this range closes.
     if (end.kind === 'line') {
@@ -551,7 +604,7 @@ function rangeActive(
   // Inside the range: this line is included; decide whether it ends here.
   if (end.kind === 'line' || end.kind === 'plus' || end.kind === 'multiple') {
     if (rng.endLine >= 0 && lineno >= rng.endLine) rng.active = false;
-  } else if (matchOne(end, lineno, line, lastLineno)) {
+  } else if (matchOne(end, lineno, line, lastLineno, st)) {
     rng.active = false;
   }
   return true;
@@ -560,6 +613,8 @@ function rangeActive(
 interface ApplyResult {
   output: string;
   quit: boolean;
+  /** Exit code requested by `q`/`Q` (default 0). */
+  code: number;
 }
 
 /** Mutable per-run execution state shared across cycles. */
@@ -567,6 +622,17 @@ interface ExecState {
   hold: string;
   /** Set when any `s///` succeeds; cleared on a new input line or a `t`/`T`. */
   substMade: boolean;
+  /** The most recently *used* regex (from an address or s///); `//` reuses it. */
+  lastRegex?: RegExp;
+}
+
+/** Resolve a (possibly empty `//`) regex against the last-used one, recording
+ * the resolved regex as the new "last regex" for subsequent `//` references. */
+function resolveRegex(re: RegExp | undefined, st: ExecState): RegExp {
+  const r = re ?? st.lastRegex;
+  if (r === undefined) throw new Error('no previous regular expression');
+  st.lastRegex = r;
+  return r;
 }
 
 function applyScript(text: string, cmds: Command[], suppress: boolean): ApplyResult {
@@ -585,6 +651,7 @@ function applyScript(text: string, cmds: Command[], suppress: boolean): ApplyRes
   const st: ExecState = { hold: '', substMade: false };
   const outParts: string[] = [];
   let quit = false;
+  let quitCode = 0;
 
   // Emit a finished line into output, honoring the input's trailing-newline
   // convention only for the final input line.
@@ -632,7 +699,7 @@ function applyScript(text: string, cmds: Command[], suppress: boolean): ApplyRes
       if (cmd.type === '}') { pc++; continue; }
       if (cmd.type === ':') { pc++; continue; }
 
-      const active = addressActive(cmd, lineno, pattern, lastLineno, ranges[pc]);
+      const active = addressActive(cmd, lineno, pattern, lastLineno, ranges[pc], st);
 
       if (cmd.type === '{') {
         // Address-gated block: enter when active, else jump past the matching `}`.
@@ -645,15 +712,18 @@ function applyScript(text: string, cmds: Command[], suppress: boolean): ApplyRes
 
       switch (cmd.type) {
         case 's': {
-          const r = applySubst(pattern, cmd);
+          const r = applySubst(pattern, cmd, st);
           pattern = r.result;
-          if (r.changed) { st.substMade = true; if (cmd.print) emitAux(pattern); }
+          if (r.changed) { st.substMade = true; if (cmd.print) emitLine(pattern, isLast()); }
           break;
         }
-        case 'p': emitAux(pattern); break;
+        case 'p': emitLine(pattern, isLast()); break;
         case 'P': {
           const nl = pattern.indexOf('\n');
-          emitAux(nl >= 0 ? pattern.slice(0, nl) : pattern);
+          // `P` prints only the first line of the pattern space; it carries a
+          // newline unless this is the last input line without a trailing one.
+          if (nl >= 0) emitAux(pattern.slice(0, nl));
+          else emitLine(pattern, isLast());
           break;
         }
         case 'd': deleted = true; break;
@@ -667,7 +737,11 @@ function applyScript(text: string, cmds: Command[], suppress: boolean): ApplyRes
           deleted = true; // no auto-print of the consumed portion
           break;
         }
-        case 'q': quit = true; break;
+        case 'q': quit = true; quitCode = cmd.code; break;
+        case 'Q':
+          // Quit immediately WITHOUT auto-printing the current pattern space.
+          quit = true; quitCode = cmd.code; deleted = true;
+          break;
         case '=': emitAux(String(lineno)); break;
         case 'y': pattern = transliterate(pattern, cmd.from, cmd.to); break;
         case 'a': appendQueue.push(cmd.text); break;
@@ -676,11 +750,13 @@ function applyScript(text: string, cmds: Command[], suppress: boolean): ApplyRes
           // GNU `c`: on a single address (or a non-range) emit the text and
           // delete the line. On a RANGE, emit once at the END of the range only
           // — i.e. only when the range has just closed (`ranges[pc].active` is
-          // false after `addressActive` evaluated this line).
+          // false after `addressActive` evaluated this line). `c` ALSO ends the
+          // current cycle: no commands after it run on the (deleted) pattern.
           deleted = true;
           const isRange = cmd.end !== undefined;
           if (!isRange || !ranges[pc].active) emitAux(cmd.text);
-          break;
+          pc = cmds.length; // end the cycle
+          continue;
         }
         case 'h': st.hold = pattern; break;
         case 'H': st.hold = st.hold + '\n' + pattern; break;
@@ -757,7 +833,7 @@ function applyScript(text: string, cmds: Command[], suppress: boolean): ApplyRes
     if (quit) break;
   }
 
-  return { output: outParts.join(''), quit };
+  return { output: outParts.join(''), quit, code: quitCode };
 }
 
 // ── file I/O ────────────────────────────────────────────────────────────────────
@@ -830,7 +906,7 @@ const sedCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         return 1;
       }
       await writeBytes(out, enc.encode(r.output));
-      return 0;
+      return r.code;
     }
 
     let exitCode = 0;
@@ -860,6 +936,8 @@ const sedCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       } else {
         await writeBytes(out, enc.encode(r.output));
       }
+      // `q`/`Q` stops processing further files and sets the exit code.
+      if (r.quit) { if (r.code !== 0) exitCode = r.code; break; }
     }
     return exitCode;
   } finally {

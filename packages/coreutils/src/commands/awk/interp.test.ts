@@ -130,8 +130,15 @@ describe('awk interp — operators & coercion', () => {
     expect(run('BEGIN{ print "a" "b" 1+1 }')).toBe('ab2\n');
   });
 
-  test('numeric string comparison', () => {
-    expect(run('BEGIN{ if ("10" > "9") print "num"; else print "str" }')).toBe('num\n');
+  test('string constant comparison is lexical, not numeric', () => {
+    // String constants compare as strings: "10" < "9" lexically.
+    expect(run('BEGIN{ if ("10" > "9") print "num"; else print "str" }')).toBe('str\n');
+    expect(run('BEGIN{ print ("10" < "9") }')).toBe('1\n');
+  });
+
+  test('numeric-string (strnum) fields compare numerically', () => {
+    // Fields that look numeric compare as numbers: 10 > 9.
+    expect(run('{ if ($1 > $2) print "num"; else print "str" }', '10 9\n')).toBe('num\n');
   });
 
   test('string comparison for non-numeric', () => {
@@ -168,6 +175,37 @@ describe('awk interp — operators & coercion', () => {
 
   test('float uses OFMT-ish formatting', () => {
     expect(run('BEGIN{ print 1/3 }')).toBe('0.333333\n');
+  });
+
+  test('large exact integers print in full (no scientific)', () => {
+    expect(run('BEGIN{ print 2^54 }')).toBe('18014398509481984\n');
+    expect(run('BEGIN{ print 10000000000000000 }')).toBe('10000000000000000\n');
+  });
+});
+
+describe('awk interp — printf/print parenthesized args (AWK-1)', () => {
+  test('printf with parenthesized arg list', () => {
+    expect(run('BEGIN{printf("%d %d\\n",1,2)}')).toBe('1 2\n');
+  });
+
+  test('print with parenthesized arg list', () => {
+    expect(run('BEGIN{print(1,2,3)}')).toBe('1 2 3\n');
+  });
+
+  test('print single parenthesized expr unaffected', () => {
+    expect(run('BEGIN{print (1+2)}')).toBe('3\n');
+  });
+});
+
+describe('awk interp — split (AWK-2)', () => {
+  test('single-char separator is literal not regex', () => {
+    expect(run('BEGIN{ n=split("a.b.c",arr,"."); print n, arr[1], arr[2], arr[3] }'))
+      .toBe('3 a b c\n');
+  });
+
+  test('multi-char separator is a regex', () => {
+    expect(run('BEGIN{ n=split("a12b34c",arr,"[0-9]+"); print n, arr[1], arr[2], arr[3] }'))
+      .toBe('3 a b c\n');
   });
 });
 

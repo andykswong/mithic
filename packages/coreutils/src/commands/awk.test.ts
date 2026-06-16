@@ -90,6 +90,19 @@ describe('awk command — CLI wiring', () => {
     expect(h.err()).toContain('awk:');
   });
 
+  test('error prefix is not doubled', async () => {
+    const h = makeIO({ args: ['awk', '{ print ( }'], stdinText: 'x\n' });
+    await awkCommand(h.io);
+    expect(h.err()).not.toContain('awk: awk:');
+  });
+
+  test('runtime error prefix is not doubled', async () => {
+    const h = makeIO({ args: ['awk', 'BEGIN{ print 1/0 }'] });
+    await awkCommand(h.io);
+    expect(h.err()).not.toContain('awk: awk:');
+    expect(h.err()).toContain('awk:');
+  });
+
   test('missing program reports usage', async () => {
     const h = makeIO({ args: ['awk'] });
     // With no program and no -f, but stdin empty → usage error.

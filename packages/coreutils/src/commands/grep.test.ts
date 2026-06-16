@@ -97,6 +97,18 @@ describe('grep', () => {
     expect(h.out()).toBe('');
   });
 
+  test('POSIX class [[:digit:]] matches', async () => {
+    const h = makeIO({ args: ['grep', '[[:digit:]]'], stdinText: 'a1\nbcd\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a1\n');
+  });
+
+  test('POSIX class [[:alpha:]] in ERE', async () => {
+    const h = makeIO({ args: ['grep', '-E', '^[[:alpha:]]+$'], stdinText: 'abc\na1c\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('abc\n');
+  });
+
   test('-i ignore case', async () => {
     const h = makeIO({ args: ['grep', '-i', 'FOO'], stdinText: 'Foo\nbar\n' });
     expect(await grepCommand(h.io)).toBe(0);

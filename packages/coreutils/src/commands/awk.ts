@@ -118,6 +118,15 @@ async function writeFileText(io: CommandIO, path: string, content: string, appen
   }
 }
 
+/** Strip a redundant leading `<name>:` from an interpreter/parser message so we
+ * don't emit a doubled prefix like `awk: awk: ...`. */
+function errText(name: string, e: unknown): string {
+  let msg = (e as Error).message ?? String(e);
+  const prefix = name + ':';
+  if (msg.startsWith(prefix)) msg = msg.slice(prefix.length).replace(/^\s+/, '');
+  return `${name}: ${msg}`;
+}
+
 const awkCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const name = io.args[0] ?? 'awk';
   const out = io.stdout.getWriter();
@@ -155,7 +164,7 @@ const awkCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     try {
       program = parseProgram(programText);
     } catch (e) {
-      await writeLine(err, `${name}: ${(e as Error).message}`);
+      await writeLine(err, errText(name, e));
       return 2;
     }
 
@@ -210,7 +219,7 @@ const awkCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     try {
       code = interp.run(inputs);
     } catch (e) {
-      await writeLine(err, `${name}: ${(e as Error).message}`);
+      await writeLine(err, errText(name, e));
       return 2;
     }
 

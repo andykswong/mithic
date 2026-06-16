@@ -508,14 +508,43 @@ export class Interpreter {
       case '/': { const d = toNum(r); if (d === 0) throw new Error('awk: division by zero'); return toNum(l) / d; }
       case '%': { const d = toNum(r); if (d === 0) throw new Error('awk: division by zero in %'); return remainder(toNum(l), d); }
       case '^': return Math.pow(toNum(l), toNum(r));
-      default: return this.compare(op, l, r) ? 1 : 0;
+      default: return this.compare(op, l, r, leftE, rightE) ? 1 : 0;
     }
   }
 
-  /** awk comparison: numeric if both operands are numbers/numeric-strings. */
-  private compare(op: string, l: Value, r: Value): boolean {
+  /**
+   * Whether an operand may be compared numerically. Per POSIX, a comparison is
+   * numeric only when BOTH operands are numeric — where "numeric" means a number
+   * or a *strnum* (a field/getline/FS-derived value that looks numeric). A
+   * string CONSTANT (or any string produced by string operations like concat or
+   * `substr`) is never numeric, so e.g. `"10" < "9"` compares lexically.
+   */
+  private numericOperand(e: Expr, v: Value): boolean {
+    if (typeof v === 'number') return true;
+    if (!looksNumeric(v)) return false;
+    return !this.isStringContext(e);
+  }
+
+  /** Whether an expression yields a definite string (not a strnum). */
+  private isStringContext(e: Expr): boolean {
+    switch (e.type) {
+      case 'str': case 'concat': return true;
+      case 'group': return this.isStringContext(e.expr);
+      case 'ternary': return this.isStringContext(e.then) && this.isStringContext(e.else);
+      case 'builtin':
+        return e.name === 'substr' || e.name === 'sprintf'
+          || e.name === 'tolower' || e.name === 'toupper';
+      default: return false;
+    }
+  }
+
+  /** awk comparison: numeric if both operands are numbers/numeric strnums. */
+  private compare(op: string, l: Value, r: Value, leftE?: Expr, rightE?: Expr): boolean {
     let cmp: number;
-    if (looksNumeric(l) && looksNumeric(r)) {
+    const numeric = leftE && rightE
+      ? this.numericOperand(leftE, l) && this.numericOperand(rightE, r)
+      : looksNumeric(l) && looksNumeric(r);
+    if (numeric) {
       const a = toNum(l), b = toNum(r);
       cmp = a < b ? -1 : a > b ? 1 : 0;
     } else {
@@ -653,21 +682,27 @@ export class Interpreter {
     arr.clear();
     let parts: string[];
     let fs: string;
+    // A `/re/` regex-literal separator is always treated as a regex, even when
+    // it is a single character (`split(s,a,/./)`).
+    const fsIsRegex = args.length >= 3 && args[2].type === 'regex';
     if (args.length >= 3) {
       fs = args[2].type === 'regex' ? args[2].source : this.valToStr(this.eval(args[2]));
     } else {
       fs = this.str('FS');
     }
-    if (fs === ' ') {
+    if (fs === ' ' && !fsIsRegex) {
       const t = s.replace(/^[ \t\n]+/, '').replace(/[ \t\n]+$/, '');
       parts = t === '' ? [] : t.split(/[ \t\n]+/);
+    } else if (fs === '') {
+      parts = s === '' ? [] : s.split('');
     } else if (s === '') {
       parts = [];
-    } else if (fs.length === 1 && !'\\^$.|?*+(){}['.includes(fs)) {
-      parts = s.split(fs);
-    } else if (fs === '') {
-      parts = s.split('');
+    } else if (fs.length === 1 && !fsIsRegex) {
+      // A single-char separator is LITERAL (mirrors FS field-splitting), even
+      // when it is a regex metacharacter like `.` — escape before splitting.
+      parts = s.split(fs === ']' || '\\^$.|?*+(){}['.includes(fs) ? new RegExp(escapeRe(fs)) : fs);
     } else {
+      // Multi-char separator is an ERE.
       parts = s.split(this.compileRegex(fs));
     }
     parts.forEach((p, i) => arr.set(String(i + 1), p));
