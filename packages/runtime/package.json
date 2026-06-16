@@ -65,6 +65,6 @@
     "@mithic/worker": "^0.1"
   },
   "optionalDependencies": {
-    "isolated-vm": "^5.0.4"
+    "isolated-vm": "^7.0.0"
   }
 }

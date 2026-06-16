@@ -2,8 +2,10 @@
 // This backend uses the `isolated-vm` native Node.js addon for true V8 isolate
 // sandboxing with memory and CPU limits.
 //
-// Node 20+ requires --no-node-snapshot when using isolated-vm due to:
-// https://github.com/laverdet/isolated-vm#requirements
+// isolated-vm v7+ is required for Node 26+ support. Earlier versions (v5) only
+// supported up to Node 22. The `--no-node-snapshot` flag was required in older
+// versions of isolated-vm but has been fixed in the v7 series.
+// See: https://github.com/laverdet/isolated-vm
 //
 // isolated-vm is declared as an optionalDependency. If the native addon is not
 // available (e.g., toolchain absent, unsupported platform), `isIvmAvailable()`
@@ -41,7 +43,9 @@ export async function isIvmAvailable(): Promise<boolean> {
 interface IvmEntry {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   isolate: any;
-  callbacks: ((msg: SyscallRequest) => void)[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any;
+  messageListeners: ((msg: SyscallRequest) => void)[];
 }
 
 export class IvmRuntime implements Runtime {
@@ -74,15 +78,18 @@ export class IvmRuntime implements Runtime {
     if (typeof code === 'string') {
       codeStr = code;
     } else {
-      codeStr = String(code instanceof URL ? code.href : code);
+      // isolated-vm's eval() runs in a fully isolated V8 context that does not
+      // have access to the host's module loader, so dynamic import() of a URL is
+      // not supported. Throw a clear error rather than silently evaluating the
+      // URL string as a no-op JS expression.
+      throw new Error('IvmRuntime: URL entry not yet supported');
     }
 
     // Create a new V8 isolate with the configured memory limit.
     const isolate = new this.#ivm.Isolate({ memoryLimit: this.#memoryLimitMb });
-    const entry: IvmEntry = { isolate, callbacks: [] };
-    this.#processes.set(id, entry);
-
     const context = await isolate.createContext();
+    const entry: IvmEntry = { isolate, context, messageListeners: [] };
+    this.#processes.set(id, entry);
 
     // Inject __isola_syscall as an async Callback so guest code can post
     // SyscallRequests back to the host. The callback is exposed on the global
@@ -93,7 +100,7 @@ export class IvmRuntime implements Runtime {
         (jsonMsg: string) => {
           try {
             const msg = JSON.parse(jsonMsg) as SyscallRequest;
-            for (const cb of entry.callbacks) {
+            for (const cb of entry.messageListeners) {
               cb(msg);
             }
           } catch {
@@ -115,23 +122,22 @@ export class IvmRuntime implements Runtime {
   kill(handle: ProcessHandle, _signal: Signal): void {
     const entry = this.#processes.get(handle.id);
     if (entry) {
+      entry.context.release();
       entry.isolate.dispose();
       this.#processes.delete(handle.id);
     }
   }
 
-  postMessage(handle: ProcessHandle, msg: SyscallResponse | KernelEvent, _transfer?: Transferable[]): void {
+  postMessage(_handle: ProcessHandle, _msg: SyscallResponse | KernelEvent, _transfer?: Transferable[]): void {
     // isolated-vm does not support Transferable ports; postMessage is a no-op for
     // directPipes=false. Callers that need bidirectional IPC should use syscall responses
     // encoded as JSON passed through __isola_syscall callbacks.
-    void handle;
-    void msg;
   }
 
   onMessage(handle: ProcessHandle, cb: (msg: SyscallRequest) => void): void {
     const entry = this.#processes.get(handle.id);
     if (entry) {
-      entry.callbacks.push(cb);
+      entry.messageListeners.push(cb);
     }
   }
 
@@ -150,6 +156,7 @@ export class IvmRuntime implements Runtime {
     const entry = this.#processes.get(handle.id);
     if (entry) {
       if (!entry.isolate.isDisposed) {
+        entry.context.release();
         entry.isolate.dispose();
       }
       this.#processes.delete(handle.id);

@@ -22,9 +22,11 @@ test('iframe and worker support direct pipes; quickjs and ivm do not', () => {
   expect(IVM_CAPABILITIES.directPipes).toBe(false);
 });
 
-test('worker and iframe support transferables', () => {
+test('worker and iframe support transferables; quickjs and ivm do not', () => {
   expect(WORKER_CAPABILITIES.transferable).toBe(true);
   expect(IFRAME_CAPABILITIES.transferable).toBe(true);
+  expect(QUICKJS_CAPABILITIES.transferable).toBe(false);
+  expect(IVM_CAPABILITIES.transferable).toBe(false);
 });
 
 test('quickjs is deterministic; others are not', () => {

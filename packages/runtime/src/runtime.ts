@@ -82,7 +82,7 @@ export const QUICKJS_CAPABILITIES: RuntimeCapabilities = {
 
 export const IVM_CAPABILITIES: RuntimeCapabilities = {
   gui: false,
-  transferable: true,
+  transferable: false,
   directPipes: false,
   deterministic: false,
   memoryLimit: true,
