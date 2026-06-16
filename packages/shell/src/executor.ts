@@ -508,7 +508,7 @@ export class Executor implements ShellEnv {
     const expanded: Array<{ name: string; argv: string[]; env: Record<string, string> }> = [];
     for (const s of stages) expanded.push(await this.expandCommand(s, expander));
 
-    if (expanded.every((e) => isBuiltin(e.name) || this.functions.has(e.name))) {
+    if (expanded.every((e) => (isBuiltin(e.name) && builtinShadowsExternal(e.name, e.argv)) || this.functions.has(e.name))) {
       let stdin = '';
       let status = 0;
       const codes: number[] = [];
@@ -580,7 +580,7 @@ export class Executor implements ShellEnv {
       if (this.functions.has(name)) {
         return await this.callFunction(name, argv, localEnv);
       }
-      if (isBuiltin(name)) {
+      if (isBuiltin(name) && builtinShadowsExternal(name, argv)) {
         const saved = { ...this.context.env };
         Object.assign(this.context.env, localEnv);
         const status = await this.dispatch(name, argv, { stdin });
@@ -745,6 +745,23 @@ export class Executor implements ShellEnv {
 
   protected writeStdout(s: string): void { this.stdoutSink(s); }
   protected writeStderr(s: string): void { this.stderrSink(s); }
+}
+
+/**
+ * "Coreutils-shadowing" builtins: commands that exist BOTH as an in-process
+ * builtin and as a spawnable external coreutils command. The builtin runs ONLY
+ * when it behaves identically to the external — otherwise the executor falls
+ * through to spawn the real external so file operands etc. are honored.
+ *
+ * `cat`: the builtin only echoes stdin. With NO operands that matches the
+ * external's `cat` (stdin passthrough), so the builtin runs. WITH file operands
+ * the builtin would print nothing, so we spawn the external coreutils `cat`,
+ * which reads the files. A host with no coreutils loses `cat file` (acceptable:
+ * the shell is meant to be used WITH coreutils), but `echo x | cat` still works.
+ */
+function builtinShadowsExternal(name: string, argv: string[]): boolean {
+  if (name === 'cat') return argv.length === 0;
+  return true;
 }
 
 function toSpawnParams(p: PipelineStageParams): SpawnParams {

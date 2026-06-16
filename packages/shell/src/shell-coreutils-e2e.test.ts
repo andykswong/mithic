@@ -194,14 +194,27 @@ test.fails('KNOWN GAP: input redirect into a lone external (grep < file) — std
   expect(out.code).toBe(0);
 }, 8000);
 
-// KNOWN GAP — see report. `cat` is a shell BUILTIN that only echoes stdin; it
-// ignores file operands entirely (`builtins.ts` `case 'cat'`). So `cat <file>`
-// and `cat *.txt` print nothing even though the external coreutils `cat` would
-// read them. Marked `fails` to document + guard the gap.
-test.fails('KNOWN GAP: builtin cat ignores file operands (cat <file> reads nothing)', async () => {
+// FIXED — `cat` is a coreutils-shadowing builtin: with NO operands it runs the
+// in-process builtin (stdin passthrough), but WITH file operands it falls
+// through to spawn the external coreutils `cat`, which reads the files.
+test('cat with file operands spawns the external coreutils cat', async () => {
   const k = await bootShell({ '/a.txt': 'AAA\n' });
   const out = await k.run('cat /a.txt');
   expect(out.stdout).toBe('AAA\n');
+}, T);
+
+test('cat *.txt globs then spawns external cat over the matches', async () => {
+  const k = await bootShell({ '/a.txt': 'AAA\n', '/b.txt': 'BBB\n', '/c.md': 'CCC\n' });
+  const out = await k.run('cd / && cat *.txt');
+  expect(out.stdout).toBe('AAA\nBBB\n');
+  expect(out.code).toBe(0);
+}, T);
+
+test('bare cat (no operands) still runs the builtin stdin passthrough', async () => {
+  const k = await bootShell();
+  const out = await k.run('echo piped | cat');
+  expect(out.stdout).toBe('piped\n');
+  expect(out.code).toBe(0);
 }, T);
 
 test('exit code: grep with no match returns 1', async () => {

@@ -268,6 +268,45 @@ test('[[ string == glob ]]', async () => {
   expect((await run('[[ foobar == foo* ]]; echo $?')).out.trim()).toBe('0');
 });
 
+// ── cat: coreutils-shadowing builtin (operands → spawn external) ────────────
+
+test('cat WITH file operands spawns the external (does not use the builtin)', async () => {
+  const k = mockKernel();
+  let out = '';
+  const ex = new Executor(k as any, { cwd: '/', env: {} }, {
+    onStdout: (s) => { out += s; },
+    resolve: (name) => name,
+  });
+  await ex.run(parse('cat /a.txt'));
+  // The external `cat` was spawned with the file operand…
+  expect(k.spawned).toHaveLength(1);
+  expect(k.spawned[0].args).toEqual(['cat', '/a.txt']);
+  // …and the builtin (stdin passthrough) did NOT run.
+  expect(out).toBe('');
+});
+
+test('bare cat (no operands) runs the builtin stdin passthrough, no spawn', async () => {
+  const k = mockKernel();
+  let out = '';
+  const ex = new Executor(k as any, { cwd: '/', env: {} }, {
+    onStdout: (s) => { out += s; },
+    resolve: (name) => name,
+  });
+  await ex.run(parse('echo hello | cat'));
+  // Pure builtin pipeline — nothing spawned.
+  expect(k.spawned).toHaveLength(0);
+  expect(out).toBe('hello\n');
+});
+
+test('cat in a pipeline WITH operands spawns the external stage', async () => {
+  const k = mockKernel();
+  const ex = new Executor(k as any, { cwd: '/', env: {} }, { resolve: (name) => name });
+  await ex.run(parse('cat /a.txt | sort'));
+  // `cat /a.txt` shadows out of the builtin path, so the whole pipeline spawns.
+  expect(k.spawned).toHaveLength(2);
+  expect(k.spawned[0].args).toEqual(['cat', '/a.txt']);
+});
+
 // ── shift / getopts ────────────────────────────────────────────────────────
 
 test('shift drops positional params', async () => {
