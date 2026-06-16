@@ -15,7 +15,10 @@
     "doc": "typedoc",
     "lint": "eslint",
     "typecheck": "npm run typecheck --ws --if-present",
-    "test": "npm test --ws --if-present"
+    "test": "vitest run",
+    "test:node": "vitest run --project node",
+    "test:browser": "vitest run --project browser",
+    "test:watch": "vitest"
   },
   "repository": {
     "type": "git",
@@ -40,25 +43,28 @@
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
     "@mithic/io": "^0.4",
-    "@mithic/wasip2": "^0.1",
-    "@mithic/process": "^0.1"
+    "@mithic/process": "^0.1",
+    "@mithic/wasip2": "^0.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0",
     "@stylistic/eslint-plugin": "^5.0",
     "@types/node": "^25.0",
     "@vitejs/plugin-react": "^6.0",
+    "@vitest/browser": "^3.2.6",
     "cross-env": "^10.0",
     "eslint": "^10.0",
-    "globals": "^17.0",
     "global-jsdom": "^29.0",
+    "globals": "^17.0",
     "jsdom": "^29.0",
+    "playwright": "^1.61.0",
     "rimraf": "^6.0",
     "typedoc": "^0.28",
     "typescript": "^6.0",
     "typescript-eslint": "^8.50",
     "vite": "^8.0",
-    "vite-plugin-dts": "^5.0"
+    "vite-plugin-dts": "^5.0",
+    "vitest": "^3.2.6"
   },
   "workspaces": [
     "./packages/worker",
