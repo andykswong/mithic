@@ -12,8 +12,14 @@ export type {
 export { CapabilityManager } from './capability-manager.ts';
 export type { FsOperation } from './capability-manager.ts';
 export { IpcBroker } from './ipc-broker.ts';
-export type { Pipe, Connection } from './ipc-broker.ts';
+export type { Pipe } from './ipc-broker.ts';
 export { ProcessManager } from './process-manager.ts';
 export type { ProcessState, ProcessEntry, WaitResult, WaitStatus } from './process-manager.ts';
 export { SyscallDispatcher } from './syscall-dispatch.ts';
 export type { SyscallDispatcherOptions, SyscallRequestLike, DomMutateHandler } from './syscall-dispatch.ts';
+export { RemoteDomHost, ALLOWED_TAGS, ALLOWED_GLOBAL_ATTRIBUTES } from './display/remote-dom-host.ts';
+export type {
+  GuestDomEvent,
+  GuestEventCallback,
+  RemoteDomHostOptions,
+} from './display/remote-dom-host.ts';

@@ -14,7 +14,7 @@
  * Host → Guest event forwarding: kernel events with `event: 'dom/event'`.
  */
 
-import type { Guest } from './isola.ts';
+import type { Guest, GuestDomEventPayload } from './isola.ts';
 
 // ---------------------------------------------------------------------------
 // Mutation record types
@@ -78,6 +78,9 @@ export interface SetTextContentMutation {
 
 let nextNodeId = 1;
 
+/** A guest-side DOM event listener (mirrors the DOM `EventListener` shape). */
+export type VNodeEventListener = (event: GuestDomEventPayload) => void;
+
 export class VNode {
   readonly id: number;
   readonly nodeType: 'element' | 'text';
@@ -87,6 +90,8 @@ export class VNode {
   #children: VNode[];
   #parent: VNode | null;
   #serializer: MutationSerializer | null;
+  /** eventType → listeners registered for host-forwarded `dom/event`. */
+  #listeners: Map<string, Set<VNodeEventListener>> | undefined;
 
   constructor(
     nodeType: 'element' | 'text',
@@ -170,6 +175,31 @@ export class VNode {
     this.#serializer?.record({ type: 'removeChild', parentId: this.id, childId: child.id });
     return child;
   }
+
+  /**
+   * Register a listener for a host-forwarded DOM event (e.g. "click", "input").
+   * The host's RemoteDomHost forwards user interactions on the mirrored real DOM
+   * element via a `dom/event` kernel event; the MutationSerializer demultiplexes
+   * by node id and invokes the listeners registered here.
+   */
+  addEventListener(type: string, listener: VNodeEventListener): void {
+    if (!this.#listeners) this.#listeners = new Map();
+    let set = this.#listeners.get(type);
+    if (!set) { set = new Set(); this.#listeners.set(type, set); }
+    set.add(listener);
+    this.#serializer?.trackEventNode(this.id, this);
+  }
+
+  removeEventListener(type: string, listener: VNodeEventListener): void {
+    this.#listeners?.get(type)?.delete(listener);
+  }
+
+  /** Internal: dispatch a forwarded host event to this node's listeners. */
+  dispatchEvent(event: GuestDomEventPayload): void {
+    const set = this.#listeners?.get(event.eventType);
+    if (!set) return;
+    for (const listener of set) listener(event);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +220,9 @@ export class VNode {
 export class MutationSerializer {
   #guest: Guest;
   #pending: DomMutation[] = [];
+  /** node id → VNode for nodes that registered host-event listeners. */
+  #eventNodes = new Map<number, VNode>();
+  #subscribed = false;
 
   constructor(guest: Guest) {
     this.#guest = guest;
@@ -198,6 +231,24 @@ export class MutationSerializer {
   /** Internal: called by VNode constructors/mutators to record a mutation. */
   record(mutation: DomMutation): void {
     this.#pending.push(mutation);
+  }
+
+  /**
+   * Internal: register a VNode so forwarded `dom/event` records can be routed to
+   * its listeners. Lazily subscribes to the guest's `dom/event` stream on first
+   * use so a serializer with no event listeners never installs a control listener.
+   */
+  trackEventNode(id: number, node: VNode): void {
+    this.#eventNodes.set(id, node);
+    if (!this.#subscribed && this.#guest.onDomEvent) {
+      this.#subscribed = true;
+      this.#guest.onDomEvent((event) => this.#dispatch(event));
+    }
+  }
+
+  /** Route a host-forwarded event to the matching node's listeners. */
+  #dispatch(event: GuestDomEventPayload): void {
+    this.#eventNodes.get(event.nodeId)?.dispatchEvent(event);
   }
 
   createElement(tag: string): VNode {

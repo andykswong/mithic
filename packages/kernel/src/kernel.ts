@@ -13,10 +13,18 @@ import { IpcBroker } from './ipc-broker.ts';
 import { ProcessManager } from './process-manager.ts';
 import type { WaitResult } from './process-manager.ts';
 import { SyscallDispatcher } from './syscall-dispatch.ts';
+import type { DomMutateHandler } from './syscall-dispatch.ts';
 
 export interface KernelOptions {
   runtime: Runtime;
   vfs: FileSystemProvider;
+  /**
+   * Optional handler for `dom/mutate` syscalls from guest processes. When set,
+   * the kernel forwards batched DomMutation records from a guest to this handler
+   * (typically `RemoteDomHost.applyMutations` bound to a container). When unset,
+   * `dom/mutate` returns ENOSYS to the guest.
+   */
+  onDomMutate?: DomMutateHandler;
   /**
    * How to actually start a guest module. The kernel constructs the boot wiring
    * (control + stdio MessagePorts, ProcessInit) and hands it to the launcher.
@@ -193,6 +201,7 @@ export class Kernel {
       caps: this.capabilities,
       cwdOf: (pid) => this.#cwds.get(pid) ?? '/',
       ipc: this.ipc,
+      onDomMutate: options.onDomMutate,
     });
     this.#launcher = options.launcher ?? new DefaultGuestLauncher();
     this.#relayLauncher = options.relayLauncher;

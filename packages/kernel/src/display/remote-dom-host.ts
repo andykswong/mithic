@@ -174,6 +174,18 @@ export class RemoteDomHost {
     this.#listeners.clear();
     this.#nodes.clear();
     this.#nodes.set(0, this.#container);
+    this.#nodeIds = new WeakMap();
+    this.#nodeIds.set(this.#container, 0);
+  }
+
+  /**
+   * Number of registered nodes (including the container, id 0). Exposed for
+   * tests asserting that removed nodes are dropped from the registry rather than
+   * leaked. After a create→append→remove cycle this returns to its pre-create
+   * value.
+   */
+  get nodeCount(): number {
+    return this.#nodes.size;
   }
 
   // ---------------------------------------------------------------------------
@@ -210,14 +222,17 @@ export class RemoteDomHost {
     const el = document.createElement(normalTag);
     this.#nodes.set(id, el);
     this.#nodeIds.set(el, id);
-    // Wire event forwarding on interactive elements.
-    this.#wireEvents(id, el, normalTag);
+    // Wire click event forwarding.
+    this.#wireEvents(id, el);
     return true;
   }
 
   #createText(id: number, text: string): boolean {
     const node = document.createTextNode(text);
     this.#nodes.set(id, node);
+    // Track the reverse mapping too so #forget can drop text descendants when
+    // their ancestor is removed (otherwise text-node ids would leak).
+    this.#nodeIds.set(node, id);
     return true;
   }
 
@@ -238,10 +253,38 @@ export class RemoteDomHost {
     } catch {
       return false;
     }
+    // Drop the removed subtree from the registry so the maps don't grow without
+    // bound under create→append→remove cycles. The child id and every tracked
+    // descendant id are forgotten (along with their forwarded event listeners).
+    this.#forget(childId, child);
     return true;
   }
 
+  /**
+   * Remove `node` (and any tracked descendants) from `#nodes`/`#nodeIds` and
+   * tear down their forwarded event listeners. Called when a node is removed
+   * from the tree so the host registry doesn't leak ids that can never recur.
+   */
+  #forget(id: number, node: Node): void {
+    // Tear down listeners for this id, if any.
+    const handlers = this.#listeners.get(id);
+    if (handlers && node instanceof EventTarget) {
+      for (const [type, handler] of handlers) node.removeEventListener(type, handler);
+    }
+    this.#listeners.delete(id);
+    this.#nodes.delete(id);
+    this.#nodeIds.delete(node);
+    // Recurse into tracked children: a descendant is tracked iff it has a node id.
+    for (const childNode of Array.from(node.childNodes)) {
+      const childId = this.#nodeIds.get(childNode);
+      if (childId !== undefined) this.#forget(childId, childNode);
+    }
+  }
+
   #setAttribute(id: number, name: string, value: string): boolean {
+    // The container (node 0) is the HOST's element — a guest must not mutate its
+    // attributes (could wipe host classes/ids or smuggle in styling/handlers).
+    if (id === 0) return false;
     const node = this.#nodes.get(id);
     if (!(node instanceof Element)) return false;
     const tag = node.tagName.toLowerCase();
@@ -251,6 +294,8 @@ export class RemoteDomHost {
   }
 
   #removeAttribute(id: number, name: string): boolean {
+    // Guard the host container (node 0) — see #setAttribute.
+    if (id === 0) return false;
     const node = this.#nodes.get(id);
     if (!(node instanceof Element)) return false;
     const tag = node.tagName.toLowerCase();
@@ -260,6 +305,9 @@ export class RemoteDomHost {
   }
 
   #setTextContent(id: number, text: string): boolean {
+    // Guard the host container (node 0): a guest setting textContent on id 0
+    // would wipe the host element's children/text.
+    if (id === 0) return false;
     const node = this.#nodes.get(id);
     if (!node) return false;
     node.textContent = text;
@@ -277,9 +325,10 @@ export class RemoteDomHost {
     const lname = name.toLowerCase();
     // Block all on* event handlers (e.g. onclick, onmouseover, onerror)
     if (lname.startsWith('on')) return false;
-    // Block javascript: URIs in URL attributes
+    // Block dangerous URI schemes (javascript:, data:, vbscript:) in URL
+    // attributes — defense-in-depth against script execution and data-URI XSS.
     if (['href', 'src', 'action', 'formaction', 'xlink:href'].includes(lname)) {
-      if (/^\s*javascript\s*:/i.test(value)) return false;
+      if (/^\s*(javascript|data|vbscript)\s*:/i.test(value)) return false;
     }
     if (ALLOWED_GLOBAL_ATTRIBUTES.has(lname)) return true;
     const perTag = ALLOWED_PER_TAG_ATTRIBUTES[tag];
@@ -288,42 +337,20 @@ export class RemoteDomHost {
   }
 
   /**
-   * Wire click/input event forwarding for elements where user interaction is
-   * meaningful. Only adds listeners for interactive elements to minimise cost.
+   * Wire click event forwarding. Every allowlisted element can be clicked, so a
+   * single click listener is attached and forwarded to the guest. Input-like
+   * elements (input/textarea/select) are NOT in ALLOWED_TAGS, so there is no
+   * `input` event to forward.
    */
-  #wireEvents(id: number, el: HTMLElement, tag: string): void {
+  #wireEvents(id: number, el: HTMLElement): void {
     if (!this.#onGuestEvent) return;
-    const handlers: Array<[string, EventListener]> = [];
-
-    const clickable = true; // all elements can be clicked
-    if (clickable) {
-      const handler: EventListener = (e) => {
-        // Only forward if this element is the target (not a bubble from a child
-        // that has its own id — the child's listener handles that case).
-        if (e.target !== el) return;
-        this.#onGuestEvent?.({ nodeId: id, eventType: 'click', payload: {} });
-      };
-      el.addEventListener('click', handler);
-      handlers.push(['click', handler]);
-    }
-
-    const isInputLike = ['input', 'textarea', 'select'].includes(tag);
-    if (isInputLike) {
-      const handler: EventListener = (e) => {
-        const target = e.target as HTMLInputElement | null;
-        if (!target || target !== el) return;
-        this.#onGuestEvent?.({
-          nodeId: id,
-          eventType: 'input',
-          payload: { value: target.value ?? '' },
-        });
-      };
-      el.addEventListener('input', handler);
-      handlers.push(['input', handler]);
-    }
-
-    if (handlers.length > 0) {
-      this.#listeners.set(id, handlers);
-    }
+    const handler: EventListener = (e) => {
+      // Only forward if this element is the target (not a bubble from a child
+      // that has its own id — the child's listener handles that case).
+      if (e.target !== el) return;
+      this.#onGuestEvent?.({ nodeId: id, eventType: 'click', payload: {} });
+    };
+    el.addEventListener('click', handler);
+    this.#listeners.set(id, [['click', handler]]);
   }
 }

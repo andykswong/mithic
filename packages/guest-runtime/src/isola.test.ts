@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 import { INITIAL_CREDIT_BYTES } from '@mithic/protocol';
 import { createGuest } from './isola.ts';
+import { MutationSerializer } from './remote-dom.ts';
 
 function makeGuest(preopenPorts?: Record<number, MessagePort>) {
   const ctrl = new MessageChannel();
@@ -90,6 +91,69 @@ test('exit posts {type:"exit",code} and rejects in-flight syscalls', async () =>
   await new Promise(r => setTimeout(r, 10));
   const exitMsg = kernelMessages.find(m => (m as { type?: string }).type === 'exit');
   expect(exitMsg).toMatchObject({ type: 'exit', code: 42 });
+
+  kernelPort.close();
+});
+
+test('M-Fix 1: dom/event kernel event reaches a guest onDomEvent listener', async () => {
+  const { guest, kernelPort } = makeGuest();
+  kernelPort.start?.();
+
+  const received: Array<{ nodeId: number; eventType: string; payload?: unknown }> = [];
+  guest.onDomEvent!((e) => received.push(e));
+
+  kernelPort.postMessage({
+    event: 'dom/event',
+    payload: { nodeId: 50, eventType: 'click', payload: {} },
+  });
+
+  await new Promise((r) => setTimeout(r, 20));
+  expect(received).toHaveLength(1);
+  expect(received[0]).toMatchObject({ nodeId: 50, eventType: 'click' });
+
+  kernelPort.close();
+});
+
+test('M-Fix 1: a malformed dom/event is ignored (no listener invoked, no throw)', async () => {
+  const { guest, kernelPort } = makeGuest();
+  kernelPort.start?.();
+  const received: unknown[] = [];
+  guest.onDomEvent!((e) => received.push(e));
+
+  // Missing nodeId / wrong type — must be dropped.
+  kernelPort.postMessage({ event: 'dom/event', payload: { eventType: 'click' } });
+  kernelPort.postMessage({ event: 'dom/event', payload: { nodeId: 'x', eventType: 'click' } });
+
+  await new Promise((r) => setTimeout(r, 20));
+  expect(received).toHaveLength(0);
+  kernelPort.close();
+});
+
+test('M-Fix 1: dom/event routes through MutationSerializer to the matching VNode listener', async () => {
+  const { guest, kernelPort } = makeGuest();
+  kernelPort.start?.();
+
+  const serializer = new MutationSerializer(guest);
+  const button = serializer.createElement('div');
+  const clicks: Array<{ nodeId: number }> = [];
+  button.addEventListener('click', (e) => { clicks.push({ nodeId: e.nodeId }); });
+
+  // Host forwards a click on this node's id.
+  kernelPort.postMessage({
+    event: 'dom/event',
+    payload: { nodeId: button.id, eventType: 'click', payload: {} },
+  });
+
+  await new Promise((r) => setTimeout(r, 20));
+  expect(clicks).toEqual([{ nodeId: button.id }]);
+
+  // An event for a different node id must NOT reach this listener.
+  kernelPort.postMessage({
+    event: 'dom/event',
+    payload: { nodeId: button.id + 999, eventType: 'click', payload: {} },
+  });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(clicks).toHaveLength(1);
 
   kernelPort.close();
 });

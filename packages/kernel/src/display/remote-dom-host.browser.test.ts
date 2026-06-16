@@ -392,6 +392,151 @@ describe('RemoteDomHost — full render pipeline', () => {
   });
 });
 
+describe('RemoteDomHost — SECURITY: container (node 0) is protected', () => {
+  let container: HTMLDivElement;
+  let host: RemoteDomHost;
+
+  beforeEach(() => {
+    container = makeContainer();
+    container.setAttribute('class', 'host-shell');
+    container.textContent = 'HOST CONTENT';
+    host = new RemoteDomHost({ container });
+  });
+  afterEach(() => {
+    host.dispose();
+    cleanupContainer(container);
+  });
+
+  it('REJECTS setTextContent on id 0 — host container content is unharmed', () => {
+    const applied = host.applyMutations([
+      { type: 'setTextContent', id: 0, text: 'PWNED' },
+    ]);
+    expect(applied).toBe(0);
+    expect(container.textContent).toBe('HOST CONTENT');
+  });
+
+  it('REJECTS setAttribute on id 0 — host container attributes are unharmed', () => {
+    const applied = host.applyMutations([
+      { type: 'setAttribute', id: 0, name: 'class', value: 'evil' },
+    ]);
+    expect(applied).toBe(0);
+    expect(container.getAttribute('class')).toBe('host-shell');
+  });
+
+  it('REJECTS removeAttribute on id 0', () => {
+    const applied = host.applyMutations([
+      { type: 'removeAttribute', id: 0, name: 'class' },
+    ]);
+    expect(applied).toBe(0);
+    expect(container.getAttribute('class')).toBe('host-shell');
+  });
+
+  it('ALLOWS appendChild with parent id 0 — top-level children attach', () => {
+    const applied = host.applyMutations([
+      { type: 'createElement', id: 1, tag: 'div' },
+      { type: 'appendChild', parentId: 0, childId: 1 },
+    ]);
+    expect(applied).toBe(2);
+    expect(container.querySelector('div')).not.toBeNull();
+  });
+});
+
+describe('RemoteDomHost — SECURITY: dangerous URI schemes blocked', () => {
+  let container: HTMLDivElement;
+  let host: RemoteDomHost;
+
+  beforeEach(() => {
+    container = makeContainer();
+    host = new RemoteDomHost({ container });
+  });
+  afterEach(() => {
+    host.dispose();
+    cleanupContainer(container);
+  });
+
+  it('REJECTS data: URI in href', () => {
+    host.applyMutations([
+      { type: 'createElement', id: 1, tag: 'a' },
+      { type: 'setAttribute', id: 1, name: 'href', value: 'data:text/html,<script>alert(1)</script>' },
+      { type: 'appendChild', parentId: 0, childId: 1 },
+    ]);
+    expect(container.querySelector('a')!.getAttribute('href')).toBeNull();
+  });
+
+  it('REJECTS vbscript: URI in href', () => {
+    host.applyMutations([
+      { type: 'createElement', id: 2, tag: 'a' },
+      { type: 'setAttribute', id: 2, name: 'href', value: 'vbscript:msgbox(1)' },
+      { type: 'appendChild', parentId: 0, childId: 2 },
+    ]);
+    expect(container.querySelector('a')!.getAttribute('href')).toBeNull();
+  });
+
+  it('REJECTS data: URI in img src', () => {
+    host.applyMutations([
+      { type: 'createElement', id: 3, tag: 'img' },
+      { type: 'setAttribute', id: 3, name: 'src', value: 'data:image/svg+xml,<svg onload=alert(1)>' },
+      { type: 'appendChild', parentId: 0, childId: 3 },
+    ]);
+    expect(container.querySelector('img')!.getAttribute('src')).toBeNull();
+  });
+});
+
+describe('RemoteDomHost — removeChild forgets nodes (no registry leak)', () => {
+  let container: HTMLDivElement;
+  let host: RemoteDomHost;
+
+  beforeEach(() => {
+    container = makeContainer();
+    host = new RemoteDomHost({ container });
+  });
+  afterEach(() => {
+    host.dispose();
+    cleanupContainer(container);
+  });
+
+  it('after removeChild, the child id is dropped from the host registry', () => {
+    const base = host.nodeCount; // container only
+    host.applyMutations([
+      { type: 'createElement', id: 200, tag: 'div' },
+      { type: 'appendChild', parentId: 0, childId: 200 },
+    ]);
+    expect(host.nodeCount).toBe(base + 1);
+    host.applyMutations([{ type: 'removeChild', parentId: 0, childId: 200 }]);
+    // The removed id must be forgotten — registry returns to baseline.
+    expect(host.nodeCount).toBe(base);
+  });
+
+  it('removeChild forgets descendants too (subtree cleanup)', () => {
+    const base = host.nodeCount;
+    host.applyMutations([
+      { type: 'createElement', id: 210, tag: 'div' },
+      { type: 'createElement', id: 211, tag: 'span' },
+      { type: 'createText', id: 212, text: 'leaf' },
+      { type: 'appendChild', parentId: 211, childId: 212 },
+      { type: 'appendChild', parentId: 210, childId: 211 },
+      { type: 'appendChild', parentId: 0, childId: 210 },
+    ]);
+    expect(host.nodeCount).toBe(base + 3);
+    host.applyMutations([{ type: 'removeChild', parentId: 0, childId: 210 }]);
+    // Parent + span + text all forgotten.
+    expect(host.nodeCount).toBe(base);
+  });
+
+  it('repeated create→append→remove cycles do not grow the registry', () => {
+    const base = host.nodeCount;
+    for (let i = 0; i < 50; i++) {
+      const id = 1000 + i;
+      host.applyMutations([
+        { type: 'createElement', id, tag: 'div' },
+        { type: 'appendChild', parentId: 0, childId: id },
+        { type: 'removeChild', parentId: 0, childId: id },
+      ]);
+    }
+    expect(host.nodeCount).toBe(base);
+  });
+});
+
 describe('RemoteDomHost — ALLOWED_TAGS export sanity', () => {
   it('ALLOWED_TAGS does not contain script, iframe, object, embed, link, meta, style', () => {
     const forbidden = ['script', 'iframe', 'object', 'embed', 'link', 'meta', 'style'];
