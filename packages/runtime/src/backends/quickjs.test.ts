@@ -63,3 +63,27 @@ test('cpuLimit aborts a CPU-bound infinite loop via the opcode budget', async ()
   const exit = await rt.waitExit(h);
   expect(exit.code).not.toBe(0);
 }, 10000);
+
+// Fix 2 regression: disposing an interrupt-killed runtime must NOT trigger the
+// "Assertion failed: list_empty(&rt->gc_obj_list)" C-level abort.  The fix sets
+// `entry.interruptDead = true` inside the interrupt handler so `#disposeEntry`
+// skips `qjsRuntime.dispose()` — same tradeoff as the OOM path.
+//
+// We verify the flag indirectly: if the assertion fired, the process would crash
+// or the test would hang; a clean exit proves the guard worked.
+test('Fix 2: interrupt-killed runtime does not trigger C-level assertion on dispose', async () => {
+  const rt = await QuickJSRuntime.create();
+  const code = 'while (true) {}';  // tight loop — interrupt will fire
+  const h = await rt.spawn(code, {
+    init: {
+      type: 'init', entry: 'inline', args: ['p'], env: {}, cwd: '/', pid: 42,
+      ppid: 0, capabilities: [], limits: { timeoutMs: 200 },
+    },
+    onSyscall: async () => ({}),
+  });
+  // waitExit resolves once the interrupt handler has fired and the runtime exits.
+  const exit = await rt.waitExit(h);
+  // Non-zero exit confirms the interrupt fired (not a normal completion).
+  expect(exit.code).not.toBe(0);
+  // If we reach here without a crash/hang, the C-level assertion was not triggered.
+}, 10000);

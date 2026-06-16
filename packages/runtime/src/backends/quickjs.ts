@@ -55,6 +55,13 @@ interface ProcessEntry {
   alive: boolean;
   /** Set to true when OOM killed the runtime — skip dispose. */
   oomDead: boolean;
+  /**
+   * Set to true when the interrupt handler (timeout / cpu budget) killed the
+   * runtime.  Disposing an interrupted runtime triggers a C-level assertion
+   * ("Assertion failed: list_empty(&rt->gc_obj_list)"), so we skip dispose and
+   * leave the runtime to GC — same accepted tradeoff as the OOM path.
+   */
+  interruptDead: boolean;
 }
 
 /**
@@ -151,29 +158,6 @@ export class QuickJSRuntime implements Runtime {
       qjsRuntime.setMemoryLimit(limits.memoryMb * 1024 * 1024);
     }
 
-    // Interrupt handler enforces BOTH a wall-clock deadline (timeoutMs) AND a
-    // CPU-op budget derived from cpuMs. The handler fires roughly every
-    // INTERRUPT_OP_INTERVAL opcodes, so we count handler invocations and multiply
-    // by the interval to get an opcode-count proxy. cpuMs is converted to an
-    // opcode budget via CPU_OPS_PER_MS (a conservative proxy: real CPU time is not
-    // exposed by quickjs-emscripten, so we bound executed opcodes instead). This
-    // honors QUICKJS_CAPABILITIES.cpuLimit === true.
-    const timeoutMs = limits?.timeoutMs ?? 0;
-    const cpuMs = limits?.cpuMs ?? 0;
-    const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : 0;
-    const opBudget = cpuMs > 0 ? cpuMs * CPU_OPS_PER_MS : 0;
-    if (deadline > 0 || opBudget > 0) {
-      let invocations = 0;
-      qjsRuntime.setInterruptHandler(() => {
-        invocations++;
-        // Opcode-count-derived CPU budget: invocations * interval ≈ ops executed.
-        if (opBudget > 0 && invocations * INTERRUPT_OP_INTERVAL >= opBudget) return true;
-        // Wall-clock deadline, sampled periodically to keep the check cheap.
-        if (deadline > 0 && invocations % 1000 === 0 && Date.now() > deadline) return true;
-        return false;
-      });
-    }
-
     const ctx = qjsRuntime.newContext() as QuickJSAsyncContext;
 
     const entry: ProcessEntry = {
@@ -183,7 +167,42 @@ export class QuickJSRuntime implements Runtime {
       exitResolvers: [],
       alive: true,
       oomDead: false,
+      interruptDead: false,
     };
+
+    // Interrupt handler enforces BOTH a wall-clock deadline (timeoutMs) AND a
+    // CPU-op budget derived from cpuMs. The handler fires roughly every
+    // INTERRUPT_OP_INTERVAL opcodes, so we count handler invocations and multiply
+    // by the interval to get an opcode-count proxy. cpuMs is converted to an
+    // opcode budget via CPU_OPS_PER_MS (a conservative proxy: real CPU time is not
+    // exposed by quickjs-emscripten, so we bound executed opcodes instead). This
+    // honors QUICKJS_CAPABILITIES.cpuLimit === true.
+    //
+    // The handler also sets `entry.interruptDead = true` so `#disposeEntry` can
+    // skip `qjsRuntime.dispose()` — disposing an interrupt-killed runtime triggers
+    // a C-level assertion ("Assertion failed: list_empty(&rt->gc_obj_list)").
+    // Same accepted tradeoff as the OOM path: leave the runtime to GC.
+    const timeoutMs = limits?.timeoutMs ?? 0;
+    const cpuMs = limits?.cpuMs ?? 0;
+    const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : 0;
+    const opBudget = cpuMs > 0 ? cpuMs * CPU_OPS_PER_MS : 0;
+    if (deadline > 0 || opBudget > 0) {
+      let invocations = 0;
+      qjsRuntime.setInterruptHandler(() => {
+        invocations++;
+        // Opcode-count-derived CPU budget: invocations * interval ≈ ops executed.
+        if (opBudget > 0 && invocations * INTERRUPT_OP_INTERVAL >= opBudget) {
+          entry.interruptDead = true;
+          return true;
+        }
+        // Wall-clock deadline, sampled periodically to keep the check cheap.
+        if (deadline > 0 && invocations % 1000 === 0 && Date.now() > deadline) {
+          entry.interruptDead = true;
+          return true;
+        }
+        return false;
+      });
+    }
     this.#processes.set(id, entry);
 
     const resultCallbacks = this.#resultCallbacks;
@@ -371,9 +390,10 @@ export class QuickJSRuntime implements Runtime {
     try {
       if (entry.ctx.alive) entry.ctx.dispose();
     } catch { /* already disposed */ }
-    // After OOM the runtime is in a corrupted state — disposing it aborts the WASM
-    // module.  Leave it for GC instead of calling dispose().
-    if (!entry.oomDead) {
+    // After OOM or interrupt-kill the runtime is in a corrupted state — disposing
+    // it triggers a C-level assertion ("Assertion failed: list_empty(&rt->gc_obj_list)").
+    // Leave it for GC instead of calling dispose() in either case.
+    if (!entry.oomDead && !entry.interruptDead) {
       try {
         if (entry.qjsRuntime.alive) entry.qjsRuntime.dispose();
       } catch { /* already disposed */ }
