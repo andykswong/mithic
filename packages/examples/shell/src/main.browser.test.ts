@@ -55,6 +55,36 @@ async function flush(): Promise<void> {
 
 const T = 30000;
 
+/** Read the first non-empty visible buffer line. */
+function firstLine(a: ShellApp): string {
+  const buf = a.terminal.buffer.active;
+  for (let y = 0; y < buf.length; y++) {
+    const s = buf.getLine(y)?.translateToString(true) ?? '';
+    if (s.trim().length > 0) return s;
+  }
+  return '';
+}
+
+test('banner renders cleanly: heading is the first line and xterm.css hides the helper textarea', async () => {
+  const el = mount();
+  app = await bootShell(el);
+  await flush();
+
+  // The first visible buffer line is the banner heading itself.
+  const first = firstLine(app);
+  expect(first.startsWith('mithic shell')).toBe(true);
+  expect(first).toContain('sandboxed POSIX-style shell');
+
+  // ROOT-CAUSE GUARD. The garbage "2…$" row that rendered ABOVE the heading was
+  // the xterm helper textarea (composition mirror) painted at top:0 because
+  // xterm.css — which sets `.xterm-helper-textarea { opacity: 0 }` — was never
+  // bundled. main.ts now imports the CSS; assert the helper is hidden so a
+  // dropped import (the regression) fails here. Without the CSS this opacity is "1".
+  const helper = el.querySelector('.xterm-helper-textarea') as HTMLElement | null;
+  expect(helper).not.toBeNull();
+  expect(getComputedStyle(helper as HTMLElement).opacity).toBe('0');
+}, T);
+
 test('coreutils pipe: echo hello | grep ell -> hello', async () => {
   app = await bootShell(mount());
   app.terminal.input('echo hello | grep ell\r', true);
