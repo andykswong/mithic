@@ -312,6 +312,22 @@ export class SyscallDispatcher {
           return res(ok(req.id, await this.#mkdir(pid, req.args)));
         case 'fs/unlink':
           return res(ok(req.id, await this.#unlink(pid, req.args)));
+        case 'fs/rmdir':
+          return res(ok(req.id, await this.#rmdir(pid, req.args)));
+        case 'fs/rename':
+          return res(ok(req.id, await this.#rename(pid, req.args)));
+        case 'fs/symlink':
+          return res(ok(req.id, await this.#symlink(pid, req.args)));
+        case 'fs/readlink':
+          return res(ok(req.id, await this.#readlink(pid, req.args)));
+        case 'fs/link':
+          return res(ok(req.id, await this.#link(pid, req.args)));
+        case 'fs/chmod':
+          return res(ok(req.id, await this.#chmod(pid, req.args)));
+        case 'fs/utimes':
+          return res(ok(req.id, await this.#utimes(pid, req.args)));
+        case 'fs/realpath':
+          return res(ok(req.id, await this.#realpath(pid, req.args)));
         case 'fs/pipe':
           return this.#pipe(pid, req.id);
         case 'ipc/listen':
@@ -733,7 +749,11 @@ export class SyscallDispatcher {
     if (!this.#caps.checkFs(pid, absPath, 'read')) {
       throw new FileSystemError('access', `Permission denied: ${absPath}`);
     }
-    const stat = await this.#vfs.stat(absPath);
+    // `followSymlinks: false` requests lstat semantics (stat the link itself).
+    const followSymlinks = args.followSymlinks !== false;
+    const stat = await this.#vfs.stat(absPath, { followSymlinks });
+    // Numbers cross the structured-clone boundary cleanly; BigInts in some
+    // realms do not, so coerce size/linkCount the guest cares about.
     return { ...stat, size: Number(stat.size), linkCount: Number(stat.linkCount) };
   }
 
@@ -761,6 +781,108 @@ export class SyscallDispatcher {
     }
     await this.#vfs.unlink(absPath);
     return {};
+  }
+
+  async #rmdir(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
+    const absPath = this.#resolvePath(pid, args);
+    if (!this.#caps.checkFs(pid, absPath, 'write')) {
+      throw new FileSystemError('access', `Permission denied: ${absPath}`);
+    }
+    await this.#vfs.rmdir(absPath);
+    return {};
+  }
+
+  /**
+   * `fs/rename {path, newPath}`: move/rename within the VFS. Requires write on
+   * both the source (it is removed) and the destination (it is created).
+   * `newPath` is resolved relative to the same cwd/dirfd rules as `path`.
+   */
+  async #rename(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
+    const oldPath = this.#resolvePath(pid, args);
+    const newPath = this.#resolvePath(pid, { ...args, path: args.newPath });
+    if (!this.#caps.checkFs(pid, oldPath, 'write') || !this.#caps.checkFs(pid, newPath, 'write')) {
+      throw new FileSystemError('access', `Permission denied: ${oldPath} -> ${newPath}`);
+    }
+    await this.#vfs.rename(oldPath, newPath);
+    return {};
+  }
+
+  /**
+   * `fs/symlink {target, path}`: create a symlink at `path` pointing at the raw
+   * `target` string (not resolved — symlink targets may be relative/dangling).
+   * Requires write on the link path.
+   */
+  async #symlink(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
+    const linkPath = this.#resolvePath(pid, args);
+    const target = String(args.target ?? '');
+    if (!this.#caps.checkFs(pid, linkPath, 'write')) {
+      throw new FileSystemError('access', `Permission denied: ${linkPath}`);
+    }
+    await this.#vfs.symlink(target, linkPath);
+    return {};
+  }
+
+  async #readlink(pid: number, args: Record<string, unknown>): Promise<{ target: string }> {
+    const absPath = this.#resolvePath(pid, args);
+    if (!this.#caps.checkFs(pid, absPath, 'read')) {
+      throw new FileSystemError('access', `Permission denied: ${absPath}`);
+    }
+    const target = await this.#vfs.readlink(absPath);
+    return { target };
+  }
+
+  /**
+   * `fs/link {target, path}`: create a hard link at `path` to the existing
+   * `target`. Requires read on the target and write on the new link path.
+   */
+  async #link(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
+    const linkPath = this.#resolvePath(pid, args);
+    const target = this.#resolvePath(pid, { ...args, path: args.target });
+    if (!this.#caps.checkFs(pid, target, 'read') || !this.#caps.checkFs(pid, linkPath, 'write')) {
+      throw new FileSystemError('access', `Permission denied: ${target} -> ${linkPath}`);
+    }
+    await this.#vfs.link(target, linkPath);
+    return {};
+  }
+
+  async #chmod(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
+    const absPath = this.#resolvePath(pid, args);
+    if (!this.#caps.checkFs(pid, absPath, 'write')) {
+      throw new FileSystemError('access', `Permission denied: ${absPath}`);
+    }
+    await this.#vfs.chmod(absPath, Number(args.mode ?? 0));
+    return {};
+  }
+
+  /**
+   * `fs/utimes {path, atime?, mtime?}`: set access/modification times. Times are
+   * accepted as epoch milliseconds; omitted times default to "now". Requires
+   * write on the path.
+   */
+  async #utimes(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
+    const absPath = this.#resolvePath(pid, args);
+    if (!this.#caps.checkFs(pid, absPath, 'write')) {
+      throw new FileSystemError('access', `Permission denied: ${absPath}`);
+    }
+    const now = Date.now();
+    const atime = new Date(typeof args.atime === 'number' ? args.atime : now);
+    const mtime = new Date(typeof args.mtime === 'number' ? args.mtime : now);
+    await this.#vfs.utimes(absPath, atime, mtime);
+    return {};
+  }
+
+  /**
+   * `fs/realpath {path}`: canonicalize a path (resolve symlinks). Requires read
+   * on the path. Falls back to the normalized path when the provider does not
+   * implement `realpath`.
+   */
+  async #realpath(pid: number, args: Record<string, unknown>): Promise<{ path: string }> {
+    const absPath = this.#resolvePath(pid, args);
+    if (!this.#caps.checkFs(pid, absPath, 'read')) {
+      throw new FileSystemError('access', `Permission denied: ${absPath}`);
+    }
+    const resolved = this.#vfs.realpath ? await this.#vfs.realpath(absPath) : absPath;
+    return { path: resolved };
   }
 
   #fdOf(pid: number, args: Record<string, unknown>): OpenFile {

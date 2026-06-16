@@ -100,6 +100,92 @@ test('fd isolation: process 2 cannot read an fd opened by process 1 (EBADF)', as
   expect(read).toMatchObject({ ok: false, error: { code: 'EBADF' } });
 });
 
+// ── extended fs/* syscalls (rmdir, rename, symlink, readlink, link, chmod, utimes, realpath) ──
+
+async function fsSetup() {
+  const router = new FileSystemRouter();
+  await router.mount('/', new MemoryFsProvider({ files: { '/tmp/a.txt': 'hello' } }));
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'fs', paths: ['/tmp'], operations: ['read', 'write'] }]);
+  return { d: new SyscallDispatcher({ vfs: router, caps, cwdOf: () => '/' }), router };
+}
+
+test('fs/mkdir + fs/rmdir round-trips an empty directory', async () => {
+  const { d } = await fsSetup();
+  const mk = (await d.dispatch(1, { id: 1, call: 'fs/mkdir', args: { path: '/tmp/d' } })).response;
+  expect(mk.ok).toBe(true);
+  const rm = (await d.dispatch(1, { id: 2, call: 'fs/rmdir', args: { path: '/tmp/d' } })).response;
+  expect(rm.ok).toBe(true);
+  const stat = (await d.dispatch(1, { id: 3, call: 'fs/stat', args: { path: '/tmp/d' } })).response;
+  expect(stat).toMatchObject({ ok: false, error: { code: 'ENOENT' } });
+});
+
+test('fs/rename moves a file within a granted prefix', async () => {
+  const { d } = await fsSetup();
+  const res = (await d.dispatch(1, { id: 1, call: 'fs/rename', args: { path: '/tmp/a.txt', newPath: '/tmp/b.txt' } })).response;
+  expect(res.ok).toBe(true);
+  const old = (await d.dispatch(1, { id: 2, call: 'fs/stat', args: { path: '/tmp/a.txt' } })).response;
+  expect(old).toMatchObject({ ok: false, error: { code: 'ENOENT' } });
+  const moved = (await d.dispatch(1, { id: 3, call: 'fs/stat', args: { path: '/tmp/b.txt' } })).response;
+  expect(moved.ok).toBe(true);
+});
+
+test('fs/rename into an ungranted prefix returns EACCES', async () => {
+  const { d } = await fsSetup();
+  const res = (await d.dispatch(1, { id: 1, call: 'fs/rename', args: { path: '/tmp/a.txt', newPath: '/etc/b.txt' } })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EACCES' } });
+});
+
+test('fs/symlink + fs/readlink + lstat (followSymlinks:false)', async () => {
+  const { d } = await fsSetup();
+  const ln = (await d.dispatch(1, { id: 1, call: 'fs/symlink', args: { target: '/tmp/a.txt', path: '/tmp/l' } })).response;
+  expect(ln.ok).toBe(true);
+  const rl = (await d.dispatch(1, { id: 2, call: 'fs/readlink', args: { path: '/tmp/l' } })).response;
+  expect((rl as { ok: true; result: { target: string } }).result.target).toBe('/tmp/a.txt');
+  const lstat = (await d.dispatch(1, { id: 3, call: 'fs/stat', args: { path: '/tmp/l', followSymlinks: false } })).response;
+  expect((lstat as { ok: true; result: { type: string } }).result.type).toBe('symlink');
+  const stat = (await d.dispatch(1, { id: 4, call: 'fs/stat', args: { path: '/tmp/l' } })).response;
+  expect((stat as { ok: true; result: { type: string } }).result.type).toBe('file');
+});
+
+test('fs/link creates a hard link to an existing file', async () => {
+  const { d } = await fsSetup();
+  const res = (await d.dispatch(1, { id: 1, call: 'fs/link', args: { target: '/tmp/a.txt', path: '/tmp/h.txt' } })).response;
+  expect(res.ok).toBe(true);
+  const stat = (await d.dispatch(1, { id: 2, call: 'fs/stat', args: { path: '/tmp/h.txt' } })).response;
+  expect((stat as { ok: true; result: { size: number } }).result.size).toBe(5);
+});
+
+test('fs/chmod changes the mode reported by fs/stat', async () => {
+  const { d } = await fsSetup();
+  const res = (await d.dispatch(1, { id: 1, call: 'fs/chmod', args: { path: '/tmp/a.txt', mode: 0o600 } })).response;
+  expect(res.ok).toBe(true);
+  const stat = (await d.dispatch(1, { id: 2, call: 'fs/stat', args: { path: '/tmp/a.txt' } })).response;
+  expect((stat as { ok: true; result: { mode: number } }).result.mode).toBe(0o600);
+});
+
+test('fs/utimes sets mtime (epoch ms)', async () => {
+  const { d } = await fsSetup();
+  const when = Date.UTC(2020, 0, 1);
+  const res = (await d.dispatch(1, { id: 1, call: 'fs/utimes', args: { path: '/tmp/a.txt', atime: when, mtime: when } })).response;
+  expect(res.ok).toBe(true);
+  const stat = (await d.dispatch(1, { id: 2, call: 'fs/stat', args: { path: '/tmp/a.txt' } })).response;
+  expect(new Date((stat as { ok: true; result: { mtime: Date } }).result.mtime).getTime()).toBe(when);
+});
+
+test('fs/realpath canonicalizes through a symlink', async () => {
+  const { d } = await fsSetup();
+  await d.dispatch(1, { id: 1, call: 'fs/symlink', args: { target: '/tmp/a.txt', path: '/tmp/l' } });
+  const res = (await d.dispatch(1, { id: 2, call: 'fs/realpath', args: { path: '/tmp/l' } })).response;
+  expect((res as { ok: true; result: { path: string } }).result.path).toBe('/tmp/a.txt');
+});
+
+test('fs/chmod outside a granted prefix returns EACCES', async () => {
+  const { d } = await fsSetup();
+  const res = (await d.dispatch(1, { id: 1, call: 'fs/chmod', args: { path: '/etc/x', mode: 0o600 } })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EACCES' } });
+});
+
 // ── process/* syscalls ────────────────────────────────────────────────────
 
 function processSetup(opts: {

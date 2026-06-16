@@ -22,7 +22,12 @@
  * corresponding `src/commands/<name>.ts` whose default export is
  * `defineCommand(fn)`. Later batches extend this list as they add commands.
  */
-export const COMMAND_NAMES = ['cat'] as const;
+export const COMMAND_NAMES = [
+  'cat',
+  // file-operation batch
+  'ls', 'cp', 'mv', 'rm', 'mkdir', 'rmdir', 'ln', 'touch', 'chmod',
+  'readlink', 'basename', 'dirname', 'find', 'mktemp', 'stat', 'pwd', 'realpath',
+] as const;
 
 export type CoreutilsCommandName = typeof COMMAND_NAMES[number];
 
