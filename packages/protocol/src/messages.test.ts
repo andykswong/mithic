@@ -16,7 +16,22 @@ test('isSyscallResponse distinguishes ok and error shapes', () => {
   expect(isSyscallResponse({ event: 'signal' })).toBe(false);
 });
 
+test('isSyscallResponse rejects wrong field types and non-objects', () => {
+  expect(isSyscallResponse({ id: 1, ok: true, result: 0 })).toBe(true);
+  expect(isSyscallResponse({ id: 'x', ok: 'yes' })).toBe(false);
+  for (const v of [null, undefined, 42, 'str', {}, []]) {
+    expect(isSyscallResponse(v)).toBe(false);
+  }
+});
+
 test('isKernelEvent matches unsolicited events', () => {
   expect(isKernelEvent({ event: 'signal', payload: { signal: 'SIGTERM' } })).toBe(true);
   expect(isKernelEvent({ id: 1, ok: true, result: 0 })).toBe(false);
+});
+
+test('isKernelEvent rejects wrong field types and non-objects', () => {
+  expect(isKernelEvent({ event: 123 })).toBe(false);
+  for (const v of [null, undefined, 42, 'str', {}, []]) {
+    expect(isKernelEvent(v)).toBe(false);
+  }
 });

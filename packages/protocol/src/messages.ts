@@ -20,9 +20,13 @@ export function makeSyscallRequest(id: number, call: string, args: Record<string
 }
 
 export function isSyscallResponse(x: unknown): x is SyscallResponse {
-  return typeof x === 'object' && x !== null && 'id' in x && 'ok' in x;
+  return typeof x === 'object' && x !== null
+    && 'id' in x && typeof (x as { id: unknown }).id === 'number'
+    && 'ok' in x && typeof (x as { ok: unknown }).ok === 'boolean';
 }
 
 export function isKernelEvent(x: unknown): x is KernelEvent {
-  return typeof x === 'object' && x !== null && 'event' in x && !('id' in x);
+  return typeof x === 'object' && x !== null
+    && 'event' in x && typeof (x as { event: unknown }).event === 'string'
+    && !('id' in x);
 }

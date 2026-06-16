@@ -6,8 +6,8 @@ export const ERRNO_CODES = [
 ] as const;
 export type ErrnoCode = typeof ERRNO_CODES[number];
 
-export function isErrnoCode(x: string): x is ErrnoCode {
-  return (ERRNO_CODES as readonly string[]).includes(x);
+export function isErrnoCode(x: unknown): x is ErrnoCode {
+  return typeof x === 'string' && (ERRNO_CODES as readonly string[]).includes(x);
 }
 
 export const SIGNALS = [

@@ -12,6 +12,12 @@ test('isErrnoCode narrows valid codes', () => {
   expect(isErrnoCode('NOTACODE')).toBe(false);
 });
 
+test('isErrnoCode rejects non-string and invalid inputs', () => {
+  for (const v of [null, undefined, 42, {}, []]) {
+    expect(isErrnoCode(v)).toBe(false);
+  }
+});
+
 test('SIGNALS includes the documented set', () => {
   for (const s of ['SIGTERM', 'SIGINT', 'SIGKILL', 'SIGSTOP', 'SIGCONT', 'SIGPIPE', 'SIGCHLD', 'SIGUSR1', 'SIGUSR2']) {
     expect(SIGNALS).toContain(s);

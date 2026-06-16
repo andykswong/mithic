@@ -1,5 +1,3 @@
-import type { Signal } from './errno.ts';
-
 export type OFlags = { create?: boolean; exclusive?: boolean; truncate?: boolean; directory?: boolean; append?: boolean; write?: boolean; read?: boolean };
 
 export interface FdRights { read: boolean; write: boolean; seek: boolean; stat: boolean; truncate: boolean }
@@ -71,5 +69,3 @@ export const DEFAULT_FD_ACTIONS: Record<number, FdAction> = {
   1: { action: 'inherit' },
   2: { action: 'inherit' },
 };
-
-export type { Signal };

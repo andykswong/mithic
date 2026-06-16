@@ -21,3 +21,9 @@ test('isPipeMessage recognizes data/end/error/credit', () => {
   expect(isPipeMessage({ type: 'credit', bytes: 64 })).toBe(true);
   expect(isPipeMessage({ type: 'init' })).toBe(false);
 });
+
+test('isPipeMessage rejects non-objects and missing/invalid type', () => {
+  for (const v of [null, undefined, 42, 'str', {}, []]) {
+    expect(isPipeMessage(v)).toBe(false);
+  }
+});
