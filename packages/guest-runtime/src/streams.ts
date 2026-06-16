@@ -13,17 +13,19 @@ import type { PipeMessage } from '@mithic/protocol';
  */
 export function portToWritable(port: MessagePort): WritableStream<Uint8Array> {
   port.start?.();
-  let credit = INITIAL_CREDIT_BYTES;
-  let creditResolve: (() => void) | null = null;
+  // Writer starts at 0 credit; the reader grants credit via PipeCredit messages.
+  let credit = 0;
+  // Queue of waiters: each waiter blocks until enough credit is available.
+  const creditWaiters: Array<{ needed: number; resolve: () => void }> = [];
 
   port.onmessage = (e: MessageEvent) => {
     const msg = e.data as unknown;
     if (isPipeMessage(msg) && msg.type === 'credit') {
       credit += msg.bytes;
-      if (creditResolve) {
-        const r = creditResolve;
-        creditResolve = null;
-        r();
+      // Wake waiters whose needed credit is now satisfied, in FIFO order.
+      while (creditWaiters.length > 0 && credit >= creditWaiters[0].needed) {
+        const waiter = creditWaiters.shift()!;
+        waiter.resolve();
       }
     }
   };
@@ -41,9 +43,11 @@ export function portToWritable(port: MessagePort): WritableStream<Uint8Array> {
 
     return (async () => {
       for (const chunk of chunks) {
-        // Wait for credit
-        while (credit < chunk.byteLength) {
-          await new Promise<void>(resolve => { creditResolve = resolve; });
+        // Block until the reader has granted enough credit for this chunk.
+        if (credit < chunk.byteLength) {
+          await new Promise<void>(resolve => {
+            creditWaiters.push({ needed: chunk.byteLength, resolve });
+          });
         }
         credit -= chunk.byteLength;
         const msg: PipeMessage = { type: 'data', chunk };

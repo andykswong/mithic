@@ -29,4 +29,14 @@ export class SyscallClient {
       this.transport.send({ id, call, args });
     });
   }
+
+  /** Rejects all in-flight syscalls and closes the underlying transport. */
+  close(): void {
+    const err = Object.assign(new Error('transport closed'), { code: 'EPIPE' });
+    for (const { reject } of this.pending.values()) {
+      reject(err);
+    }
+    this.pending.clear();
+    this.transport.close();
+  }
 }

@@ -73,7 +73,8 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
     onSignal(cb) { signalListeners.push(cb); },
     exit(code) {
       control.postMessage({ type: 'exit', code });
-      control.close();
+      // Close the client: rejects any in-flight syscalls and closes the transport.
+      client.close();
     },
   };
 }

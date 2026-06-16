@@ -29,3 +29,45 @@ test('SyscallClient rejects on error response', async () => {
   await expect(client.syscall('fd/read', { fd: 99 })).rejects.toThrow('bad file descriptor');
   port1.close(); port2.close();
 });
+
+test('SyscallClient correlates concurrent out-of-order responses correctly', async () => {
+  const { port1, port2 } = new MessageChannel();
+  const client = new SyscallClient(new MessagePortTransport(port1));
+
+  // Collect requests in order, then reply out-of-order: respond to id 2 before id 1.
+  const requests: Array<{ id: number; call: string }> = [];
+  port2.onmessage = async (e) => {
+    requests.push(e.data as { id: number; call: string });
+    if (requests.length === 2) {
+      // Reply to the second request first.
+      port2.postMessage({ id: requests[1].id, ok: true, result: { value: 'second' } });
+      // Small delay, then reply to the first.
+      await new Promise(r => setTimeout(r, 5));
+      port2.postMessage({ id: requests[0].id, ok: true, result: { value: 'first' } });
+    }
+  };
+
+  // Fire both concurrently without awaiting the first.
+  const p1 = client.syscall('op/one', {});
+  const p2 = client.syscall('op/two', {});
+
+  const [r1, r2] = await Promise.all([p1, p2]);
+  expect(r1).toEqual({ value: 'first' });
+  expect(r2).toEqual({ value: 'second' });
+
+  port1.close(); port2.close();
+});
+
+test('SyscallClient.close() rejects all pending syscalls with EPIPE', async () => {
+  const { port1, port2 } = new MessageChannel();
+  const client = new SyscallClient(new MessagePortTransport(port1));
+
+  // Start a syscall but do NOT respond — it stays pending.
+  const pending = client.syscall('op/hang', {});
+
+  // Close the client; pending call must reject.
+  client.close();
+
+  await expect(pending).rejects.toMatchObject({ message: 'transport closed', code: 'EPIPE' });
+  port2.close();
+});

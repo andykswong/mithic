@@ -22,5 +22,8 @@
   "dependencies": {
     "@mithic/protocol": "2.0.0"
   },
+  "devDependencies": {
+    "@mithic/runtime": "2.0.0"
+  },
   "license": "MIT"
 }
