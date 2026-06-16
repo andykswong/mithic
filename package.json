@@ -69,6 +69,7 @@
   "workspaces": [
     "./packages/protocol",
     "./packages/worker",
+    "./packages/runtime",
     "./packages/io",
     "./packages/wasip2",
     "./packages/process",
