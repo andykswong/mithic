@@ -26,6 +26,10 @@ export type CommandResolver = (name: string) => string | URL | undefined;
 export interface ExecutorOptions {
   /** Maps command names to spawnable guest code. */
   resolve?: CommandResolver;
+  /** stdout sink. Defaults to the host `process.stdout`. */
+  onStdout?: (s: string) => void;
+  /** stderr sink. Defaults to the host `process.stderr`. */
+  onStderr?: (s: string) => void;
 }
 
 /** Thrown internally by the `exit` builtin to unwind the executor. */
@@ -43,6 +47,8 @@ export class Executor {
   private resolve: CommandResolver;
   private lastStatus = 0;
   private exiting: number | undefined;
+  private stdoutSink: (s: string) => void;
+  private stderrSink: (s: string) => void;
 
   constructor(kernel: KernelClient, context: ShellContext, options: ExecutorOptions = {}) {
     this.kernel = kernel;
@@ -51,6 +57,12 @@ export class Executor {
     // kernel/launcher performs the real lookup. A custom resolver (e.g. the E2E
     // resolver mapping names to inline guest source) overrides this.
     this.resolve = options.resolve ?? ((name) => name);
+    this.stdoutSink = options.onStdout ?? ((s) => {
+      if (typeof process !== 'undefined' && process.stdout) process.stdout.write(s);
+    });
+    this.stderrSink = options.onStderr ?? ((s) => {
+      if (typeof process !== 'undefined' && process.stderr) process.stderr.write(s);
+    });
   }
 
   /** Run a parsed program; returns the exit status of the last statement. */
@@ -126,18 +138,40 @@ export class Executor {
     if (stages.length === 0) return 0;
     if (stages.length === 1) return this.execSimple(stages[0]);
 
-    // Multi-stage pipeline. If any stage is a builtin, run the WHOLE pipeline by
-    // spawning each stage (builtins that need spawning are resolved to inline
-    // guest programs by the resolver) — keeping the "one child per stage"
-    // contract. The real kernel exposes runPipeline for zero-hop wiring; a mock
-    // without runPipeline triggers the per-stage spawn fallback.
     const expander = new Expander(this.context.env);
+    const expanded = stages.map((s) => this.expandCommand(s, expander));
+
+    // If EVERY stage is a builtin, run the pipeline in-process: each stage's
+    // captured stdout becomes the next stage's stdin. This is the realistic E2E
+    // path for the current kernel, which exposes no process-spawn syscall — the
+    // shell guest cannot fork children, so builtin pipelines run internally.
+    if (expanded.every((e) => isBuiltin(e.name))) {
+      let stdin = '';
+      let status = 0;
+      for (let i = 0; i < expanded.length; i++) {
+        const isLast = i === expanded.length - 1;
+        const { name, argv } = expanded[i];
+        let captured = '';
+        const sink = isLast
+          ? (s: string) => this.writeStdout(s)
+          : (s: string) => { captured += s; };
+        status = await this.runBuiltinCommand(name, argv, { stdin, write: sink });
+        if (this.exiting !== undefined) return status;
+        stdin = captured;
+      }
+      return status;
+    }
+
+    // Otherwise spawn one child per stage. The real kernel exposes runPipeline
+    // for zero-hop wiring; a mock without runPipeline uses the per-stage spawn
+    // fallback. (Mixed builtin/external pipelines fall here too — builtin stages
+    // get resolved to spawnable code by the resolver, or fail as not-found.)
     const stageParams: PipelineStageParams[] = [];
-    for (const stage of stages) {
-      const { name, argv, env } = this.expandCommand(stage, expander);
+    for (let i = 0; i < expanded.length; i++) {
+      const { name, argv, env } = expanded[i];
       const code = this.resolve(name);
       if (code === undefined) {
-        // Unknown command in a pipeline stage: report and fail the pipeline.
+        this.writeStderr(`shell: ${name}: command not found\n`);
         return 127;
       }
       stageParams.push({
@@ -228,12 +262,17 @@ export class Executor {
     return { name, argv, env };
   }
 
-  private async runBuiltinCommand(name: string, argv: string[]): Promise<number> {
+  private async runBuiltinCommand(
+    name: string,
+    argv: string[],
+    io: { stdin?: string; write?: (s: string) => void } = {},
+  ): Promise<number> {
     const ctx: BuiltinContext = {
       cwd: this.context.cwd,
       env: this.context.env,
-      write: (s) => this.writeStdout(s),
+      write: io.write ?? ((s) => this.writeStdout(s)),
       writeErr: (s) => this.writeStderr(s),
+      stdin: io.stdin,
       lastStatus: this.lastStatus,
       exit: (code) => { this.exiting = code; },
       eval: (src) => this.run(parse(src)),
@@ -244,17 +283,12 @@ export class Executor {
     return status;
   }
 
-  /** Default stdout sink: the host process stdout. Overridden by process entry. */
   protected writeStdout(s: string): void {
-    if (typeof process !== 'undefined' && process.stdout) {
-      process.stdout.write(s);
-    }
+    this.stdoutSink(s);
   }
 
   protected writeStderr(s: string): void {
-    if (typeof process !== 'undefined' && process.stderr) {
-      process.stderr.write(s);
-    }
+    this.stderrSink(s);
   }
 }
 

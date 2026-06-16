@@ -92,12 +92,12 @@ export function tokenize(input: string): Token[] {
         continue;
       }
 
-      if (c === "'") {
+      if (c === '\'') {
         // Single quotes: everything literal until the closing quote.
         const start = i;
         i++;
         let inner = '';
-        while (i < n && input[i] !== "'") {
+        while (i < n && input[i] !== '\'') {
           inner += input[i];
           i++;
         }

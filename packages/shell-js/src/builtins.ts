@@ -23,6 +23,11 @@ export interface BuiltinContext {
   eval?(src: string): Promise<number>;
   /** Last command exit code, for `exit` with no args. */
   lastStatus?: number;
+  /**
+   * Standard input contents for filter builtins (e.g. `cat`). The executor
+   * supplies the upstream pipeline stage's output here. Absent ⇒ empty stdin.
+   */
+  stdin?: string;
 }
 
 export const BUILTINS = [
@@ -39,6 +44,7 @@ export const BUILTINS = [
   'exit',
   'eval',
   'set',
+  'cat',
   ':',
 ] as const;
 
@@ -121,6 +127,12 @@ export async function runBuiltin(
 
     case 'set':
       // Minimal: ignore options. A full implementation handles `-e`, `--`, etc.
+      return 0;
+
+    case 'cat':
+      // Minimal: with no file args, copy stdin to stdout. (File reads from the
+      // VFS are deferred — see Task J.8.)
+      ctx.write(ctx.stdin ?? '');
       return 0;
 
     case 'test':

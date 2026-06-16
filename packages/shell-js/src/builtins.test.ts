@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- builtin tests use an ad-hoc ctx shape */
 import { expect, test } from 'vitest';
 import { BUILTINS, runBuiltin } from './builtins.ts';
 

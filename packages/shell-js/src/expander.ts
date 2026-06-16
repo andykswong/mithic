@@ -42,12 +42,12 @@ export class Expander {
         continue;
       }
 
-      if (c === "'") {
+      if (c === '\'') {
         // Single-quoted: literal until closing quote, not split.
         flushPending();
         i++;
         let inner = '';
-        while (i < n && word[i] !== "'") { inner += word[i]; i++; }
+        while (i < n && word[i] !== '\'') { inner += word[i]; i++; }
         i++;
         pushQuoted(inner);
         continue;

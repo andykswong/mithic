@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- executor tests use a minimal mock kernel typed as any */
 import { expect, test } from 'vitest';
 import { Executor } from './executor.ts';
 import { parse } from './parser.ts';

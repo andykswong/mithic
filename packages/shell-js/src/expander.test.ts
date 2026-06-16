@@ -1,3 +1,4 @@
+/* eslint-disable @stylistic/quotes -- a test asserts single-quote literal handling and must embed `'` inside a double-quoted string */
 import { expect, test } from 'vitest';
 import { Expander } from './expander.ts';
 
