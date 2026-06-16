@@ -13,6 +13,7 @@
 
 export type RedirectOp =
   | '>'      // truncate stdout (or fd)
+  | '>|'     // truncate stdout, forcing past noclobber (set -C)
   | '>>'     // append stdout (or fd)
   | '<'      // stdin from file
   | '<<'     // here-doc

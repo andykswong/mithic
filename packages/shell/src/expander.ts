@@ -48,7 +48,16 @@ export interface ShellEnv {
   statPath?(path: string): Promise<{ dir: boolean } | undefined>;
   /** Current working directory, for relative glob resolution. Optional. */
   cwd?: string;
+  /** True when `set -u` is active: expanding an unset variable is an error. */
+  nounset?(): boolean;
 }
+
+/**
+ * Thrown by the expander for a fatal expansion error — `set -u` on an unset
+ * variable, or `${var:?msg}` on a null/unset variable. The executor catches it,
+ * writes the message to stderr, and aborts the script with a nonzero status.
+ */
+export class ExpansionError extends Error {}
 
 type Part = { text: string; quoted: boolean };
 
@@ -185,8 +194,8 @@ export class Expander {
       return { value, next: end + 1 };
     }
 
-    // Special single-char params: ? # @ * $ ! 0
-    if (c1 !== undefined && '?#@*$!0'.includes(c1)) {
+    // Special single-char params: ? # @ * $ ! 0 - ($- = current option flags)
+    if (c1 !== undefined && '?#@*$!0-'.includes(c1)) {
       return { value: this.env.getSpecial(c1) ?? '', next: i + 2 };
     }
 
@@ -203,7 +212,7 @@ export class Expander {
       name += word[j]; j++;
     }
     if (name === '') return { value: '$', next: i + 1 };
-    return { value: this.resolveVar(name), next: j };
+    return { value: this.resolveVarStrict(name), next: j };
   }
 
   /** Read a `` `cmd` `` backtick substitution at word[i] === '`'. */
@@ -250,6 +259,23 @@ export class Expander {
     return this.env.getSpecial(name) ?? '';
   }
 
+  /**
+   * Resolve a BARE `$name` / `${name}` reference, honoring `set -u` (nounset):
+   * an unset variable throws (the shell aborts). Default/alternate forms
+   * (`${name:-…}`, `${name+…}`, …) use {@link resolveVar} instead, since they
+   * legitimately handle the unset case themselves.
+   */
+  private resolveVarStrict(name: string): string {
+    const v = this.env.get(name);
+    if (v !== undefined) return v;
+    const special = this.env.getSpecial(name);
+    if (special !== undefined) return special;
+    if (this.env.nounset?.()) {
+      throw new ExpansionError(`${name}: unbound variable`);
+    }
+    return '';
+  }
+
   /** Parse and apply a `${...}` parameter-expansion body. */
   private async paramExpansion(body: string): Promise<string> {
     // ${#name} → length
@@ -263,7 +289,7 @@ export class Expander {
     if (!m) return this.resolveVar(body);
     const name = m[1];
     const rest = m[2];
-    if (rest === '') return this.resolveVar(name);
+    if (rest === '') return this.resolveVarStrict(name);
 
     const set = this.env.has(name) || this.env.getSpecial(name) !== undefined;
     const value = this.resolveVar(name);
@@ -277,7 +303,7 @@ export class Expander {
         case '-': return unsetOrEmpty ? arg : value;
         case '+': return unsetOrEmpty ? '' : arg;
         case '=': if (unsetOrEmpty) { this.env.set(name, arg); return arg; } return value;
-        case '?': if (unsetOrEmpty) throw new Error(arg || `${name}: parameter null or not set`); return value;
+        case '?': if (unsetOrEmpty) throw new ExpansionError(arg || `${name}: parameter null or not set`); return value;
       }
     }
     // ${var-word} ${var=word} ${var?word} ${var+word} (only-unset variants)
@@ -288,7 +314,7 @@ export class Expander {
         case '-': return set ? value : arg;
         case '+': return set ? arg : '';
         case '=': if (!set) { this.env.set(name, arg); return arg; } return value;
-        case '?': if (!set) throw new Error(arg || `${name}: parameter not set`); return value;
+        case '?': if (!set) throw new ExpansionError(arg || `${name}: parameter not set`); return value;
       }
     }
 

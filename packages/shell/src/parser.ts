@@ -364,7 +364,7 @@ class Parser {
   }
 
   private isRedirectToken(type: TokenType): boolean {
-    return type === 'GREAT' || type === 'GREATGREAT' || type === 'LESS'
+    return type === 'GREAT' || type === 'GREATGREAT' || type === 'GREATPIPE' || type === 'LESS'
       || type === 'LESSLESS' || type === 'LESSLESSDASH' || type === 'LESSLESSLESS'
       || type === 'GREATAMP' || type === 'AMPGREAT' || type === 'AMPGREATGREAT';
   }
@@ -382,6 +382,7 @@ class Parser {
     const fd = opTok.fd;
     switch (opTok.type) {
       case 'GREAT': return this.targetRedirect('>', fd);
+      case 'GREATPIPE': return this.targetRedirect('>|', fd);
       case 'GREATGREAT': return this.targetRedirect('>>', fd);
       case 'LESS': return this.targetRedirect('<', fd);
       case 'LESSLESSLESS': return this.hereString();

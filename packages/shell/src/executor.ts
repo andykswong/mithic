@@ -20,10 +20,10 @@
 
 import type { Program, Redirect, SimpleCommand, Statement } from './ast.ts';
 import { parse } from './parser.ts';
-import { Expander } from './expander.ts';
+import { Expander, ExpansionError } from './expander.ts';
 import type { ShellEnv } from './expander.ts';
-import { isBuiltin, runBuiltin } from './builtins.ts';
-import type { BuiltinContext, ShellState } from './builtins.ts';
+import { isBuiltin, runBuiltin, OPTION_FLAGS } from './builtins.ts';
+import type { BuiltinContext, ShellState, ShellOptionName } from './builtins.ts';
 import type {
   FsClient,
   KernelClient,
@@ -81,6 +81,8 @@ class FuncReturn extends Error {
   code: number;
   constructor(code: number) { super('return'); this.code = code; }
 }
+/** A redirect that cannot be performed (e.g. noclobber refusing to overwrite). */
+class RedirectError extends Error {}
 
 export class Executor implements ShellEnv {
   readonly context: ShellContext;
@@ -98,7 +100,14 @@ export class Executor implements ShellEnv {
   private localSaved: Array<Map<string, string | undefined>> = [];
   private jobs: Job[] = [];
   private nextJobId = 1;
-  private errExit = false;
+  /** `set` options. errexit aborts on nonzero; the rest per their POSIX meaning. */
+  private options: Record<ShellOptionName, boolean> = {
+    errexit: false,
+    nounset: false,
+    xtrace: false,
+    pipefail: false,
+    noclobber: false,
+  };
 
   constructor(kernel: KernelClient, context: ShellContext, options: ExecutorOptions = {}) {
     this.kernel = kernel;
@@ -126,6 +135,7 @@ export class Executor implements ShellEnv {
       case '#': return String((this.context.positional ?? []).length);
       case '$': return String(this.context.pid ?? 0);
       case '!': return String(this.lastBgPid);
+      case '-': return this.currentFlags();
       case '0': return this.context.name ?? 'sh';
       case '@':
       case '*': return (this.context.positional ?? []).join(' ');
@@ -139,6 +149,18 @@ export class Executor implements ShellEnv {
   }
 
   getPositional(): string[] { return this.context.positional ?? []; }
+
+  /** True when `set -u` (nounset) is active — the expander errors on unset vars. */
+  nounset(): boolean { return this.options.nounset; }
+
+  /** The short-flag letters of currently-enabled options, for `$-`. */
+  private currentFlags(): string {
+    let s = '';
+    for (const [ch, long] of Object.entries(OPTION_FLAGS)) {
+      if (this.options[long]) s += ch;
+    }
+    return s;
+  }
 
   async runCommandSub(src: string): Promise<string> {
     let out = '';
@@ -181,7 +203,10 @@ export class Executor implements ShellEnv {
       declareLocal: (name) => this.declareLocal(name),
       waitJob: (id) => this.waitForJob(id),
       waitAll: () => this.waitAllJobs(),
-      setErrExit: (v) => { this.errExit = v; },
+      setErrExit: (v) => { this.options.errexit = v; },
+      setOption: (name, value) => { this.options[name] = value; },
+      getOption: (name) => this.options[name],
+      listOptions: () => (Object.keys(this.options) as ShellOptionName[]).map((k) => [k, this.options[k]] as [ShellOptionName, boolean]),
     };
   }
 
@@ -200,9 +225,20 @@ export class Executor implements ShellEnv {
   async run(program: Program, nested = false): Promise<number> {
     try {
       for (const stmt of program.body) {
-        this.lastStatus = await this.execStatement(stmt);
+        try {
+          this.lastStatus = await this.execStatement(stmt);
+        } catch (e) {
+          if (e instanceof ExpansionError) {
+            // `set -u` unbound var / `${v:?}` — write to stderr and abort nonzero.
+            this.writeStderr(`shell: ${e.message}\n`);
+            this.lastStatus = 1;
+            if (!nested) { this.exiting = 1; return 1; }
+            return 1;
+          }
+          throw e;
+        }
         if (this.exiting !== undefined) return this.exiting;
-        if (this.errExit && this.lastStatus !== 0 && !nested) {
+        if (this.options.errexit && this.lastStatus !== 0 && !nested) {
           this.exiting = this.lastStatus;
           return this.lastStatus;
         }
@@ -399,7 +435,13 @@ export class Executor implements ShellEnv {
   private async withRedirects(stmt: Statement, fn: () => Promise<number>): Promise<number> {
     const redirects = stmt.redirects;
     if (!redirects || redirects.length === 0) return fn();
-    const restore = await this.applyRedirects(redirects);
+    let restore: () => void;
+    try {
+      restore = await this.applyRedirects(redirects);
+    } catch (e) {
+      if (e instanceof RedirectError) { this.writeStderr(`shell: ${e.message}\n`); return 1; }
+      throw e;
+    }
     try { return await fn(); } finally { restore(); }
   }
 
@@ -428,6 +470,15 @@ export class Executor implements ShellEnv {
 
       const path = await exp.expandToString(r.target);
       const append = r.op === '>>';
+      // noclobber (`set -C`): a plain `>` must not overwrite an EXISTING regular
+      // file. `>|` forces past it; `>>` (append) is exempt; a new file is fine.
+      if (this.options.noclobber && r.op === '>' && path !== '/dev/null'
+        && path !== '/dev/stdout' && path !== '/dev/stderr') {
+        const stat = await this.statPath(this.absPath(path));
+        if (stat !== undefined && !stat.dir) {
+          throw new RedirectError(`${path}: cannot overwrite existing file`);
+        }
+      }
       const sink = this.makeFileSink(path, append, closers);
       if (r.op === '&>') { this.stdoutSink = sink; this.stderrSink = sink; }
       else if (fd === 2) this.stderrSink = sink;
@@ -508,6 +559,10 @@ export class Executor implements ShellEnv {
     const expanded: Array<{ name: string; argv: string[]; env: Record<string, string> }> = [];
     for (const s of stages) expanded.push(await this.expandCommand(s, expander));
 
+    if (this.options.xtrace) {
+      for (const e of expanded) this.writeStderr('+ ' + [e.name, ...e.argv].join(' ') + '\n');
+    }
+
     if (expanded.every((e) => (isBuiltin(e.name) && builtinShadowsExternal(e.name, e.argv)) || this.functions.has(e.name))) {
       let stdin = '';
       let status = 0;
@@ -523,7 +578,7 @@ export class Executor implements ShellEnv {
         stdin = captured;
       }
       this.pipeStatus = codes;
-      return status;
+      return this.pipelineStatus(codes, status);
     }
 
     // A `<` / `<<` / `<<<` redirect on the FIRST stage becomes that stage's
@@ -544,15 +599,29 @@ export class Executor implements ShellEnv {
       const result = await this.kernel.runPipeline(stageParams);
       if (result.lastStdout) await this.writeCaptured(result.lastStdout);
       this.pipeStatus = result.exitCodes;
-      return result.exitCodes[result.exitCodes.length - 1] ?? 0;
+      return this.pipelineStatus(result.exitCodes, result.exitCodes[result.exitCodes.length - 1] ?? 0);
     }
 
     const handles = await Promise.all(stageParams.map((p) => this.kernel.spawn(toSpawnParams(p))));
     const last = handles[handles.length - 1];
     if (last?.stdout) await this.writeCaptured(last.stdout);
     const waits = await Promise.all(handles.map((h) => this.kernel.wait(h.pid)));
-    this.pipeStatus = waits.map((w) => w.code);
-    return waits[waits.length - 1]?.code ?? 0;
+    const codes = waits.map((w) => w.code);
+    this.pipeStatus = codes;
+    return this.pipelineStatus(codes, codes[codes.length - 1] ?? 0);
+  }
+
+  /**
+   * A pipeline's exit status. Normally the LAST stage's code; under `set -o
+   * pipefail` it is the LAST NON-ZERO stage's code (0 only if every stage
+   * succeeded). `lastCode` is the pre-computed last-stage code.
+   */
+  private pipelineStatus(codes: number[], lastCode: number): number {
+    if (!this.options.pipefail) return lastCode;
+    for (let i = codes.length - 1; i >= 0; i--) {
+      if (codes[i] !== 0) return codes[i];
+    }
+    return 0;
   }
 
   private async execSimple(cmd: SimpleCommand): Promise<number> {
@@ -569,6 +638,9 @@ export class Executor implements ShellEnv {
     const { name, argv } = await this.expandCommand(cmd, argExpander);
 
     if (name === '') {
+      if (this.options.xtrace && Object.keys(localEnv).length > 0) {
+        this.writeStderr('+ ' + Object.entries(localEnv).map(([k, v]) => `${k}=${v}`).join(' ') + '\n');
+      }
       for (const k of Object.keys(localEnv)) {
         this.declareLocal(k);
         this.context.env[k] = localEnv[k];
@@ -576,11 +648,24 @@ export class Executor implements ShellEnv {
       return 0;
     }
 
+    if (this.options.xtrace) {
+      this.writeStderr('+ ' + [name, ...argv].join(' ') + '\n');
+    }
+
     // stdin from input redirects
     const stdin = await this.resolveStdin(cmd.redirects);
 
-    // Apply output redirects around the command.
-    const restore = cmd.redirects.length ? await this.applyRedirects(cmd.redirects) : undefined;
+    // Apply output redirects around the command. A refused redirect (noclobber)
+    // aborts the command with status 1 — it never runs.
+    let restore: (() => void) | undefined;
+    if (cmd.redirects.length) {
+      try {
+        restore = await this.applyRedirects(cmd.redirects);
+      } catch (e) {
+        if (e instanceof RedirectError) { this.writeStderr(`shell: ${e.message}\n`); return 1; }
+        throw e;
+      }
+    }
     try {
       if (this.functions.has(name)) {
         return await this.callFunction(name, argv, localEnv);
@@ -614,6 +699,7 @@ export class Executor implements ShellEnv {
       listDir: (p) => this.listDir(p),
       statPath: (p) => this.statPath(p),
       cwd: this.context.cwd,
+      nounset: () => this.nounset(),
     };
   }
 

@@ -313,3 +313,67 @@ test('shift drops positional params', async () => {
   const { out } = await run('echo $1; shift; echo $1', { positional: ['a', 'b', 'c'] });
   expect(out).toBe('a\nb\n');
 });
+
+// ── set options: -u / -x / -o pipefail / noclobber / $- ─────────────────────
+
+test('set -u (nounset): expanding an unset var errors and aborts nonzero', async () => {
+  const { code, err } = await run('set -u; echo $UNDEFINED_VAR; echo after');
+  expect(code).not.toBe(0);
+  expect(err).toMatch(/UNDEFINED_VAR/);
+});
+
+test('set -u allows set vars and ${var:-default}', async () => {
+  expect((await run('set -u; X=hi; echo $X')).out.trim()).toBe('hi');
+  expect((await run('set -u; echo ${MISSING:-fallback}')).out.trim()).toBe('fallback');
+});
+
+test('set +u re-enables unset expansion to empty', async () => {
+  const { out, code } = await run('set -u; set +u; echo "[$NOPE]"');
+  expect(code).toBe(0);
+  expect(out.trim()).toBe('[]');
+});
+
+test('set -x (xtrace): prints each command to stderr prefixed with +', async () => {
+  const { out, err } = await run('set -x; echo hello');
+  expect(out.trim()).toBe('hello');
+  expect(err).toContain('+ echo hello');
+});
+
+test('set -o pipefail: pipeline status is the last NONZERO stage', async () => {
+  // false | true: without pipefail the status is the last stage (0). With
+  // pipefail it is the last nonzero stage (1).
+  expect((await run('false | true; echo $?')).out.trim()).toBe('0');
+  expect((await run('set -o pipefail; false | true; echo $?')).out.trim()).toBe('1');
+});
+
+test('set -o pipefail: all-zero pipeline still returns 0', async () => {
+  expect((await run('set -o pipefail; true | true; echo $?')).out.trim()).toBe('0');
+});
+
+test('noclobber: > refuses to overwrite an existing file; >| forces', async () => {
+  const fs = mockFs({ '/exists.txt': 'old\n' });
+  const r1 = await run('set -C; echo new > /exists.txt; echo "rc=$?"', {}, fs);
+  expect(r1.out.trim()).toBe('rc=1');
+  expect(fs.files.get('/exists.txt')).toBe('old\n'); // untouched
+  const r2 = await run('set -C; echo new >| /exists.txt; echo done', {}, fs);
+  expect(fs.files.get('/exists.txt')).toBe('new\n'); // forced overwrite
+  expect(r2.code).toBe(0);
+});
+
+test('noclobber: > to a NEW file still works', async () => {
+  const fs = mockFs();
+  await run('set -C; echo fresh > /new.txt', {}, fs);
+  expect(fs.files.get('/new.txt')).toBe('fresh\n');
+});
+
+test('$- reflects enabled short flags', async () => {
+  const { out } = await run('set -eux; echo "[$-]"');
+  // Order is canonical (e, u, x). The xtrace line also prints to stderr.
+  expect(out).toMatch(/\[.*e.*u.*x.*\]/);
+});
+
+test('set -o lists option states', async () => {
+  const { out } = await run('set -o pipefail; set -o');
+  expect(out).toMatch(/pipefail\s+on/);
+  expect(out).toMatch(/nounset\s+off/);
+});

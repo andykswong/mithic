@@ -35,6 +35,11 @@ test('parses input redirect and fd-dup', () => {
   expect(r3).toMatchObject({ op: '>', fd: 2, target: 'err' });
 });
 
+test('parses >| clobber-force redirect', () => {
+  const r = parse('echo x >| out.txt').body[0].stages![0].redirects[0];
+  expect(r).toMatchObject({ op: '>|', target: 'out.txt' });
+});
+
 test('parses here-string', () => {
   const r = parse('cat <<< "hello"').body[0].stages![0].redirects[0];
   expect(r.op).toBe('<<<');
