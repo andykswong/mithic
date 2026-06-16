@@ -1,5 +1,3 @@
-import type { MaybePromise } from '../types.ts';
-
 /** Descriptor type for filesystem entries. */
 export type DescriptorType = 'file' | 'directory' | 'symlink' | 'block-device' | 'character-device' | 'fifo' | 'socket' | 'unknown';
 
@@ -44,34 +42,31 @@ export interface WatchEvent {
   path: string;
 }
 
-/** Virtual filesystem provider interface, parameterized by sync mode. */
-export interface FileSystemProvider<Sync extends boolean = boolean> {
-  init?(): MaybePromise<void, Sync>;
-  dispose?(): MaybePromise<void, Sync>;
-  open(path: string, flags: OpenFlags): MaybePromise<FileHandle, Sync>;
-  close(handle: FileHandle): MaybePromise<void, Sync>;
-  read(handle: FileHandle, offset: number, len: number): MaybePromise<Uint8Array, Sync>;
-  write(handle: FileHandle, data: Uint8Array, offset: number): MaybePromise<number, Sync>;
-  truncate(handle: FileHandle, size: number): MaybePromise<void, Sync>;
-  stat(path: string, options?: { followSymlinks?: boolean }): MaybePromise<FileStat, Sync>;
-  readdir(path: string): MaybePromise<DirEntry[], Sync>;
-  mkdir(path: string): MaybePromise<void, Sync>;
-  unlink(path: string): MaybePromise<void, Sync>;
-  rmdir(path: string): MaybePromise<void, Sync>;
-  rename(oldPath: string, newPath: string): MaybePromise<void, Sync>;
-  symlink(target: string, linkPath: string): MaybePromise<void, Sync>;
-  readlink(path: string): MaybePromise<string, Sync>;
-  link(existingPath: string, newPath: string): MaybePromise<void, Sync>;
-  chmod(path: string, mode: number): MaybePromise<void, Sync>;
-  utimes(path: string, atime: Date, mtime: Date): MaybePromise<void, Sync>;
-  mkfifo(path: string): MaybePromise<void, Sync>;
+/** Virtual filesystem provider interface. All methods return Promise<T>. */
+export interface FileSystemProvider {
+  init?(): Promise<void> | void;
+  dispose?(): Promise<void> | void;
+  open(path: string, flags: OpenFlags): Promise<FileHandle> | FileHandle;
+  close(handle: FileHandle): Promise<void> | void;
+  read(handle: FileHandle, offset: number, len: number): Promise<Uint8Array> | Uint8Array;
+  write(handle: FileHandle, data: Uint8Array, offset: number): Promise<number> | number;
+  truncate(handle: FileHandle, size: number): Promise<void> | void;
+  stat(path: string, options?: { followSymlinks?: boolean }): Promise<FileStat> | FileStat;
+  readdir(path: string): Promise<DirEntry[]> | DirEntry[];
+  mkdir(path: string): Promise<void> | void;
+  unlink(path: string): Promise<void> | void;
+  rmdir(path: string): Promise<void> | void;
+  rename(oldPath: string, newPath: string): Promise<void> | void;
+  symlink(target: string, linkPath: string): Promise<void> | void;
+  readlink(path: string): Promise<string> | string;
+  link(existingPath: string, newPath: string): Promise<void> | void;
+  chmod(path: string, mode: number): Promise<void> | void;
+  utimes(path: string, atime: Date, mtime: Date): Promise<void> | void;
+  mkfifo(path: string): Promise<void> | void;
   watch?(path: string, callback: (event: WatchEvent) => void): () => void;
-  sync?(): MaybePromise<void, Sync>;
-  realpath?(path: string): MaybePromise<string, Sync>;
+  sync?(): Promise<void> | void;
+  realpath?(path: string): Promise<string> | string;
 }
-
-/** Sync filesystem provider — all methods return T (no Promise). */
-export type SyncFileSystemProvider = FileSystemProvider<true>;
 
 /** Error codes for VFS operations (aligned with WIT wasi:filesystem error-code names). */
 export type FileSystemErrorCode =

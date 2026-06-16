@@ -8,9 +8,6 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js",
-    "./io": "./dist/io/index.js",
-    "./io/providers/node-stdio": "./dist/io/providers/node-stdio.js",
-    "./io/providers/sync-bridge": "./dist/io/providers/sync-bridge.js",
     "./net": "./dist/net/index.js",
     "./net/providers/node-http-server": "./dist/net/providers/node-http-server.js",
     "./net/providers/node-socket-provider": "./dist/net/providers/node-socket-provider.js",

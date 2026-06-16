@@ -1,24 +1,32 @@
-import type { FileHandle, OpenFlags, DirEntry, FileStat, SyncFileSystemProvider } from '../provider.ts';
-import type { SyncInputStreamHandler, SyncOutputStreamHandler } from '../../io/streams.ts';
+import type { FileHandle, OpenFlags, DirEntry, FileStat, FileSystemProvider } from '../provider.ts';
 import { FileSystemError } from '../provider.ts';
 
 const DEVICE_NAMES = ['null', 'zero', 'random', 'urandom', 'stdin', 'stdout', 'stderr'] as const;
 type DeviceName = typeof DEVICE_NAMES[number];
 
+export interface StdinHandler {
+  read(len: number): Uint8Array | undefined;
+  blockingRead(len: number): Uint8Array;
+}
+
+export interface StdoutHandler {
+  write(data: Uint8Array): void;
+}
+
 export interface DeviceFsProviderOptions {
-  stdin?: SyncInputStreamHandler;
-  stdout?: SyncOutputStreamHandler;
-  stderr?: SyncOutputStreamHandler;
+  stdin?: StdinHandler;
+  stdout?: StdoutHandler;
+  stderr?: StdoutHandler;
 }
 
 /**
  * Synchronous /dev filesystem provider.
  * Implements character device semantics for null, zero, stdin, stdout, stderr.
  */
-export class DeviceFsProvider implements SyncFileSystemProvider {
-  #stdin: SyncInputStreamHandler;
-  #stdout: SyncOutputStreamHandler;
-  #stderr: SyncOutputStreamHandler;
+export class DeviceFsProvider implements FileSystemProvider {
+  #stdin: StdinHandler;
+  #stdout: StdoutHandler;
+  #stderr: StdoutHandler;
   #nextFd = 100;
   #handles = new Map<number, DeviceName>();
 
