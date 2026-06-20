@@ -84,8 +84,21 @@ export interface CaseClause {
 
 export interface Statement {
   type: StatementType;
-  /** Pipeline: pipe stages, left to right. */
+  /** Pipeline: pipe stages, left to right (all-simple fast path). */
   stages?: SimpleCommand[];
+  /**
+   * Pipeline: general stages as full command nodes, present when ANY stage is a
+   * compound command (subshell/group/if/while/for/...). When set, the executor
+   * runs stages in-process (capturing each stage's stdout for the next's stdin)
+   * rather than via the kernel spawn fast path. Mirrors `stages` for the
+   * all-simple case to keep one code path.
+   */
+  stageNodes?: Statement[];
+  /**
+   * Pipeline: per-INTER-stage `|&` flags. `pipeStderr[i] === true` means the
+   * pipe BEFORE stage i+1 also carries the previous stage's stderr.
+   */
+  pipeStderr?: boolean[];
   /** Pipeline: terminated with `&` (background). */
   background?: boolean;
   /** Pipeline: negated with leading `!`. */
@@ -112,6 +125,10 @@ export interface Statement {
   words?: string[];
   /** For: true when this is an arithmetic C-style for (uses arith fields). */
   arithFor?: boolean;
+  /** C-style for: init / cond / incr expression text (raw). */
+  arithInit?: string;
+  arithCond?: string;
+  arithIncr?: string;
   /** Case: the word being matched (raw). */
   caseWord?: string;
   /** Case: clauses. */

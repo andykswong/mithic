@@ -117,25 +117,37 @@ class Parser {
     if (this.atReserved('!')) { this.next(); negate = true; }
 
     const first = this.parseCommand();
-    if (!this.atType('PIPE')) {
+    if (!this.atType('PIPE') && !this.atType('PIPEAMP')) {
       if (negate) first.negate = true;
       this.maybeBackground(first);
       return first;
     }
-    // Build a Pipeline of simple commands. Compound stages are uncommon; we
-    // support simple-command pipelines (the common case).
-    const stages: SimpleCommand[] = [];
-    if (first.type === 'Pipeline' && first.stages) stages.push(...first.stages);
-    else if (first.type === 'Pipeline') { /* empty */ }
-    else throw new SyntaxError('shell: compound command in pipeline not supported');
-    while (this.atType('PIPE')) {
+
+    // A pipeline of ≥2 stages. Each stage is a full command node; the `|&`
+    // operator (PIPEAMP) marks the pipe BEFORE the following stage as also
+    // carrying the previous stage's stderr. `pipeStderr[i]` is the flag for the
+    // pipe joining stage i and i+1.
+    const stageNodes: Statement[] = [first];
+    const pipeStderr: boolean[] = [];
+    while (this.atType('PIPE') || this.atType('PIPEAMP')) {
+      const isAmp = this.atType('PIPEAMP');
+      if (isAmp && this.posix) this.posixReject('|&');
+      pipeStderr.push(isAmp);
       this.next();
       this.skipNewlines();
-      const stage = this.parseCommand();
-      if (stage.type === 'Pipeline' && stage.stages) stages.push(...stage.stages);
-      else throw new SyntaxError('shell: compound command in pipeline not supported');
+      stageNodes.push(this.parseCommand());
     }
-    const pipeline: Statement = { type: 'Pipeline', stages, negate };
+
+    // Fast path: when every stage is a single SimpleCommand and no `|&`, keep the
+    // flat `stages` form the kernel pipeline path expects.
+    const allSimple = stageNodes.every((s) => s.type === 'Pipeline' && s.stages?.length === 1);
+    const pipeline: Statement = { type: 'Pipeline', negate };
+    if (allSimple && !pipeStderr.some(Boolean)) {
+      pipeline.stages = stageNodes.map((s) => s.stages![0]);
+    } else {
+      pipeline.stageNodes = stageNodes;
+      pipeline.pipeStderr = pipeStderr;
+    }
     this.maybeBackground(pipeline);
     return pipeline;
   }
@@ -211,6 +223,8 @@ class Parser {
 
   private parseFor(): Statement {
     this.next(); // 'for'
+    // C-style `for (( init; cond; incr ))` (M6). The lexer yields `((` as DLPAREN.
+    if (this.atType('DLPAREN')) return this.parseArithFor();
     const v = this.next();
     if (v?.type !== 'WORD') throw new SyntaxError('shell: expected for variable');
     let words: string[] | undefined;
@@ -227,6 +241,36 @@ class Parser {
     const body = this.parseStatementListUntil(['done']);
     this.expectReserved('done');
     const stmt: Statement = { type: 'For', varName: v.value, words, body };
+    this.attachTrailingRedirects(stmt);
+    return stmt;
+  }
+
+  /**
+   * C-style `for (( init; cond; incr )); do … done`. The lexer splits the inner
+   * expression on `;` into SEMI tokens and the rest into WORDs; we reassemble
+   * the three clauses by collecting tokens up to `))`, joining WORD `value`s.
+   */
+  private parseArithFor(): Statement {
+    this.next(); // ((
+    const clauses: string[] = [''];
+    while (this.peek() && !this.atType('DRPAREN')) {
+      if (this.atType('SEMI')) { clauses.push(''); this.next(); continue; }
+      // `for ((;;))` tokenizes the empty middle as a single DSEMI (`;;`).
+      if (this.atType('DSEMI')) { clauses.push(''); clauses.push(''); this.next(); continue; }
+      const t = this.next()!;
+      clauses[clauses.length - 1] += (clauses[clauses.length - 1] ? ' ' : '') + (t.value ?? t.raw);
+    }
+    if (this.atType('DRPAREN')) this.next();
+    while (this.atType('SEMI') || this.atType('NEWLINE')) this.next();
+    this.expectReserved('do');
+    const body = this.parseStatementListUntil(['done']);
+    this.expectReserved('done');
+    const stmt: Statement = {
+      type: 'For', arithFor: true, body,
+      arithInit: (clauses[0] ?? '').trim(),
+      arithCond: (clauses[1] ?? '').trim(),
+      arithIncr: (clauses[2] ?? '').trim(),
+    };
     this.attachTrailingRedirects(stmt);
     return stmt;
   }

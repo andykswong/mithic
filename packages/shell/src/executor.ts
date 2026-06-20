@@ -20,6 +20,7 @@
 
 import type { Program, Redirect, SimpleCommand, Statement } from './ast.ts';
 import { parse } from './parser.ts';
+import { evalArith } from './arith.ts';
 import { Expander, ExpansionError } from './expander.ts';
 import type { ShellEnv } from './expander.ts';
 import { isBuiltin, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES } from './builtins.ts';
@@ -142,6 +143,8 @@ export class Executor implements ShellEnv {
   private historyLines: string[] = [];
   /** Per-shell numbered file-descriptor table (fd → sink/source), for exec/>&N. */
   private fdTable = new Map<number, FdEntry>();
+  /** Inherited pipe stdin for a compound pipeline stage (M1); undefined ⇒ none. */
+  private pipeStdin: string | undefined;
 
   constructor(kernel: KernelClient, context: ShellContext, options: ExecutorOptions = {}) {
     this.kernel = kernel;
@@ -556,6 +559,7 @@ export class Executor implements ShellEnv {
   }
 
   private async execFor(stmt: Statement): Promise<number> {
+    if (stmt.arithFor) return this.execArithFor(stmt);
     let status = 0;
     const exp = this.expander();
     let words: string[];
@@ -577,6 +581,43 @@ export class Executor implements ShellEnv {
       if (this.exiting !== undefined) return status;
     }
     return status;
+  }
+
+  /**
+   * C-style `for (( init; cond; incr ))` (M6). Evaluates `init` once, then loops
+   * while `cond` (empty ⇒ always true) is nonzero, running the body and then
+   * `incr`. Uses the arithmetic evaluator over a live env proxy so assignments
+   * persist. A safety cap prevents a runaway non-terminating loop.
+   */
+  private async execArithFor(stmt: Statement): Promise<number> {
+    let status = 0;
+    const env = this.arithEnvForExpr();
+    if (stmt.arithInit) evalArith(stmt.arithInit, env);
+    const cond = stmt.arithCond ?? '';
+    let guard = 0;
+    for (;;) {
+      if (cond !== '' && evalArith(cond, env) === 0) break;
+      if (++guard > 1_000_000) break;
+      try {
+        status = await this.execList(stmt.body ?? []);
+      } catch (e) {
+        if (e instanceof LoopBreak) { if (e.count > 1) throw new LoopBreak(e.count - 1); break; }
+        if (e instanceof LoopContinue) { if (e.count > 1) throw new LoopContinue(e.count - 1); /* fall to incr */ }
+        else throw e;
+      }
+      if (this.exiting !== undefined) return status;
+      if (stmt.arithIncr) evalArith(stmt.arithIncr, env);
+    }
+    return status;
+  }
+
+  /** A live env proxy (bare-name read/write to the shell env) for arithmetic-for. */
+  private arithEnvForExpr(): Record<string, string> {
+    return new Proxy({}, {
+      get: (_t, p: string) => this.context.env[p] ?? '',
+      set: (_t, p: string, v) => { this.context.env[p] = String(v); return true; },
+      has: (_t, p: string) => p in this.context.env,
+    }) as Record<string, string>;
   }
 
   private async execCase(stmt: Statement): Promise<number> {
@@ -919,6 +960,16 @@ export class Executor implements ShellEnv {
   // ── pipelines / simple commands ──────────────────────────────────────────────
 
   private async execPipeline(stmt: Statement): Promise<number> {
+    // General compound-stage pipeline (M1/H8): any stage may be a compound
+    // command, and `|&` may funnel stderr. Run stages in-process, capturing each
+    // stage's stdout (and optionally stderr) as the next stage's stdin.
+    if (stmt.stageNodes && stmt.stageNodes.length > 0) {
+      if (stmt.background) return this.execBackground(stmt);
+      let status = await this.execNodePipeline(stmt.stageNodes, stmt.pipeStderr ?? []);
+      if (stmt.negate) status = status === 0 ? 1 : 0;
+      return status;
+    }
+
     const stages = stmt.stages ?? [];
     if (stages.length === 0) return 0;
 
@@ -935,6 +986,41 @@ export class Executor implements ShellEnv {
     }
     if (stmt.negate) status = status === 0 ? 1 : 0;
     return status;
+  }
+
+  /**
+   * Run a pipeline whose stages are full command nodes (M1) in-process: each
+   * stage's stdout (and, for a `|&` join, its stderr) is captured and fed to the
+   * next stage as stdin. The pipeline's status is the last stage's (or, under
+   * pipefail, the last nonzero). Compound stages (subshells/groups/if/…) run via
+   * {@link execStatement}; the captured stdin is exposed via {@link pipeStdin}.
+   */
+  private async execNodePipeline(nodes: Statement[], pipeStderr: boolean[]): Promise<number> {
+    let stdin: string | undefined;
+    const codes: number[] = [];
+    const savedStdout = this.stdoutSink;
+    const savedStderr = this.stderrSink;
+    const savedPipeStdin = this.pipeStdin;
+    try {
+      for (let i = 0; i < nodes.length; i++) {
+        const isLast = i === nodes.length - 1;
+        let captured = '';
+        this.pipeStdin = i === 0 ? undefined : stdin;
+        this.stdoutSink = isLast ? savedStdout : (s) => { captured += s; };
+        // `prev |& next` routes the PREVIOUS stage's stderr into the pipe too.
+        this.stderrSink = (!isLast && pipeStderr[i]) ? (s) => { captured += s; } : savedStderr;
+        const code = await this.execStatement(nodes[i]);
+        codes.push(code);
+        if (this.exiting !== undefined) { this.pipeStatus = codes; return code; }
+        stdin = captured;
+      }
+    } finally {
+      this.stdoutSink = savedStdout;
+      this.stderrSink = savedStderr;
+      this.pipeStdin = savedPipeStdin;
+    }
+    this.pipeStatus = codes;
+    return this.pipelineStatus(codes, codes[codes.length - 1] ?? 0);
   }
 
   private async execMultiStagePipeline(stages: SimpleCommand[]): Promise<number> {
@@ -1052,8 +1138,10 @@ export class Executor implements ShellEnv {
       this.writeStderr('+ ' + [name, ...argv].join(' ') + '\n');
     }
 
-    // stdin from input redirects
-    const stdin = await this.resolveStdin(cmd.redirects);
+    // stdin: an explicit `<`/`<<`/`<<<` redirect wins; otherwise inherit a
+    // compound-pipeline stage's piped stdin (M1).
+    const redirStdin = await this.resolveStdin(cmd.redirects);
+    const stdin = redirStdin ?? this.pipeStdin;
 
     // Apply output redirects around the command. A refused redirect (noclobber)
     // aborts the command with status 1 — it never runs.

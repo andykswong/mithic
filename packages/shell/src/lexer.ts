@@ -18,6 +18,7 @@
 export type TokenType =
   | 'WORD'
   | 'PIPE'
+  | 'PIPEAMP'       // |& (pipe stdout+stderr)
   | 'GREAT'        // > or N>
   | 'GREATGREAT'   // >> or N>>
   | 'GREATPIPE'    // >| (clobber-force, overrides noclobber)
@@ -71,6 +72,7 @@ function matchOperator(input: string, i: number): OpMatch | undefined {
   // 2-char
   if (s.startsWith('&&', i)) return { type: 'AND_IF', len: 2 };
   if (s.startsWith('||', i)) return { type: 'OR_IF', len: 2 };
+  if (s.startsWith('|&', i)) return { type: 'PIPEAMP', len: 2 };
   if (s.startsWith('>>', i)) return { type: 'GREATGREAT', len: 2 };
   if (s.startsWith('>|', i)) return { type: 'GREATPIPE', len: 2 };
   if (s.startsWith('<<', i)) return { type: 'LESSLESS', len: 2 };
