@@ -165,6 +165,19 @@ describe('awk interp — operators & coercion', () => {
     expect(run('BEGIN{ print 17 % 5 }')).toBe('2\n');
   });
 
+  test('AW1: division by zero warns to stderr, yields 0, and continues (not fatal)', () => {
+    // Reference behavior: warn, return 0, keep going (program still exits 0).
+    const out = run('BEGIN{ print 1/0; print "after" }');
+    expect(out).toBe('0\nafter\n');
+    expect((run as unknown as { lastErr: string }).lastErr).toContain('division by zero');
+  });
+
+  test('AW1: modulo by zero warns to stderr, yields 0, and continues', () => {
+    const out = run('BEGIN{ print 7 % 0; print "ok" }');
+    expect(out).toBe('0\nok\n');
+    expect((run as unknown as { lastErr: string }).lastErr).toContain('division by zero');
+  });
+
   test('logical operators', () => {
     expect(run('BEGIN{ print (1 && 0), (1 || 0), !0 }')).toBe('0 1 1\n');
   });
@@ -428,6 +441,29 @@ describe('awk interp — getline & redirect', () => {
   test('getline < file', () => {
     expect(run('BEGIN{ while ((getline line < "f.txt") > 0) print line }', '', {}, { 'f.txt': 'x\ny\n' }))
       .toBe('x\ny\n');
+  });
+
+  test('AW2: getline < file does NOT increment NR (POSIX/ref)', () => {
+    // Read two lines from a file in the main loop; NR must reflect only the
+    // primary input records, not the file-getline reads.
+    const out = run(
+      '{ getline tmp < "f.txt"; print NR }',
+      'a\nb\n',
+      {},
+      { 'f.txt': 'x\ny\n' },
+    );
+    // Two primary records → NR is 1 then 2; the file getlines must not bump it.
+    expect(out).toBe('1\n2\n');
+  });
+
+  test('AW2: getline < file leaves FNR untouched', () => {
+    const out = run(
+      '{ getline tmp < "f.txt"; print FNR }',
+      'a\nb\n',
+      {},
+      { 'f.txt': 'x\ny\n' },
+    );
+    expect(out).toBe('1\n2\n');
   });
 
   test('cmd | getline', () => {

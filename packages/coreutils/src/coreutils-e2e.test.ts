@@ -277,6 +277,24 @@ test('cat <file> | awk gsub pipeline end-to-end', async () => {
   expect(out.codes).toEqual([0, 0]);
 }, 20000);
 
+test('AW3: seq 1 5 | awk \'{s+=$1}END{print s}\' sums to 15 through the real kernel pipeline', async () => {
+  // A real shell-style pipeline: seq produces 1..5, awk accumulates and prints the
+  // sum in END — both run as spawned kernel processes with a zero-hop pipe between.
+  const k = await bootKernel({});
+  const out = await k.pipeline([['seq', '1', '5'], ['awk', '{s+=$1}END{print s}']]);
+  expect(out.stdout).toBe('15\n');
+  expect(out.codes).toEqual([0, 0]);
+}, 20000);
+
+test('AW3: awk division by zero through the kernel warns but exits 0 (AW1 e2e)', async () => {
+  // Drive through seq so awk has a main-rule input (a BEGIN-only program would
+  // block waiting on an absent stdin in this harness). 5/0 per record → 0, exit 0.
+  const k = await bootKernel({});
+  const out = await k.pipeline([['seq', '1', '2'], ['awk', '{ print $1/0 }']]);
+  expect(out.stdout).toBe('0\n0\n');
+  expect(out.codes[out.codes.length - 1]).toBe(0); // not fatal
+}, 20000);
+
 test('unknown command name resolves to undefined (kernel would ENOENT)', async () => {
   const resolve = createCoreutilsResolver();
   expect(resolve('definitely-not-a-command', '/', {})).toBeUndefined();
