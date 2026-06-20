@@ -58,6 +58,8 @@ export interface ShellEnv {
   posix?(): boolean;
   /** True when the named shopt glob option is enabled (extglob/globstar/nullglob/dotglob/...). */
   shopt?(name: string): boolean;
+  /** All currently-set variable names, for `${!prefix*}` / `${!prefix@}`. Optional. */
+  names?(): string[];
 }
 
 /**
@@ -448,7 +450,8 @@ export class Expander {
       return String(this.resolveVar(inner).length);
     }
 
-    // ${!name[@]} / ${!name[*]} → array indices; ${!var} → indirect expansion.
+    // ${!name[@]} / ${!name[*]} → array indices; ${!prefix*}/${!prefix@} → names
+    // with that prefix; ${!var} → indirect expansion.
     if (body.startsWith('!') && body.length > 1) {
       const inner = body.slice(1);
       const sub = matchSubscript(inner);
@@ -456,12 +459,17 @@ export class Expander {
         const arr = this.env.getArray?.(sub.name) ?? [];
         return arr.map((_, i) => i).join(' ');
       }
+      // ${!prefix*} / ${!prefix@}: every set variable name starting with prefix.
+      if ((inner.endsWith('*') || inner.endsWith('@')) && /^[A-Za-z_][A-Za-z0-9_]*[*@]$/.test(inner)) {
+        const prefix = inner.slice(0, -1);
+        const matches = (this.env.names?.() ?? []).filter((n) => n.startsWith(prefix)).sort();
+        return { fields: matches, join: inner.endsWith('*') ? this.ifsFirst() : undefined };
+      }
       if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(inner)) {
         // Indirection: the value of the variable NAMED by `inner`.
         const target = this.resolveVar(inner);
         return target === '' ? '' : this.resolveVar(target);
       }
-      // Fall through for unsupported ${!prefix*} name-matching (rare).
     }
 
     // ${@} / ${*} bare positional forms (equivalent to $@ / $*).

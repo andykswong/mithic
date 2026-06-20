@@ -226,7 +226,7 @@ class Parser {
     // C-style `for (( init; cond; incr ))` (M6). The lexer yields `((` as DLPAREN.
     if (this.atType('DLPAREN')) return this.parseArithFor();
     const v = this.next();
-    if (v?.type !== 'WORD') throw new SyntaxError('shell: expected for variable');
+    if (v?.type !== 'WORD') throw new SyntaxError('shell: syntax error: expected for variable');
     let words: string[] | undefined;
     if (this.atReserved('in')) {
       this.next();
@@ -278,7 +278,7 @@ class Parser {
   private parseSelect(): Statement {
     this.next(); // 'select'
     const v = this.next();
-    if (v?.type !== 'WORD') throw new SyntaxError('shell: expected select variable');
+    if (v?.type !== 'WORD') throw new SyntaxError('shell: syntax error: expected select variable');
     let words: string[] | undefined;
     if (this.atReserved('in')) {
       this.next();
@@ -299,7 +299,7 @@ class Parser {
   private parseCase(): Statement {
     this.next(); // 'case'
     const word = this.next();
-    if (word?.type !== 'WORD') throw new SyntaxError('shell: expected case word');
+    if (word?.type !== 'WORD') throw new SyntaxError('shell: syntax error: expected case word');
     this.expectReserved('in');
     this.skipNewlines();
     const clauses: CaseClause[] = [];
@@ -309,7 +309,7 @@ class Parser {
       const patterns: string[] = [];
       patterns.push(this.next()!.raw);
       while (this.atType('PIPE')) { this.next(); patterns.push(this.next()!.raw); }
-      if (!this.atType('RPAREN')) throw new SyntaxError('shell: expected ) in case');
+      if (!this.atType('RPAREN')) throw new SyntaxError('shell: syntax error: expected ) in case');
       this.next(); // )
       const body = this.parseStatementListUntil([], ['DSEMI', 'esac-word']);
       clauses.push({ patterns, body });
@@ -323,7 +323,7 @@ class Parser {
   private parseFunctionKw(): Statement {
     this.next(); // 'function'
     const name = this.next();
-    if (name?.type !== 'WORD') throw new SyntaxError('shell: expected function name');
+    if (name?.type !== 'WORD') throw new SyntaxError('shell: syntax error: expected function name');
     // optional ()
     if (this.atType('LPAREN')) { this.next(); if (this.atType('RPAREN')) this.next(); }
     this.skipNewlines();
@@ -388,7 +388,10 @@ class Parser {
   }
 
   private expectReserved(word: string): void {
-    if (!this.atReserved(word)) throw new SyntaxError(`shell: expected '${word}'`);
+    if (!this.atReserved(word)) {
+      const got = this.peek()?.value ?? 'end of input';
+      throw new SyntaxError(`shell: syntax error: expected '${word}' but got '${got}'`);
+    }
     this.next();
   }
 
@@ -515,7 +518,7 @@ class Parser {
 
   private targetRedirect(op: RedirectOp, fd?: number): Redirect {
     const target = this.peek();
-    if (target?.type !== 'WORD') throw new SyntaxError('shell: expected redirect target');
+    if (target?.type !== 'WORD') throw new SyntaxError('shell: syntax error: expected redirect target');
     this.next();
     return { op, fd, target: target.raw };
   }
@@ -523,7 +526,7 @@ class Parser {
   private dupRedirect(op: RedirectOp, fd?: number): Redirect {
     // `2>&1` — the target is the destination fd word (e.g. `1`) or `-` to close.
     const target = this.peek();
-    if (target?.type !== 'WORD') throw new SyntaxError('shell: expected dup target');
+    if (target?.type !== 'WORD') throw new SyntaxError('shell: syntax error: expected dup target');
     this.next();
     return { op, fd, target: target.value };
   }
@@ -531,14 +534,14 @@ class Parser {
   private hereString(): Redirect {
     if (this.posix) this.posixReject('<<< here-string');
     const target = this.peek();
-    if (target?.type !== 'WORD') throw new SyntaxError('shell: expected here-string word');
+    if (target?.type !== 'WORD') throw new SyntaxError('shell: syntax error: expected here-string word');
     this.next();
     return { op: '<<<', target: target.raw };
   }
 
   private hereDocRedirect(strip: boolean): Redirect {
     const delim = this.peek();
-    if (delim?.type !== 'WORD') throw new SyntaxError('shell: expected here-doc delimiter');
+    if (delim?.type !== 'WORD') throw new SyntaxError('shell: syntax error: expected here-doc delimiter');
     this.next();
     // The delimiter word encodes a here-doc id (assigned during extraction).
     const id = parseInt(delim.value.replace(/^__HEREDOC_(\d+)__$/, '$1'), 10);

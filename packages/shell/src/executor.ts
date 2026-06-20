@@ -200,6 +200,11 @@ export class Executor implements ShellEnv {
   /** Read a `shopt` glob option (extglob/globstar/nullglob/dotglob/...). */
   shopt(name: string): boolean { return this.shoptStore[name] ?? false; }
 
+  /** All set variable names (scalars + arrays), for `${!prefix*}`/`${!prefix@}`. */
+  names(): string[] {
+    return [...new Set([...Object.keys(this.context.env), ...this.arrays.keys()])];
+  }
+
   /** Glob options for case/`[[ ]]` matching: extglob + nocasematch; `*` crosses `/`. */
   private globMatchOpts(): GlobOptions {
     return { extglob: this.shoptStore.extglob, nocase: this.shoptStore.nocasematch, pathSegment: false };
@@ -257,6 +262,9 @@ export class Executor implements ShellEnv {
     if (args.length > 1) this.context.positional = args.slice(1);
     try {
       return await this.run(this.parseSrc(content), /*nested*/ true);
+    } catch (e) {
+      if (e instanceof FuncReturn) return e.code; // `return N` ends the sourced script
+      throw e;
     } finally {
       this.context.positional = savedPositional;
     }
@@ -440,6 +448,17 @@ export class Executor implements ShellEnv {
             this.lastStatus = 2;
             if (!nested) { this.exiting = 2; return 2; }
             return 2;
+          }
+          // break/continue/return that reached the top level (no enclosing loop
+          // or function) → diagnostic + continue, NOT an uncaught throw (M8). A
+          // `return` from a SOURCED script (nested) is valid and re-thrown so
+          // sourceFile can use it as the script's exit code.
+          if (e instanceof LoopBreak) { this.writeStderr('shell: break: only meaningful in a `for\', `while\', or `until\' loop\n'); this.lastStatus = 1; continue; }
+          if (e instanceof LoopContinue) { this.writeStderr('shell: continue: only meaningful in a `for\', `while\', or `until\' loop\n'); this.lastStatus = 1; continue; }
+          if (e instanceof FuncReturn) {
+            if (nested) throw e;
+            this.writeStderr('shell: return: can only `return\' from a function or sourced script\n');
+            this.lastStatus = 1; continue;
           }
           throw e;
         }
@@ -1231,6 +1250,7 @@ export class Executor implements ShellEnv {
       getArray: (n) => this.arrays.get(n),
       posix: () => this.posix(),
       shopt: (n) => this.shopt(n),
+      names: () => this.names(),
     };
   }
 
