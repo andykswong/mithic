@@ -44,6 +44,20 @@ describe('ls', () => {
     expect(h.out()).toContain(' 5 ');
   });
 
+  test('-l emits 7 whitespace-delimited fields incl. owner/group (M20)', async () => {
+    const h = makeIO({ args: ['ls', '-l', '/d'], files: { '/d/f': { content: 'hello', mode: 0o644 } } });
+    await lsCommand(h.io);
+    const line = h.out().trim().split('\n').find((l) => l.includes('-rw-r--r--'))!;
+    const fields = line.trim().split(/\s+/);
+    // mode links owner group size mtime name  →  7 fields (mtime is one token).
+    expect(fields).toHaveLength(7);
+    expect(fields[0]).toBe('-rw-r--r--');
+    expect(fields[2]).toBe('root'); // owner placeholder
+    expect(fields[3]).toBe('root'); // group placeholder
+    expect(fields[4]).toBe('5');    // size
+    expect(fields[6]).toBe('f');    // name
+  });
+
   test('-d lists directory itself', async () => {
     const h = makeIO({ args: ['ls', '-d', '/d'], files: { '/d/x': 'x' } });
     await lsCommand(h.io);

@@ -9,7 +9,7 @@
  * Counts are printed in the fixed order lines, words, chars/bytes (only the
  * selected ones), each right-aligned, followed by the file name.
  */
-import { defineCommand, parseArgs, readAll, writeString } from '../harness.ts';
+import { defineCommand, parseArgs, writeString } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 async function readFile(io: CommandIO, path: string): Promise<Uint8Array> {
@@ -42,6 +42,41 @@ function count(bytes: Uint8Array): Counts {
   // chars = Unicode code points; bytes = raw byte length.
   const chars = [...text].length;
   return { lines, words, chars, bytes: bytes.byteLength };
+}
+
+const WS = /\s/;
+
+/**
+ * Count a stream INCREMENTALLY without buffering it (the parity fix: a producer
+ * piped into `wc` must drain chunk-wise, not be slurped whole). Words and chars
+ * are tracked across chunk boundaries: `inWord` carries word state, and the
+ * TextDecoder runs in streaming mode so a multibyte sequence split across chunks
+ * counts as one code point.
+ */
+async function countStream(stream: ReadableStream<Uint8Array>): Promise<Counts> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  const c: Counts = { lines: 0, words: 0, chars: 0, bytes: 0 };
+  let inWord = false;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      c.bytes += value.byteLength;
+      for (let i = 0; i < value.byteLength; i++) if (value[i] === 0x0a) c.lines++;
+      const text = decoder.decode(value, { stream: true });
+      for (const ch of text) {
+        c.chars++;
+        if (WS.test(ch)) inWord = false;
+        else if (!inWord) { inWord = true; c.words++; }
+      }
+    }
+    for (const _ of decoder.decode()) c.chars++; // flush any trailing partial char
+  } finally {
+    reader.releaseLock();
+  }
+  return c;
 }
 
 const wcCommand: CommandFn = async (io: CommandIO): Promise<number> => {
@@ -78,11 +113,11 @@ const wcCommand: CommandFn = async (io: CommandIO): Promise<number> => {
 
   try {
     for (const src of sources) {
-      let bytes: Uint8Array;
+      let c: Counts;
       if (src === '-') {
-        bytes = await readAll(io.stdin);
+        c = await countStream(io.stdin);
       } else {
-        try { bytes = await readFile(io, src); }
+        try { c = count(await readFile(io, src)); }
         catch (e) {
           const msg = (e as { message?: string }).message ?? 'No such file or directory';
           await writeString(err, `${name}: ${src}: ${msg}\n`);
@@ -90,7 +125,6 @@ const wcCommand: CommandFn = async (io: CommandIO): Promise<number> => {
           continue;
         }
       }
-      const c = count(bytes);
       total.lines += c.lines; total.words += c.words; total.chars += c.chars; total.bytes += c.bytes;
       fileCount++;
       const label = src === '-' ? '' : src;

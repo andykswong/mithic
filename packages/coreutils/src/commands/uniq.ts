@@ -9,7 +9,7 @@
  *   - operands: [INPUT [OUTPUT]] — INPUT `-`/none = stdin. (OUTPUT to a path
  *     is accepted but written to stdout; file output is not used by the shell.)
  */
-import { defineCommand, parseArgs, readLines, writeString } from '../harness.ts';
+import { CoalescingWriter, defineCommand, isBrokenPipe, parseArgs, streamLines, writeString } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 async function readFileLines(io: CommandIO, path: string): Promise<string[]> {
@@ -69,18 +69,54 @@ const uniqCommand: CommandFn = async (io: CommandIO): Promise<number> => {
 
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
+  let stdinAborted = false;
+
+  // Render an emitted group (its representative line + repeat count) per flags,
+  // or null when the group is suppressed (-d/-u). Streamed group-at-a-time so
+  // `producer | uniq | head` drains incrementally instead of buffering all input.
+  const render = (line: string, count: number): string | null => {
+    const isDup = count > 1;
+    const keep = onlyDup ? isDup : onlyUniq ? !isDup : true;
+    if (!keep) return null;
+    return showCount ? `${String(count).padStart(7, ' ')} ${line}` : line;
+  };
+
   try {
     const input = positionals[0];
-    let lines: string[];
+
     if (input === undefined || input === '-') {
-      lines = await readLines(io.stdin);
-    } else {
-      try { lines = await readFileLines(io, input); }
-      catch (e) {
-        const msg = (e as { message?: string }).message ?? 'No such file or directory';
-        await writeString(err, `${name}: ${input}: ${msg}\n`);
-        return 1;
+      const sink = new CoalescingWriter(out);
+      let groupLine: string | null = null;
+      let groupKey = '';
+      let groupCount = 0;
+      try {
+        for await (const { line } of streamLines(io.stdin)) {
+          const key = comparand(line, skipFields, skipChars, ignoreCase);
+          if (groupCount > 0 && key === groupKey) { groupCount++; continue; }
+          if (groupCount > 0) {
+            const r = render(groupLine!, groupCount);
+            if (r !== null) await sink.push(r + '\n');
+          }
+          groupLine = line; groupKey = key; groupCount = 1;
+        }
+        if (groupCount > 0) {
+          const r = render(groupLine!, groupCount);
+          if (r !== null) await sink.push(r + '\n');
+        }
+        await sink.flush();
+      } catch (e) {
+        if (isBrokenPipe(e)) { stdinAborted = true; return 0; }
+        throw e;
       }
+      return 0;
+    }
+
+    let lines: string[];
+    try { lines = await readFileLines(io, input); }
+    catch (e) {
+      const msg = (e as { message?: string }).message ?? 'No such file or directory';
+      await writeString(err, `${name}: ${input}: ${msg}\n`);
+      return 1;
     }
 
     const outLines: string[] = [];
@@ -89,12 +125,8 @@ const uniqCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       const key = comparand(lines[i], skipFields, skipChars, ignoreCase);
       let count = 1;
       while (i + count < lines.length && comparand(lines[i + count], skipFields, skipChars, ignoreCase) === key) count++;
-      const isDup = count > 1;
-      const keep = onlyDup ? isDup : onlyUniq ? !isDup : true;
-      if (keep) {
-        const line = lines[i]; // first line of the group is the representative
-        outLines.push(showCount ? `${String(count).padStart(7, ' ')} ${line}` : line);
-      }
+      const r = render(lines[i], count);
+      if (r !== null) outLines.push(r);
       i += count;
     }
     if (outLines.length > 0) await writeString(out, outLines.join('\n') + '\n');
@@ -102,6 +134,7 @@ const uniqCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   } finally {
     await out.close().catch(() => {});
     await err.close().catch(() => {});
+    if (stdinAborted) await io.stdin.cancel().catch(() => {});
   }
 };
 

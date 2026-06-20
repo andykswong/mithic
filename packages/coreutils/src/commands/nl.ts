@@ -9,7 +9,7 @@
  *
  * Non-numbered lines are emitted with blank padding in place of the number.
  */
-import { defineCommand, parseArgs, readAllText, writeString } from '../harness.ts';
+import { CoalescingWriter, defineCommand, isBrokenPipe, parseArgs, streamLines, writeString } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 async function readFileText(io: CommandIO, path: string): Promise<string> {
@@ -45,42 +45,52 @@ const nlCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
   let exitCode = 0;
+  let stdinAborted = false;
 
   try {
     const sources = positionals.length > 0 ? positionals : ['-'];
     let lineNo = 1;
     const blank = ' '.repeat(width);
+    const numberLine = (line: string): string => {
+      const numberThis = bodyStyle === 'a' || (bodyStyle === 't' && line !== '');
+      return numberThis ? String(lineNo++).padStart(width, ' ') + sep + line : blank + line;
+    };
     for (const src of sources) {
-      let text: string;
-      if (src === '-') text = await readAllText(io.stdin);
-      else {
-        try { text = await readFileText(io, src); }
-        catch (e) {
-          const msg = (e as { message?: string }).message ?? 'No such file or directory';
-          await writeString(err, `${name}: ${src}: ${msg}\n`);
-          exitCode = 1;
-          continue;
+      if (src === '-') {
+        // Stream stdin; the line counter carries across chunks. Coalesce writes.
+        const sink = new CoalescingWriter(out);
+        try {
+          for await (const { line, eol } of streamLines(io.stdin)) {
+            await sink.push(numberLine(line) + (eol ? '\n' : ''));
+          }
+          await sink.flush();
+        } catch (e) {
+          if (isBrokenPipe(e)) { stdinAborted = true; break; }
+          throw e;
         }
+        continue;
+      }
+      let text: string;
+      try { text = await readFileText(io, src); }
+      catch (e) {
+        const msg = (e as { message?: string }).message ?? 'No such file or directory';
+        await writeString(err, `${name}: ${src}: ${msg}\n`);
+        exitCode = 1;
+        continue;
       }
       if (text === '') continue;
       const hasTrailing = text.endsWith('\n');
       const body = hasTrailing ? text.slice(0, -1) : text;
       const lines = body.split('\n');
       const outParts: string[] = [];
-      for (const line of lines) {
-        const numberThis = bodyStyle === 'a' || (bodyStyle === 't' && line !== '');
-        if (numberThis) {
-          outParts.push(String(lineNo++).padStart(width, ' ') + sep + line);
-        } else {
-          outParts.push(blank + line);
-        }
-      }
+      for (const line of lines) outParts.push(numberLine(line));
       await writeString(out, outParts.join('\n') + (hasTrailing ? '\n' : ''));
     }
     return exitCode;
   } finally {
     await out.close().catch(() => {});
     await err.close().catch(() => {});
+    if (stdinAborted) await io.stdin.cancel().catch(() => {});
   }
 };
 

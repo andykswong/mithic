@@ -1,7 +1,7 @@
 import { expect, test, describe } from 'vitest';
 import { cksumCommand } from './cksum.ts';
 import { sumCommand } from './cksum.ts';
-import { crc32, bsdSum } from './cksum.ts';
+import { crc32, bsdSum, posixCksum } from './cksum.ts';
 import type { CommandIO } from '../harness.ts';
 
 function makeIO(opts: { args: string[]; stdinText?: string; files?: Record<string, string> }) {
@@ -58,6 +58,24 @@ describe('crc32', () => {
   test('deterministic', () => {
     const d = new TextEncoder().encode('hello world');
     expect(crc32(d)).toBe(crc32(d));
+  });
+});
+
+describe('posixCksum (cksum-command algorithm)', () => {
+  // Canonical GNU/BSD `cksum` values (verified against the real utility).
+  test('empty input → 4294967295', () => {
+    expect(posixCksum(new Uint8Array())).toBe(4294967295);
+  });
+  test('"a\\n" → 2418082923, length 2', () => {
+    expect(posixCksum(new TextEncoder().encode('a\n'))).toBe(2418082923);
+  });
+  test('"hello\\n" matches the real cksum value', () => {
+    // `printf 'hello\n' | cksum` → 3015617425 6
+    expect(posixCksum(new TextEncoder().encode('hello\n'))).toBe(3015617425);
+  });
+  test('differs from the reflected zlib crc32', () => {
+    const d = new TextEncoder().encode('abc');
+    expect(posixCksum(d)).not.toBe(crc32(d));
   });
 });
 

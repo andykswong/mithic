@@ -26,6 +26,11 @@ interface LsOptions {
   dirSelf: boolean; timeSort: boolean; reverse: boolean; sizeSort: boolean; human: boolean;
 }
 
+// The VFS has no ownership model; ls -l prints static placeholders so the
+// owner/group columns exist and field-splitting parsers see the 7-field layout.
+const OWNER = 'root';
+const GROUP = 'root';
+
 const TYPE_CHAR: Record<FileType, string> = {
   'file': '-', 'directory': 'd', 'symlink': 'l', 'block-device': 'b',
   'character-device': 'c', 'fifo': 'p', 'socket': 's', 'unknown': '?',
@@ -160,13 +165,20 @@ async function emitRows(
   if (opt.reverse) sorted.reverse();
 
   if (opt.long) {
+    // Long format mirrors the reference's 7-field layout:
+    //   mode links owner group size mtime name
+    // The VFS carries no ownership, so owner/group are static "root" placeholders
+    // (GNU still prints them, so consumers that field-split `ls -l` parse cleanly).
     for (const r of sorted) {
       const st = r.st;
       const perms = st ? permString(r.type, st.mode) : permString(r.type, 0);
       const links = st ? st.linkCount : 1;
       const size = st ? (opt.human ? humanSize(st.size) : String(st.size)) : '0';
       const mtime = st ? epochToStr(st.mtime) : '';
-      await writeLine(out, `${perms} ${String(links).padStart(2)} ${size.padStart(8)} ${mtime} ${r.name}`);
+      await writeLine(
+        out,
+        `${perms} ${String(links).padStart(3)} ${OWNER.padEnd(8)} ${GROUP.padEnd(8)} ${size.padStart(8)} ${mtime} ${r.name}`,
+      );
     }
     return;
   }

@@ -505,8 +505,11 @@ export class Interpreter {
       case '+': return toNum(l) + toNum(r);
       case '-': return toNum(l) - toNum(r);
       case '*': return toNum(l) * toNum(r);
-      case '/': { const d = toNum(r); if (d === 0) throw new Error('awk: division by zero'); return toNum(l) / d; }
-      case '%': { const d = toNum(r); if (d === 0) throw new Error('awk: division by zero in %'); return remainder(toNum(l), d); }
+      // AW1: division/modulo by zero is NOT fatal in awk — the reference warns to
+      // stderr, yields 0, and continues (the program still exits 0). Matching that
+      // (was: throw → exit 2).
+      case '/': { const d = toNum(r); if (d === 0) { this.io.writeErr('awk: division by zero\n'); return 0; } return toNum(l) / d; }
+      case '%': { const d = toNum(r); if (d === 0) { this.io.writeErr('awk: division by zero\n'); return 0; } return remainder(toNum(l), d); }
       case '^': return Math.pow(toNum(l), toNum(r));
       default: return this.compare(op, l, r, leftE, rightE) ? 1 : 0;
     }
@@ -813,7 +816,8 @@ export class Interpreter {
       }
       if (reader.pos >= reader.lines.length) return 0;
       const line = reader.lines[reader.pos++];
-      this.globals.set('NR', this.num('NR') + 1);
+      // AW2: `getline [var] < file` does NOT touch NR/FNR (POSIX/reference).
+      // Only `getline` from the MAIN input stream advances the record counters.
       if (e.into) this.writeLValue(e.into, line);
       else { this.setRecord(line); }
       return 1;

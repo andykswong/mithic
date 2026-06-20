@@ -1,8 +1,9 @@
 /**
  * `sleep` — suspend execution for a time interval.
  *
- * Usage: sleep NUMBER[SUFFIX]
- *   SUFFIX: s (seconds, default), m (minutes), h (hours)
+ * Usage: sleep NUMBER[SUFFIX]...
+ *   SUFFIX: s (seconds, default), m (minutes), h (hours), d (days)
+ *   Multiple operands are summed (GNU behavior): `sleep 1m 30s` waits 90s.
  *
  * Time source: We use `setTimeout` wrapped in a Promise. The guest runtime
  * provides a JS event-loop environment in which `setTimeout` is available both
@@ -16,15 +17,16 @@
 import { defineCommand, parseArgs, exitWith } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
-/** Parse a sleep argument like "1.5", "2m", "3h". Returns milliseconds. */
+/** Parse a sleep argument like "1.5", "2m", "3h", "1d". Returns milliseconds. */
 export function parseSleepArg(arg: string): number | null {
-  const m = /^([0-9]*\.?[0-9]+)(s|m|h)?$/.exec(arg);
+  const m = /^([0-9]*\.?[0-9]+)(s|m|h|d)?$/.exec(arg);
   if (!m) return null;
   const val = parseFloat(m[1]);
   const unit = m[2] ?? 's';
   if (unit === 's') return val * 1000;
   if (unit === 'm') return val * 60 * 1000;
   if (unit === 'h') return val * 3600 * 1000;
+  if (unit === 'd') return val * 86400 * 1000;
   return null;
 }
 
@@ -35,15 +37,20 @@ const sleepCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
   try {
-    if (positionals.length !== 1) {
+    if (positionals.length === 0) {
       return await exitWith(err, 1, `${name}: missing operand`);
     }
-    const ms = parseSleepArg(positionals[0]);
-    if (ms === null || ms < 0) {
-      return await exitWith(err, 1, `${name}: invalid time interval '${positionals[0]}'`);
+    // GNU sleep accepts MULTIPLE intervals and sums them; any invalid one errors.
+    let totalMs = 0;
+    for (const arg of positionals) {
+      const ms = parseSleepArg(arg);
+      if (ms === null || ms < 0) {
+        return await exitWith(err, 1, `${name}: invalid time interval '${arg}'`);
+      }
+      totalMs += ms;
     }
-    if (ms > 0) {
-      await new Promise<void>(resolve => setTimeout(resolve, ms));
+    if (totalMs > 0) {
+      await new Promise<void>(resolve => setTimeout(resolve, totalMs));
     }
     return 0;
   } finally {

@@ -18,6 +18,9 @@ export interface TestHarness {
   fs: MemoryFsProvider;
 }
 
+/** One observed `process/pipeline` spawn (used to assert -exec / xargs behavior). */
+export interface SpawnRecord { stages: Array<{ path: string; argv: string[] }>; }
+
 export function makeIO(opts: {
   args: string[];
   cwd?: string;
@@ -25,6 +28,13 @@ export function makeIO(opts: {
   stdinText?: string;
   files?: Record<string, string | Uint8Array | { content: string | Uint8Array; mode?: number; mtime?: Date }>;
   pid?: number;
+  /**
+   * Optional handler for `process/pipeline` spawns. Receives each spawn's stages
+   * and returns the child stdout (string) and per-stage exit codes. Every spawn
+   * is also recorded in {@link TestHarness} via the closure the test passes in.
+   * When omitted, `process/pipeline` throws ENOSYS (the default fs-only harness).
+   */
+  onSpawn?: (rec: SpawnRecord) => { stdout?: string; exitCodes?: number[] };
 }): TestHarness {
   const enc = new TextEncoder();
   const fs = new MemoryFsProvider({ files: opts.files });
@@ -95,6 +105,12 @@ export function makeIO(opts: {
       }
       case 'fs/realpath': return { path: fs.realpath(path!) };
       case 'process/getpid': return { pid: opts.pid ?? 7 };
+      case 'process/pipeline': {
+        if (!opts.onSpawn) throw Object.assign(new Error('process/pipeline'), { code: 'ENOSYS' });
+        const stages = (args.stages ?? []) as Array<{ path: string; argv: string[] }>;
+        const r = opts.onSpawn({ stages });
+        return { exitCodes: r.exitCodes ?? stages.map(() => 0), stdout: enc.encode(r.stdout ?? '') };
+      }
       default: throw Object.assign(new Error(`unexpected syscall ${call}`), { code: 'ENOSYS' });
     }
   };

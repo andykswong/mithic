@@ -102,6 +102,18 @@ function rangeStr(start: number, end: number): string {
 }
 
 /** Unified diff output with `context` lines of surrounding context. */
+/**
+ * Format one side of a unified-diff hunk header (`start[,count]`), matching GNU:
+ *   - count === 1 → just `start` (the comma+count is omitted)
+ *   - count === 0 → `(start-1),0` (the position is the line BEFORE the change)
+ *   - otherwise   → `start,count`
+ */
+function unifiedRange(start: number, count: number): string {
+  if (count === 1) return `${start}`;
+  if (count === 0) return `${start - 1},0`;
+  return `${start},${count}`;
+}
+
 function unifiedDiff(a: string[], b: string[], file1: string, file2: string, context = 3): string {
   const ops = editScript(a, b);
   if (ops.every(([t]) => t === ' ')) return '';
@@ -146,7 +158,7 @@ function unifiedDiff(a: string[], b: string[], file1: string, file2: string, con
       if (t !== '-') bCount++;
       hunkBody += t + line + '\n';
     }
-    out += `@@ -${aStart},${aCount} +${bStart},${bCount} @@\n` + hunkBody;
+    out += `@@ -${unifiedRange(aStart, aCount)} +${unifiedRange(bStart, bCount)} @@\n` + hunkBody;
   }
   return out;
 }
