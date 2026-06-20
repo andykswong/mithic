@@ -8,7 +8,7 @@
  *
  * Wrapping is by character count (no tab-column expansion).
  */
-import { defineCommand, parseArgs, readAllText, writeString } from '../harness.ts';
+import { CoalescingWriter, defineCommand, isBrokenPipe, parseArgs, streamLines, writeString } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 async function readFileText(io: CommandIO, path: string): Promise<string> {
@@ -63,6 +63,7 @@ const foldCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
   let exitCode = 0;
+  let stdinAborted = false;
 
   try {
     if (!(width > 0)) {
@@ -71,16 +72,27 @@ const foldCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     }
     const sources = positionals.length > 0 ? positionals : ['-'];
     for (const src of sources) {
-      let text: string;
-      if (src === '-') text = await readAllText(io.stdin);
-      else {
-        try { text = await readFileText(io, src); }
-        catch (e) {
-          const msg = (e as { message?: string }).message ?? 'No such file or directory';
-          await writeString(err, `${name}: ${src}: ${msg}\n`);
-          exitCode = 1;
-          continue;
+      if (src === '-') {
+        // Stream stdin; each input line wraps independently. Coalesce writes.
+        const sink = new CoalescingWriter(out);
+        try {
+          for await (const { line, eol } of streamLines(io.stdin)) {
+            await sink.push(foldLine(line, width, atSpaces).join('\n') + (eol ? '\n' : ''));
+          }
+          await sink.flush();
+        } catch (e) {
+          if (isBrokenPipe(e)) { stdinAborted = true; break; }
+          throw e;
         }
+        continue;
+      }
+      let text: string;
+      try { text = await readFileText(io, src); }
+      catch (e) {
+        const msg = (e as { message?: string }).message ?? 'No such file or directory';
+        await writeString(err, `${name}: ${src}: ${msg}\n`);
+        exitCode = 1;
+        continue;
       }
       if (text === '') continue;
       const hasTrailing = text.endsWith('\n');
@@ -94,6 +106,7 @@ const foldCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   } finally {
     await out.close().catch(() => {});
     await err.close().catch(() => {});
+    if (stdinAborted) await io.stdin.cancel().catch(() => {});
   }
 };
 

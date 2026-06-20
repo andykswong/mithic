@@ -132,6 +132,8 @@ export function parseArgs(args: string[], options: ParseOptions = {}): ParsedArg
   return { positionals, flags };
 }
 
+const ENCODER = new TextEncoder();
+
 // ── stdin readers ─────────────────────────────────────────────────────────────
 
 /** Read a ReadableStream fully into a single Uint8Array. */
@@ -172,9 +174,95 @@ export async function readLines(stream: ReadableStream<Uint8Array>): Promise<str
   return trimmed.split('\n');
 }
 
-// ── stdout/stderr writers ─────────────────────────────────────────────────────
+/**
+ * Incrementally yield lines from a byte stream WITHOUT buffering the whole input
+ * — the key to not hanging on an unbounded producer (parity finding H5). Each
+ * yielded item is `{ line, eol }` where `eol` is true when the line was
+ * terminated by a `\n` in the input (so the final unterminated line, if any, has
+ * `eol === false`). An empty stream yields nothing.
+ *
+ * The caller drives the generator: it reads only as much of `stream` as it pulls.
+ * If the caller stops early (e.g. its downstream broke), it should `return` from
+ * the loop and then `cancel()` the source stream so the upstream producer gets
+ * EPIPE.
+ */
+export async function* streamLines(
+  stream: ReadableStream<Uint8Array>,
+): AsyncGenerator<{ line: string; eol: boolean }, void, unknown> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let carry = '';
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      carry += decoder.decode(value, { stream: true });
+      let nl = carry.indexOf('\n');
+      while (nl !== -1) {
+        yield { line: carry.slice(0, nl), eol: true };
+        carry = carry.slice(nl + 1);
+        nl = carry.indexOf('\n');
+      }
+    }
+    carry += decoder.decode(); // flush any pending multibyte tail
+    if (carry !== '') yield { line: carry, eol: false };
+  } finally {
+    reader.releaseLock();
+  }
+}
 
-const ENCODER = new TextEncoder();
+/**
+ * A thrown value is a broken-pipe (EPIPE) signal from a closed/errored
+ * downstream. Recognizes the kernel pipe's `EPIPE` code, a WritableStream that
+ * has been closed/aborted, and the conventional "broken pipe" message.
+ */
+export function isBrokenPipe(err: unknown): boolean {
+  const code = (err as { code?: string })?.code;
+  const msg = (err as { message?: string })?.message ?? '';
+  return code === 'EPIPE' || /EPIPE|broken pipe|closed|abort/i.test(msg);
+}
+
+/**
+ * A small write coalescer for incremental (streaming) filters. `push()` appends
+ * text to an internal buffer and only `await`s a real `write()` once the buffer
+ * crosses {@link FLUSH_THRESHOLD} bytes; `flush()` drains the remainder.
+ *
+ * This avoids the trap where a per-line `await writer.write()` parks on the
+ * pipe's flush timer (~one line per tick → seconds for large input). Coalescing
+ * keeps per-line streaming semantics (output appears as input is consumed,
+ * downstream EPIPE still surfaces on the next flush) while writing in efficient
+ * blocks.
+ */
+export class CoalescingWriter {
+  static readonly FLUSH_THRESHOLD = 32 * 1024;
+  #writer: WritableStreamDefaultWriter<Uint8Array>;
+  #parts: string[] = [];
+  #size = 0;
+
+  constructor(writer: WritableStreamDefaultWriter<Uint8Array>) {
+    this.#writer = writer;
+  }
+
+  /** Buffer `text`; flush (and await) only once the buffer crosses the threshold. */
+  async push(text: string): Promise<void> {
+    if (text === '') return;
+    this.#parts.push(text);
+    this.#size += text.length;
+    if (this.#size >= CoalescingWriter.FLUSH_THRESHOLD) await this.flush();
+  }
+
+  /** Write any buffered text. */
+  async flush(): Promise<void> {
+    if (this.#parts.length === 0) return;
+    const text = this.#parts.join('');
+    this.#parts = [];
+    this.#size = 0;
+    await this.#writer.write(ENCODER.encode(text));
+  }
+}
+
+// ── stdout/stderr writers ─────────────────────────────────────────────────────
 
 /** Write raw bytes to a stream writer. */
 export function writeBytes(writer: WritableStreamDefaultWriter<Uint8Array>, bytes: Uint8Array): Promise<void> {

@@ -8,8 +8,10 @@
  *   - `--output-delimiter=STR` (field mode joins with STR instead of `-d`).
  *   - operands: file paths; `-` (or none) reads stdin.
  */
-import { defineCommand, parseArgs, readAllText, writeString } from '../harness.ts';
+import { CoalescingWriter, defineCommand, isBrokenPipe, parseArgs, streamLines, writeString } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
+
+// Note: `readFileText` (below) handles file operands; stdin is streamed.
 
 /** A selection range; `to === Infinity` means "to end of line". 1-based inclusive. */
 interface Range { from: number; to: number; }
@@ -96,6 +98,7 @@ const cutCommand: CommandFn = async (io: CommandIO): Promise<number> => {
 
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
+  let stdinAborted = false;
 
   try {
     const delim = flags.d !== undefined ? String(flags.d) : '\t';
@@ -116,16 +119,29 @@ const cutCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     const sources = positionals.length > 0 ? positionals : ['-'];
     let exitCode = 0;
     for (const src of sources) {
-      let text: string;
-      if (src === '-') text = await readAllText(io.stdin);
-      else {
-        try { text = await readFileText(io, src); }
-        catch (e) {
-          const msg = (e as { message?: string }).message ?? 'No such file or directory';
-          await writeString(err, `${name}: ${src}: ${msg}\n`);
-          exitCode = 1;
-          continue;
+      if (src === '-') {
+        // Stream stdin line-by-line (each line is independent in cut), coalescing
+        // writes so the pipeline drains incrementally instead of buffering all.
+        const sink = new CoalescingWriter(out);
+        try {
+          for await (const { line, eol } of streamLines(io.stdin)) {
+            const cut = cutLine(line, mode);
+            if (cut !== null) await sink.push(cut + (eol ? '\n' : ''));
+          }
+          await sink.flush();
+        } catch (e) {
+          if (isBrokenPipe(e)) { stdinAborted = true; break; }
+          throw e;
         }
+        continue;
+      }
+      let text: string;
+      try { text = await readFileText(io, src); }
+      catch (e) {
+        const msg = (e as { message?: string }).message ?? 'No such file or directory';
+        await writeString(err, `${name}: ${src}: ${msg}\n`);
+        exitCode = 1;
+        continue;
       }
       if (text === '') continue;
       const hasTrailing = text.endsWith('\n');
@@ -142,6 +158,7 @@ const cutCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   } finally {
     await out.close().catch(() => {});
     await err.close().catch(() => {});
+    if (stdinAborted) await io.stdin.cancel().catch(() => {});
   }
 };
 

@@ -5,7 +5,7 @@
  *   - operands: file paths; `-` (or none) reads stdin.
  *   - Reverses by Unicode code point. A trailing newline is preserved.
  */
-import { defineCommand, parseArgs, readAllText, writeString } from '../harness.ts';
+import { CoalescingWriter, defineCommand, isBrokenPipe, parseArgs, streamLines, writeString } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 async function readFileText(io: CommandIO, path: string): Promise<string> {
@@ -28,11 +28,15 @@ async function readFileText(io: CommandIO, path: string): Promise<string> {
   }
 }
 
+function revLine(line: string): string {
+  return [...line].reverse().join('');
+}
+
 function revText(text: string): string {
   if (text === '') return '';
   const hasTrailing = text.endsWith('\n');
   const body = hasTrailing ? text.slice(0, -1) : text;
-  const reversed = body.split('\n').map((line) => [...line].reverse().join('')).join('\n');
+  const reversed = body.split('\n').map(revLine).join('\n');
   return hasTrailing ? reversed + '\n' : reversed;
 }
 
@@ -44,13 +48,26 @@ const revCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
   let exitCode = 0;
+  let stdinAborted = false;
 
   try {
     for (const src of sources) {
-      let text: string;
       if (src === '-') {
-        text = await readAllText(io.stdin);
+        // Stream stdin line-by-line (coalescing writes) so an unbounded producer
+        // terminates once our downstream closes (broken pipe), rather than
+        // buffering all of it. Coalescing avoids a per-line flush-timer crawl.
+        const sink = new CoalescingWriter(out);
+        try {
+          for await (const { line, eol } of streamLines(io.stdin)) {
+            await sink.push(revLine(line) + (eol ? '\n' : ''));
+          }
+          await sink.flush();
+        } catch (e) {
+          if (isBrokenPipe(e)) { stdinAborted = true; break; }
+          throw e;
+        }
       } else {
+        let text: string;
         try { text = await readFileText(io, src); }
         catch (e) {
           const msg = (e as { message?: string }).message ?? 'No such file or directory';
@@ -58,12 +75,13 @@ const revCommand: CommandFn = async (io: CommandIO): Promise<number> => {
           exitCode = 1;
           continue;
         }
+        await writeString(out, revText(text));
       }
-      await writeString(out, revText(text));
     }
   } finally {
     await out.close().catch(() => {});
     await err.close().catch(() => {});
+    if (stdinAborted) await io.stdin.cancel().catch(() => {});
   }
   return exitCode;
 };
