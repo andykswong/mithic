@@ -78,6 +78,29 @@ describe('diff', () => {
     expect(h.out()).toContain('+baz');
   });
 
+  test('-u hunk header omits ,1 when a side count is exactly 1 (GNU format)', async () => {
+    // Single-line files, single changed line (no surrounding context exists) →
+    // GNU prints `@@ -1 +1 @@`, not the always-comma `@@ -1,1 +1,1 @@`.
+    const h = makeIO({
+      args: ['diff', '-u', '/a.txt', '/b.txt'],
+      files: { '/a.txt': 'a\n', '/b.txt': 'b\n' },
+    });
+    await diffCommand(h.io);
+    expect(h.out()).toContain('@@ -1 +1 @@');
+    expect(h.out()).not.toContain('@@ -1,1 +1,1 @@');
+  });
+
+  test('-u hunk header keeps start,count when count > 1 (with context)', async () => {
+    // With 3-line context, a mid-file change pulls in neighbors so counts > 1
+    // and the comma form is retained.
+    const h = makeIO({
+      args: ['diff', '-u', '/a.txt', '/b.txt'],
+      files: { '/a.txt': 'a\nc\n', '/b.txt': 'a\nb\nc\n' },
+    });
+    await diffCommand(h.io);
+    expect(h.out()).toContain('@@ -1,2 +1,3 @@');
+  });
+
   test('-q brief output', async () => {
     const h = makeIO({
       args: ['diff', '-q', '/a.txt', '/b.txt'],

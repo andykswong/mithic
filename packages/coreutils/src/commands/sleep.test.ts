@@ -28,6 +28,7 @@ describe('parseSleepArg', () => {
   test('hours', () => expect(parseSleepArg('1h')).toBe(3600000));
   test('invalid', () => expect(parseSleepArg('abc')).toBeNull());
   test('empty', () => expect(parseSleepArg('')).toBeNull());
+  test('days suffix', () => expect(parseSleepArg('1d')).toBe(86400000));
 });
 
 describe('sleep command', () => {
@@ -47,6 +48,19 @@ describe('sleep command', () => {
 
   test('invalid interval exits 1', async () => {
     const h = makeIO(['sleep', 'abc']);
+    expect(await sleepCommand(h.io)).toBe(1);
+    expect(h.err()).toContain('invalid');
+  });
+
+  test('multiple operands are accepted (GNU sums them); zeros exit fast', async () => {
+    const h = makeIO(['sleep', '0', '0', '0']);
+    const start = Date.now();
+    expect(await sleepCommand(h.io)).toBe(0);
+    expect(Date.now() - start).toBeLessThan(500);
+  });
+
+  test('a single invalid operand among several still errors (exit 1)', async () => {
+    const h = makeIO(['sleep', '0', 'xyz']);
     expect(await sleepCommand(h.io)).toBe(1);
     expect(h.err()).toContain('invalid');
   });
