@@ -124,9 +124,10 @@ export class IframeRuntime implements Runtime {
     });
 
     // Deliver boot object: __mithic_init + transfer list [controlPort, stdinPort, stdoutPort, stderrPort, ...]
+    // K2: preopenFds (when present) maps the stdio ports to arbitrary guest fds.
     if (options.transfer && options.transfer.length > 0) {
       iframe.contentWindow!.postMessage(
-        { __mithic_init: options.init, ports: options.transfer },
+        { __mithic_init: options.init, ports: options.transfer, preopenFds: options.preopenFds },
         '*',
         options.transfer as Transferable[],
       );

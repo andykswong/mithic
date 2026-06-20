@@ -19,6 +19,15 @@ export interface ProcessHandle {
 export interface SpawnOptions {
   init: ProcessInit;
   transfer?: Transferable[];
+  /**
+   * K2: maps each transferred stdio port (i.e. `transfer[1..]`, after the control
+   * port at `transfer[0]`) to the GUEST preopen fd it should appear at. Parallel
+   * to `transfer.slice(1)`. When omitted the backend falls back to positional
+   * mapping (`transfer[i]` → fd `i-1`), i.e. stdin=0/stdout=1/stderr=2. Supplying
+   * it lets the kernel wire arbitrary preopen fds (fd >= 3) without padding the
+   * transfer list with non-transferable nulls.
+   */
+  preopenFds?: number[];
   display?: {
     mode: 'hidden' | 'inline' | 'window' | 'fullscreen';
     width?: number;
