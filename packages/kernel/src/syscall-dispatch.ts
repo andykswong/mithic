@@ -1117,10 +1117,25 @@ export class SyscallDispatcher {
             return fail(id, 'EACCES', `Permission denied (redirect target): ${nextUrl}`);
           }
           url = nextUrl;
-          // Per HTTP semantics a 3xx commonly turns the method into GET and drops
-          // the body. Keep it simple and safe: redirect → GET, no body.
-          method = 'GET';
-          body = undefined;
+          // CU1: honor RFC 7231/7538 redirect method/body semantics.
+          //   - 307 (Temporary) / 308 (Permanent): PRESERVE method AND body.
+          //   - 303 (See Other): always rewrite to GET, drop the body.
+          //   - 301 (Moved) / 302 (Found): keep the method+body for idempotent
+          //     methods (GET/HEAD); for everything else rewrite to GET and drop
+          //     the body, matching browser fetch behavior.
+          if (response.status === 307 || response.status === 308) {
+            // method + body unchanged — temporary/permanent redirect preserves them.
+          } else if (response.status === 303) {
+            method = 'GET';
+            body = undefined;
+          } else {
+            // 301 / 302
+            const m = method.toUpperCase();
+            if (m !== 'GET' && m !== 'HEAD') {
+              method = 'GET';
+              body = undefined;
+            }
+          }
           continue;
         }
         // No Location header: surface the 3xx response as-is (can't follow).
