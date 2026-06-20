@@ -256,13 +256,12 @@ test('kernel relay SECURITY: fs syscall to an ungranted path is denied (EACCES) 
 }, 15000);
 
 /**
- * REGRESSION (Fix 1): fs/pipe on the relay path must return ENOSYS and must NOT
- * leak MessagePorts. The relay dispatcher drops the `transfer` list (it cannot
- * transfer ports over the relay bridge), so any minted ports would be silently
- * abandoned — live ports that are never closed. The kernel must intercept this,
- * close any minted ports, and surface ENOSYS to the guest instead.
+ * K5 (supersedes the former Fix-1 ENOSYS behavior): fs/pipe on the relay path now
+ * BYTE-RELAYS — it returns numeric fds (no transferable MessagePort) that the
+ * kernel retains and the guest drives via pipe/read|write|close. The kernel no
+ * longer drops the ports + returns ENOSYS; it keeps them server-side keyed by fd.
  */
-test('kernel relay: fs/pipe returns ENOSYS and leaks no MessagePort', async () => {
+test('kernel relay: fs/pipe succeeds and returns numeric fds (byte-relay, no leak)', async () => {
   const qjsRt = await QuickJSRuntime.create();
   const vfs = new FileSystemRouter();
   await vfs.mount('/', new MemoryFsProvider());
@@ -273,12 +272,17 @@ test('kernel relay: fs/pipe returns ENOSYS and leaks no MessagePort', async () =
     relayLauncher: new QuickJSGuestLauncher(qjsRt),
   });
 
-  // The guest attempts fs/pipe via the kernel relay and captures the error code.
+  // The guest calls fs/pipe and reports the returned fd shape (numeric fds, not
+  // ENOSYS). The old launcher in this file does not route pipe/read|write to relay
+  // fds, so we only assert the fs/pipe RESULT here (full pipe I/O is covered in
+  // kernel-relay-pipe.test.ts which uses a launcher that routes the byte ops).
   const code = `
     let result;
     try {
-      __mithic_syscall('fs/pipe', {});
-      result = 'NO_ERROR';
+      const p = __mithic_syscall('fs/pipe', {});
+      result = (typeof p.readfd === 'number' && typeof p.writefd === 'number')
+        ? 'FDS:' + p.readfd + ',' + p.writefd
+        : 'NO_FDS';
     } catch (e) {
       result = String(e.message || e);
     }
@@ -294,9 +298,9 @@ test('kernel relay: fs/pipe returns ENOSYS and leaks no MessagePort', async () =
 
   await kernel.wait(pid);
   const out = new TextDecoder().decode(await stdout!);
-  // Must get ENOSYS — fs/pipe is unsupported on non-transferable (relay) backends.
-  expect(out).toContain('ENOSYS');
-  expect(out).not.toContain('NO_ERROR');
+  // fs/pipe now succeeds with numeric fds — no ENOSYS, no NO_FDS.
+  expect(out).toMatch(/^FDS:\d+,\d+$/);
+  expect(out).not.toContain('ENOSYS');
 }, 15000);
 
 /**
