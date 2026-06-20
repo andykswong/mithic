@@ -438,7 +438,7 @@ class Parser {
 
   private isRedirectToken(type: TokenType): boolean {
     return type === 'GREAT' || type === 'GREATGREAT' || type === 'GREATPIPE' || type === 'LESS'
-      || type === 'LESSLESS' || type === 'LESSLESSDASH' || type === 'LESSLESSLESS'
+      || type === 'LESSGREAT' || type === 'LESSLESS' || type === 'LESSLESSDASH' || type === 'LESSLESSLESS'
       || type === 'GREATAMP' || type === 'AMPGREAT' || type === 'AMPGREATGREAT';
   }
 
@@ -458,13 +458,14 @@ class Parser {
       case 'GREATPIPE': return this.targetRedirect('>|', fd);
       case 'GREATGREAT': return this.targetRedirect('>>', fd);
       case 'LESS': return this.targetRedirect('<', fd);
+      case 'LESSGREAT': return this.targetRedirect('<>', fd);
       case 'LESSLESSLESS': return this.hereString();
       case 'LESSLESS': return this.hereDocRedirect(false);
       case 'LESSLESSDASH': return this.hereDocRedirect(true);
       case 'GREATAMP': return this.dupRedirect('>&', fd);
       case 'AMPGREAT': return this.targetRedirect('&>', fd);
-      case 'AMPGREATGREAT': { const r = this.targetRedirect('&>', fd); r.op = '&>'; return r; }
-      default: throw new SyntaxError('shell: bad redirect');
+      case 'AMPGREATGREAT': return this.targetRedirect('&>>', fd);
+      default: throw new SyntaxError('shell: syntax error: bad redirect');
     }
   }
 

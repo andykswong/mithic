@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- job-control tests use a minimal mock kernel */
+/* eslint-disable @stylistic/quotes -- trap-listing assertions embed single quotes inside double-quoted strings */
 import { expect, test } from 'vitest';
 import { Executor } from './executor.ts';
 

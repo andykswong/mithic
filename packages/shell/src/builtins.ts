@@ -79,6 +79,8 @@ export interface BuiltinContext {
   eval?(src: string): Promise<number>;
   /** `source FILE args` — read FILE from the VFS and run it in the current shell. */
   sourceFile?(args: string[]): Promise<number>;
+  /** Read one line from a numbered fd (for `read -u N`); undefined ⇒ EOF/closed. */
+  readFdLine?(fd: number): string | undefined;
   lastStatus?: number;
   stdin?: string;
   /** Loop/function control — implemented by the executor as thrown unwinds. */
@@ -94,7 +96,7 @@ export const BUILTINS = [
   'test', '[', 'true', 'false', 'exit', 'eval', 'set', 'cat', ':',
   'local', 'declare', 'readonly', 'shift', 'return', 'getopts', 'read',
   'jobs', 'fg', 'bg', 'wait', 'kill', 'break', 'continue', 'source', '.', 'type',
-  'shopt', 'trap', 'disown', 'history', 'fc',
+  'shopt', 'trap', 'disown', 'history', 'fc', 'exec',
 ] as const;
 
 const BUILTIN_SET = new Set<string>(BUILTINS);
@@ -325,6 +327,14 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       if (ctx.eval) return ctx.eval(args.join(' '));
       return 0;
     }
+
+    case 'exec':
+      // `exec REDIR` (no command) is intercepted by the executor to install
+      // persistent fds. `exec cmd` cannot replace the process in this sandbox;
+      // we run it as a normal command via eval, best-effort.
+      if (args.length === 0) return 0;
+      if (ctx.eval) return ctx.eval(args.join(' '));
+      return 0;
 
     case 'shopt':
       return runShopt(args, ctx);
@@ -606,20 +616,44 @@ function runGetopts(args: string[], ctx: BuiltinContext): number {
   return 0;
 }
 
-/** read [-r] NAME... — read one line from stdin, split on IFS into NAMEs. */
+/** read [-r] [-u FD] NAME... — read one line (from stdin or fd FD), split on IFS into NAMEs. */
 function runRead(args: string[], ctx: BuiltinContext): number {
-  const names = args.filter((a) => !a.startsWith('-'));
+  // Parse `-u FD` (and ignore -r). Remaining bare words are the target names.
+  const names: string[] = [];
+  let fdArg: number | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '-u') { fdArg = parseInt(args[++i] ?? '', 10); continue; }
+    if (a.startsWith('-u')) { fdArg = parseInt(a.slice(2), 10); continue; }
+    if (a.startsWith('-')) continue; // ignore other flags (-r, -p ...)
+    names.push(a);
+  }
+
+  // `read -u N` reads from the numbered fd's buffered input.
+  if (fdArg !== undefined) {
+    const line = ctx.readFdLine?.(fdArg);
+    if (line === undefined) return 1; // EOF or fd not open
+    const fields = line.split(/\s+/).filter((f) => f !== '');
+    assignReadVars(names, fields, line, ctx);
+    return 0;
+  }
+
   const stdin = ctx.stdin ?? '';
   const nl = stdin.indexOf('\n');
   const line = nl >= 0 ? stdin.slice(0, nl) : stdin;
   if (stdin === '') return 1; // EOF
   const fields = line.split(/\s+/).filter((f) => f !== '');
-  if (names.length === 0) { ctx.env.REPLY = line; return 0; }
+  assignReadVars(names, fields, line, ctx);
+  return 0;
+}
+
+/** Assign a read line's fields to NAMEs (last name absorbs the rest); no names → $REPLY. */
+function assignReadVars(names: string[], fields: string[], line: string, ctx: BuiltinContext): void {
+  if (names.length === 0) { ctx.env.REPLY = line; return; }
   for (let i = 0; i < names.length; i++) {
     if (i === names.length - 1) ctx.env[names[i]] = fields.slice(i).join(' ');
     else ctx.env[names[i]] = fields[i] ?? '';
   }
-  return 0;
 }
 
 function evalTest(args: string[]): boolean {

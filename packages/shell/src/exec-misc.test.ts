@@ -3,22 +3,6 @@ import { expect, test } from 'vitest';
 import { Executor } from './executor.ts';
 import { parse } from './parser.ts';
 
-function mockKernel(codes: Record<string, number> = {}) {
-  const spawned: any[] = [];
-  return {
-    spawned,
-    async spawn(args: any) {
-      spawned.push(args);
-      const name = args.args?.[0];
-      return { pid: spawned.length, _code: codes[name] ?? 0 };
-    },
-    async wait(handle: any) {
-      const h = this.spawned[this.spawned.length - 1];
-      return { pid: handle, code: 0 };
-    },
-  };
-}
-
 function run(src: string, ctx: Record<string, unknown> = {}, codes: Record<string, number> = {}) {
   // Custom kernel: external commands return a code from `codes` keyed by name.
   const spawned: any[] = [];

@@ -663,7 +663,6 @@ interface BraceMatch { pre: string; body: string; post: string; isRange: boolean
  * `${var,,}` / `$(cmd a,b)` as a brace separator (the H7 corruption bug).
  */
 function skipDollar(word: string, i: number): number {
-  const n = word.length;
   if (word[i] !== '$') return i + 1;
   const c1 = word[i + 1];
   if (c1 === '{') return findMatchingBrace(word, i + 2) + 1;

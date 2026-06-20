@@ -22,6 +22,7 @@ export type TokenType =
   | 'GREATGREAT'   // >> or N>>
   | 'GREATPIPE'    // >| (clobber-force, overrides noclobber)
   | 'LESS'         // < or N<
+  | 'LESSGREAT'    // <> or N<> (read-write)
   | 'LESSLESS'     // <<
   | 'LESSLESSDASH' // <<-
   | 'LESSLESSLESS' // <<<
@@ -73,7 +74,9 @@ function matchOperator(input: string, i: number): OpMatch | undefined {
   if (s.startsWith('>>', i)) return { type: 'GREATGREAT', len: 2 };
   if (s.startsWith('>|', i)) return { type: 'GREATPIPE', len: 2 };
   if (s.startsWith('<<', i)) return { type: 'LESSLESS', len: 2 };
+  if (s.startsWith('<>', i)) return { type: 'LESSGREAT', len: 2 };
   if (s.startsWith('>&', i)) return { type: 'GREATAMP', len: 2 };
+  if (s.startsWith('<&', i)) return { type: 'GREATAMP', len: 2 };
   if (s.startsWith('&>', i)) return { type: 'AMPGREAT', len: 2 };
   if (s.startsWith(';;', i)) return { type: 'DSEMI', len: 2 };
   if (s.startsWith('((', i)) return { type: 'DLPAREN', len: 2 };

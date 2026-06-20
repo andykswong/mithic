@@ -717,30 +717,56 @@ export class Executor implements ShellEnv {
   }
 
   /**
-   * Apply a set of redirects by swapping the stdout/stderr sinks (and recording
-   * a here-doc/file stdin). Returns a restore function. Supports `>` `>>` `<`
-   * `<<` `<<<` `2>` `&>` `2>&1`, and `/dev/null`.
+   * Snapshot the current write sink for a numbered fd (1=stdout, 2=stderr,
+   * N=fdTable). Returns the concrete function NOW (not a live reference), so a
+   * dup like `exec 3>&1` captures stdout's current target without forming a
+   * self-referential loop when stdout is later redirected to fd 3.
+   */
+  private sinkForFd(fd: number): (s: string) => void {
+    if (fd === 1) return this.stdoutSink;
+    if (fd === 2) return this.stderrSink;
+    const entry = this.fdTable.get(fd);
+    if (entry?.sink) return entry.sink;
+    return () => { /* fd not open for writing — discard */ };
+  }
+
+  /** Point a numbered fd at a sink (temporary, for the duration of a command). */
+  private setFdSink(fd: number, sink: (s: string) => void): void {
+    if (fd === 1) this.stdoutSink = sink;
+    else if (fd === 2) this.stderrSink = sink;
+    else { const e = this.fdTable.get(fd) ?? { mode: 'write' as const }; e.sink = sink; this.fdTable.set(fd, e); }
+  }
+
+  /**
+   * Apply a set of redirects, returning a restore function. Supports `>` `>>`
+   * `>|` `<` `<>` `<<` `<<<` `N>` `N>>` `&>` `&>>` (append, M9) `N>&M` (dup)
+   * `N>&-` (close), numbered fds via the per-shell {@link fdTable}, and the
+   * `/dev/null`/`/dev/stdout`/`/dev/stderr` device paths.
    */
   private async applyRedirects(redirects: Redirect[]): Promise<() => void> {
     const exp = this.expander();
     const savedStdout = this.stdoutSink;
     const savedStderr = this.stderrSink;
+    const savedFds = new Map<number, FdEntry | undefined>();
     const closers: Array<() => void> = [];
+    const snapshotFd = (fd: number): void => { if (fd !== 1 && fd !== 2 && !savedFds.has(fd)) savedFds.set(fd, this.fdTable.get(fd)); };
 
     for (const r of redirects) {
-      if (r.op === '<' || r.op === '<<' || r.op === '<<<') continue; // stdin handled per-command
-      const fd = r.fd ?? (r.op === '&>' ? 1 : (r.op === '>&' ? 1 : 1));
+      if (r.op === '<' || r.op === '<<' || r.op === '<<<' || r.op === '<>') continue; // stdin handled per-command
 
       if (r.op === '>&') {
-        // fd-dup: e.g. 2>&1 — make `fd` write to wherever the target fd writes now.
-        const dst = r.target;
-        if (dst === '1') { const cur = this.stdoutSink; if (fd === 2) this.stderrSink = (s) => cur(s); }
-        else if (dst === '2') { const cur = this.stderrSink; if (fd === 1) this.stdoutSink = (s) => cur(s); }
+        // fd-dup: `N>&M` makes fd N write where M writes; `N>&-` closes N.
+        const fd = r.fd ?? 1;
+        snapshotFd(fd);
+        if (r.target === '-') { this.setFdSink(fd, () => { /* closed */ }); if (fd > 2) this.fdTable.delete(fd); continue; }
+        const dst = parseInt(r.target, 10);
+        if (!Number.isNaN(dst)) this.setFdSink(fd, this.sinkForFd(dst));
         continue;
       }
 
+      const fd = r.fd ?? 1;
       const path = await exp.expandToString(r.target);
-      const append = r.op === '>>';
+      const append = r.op === '>>' || r.op === '&>>';
       // noclobber (`set -C`): a plain `>` must not overwrite an EXISTING regular
       // file. `>|` forces past it; `>>` (append) is exempt; a new file is fine.
       if (this.options.noclobber && r.op === '>' && path !== '/dev/null'
@@ -751,16 +777,101 @@ export class Executor implements ShellEnv {
         }
       }
       const sink = this.makeFileSink(path, append, closers);
-      if (r.op === '&>') { this.stdoutSink = sink; this.stderrSink = sink; }
-      else if (fd === 2) this.stderrSink = sink;
-      else this.stdoutSink = sink;
+      if (r.op === '&>' || r.op === '&>>') { this.stdoutSink = sink; this.stderrSink = sink; }
+      else { snapshotFd(fd); this.setFdSink(fd, sink); }
     }
 
     return () => {
       for (const c of closers) c();
       this.stdoutSink = savedStdout;
       this.stderrSink = savedStderr;
+      for (const [fd, prev] of savedFds) { if (prev === undefined) this.fdTable.delete(fd); else this.fdTable.set(fd, prev); }
     };
+  }
+
+  /**
+   * Install `exec`'s redirects permanently on the per-shell fd table. Output
+   * fds (`N>file`/`N>>file`) get a write sink; input fds (`N<file`/`N<>file`)
+   * are buffered for `read -u N`; `N>&M` dups; `N>&-` closes. Returns 1 on a
+   * missing input file (and writes a diagnostic).
+   */
+  private async execBuiltinRedirects(redirects: Redirect[]): Promise<number> {
+    const exp = this.expander();
+    const fs = this.fs;
+    for (const r of redirects) {
+      const fd = r.fd ?? (r.op === '<' || r.op === '<>' ? 0 : 1);
+      if (r.op === '>&') {
+        if (r.target === '-') { this.fdTable.delete(fd); continue; }
+        const dst = parseInt(r.target, 10);
+        if (!Number.isNaN(dst)) this.fdTable.set(fd, { mode: 'write', sink: this.sinkForFd(dst) });
+        continue;
+      }
+      if (r.op === '<' || r.op === '<>') {
+        const path = await exp.expandToString(r.target);
+        if (!fs) { this.writeStderr(`shell: exec: ${path}: cannot open\n`); return 1; }
+        let input = '';
+        if (r.op === '<' || path !== '/dev/null') {
+          try { input = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true }))); }
+          catch {
+            if (r.op === '<>') { input = ''; /* <> creates if absent */ }
+            else { this.writeStderr(`shell: ${path}: No such file or directory\n`); return 1; }
+          }
+        }
+        const entry: FdEntry = { mode: r.op === '<>' ? 'rw' : 'read', input, pos: 0 };
+        if (r.op === '<>') { entry.sink = this.makeFileSink(path, false, []); }
+        this.fdTable.set(fd, entry);
+        continue;
+      }
+      // Output: > >> >| (and &> &>> map to fd 1+2)
+      const path = await exp.expandToString(r.target);
+      const append = r.op === '>>' || r.op === '&>>';
+      let seed = '';
+      if (append && fs && path !== '/dev/null' && path !== '/dev/stdout' && path !== '/dev/stderr') {
+        try { seed = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true }))); } catch { seed = ''; }
+      }
+      const sink = this.makeExecFileSink(path, seed);
+      if (r.op === '&>' || r.op === '&>>') {
+        this.fdTable.set(1, { mode: 'write', sink });
+        this.fdTable.set(2, { mode: 'write', sink });
+      } else {
+        this.fdTable.set(fd, { mode: 'write', sink });
+      }
+    }
+    return 0;
+  }
+
+  /**
+   * A write sink for a persistent `exec N>file` fd. Each write flushes the full
+   * accumulated buffer to the VFS (open-truncate, write, close), so the file
+   * reflects current contents without holding an fd open across commands.
+   * `seed` is the pre-read existing contents for append mode.
+   */
+  private makeExecFileSink(path: string, seed: string): (s: string) => void {
+    if (path === '/dev/null') return () => { /* discard */ };
+    if (path === '/dev/stdout') return (s) => this.stdoutSink(s);
+    if (path === '/dev/stderr') return (s) => this.stderrSink(s);
+    const fs = this.fs;
+    if (!fs) throw new Error(`shell: exec redirect to '${path}' requires an FsClient`);
+    let buffer = seed;
+    return (s) => {
+      buffer += s;
+      const fd = fs.fsOpen(path, { write: true, create: true, truncate: true });
+      fs.fsWrite(fd, buffer);
+      fs.fsClose(fd);
+    };
+  }
+
+  /** Read one line (default) from a numbered input fd, advancing its cursor. For `read -u N`. */
+  readFdLine(fd: number): string | undefined {
+    const entry = this.fdTable.get(fd);
+    if (!entry || entry.input === undefined) return undefined;
+    const pos = entry.pos ?? 0;
+    if (pos >= entry.input.length) return undefined; // EOF
+    const nl = entry.input.indexOf('\n', pos);
+    const end = nl >= 0 ? nl : entry.input.length;
+    const line = entry.input.slice(pos, end);
+    entry.pos = nl >= 0 ? nl + 1 : entry.input.length;
+    return line;
   }
 
   private makeFileSink(path: string, append: boolean, closers: Array<() => void>): (s: string) => void {
@@ -783,12 +894,13 @@ export class Executor implements ShellEnv {
         stdin = await exp.expandToString(r.target) + '\n';
       } else if (r.op === '<<') {
         stdin = r.hereDocQuoted ? (r.hereDoc ?? '') : await this.expandHereDoc(r.hereDoc ?? '');
-      } else if (r.op === '<') {
+      } else if (r.op === '<' || r.op === '<>') {
         const path = await exp.expandToString(r.target);
         if (path === '/dev/null') { stdin = ''; continue; }
         const fs = this.fs;
         if (!fs) throw new Error(`shell: input redirect from '${path}' requires an FsClient`);
-        stdin = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true })));
+        try { stdin = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true }))); }
+        catch { if (r.op === '<>') stdin = ''; else throw new RedirectError(`${path}: No such file or directory`); }
       }
     }
     return stdin;
@@ -926,6 +1038,14 @@ export class Executor implements ShellEnv {
       const sub = this.lastCmdSubStatus;
       this.lastCmdSubStatus = undefined;
       return sub ?? 0;
+    }
+
+    // `exec` with redirects but NO command: install the redirects PERMANENTLY on
+    // the per-shell fd table (H4). `exec 3>f`, `exec 3<f`, `exec 3<>f`,
+    // `exec 3>&-` etc. With a command, `exec cmd` would replace the shell — we
+    // treat it as a normal spawn (the sandbox has no execve).
+    if (name === 'exec' && argv.length === 0) {
+      return await this.execBuiltinRedirects(cmd.redirects);
     }
 
     if (this.options.xtrace) {
@@ -1142,6 +1262,7 @@ export class Executor implements ShellEnv {
       exit: (code) => { this.exiting = code; },
       eval: (src) => this.run(this.parseSrc(src), true),
       sourceFile: (args) => this.sourceFile(args),
+      readFdLine: (fd) => this.readFdLine(fd),
       doBreak: (n) => { throw new LoopBreak(n); },
       doContinue: (n) => { throw new LoopContinue(n); },
       doReturn: (n) => { throw new FuncReturn(n); },

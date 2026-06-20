@@ -70,6 +70,6 @@ test('shopt -s opt1 opt2 enables multiple', async () => {
 
 test('shopt -u globstar after -s; shopt -q reflects state', async () => {
   const h = mk();
-  const code = await h.ex.exec('shopt -s globstar\nshopt -u globstar\nshopt -q globstar\necho $?');
+  await h.ex.exec('shopt -s globstar\nshopt -u globstar\nshopt -q globstar\necho $?');
   expect(h.out.trim()).toBe('1');
 });

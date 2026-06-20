@@ -16,10 +16,12 @@ export type RedirectOp =
   | '>|'     // truncate stdout, forcing past noclobber (set -C)
   | '>>'     // append stdout (or fd)
   | '<'      // stdin from file
+  | '<>'     // open fd for reading AND writing
   | '<<'     // here-doc
   | '<<<'    // here-string
   | '>&'     // duplicate / merge fd (e.g. 2>&1, >&2)
-  | '&>';    // redirect both stdout+stderr
+  | '&>'     // redirect both stdout+stderr (truncate)
+  | '&>>';   // redirect both stdout+stderr (append)
 
 export interface Redirect {
   op: RedirectOp;

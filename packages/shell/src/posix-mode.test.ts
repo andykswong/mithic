@@ -88,7 +88,6 @@ test('declare -A rejected in POSIX mode', async () => {
 // ── POSIX: activation methods ────────────────────────────────────────────────
 
 test('set -o posix activates brace-expansion suppression at runtime', async () => {
-  const h = harness();
   let out = '';
   const k = { async spawn() { return { pid: 1 }; }, async wait(p: number) { return { pid: p, code: 0 }; } };
   const ex = new Executor(k as any, { cwd: '/', env: {} } as any, { onStdout: (s) => { out += s; }, resolve: (n) => n });
@@ -119,7 +118,6 @@ test('test/[ builtin works in POSIX mode', async () => {
 // ── $SHELLOPTS / $BASHOPTS ───────────────────────────────────────────────────
 
 test('set -e; echo $SHELLOPTS includes errexit', async () => {
-  const h = harness();
   let out = '';
   const k = { async spawn() { return { pid: 1 }; }, async wait(p: number) { return { pid: p, code: 0 }; } };
   const ex = new Executor(k as any, { cwd: '/', env: {} } as any, { onStdout: (s) => { out += s; }, resolve: (n) => n });
