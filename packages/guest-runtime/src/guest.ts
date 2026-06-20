@@ -102,6 +102,36 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
   const stdout = stdoutPort ? portToWritable(stdoutPort) : nullSink();
   const stderr = stderrPort ? portToWritable(stderrPort) : nullSink();
 
+  // Seam 2: track whether stdin's read-side has already signalled closure, so
+  // `exit()` does not double-post.
+  let stdinClosed = false;
+
+  /**
+   * Tear down the stdin READ side on process exit: post an EPIPE up the pipe and
+   * close the port, so the UPSTREAM producer (the previous pipeline stage writing
+   * into our stdin) sees a broken pipe and stops — instead of blocking forever
+   * filling a pipe whose only reader has gone away (`yes | head -n3`).
+   *
+   * Mirrors POSIX: when a process exits the OS closes the read end of its stdin
+   * pipe and the writer gets EPIPE/SIGPIPE. We can only do this guest-side: the
+   * stdin MessagePort was TRANSFERRED into this guest, so the kernel no longer
+   * holds it and cannot post to its peer. We post directly to the entangled peer
+   * (the producer's write port) via this port. The kernel's `#exit` complements
+   * this for INJECTED write ports (downstream EOF); together they tear down both
+   * directions of a dying stage's pipes.
+   */
+  function closeStdinPeer(): void {
+    if (stdinClosed || !stdinPort) return;
+    stdinClosed = true;
+    try {
+      stdinPort.postMessage({ type: 'error', code: 'EPIPE' });
+      stdinPort.close();
+    } catch {
+      // Port already neutered/closed (e.g. stdin reached EOF and portToReadable
+      // closed it, or the stream was cancelled). Nothing to signal.
+    }
+  }
+
   return {
     pid: init.pid,
     args: init.args,
@@ -114,6 +144,8 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
     onSignal(cb) { signalListeners.push(cb); },
     onDomEvent(cb) { domEventListeners.push(cb); },
     exit(code) {
+      // Break the stdin pipe so an unconsumed upstream producer gets EPIPE.
+      closeStdinPeer();
       control.postMessage({ type: 'exit', code });
       // Close the client: rejects any in-flight syscalls and closes the transport.
       client.close();

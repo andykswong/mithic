@@ -224,3 +224,46 @@ test('Fix 1: parked writer rejects immediately when reader sends end', async () 
   port1.close();
   port2.close();
 });
+
+// Seam 2 regression: STICKY broken flag — a write issued AFTER the EPIPE landed
+// (while NOT parked) must reject IMMEDIATELY, not park forever. This is the race
+// that hung `yes | head -n3` (an unbounded producer whose write does not park).
+test('Seam 2: a write AFTER the peer EPIPE rejects immediately (sticky broken)', async () => {
+  const { port1, port2 } = new MessageChannel();
+  const writable = portToWritable(port1);
+  const writer = writable.getWriter();
+  port2.start?.();
+  writer.closed.catch(() => { /* stream errors once broken — expected */ });
+
+  // Grant generous credit so writes do NOT park, then let the peer post EPIPE
+  // while the writer is idle (no parked waiter to wake).
+  port2.postMessage({ type: 'credit', bytes: 1 << 20 });
+  port2.postMessage({ type: 'error', code: 'EPIPE' });
+  await new Promise(r => setTimeout(r, 10)); // let the error onmessage latch `broken`
+
+  // A small write (well under credit, would NOT park) must still reject at once.
+  await expect(writer.write(new Uint8Array([1, 2, 3]))).rejects.toThrow('EPIPE');
+  // And a subsequent write also rejects immediately (sticky — stays broken).
+  await expect(writer.write(new Uint8Array([4]))).rejects.toThrow('EPIPE');
+
+  port1.close();
+  port2.close();
+});
+
+// Seam 2: an `end` from the peer is equally sticky for later writes.
+test('Seam 2: a write AFTER the peer end rejects immediately (sticky broken)', async () => {
+  const { port1, port2 } = new MessageChannel();
+  const writable = portToWritable(port1);
+  const writer = writable.getWriter();
+  port2.start?.();
+  writer.closed.catch(() => { /* expected */ });
+
+  port2.postMessage({ type: 'credit', bytes: 1 << 20 });
+  port2.postMessage({ type: 'end' });
+  await new Promise(r => setTimeout(r, 10));
+
+  await expect(writer.write(new Uint8Array([1]))).rejects.toThrow('EPIPE');
+
+  port1.close();
+  port2.close();
+});

@@ -19,6 +19,23 @@ export function portToWritable(port: MessagePort): WritableStream<Uint8Array> {
   // pipe is broken. On EPIPE/end the reject path wakes them all immediately.
   const creditWaiters: Array<{ needed: number; resolve: () => void; reject: (e: unknown) => void }> = [];
 
+  // STICKY broken flag (Seam 2). Set the instant an `end`/`error` arrives (the
+  // reader cancelled / the consumer died). Once broken, EVERY write rejects
+  // IMMEDIATELY rather than parking on credit. This is essential for an unbounded
+  // producer (e.g. `yes | head -n3`): without it, a producer whose current write
+  // does NOT park (credit still available) keeps `postMessage`-ing to a closed
+  // peer (silently dropped) and never observes the EPIPE, OR a producer that
+  // parks on credit AFTER the EPIPE was posted waits forever for credit that
+  // will never come. `rejectAllWaiters` alone only helps writers ALREADY parked
+  // at the instant the EPIPE lands — the sticky flag closes both races.
+  let broken: { code: string } | undefined;
+
+  /** The broken-pipe error to reject writes with, built from the sticky flag. */
+  function brokenError(): Error & { code: string } {
+    const code = broken?.code ?? 'EPIPE';
+    return Object.assign(new Error(code), { code });
+  }
+
   /** Wake all parked writers with an error (reader cancelled / pipe closed). */
   function rejectAllWaiters(err: unknown): void {
     const waiters = creditWaiters.splice(0);
@@ -36,10 +53,12 @@ export function portToWritable(port: MessagePort): WritableStream<Uint8Array> {
         waiter.resolve();
       }
     } else if (msg.type === 'end' || msg.type === 'error') {
-      // Reader cancelled or peer sent EPIPE — wake all parked writers so they
+      // Reader cancelled or peer sent EPIPE. Latch the STICKY broken flag so every
+      // subsequent write rejects at once, and wake all parked writers now so they
       // don't hang forever waiting for credit that will never arrive.
       const code = msg.type === 'error' ? msg.code : 'EPIPE';
-      rejectAllWaiters(Object.assign(new Error(code), { code }));
+      broken = { code };
+      rejectAllWaiters(brokenError());
     }
   };
 
@@ -49,15 +68,18 @@ export function portToWritable(port: MessagePort): WritableStream<Uint8Array> {
 
   function flushNow() {
     if (flushTimer !== null) { clearTimeout(flushTimer); flushTimer = null; }
-    if (buf.length === 0) return Promise.resolve();
+    if (buf.length === 0) return broken ? Promise.reject(brokenError()) : Promise.resolve();
     const chunks = buf;
     buf = [];
     bufSize = 0;
 
     return (async () => {
       for (const chunk of chunks) {
+        // Sticky broken: the consumer is gone — reject without parking or posting.
+        if (broken) throw brokenError();
         // Block until the reader has granted enough credit for this chunk.
-        // If the reader cancels or sends EPIPE, the promise rejects immediately.
+        // If the reader cancels or sends EPIPE, the promise rejects immediately
+        // (the waiter is woken with the broken-pipe error).
         if (credit < chunk.byteLength) {
           await new Promise<void>((resolve, reject) => {
             creditWaiters.push({ needed: chunk.byteLength, resolve, reject });
@@ -73,6 +95,10 @@ export function portToWritable(port: MessagePort): WritableStream<Uint8Array> {
 
   return new WritableStream<Uint8Array>({
     write(chunk) {
+      // Sticky broken: reject IMMEDIATELY (do not buffer, park, or arm a timer).
+      // This is the top-of-write guard that stops an unbounded producer the
+      // moment the downstream has gone away.
+      if (broken) return Promise.reject(brokenError());
       buf.push(chunk);
       bufSize += chunk.byteLength;
       if (bufSize >= PIPE_FLUSH_BYTES) return flushNow();

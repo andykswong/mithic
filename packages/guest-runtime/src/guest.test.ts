@@ -95,6 +95,31 @@ test('exit posts {type:"exit",code} and rejects in-flight syscalls', async () =>
   kernelPort.close();
 });
 
+test('Seam 2: exit() tears down stdin, posting EPIPE to the upstream producer peer', async () => {
+  // stdin is preopen fd 0: the guest holds the READ end (port-as-stdin); the peer
+  // (port2) is the upstream producer's WRITE end. On exit the guest must post
+  // {type:'error', code:'EPIPE'} up the pipe so the producer stops.
+  const stdinCh = new MessageChannel();
+  const { guest } = makeGuest({ 0: stdinCh.port1 });
+  stdinCh.port2.start?.();
+
+  const upstream: unknown[] = [];
+  stdinCh.port2.onmessage = (e) => upstream.push(e.data);
+
+  guest.exit(0);
+
+  await new Promise(r => setTimeout(r, 10));
+  expect(upstream.some(m => (m as { type?: string; code?: string }).type === 'error'
+    && (m as { code?: string }).code === 'EPIPE')).toBe(true);
+
+  stdinCh.port2.close();
+});
+
+test('Seam 2: exit() with no stdin port is a no-op (does not throw)', () => {
+  const { guest } = makeGuest(); // no preopen ports
+  expect(() => guest.exit(0)).not.toThrow();
+});
+
 test('M-Fix 1: dom/event kernel event reaches a guest onDomEvent listener', async () => {
   const { guest, kernelPort } = makeGuest();
   kernelPort.start?.();
