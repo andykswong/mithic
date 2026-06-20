@@ -235,12 +235,13 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       return 1;
 
     case 'type': {
+      let status = 0;
       for (const a of args) {
-        if (isBuiltin(a)) ctx.write(`${a} is a shell builtin\n`);
-        else if (ctx.state?.functions.has(a)) ctx.write(`${a} is a function\n`);
-        else ctx.write(`${a} is ${a}\n`);
+        if (ctx.state?.functions.has(a)) ctx.write(`${a} is a function\n`);
+        else if (isBuiltin(a)) ctx.write(`${a} is a shell builtin\n`);
+        else { errOut(ctx, `type: ${a}: not found\n`); status = 1; }
       }
-      return 0;
+      return status;
     }
 
     case 'source':

@@ -358,15 +358,46 @@ export class Executor implements ShellEnv {
     return 0;
   }
 
+  /**
+   * Run a subshell `( … )` in an isolated execution scope. A subshell snapshots
+   * AND restores env, cwd, set-options, functions, arrays, and positional
+   * params, so none of its mutations leak to the parent (M2). Critically, an
+   * `exit` inside the subshell ends ONLY the subshell with its code — the parent
+   * continues (the standalone critical bug): we save/clear `this.exiting` across
+   * the body and convert a subshell-local exit into the subshell's return code.
+   * `break`/`continue`/`return` do not cross the subshell boundary either —
+   * they are caught and the subshell ends with the appropriate status rather
+   * than throwing uncaught into the parent.
+   */
   private async execSubshell(stmt: Statement): Promise<number> {
-    // Subshell: isolate env/cwd mutations by snapshotting and restoring.
     const savedEnv = { ...this.context.env };
     const savedCwd = this.context.cwd;
+    const savedPositional = this.context.positional ? [...this.context.positional] : undefined;
+    const savedOptions = { ...this.options };
+    const savedFunctions = new Map(this.functions);
+    const savedArrays = new Map(this.arrays);
+    const savedExiting = this.exiting;
+    this.exiting = undefined;
     try {
-      return await this.execList(stmt.body ?? []);
+      let status = await this.execList(stmt.body ?? []);
+      // An `exit` inside the subshell sets `this.exiting`; that is the subshell's
+      // own exit code and must NOT propagate to the parent.
+      if (this.exiting !== undefined) status = this.exiting;
+      return status;
+    } catch (e) {
+      // `break`/`continue`/`return` inside a subshell do not cross its boundary.
+      if (e instanceof LoopBreak || e instanceof LoopContinue) return 0;
+      if (e instanceof FuncReturn) return e.code;
+      if (e instanceof ShellExit) return e.code;
+      throw e;
     } finally {
       this.context.env = savedEnv;
       this.context.cwd = savedCwd;
+      this.context.positional = savedPositional;
+      this.options = savedOptions;
+      this.functions = savedFunctions;
+      this.arrays = savedArrays;
+      this.exiting = savedExiting;
     }
   }
 
