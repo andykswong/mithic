@@ -169,7 +169,8 @@ export class Executor implements ShellEnv {
       case '?': return String(this.lastStatus);
       case '#': return String((this.context.positional ?? []).length);
       case '$': return String(this.context.pid ?? 0);
-      case '!': return String(this.lastBgPid);
+      // `$!` is empty (not "0") until a background job has been started.
+      case '!': return this.lastBgPid === 0 ? '' : String(this.lastBgPid);
       case '-': return this.currentFlags();
       case '0': return this.context.name ?? 'sh';
       case '@':
