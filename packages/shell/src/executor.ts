@@ -20,9 +20,12 @@
 
 import type { Program, Redirect, SimpleCommand, Statement } from './ast.ts';
 import { parse } from './parser.ts';
+import { evalArith } from './arith.ts';
+import { globMatch } from './glob.ts';
+import type { GlobOptions } from './glob.ts';
 import { Expander, ExpansionError } from './expander.ts';
 import type { ShellEnv } from './expander.ts';
-import { isBuiltin, runBuiltin, OPTION_FLAGS } from './builtins.ts';
+import { isBuiltin, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES } from './builtins.ts';
 import type { BuiltinContext, ShellState, ShellOptionName } from './builtins.ts';
 import type {
   FsClient,
@@ -34,6 +37,23 @@ import type {
 export interface ShellFunction {
   name: string;
   body: Statement[];
+}
+
+/**
+ * A persistent numbered file descriptor opened by `exec N>file` / `exec N<file`
+ * / `exec N<>file`. Output fds carry a write sink + closer; input fds carry the
+ * buffered file contents and a read cursor (for `read -u N`).
+ */
+interface FdEntry {
+  mode: 'read' | 'write' | 'rw';
+  /** Write sink for output fds. */
+  sink?: (s: string) => void;
+  /** Close the underlying file (flush). */
+  close?: () => void;
+  /** Buffered input contents (read fds). */
+  input?: string;
+  /** Read cursor into `input`. */
+  pos?: number;
 }
 
 export interface Job {
@@ -92,6 +112,8 @@ export class Executor implements ShellEnv {
   private lastStatus = 0;
   private pipeStatus: number[] = [];
   private lastBgPid = 0;
+  /** Status of the most recent command substitution (`$(...)`), for M10. */
+  private lastCmdSubStatus: number | undefined;
   private exiting: number | undefined;
   private stdoutSink: (s: string) => void;
   private stderrSink: (s: string) => void;
@@ -109,7 +131,26 @@ export class Executor implements ShellEnv {
     xtrace: false,
     pipefail: false,
     noclobber: false,
+    verbose: false,
+    posix: false,
   };
+  /** `shopt` bash options (extglob/globstar/nullglob/dotglob/nocaseglob/nocasematch). */
+  private shoptStore: Record<string, boolean> = {
+    dotglob: false, extglob: false, globstar: false,
+    nocaseglob: false, nocasematch: false, nullglob: false,
+  };
+  /** Trap handlers: signal name (EXIT/ERR/INT/...) → handler command string. */
+  private traps = new Map<string, string>();
+  /** Command history (most-recent-last). */
+  private historyLines: string[] = [];
+  /** Per-shell numbered file-descriptor table (fd → sink/source), for exec/>&N. */
+  private fdTable = new Map<number, FdEntry>();
+  /** Inherited pipe stdin for a compound pipeline stage (M1); undefined ⇒ none. */
+  private pipeStdin: string | undefined;
+  /** Monotonic counter for process-substitution temp file names. */
+  private procSubSeq = 0;
+  /** Deferred `>(cmd)` process substitutions to run after the current command. */
+  private pendingProcSubs: Array<{ path: string; src: string }> = [];
 
   constructor(kernel: KernelClient, context: ShellContext, options: ExecutorOptions = {}) {
     this.kernel = kernel;
@@ -137,7 +178,8 @@ export class Executor implements ShellEnv {
       case '?': return String(this.lastStatus);
       case '#': return String((this.context.positional ?? []).length);
       case '$': return String(this.context.pid ?? 0);
-      case '!': return String(this.lastBgPid);
+      // `$!` is empty (not "0") until a background job has been started.
+      case '!': return this.lastBgPid === 0 ? '' : String(this.lastBgPid);
       case '-': return this.currentFlags();
       case '0': return this.context.name ?? 'sh';
       case '@':
@@ -156,6 +198,73 @@ export class Executor implements ShellEnv {
   /** True when `set -u` (nounset) is active — the expander errors on unset vars. */
   nounset(): boolean { return this.options.nounset; }
 
+  /** True when POSIX mode is active — the expander disables brace expansion. */
+  posix(): boolean { return this.options.posix; }
+
+  /** Read a `shopt` glob option (extglob/globstar/nullglob/dotglob/...). */
+  shopt(name: string): boolean { return this.shoptStore[name] ?? false; }
+
+  /** All set variable names (scalars + arrays), for `${!prefix*}`/`${!prefix@}`. */
+  names(): string[] {
+    return [...new Set([...Object.keys(this.context.env), ...this.arrays.keys()])];
+  }
+
+  /**
+   * Process substitution (M4). For `<(cmd)`: run `cmd`, write its stdout to a
+   * temp VFS file, and return that path (the surrounding command reads it). For
+   * `>(cmd)`: return a temp path now and QUEUE `cmd` to run after the current
+   * simple command finishes, feeding it the file's contents as stdin. Requires
+   * an FsClient; without one the path is a `/dev/null`-ish placeholder.
+   */
+  async procSub(src: string, dir: 'in' | 'out'): Promise<string> {
+    const path = `/tmp/.mithic-procsub-${this.procSubSeq++}`;
+    if (!this.fs) return '/dev/null';
+    if (dir === 'in') {
+      const out = await this.runCommandSubRaw(src);
+      const fd = this.fs.fsOpen(path, { write: true, create: true, truncate: true });
+      this.fs.fsWrite(fd, out);
+      this.fs.fsClose(fd);
+    } else {
+      // Create the empty sink file; defer running `cmd` until the outer command
+      // has written to it.
+      const fd = this.fs.fsOpen(path, { write: true, create: true, truncate: true });
+      this.fs.fsWrite(fd, '');
+      this.fs.fsClose(fd);
+      this.pendingProcSubs.push({ path, src });
+    }
+    return path;
+  }
+
+  /** Run a command-sub body WITHOUT trailing-newline stripping (for procsub files). */
+  private async runCommandSubRaw(src: string): Promise<string> {
+    let out = '';
+    const savedStdout = this.stdoutSink;
+    this.stdoutSink = (s) => { out += s; };
+    try { await this.run(this.parseSrc(src), true); }
+    finally { this.stdoutSink = savedStdout; }
+    return out;
+  }
+
+  /** Flush deferred `>(cmd)` process substitutions: feed each temp file to its cmd. */
+  private async flushPendingProcSubs(): Promise<void> {
+    if (this.pendingProcSubs.length === 0 || !this.fs) return;
+    const pending = this.pendingProcSubs;
+    this.pendingProcSubs = [];
+    for (const { path, src } of pending) {
+      let data = '';
+      try { data = await Promise.resolve(this.fs.fsRead(this.fs.fsOpen(path, { read: true }))); } catch { data = ''; }
+      const savedPipe = this.pipeStdin;
+      this.pipeStdin = data;
+      try { await this.run(this.parseSrc(src), true); }
+      finally { this.pipeStdin = savedPipe; }
+    }
+  }
+
+  /** Glob options for case/`[[ ]]` matching: extglob + nocasematch; `*` crosses `/`. */
+  private globMatchOpts(): GlobOptions {
+    return { extglob: this.shoptStore.extglob, nocase: this.shoptStore.nocasematch, pathSegment: false };
+  }
+
   /** The short-flag letters of currently-enabled options, for `$-`. */
   private currentFlags(): string {
     let s = '';
@@ -165,16 +274,113 @@ export class Executor implements ShellEnv {
     return s;
   }
 
+  /** Parse a script string honoring the current POSIX mode. */
+  private parseSrc(src: string): Program {
+    return parse(src, { posix: this.options.posix });
+  }
+
+  /** Set a shell option (used by the CLI front-end before running). */
+  setOption(name: ShellOptionName, value: boolean): void {
+    this.options[name] = value;
+    this.syncShellOpts();
+  }
+
+  /** Read a shell option (used by the CLI front-end). */
+  getOption(name: ShellOptionName): boolean {
+    return this.options[name];
+  }
+
+  /** Enable a shopt option (used by the CLI front-end / tests). */
+  setShopt(name: string, value: boolean): void {
+    if (name in this.shoptStore) { this.shoptStore[name] = value; this.syncBashOpts(); }
+  }
+
+  /**
+   * `source FILE [args]` — read FILE from the VFS and execute it in the current
+   * shell (sharing env/functions). Positional params are temporarily replaced by
+   * the supplied args (bash semantics). Returns the sourced script's status.
+   */
+  async sourceFile(args: string[]): Promise<number> {
+    const file = args[0];
+    if (file === undefined) { this.writeStderr('shell: source: filename argument required\n'); return 2; }
+    const fs = this.fs;
+    if (!fs) { this.writeStderr(`shell: source: ${file}: cannot read\n`); return 1; }
+    let content: string;
+    try {
+      const path = file.startsWith('/') ? file : this.absPath(file);
+      content = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true })));
+    } catch {
+      this.writeStderr(`shell: source: ${file}: No such file or directory\n`);
+      return 1;
+    }
+    const savedPositional = this.context.positional;
+    if (args.length > 1) this.context.positional = args.slice(1);
+    try {
+      return await this.run(this.parseSrc(content), /*nested*/ true);
+    } catch (e) {
+      if (e instanceof FuncReturn) return e.code; // `return N` ends the sourced script
+      throw e;
+    } finally {
+      this.context.positional = savedPositional;
+    }
+  }
+
+  /**
+   * Run a trap handler for the given signal name (EXIT/ERR/INT/...), if one is
+   * registered. Handlers are parsed + executed in the current shell. Errors in
+   * the handler are swallowed (a trap must not abort the shell).
+   */
+  async runTrap(signal: string): Promise<void> {
+    const handler = this.traps.get(signal);
+    if (!handler) return;
+    try { await this.run(this.parseSrc(handler), /*nested*/ true); }
+    catch { /* trap handler errors are non-fatal */ }
+  }
+
+  private async execSelect(stmt: Statement): Promise<number> {
+    // No interactive TTY in this runtime: print the numbered menu to stderr and
+    // run the body once with the variable unset (read returns EOF), then stop.
+    const exp = this.expander();
+    let words: string[];
+    if (stmt.words === undefined) words = this.getPositional();
+    else { words = []; for (const w of stmt.words) words.push(...await exp.expandWord(w)); }
+    for (let k = 0; k < words.length; k++) this.writeStderr(`${k + 1}) ${words[k]}\n`);
+    this.context.env[stmt.varName!] = '';
+    return 0;
+  }
+
   async runCommandSub(src: string): Promise<string> {
     let out = '';
     const savedStdout = this.stdoutSink;
     this.stdoutSink = (s) => { out += s; };
+    // `$(< file)` fast-read form (M5): an empty command body whose only content
+    // is a single `< file` input redirect reads the file directly.
+    const fast = src.match(/^\s*<\s*(\S+)\s*$/);
     try {
-      await this.run(parse(src), /*nested*/ true);
+      if (fast) {
+        this.lastCmdSubStatus = await this.readFileForCmdSub(fast[1]);
+      } else {
+        this.lastCmdSubStatus = await this.run(this.parseSrc(src), /*nested*/ true);
+      }
     } finally {
       this.stdoutSink = savedStdout;
     }
     return out;
+  }
+
+  /** Read a file for `$(< file)`, writing its contents to the (captured) sink. Returns status. */
+  private async readFileForCmdSub(rawPath: string): Promise<number> {
+    const path = await this.expander().expandToString(rawPath);
+    const fs = this.fs;
+    if (!fs) return 1;
+    try {
+      const data = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true })));
+      this.writeStdout(data);
+      return 0;
+    } catch {
+      this.writeStderr(`shell: ${path}: No such file or directory\n`);
+      return 1;
+    }
   }
 
   async listDir(path: string): Promise<string[] | undefined> {
@@ -207,10 +413,62 @@ export class Executor implements ShellEnv {
       waitJob: (id) => this.waitForJob(id),
       waitAll: () => this.waitAllJobs(),
       setErrExit: (v) => { this.options.errexit = v; },
-      setOption: (name, value) => { this.options[name] = value; },
+      setOption: (name, value) => {
+        this.options[name] = value;
+        if (name === 'errexit' || name === 'pipefail' || name === 'posix' || name === 'verbose' || name === 'xtrace' || name === 'noclobber' || name === 'nounset') this.syncShellOpts();
+      },
       getOption: (name) => this.options[name],
-      listOptions: () => (Object.keys(this.options) as ShellOptionName[]).map((k) => [k, this.options[k]] as [ShellOptionName, boolean]),
+      listOptions: () => SET_O_OPTIONS.map((k) => [k, this.options[k]] as [ShellOptionName, boolean]),
+      setShopt: (name, value) => {
+        if (!(name in this.shoptStore)) return false;
+        this.shoptStore[name] = value; this.syncBashOpts(); return true;
+      },
+      getShopt: (name) => (name in this.shoptStore ? this.shoptStore[name] : undefined),
+      setTrap: (signal, handler) => {
+        if (handler === undefined) this.traps.delete(signal);
+        else this.traps.set(signal, handler);
+      },
+      listTraps: () => [...this.traps.entries()],
+      history: {
+        list: () => this.historyLines,
+        add: (line) => this.addHistory(line),
+        clear: () => { this.historyLines = []; },
+      },
+      removeJob: (spec) => {
+        const idx = this.jobs.findIndex((j) => j.id === spec || j.pids.includes(spec));
+        if (idx < 0) return false;
+        this.jobs.splice(idx, 1);
+        return true;
+      },
+      killJob: (spec, _signal) => {
+        const job = this.jobs.find((j) => j.id === spec || j.pids.includes(spec));
+        if (!job) return false;
+        job.state = 'done';
+        return true;
+      },
     };
+  }
+
+  /** Append a non-blank line to history, honoring HISTSIZE (default 500). */
+  private addHistory(line: string): void {
+    const trimmed = line.trim();
+    if (trimmed === '') return;
+    this.historyLines.push(line);
+    const size = parseInt(this.context.env.HISTSIZE ?? '500', 10);
+    const cap = Number.isFinite(size) && size >= 0 ? size : 500;
+    if (this.historyLines.length > cap) this.historyLines.splice(0, this.historyLines.length - cap);
+  }
+
+  /** Rebuild $SHELLOPTS (sorted, colon-joined set -o options that are on). */
+  private syncShellOpts(): void {
+    const on = SET_O_OPTIONS.filter((k) => this.options[k]);
+    this.context.env.SHELLOPTS = on.join(':');
+  }
+
+  /** Rebuild $BASHOPTS (sorted, colon-joined shopt options that are on). */
+  private syncBashOpts(): void {
+    const on = SHOPT_NAMES.filter((k) => this.shoptStore[k]);
+    this.context.env.BASHOPTS = on.join(':');
   }
 
   private declareLocal(name: string): void {
@@ -228,6 +486,7 @@ export class Executor implements ShellEnv {
   async run(program: Program, nested = false): Promise<number> {
     try {
       for (const stmt of program.body) {
+        if (!nested) this.addHistory(describeStatement(stmt));
         try {
           this.lastStatus = await this.execStatement(stmt);
         } catch (e) {
@@ -238,7 +497,30 @@ export class Executor implements ShellEnv {
             if (!nested) { this.exiting = 1; return 1; }
             return 1;
           }
+          if (e instanceof SyntaxError) {
+            // POSIX-mode rejection / bad redirect → diagnostic + nonzero (H1/C2).
+            this.writeStderr(`${e.message}\n`);
+            this.lastStatus = 2;
+            if (!nested) { this.exiting = 2; return 2; }
+            return 2;
+          }
+          // break/continue/return that reached the top level (no enclosing loop
+          // or function) → diagnostic + continue, NOT an uncaught throw (M8). A
+          // `return` from a SOURCED script (nested) is valid and re-thrown so
+          // sourceFile can use it as the script's exit code.
+          if (e instanceof LoopBreak) { this.writeStderr('shell: break: only meaningful in a `for\', `while\', or `until\' loop\n'); this.lastStatus = 1; continue; }
+          if (e instanceof LoopContinue) { this.writeStderr('shell: continue: only meaningful in a `for\', `while\', or `until\' loop\n'); this.lastStatus = 1; continue; }
+          if (e instanceof FuncReturn) {
+            if (nested) throw e;
+            this.writeStderr('shell: return: can only `return\' from a function or sourced script\n');
+            this.lastStatus = 1; continue;
+          }
           throw e;
+        }
+        // ERR trap: a command exiting nonzero (outside a condition) runs the ERR
+        // handler. We approximate "outside a condition" by the top-level loop.
+        if (this.lastStatus !== 0 && this.traps.has('ERR') && this.exiting === undefined) {
+          await this.runTrap('ERR');
         }
         if (this.exiting !== undefined) return this.exiting;
         if (this.options.errexit && this.lastStatus !== 0 && !nested) {
@@ -251,6 +533,42 @@ export class Executor implements ShellEnv {
       throw e;
     }
     return this.lastStatus;
+  }
+
+  /**
+   * Run a top-level program and fire the EXIT trap afterward (whether the script
+   * exited explicitly or ran to EOF). Returns the final status. The shell CLI
+   * front-end (process.ts) calls this rather than {@link run} directly.
+   */
+  async runTop(program: Program): Promise<number> {
+    let code: number;
+    try {
+      code = await this.run(program, false);
+    } finally {
+      await this.runTrap('EXIT');
+    }
+    return code;
+  }
+
+  /**
+   * Parse + run a script string as the top-level shell input, honoring the
+   * current POSIX mode and firing the EXIT trap. A parse-time error (including
+   * POSIX-mode rejection) is written to stderr and yields exit 2. This is the
+   * entry point the CLI front-end uses.
+   */
+  async exec(src: string): Promise<number> {
+    let program: Program;
+    try {
+      program = this.parseSrc(src);
+    } catch (e) {
+      if (e instanceof SyntaxError) {
+        this.writeStderr(`${e.message}\n`);
+        await this.runTrap('EXIT');
+        return 2;
+      }
+      throw e;
+    }
+    return this.runTop(program);
   }
 
   private async execStatement(stmt: Statement): Promise<number> {
@@ -269,6 +587,7 @@ export class Executor implements ShellEnv {
       case 'If': return this.execIf(stmt);
       case 'While': return this.withRedirects(stmt, () => this.execWhile(stmt));
       case 'For': return this.withRedirects(stmt, () => this.execFor(stmt));
+      case 'Select': return this.withRedirects(stmt, () => this.execSelect(stmt));
       case 'Case': return this.execCase(stmt);
       case 'Function': {
         this.functions.set(stmt.funcName!, { name: stmt.funcName!, body: stmt.funcBody! });
@@ -321,6 +640,7 @@ export class Executor implements ShellEnv {
   }
 
   private async execFor(stmt: Statement): Promise<number> {
+    if (stmt.arithFor) return this.execArithFor(stmt);
     let status = 0;
     const exp = this.expander();
     let words: string[];
@@ -344,13 +664,50 @@ export class Executor implements ShellEnv {
     return status;
   }
 
+  /**
+   * C-style `for (( init; cond; incr ))` (M6). Evaluates `init` once, then loops
+   * while `cond` (empty ⇒ always true) is nonzero, running the body and then
+   * `incr`. Uses the arithmetic evaluator over a live env proxy so assignments
+   * persist. A safety cap prevents a runaway non-terminating loop.
+   */
+  private async execArithFor(stmt: Statement): Promise<number> {
+    let status = 0;
+    const env = this.arithEnvForExpr();
+    if (stmt.arithInit) evalArith(stmt.arithInit, env);
+    const cond = stmt.arithCond ?? '';
+    let guard = 0;
+    for (;;) {
+      if (cond !== '' && evalArith(cond, env) === 0) break;
+      if (++guard > 1_000_000) break;
+      try {
+        status = await this.execList(stmt.body ?? []);
+      } catch (e) {
+        if (e instanceof LoopBreak) { if (e.count > 1) throw new LoopBreak(e.count - 1); break; }
+        if (e instanceof LoopContinue) { if (e.count > 1) throw new LoopContinue(e.count - 1); /* fall to incr */ }
+        else throw e;
+      }
+      if (this.exiting !== undefined) return status;
+      if (stmt.arithIncr) evalArith(stmt.arithIncr, env);
+    }
+    return status;
+  }
+
+  /** A live env proxy (bare-name read/write to the shell env) for arithmetic-for. */
+  private arithEnvForExpr(): Record<string, string> {
+    return new Proxy({}, {
+      get: (_t, p: string) => this.context.env[p] ?? '',
+      set: (_t, p: string, v) => { this.context.env[p] = String(v); return true; },
+      has: (_t, p: string) => p in this.context.env,
+    }) as Record<string, string>;
+  }
+
   private async execCase(stmt: Statement): Promise<number> {
     const exp = this.expander();
     const word = await exp.expandToString(stmt.caseWord!);
     for (const clause of stmt.clauses ?? []) {
       for (const rawPat of clause.patterns) {
         const pat = await exp.expandToString(rawPat);
-        if (matchCasePattern(word, pat)) {
+        if (globMatch(word, pat, this.globMatchOpts())) {
           return this.execList(clause.body);
         }
       }
@@ -358,15 +715,48 @@ export class Executor implements ShellEnv {
     return 0;
   }
 
+  /**
+   * Run a subshell `( … )` in an isolated execution scope. A subshell snapshots
+   * AND restores env, cwd, set-options, functions, arrays, and positional
+   * params, so none of its mutations leak to the parent (M2). Critically, an
+   * `exit` inside the subshell ends ONLY the subshell with its code — the parent
+   * continues (the standalone critical bug): we save/clear `this.exiting` across
+   * the body and convert a subshell-local exit into the subshell's return code.
+   * `break`/`continue`/`return` do not cross the subshell boundary either —
+   * they are caught and the subshell ends with the appropriate status rather
+   * than throwing uncaught into the parent.
+   */
   private async execSubshell(stmt: Statement): Promise<number> {
-    // Subshell: isolate env/cwd mutations by snapshotting and restoring.
     const savedEnv = { ...this.context.env };
     const savedCwd = this.context.cwd;
+    const savedPositional = this.context.positional ? [...this.context.positional] : undefined;
+    const savedOptions = { ...this.options };
+    const savedShopt = { ...this.shoptStore };
+    const savedFunctions = new Map(this.functions);
+    const savedArrays = new Map(this.arrays);
+    const savedExiting = this.exiting;
+    this.exiting = undefined;
     try {
-      return await this.execList(stmt.body ?? []);
+      let status = await this.execList(stmt.body ?? []);
+      // An `exit` inside the subshell sets `this.exiting`; that is the subshell's
+      // own exit code and must NOT propagate to the parent.
+      if (this.exiting !== undefined) status = this.exiting;
+      return status;
+    } catch (e) {
+      // `break`/`continue`/`return` inside a subshell do not cross its boundary.
+      if (e instanceof LoopBreak || e instanceof LoopContinue) return 0;
+      if (e instanceof FuncReturn) return e.code;
+      if (e instanceof ShellExit) return e.code;
+      throw e;
     } finally {
       this.context.env = savedEnv;
       this.context.cwd = savedCwd;
+      this.context.positional = savedPositional;
+      this.options = savedOptions;
+      this.shoptStore = savedShopt;
+      this.functions = savedFunctions;
+      this.arrays = savedArrays;
+      this.exiting = savedExiting;
     }
   }
 
@@ -406,10 +796,10 @@ export class Executor implements ShellEnv {
       try { return new RegExp(words[2]).test(words[0]); } catch { return false; }
     }
     if (words.length === 3 && (words[1] === '==' || words[1] === '=')) {
-      return matchCasePattern(words[0], words[2]);
+      return globMatch(words[0], words[2], this.globMatchOpts());
     }
     if (words.length === 3 && words[1] === '!=') {
-      return !matchCasePattern(words[0], words[2]);
+      return !globMatch(words[0], words[2], this.globMatchOpts());
     }
     if (words.length === 2 && words[0].startsWith('-')) {
       return this.condFileTest(words[0], words[1]);
@@ -449,30 +839,56 @@ export class Executor implements ShellEnv {
   }
 
   /**
-   * Apply a set of redirects by swapping the stdout/stderr sinks (and recording
-   * a here-doc/file stdin). Returns a restore function. Supports `>` `>>` `<`
-   * `<<` `<<<` `2>` `&>` `2>&1`, and `/dev/null`.
+   * Snapshot the current write sink for a numbered fd (1=stdout, 2=stderr,
+   * N=fdTable). Returns the concrete function NOW (not a live reference), so a
+   * dup like `exec 3>&1` captures stdout's current target without forming a
+   * self-referential loop when stdout is later redirected to fd 3.
+   */
+  private sinkForFd(fd: number): (s: string) => void {
+    if (fd === 1) return this.stdoutSink;
+    if (fd === 2) return this.stderrSink;
+    const entry = this.fdTable.get(fd);
+    if (entry?.sink) return entry.sink;
+    return () => { /* fd not open for writing — discard */ };
+  }
+
+  /** Point a numbered fd at a sink (temporary, for the duration of a command). */
+  private setFdSink(fd: number, sink: (s: string) => void): void {
+    if (fd === 1) this.stdoutSink = sink;
+    else if (fd === 2) this.stderrSink = sink;
+    else { const e = this.fdTable.get(fd) ?? { mode: 'write' as const }; e.sink = sink; this.fdTable.set(fd, e); }
+  }
+
+  /**
+   * Apply a set of redirects, returning a restore function. Supports `>` `>>`
+   * `>|` `<` `<>` `<<` `<<<` `N>` `N>>` `&>` `&>>` (append, M9) `N>&M` (dup)
+   * `N>&-` (close), numbered fds via the per-shell {@link fdTable}, and the
+   * `/dev/null`/`/dev/stdout`/`/dev/stderr` device paths.
    */
   private async applyRedirects(redirects: Redirect[]): Promise<() => void> {
     const exp = this.expander();
     const savedStdout = this.stdoutSink;
     const savedStderr = this.stderrSink;
+    const savedFds = new Map<number, FdEntry | undefined>();
     const closers: Array<() => void> = [];
+    const snapshotFd = (fd: number): void => { if (fd !== 1 && fd !== 2 && !savedFds.has(fd)) savedFds.set(fd, this.fdTable.get(fd)); };
 
     for (const r of redirects) {
-      if (r.op === '<' || r.op === '<<' || r.op === '<<<') continue; // stdin handled per-command
-      const fd = r.fd ?? (r.op === '&>' ? 1 : (r.op === '>&' ? 1 : 1));
+      if (r.op === '<' || r.op === '<<' || r.op === '<<<' || r.op === '<>') continue; // stdin handled per-command
 
       if (r.op === '>&') {
-        // fd-dup: e.g. 2>&1 — make `fd` write to wherever the target fd writes now.
-        const dst = r.target;
-        if (dst === '1') { const cur = this.stdoutSink; if (fd === 2) this.stderrSink = (s) => cur(s); }
-        else if (dst === '2') { const cur = this.stderrSink; if (fd === 1) this.stdoutSink = (s) => cur(s); }
+        // fd-dup: `N>&M` makes fd N write where M writes; `N>&-` closes N.
+        const fd = r.fd ?? 1;
+        snapshotFd(fd);
+        if (r.target === '-') { this.setFdSink(fd, () => { /* closed */ }); if (fd > 2) this.fdTable.delete(fd); continue; }
+        const dst = parseInt(r.target, 10);
+        if (!Number.isNaN(dst)) this.setFdSink(fd, this.sinkForFd(dst));
         continue;
       }
 
+      const fd = r.fd ?? 1;
       const path = await exp.expandToString(r.target);
-      const append = r.op === '>>';
+      const append = r.op === '>>' || r.op === '&>>';
       // noclobber (`set -C`): a plain `>` must not overwrite an EXISTING regular
       // file. `>|` forces past it; `>>` (append) is exempt; a new file is fine.
       if (this.options.noclobber && r.op === '>' && path !== '/dev/null'
@@ -483,16 +899,101 @@ export class Executor implements ShellEnv {
         }
       }
       const sink = this.makeFileSink(path, append, closers);
-      if (r.op === '&>') { this.stdoutSink = sink; this.stderrSink = sink; }
-      else if (fd === 2) this.stderrSink = sink;
-      else this.stdoutSink = sink;
+      if (r.op === '&>' || r.op === '&>>') { this.stdoutSink = sink; this.stderrSink = sink; }
+      else { snapshotFd(fd); this.setFdSink(fd, sink); }
     }
 
     return () => {
       for (const c of closers) c();
       this.stdoutSink = savedStdout;
       this.stderrSink = savedStderr;
+      for (const [fd, prev] of savedFds) { if (prev === undefined) this.fdTable.delete(fd); else this.fdTable.set(fd, prev); }
     };
+  }
+
+  /**
+   * Install `exec`'s redirects permanently on the per-shell fd table. Output
+   * fds (`N>file`/`N>>file`) get a write sink; input fds (`N<file`/`N<>file`)
+   * are buffered for `read -u N`; `N>&M` dups; `N>&-` closes. Returns 1 on a
+   * missing input file (and writes a diagnostic).
+   */
+  private async execBuiltinRedirects(redirects: Redirect[]): Promise<number> {
+    const exp = this.expander();
+    const fs = this.fs;
+    for (const r of redirects) {
+      const fd = r.fd ?? (r.op === '<' || r.op === '<>' ? 0 : 1);
+      if (r.op === '>&') {
+        if (r.target === '-') { this.fdTable.delete(fd); continue; }
+        const dst = parseInt(r.target, 10);
+        if (!Number.isNaN(dst)) this.fdTable.set(fd, { mode: 'write', sink: this.sinkForFd(dst) });
+        continue;
+      }
+      if (r.op === '<' || r.op === '<>') {
+        const path = await exp.expandToString(r.target);
+        if (!fs) { this.writeStderr(`shell: exec: ${path}: cannot open\n`); return 1; }
+        let input = '';
+        if (r.op === '<' || path !== '/dev/null') {
+          try { input = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true }))); }
+          catch {
+            if (r.op === '<>') { input = ''; /* <> creates if absent */ }
+            else { this.writeStderr(`shell: ${path}: No such file or directory\n`); return 1; }
+          }
+        }
+        const entry: FdEntry = { mode: r.op === '<>' ? 'rw' : 'read', input, pos: 0 };
+        if (r.op === '<>') { entry.sink = this.makeFileSink(path, false, []); }
+        this.fdTable.set(fd, entry);
+        continue;
+      }
+      // Output: > >> >| (and &> &>> map to fd 1+2)
+      const path = await exp.expandToString(r.target);
+      const append = r.op === '>>' || r.op === '&>>';
+      let seed = '';
+      if (append && fs && path !== '/dev/null' && path !== '/dev/stdout' && path !== '/dev/stderr') {
+        try { seed = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true }))); } catch { seed = ''; }
+      }
+      const sink = this.makeExecFileSink(path, seed);
+      if (r.op === '&>' || r.op === '&>>') {
+        this.fdTable.set(1, { mode: 'write', sink });
+        this.fdTable.set(2, { mode: 'write', sink });
+      } else {
+        this.fdTable.set(fd, { mode: 'write', sink });
+      }
+    }
+    return 0;
+  }
+
+  /**
+   * A write sink for a persistent `exec N>file` fd. Each write flushes the full
+   * accumulated buffer to the VFS (open-truncate, write, close), so the file
+   * reflects current contents without holding an fd open across commands.
+   * `seed` is the pre-read existing contents for append mode.
+   */
+  private makeExecFileSink(path: string, seed: string): (s: string) => void {
+    if (path === '/dev/null') return () => { /* discard */ };
+    if (path === '/dev/stdout') return (s) => this.stdoutSink(s);
+    if (path === '/dev/stderr') return (s) => this.stderrSink(s);
+    const fs = this.fs;
+    if (!fs) throw new Error(`shell: exec redirect to '${path}' requires an FsClient`);
+    let buffer = seed;
+    return (s) => {
+      buffer += s;
+      const fd = fs.fsOpen(path, { write: true, create: true, truncate: true });
+      fs.fsWrite(fd, buffer);
+      fs.fsClose(fd);
+    };
+  }
+
+  /** Read one line (default) from a numbered input fd, advancing its cursor. For `read -u N`. */
+  readFdLine(fd: number): string | undefined {
+    const entry = this.fdTable.get(fd);
+    if (!entry || entry.input === undefined) return undefined;
+    const pos = entry.pos ?? 0;
+    if (pos >= entry.input.length) return undefined; // EOF
+    const nl = entry.input.indexOf('\n', pos);
+    const end = nl >= 0 ? nl : entry.input.length;
+    const line = entry.input.slice(pos, end);
+    entry.pos = nl >= 0 ? nl + 1 : entry.input.length;
+    return line;
   }
 
   private makeFileSink(path: string, append: boolean, closers: Array<() => void>): (s: string) => void {
@@ -515,12 +1016,13 @@ export class Executor implements ShellEnv {
         stdin = await exp.expandToString(r.target) + '\n';
       } else if (r.op === '<<') {
         stdin = r.hereDocQuoted ? (r.hereDoc ?? '') : await this.expandHereDoc(r.hereDoc ?? '');
-      } else if (r.op === '<') {
+      } else if (r.op === '<' || r.op === '<>') {
         const path = await exp.expandToString(r.target);
         if (path === '/dev/null') { stdin = ''; continue; }
         const fs = this.fs;
         if (!fs) throw new Error(`shell: input redirect from '${path}' requires an FsClient`);
-        stdin = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true })));
+        try { stdin = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true }))); }
+        catch { if (r.op === '<>') stdin = ''; else throw new RedirectError(`${path}: No such file or directory`); }
       }
     }
     return stdin;
@@ -539,6 +1041,16 @@ export class Executor implements ShellEnv {
   // ── pipelines / simple commands ──────────────────────────────────────────────
 
   private async execPipeline(stmt: Statement): Promise<number> {
+    // General compound-stage pipeline (M1/H8): any stage may be a compound
+    // command, and `|&` may funnel stderr. Run stages in-process, capturing each
+    // stage's stdout (and optionally stderr) as the next stage's stdin.
+    if (stmt.stageNodes && stmt.stageNodes.length > 0) {
+      if (stmt.background) return this.execBackground(stmt);
+      let status = await this.execNodePipeline(stmt.stageNodes, stmt.pipeStderr ?? []);
+      if (stmt.negate) status = status === 0 ? 1 : 0;
+      return status;
+    }
+
     const stages = stmt.stages ?? [];
     if (stages.length === 0) return 0;
 
@@ -555,6 +1067,41 @@ export class Executor implements ShellEnv {
     }
     if (stmt.negate) status = status === 0 ? 1 : 0;
     return status;
+  }
+
+  /**
+   * Run a pipeline whose stages are full command nodes (M1) in-process: each
+   * stage's stdout (and, for a `|&` join, its stderr) is captured and fed to the
+   * next stage as stdin. The pipeline's status is the last stage's (or, under
+   * pipefail, the last nonzero). Compound stages (subshells/groups/if/…) run via
+   * {@link execStatement}; the captured stdin is exposed via {@link pipeStdin}.
+   */
+  private async execNodePipeline(nodes: Statement[], pipeStderr: boolean[]): Promise<number> {
+    let stdin: string | undefined;
+    const codes: number[] = [];
+    const savedStdout = this.stdoutSink;
+    const savedStderr = this.stderrSink;
+    const savedPipeStdin = this.pipeStdin;
+    try {
+      for (let i = 0; i < nodes.length; i++) {
+        const isLast = i === nodes.length - 1;
+        let captured = '';
+        this.pipeStdin = i === 0 ? undefined : stdin;
+        this.stdoutSink = isLast ? savedStdout : (s) => { captured += s; };
+        // `prev |& next` routes the PREVIOUS stage's stderr into the pipe too.
+        this.stderrSink = (!isLast && pipeStderr[i]) ? (s) => { captured += s; } : savedStderr;
+        const code = await this.execStatement(nodes[i]);
+        codes.push(code);
+        if (this.exiting !== undefined) { this.pipeStatus = codes; return code; }
+        stdin = captured;
+      }
+    } finally {
+      this.stdoutSink = savedStdout;
+      this.stderrSink = savedStderr;
+      this.pipeStdin = savedPipeStdin;
+    }
+    this.pipeStatus = codes;
+    return this.pipelineStatus(codes, codes[codes.length - 1] ?? 0);
   }
 
   private async execMultiStagePipeline(stages: SimpleCommand[]): Promise<number> {
@@ -651,16 +1198,31 @@ export class Executor implements ShellEnv {
       if (this.options.xtrace && cmd.assignments.length > 0) {
         this.writeStderr('+ ' + cmd.assignments.map((a) => `${a.name}=${a.value}`).join(' ') + '\n');
       }
+      // A bare `x=$(cmd)` takes its status from the LAST command substitution in
+      // the RHS (M10): `x=$(false); echo $?` → 1. With no command sub, status 0.
+      this.lastCmdSubStatus = undefined;
       for (const a of cmd.assignments) await this.applyAssignment(a, expander);
-      return 0;
+      const sub = this.lastCmdSubStatus;
+      this.lastCmdSubStatus = undefined;
+      return sub ?? 0;
+    }
+
+    // `exec` with redirects but NO command: install the redirects PERMANENTLY on
+    // the per-shell fd table (H4). `exec 3>f`, `exec 3<f`, `exec 3<>f`,
+    // `exec 3>&-` etc. With a command, `exec cmd` would replace the shell — we
+    // treat it as a normal spawn (the sandbox has no execve).
+    if (name === 'exec' && argv.length === 0) {
+      return await this.execBuiltinRedirects(cmd.redirects);
     }
 
     if (this.options.xtrace) {
       this.writeStderr('+ ' + [name, ...argv].join(' ') + '\n');
     }
 
-    // stdin from input redirects
-    const stdin = await this.resolveStdin(cmd.redirects);
+    // stdin: an explicit `<`/`<<`/`<<<` redirect wins; otherwise inherit a
+    // compound-pipeline stage's piped stdin (M1).
+    const redirStdin = await this.resolveStdin(cmd.redirects);
+    const stdin = redirStdin ?? this.pipeStdin;
 
     // Apply output redirects around the command. A refused redirect (noclobber)
     // aborts the command with status 1 — it never runs.
@@ -691,6 +1253,9 @@ export class Executor implements ShellEnv {
       return await this.spawnExternal(name, argv, localEnv, stdin);
     } finally {
       if (restore) restore();
+      // Run any deferred `>(cmd)` substitutions now that the outer command has
+      // written to their temp files (and the redirect sinks have flushed).
+      await this.flushPendingProcSubs();
     }
   }
 
@@ -741,6 +1306,10 @@ export class Executor implements ShellEnv {
       cwd: this.context.cwd,
       nounset: () => this.nounset(),
       getArray: (n) => this.arrays.get(n),
+      posix: () => this.posix(),
+      shopt: (n) => this.shopt(n),
+      names: () => this.names(),
+      procSub: (src, d) => this.procSub(src, d),
     };
   }
 
@@ -865,7 +1434,9 @@ export class Executor implements ShellEnv {
       stdin: io.stdin,
       lastStatus: this.lastStatus,
       exit: (code) => { this.exiting = code; },
-      eval: (src) => this.run(parse(src), true),
+      eval: (src) => this.run(this.parseSrc(src), true),
+      sourceFile: (args) => this.sourceFile(args),
+      readFdLine: (fd) => this.readFdLine(fd),
       doBreak: (n) => { throw new LoopBreak(n); },
       doContinue: (n) => { throw new LoopContinue(n); },
       doReturn: (n) => { throw new FuncReturn(n); },
@@ -907,33 +1478,13 @@ function toSpawnParams(p: PipelineStageParams): SpawnParams {
 }
 
 function describeStages(stages: SimpleCommand[]): string {
-  return stages.map((s) => [s.name, ...s.args].join(' ')).join(' | ');
+  return stages.map((s) => [s.name, ...s.args].filter((w) => w !== '').join(' ')).join(' | ');
 }
 
-/** Match a shell case/`[[ ]]` glob pattern against a string. */
-function matchCasePattern(value: string, pattern: string): boolean {
-  let re = '';
-  let i = 0;
-  while (i < pattern.length) {
-    const c = pattern[i];
-    if (c === '\\') { re += escapeRe(pattern[i + 1] ?? ''); i += 2; continue; }
-    if (c === '*') { re += '.*'; i++; continue; }
-    if (c === '?') { re += '.'; i++; continue; }
-    if (c === '[') {
-      let j = i + 1; let neg = false;
-      if (pattern[j] === '!' || pattern[j] === '^') { neg = true; j++; }
-      let cls = '';
-      while (j < pattern.length && pattern[j] !== ']') { cls += pattern[j]; j++; }
-      if (j < pattern.length) { re += '[' + (neg ? '^' : '') + cls + ']'; i = j + 1; continue; }
-      re += '\\['; i++; continue;
-    }
-    re += escapeRe(c); i++;
-  }
-  try { return new RegExp('^' + re + '$').test(value); } catch { return value === pattern; }
-}
-
-function escapeRe(c: string): string {
-  return /[.*+?^${}()|[\]\\]/.test(c) ? '\\' + c : c;
+/** Reconstruct a readable command string for the history list. */
+function describeStatement(stmt: Statement): string {
+  if (stmt.type === 'Pipeline') return describeStages(stmt.stages ?? []);
+  return stmt.type.toLowerCase();
 }
 
 /** test(1)-style argument evaluation for `[[ ]]` fallback (string truthiness, numeric/string comparisons). */

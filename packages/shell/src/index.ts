@@ -10,6 +10,7 @@
 export { tokenize } from './lexer.ts';
 export type { Token, TokenType } from './lexer.ts';
 export { parse } from './parser.ts';
+export type { ParseOptions } from './parser.ts';
 export type {
   Program,
   Statement,
@@ -19,8 +20,10 @@ export type {
   Assignment,
 } from './ast.ts';
 export { Expander } from './expander.ts';
-export { BUILTINS, isBuiltin, runBuiltin } from './builtins.ts';
-export type { BuiltinContext } from './builtins.ts';
+export { BUILTINS, isBuiltin, runBuiltin, SET_O_OPTIONS, SHOPT_NAMES } from './builtins.ts';
+export type { BuiltinContext, ShellOptionName } from './builtins.ts';
+export { parseCliArgs, VERSION, HELP } from './cli.ts';
+export type { CliResult } from './cli.ts';
 export { Executor } from './executor.ts';
 export type { ShellContext, ExecutorOptions, CommandResolver } from './executor.ts';
 export type {
@@ -87,7 +90,9 @@ export async function runScript(src: string, options: RunScriptOptions = {}): Pr
   const guestUrl = new URL('../dist/process.js', import.meta.url);
 
   const { pid, stdout } = await kernel.spawn(guestUrl, {
-    args: ['shell', src],
+    // `-c SRC` runs the script string via the CLI front-end. argv0 is `bash`
+    // (not `sh`) so POSIX mode is not auto-enabled for the E2E helper.
+    args: ['bash', '-c', src],
     capabilities: [{ type: 'process' }],
     captureStdout: true,
   });

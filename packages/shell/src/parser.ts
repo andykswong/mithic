@@ -28,20 +28,31 @@ import type {
 const RESERVED = new Set([
   'if', 'then', 'elif', 'else', 'fi',
   'while', 'until', 'do', 'done',
-  'for', 'in', 'case', 'esac', 'function',
+  'for', 'select', 'in', 'case', 'esac', 'function',
   '{', '}', '!',
 ]);
 
 interface HereDoc { id: number; body: string; quoted: boolean; }
 
+export interface ParseOptions {
+  /** POSIX mode: reject bash extensions ([[, ((, <<<, |&, select, arrays). */
+  posix?: boolean;
+}
+
 class Parser {
   private tokens: Token[];
   private pos = 0;
   private heredocs: Map<number, HereDoc>;
+  private posix: boolean;
 
-  constructor(tokens: Token[], heredocs: Map<number, HereDoc>) {
+  constructor(tokens: Token[], heredocs: Map<number, HereDoc>, options: ParseOptions = {}) {
     this.tokens = tokens;
     this.heredocs = heredocs;
+    this.posix = options.posix ?? false;
+  }
+
+  private posixReject(feature: string): never {
+    throw new SyntaxError(`shell: syntax error: ${feature} is not supported in POSIX mode`);
   }
 
   private peek(): Token | undefined { return this.tokens[this.pos]; }
@@ -81,7 +92,7 @@ class Parser {
     const t = this.peek();
     if (!t) return true;
     if (t.type === 'WORD' && RESERVED.has(t.value)
-      && !['if', 'while', 'until', 'for', 'case', 'function', '{', '!'].includes(t.value)) {
+      && !['if', 'while', 'until', 'for', 'select', 'case', 'function', '{', '!'].includes(t.value)) {
       return true;
     }
     if (t.type === 'RPAREN' || t.type === 'DSEMI' || t.type === 'DRPAREN') return true;
@@ -106,25 +117,37 @@ class Parser {
     if (this.atReserved('!')) { this.next(); negate = true; }
 
     const first = this.parseCommand();
-    if (!this.atType('PIPE')) {
+    if (!this.atType('PIPE') && !this.atType('PIPEAMP')) {
       if (negate) first.negate = true;
       this.maybeBackground(first);
       return first;
     }
-    // Build a Pipeline of simple commands. Compound stages are uncommon; we
-    // support simple-command pipelines (the common case).
-    const stages: SimpleCommand[] = [];
-    if (first.type === 'Pipeline' && first.stages) stages.push(...first.stages);
-    else if (first.type === 'Pipeline') { /* empty */ }
-    else throw new SyntaxError('shell: compound command in pipeline not supported');
-    while (this.atType('PIPE')) {
+
+    // A pipeline of ≥2 stages. Each stage is a full command node; the `|&`
+    // operator (PIPEAMP) marks the pipe BEFORE the following stage as also
+    // carrying the previous stage's stderr. `pipeStderr[i]` is the flag for the
+    // pipe joining stage i and i+1.
+    const stageNodes: Statement[] = [first];
+    const pipeStderr: boolean[] = [];
+    while (this.atType('PIPE') || this.atType('PIPEAMP')) {
+      const isAmp = this.atType('PIPEAMP');
+      if (isAmp && this.posix) this.posixReject('|&');
+      pipeStderr.push(isAmp);
       this.next();
       this.skipNewlines();
-      const stage = this.parseCommand();
-      if (stage.type === 'Pipeline' && stage.stages) stages.push(...stage.stages);
-      else throw new SyntaxError('shell: compound command in pipeline not supported');
+      stageNodes.push(this.parseCommand());
     }
-    const pipeline: Statement = { type: 'Pipeline', stages, negate };
+
+    // Fast path: when every stage is a single SimpleCommand and no `|&`, keep the
+    // flat `stages` form the kernel pipeline path expects.
+    const allSimple = stageNodes.every((s) => s.type === 'Pipeline' && s.stages?.length === 1);
+    const pipeline: Statement = { type: 'Pipeline', negate };
+    if (allSimple && !pipeStderr.some(Boolean)) {
+      pipeline.stages = stageNodes.map((s) => s.stages![0]);
+    } else {
+      pipeline.stageNodes = stageNodes;
+      pipeline.pipeStderr = pipeStderr;
+    }
     this.maybeBackground(pipeline);
     return pipeline;
   }
@@ -141,8 +164,9 @@ class Parser {
     if (this.atReserved('function')) return this.parseFunctionKw();
     if (this.atReserved('{')) return this.parseGroup();
     if (this.atType('LPAREN')) return this.parseSubshell();
-    if (this.atType('DLPAREN')) return this.parseArithCmd();
-    if (this.atType('DLBRACKET')) return this.parseCond();
+    if (this.atType('DLPAREN')) { if (this.posix) this.posixReject('(( ))'); return this.parseArithCmd(); }
+    if (this.atType('DLBRACKET')) { if (this.posix) this.posixReject('[[ ]]'); return this.parseCond(); }
+    if (this.atReserved('select')) { if (this.posix) this.posixReject('select'); return this.parseSelect(); }
 
     // function definition: NAME ( )  { ... }
     const t = this.peek();
@@ -199,8 +223,10 @@ class Parser {
 
   private parseFor(): Statement {
     this.next(); // 'for'
+    // C-style `for (( init; cond; incr ))` (M6). The lexer yields `((` as DLPAREN.
+    if (this.atType('DLPAREN')) return this.parseArithFor();
     const v = this.next();
-    if (v?.type !== 'WORD') throw new SyntaxError('shell: expected for variable');
+    if (v?.type !== 'WORD') throw new SyntaxError('shell: syntax error: expected for variable');
     let words: string[] | undefined;
     if (this.atReserved('in')) {
       this.next();
@@ -219,10 +245,61 @@ class Parser {
     return stmt;
   }
 
+  /**
+   * C-style `for (( init; cond; incr )); do … done`. The lexer splits the inner
+   * expression on `;` into SEMI tokens and the rest into WORDs; we reassemble
+   * the three clauses by collecting tokens up to `))`, joining WORD `value`s.
+   */
+  private parseArithFor(): Statement {
+    this.next(); // ((
+    const clauses: string[] = [''];
+    while (this.peek() && !this.atType('DRPAREN')) {
+      if (this.atType('SEMI')) { clauses.push(''); this.next(); continue; }
+      // `for ((;;))` tokenizes the empty middle as a single DSEMI (`;;`).
+      if (this.atType('DSEMI')) { clauses.push(''); clauses.push(''); this.next(); continue; }
+      const t = this.next()!;
+      clauses[clauses.length - 1] += (clauses[clauses.length - 1] ? ' ' : '') + (t.value ?? t.raw);
+    }
+    if (this.atType('DRPAREN')) this.next();
+    while (this.atType('SEMI') || this.atType('NEWLINE')) this.next();
+    this.expectReserved('do');
+    const body = this.parseStatementListUntil(['done']);
+    this.expectReserved('done');
+    const stmt: Statement = {
+      type: 'For', arithFor: true, body,
+      arithInit: (clauses[0] ?? '').trim(),
+      arithCond: (clauses[1] ?? '').trim(),
+      arithIncr: (clauses[2] ?? '').trim(),
+    };
+    this.attachTrailingRedirects(stmt);
+    return stmt;
+  }
+
+  private parseSelect(): Statement {
+    this.next(); // 'select'
+    const v = this.next();
+    if (v?.type !== 'WORD') throw new SyntaxError('shell: syntax error: expected select variable');
+    let words: string[] | undefined;
+    if (this.atReserved('in')) {
+      this.next();
+      words = [];
+      while (this.peek() && !this.atType('SEMI') && !this.atType('NEWLINE') && !this.atReserved('do')) {
+        words.push(this.next()!.raw);
+      }
+    }
+    while (this.atType('SEMI') || this.atType('NEWLINE')) this.next();
+    this.expectReserved('do');
+    const body = this.parseStatementListUntil(['done']);
+    this.expectReserved('done');
+    const stmt: Statement = { type: 'Select', varName: v.value, words, body };
+    this.attachTrailingRedirects(stmt);
+    return stmt;
+  }
+
   private parseCase(): Statement {
     this.next(); // 'case'
     const word = this.next();
-    if (word?.type !== 'WORD') throw new SyntaxError('shell: expected case word');
+    if (word?.type !== 'WORD') throw new SyntaxError('shell: syntax error: expected case word');
     this.expectReserved('in');
     this.skipNewlines();
     const clauses: CaseClause[] = [];
@@ -232,7 +309,7 @@ class Parser {
       const patterns: string[] = [];
       patterns.push(this.next()!.raw);
       while (this.atType('PIPE')) { this.next(); patterns.push(this.next()!.raw); }
-      if (!this.atType('RPAREN')) throw new SyntaxError('shell: expected ) in case');
+      if (!this.atType('RPAREN')) throw new SyntaxError('shell: syntax error: expected ) in case');
       this.next(); // )
       const body = this.parseStatementListUntil([], ['DSEMI', 'esac-word']);
       clauses.push({ patterns, body });
@@ -246,7 +323,7 @@ class Parser {
   private parseFunctionKw(): Statement {
     this.next(); // 'function'
     const name = this.next();
-    if (name?.type !== 'WORD') throw new SyntaxError('shell: expected function name');
+    if (name?.type !== 'WORD') throw new SyntaxError('shell: syntax error: expected function name');
     // optional ()
     if (this.atType('LPAREN')) { this.next(); if (this.atType('RPAREN')) this.next(); }
     this.skipNewlines();
@@ -311,7 +388,10 @@ class Parser {
   }
 
   private expectReserved(word: string): void {
-    if (!this.atReserved(word)) throw new SyntaxError(`shell: expected '${word}'`);
+    if (!this.atReserved(word)) {
+      const got = this.peek()?.value ?? 'end of input';
+      throw new SyntaxError(`shell: syntax error: expected '${word}' but got '${got}'`);
+    }
     this.next();
   }
 
@@ -383,6 +463,7 @@ class Parser {
     // Array literal: `name=(` — the value text after `=` is empty and the next
     // token is `(`. Collect the word list up to the matching `)`.
     if (rhs === '' && index === undefined && this.atType('LPAREN')) {
+      if (this.posix) this.posixReject('arrays');
       this.next(); // (
       const elems: string[] = [];
       while (this.peek() && !this.atType('RPAREN')) {
@@ -404,7 +485,7 @@ class Parser {
 
   private isRedirectToken(type: TokenType): boolean {
     return type === 'GREAT' || type === 'GREATGREAT' || type === 'GREATPIPE' || type === 'LESS'
-      || type === 'LESSLESS' || type === 'LESSLESSDASH' || type === 'LESSLESSLESS'
+      || type === 'LESSGREAT' || type === 'LESSLESS' || type === 'LESSLESSDASH' || type === 'LESSLESSLESS'
       || type === 'GREATAMP' || type === 'AMPGREAT' || type === 'AMPGREATGREAT';
   }
 
@@ -424,19 +505,20 @@ class Parser {
       case 'GREATPIPE': return this.targetRedirect('>|', fd);
       case 'GREATGREAT': return this.targetRedirect('>>', fd);
       case 'LESS': return this.targetRedirect('<', fd);
+      case 'LESSGREAT': return this.targetRedirect('<>', fd);
       case 'LESSLESSLESS': return this.hereString();
       case 'LESSLESS': return this.hereDocRedirect(false);
       case 'LESSLESSDASH': return this.hereDocRedirect(true);
       case 'GREATAMP': return this.dupRedirect('>&', fd);
       case 'AMPGREAT': return this.targetRedirect('&>', fd);
-      case 'AMPGREATGREAT': { const r = this.targetRedirect('&>', fd); r.op = '&>'; return r; }
-      default: throw new SyntaxError('shell: bad redirect');
+      case 'AMPGREATGREAT': return this.targetRedirect('&>>', fd);
+      default: throw new SyntaxError('shell: syntax error: bad redirect');
     }
   }
 
   private targetRedirect(op: RedirectOp, fd?: number): Redirect {
     const target = this.peek();
-    if (target?.type !== 'WORD') throw new SyntaxError('shell: expected redirect target');
+    if (target?.type !== 'WORD') throw new SyntaxError('shell: syntax error: expected redirect target');
     this.next();
     return { op, fd, target: target.raw };
   }
@@ -444,21 +526,22 @@ class Parser {
   private dupRedirect(op: RedirectOp, fd?: number): Redirect {
     // `2>&1` — the target is the destination fd word (e.g. `1`) or `-` to close.
     const target = this.peek();
-    if (target?.type !== 'WORD') throw new SyntaxError('shell: expected dup target');
+    if (target?.type !== 'WORD') throw new SyntaxError('shell: syntax error: expected dup target');
     this.next();
     return { op, fd, target: target.value };
   }
 
   private hereString(): Redirect {
+    if (this.posix) this.posixReject('<<< here-string');
     const target = this.peek();
-    if (target?.type !== 'WORD') throw new SyntaxError('shell: expected here-string word');
+    if (target?.type !== 'WORD') throw new SyntaxError('shell: syntax error: expected here-string word');
     this.next();
     return { op: '<<<', target: target.raw };
   }
 
   private hereDocRedirect(strip: boolean): Redirect {
     const delim = this.peek();
-    if (delim?.type !== 'WORD') throw new SyntaxError('shell: expected here-doc delimiter');
+    if (delim?.type !== 'WORD') throw new SyntaxError('shell: syntax error: expected here-doc delimiter');
     this.next();
     // The delimiter word encodes a here-doc id (assigned during extraction).
     const id = parseInt(delim.value.replace(/^__HEREDOC_(\d+)__$/, '$1'), 10);
@@ -520,7 +603,7 @@ function extractHereDocs(input: string): { src: string; heredocs: Map<number, He
   return { src: out.join('\n'), heredocs };
 }
 
-export function parse(input: string): Program {
+export function parse(input: string, options: ParseOptions = {}): Program {
   const { src, heredocs } = extractHereDocs(input);
-  return new Parser(tokenize(src), heredocs).parseProgram();
+  return new Parser(tokenize(src), heredocs, options).parseProgram();
 }

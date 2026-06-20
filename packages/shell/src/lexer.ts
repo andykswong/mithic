@@ -18,10 +18,12 @@
 export type TokenType =
   | 'WORD'
   | 'PIPE'
+  | 'PIPEAMP'       // |& (pipe stdout+stderr)
   | 'GREAT'        // > or N>
   | 'GREATGREAT'   // >> or N>>
   | 'GREATPIPE'    // >| (clobber-force, overrides noclobber)
   | 'LESS'         // < or N<
+  | 'LESSGREAT'    // <> or N<> (read-write)
   | 'LESSLESS'     // <<
   | 'LESSLESSDASH' // <<-
   | 'LESSLESSLESS' // <<<
@@ -57,6 +59,44 @@ function isBlank(ch: string): boolean {
   return ch === ' ' || ch === '\t' || ch === '\r';
 }
 
+/**
+ * Match a glob bracket expression `[...]` starting at `input[i] === '['`,
+ * returning the index just past the closing `]` (or `i` if it is not a valid
+ * bracket — e.g. an unbalanced `[`). Handles `[!...]`/`[^...]`, a leading `]`
+ * as a literal, and embedded POSIX classes `[[:name:]]`. A blank inside aborts
+ * the bracket (so `[ -f x ]` test syntax is not swallowed).
+ */
+function matchBracket(input: string, i: number): number {
+  const n = input.length;
+  let j = i + 1;
+  if (input[j] === '!' || input[j] === '^') j++;
+  if (input[j] === ']') j++; // literal leading ]
+  while (j < n) {
+    const c = input[j];
+    if (c === ']') return j + 1;
+    if (c === ' ' || c === '\t' || c === '\n') return i; // not a bracket class
+    if (c === '[' && input[j + 1] === ':') { const close = input.indexOf(':]', j + 2); if (close >= 0) { j = close + 2; continue; } }
+    j++;
+  }
+  return i;
+}
+
+/**
+ * Match a process-substitution group `<(...)` / `>(...)` at `input[i]`,
+ * returning the index past the closing `)` (or `i` if unbalanced).
+ */
+function procSub(input: string, i: number): number {
+  const n = input.length;
+  let j = i + 2;
+  let depth = 1;
+  while (j < n && depth > 0) {
+    if (input[j] === '(') depth++;
+    else if (input[j] === ')') { depth--; if (depth === 0) return j + 1; }
+    j++;
+  }
+  return i;
+}
+
 interface OpMatch { type: TokenType; len: number; }
 
 /** Try to match an operator at position i. Returns undefined if none. */
@@ -70,10 +110,13 @@ function matchOperator(input: string, i: number): OpMatch | undefined {
   // 2-char
   if (s.startsWith('&&', i)) return { type: 'AND_IF', len: 2 };
   if (s.startsWith('||', i)) return { type: 'OR_IF', len: 2 };
+  if (s.startsWith('|&', i)) return { type: 'PIPEAMP', len: 2 };
   if (s.startsWith('>>', i)) return { type: 'GREATGREAT', len: 2 };
   if (s.startsWith('>|', i)) return { type: 'GREATPIPE', len: 2 };
   if (s.startsWith('<<', i)) return { type: 'LESSLESS', len: 2 };
+  if (s.startsWith('<>', i)) return { type: 'LESSGREAT', len: 2 };
   if (s.startsWith('>&', i)) return { type: 'GREATAMP', len: 2 };
+  if (s.startsWith('<&', i)) return { type: 'GREATAMP', len: 2 };
   if (s.startsWith('&>', i)) return { type: 'AMPGREAT', len: 2 };
   if (s.startsWith(';;', i)) return { type: 'DSEMI', len: 2 };
   if (s.startsWith('((', i)) return { type: 'DLPAREN', len: 2 };
@@ -120,8 +163,17 @@ export function tokenize(input: string): Token[] {
       continue;
     }
 
+    // Process substitution `<(...)` / `>(...)` at word start is a WORD, not a
+    // redirect operator — handle before matchOperator would split off `<`/`>`.
+    if ((ch === '<' || ch === '>') && input[i + 1] === '(') {
+      const grp = procSub(input, i);
+      if (grp > i) {
+        // fall through into WORD accumulation starting at i (handled below)
+      }
+    }
+
     const op = matchOperator(input, i);
-    if (op) {
+    if (op && !((ch === '<' || ch === '>') && input[i + 1] === '(')) {
       tokens.push({ type: op.type, value: input.slice(i, i + op.len), raw: input.slice(i, i + op.len) });
       i += op.len;
       continue;
@@ -133,6 +185,37 @@ export function tokenize(input: string): Token[] {
     while (i < n) {
       const c = input[i];
       if (isBlank(c)) break;
+
+      // process substitution `<(...)` / `>(...)` — keep the balanced group inside
+      // the WORD so it isn't split as a redirect + subshell.
+      if ((c === '<' || c === '>') && input[i + 1] === '(') {
+        const grp = procSub(input, i);
+        if (grp > i) { const t = input.slice(i, grp); value += t; raw += t; i = grp; continue; }
+      }
+
+      // extglob group `@(...)` `?(...)` `*(...)` `+(...)` `!(...)` — keep the
+      // balanced parenthesised group inside the WORD so case/[[ ]] patterns
+      // tokenize as one word (the executor decides whether extglob is enabled).
+      if ('?*+@!'.includes(c) && input[i + 1] === '(') {
+        const start = i;
+        i += 2;
+        let depth = 1;
+        while (i < n && depth > 0) {
+          if (input[i] === '(') depth++;
+          else if (input[i] === ')') { depth--; if (depth === 0) { i++; break; } }
+          i++;
+        }
+        const grp = input.slice(start, i);
+        value += grp; raw += grp;
+        continue;
+      }
+
+      // bracket class `[...]` (incl. POSIX `[[:class:]]`) — keep intact in the WORD.
+      if (c === '[') {
+        const end = matchBracket(input, i);
+        if (end > i) { const grp = input.slice(i, end); value += grp; raw += grp; i = end; continue; }
+      }
+
       if (matchOperator(input, i)) break;
 
       if (c === '\\') {

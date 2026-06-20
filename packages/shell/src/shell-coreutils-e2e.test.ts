@@ -56,7 +56,7 @@ async function bootShell(files: Record<string, string> = {}): Promise<{
   return {
     async run(script) {
       const { pid, stdout } = await kernel.spawn(guestUrl, {
-        args: ['shell', script],
+        args: ['bash', '-c', script],
         capabilities: [{ type: 'process' }, ...FS_RW],
         captureStdout: true,
       });

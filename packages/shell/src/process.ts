@@ -23,7 +23,7 @@ import type {
   SpawnHandle,
   SpawnParams,
 } from './kernel-client.ts';
-import { parse } from './parser.ts';
+import { parseCliArgs, VERSION, HELP } from './cli.ts';
 
 /**
  * Build an {@link FsClient} over the guest `fs/*` syscalls. Used for redirect
@@ -249,22 +249,44 @@ export default async function main(boot: unknown): Promise<void> {
 
   let code = 0;
   try {
-    // Script source: argv[1] (argv[0] is the program name), else read stdin.
-    // Remaining argv become positional params ($1..). With `-c SCRIPT a b`, the
-    // POSIX convention applies; here we keep it simple: argv[1] is the script,
-    // argv[2..] are positionals.
-    const fromArgs = guest.args.length > 1;
-    const script = fromArgs ? guest.args[1] : await readAll(guest);
-    const positional = fromArgs ? guest.args.slice(2) : [];
+    // CLI/argv front-end (H1): argv[0] is the program name, argv[1..] are the
+    // shell arguments. Recognises -c/-s/-e/-u/-x/-v/-C/--posix/--version/--help/--,
+    // $0 override, and positional params per POSIX.
+    const argv0 = guest.args[0] ?? 'sh';
+    const env = { ...guest.env };
+    const cli = parseCliArgs(guest.args.slice(1), argv0, env);
+
+    if (cli.error) { onStderr(cli.error + '\n'); guest.exit(2); return; }
+    if (cli.action === 'version') { onStdout(VERSION + '\n'); await Promise.all(writes); guest.exit(0); return; }
+    if (cli.action === 'help') { onStdout(HELP); await Promise.all(writes); guest.exit(0); return; }
+
     const fsClient = makeFsClient(guest);
+
+    // Script source: a `-c` command string, a script FILE read from the VFS, or
+    // (default) stdin.
+    let script: string;
+    if (cli.commandString !== undefined) {
+      script = cli.commandString;
+    } else if (cli.scriptFile !== undefined) {
+      try {
+        script = await Promise.resolve(fsClient.fsRead(fsClient.fsOpen(cli.scriptFile, { read: true })));
+      } catch {
+        onStderr(`${cli.name ?? 'sh'}: ${cli.scriptFile}: No such file or directory\n`);
+        await Promise.all(writes);
+        guest.exit(127);
+        return;
+      }
+    } else {
+      script = await readAll(guest);
+    }
 
     const executor = new Executor(
       makeKernelClient(guest, onStderr),
       {
         cwd: guest.cwd,
-        env: { ...guest.env },
-        positional,
-        name: guest.args[0] ?? 'sh',
+        env,
+        positional: cli.positional,
+        name: cli.name ?? argv0,
         pid: guest.pid,
       },
       // The shell resolves bare command names by deferring to the KERNEL: it
@@ -274,7 +296,13 @@ export default async function main(boot: unknown): Promise<void> {
       // and glob through the guest's fs/* syscalls (best-effort; needs a vfs cap).
       { onStdout, onStderr, resolve: (name) => name, fs: fsClient },
     );
-    code = await executor.run(parse(script));
+    // Pre-set the requested options (POSIX mode + -e/-u/-x/-v/-C).
+    if (cli.posix) executor.setOption('posix', true);
+    for (const opt of cli.options) executor.setOption(opt, true);
+    // `-v` (verbose): echo the input to stderr before running.
+    if (executor.getOption('verbose')) onStderr(script.endsWith('\n') ? script : script + '\n');
+
+    code = await executor.exec(script);
     await fsClient.flush();
   } catch (err) {
     onStderr(`shell: ${(err as Error).message}\n`);
