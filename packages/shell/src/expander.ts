@@ -17,6 +17,8 @@
  * `{$V,b}` splits on the literal braces and only then expands `$V` in each arm.
  */
 import { evalArith } from './arith.ts';
+import { globToReSource, globToRegExp, isGlobPattern } from './glob.ts';
+import type { GlobOptions } from './glob.ts';
 
 /**
  * The shell-state surface the expander reads/writes. Implemented by the
@@ -97,6 +99,7 @@ export class Expander {
     const braced = this.env.posix?.() ? [word] : expandBraces(word);
     const out: string[] = [];
     let anyEmptyByAt = false;
+    let nullglobbed = false;
     for (const braw of braced) {
       // 2. tilde expansion (leading unquoted `~` → $HOME), then substitution.
       const b = this.tildeExpand(braw);
@@ -107,14 +110,15 @@ export class Expander {
       // 4. pathname expansion per field (unquoted only)
       for (const f of fields) {
         const globbed = await this.maybeGlob(f);
+        if (globbed.nullglobbed) nullglobbed = true;
         out.push(...globbed.fields);
       }
     }
-    // A word whose sole content was a `$@`/`${arr[@]}` that expanded to nothing
-    // contributes zero fields (bash). Other empty results keep the single-''
-    // field this expander historically produces.
+    // A word whose sole content was a `$@`/`${arr[@]}` that expanded to nothing,
+    // OR a nullglob pattern that matched nothing, contributes zero fields (bash).
+    // Other empty results keep the single-'' field.
     if (out.length > 0) return out;
-    return anyEmptyByAt ? [] : [''];
+    return (anyEmptyByAt || nullglobbed) ? [] : [''];
   }
 
   /** Expand only $-substitutions (no brace, splitting, or glob). For here-doc lines. */
@@ -520,13 +524,13 @@ export class Expander {
     if (rest[0] === '#') {
       const longest = rest[1] === '#';
       const pat = await this.expandToString(rest.slice(longest ? 2 : 1));
-      return stripPrefix(value, pat, longest);
+      return stripPrefix(value, pat, longest, this.globOpts());
     }
     // ${var%pat} ${var%%pat} suffix strip
     if (rest[0] === '%') {
       const longest = rest[1] === '%';
       const pat = await this.expandToString(rest.slice(longest ? 2 : 1));
-      return stripSuffix(value, pat, longest);
+      return stripSuffix(value, pat, longest, this.globOpts());
     }
     // ${var/pat/repl} ${var//pat/repl}
     if (rest[0] === '/') {
@@ -535,7 +539,7 @@ export class Expander {
       const slash = findUnescaped(spec, '/');
       const pat = await this.expandToString(slash >= 0 ? spec.slice(0, slash) : spec);
       const repl = slash >= 0 ? await this.expandToString(spec.slice(slash + 1)) : '';
-      return substitute(value, pat, repl, all);
+      return substitute(value, pat, repl, all, this.globOpts());
     }
     // ${var^} ${var^^} ${var,} ${var,,} — case modification (optionally gated by
     // a glob pattern of which chars to convert; default matches every char).
@@ -544,7 +548,7 @@ export class Expander {
       const all = rest[1] === rest[0];
       const patStr = rest.slice(all ? 2 : 1);
       const pat = patStr === '' ? '?' : await this.expandToString(patStr);
-      const re = new RegExp('^' + globToReSource(pat) + '$');
+      const re = new RegExp('^' + globToReSource(pat, this.globOpts()) + '$');
       const conv = (ch: string): string => (re.test(ch) ? (upper ? ch.toUpperCase() : ch.toLowerCase()) : ch);
       if (all) return value.split('').map(conv).join('');
       return value.length === 0 ? value : conv(value[0]) + value.slice(1);
@@ -567,50 +571,90 @@ export class Expander {
     return value;
   }
 
-  /** Glob a field against the VFS; unmatched stays literal. */
-  private async maybeGlob(field: string): Promise<{ fields: string[] }> {
-    if (!/[*?[]/.test(field)) return { fields: [field] };
-    const matches = await this.globPath(field);
-    return { fields: matches.length > 0 ? matches : [field] };
+  /**
+   * Glob options for STRING-matching contexts (parameter `${var#pat}`, case-mod):
+   * `*`/`?` cross `/` (pathSegment:false). extglob honored; nocaseglob applies.
+   */
+  private globOpts(): GlobOptions {
+    return { extglob: this.env.shopt?.('extglob') ?? false, nocase: this.env.shopt?.('nocaseglob') ?? false, pathSegment: false };
   }
 
-  private async globPath(pattern: string): Promise<string[]> {
+  /** Glob options for PATHNAME expansion: `*`/`?` do NOT cross `/` (pathSegment:true). */
+  private pathGlobOpts(): GlobOptions {
+    return { extglob: this.env.shopt?.('extglob') ?? false, nocase: this.env.shopt?.('nocaseglob') ?? false, pathSegment: true };
+  }
+
+  /**
+   * Glob a field against the VFS. An unmatched pattern stays literal UNLESS
+   * `nullglob` is on (then it produces zero fields). `null` ⇒ the field had no
+   * glob metacharacter.
+   */
+  private async maybeGlob(field: string): Promise<{ fields: string[]; nullglobbed?: boolean }> {
+    const extglob = this.env.shopt?.('extglob') ?? false;
+    const globstar = this.env.shopt?.('globstar') ?? false;
+    if (!isGlobPattern(field, extglob)) return { fields: [field] };
+    const matches = await this.globPath(field, globstar);
+    if (matches.length > 0) return { fields: matches };
+    // nullglob: a non-matching pattern expands to nothing (zero fields).
+    if (this.env.shopt?.('nullglob')) return { fields: [], nullglobbed: true };
+    return { fields: [field] };
+  }
+
+  private async globPath(pattern: string, globstar: boolean): Promise<string[]> {
     const absolute = pattern.startsWith('/');
     const baseDir = absolute ? '/' : (this.env.cwd ?? '.');
     const segments = pattern.split('/').filter((s, idx) => !(idx === 0 && s === ''));
-    const results = await this.globSegments(baseDir, segments, absolute);
+    const results = await this.globSegments(baseDir, segments, globstar);
     results.sort();
-    // Return relative or absolute consistent with the pattern.
     return results.map((r) => {
       if (absolute) return r;
-      // strip the baseDir prefix to keep relative form
       const prefix = baseDir === '.' ? '' : baseDir.replace(/\/$/, '') + '/';
       return r.startsWith(prefix) ? r.slice(prefix.length) : r;
     });
   }
 
-  private async globSegments(dir: string, segments: string[], absolute: boolean): Promise<string[]> {
+  private async globSegments(dir: string, segments: string[], globstar: boolean): Promise<string[]> {
     if (segments.length === 0) return [dir];
     const [seg, ...rest] = segments;
-    if (seg === '') return this.globSegments(dir, rest, absolute);
+    if (seg === '') return this.globSegments(dir, rest, globstar);
+    const opts = this.pathGlobOpts();
+    const dotglob = this.env.shopt?.('dotglob') ?? false;
 
-    if (!/[*?[]/.test(seg)) {
-      // literal segment: descend without listing
+    // globstar `**`: match this directory and all descendants (recursively).
+    if (globstar && seg === '**') {
+      const here = await this.globSegments(dir, rest, globstar);
+      const out = [...here];
+      const entries = await this.env.listDir(dir);
+      for (const e of entries ?? []) {
+        if (e.startsWith('.') && !dotglob) continue;
+        const full = joinPath(dir, e);
+        if (await this.isDir(full)) out.push(...await this.globSegments(full, segments, globstar));
+      }
+      return out;
+    }
+
+    if (!isGlobPattern(seg, opts.extglob)) {
       const next = joinPath(dir, seg);
-      return this.globSegments(next, rest, absolute);
+      return this.globSegments(next, rest, globstar);
     }
 
     const entries = await this.env.listDir(dir);
     if (!entries) return [];
-    const re = globToRegExp(seg);
-    const matched = entries.filter((e) => re.test(e) && !(e.startsWith('.') && !seg.startsWith('.')));
+    const re = globToRegExp(seg, opts);
+    // dotfiles are hidden unless the pattern starts with `.` OR dotglob is on.
+    const matched = entries.filter((e) => re.test(e) && !(e.startsWith('.') && !seg.startsWith('.') && !dotglob));
     const out: string[] = [];
     for (const m of matched) {
       const full = joinPath(dir, m);
       if (rest.length === 0) out.push(full);
-      else out.push(...await this.globSegments(full, rest, absolute));
+      else out.push(...await this.globSegments(full, rest, globstar));
     }
     return out;
+  }
+
+  private async isDir(path: string): Promise<boolean> {
+    const s = await this.env.statPath?.(path);
+    return s?.dir ?? false;
   }
 }
 
@@ -820,55 +864,23 @@ function stripTrailingNewlines(s: string): string {
 
 // ── pattern matching (glob-style for ${} strip/subst and pathname) ───────────
 
-/** Convert a shell glob pattern to a RegExp anchored to the whole string. */
-function globToRegExp(pat: string): RegExp {
-  return new RegExp('^' + globToReSource(pat) + '$');
-}
-
-function globToReSource(pat: string): string {
-  let re = '';
-  let i = 0;
-  while (i < pat.length) {
-    const c = pat[i];
-    if (c === '\\') { re += escapeRe(pat[i + 1] ?? ''); i += 2; continue; }
-    if (c === '*') { re += '.*'; i++; continue; }
-    if (c === '?') { re += '.'; i++; continue; }
-    if (c === '[') {
-      let j = i + 1;
-      let neg = false;
-      if (pat[j] === '!' || pat[j] === '^') { neg = true; j++; }
-      let cls = '';
-      if (pat[j] === ']') { cls += '\\]'; j++; }
-      while (j < pat.length && pat[j] !== ']') { cls += pat[j] === '\\' ? '\\\\' : pat[j]; j++; }
-      if (j < pat.length) { re += '[' + (neg ? '^' : '') + cls + ']'; i = j + 1; continue; }
-      re += '\\['; i++; continue;
-    }
-    re += escapeRe(c); i++;
-  }
-  return re;
-}
-
-function escapeRe(c: string): string {
-  return /[.*+?^${}()|[\]\\]/.test(c) ? '\\' + c : c;
-}
-
-function stripPrefix(value: string, pat: string, longest: boolean): string {
+function stripPrefix(value: string, pat: string, longest: boolean, opts: GlobOptions): string {
   // try match anchored at start; longest vs shortest
   const lengths = [];
   for (let k = 0; k <= value.length; k++) lengths.push(k);
   const candidates = longest ? lengths.reverse() : lengths;
-  const re = new RegExp('^' + globToReSource(pat) + '$');
+  const re = new RegExp('^' + globToReSource(pat, opts) + '$');
   for (const len of candidates) {
     if (re.test(value.slice(0, len))) return value.slice(len);
   }
   return value;
 }
 
-function stripSuffix(value: string, pat: string, longest: boolean): string {
+function stripSuffix(value: string, pat: string, longest: boolean, opts: GlobOptions): string {
   const lengths = [];
   for (let k = 0; k <= value.length; k++) lengths.push(k);
   const candidates = longest ? lengths.reverse() : lengths;
-  const re = new RegExp('^' + globToReSource(pat) + '$');
+  const re = new RegExp('^' + globToReSource(pat, opts) + '$');
   for (const len of candidates) {
     const start = value.length - len;
     if (re.test(value.slice(start))) return value.slice(0, start);
@@ -876,14 +888,14 @@ function stripSuffix(value: string, pat: string, longest: boolean): string {
   return value;
 }
 
-function substitute(value: string, pat: string, repl: string, all: boolean): string {
+function substitute(value: string, pat: string, repl: string, all: boolean, opts: GlobOptions): string {
   if (pat === '') return value;
   // Anchors: leading '#' = match at start, trailing '%' = match at end.
   let anchorStart = false, anchorEnd = false;
   let p = pat;
   if (p[0] === '#') { anchorStart = true; p = p.slice(1); }
   if (p[p.length - 1] === '%') { anchorEnd = true; p = p.slice(0, -1); }
-  const reSrc = globToReSource(p);
+  const reSrc = globToReSource(p, opts);
   if (anchorStart) return value.replace(new RegExp('^' + reSrc), repl);
   if (anchorEnd) return value.replace(new RegExp(reSrc + '$'), repl);
   const flags = all ? 'g' : '';

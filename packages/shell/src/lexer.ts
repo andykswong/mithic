@@ -59,6 +59,28 @@ function isBlank(ch: string): boolean {
   return ch === ' ' || ch === '\t' || ch === '\r';
 }
 
+/**
+ * Match a glob bracket expression `[...]` starting at `input[i] === '['`,
+ * returning the index just past the closing `]` (or `i` if it is not a valid
+ * bracket — e.g. an unbalanced `[`). Handles `[!...]`/`[^...]`, a leading `]`
+ * as a literal, and embedded POSIX classes `[[:name:]]`. A blank inside aborts
+ * the bracket (so `[ -f x ]` test syntax is not swallowed).
+ */
+function matchBracket(input: string, i: number): number {
+  const n = input.length;
+  let j = i + 1;
+  if (input[j] === '!' || input[j] === '^') j++;
+  if (input[j] === ']') j++; // literal leading ]
+  while (j < n) {
+    const c = input[j];
+    if (c === ']') return j + 1;
+    if (c === ' ' || c === '\t' || c === '\n') return i; // not a bracket class
+    if (c === '[' && input[j + 1] === ':') { const close = input.indexOf(':]', j + 2); if (close >= 0) { j = close + 2; continue; } }
+    j++;
+  }
+  return i;
+}
+
 interface OpMatch { type: TokenType; len: number; }
 
 /** Try to match an operator at position i. Returns undefined if none. */
@@ -138,6 +160,30 @@ export function tokenize(input: string): Token[] {
     while (i < n) {
       const c = input[i];
       if (isBlank(c)) break;
+
+      // extglob group `@(...)` `?(...)` `*(...)` `+(...)` `!(...)` — keep the
+      // balanced parenthesised group inside the WORD so case/[[ ]] patterns
+      // tokenize as one word (the executor decides whether extglob is enabled).
+      if ('?*+@!'.includes(c) && input[i + 1] === '(') {
+        const start = i;
+        i += 2;
+        let depth = 1;
+        while (i < n && depth > 0) {
+          if (input[i] === '(') depth++;
+          else if (input[i] === ')') { depth--; if (depth === 0) { i++; break; } }
+          i++;
+        }
+        const grp = input.slice(start, i);
+        value += grp; raw += grp;
+        continue;
+      }
+
+      // bracket class `[...]` (incl. POSIX `[[:class:]]`) — keep intact in the WORD.
+      if (c === '[') {
+        const end = matchBracket(input, i);
+        if (end > i) { const grp = input.slice(i, end); value += grp; raw += grp; i = end; continue; }
+      }
+
       if (matchOperator(input, i)) break;
 
       if (c === '\\') {

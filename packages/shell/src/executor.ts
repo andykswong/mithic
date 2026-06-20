@@ -21,6 +21,8 @@
 import type { Program, Redirect, SimpleCommand, Statement } from './ast.ts';
 import { parse } from './parser.ts';
 import { evalArith } from './arith.ts';
+import { globMatch } from './glob.ts';
+import type { GlobOptions } from './glob.ts';
 import { Expander, ExpansionError } from './expander.ts';
 import type { ShellEnv } from './expander.ts';
 import { isBuiltin, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES } from './builtins.ts';
@@ -197,6 +199,11 @@ export class Executor implements ShellEnv {
 
   /** Read a `shopt` glob option (extglob/globstar/nullglob/dotglob/...). */
   shopt(name: string): boolean { return this.shoptStore[name] ?? false; }
+
+  /** Glob options for case/`[[ ]]` matching: extglob + nocasematch; `*` crosses `/`. */
+  private globMatchOpts(): GlobOptions {
+    return { extglob: this.shoptStore.extglob, nocase: this.shoptStore.nocasematch, pathSegment: false };
+  }
 
   /** The short-flag letters of currently-enabled options, for `$-`. */
   private currentFlags(): string {
@@ -626,7 +633,7 @@ export class Executor implements ShellEnv {
     for (const clause of stmt.clauses ?? []) {
       for (const rawPat of clause.patterns) {
         const pat = await exp.expandToString(rawPat);
-        if (matchCasePattern(word, pat)) {
+        if (globMatch(word, pat, this.globMatchOpts())) {
           return this.execList(clause.body);
         }
       }
@@ -715,10 +722,10 @@ export class Executor implements ShellEnv {
       try { return new RegExp(words[2]).test(words[0]); } catch { return false; }
     }
     if (words.length === 3 && (words[1] === '==' || words[1] === '=')) {
-      return matchCasePattern(words[0], words[2]);
+      return globMatch(words[0], words[2], this.globMatchOpts());
     }
     if (words.length === 3 && words[1] === '!=') {
-      return !matchCasePattern(words[0], words[2]);
+      return !globMatch(words[0], words[2], this.globMatchOpts());
     }
     if (words.length === 2 && words[0].startsWith('-')) {
       return this.condFileTest(words[0], words[1]);
@@ -1399,32 +1406,6 @@ function describeStages(stages: SimpleCommand[]): string {
 function describeStatement(stmt: Statement): string {
   if (stmt.type === 'Pipeline') return describeStages(stmt.stages ?? []);
   return stmt.type.toLowerCase();
-}
-
-/** Match a shell case/`[[ ]]` glob pattern against a string. */
-function matchCasePattern(value: string, pattern: string): boolean {
-  let re = '';
-  let i = 0;
-  while (i < pattern.length) {
-    const c = pattern[i];
-    if (c === '\\') { re += escapeRe(pattern[i + 1] ?? ''); i += 2; continue; }
-    if (c === '*') { re += '.*'; i++; continue; }
-    if (c === '?') { re += '.'; i++; continue; }
-    if (c === '[') {
-      let j = i + 1; let neg = false;
-      if (pattern[j] === '!' || pattern[j] === '^') { neg = true; j++; }
-      let cls = '';
-      while (j < pattern.length && pattern[j] !== ']') { cls += pattern[j]; j++; }
-      if (j < pattern.length) { re += '[' + (neg ? '^' : '') + cls + ']'; i = j + 1; continue; }
-      re += '\\['; i++; continue;
-    }
-    re += escapeRe(c); i++;
-  }
-  try { return new RegExp('^' + re + '$').test(value); } catch { return value === pattern; }
-}
-
-function escapeRe(c: string): string {
-  return /[.*+?^${}()|[\]\\]/.test(c) ? '\\' + c : c;
 }
 
 /** test(1)-style argument evaluation for `[[ ]]` fallback (string truthiness, numeric/string comparisons). */
