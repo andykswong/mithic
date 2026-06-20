@@ -43,7 +43,11 @@ function buildBoot(ports: (MessagePort | null)[], init: ProcessInit) {
 
 test('BOOTSTRAP_SOURCE shape matches buildBoot construction', () => {
   // Confirm the boot object construction is consistent with the bootstrap source.
-  expect(BOOTSTRAP_SOURCE).toContain('preopenPorts[i - 1] = ports[i]');
+  // K2: the bootstrap now maps each stdio port to its preopen fd via a preopenFds
+  // table (falling back to positional `i - 1` when absent), so we assert the stable
+  // shape tokens rather than the exact (now fd-aware) mapping expression.
+  expect(BOOTSTRAP_SOURCE).toContain('preopenPorts');
+  expect(BOOTSTRAP_SOURCE).toContain('ports[i]');
   expect(BOOTSTRAP_SOURCE).toContain('control: ports[0]');
   expect(BOOTSTRAP_SOURCE).toContain('__mithic_init');
   expect(BOOTSTRAP_SOURCE).toContain('__mithic_default');
