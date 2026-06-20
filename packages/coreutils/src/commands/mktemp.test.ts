@@ -53,6 +53,21 @@ describe('mktemp', () => {
     expect(h.err()).toContain('too few X\'s');
   });
 
+  test('--suffix appends a suffix after the filled template (M23)', async () => {
+    const h = makeIO({ args: ['mktemp', '--suffix', '.txt', 'f.XXXXXX'], files: { '/tmp/.keep': '' } });
+    expect(await mktempCommand(h.io)).toBe(0);
+    const path = h.out().trim();
+    expect(path.startsWith('/tmp/f.')).toBe(true);
+    expect(path.endsWith('.txt')).toBe(true);
+    expect((await h.fs.stat(path)).type).toBe('file');
+  });
+
+  test('--suffix is honored on a dry-run too', async () => {
+    const h = makeIO({ args: ['mktemp', '-u', '--suffix=.log', 'x.XXXXXX'], files: { '/tmp/.keep': '' } });
+    expect(await mktempCommand(h.io)).toBe(0);
+    expect(h.out().trim().endsWith('.log')).toBe(true);
+  });
+
   test('two calls in the same process do not collide', async () => {
     const h1 = makeIO({ args: ['mktemp'], files: { '/tmp/.keep': '' }, pid: 99 });
     const h2 = makeIO({ args: ['mktemp'], files: { '/tmp/.keep': '' }, pid: 99 });

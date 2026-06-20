@@ -91,11 +91,14 @@ const mktempCommand: CommandFn = async (io: CommandIO): Promise<number> => {
 
     const pid = await getPid(io);
     const seed = parseInt(io.env.MKTEMP_SEED ?? '', 10) || 0;
+    // `--suffix=SUF`: appended after the filled template (GNU mktemp). The X run
+    // stays the trailing run of `base`; the suffix lands after it.
+    const suffix = typeof flags.suffix === 'string' ? flags.suffix : '';
 
     // Try a bounded number of candidates, bumping the counter each time.
     for (let attempt = 0; attempt < 1000; attempt++) {
       const fill = entropy(pid, ++attemptCounter, seed, nX);
-      const candidate = fillTemplate(base, fill);
+      const candidate = fillTemplate(base, fill) + suffix;
       if (flags.u) { await writeLine(out, candidate); return 0; } // dry-run: don't create
 
       if ((await typeOf(io, candidate)) !== undefined) continue; // collision: retry

@@ -16,9 +16,15 @@ import { createCoreutilsResolver } from './index.ts';
 
 const FS_READ = [{ type: 'fs' as const, paths: ['/'], operations: ['read' as const] }];
 const FS_RW = [{ type: 'fs' as const, paths: ['/'], operations: ['read' as const, 'write' as const] }];
+// fs read + a process cap so `find -exec` can spawn child commands via process/pipeline.
+const FS_PROC = [
+  { type: 'fs' as const, paths: ['/'], operations: ['read' as const] },
+  { type: 'process' as const },
+];
 
 async function bootKernel(files: Record<string, string>): Promise<{
   spawn: (args: string[], cap?: boolean) => Promise<{ stdout: string; code: number }>;
+  execSpawn: (args: string[]) => Promise<{ stdout: string; code: number }>;
   rwSpawn: (args: string[]) => Promise<{ stdout: string; code: number }>;
   spawnRW: (args: string[]) => Promise<{ stdout: string; code: number }>;
   readFile: (path: string) => Promise<string>;
@@ -48,6 +54,14 @@ async function bootKernel(files: Record<string, string>): Promise<{
         capabilities: cap ? FS_READ : [],
         captureStdout: true,
       });
+      const { code: exitCode } = await kernel.wait(pid);
+      const bytes = stdout ? await stdout : new Uint8Array();
+      return { stdout: new TextDecoder().decode(bytes), code: exitCode };
+    },
+    // Spawn with fs-read + a process cap (for `find -exec`, which spawns children).
+    async execSpawn(args: string[]) {
+      const code = resolveCommand(args[0], '/', {})!;
+      const { pid, stdout } = await kernel.spawn(code, { args, capabilities: FS_PROC, captureStdout: true });
       const { code: exitCode } = await kernel.wait(pid);
       const bytes = stdout ? await stdout : new Uint8Array();
       return { stdout: new TextDecoder().decode(bytes), code: exitCode };
@@ -327,6 +341,29 @@ test('find -name through the kernel', async () => {
   expect(out.code).toBe(0);
   const lines = out.stdout.trim().split('\n').sort();
   expect(lines).toEqual(['/r/a.txt', '/r/sub/c.txt']);
+}, 20000);
+
+test('find -exec cat {} \\; spawns the real coreutil per match end-to-end', async () => {
+  const k = await bootKernel({ '/r/a.txt': 'AAA\n', '/r/sub/c.txt': 'CCC\n' });
+  // find spawns `cat <path>` for each .txt match; child stdout is forwarded.
+  const out = await k.execSpawn(['find', '/r', '-name', '*.txt', '-exec', 'cat', '{}', ';']);
+  expect(out.code).toBe(0);
+  // Order is deterministic (sorted walk): a.txt then sub/c.txt.
+  expect(out.stdout).toBe('AAA\nCCC\n');
+}, 20000);
+
+test('find -exec echo {} + batches all matches into one spawn end-to-end', async () => {
+  const k = await bootKernel({ '/r/a.txt': '1', '/r/b.txt': '2' });
+  const out = await k.execSpawn(['find', '/r', '-name', '*.txt', '-exec', 'echo', '{}', '+']);
+  expect(out.code).toBe(0);
+  expect(out.stdout).toBe('/r/a.txt /r/b.txt\n');
+}, 20000);
+
+test('find -path crosses / for whole-path matching end-to-end', async () => {
+  const k = await bootKernel({ '/r/a.txt': '1', '/r/sub/c.txt': '2', '/r/sub/deep/d.txt': '3' });
+  const out = await k.spawn(['find', '/r', '-path', '/r/*/c.txt']);
+  expect(out.code).toBe(0);
+  expect(out.stdout.trim()).toBe('/r/sub/c.txt');
 }, 20000);
 
 test('a write command without write caps is denied (EACCES → exit 1)', async () => {
