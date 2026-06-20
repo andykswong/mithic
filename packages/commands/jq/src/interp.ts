@@ -23,10 +23,36 @@ export class JQError extends Error {
   }
 }
 
+/**
+ * `halt` / `halt_error` control signal. Like {@link BreakSignal}, this is NOT a
+ * {@link JQError}, so `try`/`catch`, `?`, `//`, and `recurse` do not swallow it —
+ * it unwinds the whole program (matching real jq). It still carries a `value`
+ * and a `__halt` marker so the CLI handler can map it to an exit code.
+ */
+export class HaltError extends Error {
+  readonly __halt = true as const;
+  code: number;
+  value: unknown;
+  constructor(code: number, value?: unknown) {
+    super('halt');
+    this.code = code;
+    this.value = value;
+  }
+}
+
 /** Internal control signal for `label $x | … break $x`. */
 export class BreakSignal {
   name: string;
   constructor(name: string) { this.name = name; }
+}
+
+/**
+ * A thrown value is catchable by `try`/`?`/`//`/`recurse` only if it is an
+ * ordinary jq error. Control-flow signals (`halt`/`halt_error`, `label`/`break`)
+ * are re-raised so they unwind past the catch site, like real jq.
+ */
+export function isCatchable(e: unknown): boolean {
+  return e instanceof JQError && !(e instanceof HaltError);
 }
 
 /** A bound user function: its formal params, body, and the env it closed over. */
@@ -104,6 +130,10 @@ export interface Context {
   env: Record<string, string>;
   /** Named CLI args ($name) from --arg/--argjson, exposed via $ARGS too. */
   args: Record<string, unknown>;
+  /** Remaining input stream that `input`/`inputs` pull from (CLI-provided). */
+  inputs?: Iterator<unknown>;
+  /** Sink for `debug`/`debug(msg)` output (the CLI routes it to stderr). */
+  debug?: (msg: unknown) => void;
 }
 
 /** Evaluate a program node against `input`, yielding each output value. */
@@ -254,7 +284,7 @@ export function* evalNode(node: Node, input: unknown, env: Env, ctx: Context): G
       try {
         yield* evalNode(node.body, input, env, ctx);
       } catch (e) {
-        if (e instanceof JQError) return;
+        if (isCatchable(e)) return;
         throw e;
       }
       return;
@@ -271,8 +301,9 @@ export function* evalNode(node: Node, input: unknown, env: Env, ctx: Context): G
       try {
         yield* evalNode(node.body, input, env, ctx);
       } catch (e) {
-        if (e instanceof JQError) {
-          if (node.catch) yield* evalNode(node.catch, e.value, env, ctx);
+        // Re-raise control-flow signals (halt/halt_error, break) past `try`.
+        if (isCatchable(e)) {
+          if (node.catch) yield* evalNode(node.catch, (e as JQError).value, env, ctx);
           return;
         }
         throw e;
@@ -385,7 +416,7 @@ function* bindAlternatives(patterns: Pattern[], i: number, value: unknown, input
     const cenv = bindPattern(patterns[i], value, env, ctx);
     yield* evalNode(body, input, cenv, ctx);
   } catch (e) {
-    if (!isLast && e instanceof JQError) {
+    if (!isLast && isCatchable(e)) {
       yield* bindAlternatives(patterns, i + 1, value, input, env, ctx, body);
       return;
     }

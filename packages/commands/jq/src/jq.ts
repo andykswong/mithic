@@ -12,7 +12,7 @@
  */
 import { defineCommand, readAllText, writeString } from './harness.ts';
 import type { CommandFn, CommandIO } from './harness.ts';
-import { compile, JQError } from './engine.ts';
+import { compile, HaltError, JQError } from './engine.ts';
 import { formatOutput, parseInputs, parseJqArgs } from './cli.ts';
 
 const jqCommand: CommandFn = async (io: CommandIO): Promise<number> => {
@@ -28,15 +28,13 @@ const jqCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     return 3;
   }
 
-  // Gather inputs. `-n` runs once with `null` input but still allows the filter
-  // to pull from `inputs` later (not supported here); plain mode reads stdin.
-  let inputs: unknown[];
-  if (opts.nullInput) {
-    inputs = [null];
-  } else {
-    const text = await readAllText(io.stdin);
-    inputs = parseInputs(text, opts);
-  }
+  // Read the whole input stream up front, then drive it through a single shared
+  // iterator so the `input`/`inputs` builtins consume from the *same* stream the
+  // main loop walks (matching jq). `-n` runs the program once with `null` for the
+  // initial input, but the stdin stream is still parsed so `input`/`inputs` can
+  // pull from it.
+  const streamValues = parseInputs(await readAllText(io.stdin), opts);
+  const stream: Iterator<unknown> = streamValues[Symbol.iterator]();
 
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
@@ -44,26 +42,49 @@ const jqCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   let exitCode = 0;
   let lastOutput: unknown = undefined;
   let produced = false;
+  // Collect debug lines and flush them as we go (jq writes them to stderr).
+  const pendingDebug: string[] = [];
+  const runOpts = {
+    env: io.env,
+    args: opts.args,
+    inputs: stream,
+    debug: (msg: unknown) => { pendingDebug.push(JSON.stringify(msg)); },
+  };
+  const flushDebug = async (): Promise<void> => {
+    while (pendingDebug.length) await writeString(err, pendingDebug.shift()! + '\n');
+  };
+
+  // Drive the main loop: under `-n` run once with null; otherwise once per
+  // top-level input pulled from the shared stream.
+  const mainInputs = (function* (): Generator<unknown> {
+    if (opts.nullInput) { yield null; return; }
+    for (;;) { const n = stream.next(); if (n.done) return; yield n.value; }
+  })();
 
   try {
-    for (const input of inputs) {
+    for (const input of mainInputs) {
       try {
-        for (const value of filter.run(input, { env: io.env, args: opts.args })) {
+        for (const value of filter.run(input, runOpts)) {
           produced = true;
           lastOutput = value;
+          await flushDebug();
           await writeString(out, formatOutput(value, opts) + sep);
         }
+        await flushDebug();
       } catch (e) {
+        await flushDebug();
+        // halt / halt_error: unwind the whole program with the requested code.
+        if (e instanceof HaltError) {
+          const h = e;
+          if (h.value !== undefined && h.value !== null) {
+            await writeString(err, typeof h.value === 'string' ? h.value : JSON.stringify(h.value) + '\n');
+          }
+          await out.close().catch(() => { /* */ });
+          await err.close().catch(() => { /* */ });
+          return h.code;
+        }
         if (e instanceof JQError) {
           const v = (e as JQError).value;
-          // halt_error: bubble the requested exit code.
-          if (v && typeof v === 'object' && (v as { __halt?: boolean }).__halt) {
-            const h = v as { code: number; value?: unknown };
-            if (h.value !== undefined) await writeString(err, typeof h.value === 'string' ? h.value : JSON.stringify(h.value) + '\n');
-            await out.close().catch(() => { /* */ });
-            await err.close().catch(() => { /* */ });
-            return h.code;
-          }
           await writeString(err, `jq: error: ${typeof v === 'string' ? v : JSON.stringify(v)}\n`);
           exitCode = 5;
         } else {
@@ -72,6 +93,7 @@ const jqCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       }
     }
   } finally {
+    await flushDebug();
     await out.close().catch(() => { /* already closed */ });
     await err.close().catch(() => { /* already closed */ });
   }

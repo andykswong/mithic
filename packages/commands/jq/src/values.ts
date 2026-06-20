@@ -123,7 +123,11 @@ export function toJSON(v: unknown, indent: number | string = 0, sortKeys = false
  * `decpt <= -4 || decpt > ndigits + 15`.
  */
 export function formatNumber(n: number): string {
-  if (!isFinite(n)) return 'null';
+  // jq 1.7: NaN renders as `null`, but +/-Infinity clamp to the largest finite
+  // double (so `infinite` prints `1.7976931348623157e+308`, not `null`).
+  if (Number.isNaN(n)) return 'null';
+  if (n === Infinity) return formatNumber(Number.MAX_VALUE);
+  if (n === -Infinity) return formatNumber(-Number.MAX_VALUE);
   if (n === 0) return Object.is(n, -0) ? '-0' : '0';
 
   const sign = n < 0 ? '-' : '';

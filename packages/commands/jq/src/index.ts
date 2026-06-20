@@ -10,7 +10,7 @@
  * The engine (lexer → parser → interpreter + builtins) is also exported from
  * `@mithic/jq/engine` for consumers that only need the language, not the process.
  */
-export { compile, run, JQError } from './engine.ts';
+export { compile, run, JQError, HaltError } from './engine.ts';
 export type { CompiledFilter, RunOptions, Context } from './engine.ts';
 export { createJqResolver, resolveJq, COMMAND_NAMES } from './resolver.ts';
 export type { JqResolverOptions } from './resolver.ts';
