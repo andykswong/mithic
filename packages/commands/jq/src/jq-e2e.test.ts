@@ -112,6 +112,48 @@ test('jq group_by + map over real JSON', async () => {
   expect(JSON.parse(out.stdout)).toEqual([{ t: 'a', sum: 4 }, { t: 'b', sum: 2 }]);
 }, 20000);
 
+test('jq halt_error sets a non-zero exit code (not swallowed by try)', async () => {
+  const k = await bootKernel();
+  const out = await k.jq('"boom"', ['-n', 'try halt_error catch "swallowed"']);
+  // halt_error unwinds past `try`; exit code is 5, nothing reaches stdout.
+  expect(out.code).toBe(5);
+  expect(out.stdout).toBe('');
+}, 20000);
+
+test('jq halt exits 0 with no output even inside try', async () => {
+  const k = await bootKernel();
+  const out = await k.jq('1', ['try halt catch "x"']);
+  expect(out.code).toBe(0);
+  expect(out.stdout).toBe('');
+}, 20000);
+
+test('jq inputs slurps the rest of the stream after the first input', async () => {
+  const k = await bootKernel();
+  const out = await k.jq('1 2 3 4', ['-c', '-n', '[inputs]']);
+  expect(out.stdout).toBe('[1,2,3,4]\n');
+}, 20000);
+
+test('jq input pulls the next value from the stream', async () => {
+  const k = await bootKernel();
+  const out = await k.jq('1 2 3', ['-c', '. + input']);
+  // input 1 → 1+2=3; then input 3 has no following value (the loop already
+  // consumed 2 via `input`), so the third top-level run errors but exits 5.
+  expect(out.stdout).toBe('3\n');
+}, 20000);
+
+test('jq @uri encodes the full reserved set through the CLI', async () => {
+  const k = await bootKernel();
+  const out = await k.jq('"a!b*c(d)"', ['-r', '@uri']);
+  expect(out.stdout).toBe('a%21b%2Ac%28d%29\n');
+}, 20000);
+
+test('jq invalid @format reports a jq: error and exits 5 (no crash)', async () => {
+  const k = await bootKernel();
+  const out = await k.jq('"x"', ['@nope']);
+  expect(out.code).toBe(5);
+  expect(out.stdout).toBe('');
+}, 20000);
+
 test('unknown command resolves to undefined (kernel would ENOENT)', () => {
   expect(resolveJq('not-jq', '/', {})).toBeUndefined();
   expect(resolveJq('jq', '/', {})).toBeInstanceOf(URL);

@@ -10,7 +10,7 @@ import type { Node } from './ast.ts';
 import { Env, evalNode } from './interp.ts';
 import type { Context } from './interp.ts';
 
-export { JQError } from './interp.ts';
+export { JQError, HaltError } from './interp.ts';
 export { toJSON, typeOf } from './values.ts';
 export { parse } from './parser.ts';
 export { lex } from './lexer.ts';
@@ -21,6 +21,10 @@ export interface RunOptions {
   env?: Record<string, string>;
   /** Named args from `--arg`/`--argjson`, bound as `$name` and in `$ARGS.named`. */
   args?: Record<string, unknown>;
+  /** Remaining input stream that `input`/`inputs` pull from. */
+  inputs?: Iterator<unknown>;
+  /** Sink for `debug`/`debug(msg)` (routed to stderr by the CLI). */
+  debug?: (msg: unknown) => void;
 }
 
 /** A parsed jq program, applicable to many inputs. */
@@ -46,7 +50,12 @@ export function compile(program: string): CompiledFilter {
   return {
     ast,
     *run(input: unknown, options: RunOptions = {}): Generator<unknown> {
-      const ctx: Context = { env: options.env ?? {}, args: options.args ?? {} };
+      const ctx: Context = {
+        env: options.env ?? {},
+        args: options.args ?? {},
+        inputs: options.inputs,
+        debug: options.debug,
+      };
       const root = makeRootEnv(ctx);
       yield* evalNode(ast, input, root, ctx);
     },

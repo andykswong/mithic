@@ -194,8 +194,9 @@ test('number formatting matches jq 1.7', () => {
   expect(formatNumber(2.5)).toBe('2.5');
   expect(formatNumber(0.1)).toBe('0.1');
   expect(formatNumber(1234567.89)).toBe('1234567.89');
-  // NaN / Infinity render as null (jq)
-  expect(formatNumber(Infinity)).toBe('null');
+  // jq 1.7: NaN renders as null; +/-Infinity clamp to the largest finite double
+  expect(formatNumber(Infinity)).toBe('1.7976931348623157e+308');
+  expect(formatNumber(-Infinity)).toBe('-1.7976931348623157e+308');
   expect(formatNumber(NaN)).toBe('null');
   // round-trips through JSON output
   expect(toJSON([1e20, 3.0, 1.5e-10])).toBe('[1e+20,3,1.5e-10]');

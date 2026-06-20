@@ -12,10 +12,13 @@
  */
 import type { Node } from './ast.ts';
 import type { Context, Env } from './interp.ts';
+import { HaltError, JQError, isCatchable } from './interp.ts';
 import { compare, equal, toJSON, toStr, truthy, typeOf } from './values.ts';
 import type { JQType } from './values.ts';
 
-// evalNode is injected to avoid a circular import at module-eval time.
+// evalNode is injected (helpers bag) to avoid invoking the interpreter at
+// module-eval time; the import of JQError above is a live binding only used
+// inside function bodies, so the interp↔builtins cycle resolves safely.
 type EvalFn = (node: Node, input: unknown, env: Env, ctx: Context) => Generator<unknown>;
 
 interface Helpers {
@@ -27,7 +30,10 @@ interface Helpers {
 }
 
 let H: Helpers;
-function err(v: unknown): Error { return new H.JQError(v); }
+/** Construct a jq error. Uses {@link JQError} directly so it works even before
+ * any builtin call has populated the helper bag (fixes the bare-`@format`
+ * TypeError crash). */
+function err(v: unknown): Error { return new JQError(v); }
 
 // ── simple builtins: (input, ...materialized-args) => value | values[] ──────
 
@@ -108,6 +114,10 @@ const SIMPLE: Record<string, SimpleFn> = {
   'match/2': (input, [re, fl]) => multi(regexMatch(input, re, fl as string)),
   'capture/1': (input, [re]) => regexCapture(input, re, undefined),
   'capture/2': (input, [re, fl]) => regexCapture(input, re, fl as string),
+  'scan/1': (input, [re]) => multi(regexScan(input, re, undefined)),
+  'scan/2': (input, [re, fl]) => multi(regexScan(input, re, fl as string)),
+  'transpose/0': (input) => transpose(input),
+  'builtins/0': () => BUILTIN_NAMES.slice(),
 };
 
 // builtins that re-enter the evaluator (need the arg NODES), keyed by name/arity.
@@ -125,6 +135,7 @@ const HIGHER = new Set([
   'objects/0', 'arrays/0', 'booleans/0', 'numbers/0',
   'strings/0', 'nulls/0', 'iterables/0', 'scalars/0', 'values/0',
   'combinations/0', 'getpath/1',
+  'path/1', 'isempty/1', 'debug/0', 'debug/1', 'input/0', 'inputs/0',
 ]);
 
 /** True if `name/arity` is provided by SIMPLE or the higher-order set. */
@@ -135,6 +146,16 @@ export function isBuiltin(name: string, arity: number): boolean {
   return key in SIMPLE || HIGHER.has(key);
 }
 
+/**
+ * The `builtins/0` listing: every `name/arity` jq recognizes (the union of the
+ * SIMPLE and higher-order tables), sorted for stable output. Internal markers
+ * (`@@…`) are excluded.
+ */
+const BUILTIN_NAMES: string[] = (() => {
+  const set = new Set<string>([...Object.keys(SIMPLE), ...HIGHER]);
+  return [...set].filter((k) => !k.startsWith('@@')).sort();
+})();
+
 let CURRENT_CTX: Context | null = null;
 
 /** Apply a `@format` to a value (used by format strings and bare `@fmt`). */
@@ -144,7 +165,7 @@ export function applyFormat(name: string, v: unknown): string {
     case '@json': return toJSON(v, 0);
     case '@base64': return base64Encode(toStr(v));
     case '@base64d': return base64Decode(toStr(v));
-    case '@uri': return encodeURIComponent(toStr(v));
+    case '@uri': return uriEncode(toStr(v));
     case '@csv': return rowFormat(v, ',', csvCell);
     case '@tsv': return rowFormat(v, '\t', tsvCell);
     case '@html': return htmlEscape(toStr(v));
@@ -318,9 +339,15 @@ function* callHigher(name: string, args: Node[], input: unknown, env: Env, ctx: 
     case 'sub/3': { for (const re of evalNode(a[0], input, env, ctx)) for (const fl of evalNode(a[2], input, env, ctx)) yield* regexSub(input, re, a[1], fl as string, false, env, ctx, evalNode); return; }
     case 'gsub/3': { for (const re of evalNode(a[0], input, env, ctx)) for (const fl of evalNode(a[2], input, env, ctx)) yield* regexSub(input, re, a[1], fl as string, true, env, ctx, evalNode); return; }
     case 'combinations/0': { yield* combinations(input as unknown[][], 0, []); return; }
-    case 'halt/0': throw err({ __halt: true, code: 0 });
-    case 'halt_error/0': throw err({ __halt: true, code: 5, value: input });
-    case 'halt_error/1': { const c = reqNum(first(evalNode(a[0], input, env, ctx)).value); throw err({ __halt: true, code: c, value: input }); }
+    case 'path/1': { yield* pathExpr(a[0], input, env, ctx, evalNode); return; }
+    case 'isempty/1': { let empty = true; for (const _ of evalNode(a[0], input, env, ctx)) { empty = false; break; } yield empty; return; }
+    case 'input/0': { yield pullInput(ctx); return; }
+    case 'inputs/0': { yield* pullInputs(ctx); return; }
+    case 'debug/0': { ctx.debug?.(['DEBUG:', input]); yield input; return; }
+    case 'debug/1': { for (const m of evalNode(a[0], input, env, ctx)) ctx.debug?.(['DEBUG:', m]); yield input; return; }
+    case 'halt/0': throw new HaltError(0);
+    case 'halt_error/0': throw new HaltError(5, input);
+    case 'halt_error/1': { const c = reqNum(first(evalNode(a[0], input, env, ctx)).value); throw new HaltError(c, input); }
   }
   throw err(`${name}/${args.length} is not defined`);
 }
@@ -363,6 +390,27 @@ function collectPaths(node: Node, input: unknown, env: Env, ctx: Context, evalNo
   return out;
 }
 
+/** `path(f)` — stream the path arrays the filter `f` designates over `input`. */
+function* pathExpr(node: Node, input: unknown, env: Env, ctx: Context, evalNode: EvalFn): Generator<unknown[]> {
+  yield* evalPaths(node, [], input, env, ctx, evalNode);
+}
+
+/** `input` — pull the next value from the input stream, or error if exhausted. */
+function pullInput(ctx: Context): unknown {
+  const it = ctx.inputs;
+  if (!it) throw err('No more inputs');
+  const n = it.next();
+  if (n.done) throw err('No more inputs');
+  return n.value;
+}
+
+/** `inputs` — yield all remaining values from the input stream. */
+function* pullInputs(ctx: Context): Generator<unknown> {
+  const it = ctx.inputs;
+  if (!it) return;
+  for (;;) { const n = it.next(); if (n.done) return; yield n.value; }
+}
+
 // Yield the paths reached by a filter (path expression) from `input`.
 function* evalPaths(node: Node, prefix: unknown[], input: unknown, env: Env, ctx: Context, evalNode: EvalFn): Generator<unknown[]> {
   switch (node.kind) {
@@ -399,7 +447,7 @@ function* evalPaths(node: Node, prefix: unknown[], input: unknown, env: Env, ctx
       }
       return;
     }
-    case 'optional': { try { yield* evalPaths(node.body, prefix, input, env, ctx, evalNode); } catch (e) { if (!(e instanceof H.JQError)) throw e; } return; }
+    case 'optional': { try { yield* evalPaths(node.body, prefix, input, env, ctx, evalNode); } catch (e) { if (!isCatchable(e)) throw e; } return; }
     case 'call': {
       if (node.name === 'select' && node.args.length === 1) {
         for (const c of evalNode(node.args[0], input, env, ctx)) if (truthy(c)) yield prefix;
@@ -445,7 +493,7 @@ function* recurseF(f: Node, cond: Node | null, input: unknown, env: Env, ctx: Co
   yield input;
   for (const next of evalNode(f, input, env, ctx)) {
     try { yield* recurseF(f, cond, next, env, ctx, evalNode); }
-    catch (e) { if (!(e instanceof H.JQError)) throw e; }
+    catch (e) { if (!isCatchable(e)) throw e; }
   }
 }
 
@@ -561,6 +609,20 @@ function flatten(v: unknown, depth: number): unknown[] {
     for (const x of arr) { if (Array.isArray(x) && d > 0) go(x, d - 1); else out.push(x); }
   };
   go(v, depth);
+  return out;
+}
+
+/** `transpose` — turn rows into columns, padding short rows with null. */
+function transpose(v: unknown): unknown[][] {
+  if (!Array.isArray(v)) throw err(`Cannot transpose ${typeOf(v)}`);
+  let cols = 0;
+  for (const row of v) { if (!Array.isArray(row)) throw err('transpose: input must be an array of arrays'); if (row.length > cols) cols = row.length; }
+  const out: unknown[][] = [];
+  for (let c = 0; c < cols; c++) {
+    const col: unknown[] = [];
+    for (const row of v) col.push((row as unknown[])[c] ?? null);
+    out.push(col);
+  }
   return out;
 }
 
@@ -794,6 +856,23 @@ function regexCapture(input: unknown, re: unknown, fl: string | undefined): Reco
 }
 
 /**
+ * `scan` — yield every (global) match of `re` in the input string. With no
+ * capture groups each output is the whole match string; with groups each output
+ * is the array of group captures (jq semantics).
+ */
+function regexScan(input: unknown, re: unknown, fl: string | undefined): unknown[] {
+  const s = reqStr(input);
+  const rx = compileRe(re, fl, true);
+  const out: unknown[] = [];
+  for (const m of s.matchAll(rx)) {
+    if (m.length > 1) out.push((m.slice(1) as (string | undefined)[]).map((g) => g ?? null));
+    else out.push(m[0]);
+    if (m[0] === '') rx.lastIndex++; // avoid infinite loop on empty match
+  }
+  return out;
+}
+
+/**
  * `sub`/`gsub`: replace matches of `re` in the input string. The replacement
  * `repNode` is a FILTER evaluated with each match's named-capture object as its
  * input (so `.name`, `\(.name)`, etc. work). A replacement filter that yields
@@ -843,6 +922,26 @@ function* regexSplit(input: unknown, re: unknown, fl: string | undefined): Gener
 }
 
 // ── @format encoders ─────────────────────────────────────────────────────────
+
+/**
+ * `@uri` percent-encoding matching jq: only the RFC 3986 *unreserved* set
+ * (`A-Za-z0-9` and `-_.~`) passes through; everything else — including
+ * `! * ' ( )`, which `encodeURIComponent` leaves alone — is percent-encoded
+ * byte-by-byte over the UTF-8 encoding.
+ */
+function uriEncode(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let out = '';
+  for (const b of bytes) {
+    const unreserved =
+      (b >= 0x41 && b <= 0x5a) || // A-Z
+      (b >= 0x61 && b <= 0x7a) || // a-z
+      (b >= 0x30 && b <= 0x39) || // 0-9
+      b === 0x2d || b === 0x5f || b === 0x2e || b === 0x7e; // - _ . ~
+    out += unreserved ? String.fromCharCode(b) : '%' + b.toString(16).toUpperCase().padStart(2, '0');
+  }
+  return out;
+}
 
 function base64Encode(s: string): string {
   const bytes = new TextEncoder().encode(s);
