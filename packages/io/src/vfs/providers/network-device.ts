@@ -12,9 +12,33 @@ interface SocketHandle {
   remotePort: number;
 }
 
+/**
+ * One entry in a {@link NetworkDeviceFsProviderOptions.allow} host allowlist.
+ * `host` is matched case-insensitively against the REQUESTED host (the literal
+ * path segment, before DNS resolution — so the gate keys on what the caller
+ * asked for, not on a resolved IP that DNS rebinding could vary). When `port`
+ * is omitted, any port on `host` is permitted.
+ */
+export interface NetworkAllowEntry {
+  host: string;
+  port?: number;
+}
+
 export interface NetworkDeviceFsProviderOptions {
   sockets: SocketProvider;
   protocol: Protocol;
+  /**
+   * Capability gate: an explicit allowlist of `host[:port]` targets this device
+   * may connect to. Enforced deny-by-default — an `open` of a host:port NOT on
+   * the list is rejected with FileSystemError('access') BEFORE any socket is
+   * created (so no SSRF / no connection side-effect). An empty array denies
+   * everything. When OMITTED (`undefined`), the device is ungated and the mount
+   * site is responsible for restricting reachability (e.g. the kernel `fs`
+   * capability on the `/dev/tcp` subtree). The capability-safe wiring derives
+   * this list from the spawning process's `net` capability origins — see
+   * {@link mountNetworkDevices}.
+   */
+  allow?: NetworkAllowEntry[];
 }
 
 /**
@@ -25,6 +49,7 @@ export interface NetworkDeviceFsProviderOptions {
 export class NetworkDeviceFsProvider implements FileSystemProvider {
   readonly #sockets: SocketProvider;
   readonly #protocol: Protocol;
+  readonly #allow: NetworkAllowEntry[] | undefined;
   #nextFd = 200;
   #freeFds: number[] = [];
   #handles = new Map<number, SocketHandle>();
@@ -34,12 +59,19 @@ export class NetworkDeviceFsProvider implements FileSystemProvider {
   constructor(options: NetworkDeviceFsProviderOptions) {
     this.#sockets = options.sockets;
     this.#protocol = options.protocol;
+    this.#allow = options.allow ? options.allow.map(e => ({ host: e.host.toLowerCase(), port: e.port })) : undefined;
   }
 
   async open(path: string, flags: OpenFlags): Promise<FileHandle> {
     const parsed = this.#parsePath(path);
     if (!parsed.port) {
       throw new FileSystemError('invalid', `Invalid network path: ${path} (expected <host>/<port>)`);
+    }
+
+    // Capability gate FIRST — before any socket is created — so a denied target
+    // has no connection side-effect (SSRF-safe). Keyed on the REQUESTED host.
+    if (!this.#isAllowed(parsed.host, parsed.port)) {
+      throw new FileSystemError('access', `Permission denied: ${this.#protocol}/${parsed.host}/${parsed.port} not permitted by net capability`);
     }
 
     const normalizedPath = `${parsed.host}/${parsed.port}`;
@@ -200,6 +232,17 @@ export class NetworkDeviceFsProvider implements FileSystemProvider {
     this.#handles.clear();
   }
 
+  /**
+   * Capability gate: is `host:port` permitted? Ungated (no allowlist) → always
+   * true. Otherwise the requested host must match an entry (case-insensitive),
+   * and the entry's port must match (or be omitted = any port).
+   */
+  #isAllowed(host: string, port: number): boolean {
+    if (this.#allow === undefined) return true;
+    const h = host.toLowerCase();
+    return this.#allow.some(e => e.host === h && (e.port === undefined || e.port === port));
+  }
+
   #parsePath(path: string): { host: string; port: number | undefined } {
     const normalized = path.replace(/^\/+/, '');
     const parts = normalized.split('/');
@@ -229,4 +272,117 @@ export class NetworkDeviceFsProvider implements FileSystemProvider {
     }
     return addresses[0].address;
   }
+}
+
+/** The subset of {@link import('../router.ts').FileSystemRouter} this helper needs. */
+export interface MountableRouter {
+  mount(mountPoint: string, provider: FileSystemProvider): Promise<void> | void;
+}
+
+export interface MountNetworkDevicesOptions {
+  sockets: SocketProvider;
+  /**
+   * Host allowlist shared by both `/dev/tcp` and `/dev/udp` (see
+   * {@link NetworkDeviceFsProviderOptions.allow}). Derive it from the spawning
+   * process's `net` capability origins via {@link netOriginsToAllow}. Omit to
+   * mount UNGATED devices (only safe when the mount site otherwise restricts the
+   * `/dev/tcp`+`/dev/udp` subtree, e.g. via the kernel `fs` capability).
+   */
+  allow?: NetworkAllowEntry[];
+  /** Mount point for TCP (default `/dev/tcp`). */
+  tcpMountPoint?: string;
+  /** Mount point for UDP (default `/dev/udp`). */
+  udpMountPoint?: string;
+}
+
+/**
+ * Mount the raw-socket network devices at `/dev/tcp` and `/dev/udp` on `router`.
+ *
+ * This is the io-side half of the `/dev/tcp` path. Opening
+ * `/dev/tcp/<host>/<port>` (or `/dev/udp/...`) through the VFS yields a
+ * bidirectional stream fd, capability-gated by `allow` (deny-by-default when an
+ * allowlist is supplied). Reads/writes on that fd map to socket receive/send.
+ *
+ * CROSS-CLUSTER INTEGRATION NOTE — what remains to make `exec 3<>/dev/tcp/...`
+ * work end-to-end through the shell:
+ *   1. KERNEL (mount hook): the kernel does not build the VFS — its caller does
+ *      (the server/host integration or a test). The host must call
+ *      `mountNetworkDevices(vfs, { sockets, allow: netOriginsToAllow(netOrigins) })`
+ *      when constructing the router it hands to `new Kernel({ vfs })`, deriving
+ *      `allow` from the process's `net` capability origins. Opening a
+ *      `/dev/tcp/...` path then ALSO passes through the kernel's existing `fs`
+ *      capability check on the `/dev/tcp` subtree (`#canonicalCheckedPath`), so a
+ *      guest needs BOTH an `fs` grant on `/dev/tcp` AND a host on this allowlist —
+ *      two independent gates, no ungated networking. No kernel SOURCE change is
+ *      required for this; only the VFS-construction site wires the mount.
+ *   2. SHELL (numbered-fd table + `<>`): `exec 3<>/dev/tcp/host/port`,
+ *      `echo >&3`, `read -u 3`, and redirects to/from the device require the
+ *      shell's numbered-fd table and the `<>` (read-write) redirect operator
+ *      (parity finding H4 — owned by the shell agent). The shell opens the path
+ *      via `fs/open` with `{read,write}` and reads/writes via `fs/read`/`fs/write`
+ *      on the returned fd — exactly the surface this provider implements.
+ * The provider + mount + capability gate proven here are the complete io-side
+ * contribution; (1) is a one-line wiring at the host and (2) is the shell agent's.
+ */
+export async function mountNetworkDevices(router: MountableRouter, options: MountNetworkDevicesOptions): Promise<void> {
+  const tcpMount = options.tcpMountPoint ?? '/dev/tcp';
+  const udpMount = options.udpMountPoint ?? '/dev/udp';
+  await router.mount(tcpMount, new NetworkDeviceFsProvider({
+    sockets: options.sockets,
+    protocol: 'tcp',
+    ...(options.allow !== undefined ? { allow: options.allow } : {}),
+  }));
+  await router.mount(udpMount, new NetworkDeviceFsProvider({
+    sockets: options.sockets,
+    protocol: 'udp',
+    ...(options.allow !== undefined ? { allow: options.allow } : {}),
+  }));
+}
+
+/**
+ * Convert `net` capability origins (e.g. `https://api.example.com`,
+ * `tcp://127.0.0.1:9000`, `host:port`, or a bare `host`) into
+ * {@link NetworkAllowEntry}s for {@link mountNetworkDevices}. Unparseable
+ * entries are dropped. `http`/`https` map to their default port (80/443) when no
+ * explicit port is present; `tcp`/`udp`/bare `host:port` carry the stated port;
+ * a bare `host` permits any port on that host.
+ */
+export function netOriginsToAllow(origins: readonly string[]): NetworkAllowEntry[] {
+  const out: NetworkAllowEntry[] = [];
+  for (const origin of origins) {
+    const entry = parseOriginToAllow(origin);
+    if (entry) out.push(entry);
+  }
+  return out;
+}
+
+const DEFAULT_PORTS: Record<string, number> = { 'http:': 80, 'https:': 443, 'ws:': 80, 'wss:': 443 };
+
+function parseOriginToAllow(origin: string): NetworkAllowEntry | undefined {
+  const raw = origin.trim();
+  if (raw === '') return undefined;
+  // URL-shaped (scheme://host[:port]).
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(raw)) {
+    let u: URL;
+    try { u = new URL(raw); } catch { return undefined; }
+    if (!u.hostname) return undefined;
+    const host = u.hostname.toLowerCase();
+    if (u.port) return { host, port: Number(u.port) };
+    const def = DEFAULT_PORTS[u.protocol];
+    return def !== undefined ? { host, port: def } : { host };
+  }
+  // Bare `host:port` (a single colon, port numeric) — but not a bare IPv6.
+  const colon = raw.lastIndexOf(':');
+  if (colon > 0 && raw.indexOf(':') === colon) {
+    const host = raw.slice(0, colon).toLowerCase();
+    const portStr = raw.slice(colon + 1);
+    const port = Number(portStr);
+    if (host && /^\d+$/.test(portStr) && port >= 0 && port <= 65535) {
+      return { host, port };
+    }
+  }
+  // Bare host (any port). Reject obvious garbage (whitespace).
+  if (/\s/.test(raw)) return undefined;
+  if (raw.includes(':')) return undefined; // ambiguous (e.g. malformed)
+  return { host: raw.toLowerCase() };
 }

@@ -23,9 +23,11 @@
  *   -i (include headers), -I/--head (HEAD), -L (follow redirects),
  *   -f (fail on HTTP >= 400 → exit 22), -w FORMAT (%{http_code} etc.),
  *   -u user:pass (basic auth), --json, -A user-agent, -e referer,
+ *   -v/--verbose (request/response trace to stderr),
  *   --max-time SECONDS, -k (insecure — no-op under fetch).
- * Exit codes: 0 ok, 22 http-error (with -f), 6 couldn't-resolve-host,
- *   7 couldn't-connect, 3 malformed-url, 2 usage.
+ * Exit codes (aligned with real curl): 0 ok, 2 usage, 3 malformed-url,
+ *   6 couldn't-resolve-host, 7 couldn't-connect, 22 http-error (with -f),
+ *   28 operation-timeout, 47 too-many-redirects.
  */
 import { defineCommand, parseArgs, readAll, writeBytes, writeLine, writeString } from './harness.ts';
 import type { CommandFn, CommandIO } from './harness.ts';
@@ -45,6 +47,8 @@ const EXIT = {
   COULDNT_RESOLVE_HOST: 6,
   COULDNT_CONNECT: 7,
   HTTP_RETURNED_ERROR: 22,
+  OPERATION_TIMEDOUT: 28,
+  TOO_MANY_REDIRECTS: 47,
 } as const;
 
 const MAX_REDIRECTS = 50;
@@ -52,7 +56,7 @@ const MAX_REDIRECTS = 50;
 export const curlCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const name = io.args[0] ?? 'curl';
   const { positionals, flags } = parseArgs(io.args.slice(1), {
-    boolean: ['s', 'S', 'i', 'I', 'head', 'L', 'f', 'G', 'O', 'k', 'insecure', 'silent', 'fail'],
+    boolean: ['s', 'S', 'i', 'I', 'head', 'L', 'f', 'G', 'O', 'k', 'insecure', 'silent', 'fail', 'v', 'verbose'],
     string: ['X', 'request', 'o', 'output', 'w', 'write-out', 'u', 'user', 'A', 'user-agent', 'e', 'referer', 'json', 'max-time'],
     collect: ['H', 'header', 'd', 'data', 'data-raw'],
     alias: {
@@ -69,6 +73,7 @@ export const curlCommand: CommandFn = async (io: CommandIO): Promise<number> => 
       silent: 's',
       fail: 'f',
       insecure: 'k',
+      verbose: 'v',
     },
   });
 
@@ -80,6 +85,7 @@ export const curlCommand: CommandFn = async (io: CommandIO): Promise<number> => 
   const includeHeaders = Boolean(flags.i);
   const headOnly = Boolean(flags.I);
   const followRedirects = Boolean(flags.L);
+  const verbose = Boolean(flags.v);
   const failOnError = Boolean(flags.f);
   const dataAsQuery = Boolean(flags.G);
   const writeToFileNamed = typeof flags.o === 'string' ? flags.o : undefined;
@@ -90,6 +96,12 @@ export const curlCommand: CommandFn = async (io: CommandIO): Promise<number> => 
   const reportError = async (msg: string): Promise<void> => {
     if (silent && !showError) return;
     await writeLine(err, `${name}: ${msg}`);
+  };
+
+  /** Emit a `-v` trace line to stderr (no-op unless verbose). */
+  const trace = async (line: string): Promise<void> => {
+    if (!verbose) return;
+    await writeLine(err, line);
   };
 
   try {
@@ -166,7 +178,7 @@ export const curlCommand: CommandFn = async (io: CommandIO): Promise<number> => 
       const url = applyQuery(rawUrl, queryData);
       const r = await fetchFollowing(io, {
         method, url, headers, body, timeoutMs, followRedirects,
-      });
+      }, trace);
       if (r instanceof FetchError) {
         await reportError(r.message);
         exitCode = r.exitCode;
@@ -219,15 +231,26 @@ class FetchError {
 /**
  * Perform `net/fetch`, following 3xx redirects when `followRedirects` is set
  * (up to {@link MAX_REDIRECTS}). Maps a kernel errno to a curl exit code.
+ *
+ * The kernel's `net/fetch` already follows redirects internally (re-checking the
+ * `net` capability against every hop), so curl normally receives the FINAL
+ * response in one call. This client-side loop still matters when the kernel
+ * hands a 3xx back (e.g. a redirect to an origin curl should re-evaluate) and
+ * must apply RFC 7231/7538 method semantics correctly so the two compose:
+ *   - 301/302/303 → downgrade to GET and drop the body;
+ *   - 307/308     → PRESERVE the original method AND body.
+ * Exceeding {@link MAX_REDIRECTS} is curl's too-many-redirects (exit 47).
  */
 async function fetchFollowing(
   io: CommandIO,
   req: { method: string; url: string; headers: [string, string][]; body?: Uint8Array; timeoutMs?: number; followRedirects: boolean },
+  trace: (line: string) => Promise<void>,
 ): Promise<FetchResult | FetchError> {
   let url = req.url;
   let method = req.method;
   let body = req.body;
   for (let hop = 0; ; hop++) {
+    await traceRequest(trace, method, url, req.headers, body);
     let result: FetchResult;
     try {
       result = (await io.syscall('net/fetch', {
@@ -240,14 +263,22 @@ async function fetchFollowing(
     } catch (e) {
       return new FetchError(messageOf(e), errnoToExit(errnoOf(e)));
     }
-    if (req.followRedirects && isRedirect(result.status) && hop < MAX_REDIRECTS) {
+    await traceResponse(trace, result);
+    if (req.followRedirects && isRedirect(result.status)) {
       const loc = headerValue(result.headers, 'location');
       if (loc) {
+        if (hop >= MAX_REDIRECTS) {
+          return new FetchError(`Maximum (${MAX_REDIRECTS}) redirects followed`, EXIT.TOO_MANY_REDIRECTS);
+        }
         url = resolveUrl(url, loc);
-        // Per HTTP semantics a 303 (and commonly 301/302) turns the method into
-        // GET and drops the body. Keep it simple: redirect → GET, no body.
-        method = 'GET';
-        body = undefined;
+        // RFC 7231/7538: 301/302/303 turn the request into a bodyless GET; but
+        // 307/308 MUST preserve the original method and body (e.g. a POST stays
+        // a POST). Dropping the body on 307/308 would silently corrupt the
+        // request, so we only downgrade for 301/302/303.
+        if (!preservesMethod(result.status)) {
+          method = 'GET';
+          body = undefined;
+        }
         continue;
       }
     }
@@ -259,18 +290,29 @@ function isRedirect(status: number): boolean {
   return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
 }
 
+/** True for redirects that preserve the request method + body (307, 308). */
+function preservesMethod(status: number): boolean {
+  return status === 307 || status === 308;
+}
+
 /** Map a kernel errno (from the net/fetch rejection) to a curl exit code. */
 function errnoToExit(errno: string | undefined): number {
   switch (errno) {
     case 'ENOTFOUND':
+    case 'EAI_AGAIN':
+      // DNS could not resolve the host.
       return EXIT.COULDNT_RESOLVE_HOST;
     case 'EHOSTUNREACH':
     case 'ECONNREFUSED':
     case 'ENETUNREACH':
+    case 'ECONNRESET':
     case 'EPIPE':
       return EXIT.COULDNT_CONNECT;
     case 'ETIMEDOUT':
-      return EXIT.COULDNT_CONNECT;
+      return EXIT.OPERATION_TIMEDOUT;
+    case 'ELOOP':
+      // The kernel hit its own redirect cap (SSRF-safe redirect follow).
+      return EXIT.TOO_MANY_REDIRECTS;
     case 'EACCES':
     case 'EPERM':
       // A capability denial: not a normal curl code, but must be non-zero.
@@ -278,6 +320,36 @@ function errnoToExit(errno: string | undefined): number {
     default:
       return EXIT.COULDNT_CONNECT;
   }
+}
+
+/** Emit the `-v` request trace: `* Connected to host`, `> METHOD path`, `> header`. */
+async function traceRequest(
+  trace: (line: string) => Promise<void>,
+  method: string,
+  url: string,
+  headers: [string, string][],
+  body: Uint8Array | undefined,
+): Promise<void> {
+  let host = url;
+  let pathName = url;
+  try {
+    const u = new URL(url);
+    host = u.host;
+    pathName = u.pathname + u.search;
+  } catch { /* keep the raw url */ }
+  await trace(`* Connected to ${host}`);
+  await trace(`> ${method} ${pathName} HTTP/1.1`);
+  await trace(`> Host: ${host}`);
+  for (const [k, v] of headers) await trace(`> ${k}: ${v}`);
+  await trace('>');
+  if (body && body.byteLength > 0) await trace(`* upload completely sent off: ${body.byteLength} bytes`);
+}
+
+/** Emit the `-v` response trace: `< HTTP/1.1 <status>`, `< header`. */
+async function traceResponse(trace: (line: string) => Promise<void>, r: FetchResult): Promise<void> {
+  await trace(`< HTTP/1.1 ${r.status}`);
+  for (const [k, v] of r.headers) await trace(`< ${k}: ${v}`);
+  await trace('<');
 }
 
 function errnoOf(e: unknown): string | undefined {

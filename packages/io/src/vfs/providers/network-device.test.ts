@@ -528,3 +528,106 @@ describe('NetworkDeviceFsProvider (udp)', () => {
     });
   });
 });
+
+describe('NetworkDeviceFsProvider capability gate (host allowlist)', () => {
+  let mockSockets: ReturnType<typeof createMockSocketProvider>;
+
+  beforeEach(() => {
+    mockSockets = createMockSocketProvider();
+  });
+
+  it('permits a host:port that is on the allowlist', async () => {
+    const provider = new NetworkDeviceFsProvider({
+      sockets: mockSockets,
+      protocol: 'tcp',
+      allow: [{ host: '127.0.0.1', port: 8080 }],
+    });
+    const handle = await provider.open('/127.0.0.1/8080', { read: true, write: true });
+    expect(mockSockets.lastTcp!.calls).toContain('connect:127.0.0.1:8080');
+    provider.close(handle);
+  });
+
+  it('denies a host that is NOT on the allowlist (no socket created)', async () => {
+    const provider = new NetworkDeviceFsProvider({
+      sockets: mockSockets,
+      protocol: 'tcp',
+      allow: [{ host: '127.0.0.1', port: 8080 }],
+    });
+    await expect(provider.open('/10.0.0.1/8080', { read: true })).rejects.toBeInstanceOf(FileSystemError);
+    expect(mockSockets.lastTcp).toBeNull(); // gate runs BEFORE any socket is opened
+  });
+
+  it('denies an allowed host on a NON-allowed port', async () => {
+    const provider = new NetworkDeviceFsProvider({
+      sockets: mockSockets,
+      protocol: 'tcp',
+      allow: [{ host: '127.0.0.1', port: 8080 }],
+    });
+    await expect(provider.open('/127.0.0.1/9090', { read: true })).rejects.toBeInstanceOf(FileSystemError);
+    expect(mockSockets.lastTcp).toBeNull();
+  });
+
+  it('a host entry without a port permits any port on that host', async () => {
+    const provider = new NetworkDeviceFsProvider({
+      sockets: mockSockets,
+      protocol: 'tcp',
+      allow: [{ host: 'example.com' }],
+    });
+    const handle = await provider.open('/example.com/443', { read: true });
+    expect(mockSockets.lastTcp!.calls).toContain('connect:93.184.216.34:443');
+    provider.close(handle);
+  });
+
+  it('matches the allowlist against the REQUESTED host, not the resolved IP', async () => {
+    mockSockets.resolveResult = [{ family: 'ipv4', address: '93.184.216.34' }];
+    const provider = new NetworkDeviceFsProvider({
+      sockets: mockSockets,
+      protocol: 'tcp',
+      allow: [{ host: 'example.com', port: 80 }],
+    });
+    const handle = await provider.open('/example.com/80', { read: true });
+    provider.close(handle);
+    // The resolved IP (93.184.216.34) is NOT on the allowlist, but the requested
+    // hostname is — the gate must key on what the caller asked for.
+    await expect(provider.open('/93.184.216.34/80', { read: true })).rejects.toBeInstanceOf(FileSystemError);
+  });
+
+  it('an empty allowlist denies everything (deny-by-default when gated)', async () => {
+    const provider = new NetworkDeviceFsProvider({
+      sockets: mockSockets,
+      protocol: 'tcp',
+      allow: [],
+    });
+    await expect(provider.open('/127.0.0.1/80', { read: true })).rejects.toBeInstanceOf(FileSystemError);
+    expect(mockSockets.lastTcp).toBeNull();
+  });
+
+  it('an absent allowlist is ungated (backward compatible)', async () => {
+    const provider = new NetworkDeviceFsProvider({ sockets: mockSockets, protocol: 'tcp' });
+    const handle = await provider.open('/any.host/1234', { read: true });
+    expect(mockSockets.lastTcp).toBeTruthy();
+    provider.close(handle);
+  });
+
+  it('gates UDP the same way', async () => {
+    const provider = new NetworkDeviceFsProvider({
+      sockets: mockSockets,
+      protocol: 'udp',
+      allow: [{ host: '127.0.0.1', port: 53 }],
+    });
+    await expect(provider.open('/8.8.8.8/53', { write: true })).rejects.toBeInstanceOf(FileSystemError);
+    expect(mockSockets.lastUdp).toBeNull();
+    const handle = await provider.open('/127.0.0.1/53', { write: true });
+    expect(mockSockets.lastUdp).toBeTruthy();
+    provider.close(handle);
+  });
+
+  it('the denial error code is access (capability denial)', async () => {
+    const provider = new NetworkDeviceFsProvider({
+      sockets: mockSockets,
+      protocol: 'tcp',
+      allow: [{ host: '127.0.0.1', port: 8080 }],
+    });
+    await expect(provider.open('/evil.example/80', { read: true })).rejects.toMatchObject({ code: 'access' });
+  });
+});
