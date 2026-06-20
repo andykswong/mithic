@@ -1,4 +1,4 @@
-import type { SyscallResponse, ErrnoCode, SpawnArgs } from '@mithic/protocol';
+import type { SyscallResponse, ErrnoCode, SpawnArgs, ProcessLimits } from '@mithic/protocol';
 import { fsErrorToErrno } from '@mithic/protocol';
 import { FileSystemError, normalizePath } from '@mithic/io/vfs';
 import type { FileSystemProvider, FileHandle, OpenFlags } from '@mithic/io/vfs';
@@ -119,6 +119,17 @@ export interface SyscallDispatcherOptions {
   caps: CapabilityManager;
   /** Resolve a process's current working directory. */
   cwdOf: (pid: number) => string;
+  /**
+   * K1: resolve a process's {@link ProcessLimits} (or undefined). The dispatcher
+   * enforces the limits it can at the syscall boundary, independent of backend:
+   *   - `networkDisabled` → `net/fetch` is denied (EACCES) for that pid even when
+   *     it holds a matching `net` capability.
+   *   - `maxChildren` → caps `process/spawn` + `process/pipeline` for that pid;
+   *     the EFFECTIVE cap is the MIN of this and the `process` capability's
+   *     `maxChildren`.
+   * Unset = no limit-based gating (only capability gating applies).
+   */
+  limitsOf?: (pid: number) => ProcessLimits | undefined;
   /** IPC broker used to mint pipes for the `fs/pipe` syscall. Optional for fs-only setups. */
   ipc?: IpcBroker;
   /**
@@ -217,6 +228,7 @@ export class SyscallDispatcher {
   #vfs: FileSystemProvider;
   #caps: CapabilityManager;
   #cwdOf: (pid: number) => string;
+  #limitsOf: ((pid: number) => ProcessLimits | undefined) | undefined;
   #ipc: IpcBroker | undefined;
   #directPipes: boolean;
   #onDomMutate: DomMutateHandler | undefined;
@@ -243,6 +255,7 @@ export class SyscallDispatcher {
     this.#vfs = options.vfs;
     this.#caps = options.caps;
     this.#cwdOf = options.cwdOf;
+    this.#limitsOf = options.limitsOf;
     this.#ipc = options.ipc;
     this.#directPipes = options.directPipes ?? true;
     this.#onDomMutate = options.onDomMutate;
@@ -424,7 +437,10 @@ export class SyscallDispatcher {
       return res(fail(id, 'ENOSYS', 'process/spawn: no spawn handler configured'));
     }
     const childCount = this.#liveChildPids.get(pid)?.size ?? 0;
-    if (!this.#caps.checkProcess(pid, childCount)) {
+    // K1: gate on the process CAPABILITY and the effective maxChildren (MIN of the
+    // cap's maxChildren and ProcessLimits.maxChildren). Spawning one more child
+    // must keep the live count within the cap.
+    if (!this.#caps.checkProcess(pid, childCount) || !this.#withinChildLimit(pid, childCount + 1)) {
       this.#closePorts(ports);
       return res(fail(id, 'EPERM', 'process/spawn: missing process capability or child limit reached'));
     }
@@ -509,7 +525,13 @@ export class SyscallDispatcher {
     // the stage count does not exceed the parent's maxChildren cap. This prevents
     // a guest from bypassing the process cap by routing spawns through pipeline.
     const currentChildren = this.#liveChildPids.get(pid)?.size ?? 0;
-    if (!this.#caps.checkProcess(pid, currentChildren + rawStages.length - 1)) {
+    // K1: a pipeline of N stages transiently spawns N children. Gate on the
+    // process capability AND the effective maxChildren (MIN of cap + limit) so a
+    // guest cannot bypass the cap by routing spawns through pipeline.
+    if (
+      !this.#caps.checkProcess(pid, currentChildren + rawStages.length - 1)
+      || !this.#withinChildLimit(pid, currentChildren + rawStages.length)
+    ) {
       return fail(id, 'EPERM', 'process/pipeline: missing process capability or child limit reached');
     }
     const resolved: Array<{ code: string | URL; spec: PipelineStageSpec }> = [];
@@ -575,6 +597,18 @@ export class SyscallDispatcher {
 
   /** pid -> set of its live (spawned, not-yet-waited) child pids. */
   #liveChildPids = new Map<number, Set<number>>();
+
+  /**
+   * K1: true if a process with `prospectiveCount` live children would stay within
+   * its `ProcessLimits.maxChildren` cap. (The `process` capability's own
+   * `maxChildren` is enforced separately by `checkProcess`; the effective cap is
+   * the MIN of the two.) Unset limit = no limit-based cap (capability still applies).
+   */
+  #withinChildLimit(pid: number, prospectiveCount: number): boolean {
+    const max = this.#limitsOf?.(pid)?.maxChildren;
+    if (max === undefined) return true;
+    return prospectiveCount <= max;
+  }
 
   /** Close any ports a rejected `process/spawn` received, so none leak. */
   #closePorts(ports?: readonly MessagePort[]): void {
@@ -1061,6 +1095,12 @@ export class SyscallDispatcher {
   async #netFetch(pid: number, id: number, args: Record<string, unknown>): Promise<SyscallResponse> {
     if (!this.#httpClient) {
       return fail(id, 'ENOSYS', 'net/fetch: no HTTP client configured');
+    }
+    // K1: a process whose limits set `networkDisabled` cannot reach the network
+    // at all, even if it holds a matching `net` capability. Deny before any
+    // network access (EACCES), so the HTTP client is never invoked for this pid.
+    if (this.#limitsOf?.(pid)?.networkDisabled) {
+      return fail(id, 'EACCES', 'net/fetch: network disabled for this process (ProcessLimits.networkDisabled)');
     }
     let url = String(args.url ?? '');
     // Capability gate FIRST — before any network access. An ungranted origin

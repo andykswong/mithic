@@ -92,6 +92,17 @@ export interface KernelOptions {
    * existing tests do not flake — unset means no heartbeat monitoring.
    */
   heartbeat?: HeartbeatOptions;
+  /**
+   * K1: invoked when a process is spawned with a HARD limit the active runtime
+   * backend cannot enforce — `memoryMb` on a backend with `memoryLimit:false`
+   * (Worker/iframe), or `cpuMs` on a backend with `cpuLimit:false`
+   * (Worker/iframe/ivm). Rather than silently dropping the limit, the kernel
+   * reports it here so callers can surface a clear diagnostic or refuse to run.
+   * Defaults to a `console.warn`. (The kernel still enforces the limits it CAN
+   * regardless of backend: timeoutMs/maxOutputBytes via the watchdog, and
+   * networkDisabled/maxChildren at the syscall boundary.)
+   */
+  onLimitUnenforceable?: (pid: number, limit: 'memoryMb' | 'cpuMs', backend: string) => void;
 }
 
 /** K4: heartbeat/health-watchdog configuration (§8.2). */
@@ -298,15 +309,20 @@ export class Kernel {
   #cwds = new Map<number, string>();
   #signalGraceMs: number;
   #heartbeat: HeartbeatOptions | undefined;
+  #onLimitUnenforceable: (pid: number, limit: 'memoryMb' | 'cpuMs', backend: string) => void;
+  /** K1: per-process limits, consulted by the dispatcher for networkDisabled/maxChildren. */
+  #limits = new Map<number, ProcessLimits>();
 
   constructor(options: KernelOptions) {
     this.#runtime = options.runtime;
     this.#signalGraceMs = options.signalGraceMs ?? DEFAULT_SIGNAL_GRACE_MS;
     this.#heartbeat = options.heartbeat;
+    this.#onLimitUnenforceable = options.onLimitUnenforceable ?? defaultLimitDiagnostic;
     this.dispatcher = new SyscallDispatcher({
       vfs: options.vfs,
       caps: this.capabilities,
       cwdOf: (pid) => this.#cwds.get(pid) ?? '/',
+      limitsOf: (pid) => this.#limits.get(pid),
       ipc: this.ipc,
       directPipes: options.runtime.capabilities.directPipes,
       onDomMutate: options.onDomMutate,
@@ -341,6 +357,9 @@ export class Kernel {
     const pid = this.processes.allocate(ppid);
     const cwd = init.cwd ?? '/';
     this.#cwds.set(pid, cwd);
+    // K1: record limits so the dispatcher can enforce networkDisabled/maxChildren,
+    // and surface a diagnostic for hard limits this backend cannot honor.
+    this.#recordLimits(pid, init.limits);
 
     // Capabilities: narrow against the parent unless spawned by the kernel (ppid 0).
     const requested = init.capabilities ?? [];
@@ -550,6 +569,7 @@ export class Kernel {
     const pid = this.processes.allocate(ppid);
     const cwd = init.cwd ?? '/';
     this.#cwds.set(pid, cwd);
+    this.#recordLimits(pid, init.limits);
 
     const requested = init.capabilities ?? [];
     const granted = ppid === 0 ? requested : this.capabilities.narrow(ppid, requested);
@@ -885,6 +905,25 @@ export class Kernel {
   #heartbeatMissed = new Map<number, number>();
 
   /**
+   * K1: record a process's limits (for dispatcher-side networkDisabled/maxChildren
+   * enforcement) and surface a diagnostic for any HARD limit this backend cannot
+   * honor — `memoryMb` when `capabilities.memoryLimit` is false, `cpuMs` when
+   * `capabilities.cpuLimit` is false — rather than silently dropping it.
+   */
+  #recordLimits(pid: number, limits: ProcessLimits | undefined): void {
+    if (!limits) return;
+    this.#limits.set(pid, limits);
+    const caps = this.#runtime.capabilities;
+    const backend = this.#runtime.constructor?.name ?? 'runtime';
+    if (limits.memoryMb !== undefined && !caps.memoryLimit) {
+      this.#onLimitUnenforceable(pid, 'memoryMb', backend);
+    }
+    if (limits.cpuMs !== undefined && !caps.cpuLimit) {
+      this.#onLimitUnenforceable(pid, 'cpuMs', backend);
+    }
+  }
+
+  /**
    * Arm a kernel-side wall-clock watchdog for `pid` if `limits.timeoutMs` is set.
    * On expiry, if the process is still alive, SIGKILL it — its `wait()` then
    * resolves with the SIGKILL exit status (137, nonzero). `unref()` (when
@@ -1006,6 +1045,7 @@ export class Kernel {
     this.capabilities.revoke(pid);
     this.ipc.releaseByPid(pid);
     this.#cwds.delete(pid);
+    this.#limits.delete(pid);
   }
 
   /**
@@ -1237,6 +1277,16 @@ const KERNEL_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
  * onSignal handler + clean exit to run; short enough not to wedge shutdown.
  */
 const DEFAULT_SIGNAL_GRACE_MS = 2000;
+
+/** K1: default diagnostic for a hard limit the active backend cannot enforce. */
+function defaultLimitDiagnostic(pid: number, limit: 'memoryMb' | 'cpuMs', backend: string): void {
+  const cap = limit === 'memoryMb' ? 'memoryLimit' : 'cpuLimit';
+  console.warn(
+    `[mithic] pid ${pid}: ProcessLimits.${limit} cannot be enforced by the ${backend} backend `
+    + `(no ${cap} capability) — the limit is NOT applied. `
+    + 'Use a backend that supports it (QuickJS/ivm for memory) or remove the limit.',
+  );
+}
 
 function isSyscallRequestMsg(x: unknown): x is SyscallRequest {
   return typeof x === 'object' && x !== null
