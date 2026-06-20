@@ -19,6 +19,15 @@ export interface ProcessHandle {
 export interface SpawnOptions {
   init: ProcessInit;
   transfer?: Transferable[];
+  /**
+   * K2: maps each transferred stdio port (i.e. `transfer[1..]`, after the control
+   * port at `transfer[0]`) to the GUEST preopen fd it should appear at. Parallel
+   * to `transfer.slice(1)`. When omitted the backend falls back to positional
+   * mapping (`transfer[i]` → fd `i-1`), i.e. stdin=0/stdout=1/stderr=2. Supplying
+   * it lets the kernel wire arbitrary preopen fds (fd >= 3) without padding the
+   * transfer list with non-transferable nulls.
+   */
+  preopenFds?: number[];
   display?: {
     mode: 'hidden' | 'inline' | 'window' | 'fullscreen';
     width?: number;
@@ -83,12 +92,10 @@ export const QUICKJS_CAPABILITIES: RuntimeCapabilities = {
 /**
  * IVM (isolated-vm) backend capabilities.
  *
- * `cpuLimit: false` — isolated-vm's `context.eval({ timeout })` enforces a
- * **wall-clock** deadline, not a CPU-time budget.  True CPU metering would
- * require polling `isolate.cpuTime` in a separate timer loop or relying on
- * `isolate.wallTime`, neither of which is currently wired.  Advertising
- * `cpuLimit: true` would be dishonest; set it to false until real cpuTime
- * enforcement is added.
+ * `cpuLimit: true` — H3: `IvmRuntime` polls `isolate.cpuTime` (true CPU-time
+ * metering, nanoseconds) against the `cpuMs` budget in a watchdog and disposes the
+ * isolate when it is exceeded. This is real CPU metering, not a wall-clock
+ * deadline, so the capability is advertised honestly.
  *
  * `memoryLimit: true` — enforced via the `memoryLimit` constructor option
  * (hard V8 heap cap that terminates the isolate on OOM).
@@ -99,7 +106,7 @@ export const IVM_CAPABILITIES: RuntimeCapabilities = {
   directPipes: false,
   deterministic: false,
   memoryLimit: true,
-  cpuLimit: false,
+  cpuLimit: true,
   parallelism: true,
   interruptible: true,
 };

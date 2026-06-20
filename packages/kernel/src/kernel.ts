@@ -1,15 +1,25 @@
 import type {
   Capability,
   FdAction,
+  KernelEvent,
   ProcessInit,
   ProcessLimits,
   Signal,
   SpawnArgs,
   SyscallRequest,
+  SyscallResponse,
 } from '@mithic/protocol';
-import { isProcessExit, isProcessReady, isSyscallResponse } from '@mithic/protocol';
+import {
+  isProcessExit,
+  isProcessReady,
+  isSyscallResponse,
+  isTerminatingSignal,
+  signalExitCode,
+} from '@mithic/protocol';
 import type { Runtime, ProcessHandle } from '@mithic/runtime';
-import type { FileSystemProvider } from '@mithic/io/vfs';
+import type { FileSystemProvider, FileHandle, OpenFlags } from '@mithic/io/vfs';
+import { normalizePath } from '@mithic/io/vfs';
+import type { FsOperation } from './capability-manager.ts';
 import type { HttpClient } from '@mithic/io/net';
 import { FetchHttpClient } from '@mithic/io/net';
 import { CapabilityManager } from './capability-manager.ts';
@@ -68,6 +78,42 @@ export interface KernelOptions {
    * Required when using a non-transferable runtime backend.
    */
   relayLauncher?: RelayLauncher;
+  /**
+   * C1: grace window (ms) the kernel waits after delivering a TERMINATING signal
+   * (SIGTERM/SIGINT/SIGHUP/…) before forcibly tearing the sandbox down. A guest
+   * that installs `onSignal` and exits cleanly within this window reports its OWN
+   * exit code; a guest that ignores the signal is killed with `128+signum`.
+   * Defaults to {@link DEFAULT_SIGNAL_GRACE_MS}.
+   */
+  signalGraceMs?: number;
+  /**
+   * K4 (§8.2): heartbeat/health watchdog config. When enabled, the kernel pings
+   * each guest's retained control port every `intervalMs` with a
+   * `{event:'heartbeat'}` KernelEvent; the guest must reply with a
+   * `{type:'heartbeat-ack'}` control message. After `maxMissed` consecutive
+   * missed acks the process is declared hung and SIGKILLed (exit 137). Opt-in so
+   * existing tests do not flake — unset means no heartbeat monitoring.
+   */
+  heartbeat?: HeartbeatOptions;
+  /**
+   * K1: invoked when a process is spawned with a HARD limit the active runtime
+   * backend cannot enforce — `memoryMb` on a backend with `memoryLimit:false`
+   * (Worker/iframe), or `cpuMs` on a backend with `cpuLimit:false`
+   * (Worker/iframe/ivm). Rather than silently dropping the limit, the kernel
+   * reports it here so callers can surface a clear diagnostic or refuse to run.
+   * Defaults to a `console.warn`. (The kernel still enforces the limits it CAN
+   * regardless of backend: timeoutMs/maxOutputBytes via the watchdog, and
+   * networkDisabled/maxChildren at the syscall boundary.)
+   */
+  onLimitUnenforceable?: (pid: number, limit: 'memoryMb' | 'cpuMs', backend: string) => void;
+}
+
+/** K4: heartbeat/health-watchdog configuration (§8.2). */
+export interface HeartbeatOptions {
+  /** Ping interval in ms. Design default: 5000. */
+  intervalMs: number;
+  /** Consecutive missed acks before declaring the process hung. Design default: 3. */
+  maxMissed: number;
 }
 
 /**
@@ -109,6 +155,16 @@ export interface RelayContext {
   closeStderr(): void;
   /** Notify the kernel that the process exited. */
   notifyExit(code: number): void;
+  /**
+   * C1/K3: register a sink for KernelEvents the kernel wants delivered to this
+   * guest (`{event:'signal'}`, `{event:'dom/event'}`, `{event:'heartbeat'}`).
+   * Relay backends have no transferable control port, so the launcher provides a
+   * callback the kernel invokes; the launcher bridges the event into the guest
+   * (e.g. by calling a guest-exposed `__mithic_kernel_event(json)` hook). Optional
+   * — a launcher that cannot deliver events simply omits it (signals still compute
+   * the 128+N exit code on teardown, but the guest's onSignal will not fire).
+   */
+  onKernelEvent?(sink: (event: KernelEvent) => void): void;
 }
 
 /**
@@ -145,6 +201,14 @@ export interface SpawnInit {
   stdin?: MessagePort;
   stdout?: MessagePort;
   stderr?: MessagePort;
+  /**
+   * K2: GUEST-side preopen ports for fds >= 3 (the child reads/writes these as
+   * extra file descriptors). The kernel transfers each into the sandbox as a
+   * preopen at the keyed fd. The OTHER end (if a fresh pipe) is the kernel's to
+   * drive/drain — used to wire `process/spawn` `pipe`/`dup2`/`open` fd actions for
+   * fds beyond 0-2. Keys must be >= 3 (0/1/2 use stdin/stdout/stderr above).
+   */
+  extraFds?: Record<number, MessagePort>;
   /**
    * Inline stdin payload. When set (and `stdin` is NOT injected), the kernel
    * mints the stdin pipe, gives the child the read end, then writes these bytes
@@ -222,6 +286,12 @@ export interface LaunchContext {
   init: ProcessInit;
   control: MessagePort;
   stdio: MessagePort[];
+  /**
+   * K2: the GUEST preopen fd each `stdio` port maps to, parallel to `stdio`. When
+   * omitted the runtime falls back to positional mapping (stdio[0]→fd0, etc.).
+   * Supplied when the process has preopen fds beyond stdin/stdout/stderr.
+   */
+  preopenFds?: number[];
   /** GUI display placement forwarded to the runtime's `spawn` (see {@link DisplayOptions}). */
   display?: DisplayOptions;
 }
@@ -251,16 +321,27 @@ export class Kernel {
   readonly dispatcher: SyscallDispatcher;
 
   #runtime: Runtime;
+  #vfs: FileSystemProvider;
   #launcher: GuestLauncher;
   #relayLauncher: RelayLauncher | undefined;
   #cwds = new Map<number, string>();
+  #signalGraceMs: number;
+  #heartbeat: HeartbeatOptions | undefined;
+  #onLimitUnenforceable: (pid: number, limit: 'memoryMb' | 'cpuMs', backend: string) => void;
+  /** K1: per-process limits, consulted by the dispatcher for networkDisabled/maxChildren. */
+  #limits = new Map<number, ProcessLimits>();
 
   constructor(options: KernelOptions) {
     this.#runtime = options.runtime;
+    this.#vfs = options.vfs;
+    this.#signalGraceMs = options.signalGraceMs ?? DEFAULT_SIGNAL_GRACE_MS;
+    this.#heartbeat = options.heartbeat;
+    this.#onLimitUnenforceable = options.onLimitUnenforceable ?? defaultLimitDiagnostic;
     this.dispatcher = new SyscallDispatcher({
       vfs: options.vfs,
       caps: this.capabilities,
       cwdOf: (pid) => this.#cwds.get(pid) ?? '/',
+      limitsOf: (pid) => this.#limits.get(pid),
       ipc: this.ipc,
       directPipes: options.runtime.capabilities.directPipes,
       onDomMutate: options.onDomMutate,
@@ -295,6 +376,9 @@ export class Kernel {
     const pid = this.processes.allocate(ppid);
     const cwd = init.cwd ?? '/';
     this.#cwds.set(pid, cwd);
+    // K1: record limits so the dispatcher can enforce networkDisabled/maxChildren,
+    // and surface a diagnostic for hard limits this backend cannot honor.
+    this.#recordLimits(pid, init.limits);
 
     // Capabilities: narrow against the parent unless spawned by the kernel (ppid 0).
     const requested = init.capabilities ?? [];
@@ -371,6 +455,25 @@ export class Kernel {
     }
 
     const stdio: MessagePort[] = [stdinReadPort, stdoutWritePort, stderrWritePort];
+    // K2: positional preopen fds for stdio (0/1/2), extended below with any fd>=3.
+    const preopenFds: number[] = [0, 1, 2];
+    const preopens: ProcessInit['preopens'] = {
+      0: { type: 'pipe' },
+      1: { type: 'pipe' },
+      2: { type: 'pipe' },
+    };
+    // K2: wire extra preopen fds (fd >= 3) into the transfer/preopen tables. Each
+    // guest-side port is appended to stdio and its fd recorded in preopenFds so
+    // the backend bootstrap maps it to the correct preopen index.
+    if (init.extraFds) {
+      for (const [fdStr, port] of Object.entries(init.extraFds)) {
+        const fd = Number(fdStr);
+        if (fd < 3) continue; // 0/1/2 are stdin/stdout/stderr
+        stdio.push(port);
+        preopenFds.push(fd);
+        preopens![fd] = { type: 'pipe' };
+      }
+    }
 
     // Track injected write ports so #exit can signal EOF if the process exits
     // without closing them (abnormal exit / crash). Only track ports that were
@@ -394,11 +497,7 @@ export class Kernel {
       // memory/cpu (quickjs/ivm) sees them. The kernel-side watchdog enforces
       // timeoutMs/maxOutputBytes regardless of backend.
       limits: init.limits,
-      preopens: {
-        0: { type: 'pipe' },
-        1: { type: 'pipe' },
-        2: { type: 'pipe' },
-      },
+      preopens,
     };
 
     // Wire the kernel-side control port BEFORE launching so no message is lost.
@@ -409,6 +508,9 @@ export class Kernel {
       init: processInit,
       control: guestControl,
       stdio,
+      // K2: only pass preopenFds when there are extra fds beyond the default 0/1/2,
+      // so the positional fallback path is unaffected for the common case.
+      preopenFds: preopenFds.length > 3 ? preopenFds : undefined,
       display: init.display,
     });
 
@@ -416,6 +518,8 @@ export class Kernel {
 
     // LIM-1: arm the kernel-side wall-clock timeout watchdog (backend-agnostic).
     this.#armWatchdog(pid, init.limits);
+    // K4: arm the heartbeat/health watchdog (opt-in via KernelOptions.heartbeat).
+    this.#armHeartbeat(pid);
 
     // Surface bootstrap errors from the worker main channel as a crash exit.
     this.#runtime.onMessage(handle, (msg: unknown) => {
@@ -502,6 +606,7 @@ export class Kernel {
     const pid = this.processes.allocate(ppid);
     const cwd = init.cwd ?? '/';
     this.#cwds.set(pid, cwd);
+    this.#recordLimits(pid, init.limits);
 
     const requested = init.capabilities ?? [];
     const granted = ppid === 0 ? requested : this.capabilities.narrow(ppid, requested);
@@ -585,6 +690,9 @@ export class Kernel {
       closeStdout() { stdoutResolve?.(concat(stdoutChunks)); },
       closeStderr() { stderrResolve?.(concat(stderrChunks)); },
       notifyExit: (code) => { this.#exit(pid, code); },
+      // C1/K3: the launcher registers a sink so the kernel can deliver signal /
+      // dom-event / heartbeat KernelEvents to the guest over the relay bridge.
+      onKernelEvent: (sink) => { this.#relaySignalSinks.set(pid, sink); },
     };
 
     this.processes.markReady(pid);
@@ -594,6 +702,8 @@ export class Kernel {
 
     // LIM-1: arm the kernel-side wall-clock timeout watchdog (relay backend too).
     this.#armWatchdog(pid, init.limits);
+    // K4: arm the heartbeat/health watchdog (opt-in).
+    this.#armHeartbeat(pid);
 
     return { pid, stdout, stderr };
   }
@@ -617,9 +727,13 @@ export class Kernel {
    *   - `inherit` / unset — the child gets a fresh kernel-owned stdio pipe (its
    *                output is not connected to the parent unless captured).
    *   - `close`  — the fd is left unwired (guest sees /dev/null semantics).
-   *   - `open`   — DEFERRED: an fd backed by a VFS file open is not yet wired;
-   *                treated as `inherit` for now (no silent data loss — the child
-   *                simply gets a default stdio pipe).
+   *   - `open`   — K2: the kernel opens the VFS `path` (capability-checked against
+   *                the parent's fs grants) and wires it into the child fd: for a
+   *                READ open it streams the file's bytes into the child's read end;
+   *                for a WRITE open it drains the child's write end into the file.
+   *
+   * fds >= 3 are fully supported (K2): a `pipe`/`open` action wires a preopen pipe
+   * at that fd, and a `dup2` injects a guest-supplied port at that fd.
    */
   async #spawnChild(
     parentPid: number,
@@ -642,13 +756,21 @@ export class Kernel {
     // Parent-facing pipe ports to transfer back, and the pipes map for the result.
     const transfer: Transferable[] = [];
     const pipes: Record<number, 'transferred'> = {};
+    // K2: VFS-file pump actions deferred until AFTER the child spawns (so the
+    // child's read end has a reader granting credit before we feed file bytes).
+    const filePumps: Array<() => void> = [];
 
     for (const [fdStr, action] of Object.entries(fds)) {
       const fd = Number(fdStr);
-      this.#applyFdAction(fd, action, init, injectedPorts, transfer, pipes);
+      await this.#applyFdAction(parentPid, fd, action, init, injectedPorts, transfer, pipes, filePumps);
     }
 
     const { pid } = await this.spawn(code, init);
+
+    // Start any VFS-file pumps now that the child is running (its stdio reader/
+    // writer ports are live). feed/drain run fire-and-forget against the kernel-
+    // retained pipe ends.
+    for (const start of filePumps) start();
 
     const result: SpawnChildResult = { pid };
     if (Object.keys(pipes).length > 0) result.pipes = pipes;
@@ -657,46 +779,52 @@ export class Kernel {
   }
 
   /**
-   * Apply a single {@link FdAction} for the child's fd, mutating `init` to inject
-   * the child-side stdio port and pushing any parent-facing pipe ports into
-   * `transfer` / recording them in `pipes`.
-   *
-   * Only stdio fds 0/1/2 are supported for port injection and pipe actions.
-   * fd >= 3 with a `pipe` or `dup2` action is not yet wired into the child's
-   * preopen table; the kernel rejects such actions with EINVAL (pipe: both
-   * freshly minted ports are closed to avoid a leak; dup2: the injected port is
-   * closed). This is a deliberate, documented limitation — callers must not pass
-   * fd >= 3 until the preopen-for-arbitrary-fds path is implemented.
+   * Wire the child-side preopen port for `fd` into `init`. fds 0/1/2 use the
+   * dedicated stdin/stdout/stderr slots; fds >= 3 go into `init.extraFds`.
    */
-  #applyFdAction(
+  #wireChildFd(init: SpawnInit, fd: number, port: MessagePort): void {
+    if (fd === 0) init.stdin = port;
+    else if (fd === 1) init.stdout = port;
+    else if (fd === 2) init.stderr = port;
+    else { (init.extraFds ??= {})[fd] = port; }
+  }
+
+  /**
+   * K2: apply a single {@link FdAction} for the child's `fd`, mutating `init` to
+   * wire the child-side preopen port and pushing parent-facing pipe ports into
+   * `transfer`/`pipes`. Supports all fds (0-2 and >= 3).
+   *
+   *   - `pipe`  — mint a fresh pipe. The child gets the guest-side end (fd 0 →
+   *               read end, else write end); the OTHER end is transferred back to
+   *               the parent.
+   *   - `dup2`  — inject a guest-supplied port at this fd (zero-hop pipe).
+   *   - `open`  — open the VFS `path` (checked against the parent's fs cap) and
+   *               pump it: READ feeds the file into the child's read end; WRITE
+   *               drains the child's write end into the file.
+   *   - `inherit`/`close`/default — default kernel-owned stdio (or an injected
+   *               port already present for this fd).
+   */
+  async #applyFdAction(
+    parentPid: number,
     fd: number,
     action: FdAction,
     init: SpawnInit,
     injectedPorts: Map<number, MessagePort>,
     transfer: Transferable[],
     pipes: Record<number, 'transferred'>,
-  ): void {
+    filePumps: Array<() => void>,
+  ): Promise<void> {
     switch (action.action) {
       case 'pipe': {
-        // Fix 4: fd >= 3 pipe actions are unsupported — the kernel has no path
-        // to wire an arbitrary fd into a child's preopen table yet. Reject here
-        // (throw so #spawnChild propagates EINVAL back to the dispatcher) rather
-        // than silently minting and leaking two MessagePorts.
-        if (fd > 2) {
-          throw Object.assign(
-            new Error(`process/spawn: pipe fd action on fd ${fd} is not supported (only fd 0–2)`),
-            { errno: 'EINVAL' as const },
-          );
-        }
         const pipe = this.ipc.createPipe();
         if (fd === 0) {
-          // Child reads stdin: child gets read end; parent gets write end.
-          init.stdin = pipe.readPort;
+          // Child reads: child gets the read end; parent gets the write end.
+          this.#wireChildFd(init, fd, pipe.readPort);
           transfer.push(pipe.writePort);
         } else {
-          // Child writes (fd 1/2): child gets write end; parent gets read end.
-          if (fd === 1) init.stdout = pipe.writePort;
-          else if (fd === 2) init.stderr = pipe.writePort;
+          // Child writes (fd 1/2 or any fd >= 3 by convention): child gets the
+          // write end; parent gets the read end to drain.
+          this.#wireChildFd(init, fd, pipe.writePort);
           transfer.push(pipe.readPort);
         }
         pipes[fd] = 'transferred';
@@ -706,37 +834,123 @@ export class Kernel {
         // The guest injected a port it owns for this fd (port-based dup2).
         const port = injectedPorts.get(fd);
         if (!port) break; // No port supplied: leave unwired (close-like).
-        // Fix 4: fd >= 3 dup2 injection is unsupported — close the port so it
-        // does not leak, then reject. The port was extracted from injectedPorts
-        // which means it came from the guest's transfer list; the kernel is now
-        // its owner and must close it if it cannot wire it.
-        if (fd > 2) {
-          try { port.close(); } catch { /* already closed */ }
+        this.#wireChildFd(init, fd, port);
+        break;
+      }
+      case 'open': {
+        // K2: open a VFS file into the child fd. Capability-checked against the
+        // PARENT's fs grants (the child can hold no more than the parent).
+        const cwd = init.cwd ?? '/';
+        const path = action.path.startsWith('/')
+          ? normalizePath(action.path)
+          : normalizePath(cwd.endsWith('/') ? cwd + action.path : cwd + '/' + action.path);
+        const writing = Boolean(
+          action.flags.write || action.flags.create || action.flags.truncate || action.flags.append,
+        );
+        const op: FsOperation = writing ? 'write' : 'read';
+        if (!this.capabilities.checkFs(parentPid, path, op)) {
           throw Object.assign(
-            new Error(`process/spawn: dup2 fd injection on fd ${fd} is not supported (only fd 0–2)`),
-            { errno: 'EINVAL' as const },
+            new Error(`process/spawn: open fd ${fd}: permission denied: ${path}`),
+            { errno: 'EACCES' as const },
           );
         }
-        if (fd === 0) init.stdin = port;
-        else if (fd === 1) init.stdout = port;
-        else if (fd === 2) init.stderr = port;
+        const handle = await this.#vfs.open(path, action.flags as OpenFlags);
+        const pipe = this.ipc.createPipe();
+        if (writing) {
+          // Child WRITES the fd → child gets the write end; the kernel drains the
+          // read end into the VFS file (offset advancing from 0).
+          this.#wireChildFd(init, fd, pipe.writePort);
+          filePumps.push(() => { void this.#drainPortToFile(pipe.readPort, handle); });
+        } else {
+          // Child READS the fd → child gets the read end; the kernel feeds the
+          // file's bytes into the write end then closes (EOF).
+          this.#wireChildFd(init, fd, pipe.readPort);
+          filePumps.push(() => { void this.#feedFileToPort(handle, pipe.writePort); });
+        }
         break;
       }
       case 'inherit':
-      case 'open':
       case 'close':
       default:
-        // inherit/open/close: leave the child with default kernel-owned stdio
-        // (spawn() mints fresh pipes for any fd not injected here). Injected
-        // ports already in `injectedPorts` for this fd are wired too.
+        // inherit/close: default kernel-owned stdio (spawn() mints a fresh pipe
+        // for any fd not injected here). An injected port for this fd is wired.
         if (injectedPorts.has(fd)) {
-          const port = injectedPorts.get(fd)!;
-          if (fd === 0) init.stdin = port;
-          else if (fd === 1) init.stdout = port;
-          else if (fd === 2) init.stderr = port;
+          this.#wireChildFd(init, fd, injectedPorts.get(fd)!);
         }
         break;
     }
+  }
+
+  /**
+   * K2: stream a VFS file's bytes into a pipe WRITE port (the child's read end),
+   * honoring the credit protocol, then send EOF and close. Reads the file in
+   * chunks so a large file does not buffer wholesale. Fire-and-forget; errors
+   * close the port (the child sees EOF/EPIPE).
+   */
+  async #feedFileToPort(handle: FileHandle, writePort: MessagePort): Promise<void> {
+    writePort.start?.();
+    let credit = 0;
+    const waiters: Array<() => void> = [];
+    let broken = false;
+    writePort.onmessage = (e: MessageEvent): void => {
+      const msg = e.data as { type?: string; bytes?: number };
+      if (msg?.type === 'credit') {
+        credit += msg.bytes ?? 0;
+        while (waiters.length > 0 && credit > 0) waiters.shift()!();
+      } else if (msg?.type === 'end' || msg?.type === 'error') {
+        broken = true;
+        while (waiters.length > 0) waiters.shift()!();
+      }
+    };
+    const awaitCredit = (): Promise<void> =>
+      credit > 0 || broken ? Promise.resolve() : new Promise<void>((r) => waiters.push(r));
+    try {
+      let offset = 0;
+      const CHUNK = 64 * 1024;
+      for (;;) {
+        await awaitCredit();
+        if (broken) break;
+        const data = await this.#vfs.read(handle, offset, Math.min(CHUNK, credit > 0 ? credit : CHUNK));
+        if (data.byteLength === 0) break; // EOF
+        offset += data.byteLength;
+        credit -= data.byteLength;
+        writePort.postMessage({ type: 'data', chunk: data }, [data.buffer as ArrayBuffer]);
+      }
+    } catch { /* read/transfer failure: fall through to EOF/close */ }
+    try { writePort.postMessage({ type: 'end' }); } catch { /* closed */ }
+    try { writePort.close(); } catch { /* closed */ }
+    try { await this.#vfs.close(handle); } catch { /* already closed */ }
+  }
+
+  /**
+   * K2: drain a pipe READ port (the child's write end) into a VFS file, advancing
+   * the write offset. Grants credit so the writer flows. On EOF closes the file.
+   * Fire-and-forget; errors close the port and the file.
+   */
+  #drainPortToFile(readPort: MessagePort, handle: FileHandle): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let offset = 0;
+      let chain: Promise<unknown> = Promise.resolve();
+      readPort.start?.();
+      readPort.postMessage({ type: 'credit', bytes: 1 << 20 });
+      const finish = (): void => {
+        chain = chain.then(() => this.#vfs.close(handle)).catch(() => { /* closed */ });
+        try { readPort.close(); } catch { /* closed */ }
+        resolve();
+      };
+      readPort.onmessage = (e: MessageEvent): void => {
+        const msg = e.data as { type?: string; chunk?: Uint8Array };
+        if (msg?.type === 'data' && msg.chunk) {
+          const chunk = msg.chunk;
+          const at = offset;
+          offset += chunk.byteLength;
+          chain = chain.then(() => this.#vfs.write(handle, chunk, at)).catch(() => { /* write failure */ });
+          readPort.postMessage({ type: 'credit', bytes: chunk.byteLength });
+        } else if (msg?.type === 'end' || msg?.type === 'error') {
+          finish();
+        }
+      };
+    });
   }
 
   /**
@@ -771,30 +985,49 @@ export class Kernel {
   }
 
   /**
+   * K5: per-pid kernel-held relay pipe ends, keyed by the fd NUMBER the guest was
+   * given. On non-transferable backends the guest cannot hold a MessagePort, so
+   * `fs/pipe`/`ipc/accept`/`ipc/connect` keep their minted ports HERE and the
+   * guest operates them by fd via `pipe/read`/`pipe/write`/`pipe/close` — a kernel
+   * byte-relay (design §4.8). Cleared per-pid on process exit.
+   */
+  #relayFds = new Map<number, Map<number, RelayEnd>>();
+
+  /**
    * Kernel-owned syscall routing for the relay path. The launcher passes the
    * guest's raw `call`+`args`; the kernel binds the correct, kernel-owned `pid`
    * and dispatches through its own `SyscallDispatcher`, so all capability checks
    * run in-kernel — identical to the transfer path. The launcher can neither
    * forge the pid nor reach the dispatcher directly.
    *
-   * If the dispatcher returns a non-empty `transfer` list (e.g. `fs/pipe` ports),
-   * those transferables cannot cross the relay bridge — the relay context has no
-   * postMessage transfer mechanism. Any minted ports MUST be closed here to avoid
-   * leaks, and ENOSYS is returned to the guest instead.
+   * K5: syscalls that mint transferable ports (`fs/pipe`, `ipc/accept`,
+   * `ipc/connect`) are BYTE-RELAYED instead of ENOSYS'd: the kernel retains the
+   * ports keyed by the returned fd numbers and the guest drives them with
+   * `pipe/read`/`pipe/write`/`pipe/close`, which this method services directly.
+   * Any OTHER transferable result (none exist today) still closes + ENOSYSs.
    */
   async #relaySyscall(
     pid: number,
     call: string,
     args: Record<string, unknown>
   ): Promise<RelaySyscallResult> {
+    // K5: relay-only byte operations on kernel-held pipe/IPC fds.
+    if (call === 'pipe/read') return this.#relayPipeRead(pid, args);
+    if (call === 'pipe/write') return this.#relayPipeWrite(pid, args);
+    if (call === 'pipe/close') return this.#relayPipeClose(pid, args);
+
     const { response, transfer } = await this.dispatcher.dispatch(pid, { id: 0, call, args });
-    // If the dispatch minted transferable ports (or other transferables), they
-    // cannot be delivered over the relay bridge. Close every minted MessagePort
-    // to prevent leaks and surface ENOSYS so the guest gets a clean error.
+
     if (transfer && transfer.length > 0) {
-      for (const t of transfer) {
-        if (t instanceof MessagePort) t.close();
+      // K5: register the minted ports as kernel-held relay fds keyed by the fd
+      // numbers in the response, then strip the ports from what crosses the
+      // bridge. fs/pipe → {readfd, writefd}; ipc/accept|connect → {connfd}.
+      const registered = this.#registerRelayPorts(pid, response, transfer);
+      if (registered) {
+        return response.ok ? { ok: true, result: response.result } : { ok: false, error: response.error };
       }
+      // Unknown transferable result: close to avoid a leak and surface ENOSYS.
+      for (const t of transfer) { if (t instanceof MessagePort) t.close(); }
       return { ok: false, error: { code: 'ENOSYS', message: `${call} unsupported on non-transferable backend` } };
     }
     return response.ok
@@ -802,7 +1035,98 @@ export class Kernel {
       : { ok: false, error: response.error };
   }
 
+  /** K5: relay-fd table for a pid (created on demand). */
+  #relayTableFor(pid: number): Map<number, RelayEnd> {
+    let t = this.#relayFds.get(pid);
+    if (!t) { t = new Map(); this.#relayFds.set(pid, t); }
+    return t;
+  }
+
+  /**
+   * K5: register the transferable ports of a port-minting syscall as kernel-held
+   * relay ends keyed by the response's fd numbers. Returns true if the response
+   * shape was recognized (fs/pipe / ipc connection), false otherwise.
+   */
+  #registerRelayPorts(pid: number, response: SyscallResponse, transfer: Transferable[]): boolean {
+    if (!response.ok) return false;
+    const result = response.result as Record<string, unknown>;
+    const table = this.#relayTableFor(pid);
+    if (typeof result.readfd === 'number' && typeof result.writefd === 'number'
+      && transfer[0] instanceof MessagePort && transfer[1] instanceof MessagePort) {
+      // fs/pipe: transfer = [readPort, writePort].
+      table.set(result.readfd, new RelayEnd(transfer[0]));
+      table.set(result.writefd, new RelayEnd(transfer[1]));
+      return true;
+    }
+    if (typeof result.connfd === 'number' && transfer[0] instanceof MessagePort) {
+      // ipc/accept | ipc/connect: transfer = [connectionPort] (bidirectional).
+      table.set(result.connfd, new RelayEnd(transfer[0]));
+      return true;
+    }
+    return false;
+  }
+
+  /** K5: `pipe/read {fd, len}` over a kernel-held relay end. */
+  async #relayPipeRead(pid: number, args: Record<string, unknown>): Promise<RelaySyscallResult> {
+    const fd = Number(args.fd);
+    const end = this.#relayFds.get(pid)?.get(fd);
+    if (!end) return { ok: false, error: { code: 'EBADF', message: `pipe/read: bad fd ${fd}` } };
+    const len = typeof args.len === 'number' ? args.len : undefined;
+    const chunk = await end.read(len);
+    // Return a plain number array so the value JSON-clones cleanly across the
+    // relay bridge (Uint8Array does not survive QuickJS's JSON round-trip).
+    return { ok: true, result: { data: Array.from(chunk) } };
+  }
+
+  /** K5: `pipe/write {fd, data}` over a kernel-held relay end. */
+  async #relayPipeWrite(pid: number, args: Record<string, unknown>): Promise<RelaySyscallResult> {
+    const fd = Number(args.fd);
+    const end = this.#relayFds.get(pid)?.get(fd);
+    if (!end) return { ok: false, error: { code: 'EBADF', message: `pipe/write: bad fd ${fd}` } };
+    const raw = args.data;
+    const chunk = raw instanceof Uint8Array ? raw
+      : Array.isArray(raw) ? new Uint8Array(raw as number[])
+        : typeof raw === 'string' ? new TextEncoder().encode(raw)
+          : new Uint8Array(0);
+    await end.write(chunk);
+    return { ok: true, result: { written: chunk.byteLength } };
+  }
+
+  /** K5: `pipe/close {fd}` — send EOF + close a kernel-held relay end. */
+  #relayPipeClose(pid: number, args: Record<string, unknown>): RelaySyscallResult {
+    const fd = Number(args.fd);
+    const table = this.#relayFds.get(pid);
+    const end = table?.get(fd);
+    if (!end) return { ok: false, error: { code: 'EBADF', message: `pipe/close: bad fd ${fd}` } };
+    end.close();
+    table!.delete(fd);
+    return { ok: true, result: {} };
+  }
+
+  /** K5: tear down all of a pid's relay ends (process exit). */
+  #closeRelayFds(pid: number): void {
+    const table = this.#relayFds.get(pid);
+    if (!table) return;
+    for (const end of table.values()) { try { end.close(); } catch { /* closed */ } }
+    this.#relayFds.delete(pid);
+  }
+
   #handles = new Map<number, ProcessHandle>();
+  /**
+   * C1/K3: per-process RETAINED kernel-side control port. The kernel keeps this
+   * MessagePort so it can POST KernelEvents (`{event:'signal'}`, `{event:'dom/
+   * event'}`, `{event:'heartbeat'}`) to a running guest. The transfer path stores
+   * the minted `kernelSide` here; relay backends have no transferable port, so
+   * signal events are delivered to the launcher via a registered callback instead.
+   */
+  #controlPorts = new Map<number, MessagePort>();
+  /**
+   * C1: relay-backend signal sinks. A relay launcher (non-transferable backend)
+   * registers a callback per pid so the kernel can deliver `{event:'signal'}` to
+   * the guest even without a transferable control port. Unset for the relay path =
+   * the signal is recorded but not delivered to guest code (still computes 128+N).
+   */
+  #relaySignalSinks = new Map<number, (event: KernelEvent) => void>();
   /**
    * LIM-1: per-process wall-clock timeout watchdog timers. Started by `spawn`/
    * `#spawnRelay` when `limits.timeoutMs` is set, cleared in `#exit`. Backend-
@@ -810,6 +1134,30 @@ export class Kernel {
    * the runtime enforces timeouts itself (Worker/iframe do not).
    */
   #watchdogs = new Map<number, ReturnType<typeof setTimeout>>();
+  /** C1: per-process grace-window timers armed after a terminating signal is delivered. */
+  #signalGraceTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  /** K4: per-process heartbeat interval timers and missed-ack counters. */
+  #heartbeatTimers = new Map<number, ReturnType<typeof setInterval>>();
+  #heartbeatMissed = new Map<number, number>();
+
+  /**
+   * K1: record a process's limits (for dispatcher-side networkDisabled/maxChildren
+   * enforcement) and surface a diagnostic for any HARD limit this backend cannot
+   * honor — `memoryMb` when `capabilities.memoryLimit` is false, `cpuMs` when
+   * `capabilities.cpuLimit` is false — rather than silently dropping it.
+   */
+  #recordLimits(pid: number, limits: ProcessLimits | undefined): void {
+    if (!limits) return;
+    this.#limits.set(pid, limits);
+    const caps = this.#runtime.capabilities;
+    const backend = this.#runtime.constructor?.name ?? 'runtime';
+    if (limits.memoryMb !== undefined && !caps.memoryLimit) {
+      this.#onLimitUnenforceable(pid, 'memoryMb', backend);
+    }
+    if (limits.cpuMs !== undefined && !caps.cpuLimit) {
+      this.#onLimitUnenforceable(pid, 'cpuMs', backend);
+    }
+  }
 
   /**
    * Arm a kernel-side wall-clock watchdog for `pid` if `limits.timeoutMs` is set.
@@ -849,6 +1197,9 @@ export class Kernel {
   #injectedWritePorts = new Map<number, MessagePort[]>();
 
   #wireControl(pid: number, kernelSide: MessagePort): void {
+    // C1/K3: RETAIN the kernel-side control port so the kernel can post
+    // KernelEvents (signal / dom-event / heartbeat) to the running guest.
+    this.#controlPorts.set(pid, kernelSide);
     kernelSide.start?.();
     kernelSide.onmessage = (e: MessageEvent) => {
       const msg = e.data as unknown;
@@ -858,6 +1209,11 @@ export class Kernel {
       }
       if (isProcessExit(msg)) {
         this.#exit(pid, msg.code);
+        return;
+      }
+      // K4: heartbeat liveness ack. Resets the missed-ack counter.
+      if (isHeartbeatAck(msg)) {
+        this.#heartbeatMissed.set(pid, 0);
         return;
       }
       // A syscall response from the guest would be malformed here; the guest
@@ -890,6 +1246,18 @@ export class Kernel {
     // LIM-1: cancel the wall-clock watchdog (if any) so it cannot fire after the
     // process has already exited (and cannot leak a timer / re-kill a reused pid).
     this.#clearWatchdog(pid);
+    // C1/K4: cancel any armed signal grace timer and heartbeat monitor.
+    this.#clearSignalGrace(pid);
+    this.#clearHeartbeat(pid);
+    // C1/K3: drop the retained control port + relay signal sink.
+    const ctrl = this.#controlPorts.get(pid);
+    if (ctrl) {
+      this.#controlPorts.delete(pid);
+      // Do NOT close the port here: on the transfer path the guest still owns
+      // its end and may post a final lifecycle frame; closing the kernel side
+      // can race a pending message. The GC reclaims it once the guest end dies.
+    }
+    this.#relaySignalSinks.delete(pid);
     // Signal EOF on any injected write ports before the process is torn down.
     // If a pipeline stage exits abnormally without closing its stdout, the
     // downstream stage's portToReadable would hang forever waiting for an
@@ -913,6 +1281,9 @@ export class Kernel {
     this.capabilities.revoke(pid);
     this.ipc.releaseByPid(pid);
     this.#cwds.delete(pid);
+    this.#limits.delete(pid);
+    // K5: tear down any kernel-held relay pipe/IPC ends for this pid.
+    this.#closeRelayFds(pid);
   }
 
   /**
@@ -990,19 +1361,135 @@ export class Kernel {
     return this.processes.wait(pid);
   }
 
-  /** Send a signal to a process. SIGKILL tears down the sandbox. */
+  /**
+   * C1: send a signal to a process.
+   *
+   * - **SIGKILL**: hard sandbox teardown, NO event delivery (mirrors Unix). The
+   *   process exits `137` (128+9) immediately.
+   * - **Deliverable signals** (everything else): the kernel POSTs a
+   *   `{event:'signal', payload:{signal}}` KernelEvent over the pid's retained
+   *   control port so the guest's `onSignal` handler runs.
+   *     - For a TERMINATING signal (SIGTERM/SIGINT/SIGHUP/SIGQUIT/SIGPIPE) the
+   *       kernel arms a grace window: if the guest exits on its own within it, it
+   *       reports its OWN exit code; otherwise the kernel tears the sandbox down
+   *       with `128+signum` (SIGTERM→143, SIGINT→130, …).
+   *     - For a NON-terminating signal (SIGUSR1/2, SIGCHLD, SIGCONT) the event is
+   *       delivered and the process is left running — the guest decides what to do.
+   *
+   * Idempotent against an already-dead process (no-op).
+   */
   kill(pid: number, signal: Signal = 'SIGKILL'): void {
+    const proc = this.processes.get(pid);
+    if (!proc || proc.state === 'DEAD') return;
     const handle = this.#handles.get(pid);
+
+    // Always notify the process manager's signal listeners (SIGCHLD wiring etc.).
     this.processes.signal(pid, signal);
+
     if (signal === 'SIGKILL') {
       if (handle) {
         if (this.#launcher.kill) this.#launcher.kill(this.#runtime, handle, signal);
         else this.#runtime.kill(handle, signal);
       }
-      this.#exit(pid, 137);
-    } else if (handle) {
-      this.#runtime.kill(handle, signal);
+      this.#exit(pid, signalExitCode('SIGKILL')); // 137
+      return;
     }
+
+    // Deliver the signal as a control-port KernelEvent so the guest's onSignal runs.
+    this.#deliverSignalEvent(pid, signal);
+
+    if (!isTerminatingSignal(signal)) {
+      // Non-terminating (SIGUSR1/2, SIGCHLD, SIGCONT): deliver only — never tear down.
+      return;
+    }
+
+    // Terminating signal: give the guest a grace window to exit cleanly, then
+    // forcibly tear it down with the 128+signum status if it ignored the signal.
+    if (this.#signalGraceTimers.has(pid)) return; // a grace window is already pending
+    const forced = signalExitCode(signal);
+    const timer = setTimeout(() => {
+      this.#signalGraceTimers.delete(pid);
+      const still = this.processes.get(pid);
+      if (!still || still.state === 'DEAD') return;
+      if (handle) {
+        if (this.#launcher.kill) this.#launcher.kill(this.#runtime, handle, 'SIGKILL');
+        else this.#runtime.kill(handle, 'SIGKILL');
+      }
+      this.#exit(pid, forced);
+    }, this.#signalGraceMs);
+    (timer as { unref?: () => void }).unref?.();
+    this.#signalGraceTimers.set(pid, timer);
+  }
+
+  /**
+   * C1/K3: POST a KernelEvent (`signal` / `dom/event` / `heartbeat`) to a guest
+   * over its retained control port. On relay (non-transferable) backends there is
+   * no transferable port; a registered relay signal sink receives it instead.
+   * No-op if the process has no retained port and no sink (already exited).
+   */
+  #postKernelEvent(pid: number, event: KernelEvent): void {
+    const port = this.#controlPorts.get(pid);
+    if (port) {
+      try { port.postMessage(event); } catch { /* port neutered (guest gone) */ }
+      return;
+    }
+    this.#relaySignalSinks.get(pid)?.(event);
+  }
+
+  /** C1: deliver a `{event:'signal'}` KernelEvent to a guest. */
+  #deliverSignalEvent(pid: number, signal: Signal): void {
+    this.#postKernelEvent(pid, { event: 'signal', payload: { signal } });
+  }
+
+  /**
+   * K3: forward a host-captured DOM event (a user interaction on a mirrored
+   * Remote-DOM element) to the owning guest as a `{event:'dom/event'}`
+   * KernelEvent. The guest's remote-dom layer (`onDomEvent`) dispatches it to the
+   * matching VNode listener — closing the host→guest half of the Remote DOM loop.
+   */
+  forwardDomEvent(pid: number, payload: { nodeId: number; eventType: string; payload?: Record<string, unknown> }): void {
+    this.#postKernelEvent(pid, { event: 'dom/event', payload });
+  }
+
+  /** C1: cancel a pid's pending terminating-signal grace timer (e.g. it exited). */
+  #clearSignalGrace(pid: number): void {
+    const t = this.#signalGraceTimers.get(pid);
+    if (t !== undefined) { clearTimeout(t); this.#signalGraceTimers.delete(pid); }
+  }
+
+  /**
+   * K4 (§8.2): arm the heartbeat watchdog for `pid` if heartbeat monitoring is
+   * enabled. Every `intervalMs` the kernel posts `{event:'heartbeat'}` and counts
+   * it as a missed ack until the guest replies `{type:'heartbeat-ack'}` (handled
+   * in `#wireControl`, which resets the counter). After `maxMissed` consecutive
+   * misses the process is declared hung and SIGKILLed (137).
+   */
+  #armHeartbeat(pid: number): void {
+    const hb = this.#heartbeat;
+    if (!hb || hb.intervalMs <= 0) return;
+    this.#heartbeatMissed.set(pid, 0);
+    const timer = setInterval(() => {
+      const proc = this.processes.get(pid);
+      if (!proc || proc.state === 'DEAD') { this.#clearHeartbeat(pid); return; }
+      const missed = (this.#heartbeatMissed.get(pid) ?? 0) + 1;
+      this.#heartbeatMissed.set(pid, missed);
+      if (missed > hb.maxMissed) {
+        // Declared hung: hard-kill (137). #exit (via kill→#exit) clears the timer.
+        this.#clearHeartbeat(pid);
+        try { this.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+        return;
+      }
+      this.#postKernelEvent(pid, { event: 'heartbeat' });
+    }, hb.intervalMs);
+    (timer as { unref?: () => void }).unref?.();
+    this.#heartbeatTimers.set(pid, timer);
+  }
+
+  /** K4: cancel a pid's heartbeat monitor. */
+  #clearHeartbeat(pid: number): void {
+    const t = this.#heartbeatTimers.get(pid);
+    if (t !== undefined) { clearInterval(t); this.#heartbeatTimers.delete(pid); }
+    this.#heartbeatMissed.delete(pid);
   }
 }
 
@@ -1022,12 +1509,131 @@ const RELAY_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
  */
 const KERNEL_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
+/**
+ * C1: default grace window (ms) after delivering a terminating signal before the
+ * kernel forcibly tears the sandbox down. Long enough for a guest's async
+ * onSignal handler + clean exit to run; short enough not to wedge shutdown.
+ */
+const DEFAULT_SIGNAL_GRACE_MS = 2000;
+
+/** K1: default diagnostic for a hard limit the active backend cannot enforce. */
+function defaultLimitDiagnostic(pid: number, limit: 'memoryMb' | 'cpuMs', backend: string): void {
+  const cap = limit === 'memoryMb' ? 'memoryLimit' : 'cpuLimit';
+  console.warn(
+    `[mithic] pid ${pid}: ProcessLimits.${limit} cannot be enforced by the ${backend} backend `
+    + `(no ${cap} capability) — the limit is NOT applied. `
+    + 'Use a backend that supports it (QuickJS/ivm for memory) or remove the limit.',
+  );
+}
+
 function isSyscallRequestMsg(x: unknown): x is SyscallRequest {
   return typeof x === 'object' && x !== null
     && 'id' in x && typeof (x as { id: unknown }).id === 'number'
     && 'call' in x && typeof (x as { call: unknown }).call === 'string'
     && 'args' in x;
 }
+
+/** K4: a guest's liveness reply to a `{event:'heartbeat'}` ping. */
+function isHeartbeatAck(x: unknown): x is { type: 'heartbeat-ack' } {
+  return typeof x === 'object' && x !== null
+    && (x as { type?: unknown }).type === 'heartbeat-ack';
+}
+
+/**
+ * K5: a kernel-held end of a pipe/IPC MessageChannel used to BYTE-RELAY data to a
+ * non-transferable (relay) guest. The guest never holds the port — it operates it
+ * by fd via `pipe/read`/`pipe/write`/`pipe/close`, which the kernel services
+ * through this wrapper.
+ *
+ * The wrapper handles BOTH directions so a single object backs both unidirectional
+ * pipe ends (fs/pipe) and bidirectional IPC connection ports:
+ *   - READ side: grants an initial credit window, buffers incoming `{type:'data'}`
+ *     chunks, and observes `{type:'end'}`/`{type:'error'}` (EOF). `read(len)`
+ *     returns the next buffered bytes (FIFO), or an empty chunk at EOF, parking
+ *     until data arrives if the buffer is empty and the peer has not ended.
+ *   - WRITE side: tracks `credit` granted by the peer and `write(chunk)` parks
+ *     until enough credit is available, then posts `{type:'data'}`.
+ */
+class RelayEnd {
+  #port: MessagePort;
+  #buffer: Uint8Array[] = [];
+  #ended = false;
+  #readWaiters: Array<() => void> = [];
+  #credit = 0;
+  #creditWaiters: Array<{ needed: number; resolve: () => void }> = [];
+  #closed = false;
+
+  constructor(port: MessagePort) {
+    this.#port = port;
+    port.start?.();
+    // Grant an initial read-credit window so the peer writer can flow immediately.
+    port.postMessage({ type: 'credit', bytes: RELAY_READ_WINDOW });
+    port.onmessage = (e: MessageEvent): void => {
+      const msg = e.data as { type?: string; chunk?: Uint8Array; bytes?: number };
+      if (msg?.type === 'data' && msg.chunk) {
+        this.#buffer.push(msg.chunk);
+        // Replenish read credit for what we consumed into our buffer.
+        try { this.#port.postMessage({ type: 'credit', bytes: msg.chunk.byteLength }); } catch { /* closed */ }
+        this.#wakeReaders();
+      } else if (msg?.type === 'credit') {
+        this.#credit += msg.bytes ?? 0;
+        this.#wakeWriters();
+      } else if (msg?.type === 'end' || msg?.type === 'error') {
+        this.#ended = true;
+        this.#wakeReaders();
+        // Wake any parked writers too so they don't hang on a dead peer.
+        for (const w of this.#creditWaiters.splice(0)) w.resolve();
+      }
+    };
+  }
+
+  #wakeReaders(): void { for (const w of this.#readWaiters.splice(0)) w(); }
+  #wakeWriters(): void {
+    while (this.#creditWaiters.length > 0 && this.#credit >= this.#creditWaiters[0].needed) {
+      this.#creditWaiters.shift()!.resolve();
+    }
+  }
+
+  /** Read up to `len` bytes (or the next buffered chunk). Empty chunk = EOF. */
+  async read(len?: number): Promise<Uint8Array> {
+    for (;;) {
+      if (this.#buffer.length > 0) {
+        const head = this.#buffer[0];
+        if (len === undefined || len >= head.byteLength) { this.#buffer.shift(); return head; }
+        // Partial read: split the head chunk.
+        const out = head.subarray(0, len);
+        this.#buffer[0] = head.subarray(len);
+        return new Uint8Array(out);
+      }
+      if (this.#ended || this.#closed) return new Uint8Array(0);
+      await new Promise<void>((resolve) => this.#readWaiters.push(resolve));
+    }
+  }
+
+  /** Write `chunk`, parking until the peer grants enough credit. */
+  async write(chunk: Uint8Array): Promise<void> {
+    if (this.#closed || chunk.byteLength === 0) return;
+    if (this.#credit < chunk.byteLength && !this.#ended) {
+      await new Promise<void>((resolve) => this.#creditWaiters.push({ needed: chunk.byteLength, resolve }));
+    }
+    if (this.#closed || this.#ended) return;
+    this.#credit -= chunk.byteLength;
+    try { this.#port.postMessage({ type: 'data', chunk }); } catch { /* closed */ }
+  }
+
+  /** Send EOF to the peer and close the port. */
+  close(): void {
+    if (this.#closed) return;
+    this.#closed = true;
+    try { this.#port.postMessage({ type: 'end' }); } catch { /* closed */ }
+    try { this.#port.close(); } catch { /* closed */ }
+    this.#wakeReaders();
+    for (const w of this.#creditWaiters.splice(0)) w.resolve();
+  }
+}
+
+/** K5: initial read-credit window granted to a relay end's peer writer (bytes). */
+const RELAY_READ_WINDOW = 1 << 20; // 1 MiB
 
 /**
  * Write `data` into a kernel-owned pipe WRITE port using the credit protocol the
@@ -1086,6 +1692,7 @@ export class DefaultGuestLauncher implements GuestLauncher {
       return runtime.spawn(ctx.code, {
         init: ctx.init,
         transfer: [ctx.control, ...ctx.stdio],
+        preopenFds: ctx.preopenFds,
         display: ctx.display,
       });
     }
@@ -1100,8 +1707,14 @@ export class DefaultGuestLauncher implements GuestLauncher {
     // Reserve a handle id from the runtime's perspective for kill()/onMessage().
     const handle: ProcessHandle = { id: ctx.init.pid };
 
+    // K2: map each stdio port to its preopen fd (positional default, or the
+    // explicit preopenFds mapping when the process has fds beyond 0-2).
     const preopenPorts: Record<number, MessagePort> = {};
-    ctx.stdio.forEach((port, i) => { if (port != null) preopenPorts[i] = port; });
+    ctx.stdio.forEach((port, i) => {
+      if (port == null) return;
+      const fd = ctx.preopenFds ? ctx.preopenFds[i] : i;
+      if (typeof fd === 'number') preopenPorts[fd] = port;
+    });
     const boot = { control: ctx.control, init: ctx.init, preopenPorts };
 
     const defaultExport = await loadGuestDefault(ctx.code);

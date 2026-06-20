@@ -67,57 +67,52 @@ test('fs/read with a subarray view delivers the correct bytes', async () => {
   expect(result.byteLength).toBe(result.buffer.byteLength);
 });
 
-// ── Fix 4 regression: fd > 2 port injection / pipe actions must not leak ────
+// ── K2: fd >= 3 port injection / pipe / open actions are now supported ──────
+// (Superseded the old "Fix 4" EINVAL behavior: fd >= 3 was previously rejected;
+//  K2 wires arbitrary preopen fds. Deeper coverage lives in kernel-fd-actions.test.ts.)
 
 /**
- * Fix 4 regression: a process/spawn with a `pipe` fd action on fd 3 must return
- * EINVAL and must NOT leave a leaked MessagePort (no silent discard of minted ports).
- * The kernel rejects unsupported fd>2 pipe/dup2 actions with a clear error before
- * any orphan child or orphan port can be created.
+ * K2: a process/spawn with a `pipe` fd action on fd 3 SUCCEEDS — the child gets a
+ * preopen pipe at fd 3 and the parent-facing end is transferred back (no leak, no
+ * orphan failure). Previously this returned EINVAL.
  */
-test('Fix 4: process/spawn with pipe action on fd 3 returns EINVAL (no orphan/leak)', async () => {
+test('K2: process/spawn with pipe action on fd 3 succeeds and transfers the parent end', async () => {
   const vfs = new FileSystemRouter();
   await vfs.mount('/', new MemoryFsProvider());
-  const kernel = new Kernel({ runtime: new WorkerRuntime(), vfs });
 
-  const parentPid = kernel.processes.allocate(0);
-  kernel.processes.markReady(parentPid);
-  kernel.capabilities.grant(parentPid, [{ type: 'process' }]);
-
-  // Register a resolver so the command is found (ENOENT would hide the real error).
+  // Register a resolver so the command is found.
   const NOOP_CMD = `import { createGuest } from '@mithic/guest-runtime';
     export default async (boot) => { const g = createGuest(boot); g.exit(0); };`;
-  const kernelWithResolver = new Kernel({
+  const kernel = new Kernel({
     runtime: new WorkerRuntime(),
     vfs,
     resolveCommand: (name) => name === 'noop' ? NOOP_CMD : undefined,
   });
 
-  const parentPid2 = kernelWithResolver.processes.allocate(0);
-  kernelWithResolver.processes.markReady(parentPid2);
-  kernelWithResolver.capabilities.grant(parentPid2, [{ type: 'process' }]);
+  const parentPid = kernel.processes.allocate(0);
+  kernel.processes.markReady(parentPid);
+  kernel.capabilities.grant(parentPid, [{ type: 'process' }]);
 
-  const countBefore = kernelWithResolver.processes.list().length;
-
-  const { response } = await kernelWithResolver.dispatcher.dispatch(parentPid2, {
+  const { response, transfer } = await kernel.dispatcher.dispatch(parentPid, {
     id: 1,
     call: 'process/spawn',
     args: { path: 'noop', argv: ['noop'], fds: { 3: { action: 'pipe' } } },
   });
 
-  // Must be rejected with EINVAL.
-  expect(response).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
-
-  // No orphan child should have been created — process table count must not grow.
-  const countAfter = kernelWithResolver.processes.list().length;
-  expect(countAfter).toBe(countBefore);
+  // Succeeds: fd 3 is wired as a preopen pipe; the parent end is transferred.
+  expect(response.ok).toBe(true);
+  expect((response as { ok: true; result: { pipes: Record<number, string> } }).result.pipes).toEqual({ 3: 'transferred' });
+  expect(transfer).toHaveLength(1);
+  expect(transfer![0]).toBeInstanceOf(MessagePort);
+  const pid = (response as { ok: true; result: { pid: number } }).result.pid;
+  await kernel.wait(pid);
 }, 10000);
 
 /**
- * Fix 4 regression: a process/spawn with a `dup2` injection on fd 3 returns
- * EINVAL and closes the injected port (no silent leak).
+ * K2: a process/spawn with a `dup2` injection on fd 3 SUCCEEDS — the guest-supplied
+ * port is wired as the child's preopen at fd 3. Previously this returned EINVAL.
  */
-test('Fix 4: process/spawn with dup2 injection on fd 3 returns EINVAL and closes the port', async () => {
+test('K2: process/spawn with dup2 injection on fd 3 succeeds (wires the injected port)', async () => {
   const vfs = new FileSystemRouter();
   await vfs.mount('/', new MemoryFsProvider());
 
@@ -133,14 +128,10 @@ test('Fix 4: process/spawn with dup2 injection on fd 3 returns EINVAL and closes
   kernel.processes.markReady(parentPid);
   kernel.capabilities.grant(parentPid, [{ type: 'process' }]);
 
-  // Create a port to inject at fd 3 via portFds + fds:{3:{action:'dup2'}}.
+  // A port to inject at fd 3 via portFds + fds:{3:{action:'dup2'}}.
   const chan = new MessageChannel();
   const injectedPort = chan.port1;
-  chan.port2.close();
 
-  const countBefore = kernel.processes.list().length;
-
-  // Transfer the port in via portFds with an explicit dup2 fd action for fd 3.
   const { response } = await kernel.dispatcher.dispatch(
     parentPid,
     {
@@ -155,12 +146,11 @@ test('Fix 4: process/spawn with dup2 injection on fd 3 returns EINVAL and closes
     [injectedPort],
   );
 
-  // Must be rejected with EINVAL.
-  expect(response).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
-
-  // No orphan child should have been created.
-  const countAfter = kernel.processes.list().length;
-  expect(countAfter).toBe(countBefore);
+  // Succeeds: the injected port is wired into the child's preopen fd 3.
+  expect(response.ok).toBe(true);
+  const pid = (response as { ok: true; result: { pid: number } }).result.pid;
+  await kernel.wait(pid);
+  chan.port2.close();
 }, 10000);
 
 // ── CAP-2: captured stdout must not hang when the guest writes past the cap ──

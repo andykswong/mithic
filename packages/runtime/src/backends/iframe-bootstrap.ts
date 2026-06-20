@@ -42,9 +42,14 @@ window.onmessage = (e) => {
   const data = e.data;
   if (data && typeof data === 'object' && '__mithic_init' in data) {
     const ports = Array.isArray(data.ports) ? data.ports : [];
+    // K2: data.preopenFds (when present) maps ports[1..] to arbitrary guest fds;
+    // otherwise fall back to positional mapping (ports[i] -> fd i-1).
+    const preopenFds = Array.isArray(data.preopenFds) ? data.preopenFds : null;
     const preopenPorts = {};
     for (let i = 1; i < ports.length; i++) {
-      if (ports[i] != null) preopenPorts[i - 1] = ports[i];
+      if (ports[i] == null) continue;
+      const fd = preopenFds ? preopenFds[i - 1] : i - 1;
+      if (typeof fd === 'number') preopenPorts[fd] = ports[i];
     }
     __mithic_boot = { control: ports[0], init: data.__mithic_init, preopenPorts };
   } else if (data && typeof data === 'object' && '__mithic_run' in data && typeof data.__mithic_run === 'string') {
