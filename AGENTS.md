@@ -2,43 +2,60 @@
 
 ## Project Overview
 
-Mithic (Mithic 2.0) is a capability-based sandboxed process kernel with GUI-capable sandboxes, running identically in the browser and on native platforms.
+Mithic (Mithic 2.0) is an isomorphic, capability-based sandboxed **JavaScript** process runtime that runs identically in the browser and on native Node platforms. It provides a POSIX-style shell that itself runs as a regular sandboxed process, a capability-gated virtual filesystem (VFS) and network layer, pluggable isolation backends (iframe, Web Worker, QuickJS-WASM, isolated-vm), and a microkernel that brokers syscalls, IPC pipes, process lifecycle, and a sanitized Remote-DOM host for GUI processes.
+
+npm scope is `@mithic/*`; core library packages are at version `2.0.0` (`@mithic/worker` is `0.1.0`).
+
+> v2 is **JS-first**. The earlier WASM/WASI-Preview-2 implementation is paused — its packages (`wasip2`, `process`, `wasm-transpile`, and the WASM variants of `shell`/`coreutils`/`commands`) live on the `wasm` branch and `origin/main`, not here. Do not reference them as if present on `v2`.
+>
+> ("Isola" was an internal codename for an earlier iteration and must not appear as the product name — the product is Mithic.)
 
 ## Monorepo Structure
 
 ```
 packages/
-├── protocol/       @mithic/protocol       — wire types: ProcessInit, Capability, SyscallRequest/Response, KernelEvent, pipe + errno protocol
-├── guest-runtime/  @mithic/guest-runtime  — in-sandbox guest API: createGuest(boot) → {syscall, stdio streams, onSignal, onDomEvent, exit}; Remote DOM client
-├── runtime/        @mithic/runtime        — pluggable execution backends: Worker, iframe (GUI/opaque-origin), QuickJS, isolated-vm
-├── kernel/         @mithic/kernel         — the Kernel: process lifecycle, IPC broker, capability manager, syscall dispatch, pipelines, Remote DOM host
-├── shell/          @mithic/shell       — POSIX-style shell interpreter (lexer/parser/expander/builtins/executor) running as a regular Mithic process
-├── server/         @mithic/server         — host-side server integration
-├── io/             @mithic/io             — VFS router, providers, HTTP/sockets (VFS used by Mithic Vitest suite)
-├── worker/         @mithic/worker         — Web Worker polyfill for Node.js (isomorphic new Worker())
-└── examples/
-    ├── shell/        @mithic/example-shell        — xterm.js terminal (pending re-adaptation to Mithic JS shell)
+├── protocol/       @mithic/protocol       — wire/IPC types: errno + signals, SyscallRequest/Response, KernelEvent, Capability, ProcessInit/Limits, pipe protocol (leaf; no deps)
+├── runtime/        @mithic/runtime        — pluggable execution backends (Worker, iframe [GUI], QuickJS, isolated-vm) + RuntimeCapabilities + selectBackend()
+├── guest-runtime/  @mithic/guest-runtime  — in-sandbox guest API: createGuest(opts) → {pid, args, env, cwd, stdio streams, syscall, onSignal, onDomEvent, exit}; Remote-DOM client
+├── kernel/         @mithic/kernel         — the Kernel: process lifecycle, IPC broker, capability manager, syscall dispatch, pipelines, Remote-DOM host
+├── io/             @mithic/io             — VFS router + providers (memory/device/node-fs/opfs/caching), HTTP/socket abstractions, sync-bridge utils
+├── shell/          @mithic/shell          — POSIX-style shell interpreter (lexer/parser/expander/executor/builtins) running as a regular Mithic process
+├── coreutils/      @mithic/coreutils      — pure-TS Unix coreutils (54 commands), one guest module per command, + createCoreutilsResolver
+├── commands/
+│   ├── jq/         @mithic/jq             — pure-TS jq JSON processor as a sandboxed process (+ standalone ./engine)
+│   └── curl/       @mithic/curl           — pure-TS curl-like HTTP client; all network via the capability-gated net/fetch syscall
+├── server/         @mithic/server         — host-side Hono REST server: POST /exec runs sandboxed code (QuickJS relay path)
+├── worker/         @mithic/worker         — Web Worker polyfill for Node.js (isomorphic `new Worker()`); built with tsc, tested with node --test
+└── examples/       (private)
+    ├── shell/        @mithic/example-shell        — xterm.js browser terminal running @mithic/shell with the full coreutils + jq + curl suite
     ├── image-viewer/ @mithic/example-image-viewer — GUI Mithic process: drop-zone + <img> rendered in its own sandboxed iframe DOM
-    └── notebook/     @mithic/example-notebook     — xterm.js shell notebook: boots Kernel + IframeRuntime, drives @mithic/shell
+    └── notebook/     @mithic/example-notebook     — xterm.js shell-notebook frontend booting a Kernel with the full command suite + an inline GUI image-viewer
 ```
 
-> The original WASM/WASI P2 packages (shell, coreutils, jq, curl, wasip2, process, wasm-transpile) are removed from this branch. They are preserved on the `wasm` branch (and `origin/main`).
+**Dependency layering (bottom → top):** `protocol` → `runtime`/`guest-runtime`/`io` → `kernel` (uses runtime + io + protocol) → `shell`/`coreutils`/`jq`/`curl` (guests on guest-runtime) → `server` and `examples` (compose kernel + runtime + io + shell + command packages). `worker` is standalone and consumed by `runtime` for Node Worker support.
+
+**Command suite: 56 commands** — 54 coreutils (`COMMAND_NAMES` in `packages/coreutils/src/resolver.ts`) + `jq` (`@mithic/jq`) + `curl` (`@mithic/curl`). The kernel owns the command namespace: a bare command name is mapped to spawnable guest code via `KernelOptions.resolveCommand(name, cwd, env)`.
 
 ## Build & Test
 
 ```shell
-npm install                  # installs deps + wasm-tools/wkg via cargo
-npm run build                # vite build across all workspaces
+npm install                  # installs workspace deps (pure JS/TS — no cargo, no wasm-tools)
+npm run build                # vite build across all workspaces (tsc for @mithic/worker)
 npm test                     # vitest run across all projects (node + browser)
 npm run test:node            # node-environment tests only
 npm run test:browser         # browser-mode tests (Chromium via Playwright)
 npm run lint                 # eslint
-npm run typecheck            # tsc --noEmit
+npm run typecheck            # tsc --noEmit per package
 ```
 
 Individual package: run the same commands inside the package directory.
 
-Mithic packages use **Vitest**. Node-environment unit/integration tests are `*.test.ts`; tests requiring a real browser (iframe sandboxing, DOM, MessagePort/ArrayBuffer transfer) are `*.browser.test.ts` and run in Chromium. Legacy Mithic packages may still use `node --test` until migrated.
+Test runner is **Vitest** (`vitest.config.ts`), with two projects:
+
+- **`node`** — environment `node`; runs `*.test.ts` matched by the config's include allowlist (`packages/{protocol,runtime,guest-runtime,kernel,shell,coreutils,server}/src/**`, `packages/io/src/vfs/**`, `packages/commands/*/src/**`).
+- **`browser`** — real Chromium via Playwright (headless); runs `*.browser.test.ts` (iframe sandboxing, DOM, MessagePort/ArrayBuffer transfer) plus the three example packages.
+
+The include globs are an **explicit allowlist**, not a `packages/*` sweep — `@mithic/io` net/utils (only `io/src/vfs/**` is in the allowlist) and `@mithic/worker` run via `node --test` through their own package `test` scripts and must not be picked up by vitest. Toolchain: TypeScript 6+, ESM-only, Vite 8, Vitest 3.2.
 
 ## Key Conventions
 
@@ -49,18 +66,21 @@ Mithic packages use **Vitest**. Node-environment unit/integration tests are `*.t
 
 ## Architecture Principles
 
-- **Pluggable components** — VFS, HTTP, sockets, and process management are all defined as interfaces with injectable implementations, configured via WASI instantiation helpers. This follows SOLID principles for loose coupling and testability.
-- **Isomorphic by design** — Exposes both standard Web APIs for JavaScript consumers (Web File System API) and WASI interfaces for WebAssembly components, backed by the same underlying providers.
-- **Standards-based** — Implements WASI Preview 2 interfaces faithfully. Process management mirrors POSIX semantics (spawn, pipes, signals) with two execution modes:
-  - **Worker mode**: Each spawned WASM component runs in its own Web Worker with SharedPipe ring buffers for cross-Worker I/O and `Atomics`-based blocking semantics. True parallelism.
-  - **Async mode**: All processes run on the same JS thread as suspended JSPI stacks (or asyncify-instrumented stacks). Cooperative concurrency via Promise yielding. No Workers, no SharedArrayBuffer needed — works in environments without COOP/COEP headers.
-  
-  Shell mirrors Bash shell behavior with POSIX mode support. Follows the Unix "everything is a file" philosophy — cloud storage, devices, and IPC are all VFS mounts.
+- **Capability-gated** — Every privileged operation is a syscall brokered by the kernel. A process only acts on resources granted by its `Capability` set (`fs | net | ipc | process | env`); the `CapabilityManager` checks each `fs/*`, `net/fetch`, `ipc/*`, and `process/*` call before it reaches a provider. Guests never hold a raw socket or fd — e.g. `@mithic/curl` issues `net/fetch` and the kernel runs the capability check before invoking the `HttpClient`.
+- **Pluggable components** — VFS providers, HTTP/socket clients, and runtime backends are interfaces with injectable implementations, wired through `KernelOptions` (`runtime`, `vfs`, `httpClient`, `resolveCommand`, `launcher`/`relayLauncher`, `onDomMutate`). SOLID-style loose coupling for testability and isomorphism.
+- **Isomorphic by design** — The same kernel, VFS, and command suite run unchanged in the browser and on Node. Backends differ in capability, not in API:
+  - **Worker** (`WorkerRuntime`) — true parallelism via Web Workers; transferable MessagePort pipes (direct pipes); no resource limits.
+  - **iframe** (`IframeRuntime`) — the only `gui: true` backend (Remote-DOM rendering in an opaque-origin sandbox); transferable, direct pipes; not interruptible.
+  - **QuickJS** (`QuickJSRuntime`) — deterministic WASM interpreter; hard memory cap + CPU/wall-clock interrupt budget. Not transferable, so the kernel uses the **relay path** (`RelayContext.onSyscall`) — capability checks still run in-kernel.
+  - **isolated-vm** (`IvmRuntime`) — hard V8 memory cap; wall-clock (not CPU-time) timeout, so `cpuLimit` is honestly advertised as false.
+
+  `selectBackend(policy, context)` picks one against each backend's `RuntimeCapabilities` (`gui, transferable, directPipes, deterministic, memoryLimit, cpuLimit, parallelism, interruptible`), default fallback order `['worker','iframe','quickjs','ivm']`.
+- **Everything is a file / POSIX shell** — `@mithic/shell` mirrors Bash (builtin-first dispatch; non-builtins spawned via `process/spawn` and `process/pipeline`), with POSIX `set` options (`errexit`, `nounset`, `xtrace`, `pipefail`, `noclobber`). Storage, devices, and IPC are all VFS mounts.
 - **Disposable ownership convention** — When a component receives a `Disposable` resource, ownership must be explicit:
   - **Owned**: The receiver calls `[Symbol.dispose]()` when done. The resource's lifetime is tied to the receiver.
   - **Borrowed**: The receiver uses the resource but does NOT dispose it. The caller retains ownership. For streams, use `borrow()` to make this explicit — the borrow is a non-ref-counted view whose dispose is a no-op.
-  
-  Example: `WASIShim` owns its stdio streams and exposes them as `borrow()` to WASM guests. The handler disposes the shim in its `finally` block, which drops the owned streams and propagates EOF/broken-pipe.
+
+  Example: a guest owns its stdio streams (the pipe-protocol `ReadableStream`/`WritableStream` over `MessagePort` from `@mithic/guest-runtime`) and disposes them on exit, which propagates EOF / broken-pipe (`EPIPE`) to the peer.
 
 ## When Editing
 

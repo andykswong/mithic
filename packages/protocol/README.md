@@ -1,16 +1,90 @@
 # @mithic/protocol
 
-Wire-protocol types shared across the Mithic runtime. This package is pure type
-and guard definitions — the single source of truth for the messages that flow
-between the kernel, a runtime backend, and a sandboxed guest.
+Wire-protocol types shared across the Mithic runtime. This package is pure type,
+constant, and guard definitions — the single source of truth for the messages
+that flow between the kernel, a runtime backend, and a sandboxed guest. It has
+**zero dependencies**: every other Mithic package builds on top of it.
+
+The kernel and guest never hand-roll these shapes — import the types, constants,
+and guards from here so both sides stay compatible.
 
 ## What's in it
 
-- **Process** — `ProcessInit`, `Capability` (`{ type: 'fs', paths, operations }`, …),
-  `ProcessLimits`, `Signal`, and the `isProcessReady` / `isProcessExit` guards.
-- **Syscall** — `SyscallRequest`, `SyscallResponse`, and `isSyscallResponse`.
-- **Kernel events** — `KernelEvent` (e.g. `signal`, `dom/event`) and `isKernelEvent`.
-- **Pipe + errno** — the credit-based pipe message protocol and POSIX errno helpers.
+Everything is re-exported from the single entry point (`@mithic/protocol`), which
+aggregates five source modules.
+
+### Process & capabilities (`process.ts`)
+
+The shape a runtime hands a guest at boot, plus the capability and resource-limit
+model.
+
+- **`ProcessInit`** — the boot message: `entry` (`string | URL`), `args`, `env`,
+  `cwd`, `pid`/`ppid` (+ optional `uid`), `capabilities`, optional `limits`, and
+  optional `preopens` (fd-numbered `PreopenDescriptor`s).
+- **`Capability`** — discriminated union (on `type`) gating what a process may
+  touch: `fs` (`paths` + `operations: ('read'|'write'|'execute')[]`),
+  `net` (`origins`), `ipc` (`channels`), `process` (optional `maxChildren`),
+  and `env`.
+- **`ProcessLimits`** — `memoryMb`, `cpuMs`, `timeoutMs`, `maxOutputBytes`,
+  `maxChildren`, `networkDisabled` (all optional; enforced by backends that
+  advertise the matching capability).
+- **`ProcessReady` / `ProcessExit`** — guest lifecycle messages, with guards
+  `isProcessReady` and `isProcessExit`.
+- **Spawn** — `SpawnArgs` (`path`, `argv`, optional `env`/`cwd`/`fds`),
+  `SpawnResult` (`pid` + optional transferred-pipe map), `FdAction`
+  (`inherit | pipe | open | close | dup2`), and `DEFAULT_FD_ACTIONS`
+  (fds 0/1/2 → `inherit`).
+- **Descriptors** — `OFlags`, `FdRights`, `FdFlags`, and `PreopenDescriptor`.
+
+### Syscall messages (`messages.ts`)
+
+The request/response envelope for the kernel syscall channel, plus kernel-pushed
+events.
+
+- **`SyscallRequest`** — `{ id, call, args }`; build one with `makeSyscallRequest`.
+- **`SyscallResponse`** — ok/err union: `{ id, ok: true, result }` or
+  `{ id, ok: false, error: { code: ErrnoCode, message } }`. Guard:
+  `isSyscallResponse`.
+- **`KernelEvent`** — unsolicited kernel → guest events `{ event, payload? }`
+  (e.g. signal delivery, DOM events). Guard: `isKernelEvent` (distinguishes an
+  event from a response by the absence of `id`).
+
+### Errno & signals (`errno.ts`)
+
+- **`ERRNO_CODES`** — the 26 POSIX errno strings used throughout
+  (`EACCES`, `EBADF`, `EBUSY`, `EEXIST`, `EFAULT`, `EINVAL`, `EIO`, `EISDIR`,
+  `EMFILE`, `ENAMETOOLONG`, `ENOENT`, `ENOSPC`, `ENOTDIR`, `ENOTEMPTY`, `EPERM`,
+  `EPIPE`, `ESRCH`, `ETIMEDOUT`, `EXDEV`, `EAGAIN`, `ENOSYS`, `ELOOP`, `EROFS`,
+  `EHOSTUNREACH`, `ECONNREFUSED`, `ENETUNREACH`). Type `ErrnoCode`; guard
+  `isErrnoCode`.
+- **`SIGNALS`** — `SIGTERM`, `SIGINT`, `SIGKILL`, `SIGSTOP`, `SIGCONT`,
+  `SIGPIPE`, `SIGCHLD`, `SIGUSR1`, `SIGUSR2`. Type `Signal`.
+
+### Filesystem errno mapping (`fs-errno.ts`)
+
+Translates `@mithic/io`'s WASI-style `FileSystemError` codes into POSIX errno for
+syscall responses.
+
+- **`FileSystemErrorCode`** — the source code set (`access`, `exist`, `no-entry`,
+  `not-directory`, `is-directory`, `not-empty`, `invalid`, `insufficient-space`,
+  `io`, `loop`, `name-too-long`, `not-permitted`, `read-only`, `cross-device`,
+  `unsupported`).
+- **`FS_ERROR_TO_ERRNO`** — the static map (e.g. `no-entry → ENOENT`,
+  `read-only → EROFS`, `unsupported → ENOSYS`).
+- **`fsErrorToErrno(code)`** — lookup helper, defaulting unknown codes to `EIO`.
+
+### Pipe protocol (`pipe.ts`)
+
+The credit-based, flow-controlled message protocol for IPC pipes between
+processes.
+
+- **`PipeMessage`** — union of `data` (`{ chunk: Uint8Array }`), `end`,
+  `error` (`{ code: 'EPIPE' }`), and `credit` (`{ bytes }`). Guard:
+  `isPipeMessage`.
+- **Tuning constants** — `TRANSFER_THRESHOLD_BYTES` (10 KiB, above which chunks
+  are transferred rather than copied), `PIPE_FLUSH_BYTES` (16 KiB),
+  `PIPE_FLUSH_MS` (4 ms), and `INITIAL_CREDIT_BYTES` (64 KiB starting flow-control
+  window).
 
 ## Quick start
 
@@ -19,6 +93,7 @@ import { isSyscallResponse, type Capability, type ProcessInit } from '@mithic/pr
 
 const caps: Capability[] = [
   { type: 'fs', paths: ['/tmp'], operations: ['read', 'write'] },
+  { type: 'net', origins: ['https://api.example.com'] },
 ];
 
 function handle(msg: unknown) {
@@ -27,6 +102,3 @@ function handle(msg: unknown) {
   }
 }
 ```
-
-The kernel and guest never hand-roll these shapes — import the types and guards
-from here so both sides stay compatible.

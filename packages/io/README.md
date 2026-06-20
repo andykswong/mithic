@@ -4,16 +4,16 @@
 [![npm](https://img.shields.io/npm/v/@mithic/io?style=flat-square&logo=npm)](https://www.npmjs.com/package/@mithic/io)
 [![license: MIT](https://img.shields.io/badge/License-MIT-red.svg?style=flat-square)](./LICENSE)
 
-> I/O layer for mithic — virtual filesystem, network providers, and sync-bridge
+> I/O engine for Mithic — virtual filesystem router, providers, and network abstractions
 
 ## Overview
 
-`@mithic/io` is the foundational I/O layer for the mithic runtime. It provides:
+`@mithic/io` is the foundational I/O layer for the Mithic runtime. It provides:
 
-- **Virtual File System (VFS)** — A mount-based router with pluggable providers (memory, OPFS, Node.js native fs, synthetic devices)
-- **Network Providers** — Virtual HTTP client/server and TCP/UDP socket interfaces
-- **Sync Bridge** — `SharedArrayBuffer` + `Atomics` bridge enabling synchronous calls from WASM workers, with a unified call handler and pre-built sync-bridge providers
-- **Stream Handlers** — `InputStreamHandler` / `OutputStreamHandler` interfaces for composable I/O
+- **Virtual File System (VFS)** — A mount-based router with pluggable providers (memory, OPFS, Node.js native fs, synthetic devices, network devices, caching)
+- **Network Providers** — Virtual HTTP client/server and TCP/UDP socket interfaces with pluggable implementations
+
+The VFS is what the Mithic kernel mounts and exposes to sandboxed processes; the Mithic Vitest suite exercises it directly. All interfaces are **async** — methods return `T | Promise<T>` and consumers `await` them.
 
 ## Install
 
@@ -23,116 +23,68 @@ npm install @mithic/io
 
 ## Key Concepts
 
-### MaybeAsync / Sync Interface Pattern
+### Async provider interfaces
 
-All provider interfaces use `MaybePromise<T>` (= `T | Promise<T>`) as return types. Sync variants narrow returns to `T` only:
+All provider interfaces are async: filesystem and network methods return `T | Promise<T>`, so a single async consumer (the router, the kernel) works against both in-memory and I/O-bound backends. The `MaybePromise<T>` helper type (`= T | Promise<T>`) and the `chainMaybePromise` / `mapMaybePromise` / `isThenable` utilities make it cheap to thread a value through whether or not it is wrapped in a `Promise`.
 
-```typescript
-interface FileSystemProvider {
-  read(handle, offset, len): MaybePromise<Uint8Array>;  // base
-}
-interface SyncFileSystemProvider extends FileSystemProvider {
-  read(handle, offset, len): Uint8Array;                 // sync narrowing
-}
-```
+### Virtual File System
 
-This enables:
-- **Async consumers** (call handler, router) use `await` on any provider — works for both sync and async
-- **Sync consumers** (WASI code) accept only `Sync*` variants — guaranteed no-Promise returns
+`FileSystemProvider` is the core interface. It exposes POSIX-style operations — `open`, `read`, `write`, `truncate`, `close`, `stat`, `readdir`, `mkdir`, `unlink`, `rmdir`, `rename`, `symlink`, `readlink`, `link`, `chmod`, `utimes`, `mkfifo`, optional `realpath` / `watch` / `sync`, and optional `init` / `dispose` lifecycle hooks. Errors are thrown as `FileSystemError` carrying a `FileSystemErrorCode` (`'no-entry'`, `'access'`, `'exist'`, `'not-directory'`, `'is-directory'`, `'cross-device'`, …) aligned with the WASI `wasi:filesystem` error-code names.
 
-### File System Providers
+#### Providers
 
-| Provider | Interface | Use Case |
-|----------|-----------|----------|
-| `MemoryFsProvider` | `SyncFileSystemProvider` | Testing, browser default |
-| `DeviceFsProvider` | `SyncFileSystemProvider` | Synthetic `/dev` devices (null, zero, stdin, stdout, stderr) |
-| `OPFSProvider` | `FileSystemProvider` | Browser persistent storage |
-| `NodeFsProvider` | `FileSystemProvider` | Native server/desktop |
-| `SyncBridgeFsProvider` | `SyncFileSystemProvider` | Cross-thread via WorkerIo |
+| Provider | Entry point | Use case |
+|----------|-------------|----------|
+| `MemoryFsProvider` | `@mithic/io/vfs` | In-memory store — testing, browser default |
+| `DeviceFsProvider` | `@mithic/io/vfs` | Synthetic devices: `null`, `zero`, `random`, `urandom`, `stdin`, `stdout`, `stderr` |
+| `NetworkDeviceFsProvider` | `@mithic/io/vfs` | Network-backed synthetic devices |
+| `CachingProvider` | `@mithic/io/vfs` (also `@mithic/io/vfs/providers/caching`) | Read-through cache wrapping another provider |
+| `OPFSProvider` | `@mithic/io/vfs/providers/opfs` | Browser persistent storage (Origin Private File System) |
+| `NodeFsProvider` | `@mithic/io/vfs/providers/node-fs` | Native server/desktop, backed by `node:fs` |
 
 #### File System Router
 
-`FileSystemRouter` (async) and `SyncFileSystemRouter` (sync) delegate to mounted providers via longest-prefix path matching:
+`FileSystemRouter` itself implements `FileSystemProvider`, so routers compose. It delegates to mounted providers via longest-prefix path matching:
 
 ```typescript
-import { SyncFileSystemRouter, MemoryFsProvider, DeviceFsProvider } from '@mithic/io/vfs';
+import { FileSystemRouter, MemoryFsProvider, DeviceFsProvider } from '@mithic/io/vfs';
 
-const router = new SyncFileSystemRouter();
-router.mount('/', new MemoryFsProvider());
-router.mount('/dev', new DeviceFsProvider());
+const router = new FileSystemRouter();
+await router.mount('/', new MemoryFsProvider());
+await router.mount('/dev', new DeviceFsProvider());
+
+const fh = await router.open('/tmp/hello.txt', { create: true, write: true });
+await router.write(fh, new TextEncoder().encode('hi'), 0);
+await router.close(fh);
 ```
+
+Paths are canonicalized with `normalizePath`. `mount` / `unmount` drive each provider's optional `init` / `dispose` hooks, and `resolve(path)` returns the `{ provider, relativePath, mountPoint }` (`ResolveResult`) selected for a path.
 
 ### Network Providers
 
-| Interface | Sync Variant | SyncBridge impl |
-|-----------|--------------|-----------------|
-| `HttpClient` | `SyncHttpClient` | `SyncBridgeHttpClient` |
-| `SocketProvider` | `SyncSocketProvider` | `SyncBridgeSocketProvider` |
-| `TcpSocket` | `SyncTcpSocket` | `SyncBridgeTcpSocket` |
+The `net` layer defines the HTTP and socket abstractions plus default implementations:
 
-### Stream Handlers
+| Interface | Implementations |
+|-----------|-----------------|
+| `HttpClient` | `FetchHttpClient`, `MockHttpClient`, `DisabledHttpClient` |
+| `HttpServer` | `DisabledHttpServer`, Node.js HTTP server (`@mithic/io/net/providers/node-http-server`) |
+| `SocketProvider` / `TcpSocket` / `UdpSocket` | `DisabledSocketProvider`, Node.js sockets (`@mithic/io/net/providers/node-socket-provider`) |
 
-| Interface | Sync Variant | SyncBridge impl |
-|-----------|--------------|-----------------|
-| `InputStreamHandler` | `SyncInputStreamHandler` | `SyncBridgeInputStreamHandler` |
-| `OutputStreamHandler` | `SyncOutputStreamHandler` | `SyncBridgeOutputStreamHandler` |
-
-### Sync Bridge
-
-For WASM workers that need synchronous I/O backed by async providers on another thread:
-
-```typescript
-// Main thread: set up I/O loop with call handler
-import { IoLoop, createCallHandler } from '@mithic/io/io';
-
-const loop = new IoLoop({ onCall: createCallHandler({ fs: memoryProvider }) });
-const workerPort = loop.addWorker();
-
-// Worker thread: use sync-bridge providers
-import { WorkerIo, SyncBridgeFsProvider, SyncBridgeHttpClient } from '@mithic/io/io';
-
-const io = new WorkerIo(port);
-const fs = new SyncBridgeFsProvider(io);       // implements SyncFileSystemProvider
-const http = new SyncBridgeHttpClient(io);     // implements SyncHttpClient
-```
-
-## Cross-Platform Requirements
-
-### Browser: SharedArrayBuffer and Cross-Origin Mithiction
-
-The sync-bridge relies on `SharedArrayBuffer` and `Atomics` for synchronous cross-thread communication. Browsers require **Cross-Origin Mithiction** headers for `SharedArrayBuffer` to be available:
-
-```
-Cross-Origin-Opener-Policy: same-origin
-Cross-Origin-Embedder-Policy: require-corp
-```
-
-Without these headers, `SharedArrayBuffer` is undefined and the sync-bridge will not function.
-
-### Browser: Atomics.wait() and the Main Thread
-
-`Atomics.wait()` **cannot be called on the browser main thread** — it throws a `TypeError`. All synchronous blocking I/O (which uses `Atomics.wait()` internally) must run inside a **Web Worker**. The typical architecture is:
-
-- **Main thread**: Runs the `IoLoop` with async providers (e.g., OPFS, fetch-based HTTP)
-- **Worker thread**: Runs WASM code with `SyncBridge*` providers that block via `Atomics.wait()`
-
-### Node.js: Worker Threads for Sync Bridge
-
-On Node.js, the sync-bridge requires `worker_threads` for blocking I/O. The worker uses `Atomics.wait()` to block until the main thread (or another worker running the `IoLoop`) services the request and signals completion via `Atomics.notify()`.
-
-Node.js does allow `Atomics.wait()` on the main thread, but using it there would block the event loop and prevent the `IoLoop` from servicing requests — so a dedicated worker thread is still required for WASM workloads that use synchronous I/O.
+`HttpClient.send` mirrors the Fetch API and supports `redirect: 'manual'`, which the kernel uses to capability-check redirect targets before following them (SSRF guard).
 
 ## Exports
 
-| Entry Point | Contents |
+| Entry point | Contents |
 |-------------|----------|
-| `@mithic/io` | Main index (all types and providers) |
-| `@mithic/io/io` | Sync-bridge, call handler, stream handlers, WorkerIo, IoLoop |
-| `@mithic/io/io/providers/node-stdio` | Node.js stdio stream handlers (NodeAsyncStdinHandler, NodeStdoutHandler, NodeStderrHandler) |
-| `@mithic/io/io/providers/sync-bridge` | SyncBridge providers (SyncBridgeFsProvider, createStdinHandler, etc.) |
-| `@mithic/io/vfs` | VFS router, provider interface, MemoryFsProvider |
-| `@mithic/io/vfs/providers/opfs` | OPFS provider (browser) |
-| `@mithic/io/vfs/providers/node-fs` | Node.js native fs provider |
-| `@mithic/io/net` | HTTP and socket interfaces + providers |
+| `@mithic/io` | Main index — re-exports `vfs`, `net`, and shared utils/types |
+| `@mithic/io/vfs` | `FileSystemProvider`, `FileSystemRouter`, `FileSystemError`, `FileStat`, `DirEntry`, `FileHandle`, `OpenFlags`, `DescriptorType`, `WatchEvent`, `ResolveResult`, `normalizePath`, `VFSDirectoryHandle`, `VFSFileHandle`, and the `MemoryFsProvider` / `DeviceFsProvider` / `NetworkDeviceFsProvider` / `CachingProvider` providers |
+| `@mithic/io/vfs/providers/node-fs` | `NodeFsProvider` (Node.js native fs) |
+| `@mithic/io/vfs/providers/opfs` | `OPFSProvider` (browser) |
+| `@mithic/io/vfs/providers/caching` | `CachingProvider` |
+| `@mithic/io/net` | `HttpClient`, `HttpServer`, `HttpRequest`/`HttpResponse`, `TcpSocket`/`UdpSocket`/`SocketProvider`, `DisabledSocketProvider`, and the `FetchHttpClient` / `MockHttpClient` / `DisabledHttpClient` / `DisabledHttpServer` providers |
 | `@mithic/io/net/providers/node-http-server` | Node.js HTTP server |
 | `@mithic/io/net/providers/node-socket-provider` | Node.js TCP/UDP sockets |
+
+## License
+
+MIT
