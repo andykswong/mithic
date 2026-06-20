@@ -296,6 +296,19 @@ export default async function main(boot: unknown): Promise<void> {
       // and glob through the guest's fs/* syscalls (best-effort; needs a vfs cap).
       { onStdout, onStderr, resolve: (name) => name, fs: fsClient },
     );
+    // Seam 1 (C1 ↔ M16): wire kernel-delivered signals to the shell's trap
+    // dispatch. The kernel posts `{event:'signal', payload:{signal}}` over the
+    // pid's control port (Kernel.kill); the guest API surfaces it via onSignal.
+    // The shell stores traps under the canonical NAME (INT/TERM/HUP/…, no `SIG`
+    // prefix — see builtins.ts normalizeSignal), so strip the prefix here before
+    // dispatching. A delivered signal with a registered trap fires the handler
+    // and the shell keeps running; with no trap it is a no-op (the kernel's grace
+    // timer still tears the process down for an UNHANDLED terminating signal).
+    guest.onSignal((signal) => {
+      const name = signal.toUpperCase().replace(/^SIG/, '');
+      void executor.runTrap(name);
+    });
+
     // Pre-set the requested options (POSIX mode + -e/-u/-x/-v/-C).
     if (cli.posix) executor.setOption('posix', true);
     for (const opt of cli.options) executor.setOption(opt, true);
