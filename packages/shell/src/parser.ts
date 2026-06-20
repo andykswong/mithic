@@ -28,20 +28,31 @@ import type {
 const RESERVED = new Set([
   'if', 'then', 'elif', 'else', 'fi',
   'while', 'until', 'do', 'done',
-  'for', 'in', 'case', 'esac', 'function',
+  'for', 'select', 'in', 'case', 'esac', 'function',
   '{', '}', '!',
 ]);
 
 interface HereDoc { id: number; body: string; quoted: boolean; }
 
+export interface ParseOptions {
+  /** POSIX mode: reject bash extensions ([[, ((, <<<, |&, select, arrays). */
+  posix?: boolean;
+}
+
 class Parser {
   private tokens: Token[];
   private pos = 0;
   private heredocs: Map<number, HereDoc>;
+  private posix: boolean;
 
-  constructor(tokens: Token[], heredocs: Map<number, HereDoc>) {
+  constructor(tokens: Token[], heredocs: Map<number, HereDoc>, options: ParseOptions = {}) {
     this.tokens = tokens;
     this.heredocs = heredocs;
+    this.posix = options.posix ?? false;
+  }
+
+  private posixReject(feature: string): never {
+    throw new SyntaxError(`shell: syntax error: ${feature} is not supported in POSIX mode`);
   }
 
   private peek(): Token | undefined { return this.tokens[this.pos]; }
@@ -81,7 +92,7 @@ class Parser {
     const t = this.peek();
     if (!t) return true;
     if (t.type === 'WORD' && RESERVED.has(t.value)
-      && !['if', 'while', 'until', 'for', 'case', 'function', '{', '!'].includes(t.value)) {
+      && !['if', 'while', 'until', 'for', 'select', 'case', 'function', '{', '!'].includes(t.value)) {
       return true;
     }
     if (t.type === 'RPAREN' || t.type === 'DSEMI' || t.type === 'DRPAREN') return true;
@@ -141,8 +152,9 @@ class Parser {
     if (this.atReserved('function')) return this.parseFunctionKw();
     if (this.atReserved('{')) return this.parseGroup();
     if (this.atType('LPAREN')) return this.parseSubshell();
-    if (this.atType('DLPAREN')) return this.parseArithCmd();
-    if (this.atType('DLBRACKET')) return this.parseCond();
+    if (this.atType('DLPAREN')) { if (this.posix) this.posixReject('(( ))'); return this.parseArithCmd(); }
+    if (this.atType('DLBRACKET')) { if (this.posix) this.posixReject('[[ ]]'); return this.parseCond(); }
+    if (this.atReserved('select')) { if (this.posix) this.posixReject('select'); return this.parseSelect(); }
 
     // function definition: NAME ( )  { ... }
     const t = this.peek();
@@ -215,6 +227,27 @@ class Parser {
     const body = this.parseStatementListUntil(['done']);
     this.expectReserved('done');
     const stmt: Statement = { type: 'For', varName: v.value, words, body };
+    this.attachTrailingRedirects(stmt);
+    return stmt;
+  }
+
+  private parseSelect(): Statement {
+    this.next(); // 'select'
+    const v = this.next();
+    if (v?.type !== 'WORD') throw new SyntaxError('shell: expected select variable');
+    let words: string[] | undefined;
+    if (this.atReserved('in')) {
+      this.next();
+      words = [];
+      while (this.peek() && !this.atType('SEMI') && !this.atType('NEWLINE') && !this.atReserved('do')) {
+        words.push(this.next()!.raw);
+      }
+    }
+    while (this.atType('SEMI') || this.atType('NEWLINE')) this.next();
+    this.expectReserved('do');
+    const body = this.parseStatementListUntil(['done']);
+    this.expectReserved('done');
+    const stmt: Statement = { type: 'Select', varName: v.value, words, body };
     this.attachTrailingRedirects(stmt);
     return stmt;
   }
@@ -383,6 +416,7 @@ class Parser {
     // Array literal: `name=(` — the value text after `=` is empty and the next
     // token is `(`. Collect the word list up to the matching `)`.
     if (rhs === '' && index === undefined && this.atType('LPAREN')) {
+      if (this.posix) this.posixReject('arrays');
       this.next(); // (
       const elems: string[] = [];
       while (this.peek() && !this.atType('RPAREN')) {
@@ -450,6 +484,7 @@ class Parser {
   }
 
   private hereString(): Redirect {
+    if (this.posix) this.posixReject('<<< here-string');
     const target = this.peek();
     if (target?.type !== 'WORD') throw new SyntaxError('shell: expected here-string word');
     this.next();
@@ -520,7 +555,7 @@ function extractHereDocs(input: string): { src: string; heredocs: Map<number, He
   return { src: out.join('\n'), heredocs };
 }
 
-export function parse(input: string): Program {
+export function parse(input: string, options: ParseOptions = {}): Program {
   const { src, heredocs } = extractHereDocs(input);
-  return new Parser(tokenize(src), heredocs).parseProgram();
+  return new Parser(tokenize(src), heredocs, options).parseProgram();
 }

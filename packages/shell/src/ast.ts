@@ -64,6 +64,7 @@ export type StatementType =
   | 'If'
   | 'While'
   | 'For'
+  | 'Select'
   | 'Case'
   | 'And'
   | 'Or'

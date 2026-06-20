@@ -23,18 +23,51 @@ export interface ShellState {
   getOption(name: ShellOptionName): boolean;
   /** All options as [longName, enabled] pairs in canonical order. */
   listOptions(): Array<[ShellOptionName, boolean]>;
+  /** Set a `shopt` option (extglob/globstar/...). Returns false for an unknown name. */
+  setShopt?(name: string, value: boolean): boolean;
+  /** Read a `shopt` option's value (undefined ⇒ unknown name). */
+  getShopt?(name: string): boolean | undefined;
+  /** Register/remove a trap handler. signal name (EXIT/ERR/INT/...) → handler ('' clears). */
+  setTrap?(signal: string, handler: string | undefined): void;
+  /** List traps as [signal, handler] pairs. */
+  listTraps?(): Array<[string, string]>;
+  /** History: append a line, list, or clear. */
+  history?: {
+    list(): string[];
+    add(line: string): void;
+    clear(): void;
+  };
+  /** Remove a job from the table by spec (pid or %id). Returns false if not found. */
+  removeJob?(spec: number): boolean;
+  /** Send a signal to a job/pid. Returns false if no such job. */
+  killJob?(spec: number, signal: string): boolean;
 }
 
-/** Long names of the shell options toggled via `set`. */
-export type ShellOptionName = 'errexit' | 'nounset' | 'xtrace' | 'pipefail' | 'noclobber';
+/** Long names of the shell options toggled via `set` / `set -o`. */
+export type ShellOptionName =
+  | 'errexit' | 'nounset' | 'xtrace' | 'pipefail' | 'noclobber' | 'verbose' | 'posix';
+
+/** `set -o`-settable option names in canonical (sorted) order — drives $SHELLOPTS. */
+export const SET_O_OPTIONS: ShellOptionName[] = [
+  'errexit', 'noclobber', 'nounset', 'pipefail', 'posix', 'verbose', 'xtrace',
+];
 
 /** Map of `set -X` short flags ↔ long option names. */
 export const OPTION_FLAGS: Record<string, ShellOptionName> = {
   e: 'errexit',
   u: 'nounset',
   x: 'xtrace',
+  v: 'verbose',
   C: 'noclobber',
 };
+
+/**
+ * `shopt`-settable bash options (sorted) — drives $BASHOPTS. The expander/glob
+ * consults extglob/globstar/nullglob/dotglob/nocaseglob/nocasematch.
+ */
+export const SHOPT_NAMES: string[] = [
+  'dotglob', 'extglob', 'globstar', 'nocaseglob', 'nocasematch', 'nullglob',
+];
 
 /** Mutable shell state + I/O hooks a builtin operates on. */
 export interface BuiltinContext {
@@ -44,6 +77,8 @@ export interface BuiltinContext {
   writeErr?(s: string): void;
   exit?(code: number): void;
   eval?(src: string): Promise<number>;
+  /** `source FILE args` — read FILE from the VFS and run it in the current shell. */
+  sourceFile?(args: string[]): Promise<number>;
   lastStatus?: number;
   stdin?: string;
   /** Loop/function control — implemented by the executor as thrown unwinds. */
@@ -59,6 +94,7 @@ export const BUILTINS = [
   'test', '[', 'true', 'false', 'exit', 'eval', 'set', 'cat', ':',
   'local', 'declare', 'readonly', 'shift', 'return', 'getopts', 'read',
   'jobs', 'fg', 'bg', 'wait', 'kill', 'break', 'continue', 'source', '.', 'type',
+  'shopt', 'trap', 'disown', 'history', 'fc',
 ] as const;
 
 const BUILTIN_SET = new Set<string>(BUILTINS);
@@ -108,7 +144,10 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       let newline = true;
       let interpret = false;
       let start = 0;
-      while (start < args.length && /^-[neE]+$/.test(args[start])) {
+      // In POSIX mode, `echo` does NOT recognise `-n`/`-e` flags (they are
+      // printed literally) — matches the reference's posix/xpg_echo behavior.
+      const posix = ctx.state?.getOption('posix') ?? false;
+      while (!posix && start < args.length && /^-[neE]+$/.test(args[start])) {
         if (args[start].includes('n')) newline = false;
         if (args[start].includes('e')) interpret = true;
         if (args[start].includes('E')) interpret = false;
@@ -145,6 +184,10 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
     case 'readonly': {
       // Assign NAME=value into the (function-local for `local`) env.
       const isLocal = name === 'local';
+      if (name === 'declare' && args.includes('-A') && (ctx.state?.getOption('posix') ?? false)) {
+        errOut(ctx, 'shell: declare: -A: not supported in POSIX mode\n');
+        return 2;
+      }
       for (const arg of args) {
         if (arg.startsWith('-')) continue; // ignore option flags (-i, -a, etc.)
         const eq = arg.indexOf('=');
@@ -225,14 +268,39 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       if (!ctx.state) return 0;
       if (args.length === 0) return ctx.state.waitAll();
       let last = 0;
-      for (const a of args) last = await ctx.state.waitJob(parseJobSpec(a));
+      for (const a of args) {
+        const spec = parseJobSpec(a);
+        // `wait %N`/`wait pid` for a job that does not exist → 127 (M17).
+        if (a.startsWith('%') && spec !== undefined && !jobExists(ctx, spec)) {
+          errOut(ctx, `shell: wait: ${a}: no such job\n`);
+          return 127;
+        }
+        last = await ctx.state.waitJob(spec);
+      }
       return last;
     }
 
-    case 'kill':
-      // Signal delivery is not supported by the runtime; report gracefully.
-      errOut(ctx, 'shell: kill: signal delivery not supported in this runtime\n');
-      return 1;
+    case 'kill': {
+      // No args → usage. `%N`/pid honors the job table; unknown → no such job (M14).
+      const sigArgs = args.filter((a) => !a.startsWith('-'));
+      if (args.length === 0) {
+        errOut(ctx, 'shell: kill: usage: kill [-signal] pid|%job ...\n');
+        return 1;
+      }
+      let signal = 'TERM';
+      for (const a of args) {
+        if (a.startsWith('-') && a.length > 1) signal = normalizeSignal(a.slice(1));
+      }
+      let status = 0;
+      for (const a of sigArgs) {
+        const spec = parseJobSpec(a);
+        if (spec === undefined || !ctx.state?.killJob || !ctx.state.killJob(spec, signal)) {
+          errOut(ctx, `shell: kill: ${a}: no such job\n`);
+          status = 1;
+        }
+      }
+      return status;
+    }
 
     case 'type': {
       let status = 0;
@@ -246,8 +314,49 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
 
     case 'source':
     case '.': {
-      // Without a file system read here, treat args as an inline script for eval.
+      // In POSIX mode only `.` is valid; `source` is a bash extension.
+      if (name === 'source' && (ctx.state?.getOption('posix') ?? false)) {
+        errOut(ctx, 'shell: source: not supported in POSIX mode (use . instead)\n');
+        return 1;
+      }
+      // The executor wires a file-aware source via ctx.sourceFile; fall back to
+      // treating args as an inline script for eval when unavailable.
+      if (ctx.sourceFile) return ctx.sourceFile(args);
       if (ctx.eval) return ctx.eval(args.join(' '));
+      return 0;
+    }
+
+    case 'shopt':
+      return runShopt(args, ctx);
+
+    case 'trap':
+      return runTrap(args, ctx);
+
+    case 'disown': {
+      if (!ctx.state?.removeJob) return 0;
+      let status = 0;
+      for (const a of args) {
+        if (a.startsWith('-')) continue;
+        const spec = parseJobSpec(a);
+        if (spec === undefined || !ctx.state.removeJob(spec)) {
+          errOut(ctx, `shell: disown: ${a}: no such job\n`);
+          status = 1;
+        }
+      }
+      return status;
+    }
+
+    case 'history':
+      return runHistory(args, ctx);
+
+    case 'fc': {
+      // `fc -l` lists recent history (the only form we support).
+      if (args.includes('-l') && ctx.state?.history) {
+        const lines = ctx.state.history.list();
+        const n = lines.length;
+        const startIdx = Math.max(0, n - 16);
+        for (let k = startIdx; k < n; k++) ctx.write(`${k + 1}\t${lines[k]}\n`);
+      }
       return 0;
     }
 
@@ -283,6 +392,116 @@ function parseJobSpec(arg?: string): number | undefined {
   if (arg === undefined) return undefined;
   if (arg.startsWith('%')) return parseInt(arg.slice(1), 10);
   return parseInt(arg, 10);
+}
+
+function jobExists(ctx: BuiltinContext, spec: number): boolean {
+  const jobs = ctx.state?.jobs ?? [];
+  return jobs.some((j) => j.id === spec || j.pids.includes(spec));
+}
+
+/** Map a signal number/name to a canonical name (e.g. `2`/`SIGINT`/`int` → `INT`). */
+function normalizeSignal(s: string): string {
+  const byNum: Record<string, string> = { '0': 'EXIT', '2': 'INT', '9': 'KILL', '15': 'TERM', '18': 'CONT', '20': 'TSTP' };
+  if (/^\d+$/.test(s)) return byNum[s] ?? s;
+  return s.toUpperCase().replace(/^SIG/, '');
+}
+
+/**
+ * `shopt [-s|-u|-q|-p] [name...]` — bash option store (extglob/globstar/...).
+ * `-s` set, `-u` unset, `-q` quiet (exit status only), `-p`/none print. With
+ * names but no -s/-u, prints/queries status (exit 0 if all on, 1 otherwise).
+ */
+function runShopt(args: string[], ctx: BuiltinContext): number {
+  const st = ctx.state;
+  if (!st?.getShopt || !st.setShopt) return 0;
+  let mode: 'set' | 'unset' | 'query' = 'query';
+  let quiet = false;
+  let print = false;
+  const names: string[] = [];
+  for (const a of args) {
+    if (a === '-s') mode = 'set';
+    else if (a === '-u') mode = 'unset';
+    else if (a === '-q') quiet = true;
+    else if (a === '-p') print = true;
+    else if (a.startsWith('-')) { errOut(ctx, `shell: shopt: ${a}: invalid option\n`); return 2; }
+    else names.push(a);
+  }
+
+  const printOne = (n: string): void => {
+    const on = st.getShopt!(n);
+    ctx.write(`shopt -${on ? 's' : 'u'} ${n}\n`);
+  };
+
+  if (mode === 'set' || mode === 'unset') {
+    let status = 0;
+    for (const n of names) {
+      if (!st.setShopt!(n, mode === 'set')) {
+        errOut(ctx, `shell: shopt: ${n}: invalid shell option name\n`);
+        status = 2;
+      }
+    }
+    return status;
+  }
+
+  // query/print mode
+  const allNames = SHOPT_NAMES;
+  const targets = names.length > 0 ? names : allNames;
+  if (print || (names.length === 0 && !quiet)) {
+    let status = 0;
+    for (const n of targets) {
+      const on = st.getShopt!(n);
+      if (on === undefined) { errOut(ctx, `shell: shopt: ${n}: invalid shell option name\n`); status = 1; continue; }
+      printOne(n);
+      if (!on) status = 1;
+    }
+    return status;
+  }
+  // names given (query): `shopt NAME` prints "name<TAB>on|off" and exit reflects state.
+  let status = 0;
+  for (const n of targets) {
+    const on = st.getShopt!(n);
+    if (on === undefined) { errOut(ctx, `shell: shopt: ${n}: invalid shell option name\n`); status = 1; continue; }
+    if (!quiet) ctx.write(`${n}\t${on ? 'on' : 'off'}\n`);
+    if (!on) status = 1;
+  }
+  return status;
+}
+
+/**
+ * `trap [HANDLER] [SIGNAL...]` — register/list/remove traps. `trap` with no
+ * args lists; `trap -` clears all; `trap - SIG` removes one; `trap '' SIG`
+ * ignores; otherwise registers HANDLER for each SIGNAL.
+ */
+function runTrap(args: string[], ctx: BuiltinContext): number {
+  const st = ctx.state;
+  if (!st?.setTrap || !st.listTraps) return 0;
+  if (args.length === 0) {
+    for (const [sig, handler] of st.listTraps()) ctx.write(`trap -- '${handler}' ${sig}\n`);
+    return 0;
+  }
+  if (args[0] === '-' && args.length === 1) {
+    for (const [sig] of st.listTraps()) st.setTrap(sig, undefined);
+    return 0;
+  }
+  if (args[0] === '-') {
+    for (const s of args.slice(1)) st.setTrap(normalizeSignal(s), undefined);
+    return 0;
+  }
+  const handler = args[0];
+  const signals = args.slice(1);
+  if (signals.length === 0) { errOut(ctx, 'shell: trap: usage: trap [-lp] [[arg] signal_spec ...]\n'); return 1; }
+  for (const s of signals) st.setTrap(normalizeSignal(s), handler);
+  return 0;
+}
+
+/** `history [-c]` / `history` — list or clear command history. */
+function runHistory(args: string[], ctx: BuiltinContext): number {
+  const h = ctx.state?.history;
+  if (!h) return 0;
+  if (args[0] === '-c') { h.clear(); return 0; }
+  const lines = h.list();
+  for (let k = 0; k < lines.length; k++) ctx.write(`${String(k + 1).padStart(5)}  ${lines[k]}\n`);
+  return 0;
 }
 
 /**
@@ -331,8 +550,7 @@ function runSet(args: string[], ctx: BuiltinContext): number {
 }
 
 function setLongOption(ctx: BuiltinContext, name: string, value: boolean): boolean {
-  const valid = ['errexit', 'nounset', 'xtrace', 'pipefail', 'noclobber'];
-  if (!valid.includes(name)) return false;
+  if (!SET_O_OPTIONS.includes(name as ShellOptionName)) return false;
   ctx.state?.setOption(name as ShellOptionName, value);
   return true;
 }
