@@ -60,6 +60,12 @@ export interface ShellEnv {
   shopt?(name: string): boolean;
   /** All currently-set variable names, for `${!prefix*}` / `${!prefix@}`. Optional. */
   names?(): string[];
+  /**
+   * Process substitution `<(cmd)` / `>(cmd)`: run `cmd` and return a VFS path the
+   * surrounding command reads (`dir: 'in'`) or writes (`dir: 'out'`). Optional —
+   * undefined ⇒ the construct is left literal.
+   */
+  procSub?(src: string, dir: 'in' | 'out'): Promise<string>;
 }
 
 /**
@@ -261,6 +267,15 @@ export class Expander {
         i = r.next; continue;
       }
       if (c === '`') { const r = await this.readBacktick(word, i); addText(r.value, false); i = r.next; continue; }
+
+      // Process substitution `<(cmd)` / `>(cmd)` (M4) — substitute a VFS path.
+      if ((c === '<' || c === '>') && word[i + 1] === '(' && this.env.procSub) {
+        const end = findMatchingParen(word, i + 2);
+        const src = word.slice(i + 2, end);
+        const path = await this.env.procSub(src, c === '<' ? 'in' : 'out');
+        addText(path, false);
+        i = end + 1; continue;
+      }
 
       addText(c, false); i++;
     }

@@ -81,6 +81,22 @@ function matchBracket(input: string, i: number): number {
   return i;
 }
 
+/**
+ * Match a process-substitution group `<(...)` / `>(...)` at `input[i]`,
+ * returning the index past the closing `)` (or `i` if unbalanced).
+ */
+function procSub(input: string, i: number): number {
+  const n = input.length;
+  let j = i + 2;
+  let depth = 1;
+  while (j < n && depth > 0) {
+    if (input[j] === '(') depth++;
+    else if (input[j] === ')') { depth--; if (depth === 0) return j + 1; }
+    j++;
+  }
+  return i;
+}
+
 interface OpMatch { type: TokenType; len: number; }
 
 /** Try to match an operator at position i. Returns undefined if none. */
@@ -147,8 +163,17 @@ export function tokenize(input: string): Token[] {
       continue;
     }
 
+    // Process substitution `<(...)` / `>(...)` at word start is a WORD, not a
+    // redirect operator — handle before matchOperator would split off `<`/`>`.
+    if ((ch === '<' || ch === '>') && input[i + 1] === '(') {
+      const grp = procSub(input, i);
+      if (grp > i) {
+        // fall through into WORD accumulation starting at i (handled below)
+      }
+    }
+
     const op = matchOperator(input, i);
-    if (op) {
+    if (op && !((ch === '<' || ch === '>') && input[i + 1] === '(')) {
       tokens.push({ type: op.type, value: input.slice(i, i + op.len), raw: input.slice(i, i + op.len) });
       i += op.len;
       continue;
@@ -160,6 +185,13 @@ export function tokenize(input: string): Token[] {
     while (i < n) {
       const c = input[i];
       if (isBlank(c)) break;
+
+      // process substitution `<(...)` / `>(...)` — keep the balanced group inside
+      // the WORD so it isn't split as a redirect + subshell.
+      if ((c === '<' || c === '>') && input[i + 1] === '(') {
+        const grp = procSub(input, i);
+        if (grp > i) { const t = input.slice(i, grp); value += t; raw += t; i = grp; continue; }
+      }
 
       // extglob group `@(...)` `?(...)` `*(...)` `+(...)` `!(...)` — keep the
       // balanced parenthesised group inside the WORD so case/[[ ]] patterns

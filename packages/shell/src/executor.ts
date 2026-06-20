@@ -147,6 +147,10 @@ export class Executor implements ShellEnv {
   private fdTable = new Map<number, FdEntry>();
   /** Inherited pipe stdin for a compound pipeline stage (M1); undefined ⇒ none. */
   private pipeStdin: string | undefined;
+  /** Monotonic counter for process-substitution temp file names. */
+  private procSubSeq = 0;
+  /** Deferred `>(cmd)` process substitutions to run after the current command. */
+  private pendingProcSubs: Array<{ path: string; src: string }> = [];
 
   constructor(kernel: KernelClient, context: ShellContext, options: ExecutorOptions = {}) {
     this.kernel = kernel;
@@ -203,6 +207,57 @@ export class Executor implements ShellEnv {
   /** All set variable names (scalars + arrays), for `${!prefix*}`/`${!prefix@}`. */
   names(): string[] {
     return [...new Set([...Object.keys(this.context.env), ...this.arrays.keys()])];
+  }
+
+  /**
+   * Process substitution (M4). For `<(cmd)`: run `cmd`, write its stdout to a
+   * temp VFS file, and return that path (the surrounding command reads it). For
+   * `>(cmd)`: return a temp path now and QUEUE `cmd` to run after the current
+   * simple command finishes, feeding it the file's contents as stdin. Requires
+   * an FsClient; without one the path is a `/dev/null`-ish placeholder.
+   */
+  async procSub(src: string, dir: 'in' | 'out'): Promise<string> {
+    const path = `/tmp/.mithic-procsub-${this.procSubSeq++}`;
+    if (!this.fs) return '/dev/null';
+    if (dir === 'in') {
+      const out = await this.runCommandSubRaw(src);
+      const fd = this.fs.fsOpen(path, { write: true, create: true, truncate: true });
+      this.fs.fsWrite(fd, out);
+      this.fs.fsClose(fd);
+    } else {
+      // Create the empty sink file; defer running `cmd` until the outer command
+      // has written to it.
+      const fd = this.fs.fsOpen(path, { write: true, create: true, truncate: true });
+      this.fs.fsWrite(fd, '');
+      this.fs.fsClose(fd);
+      this.pendingProcSubs.push({ path, src });
+    }
+    return path;
+  }
+
+  /** Run a command-sub body WITHOUT trailing-newline stripping (for procsub files). */
+  private async runCommandSubRaw(src: string): Promise<string> {
+    let out = '';
+    const savedStdout = this.stdoutSink;
+    this.stdoutSink = (s) => { out += s; };
+    try { await this.run(this.parseSrc(src), true); }
+    finally { this.stdoutSink = savedStdout; }
+    return out;
+  }
+
+  /** Flush deferred `>(cmd)` process substitutions: feed each temp file to its cmd. */
+  private async flushPendingProcSubs(): Promise<void> {
+    if (this.pendingProcSubs.length === 0 || !this.fs) return;
+    const pending = this.pendingProcSubs;
+    this.pendingProcSubs = [];
+    for (const { path, src } of pending) {
+      let data = '';
+      try { data = await Promise.resolve(this.fs.fsRead(this.fs.fsOpen(path, { read: true }))); } catch { data = ''; }
+      const savedPipe = this.pipeStdin;
+      this.pipeStdin = data;
+      try { await this.run(this.parseSrc(src), true); }
+      finally { this.pipeStdin = savedPipe; }
+    }
   }
 
   /** Glob options for case/`[[ ]]` matching: extglob + nocasematch; `*` crosses `/`. */
@@ -1198,6 +1253,9 @@ export class Executor implements ShellEnv {
       return await this.spawnExternal(name, argv, localEnv, stdin);
     } finally {
       if (restore) restore();
+      // Run any deferred `>(cmd)` substitutions now that the outer command has
+      // written to their temp files (and the redirect sinks have flushed).
+      await this.flushPendingProcSubs();
     }
   }
 
@@ -1251,6 +1309,7 @@ export class Executor implements ShellEnv {
       posix: () => this.posix(),
       shopt: (n) => this.shopt(n),
       names: () => this.names(),
+      procSub: (src, d) => this.procSub(src, d),
     };
   }
 
