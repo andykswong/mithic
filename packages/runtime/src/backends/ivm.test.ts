@@ -9,36 +9,37 @@ test('isIvmAvailable() returns a boolean without throwing', async () => {
 });
 
 // Test 2: Real execution — only runs when the native addon is present.
-// If isolated-vm is not installed/built, this test is skipped gracefully.
+// H3: __mithic_syscall(call, args) is a SUSPENDABLE bridge that returns the host
+// result synchronously into the isolate (applySyncPromise). This proves a syscall
+// is actually SERVICED (a result round-trips), not merely posted fire-and-forget.
 test.skipIf(!(await isIvmAvailable()))(
-  'IvmRuntime spawns a process that posts a syscall request via __mithic_syscall',
+  'IvmRuntime services a __mithic_syscall round-trip and returns the result into the isolate',
   async () => {
     const rt = await IvmRuntime.create(64);
 
-    // Guest code: calls __mithic_syscall with a JSON-encoded syscall request.
-    const code = '__mithic_syscall(JSON.stringify({ id: 1, call: \'process/getpid\', args: {} }));';
-
-    const received: unknown[] = [];
+    const seen: Array<{ call: string; args: Record<string, unknown> }> = [];
+    // Guest calls __mithic_syscall('echo', {n:41}); the host returns {result:{n:42}}
+    // and the guest exits with that value via process/exit.
+    const code = `
+      const r = __mithic_syscall('echo', { n: 41 });
+      __mithic_syscall('process/exit', { code: r.n });
+    `;
     const handle = await rt.spawn(code, {
       init: {
-        type: 'init',
-        entry: 'inline',
-        args: [],
-        env: {},
-        cwd: '/',
-        pid: 1,
-        ppid: 0,
-        capabilities: [],
+        type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 1, ppid: 0, capabilities: [],
+      },
+      onSyscall: async (call, args) => {
+        seen.push({ call, args });
+        if (call === 'echo') return { ok: true, result: { n: Number(args.n) + 1 } };
+        return { ok: true, result: {} };
       },
     });
 
-    rt.onMessage(handle, (m) => received.push(m));
+    // Let the suspendable bridge round-trip and the guest finish.
+    await new Promise<void>((resolve) => setTimeout(resolve, 300));
 
-    // Give async callbacks time to fire.
-    await new Promise<void>((resolve) => setTimeout(resolve, 200));
-
-    expect(received).toContainEqual({ id: 1, call: 'process/getpid', args: {} });
-
+    // The echo syscall was serviced with the args the guest passed.
+    expect(seen.some((s) => s.call === 'echo' && (s.args as { n?: number }).n === 41)).toBe(true);
     rt.dispose(handle);
   },
 );

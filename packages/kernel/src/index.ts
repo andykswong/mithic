@@ -28,6 +28,7 @@ export type {
   PipelineChildResult,
   PipelineStageSpec,
 } from './syscall-dispatch.ts';
+export { IvmRelayLauncher } from './launchers/ivm-relay-launcher.ts';
 export { RemoteDomHost, ALLOWED_TAGS, ALLOWED_GLOBAL_ATTRIBUTES } from './display/remote-dom-host.ts';
 export type {
   GuestDomEvent,

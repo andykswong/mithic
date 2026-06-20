@@ -27,17 +27,51 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type IvmModule = any;
 
+/**
+ * Dynamically load the optional `isolated-vm` native addon WITHOUT a static module
+ * specifier (so TS never tries to resolve it — the addon is an optionalDependency
+ * that may be absent, and a literal `import('isolated-vm')` would be a TS2307).
+ *
+ * Two strategies, because environments differ:
+ *   1. `new Function('m','return import(m)')` — works under plain Node, keeps the
+ *      specifier opaque to the bundler.
+ *   2. plain `import(spec)` with a VARIABLE specifier — used when (1) throws "A
+ *      dynamic import callback was not specified" (the Vite/vitest module system
+ *      does not support the `new Function` import trick). A variable specifier is
+ *      still opaque to TS so it does not trigger a static-resolution error.
+ */
+async function loadIvm(): Promise<IvmModule> {
+  try {
+    return await (new Function('m', 'return import(m)') as (m: string) => Promise<IvmModule>)('isolated-vm');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/dynamic import callback was not specified/i.test(msg)) {
+      const spec = 'isolated-vm';
+      return await import(/* @vite-ignore */ spec);
+    }
+    throw err;
+  }
+}
+
 /** Returns true if isolated-vm is loadable in this environment, false otherwise. Never throws. */
 export async function isIvmAvailable(): Promise<boolean> {
   try {
-    // Use an indirect dynamic import via new Function so TypeScript does not
-    // perform static module-resolution on 'isolated-vm'. The optional native
-    // addon may not be installed, and a hard TS2307 error would break builds.
-    await (new Function('m', 'return import(m)') as (m: string) => Promise<unknown>)('isolated-vm');
+    await loadIvm();
     return true;
   } catch {
     return false;
   }
+}
+
+/**
+ * Host syscall handler injected into the isolate. The guest calls
+ * `__mithic_syscall(call, args)` synchronously (from its view); the host returns a
+ * plain object that is JSON-cloned back into the isolate. The bridge SUSPENDS the
+ * isolate thread (via `Reference.applySyncPromise`) while the host `await`s its
+ * work, then resumes the isolate with the serialised result — design §4.4.
+ */
+export interface IvmSpawnOptions extends SpawnOptions {
+  onSyscall?: (call: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>;
 }
 
 interface IvmEntry {
@@ -46,6 +80,16 @@ interface IvmEntry {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   context: any;
   messageListeners: ((msg: SyscallRequest) => void)[];
+  exitCode: number | undefined;
+  exitResolvers: ((code: number) => void)[];
+  alive: boolean;
+  /** cpuLimit watchdog timer (cleared on exit/dispose). */
+  cpuWatch: ReturnType<typeof setInterval> | undefined;
+}
+
+/** Exit result returned by `waitExit`. */
+export interface IvmExitResult {
+  code: number;
 }
 
 export class IvmRuntime implements Runtime {
@@ -66,12 +110,21 @@ export class IvmRuntime implements Runtime {
    * @param memoryLimitMb - Per-isolate memory limit in MiB (default 128).
    */
   static async create(memoryLimitMb = 128): Promise<IvmRuntime> {
-    // Indirect dynamic import — same reason as in isIvmAvailable: avoids TS2307.
-    const ivm: IvmModule = await (new Function('m', 'return import(m)') as (m: string) => Promise<IvmModule>)('isolated-vm');
-    return new IvmRuntime(ivm, memoryLimitMb);
+    const ivm: IvmModule = await loadIvm();
+    return new IvmRuntime((ivm.default ?? ivm), memoryLimitMb);
   }
 
-  async spawn(code: string | URL, options: SpawnOptions): Promise<ProcessHandle> {
+  /**
+   * Spawn a guest in a fresh isolate. The guest runs NON-BLOCKING: `spawn`
+   * resolves once the isolate is started, so syscalls can be serviced while the
+   * guest executes. The guest's `__mithic_syscall(call, args)` is bridged to
+   * `options.onSyscall` (when provided) via a host `Reference.applySyncPromise`
+   * round-trip, returning the result synchronously into the isolate.
+   *
+   * Memory is hard-capped via the `memoryLimit` constructor option. cpuMs is
+   * enforced via an `isolate.cpuTime` watchdog (true CPU metering, not wall-clock).
+   */
+  async spawn(code: string | URL, options: IvmSpawnOptions): Promise<ProcessHandle> {
     const id = this.#nextId++;
 
     let codeStr: string;
@@ -85,81 +138,160 @@ export class IvmRuntime implements Runtime {
       throw new Error('IvmRuntime: URL entry not yet supported');
     }
 
-    // Create a new V8 isolate with the configured memory limit.
-    const isolate = new this.#ivm.Isolate({ memoryLimit: this.#memoryLimitMb });
+    const memoryLimit = options.init.limits?.memoryMb ?? this.#memoryLimitMb;
+    const isolate = new this.#ivm.Isolate({ memoryLimit });
     const context = await isolate.createContext();
-    const entry: IvmEntry = { isolate, context, messageListeners: [] };
+    const entry: IvmEntry = {
+      isolate,
+      context,
+      messageListeners: [],
+      exitCode: undefined,
+      exitResolvers: [],
+      alive: true,
+      cpuWatch: undefined,
+    };
     this.#processes.set(id, entry);
 
-    // Inject __mithic_syscall as an async Callback so guest code can post
-    // SyscallRequests back to the host. The callback is exposed on the global
-    // as `__mithic_syscall(jsonMsg)`.
-    await context.global.set(
-      '__mithic_syscall',
-      new this.#ivm.Callback(
-        (jsonMsg: string) => {
-          try {
-            const msg = JSON.parse(jsonMsg) as SyscallRequest;
-            for (const cb of entry.messageListeners) {
-              cb(msg);
-            }
-          } catch {
-            // Malformed message — ignore.
-          }
-        },
-        { async: true },
-      ),
-    );
+    // Host syscall handler: returns a JSON-encoded SyscallResponse string. The
+    // guest calls it via applySyncPromise (suspends the isolate until resolved).
+    const onSyscall = options.onSyscall;
+    const syscallRef = new this.#ivm.Reference(async (jsonReq: string): Promise<string> => {
+      let req: { call?: string; args?: Record<string, unknown> };
+      try { req = JSON.parse(jsonReq); } catch { return JSON.stringify({ ok: false, error: { code: 'EINVAL', message: 'bad syscall request' } }); }
+      const call = typeof req.call === 'string' ? req.call : '';
+      const args = (req.args && typeof req.args === 'object') ? req.args : {};
+      // Also surface the raw request to any onMessage listeners (parity with the
+      // pre-existing fire-and-forget behavior that tests relied on).
+      for (const cb of entry.messageListeners) {
+        cb({ id: 0, call, args } as SyscallRequest);
+      }
+      if (!onSyscall) {
+        return JSON.stringify({ ok: false, error: { code: 'ENOSYS', message: 'no syscall handler' } });
+      }
+      try {
+        const result = await onSyscall(call, args);
+        return JSON.stringify(result ?? {});
+      } catch (err) {
+        const code = (err && typeof err === 'object' && 'code' in err) ? String((err as { code: unknown }).code) : 'EIO';
+        const message = err instanceof Error ? err.message : String(err);
+        return JSON.stringify({ ok: false, error: { code, message } });
+      }
+    });
+    await context.global.set('__mithic_syscall_ref', syscallRef);
+    await context.global.set('__mithic_init_json', JSON.stringify(options.init));
 
-    // Evaluate the guest code. Falls back to 30 s if no limits.timeoutMs supplied.
-    // Callers using cpuLimit semantics may also rely on isolate wallTime/cpuTime.
-    const timeout = options.init.limits?.timeoutMs ?? 30_000;
-    await context.eval(codeStr, { timeout });
+    // Bootstrap: a synchronous-looking __mithic_syscall over the suspendable
+    // bridge. The handler may return either a bare result object OR a wrapped
+    // {ok,result|error}; we normalize so the guest gets the result (or throws).
+    await context.eval(`
+      globalThis.__mithic_init = JSON.parse(__mithic_init_json);
+      globalThis.__mithic_syscall = (call, args) => {
+        const json = __mithic_syscall_ref.applySyncPromise(undefined, [JSON.stringify({ call, args: args || {} })]);
+        const r = JSON.parse(json);
+        if (r && typeof r === 'object' && 'ok' in r) {
+          if (r.ok) return r.result;
+          const e = new Error((r.error && r.error.message) || 'syscall failed');
+          e.code = r.error && r.error.code;
+          throw e;
+        }
+        return r;
+      };
+    `);
+
+    // cpuMs enforcement: poll isolate.cpuTime (nanoseconds) and dispose when the
+    // CPU budget is exceeded. This is real CPU metering (not wall-clock) — backs
+    // IVM_CAPABILITIES.cpuLimit === true.
+    const cpuMs = options.init.limits?.cpuMs;
+    if (cpuMs !== undefined && cpuMs > 0) {
+      const budgetNs = BigInt(Math.floor(cpuMs)) * 1_000_000n;
+      entry.cpuWatch = setInterval(() => {
+        if (!entry.alive) { this.#stopCpuWatch(entry); return; }
+        try {
+          if ((isolate.cpuTime as bigint) > budgetNs) {
+            this.#markExit(id, 137);
+            this.#disposeEntry(id);
+          }
+        } catch { /* isolate gone */ }
+      }, 10);
+      (entry.cpuWatch as { unref?: () => void }).unref?.();
+    }
+
+    // Run the guest NON-BLOCKING: wrap in an async IIFE (for top-level await) and
+    // do not await completion here. On settle, mark exit (0 normally, 137 on a
+    // RangeError-style OOM/timeout). A guest that calls process/exit settles via
+    // its own syscall + the relay launcher's notifyExit.
+    const wrapped = `(async () => {\n${codeStr}\n})()`;
+    const evalPromise: Promise<unknown> = context.eval(wrapped, { promise: true, timeout: options.init.limits?.timeoutMs });
+    evalPromise.then(() => {
+      if (entry.alive) { this.#markExit(id, 0); this.#disposeEntry(id); }
+    }).catch((err: unknown) => {
+      if (!entry.alive) return;
+      // A disposed isolate (cpuLimit/OOM kill) rejects here — already handled.
+      const msg = err instanceof Error ? err.message : String(err);
+      const code = /memory limit|out of memory|disposed|cpu/i.test(msg) ? 137 : 1;
+      this.#markExit(id, code);
+      this.#disposeEntry(id);
+    });
 
     return { id };
   }
 
-  kill(handle: ProcessHandle, _signal: Signal): void {
+  /** Wait for a spawned process to exit and return its exit code. */
+  waitExit(handle: ProcessHandle): Promise<IvmExitResult> {
     const entry = this.#processes.get(handle.id);
-    if (entry) {
-      entry.context.release();
-      entry.isolate.dispose();
-      this.#processes.delete(handle.id);
-    }
+    if (!entry) return Promise.resolve({ code: 1 });
+    if (entry.exitCode !== undefined) return Promise.resolve({ code: entry.exitCode });
+    return new Promise<IvmExitResult>((resolve) => {
+      entry.exitResolvers.push((code) => resolve({ code }));
+    });
+  }
+
+  kill(handle: ProcessHandle, _signal: Signal): void {
+    this.#markExit(handle.id, 137);
+    this.#disposeEntry(handle.id);
   }
 
   postMessage(_handle: ProcessHandle, _msg: SyscallResponse | KernelEvent, _transfer?: Transferable[]): void {
     // isolated-vm does not support Transferable ports; postMessage is a no-op for
-    // directPipes=false. Callers that need bidirectional IPC should use syscall responses
-    // encoded as JSON passed through __mithic_syscall callbacks.
+    // directPipes=false. Bidirectional IPC is via syscall responses through the
+    // suspendable __mithic_syscall bridge.
   }
 
   onMessage(handle: ProcessHandle, cb: (msg: SyscallRequest) => void): void {
     const entry = this.#processes.get(handle.id);
-    if (entry) {
-      entry.messageListeners.push(cb);
-    }
+    if (entry) entry.messageListeners.push(cb);
   }
 
   isAlive(handle: ProcessHandle): boolean {
     const entry = this.#processes.get(handle.id);
     if (!entry) return false;
-    try {
-      // Accessing .isDisposed is synchronous and does not throw.
-      return !entry.isolate.isDisposed;
-    } catch {
-      return false;
-    }
+    return entry.alive;
   }
 
   dispose(handle: ProcessHandle): void {
-    const entry = this.#processes.get(handle.id);
-    if (entry) {
-      if (!entry.isolate.isDisposed) {
-        entry.context.release();
-        entry.isolate.dispose();
-      }
-      this.#processes.delete(handle.id);
-    }
+    this.#markExit(handle.id, this.#processes.get(handle.id)?.exitCode ?? 0);
+    this.#disposeEntry(handle.id);
+  }
+
+  #markExit(id: number, code: number): void {
+    const entry = this.#processes.get(id);
+    if (!entry || entry.exitCode !== undefined) return;
+    entry.exitCode = code;
+    entry.alive = false;
+    for (const resolve of entry.exitResolvers) resolve(code);
+    entry.exitResolvers.length = 0;
+  }
+
+  #stopCpuWatch(entry: IvmEntry): void {
+    if (entry.cpuWatch !== undefined) { clearInterval(entry.cpuWatch); entry.cpuWatch = undefined; }
+  }
+
+  #disposeEntry(id: number): void {
+    const entry = this.#processes.get(id);
+    if (!entry) return;
+    this.#processes.delete(id);
+    this.#stopCpuWatch(entry);
+    try { if (!entry.isolate.isDisposed) { entry.context.release(); entry.isolate.dispose(); } } catch { /* already disposed */ }
   }
 }
+
