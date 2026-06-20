@@ -273,6 +273,80 @@ test('a permission-denied (EACCES) net/fetch surfaces as a curl error', async ()
   expect(f.err()).not.toBe('');
 });
 
+// ── exit-code mapping (align with real curl) ───────────────────────────────────
+
+test('couldn\'t-resolve-host (ENOTFOUND) maps to exit 6', async () => {
+  const f = fakeIO(['curl', 'https://nope.invalid/x'], {
+    responder: () => Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' }),
+  });
+  expect(await curlCommand(f.io)).toBe(6);
+});
+
+test('couldn\'t-connect (ECONNREFUSED) maps to exit 7', async () => {
+  const f = fakeIO(['curl', 'https://api.example.com/x'], {
+    responder: () => Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }),
+  });
+  expect(await curlCommand(f.io)).toBe(7);
+});
+
+test('operation timeout (ETIMEDOUT) maps to exit 28', async () => {
+  const f = fakeIO(['curl', 'https://api.example.com/x'], {
+    responder: () => Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }),
+  });
+  expect(await curlCommand(f.io)).toBe(28);
+});
+
+test('too-many-redirects (ELOOP) maps to exit 47', async () => {
+  const f = fakeIO(['curl', '-L', 'https://api.example.com/x'], {
+    responder: () => Object.assign(new Error('too many redirects'), { code: 'ELOOP' }),
+  });
+  expect(await curlCommand(f.io)).toBe(47);
+});
+
+test('-L hitting curl\'s own redirect cap (no kernel follow) exits 47', async () => {
+  // The kernel did NOT follow (returns the 3xx each time) and the loop exceeds
+  // curl's own MAX_REDIRECTS — curl must report too-many-redirects (exit 47).
+  const f = fakeIO(['curl', '-L', 'https://api.example.com/loop'], {
+    responder: () => ({ status: 302, headers: [['location', 'https://api.example.com/loop']], body: undefined }),
+  });
+  const code = await curlCommand(f.io);
+  expect(code).toBe(47);
+  expect(f.err()).not.toBe('');
+});
+
+// ── -v / --verbose ─────────────────────────────────────────────────────────────
+
+test('-v traces the request and response to stderr', async () => {
+  const f = fakeIO(['curl', '-v', 'https://api.example.com/data'], {
+    responder: () => ({ status: 200, headers: [['content-type', 'text/plain']], body: enc.encode('hi') }),
+  });
+  const code = await curlCommand(f.io);
+  expect(code).toBe(0);
+  expect(f.out()).toBe('hi');
+  const e = f.err();
+  // Request line + outgoing header markers, then response status + headers.
+  expect(e).toContain('> GET /data');
+  expect(e).toContain('* Connected to api.example.com');
+  expect(e).toContain('< HTTP/1.1 200');
+  expect(e).toContain('< content-type: text/plain');
+});
+
+test('-v does NOT pollute stdout (body still clean)', async () => {
+  const f = fakeIO(['curl', '-v', 'https://api.example.com/data'], {
+    responder: () => ({ status: 200, headers: [], body: enc.encode('clean-body') }),
+  });
+  await curlCommand(f.io);
+  expect(f.out()).toBe('clean-body');
+});
+
+test('--verbose is the long form of -v', async () => {
+  const f = fakeIO(['curl', '--verbose', 'https://api.example.com/x'], {
+    responder: () => ({ status: 204, headers: [], body: undefined }),
+  });
+  await curlCommand(f.io);
+  expect(f.err()).toContain('< HTTP/1.1 204');
+});
+
 test('-L follows a 302 redirect to the Location header', async () => {
   let n = 0;
   const f = fakeIO(['curl', '-L', 'https://api.example.com/start'], {
@@ -296,6 +370,69 @@ test('without -L a 302 is not followed (body of the redirect response is printed
   await curlCommand(f.io);
   expect(f.netCalls).toHaveLength(1);
   expect(f.out()).toBe('redirect');
+});
+
+// ── CU1: 307/308 must PRESERVE method + body; 301/302/303 downgrade to GET ──────
+
+test('CU1: -L on a 307 preserves the POST method and body', async () => {
+  let n = 0;
+  const f = fakeIO(['curl', '-L', '-X', 'POST', '-d', 'name=mithic', 'https://api.example.com/start'], {
+    responder: () => {
+      n++;
+      if (n === 1) return { status: 307, headers: [['location', 'https://api.example.com/final']], body: undefined };
+      return { status: 200, headers: [], body: enc.encode('ok') };
+    },
+  });
+  const code = await curlCommand(f.io);
+  expect(code).toBe(0);
+  expect(f.netCalls).toHaveLength(2);
+  expect(f.netCalls[1].url).toBe('https://api.example.com/final');
+  expect(f.netCalls[1].method).toBe('POST');
+  expect(new TextDecoder().decode(f.netCalls[1].body)).toBe('name=mithic');
+  expect(f.out()).toBe('ok');
+});
+
+test('CU1: -L on a 308 preserves the PUT method and body', async () => {
+  let n = 0;
+  const f = fakeIO(['curl', '-L', '-X', 'PUT', '-d', 'a=1', 'https://api.example.com/start'], {
+    responder: () => {
+      n++;
+      if (n === 1) return { status: 308, headers: [['location', 'https://api.example.com/final']], body: undefined };
+      return { status: 200, headers: [], body: enc.encode('done') };
+    },
+  });
+  const code = await curlCommand(f.io);
+  expect(code).toBe(0);
+  expect(f.netCalls[1].method).toBe('PUT');
+  expect(new TextDecoder().decode(f.netCalls[1].body)).toBe('a=1');
+});
+
+test('CU1: -L on a 303 downgrades a POST to GET and drops the body', async () => {
+  let n = 0;
+  const f = fakeIO(['curl', '-L', '-X', 'POST', '-d', 'a=1', 'https://api.example.com/start'], {
+    responder: () => {
+      n++;
+      if (n === 1) return { status: 303, headers: [['location', 'https://api.example.com/final']], body: undefined };
+      return { status: 200, headers: [], body: enc.encode('done') };
+    },
+  });
+  await curlCommand(f.io);
+  expect(f.netCalls[1].method).toBe('GET');
+  expect(f.netCalls[1].body).toBeUndefined();
+});
+
+test('CU1: -L on a 301 downgrades a POST to GET and drops the body', async () => {
+  let n = 0;
+  const f = fakeIO(['curl', '-L', '-X', 'POST', '-d', 'a=1', 'https://api.example.com/start'], {
+    responder: () => {
+      n++;
+      if (n === 1) return { status: 301, headers: [['location', 'https://api.example.com/final']], body: undefined };
+      return { status: 200, headers: [], body: enc.encode('done') };
+    },
+  });
+  await curlCommand(f.io);
+  expect(f.netCalls[1].method).toBe('GET');
+  expect(f.netCalls[1].body).toBeUndefined();
 });
 
 test('reads POST body from stdin when -d @- is given', async () => {

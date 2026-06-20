@@ -163,6 +163,56 @@ test('curl -o writes the body to a VFS file (capability-gated origin)', async ()
   expect(await k.readFile('/dl.txt')).toBe('downloaded');
 }, 20000);
 
+// CU1 COMPOSE NOTE (cross-cluster): the kernel's `net/fetch` follows 3xx
+// redirects INTERNALLY (with `redirect:'manual'`, re-checking the net cap on
+// every hop), so curl normally receives the FINAL response in a single syscall.
+// That means end-to-end 307/308 method+body preservation is enforced primarily
+// by the KERNEL net/fetch hop logic (owned by the kernel agent). The curl-client
+// half — preserving method+body on 307/308 and downgrading 301/302/303 to GET
+// when CURL itself follows a returned 3xx — is exhaustively covered in
+// curl.test.ts ("CU1: …"). Here we only assert what the curl client controls
+// end-to-end: a plain POST body survives to the kernel, and a kernel redirect
+// cap (ELOOP) maps to curl's too-many-redirects exit 47.
+
+test('CU1 compose: a POST body reaches the granted origin intact end-to-end', async () => {
+  const k = await bootKernel({
+    responses: {
+      'https://api.example.com/post': { status: 200, headers: [], body: enc.encode('ack') },
+    },
+  });
+  const r = await k.curl(['curl', '-X', 'POST', '-d', 'name=mithic', 'https://api.example.com/post']);
+  expect(r.code).toBe(0);
+  const sent = k.requests.find(rq => rq.url === 'https://api.example.com/post');
+  expect(sent!.method).toBe('POST');
+  expect(new TextDecoder().decode(sent!.body)).toBe('name=mithic');
+}, 20000);
+
+test('CU1 compose: a kernel redirect cap (ELOOP) maps to curl exit 47', async () => {
+  // A self-referential 302 makes the kernel follow until it hits MAX_REDIRECT_HOPS
+  // and fails with ELOOP; the curl client must surface that as exit 47.
+  const k = await bootKernel({
+    responses: {
+      'https://api.example.com/loop': { status: 302, headers: [['location', 'https://api.example.com/loop']], body: undefined },
+    },
+  });
+  const r = await k.curl(['curl', '-L', 'https://api.example.com/loop']);
+  expect(r.code).toBe(47);
+  expect(r.stderr).not.toBe('');
+}, 20000);
+
+test('curl -v traces request/response to stderr end-to-end', async () => {
+  const k = await bootKernel({
+    responses: {
+      'https://api.example.com/data': { status: 200, headers: [['content-type', 'text/plain']], body: enc.encode('hi') },
+    },
+  });
+  const r = await k.curl(['curl', '-v', 'https://api.example.com/data']);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toBe('hi');           // body stays clean on stdout
+  expect(r.stderr).toContain('> GET /data');
+  expect(r.stderr).toContain('< HTTP/1.1 200');
+}, 20000);
+
 test('unknown command name resolves to undefined (kernel would ENOENT)', () => {
   const resolve = createCurlResolver();
   expect(resolve('not-a-command', '/', {})).toBeUndefined();
