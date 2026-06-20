@@ -52,6 +52,10 @@ export interface ShellEnv {
   nounset?(): boolean;
   /** Read an indexed array's elements (undefined ⇒ not an array). Optional. */
   getArray?(name: string): string[] | undefined;
+  /** True when POSIX mode is active (disables brace expansion). Optional. */
+  posix?(): boolean;
+  /** True when the named shopt glob option is enabled (extglob/globstar/nullglob/dotglob/...). */
+  shopt?(name: string): boolean;
 }
 
 /**
@@ -89,12 +93,13 @@ export class Expander {
 
   /** Expand a single raw word into zero or more fields. */
   async expandWord(word: string): Promise<string[]> {
-    // 1. Brace expansion (purely textual, pre-substitution).
-    const braced = expandBraces(word);
+    // 1. Brace expansion (purely textual, pre-substitution). Disabled in POSIX mode.
+    const braced = this.env.posix?.() ? [word] : expandBraces(word);
     const out: string[] = [];
     let anyEmptyByAt = false;
-    for (const b of braced) {
-      // 2. substitution → parts (tagged quoted/unquoted)
+    for (const braw of braced) {
+      // 2. tilde expansion (leading unquoted `~` → $HOME), then substitution.
+      const b = this.tildeExpand(braw);
       const { parts, emptiedByAt } = await this.substitute(b);
       if (emptiedByAt && parts.length === 0) { anyEmptyByAt = true; continue; }
       // 3. word splitting (unquoted regions only)
@@ -124,11 +129,30 @@ export class Expander {
     // Assignments/redirect targets don't brace-expand into multiple words in a
     // meaningful way here; join is acceptable for the common single-result case.
     const pieces: string[] = [];
-    for (const b of braced) {
-      const { parts } = await this.substitute(b);
+    for (const braw of braced) {
+      const { parts } = await this.substitute(this.tildeExpand(braw));
       pieces.push(partsText(parts));
     }
     return pieces.join(' ');
+  }
+
+  /**
+   * Tilde expansion (H6): a leading unquoted `~` → `$HOME`, `~/rest` →
+   * `$HOME/rest`. Only fires when the word literally starts with `~` (so quoted
+   * `"~"` and mid-word `a~` are left alone). `~user` is left literal — there is
+   * no user database in the sandbox. Disabled when `$HOME` is unset.
+   */
+  private tildeExpand(word: string): string {
+    if (word[0] !== '~') return word;
+    // `~` then end / `/` / `:` (PATH-like) — anything else (e.g. `~user`) is a
+    // named-home form we don't support, so leave it literal.
+    const rest = word.slice(1);
+    if (rest === '' || rest[0] === '/') {
+      const home = this.env.get('HOME');
+      if (home === undefined || home === '') return word;
+      return home + rest;
+    }
+    return word;
   }
 
   /**
@@ -273,7 +297,9 @@ export class Expander {
       const expr = word.slice(i + 3, end);
       const expanded = await this.expandSubExpr(expr);
       const liveEnv = this.arithEnvProxy();
-      const v = evalArith(expanded, liveEnv);
+      let v: number;
+      try { v = evalArith(expanded, liveEnv); }
+      catch (e) { throw new ExpansionError((e as Error).message); }
       return { value: String(v), next: end + 2 };
     }
 
@@ -511,6 +537,19 @@ export class Expander {
       const repl = slash >= 0 ? await this.expandToString(spec.slice(slash + 1)) : '';
       return substitute(value, pat, repl, all);
     }
+    // ${var^} ${var^^} ${var,} ${var,,} — case modification (optionally gated by
+    // a glob pattern of which chars to convert; default matches every char).
+    if (rest[0] === '^' || rest[0] === ',') {
+      const upper = rest[0] === '^';
+      const all = rest[1] === rest[0];
+      const patStr = rest.slice(all ? 2 : 1);
+      const pat = patStr === '' ? '?' : await this.expandToString(patStr);
+      const re = new RegExp('^' + globToReSource(pat) + '$');
+      const conv = (ch: string): string => (re.test(ch) ? (upper ? ch.toUpperCase() : ch.toLowerCase()) : ch);
+      if (all) return value.split('').map(conv).join('');
+      return value.length === 0 ? value : conv(value[0]) + value.slice(1);
+    }
+
     // ${var:offset:len} substring (offset is numeric → not one of the : ops above)
     if (rest[0] === ':') {
       const spec = rest.slice(1);
@@ -617,13 +656,32 @@ export function expandBraces(word: string): string[] {
 
 interface BraceMatch { pre: string; body: string; post: string; isRange: boolean; }
 
-/** Find the first top-level `{...}` (respecting quotes/escapes and nesting). */
+/**
+ * Skip over a `$`-construct (`${...}`, `$(...)`, `$((...))`) that starts at
+ * `word[i] === '$'`, returning the index just past it. A non-construct `$`
+ * returns i+1. Used so brace-expansion scanning never treats a comma inside a
+ * `${var,,}` / `$(cmd a,b)` as a brace separator (the H7 corruption bug).
+ */
+function skipDollar(word: string, i: number): number {
+  const n = word.length;
+  if (word[i] !== '$') return i + 1;
+  const c1 = word[i + 1];
+  if (c1 === '{') return findMatchingBrace(word, i + 2) + 1;
+  if (c1 === '(') {
+    if (word[i + 2] === '(') return findMatchingArith(word, i + 3) + 2;
+    return findMatchingParen(word, i + 2) + 1;
+  }
+  return i + 1;
+}
+
+/** Find the first top-level `{...}` (respecting quotes/escapes, nesting, and `$`-constructs). */
 function findBrace(word: string): BraceMatch | undefined {
   let i = 0;
   const n = word.length;
   while (i < n) {
     const c = word[i];
     if (c === '\\') { i += 2; continue; }
+    if (c === '$' && (word[i + 1] === '{' || word[i + 1] === '(')) { i = skipDollar(word, i); continue; }
     if (c === '\'' || c === '"') {
       const q = c; i++;
       while (i < n && word[i] !== q) { if (word[i] === '\\') i++; i++; }
@@ -640,6 +698,7 @@ function findBrace(word: string): BraceMatch | undefined {
       while (j < n && depth > 0) {
         const cc = word[j];
         if (cc === '\\') { j += 2; continue; }
+        if (cc === '$' && (word[j + 1] === '{' || word[j + 1] === '(')) { j = skipDollar(word, j); continue; }
         if (cc === '\'' || cc === '"') { const q = cc; j++; while (j < n && word[j] !== q) { if (word[j] === '\\') j++; j++; } j++; continue; }
         if (cc === '{') depth++;
         else if (cc === '}') { depth--; if (depth === 0) break; }
@@ -661,7 +720,7 @@ function findBrace(word: string): BraceMatch | undefined {
   return undefined;
 }
 
-/** Split `a,b{,x},c` on top-level commas (respecting nested braces/quotes). */
+/** Split `a,b{,x},c` on top-level commas (respecting nested braces/quotes/`$`-constructs). */
 function splitTopLevel(body: string): string[] {
   const out: string[] = [];
   let depth = 0;
@@ -670,6 +729,9 @@ function splitTopLevel(body: string): string[] {
   while (i < body.length) {
     const c = body[i];
     if (c === '\\') { cur += c + (body[i + 1] ?? ''); i += 2; continue; }
+    if (c === '$' && (body[i + 1] === '{' || body[i + 1] === '(')) {
+      const end = skipDollar(body, i); cur += body.slice(i, end); i = end; continue;
+    }
     if (c === '{') depth++;
     if (c === '}') depth--;
     if (c === ',' && depth === 0) { out.push(cur); cur = ''; i++; continue; }

@@ -92,6 +92,8 @@ export class Executor implements ShellEnv {
   private lastStatus = 0;
   private pipeStatus: number[] = [];
   private lastBgPid = 0;
+  /** Status of the most recent command substitution (`$(...)`), for M10. */
+  private lastCmdSubStatus: number | undefined;
   private exiting: number | undefined;
   private stdoutSink: (s: string) => void;
   private stderrSink: (s: string) => void;
@@ -169,12 +171,34 @@ export class Executor implements ShellEnv {
     let out = '';
     const savedStdout = this.stdoutSink;
     this.stdoutSink = (s) => { out += s; };
+    // `$(< file)` fast-read form (M5): an empty command body whose only content
+    // is a single `< file` input redirect reads the file directly.
+    const fast = src.match(/^\s*<\s*(\S+)\s*$/);
     try {
-      await this.run(parse(src), /*nested*/ true);
+      if (fast) {
+        this.lastCmdSubStatus = await this.readFileForCmdSub(fast[1]);
+      } else {
+        this.lastCmdSubStatus = await this.run(parse(src), /*nested*/ true);
+      }
     } finally {
       this.stdoutSink = savedStdout;
     }
     return out;
+  }
+
+  /** Read a file for `$(< file)`, writing its contents to the (captured) sink. Returns status. */
+  private async readFileForCmdSub(rawPath: string): Promise<number> {
+    const path = await this.expander().expandToString(rawPath);
+    const fs = this.fs;
+    if (!fs) return 1;
+    try {
+      const data = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true })));
+      this.writeStdout(data);
+      return 0;
+    } catch {
+      this.writeStderr(`shell: ${path}: No such file or directory\n`);
+      return 1;
+    }
   }
 
   async listDir(path: string): Promise<string[] | undefined> {
@@ -682,8 +706,13 @@ export class Executor implements ShellEnv {
       if (this.options.xtrace && cmd.assignments.length > 0) {
         this.writeStderr('+ ' + cmd.assignments.map((a) => `${a.name}=${a.value}`).join(' ') + '\n');
       }
+      // A bare `x=$(cmd)` takes its status from the LAST command substitution in
+      // the RHS (M10): `x=$(false); echo $?` → 1. With no command sub, status 0.
+      this.lastCmdSubStatus = undefined;
       for (const a of cmd.assignments) await this.applyAssignment(a, expander);
-      return 0;
+      const sub = this.lastCmdSubStatus;
+      this.lastCmdSubStatus = undefined;
+      return sub ?? 0;
     }
 
     if (this.options.xtrace) {

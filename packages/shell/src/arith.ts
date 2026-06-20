@@ -118,8 +118,8 @@ class ArithParser {
           case '+=': result = cur + rhs; break;
           case '-=': result = cur - rhs; break;
           case '*=': result = cur * rhs; break;
-          case '/=': result = trunc(cur / rhs); break;
-          case '%=': result = cur % rhs; break;
+          case '/=': result = trunc(cur / checkNonZero(rhs)); break;
+          case '%=': result = cur % checkNonZero(rhs); break;
           case '&=': result = cur & rhs; break;
           case '|=': result = cur | rhs; break;
           case '^=': result = cur ^ rhs; break;
@@ -214,8 +214,8 @@ class ArithParser {
     let v = this.power();
     for (;;) {
       if (this.isOp('*')) { this.pos++; v = v * this.power(); }
-      else if (this.isOp('/')) { this.pos++; v = trunc(v / this.power()); }
-      else if (this.isOp('%')) { this.pos++; v = v % this.power(); }
+      else if (this.isOp('/')) { this.pos++; v = trunc(v / checkNonZero(this.power())); }
+      else if (this.isOp('%')) { this.pos++; v = v % checkNonZero(this.power()); }
       else break;
     }
     return v;
@@ -265,6 +265,12 @@ class ArithParser {
 
 function trunc(n: number): number {
   return n < 0 ? Math.ceil(n) : Math.floor(n);
+}
+
+/** Guard a divisor: bash errors on `/ 0` / `% 0` (the result is not Infinity). */
+function checkNonZero(n: number): number {
+  if (n === 0) throw new SyntaxError('arith: division by 0');
+  return n;
 }
 
 /** Evaluate an arithmetic expression. Mutates `env` for assignments. */
