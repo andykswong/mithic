@@ -27,6 +27,13 @@ export class FetchHttpClient implements HttpClient {
       }
     }
 
+    // B1: derive a real transport-level AbortSignal. `timeoutMs` (previously
+    // inert) becomes an `AbortSignal.timeout`; a caller-supplied `signal` is
+    // composed with it via `AbortSignal.any` so whichever fires first aborts the
+    // in-flight fetch. A request that exceeds the timeout rejects with a
+    // TimeoutError, which the caller (the kernel) maps to ETIMEDOUT (curl exit 28).
+    const signal = combineSignals(request.timeoutMs, request.signal);
+
     // Create a Request object. `redirect` defaults to the platform default
     // ('follow') unless the caller requests otherwise. The kernel passes
     // 'manual' so it can capability-check each redirect hop (SSRF prevention).
@@ -36,6 +43,7 @@ export class FetchHttpClient implements HttpClient {
       headers,
       body: request.body as BodyInit | undefined,
       redirect: request.redirect,
+      ...(signal ? { signal } : {}),
     });
 
     // Call fetch
@@ -56,4 +64,17 @@ export class FetchHttpClient implements HttpClient {
       body,
     };
   }
+}
+
+/**
+ * B1: build the AbortSignal to pass to `fetch` from a `timeoutMs` and/or a
+ * caller-supplied `signal`. Returns:
+ *   - `undefined` when neither is set (no signal field → unchanged behavior);
+ *   - the lone signal when only one source is present;
+ *   - `AbortSignal.any([timeout, caller])` when both are present (first abort wins).
+ */
+function combineSignals(timeoutMs: number | undefined, caller: AbortSignal | undefined): AbortSignal | undefined {
+  const timeout = typeof timeoutMs === 'number' && timeoutMs >= 0 ? AbortSignal.timeout(timeoutMs) : undefined;
+  if (timeout && caller) return AbortSignal.any([timeout, caller]);
+  return timeout ?? caller;
 }

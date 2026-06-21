@@ -105,3 +105,60 @@ test('Fix 2: without timeoutMs option, syscall resolves normally when kernel res
   port1.close();
   port2.close();
 });
+
+// --- B1: per-call signal / timeoutMs threading ---
+
+test('B1: a per-call AbortSignal cancels an in-flight syscall with ECANCELED', async () => {
+  const { port1, port2 } = new MessageChannel();
+  port2.start?.(); // kernel side never responds
+  const client = new SyscallClient(new MessagePortTransport(port1));
+
+  const controller = new AbortController();
+  const pending = client.syscall('op/hang', {}, { signal: controller.signal });
+  controller.abort();
+
+  await expect(pending).rejects.toMatchObject({ code: 'ECANCELED' });
+  port1.close(); port2.close();
+});
+
+test('B1: an already-aborted signal rejects synchronously without sending', async () => {
+  const { port1, port2 } = new MessageChannel();
+  let sent = false;
+  port2.onmessage = () => { sent = true; };
+  port2.start?.();
+  const client = new SyscallClient(new MessagePortTransport(port1));
+
+  const controller = new AbortController();
+  controller.abort();
+  await expect(client.syscall('op/x', {}, { signal: controller.signal })).rejects.toMatchObject({ code: 'ECANCELED' });
+  // Give any stray message a tick; nothing should have been sent.
+  await new Promise((r) => setTimeout(r, 10));
+  expect(sent).toBe(false);
+  port1.close(); port2.close();
+});
+
+test('B1: a per-call timeoutMs overrides the client default and rejects with ETIMEDOUT', async () => {
+  const { port1, port2 } = new MessageChannel();
+  port2.start?.(); // never responds
+  const client = new SyscallClient(new MessagePortTransport(port1), { timeoutMs: 10_000 });
+
+  const start = Date.now();
+  await expect(client.syscall('op/hang', {}, { timeoutMs: 30 })).rejects.toMatchObject({ code: 'ETIMEDOUT' });
+  expect(Date.now() - start).toBeLessThan(1000); // honored the SHORT per-call timeout
+  port1.close(); port2.close();
+});
+
+test('B1: a normal response settles cleanly even with a signal supplied (no leak)', async () => {
+  const { port1, port2 } = new MessageChannel();
+  const client = new SyscallClient(new MessagePortTransport(port1));
+  port2.onmessage = (e) => {
+    const req = e.data as { id: number };
+    port2.postMessage({ id: req.id, ok: true, result: { ok: 1 } });
+  };
+  const controller = new AbortController();
+  const result = await client.syscall('op/echo', {}, { signal: controller.signal });
+  expect(result).toEqual({ ok: 1 });
+  // Aborting AFTER the call settled must not throw / double-settle.
+  controller.abort();
+  port1.close(); port2.close();
+});

@@ -1,5 +1,5 @@
-import type { SyscallResponse, ErrnoCode, SpawnArgs, ProcessLimits } from '@mithic/protocol';
-import { fsErrorToErrno } from '@mithic/protocol';
+import type { SyscallResponse, ErrnoCode, SpawnArgs, ProcessLimits, SyscallName, SyscallArgs, FsPathArgs } from '@mithic/protocol';
+import { fsErrorToErrno, isSyscallName } from '@mithic/protocol';
 import { FileSystemError, normalizePath } from '@mithic/io/vfs';
 import type { FileSystemProvider, FileHandle, OpenFlags } from '@mithic/io/vfs';
 import type { HttpClient, HttpRequest, HttpResponse } from '@mithic/io/net';
@@ -17,8 +17,31 @@ class BadFdError extends Error {
   }
 }
 
-/** AT_FDCWD: a dirfd meaning "resolve relative to the process cwd". */
-const AT_FDCWD = -100;
+/**
+ * C2: thrown by a `parse*` boundary helper when a guest sends malformed args
+ * (e.g. a missing required field, or `fd` that is not a number). Maps to EINVAL.
+ * This is the single runtime-validation step the typed union does NOT remove —
+ * guest input crossing the postMessage/relay bridge is untrusted.
+ */
+class MalformedArgsError extends Error {
+  readonly errno: ErrnoCode = 'EINVAL';
+  constructor(message: string) {
+    super(message);
+    this.name = 'MalformedArgsError';
+  }
+}
+
+/**
+ * C2: a syscall handler. Receives the kernel-owned `pid`, the raw request (it
+ * runs its own ONE boundary parse step over `req.args`), and any transferred
+ * ports. Returns a {@link DispatchResult} (possibly a promise). The handler map
+ * keyed by {@link SyscallName} makes the set exhaustive at compile time.
+ */
+type SyscallHandler = (
+  pid: number,
+  req: SyscallRequestLike,
+  ports?: readonly MessagePort[],
+) => DispatchResult | Promise<DispatchResult>;
 
 /**
  * Sentinel passed to a parked `ipc/accept` waiter when its listener is torn down
@@ -83,6 +106,26 @@ export type SpawnChild = (
 
 /** Narrow callback to await a child's exit (delegates to ProcessManager.wait). */
 export type WaitChild = (pid: number) => Promise<WaitResult>;
+
+/**
+ * C2: relay byte-channel operations for non-transferable (relay) backends. On
+ * such backends the guest cannot hold a MessagePort, so `fs/pipe`/`ipc/*` ports
+ * are retained kernel-side and the guest drives them by fd via the first-class
+ * `pipe/read`/`pipe/write`/`pipe/close` syscalls. The kernel injects these so
+ * the dispatcher's handler map is exhaustive over the full {@link Syscall}
+ * union — the relay ends themselves stay owned by the kernel. Unset = the three
+ * calls return EBADF (no relay ends exist on a transfer-path backend).
+ */
+export interface RelayPipeHandlers {
+  read(pid: number, fd: number, len?: number): Promise<RelayPipeResult>;
+  write(pid: number, fd: number, data: Uint8Array | number[] | string): Promise<RelayPipeResult>;
+  close(pid: number, fd: number): RelayPipeResult;
+}
+
+/** Result of a relay pipe op: a wire result value or an errno failure. */
+export type RelayPipeResult =
+  | { ok: true; result: unknown }
+  | { ok: false; error: { code: ErrnoCode; message: string } };
 
 /** One stage of a guest-requested pipeline (command name/path + argv + env). */
 export interface PipelineStageSpec {
@@ -183,6 +226,13 @@ export interface SyscallDispatcherOptions {
    * returns ENOSYS (network disabled).
    */
   httpClient?: HttpClient;
+  /**
+   * C2: kernel-provided relay byte-channel handlers for `pipe/read`/`pipe/write`/
+   * `pipe/close`. Injected only by relay (non-transferable) backends. Unset = the
+   * three calls return EBADF (a transfer-path guest holds real ports and never
+   * uses them).
+   */
+  relayPipe?: RelayPipeHandlers;
 }
 
 /**
@@ -240,6 +290,7 @@ export class SyscallDispatcher {
   #chdir: ((pid: number, path: string) => void) | undefined;
   #exitProcess: ((pid: number, code: number) => void) | undefined;
   #httpClient: HttpClient | undefined;
+  #relayPipe: RelayPipeHandlers | undefined;
   /** pid -> (fd -> open file or pipe end). */
   #fdTables = new Map<number, Map<number, FdEntry>>();
   /** pid -> next fd to allocate (file fds start above the reserved stdio range). */
@@ -267,6 +318,7 @@ export class SyscallDispatcher {
     this.#chdir = options.chdir;
     this.#exitProcess = options.exitProcess;
     this.#httpClient = options.httpClient;
+    this.#relayPipe = options.relayPipe;
   }
 
   /** Discard a process's fd table (called on process exit). */
@@ -316,77 +368,71 @@ export class SyscallDispatcher {
     this.#pendingConns.delete(fd);
   }
 
+  /**
+   * C2: the syscall handler map — ONE entry per {@link Syscall} union member,
+   * keyed by call name. The `satisfies Record<SyscallName, Handler>` makes
+   * exhaustiveness COMPILER-CHECKED: adding a `Syscall` member without a handler
+   * here (or vice versa) is a build error, replacing the old stringly-typed
+   * `switch`. Each handler does ONE parse step at the trust boundary (guest input
+   * crossing the postMessage/relay bridge is untrusted) via the `parse*` helpers,
+   * then runs the operation. Capability checks live inside the handlers / VFS as
+   * before — the typed args are a maintainability win, not a security one.
+   */
+  #handlers: Record<SyscallName, SyscallHandler> = {
+    'fs/open': async (pid, a) => res(ok(a.id, await this.#open(pid, parseFsOpen(a.args)))),
+    'fs/read': async (pid, a) => res(ok(a.id, await this.#read(pid, parseFsRead(a.args)))),
+    'fs/write': async (pid, a) => res(ok(a.id, await this.#write(pid, parseFsWrite(a.args)))),
+    'fs/close': (pid, a) => res(ok(a.id, this.#close(pid, parseFd(a.args)))),
+    'fs/stat': async (pid, a) => res(ok(a.id, await this.#stat(pid, parseFsStat(a.args)))),
+    'fs/readdir': async (pid, a) => res(ok(a.id, await this.#readdir(pid, parseFsPath(a.args)))),
+    'fs/mkdir': async (pid, a) => res(ok(a.id, await this.#mkdir(pid, parseFsPath(a.args)))),
+    'fs/unlink': async (pid, a) => res(ok(a.id, await this.#unlink(pid, parseFsPath(a.args)))),
+    'fs/rmdir': async (pid, a) => res(ok(a.id, await this.#rmdir(pid, parseFsPath(a.args)))),
+    'fs/rename': async (pid, a) => res(ok(a.id, await this.#rename(pid, parseFsRename(a.args)))),
+    'fs/symlink': async (pid, a) => res(ok(a.id, await this.#symlink(pid, parseFsLinkTarget(a.args)))),
+    'fs/readlink': async (pid, a) => res(ok(a.id, await this.#readlink(pid, parseFsPath(a.args)))),
+    'fs/link': async (pid, a) => res(ok(a.id, await this.#link(pid, parseFsLinkTarget(a.args)))),
+    'fs/chmod': async (pid, a) => res(ok(a.id, await this.#chmod(pid, parseFsChmod(a.args)))),
+    'fs/utimes': async (pid, a) => res(ok(a.id, await this.#utimes(pid, parseFsUtimes(a.args)))),
+    'fs/realpath': async (pid, a) => res(ok(a.id, await this.#realpath(pid, parseFsPath(a.args)))),
+    'fs/pipe': (pid, a) => this.#pipe(pid, a.id),
+    'ipc/listen': (pid, a) => this.#ipcListen(pid, a.id, parseIpcPath(a.args)),
+    'ipc/accept': (pid, a) => this.#ipcAccept(pid, a.id, parseFd(a.args)),
+    'ipc/connect': (pid, a) => this.#ipcConnect(pid, a.id, parseIpcPath(a.args)),
+    'dom/mutate': (pid, a) => res(ok(a.id, this.#domMutate(pid, parseDomMutate(a.args)))),
+    'net/fetch': async (pid, a) => res(await this.#netFetch(pid, a.id, parseNetFetch(a.args))),
+    'process/spawn': (pid, a, ports) => this.#spawn(pid, a.id, a.args, ports),
+    'process/pipeline': async (pid, a) => res(await this.#pipeline(pid, a.id, a.args)),
+    'process/wait': async (pid, a) => res(ok(a.id, await this.#wait(pid, parseWait(a.args)))),
+    'process/exit': (pid, a) => res(ok(a.id, this.#processExit(pid, parseExit(a.args)))),
+    'process/getpid': (pid, a) => res(ok(a.id, { pid })),
+    'process/getppid': (pid, a) => res(ok(a.id, { ppid: this.#ppidOf?.(pid) ?? 0 })),
+    'process/getcwd': (pid, a) => res(ok(a.id, { cwd: this.#cwdOf(pid) })),
+    'process/chdir': (pid, a) => res(ok(a.id, this.#chdirCall(pid, parseChdir(a.args)))),
+    'pipe/read': (pid, a) => this.#pipeRead(pid, a.id, parsePipeRead(a.args)),
+    'pipe/write': (pid, a) => this.#pipeWrite(pid, a.id, parsePipeWrite(a.args)),
+    'pipe/close': (pid, a) => this.#pipeClose(pid, a.id, parseFd(a.args)),
+  } satisfies Record<SyscallName, SyscallHandler>;
+
   async dispatch(
     pid: number,
     req: SyscallRequestLike,
     ports?: readonly MessagePort[],
   ): Promise<DispatchResult> {
+    // Unknown call: ENOSYS (and close any ports a spawn-shaped call would have
+    // carried, so they don't leak). Looking the name up against the typed
+    // registry FIRST keeps the trust-boundary contract explicit.
+    if (!isSyscallName(req.call)) {
+      this.#closePorts(ports);
+      return res(fail(req.id, 'ENOSYS', `Unknown syscall: ${req.call}`));
+    }
     try {
-      switch (req.call) {
-        case 'fs/open':
-          return res(ok(req.id, await this.#open(pid, req.args)));
-        case 'fs/read':
-          return res(ok(req.id, await this.#read(pid, req.args)));
-        case 'fs/write':
-          return res(ok(req.id, await this.#write(pid, req.args)));
-        case 'fs/close':
-          return res(ok(req.id, this.#close(pid, req.args)));
-        case 'fs/stat':
-          return res(ok(req.id, await this.#stat(pid, req.args)));
-        case 'fs/readdir':
-          return res(ok(req.id, await this.#readdir(pid, req.args)));
-        case 'fs/mkdir':
-          return res(ok(req.id, await this.#mkdir(pid, req.args)));
-        case 'fs/unlink':
-          return res(ok(req.id, await this.#unlink(pid, req.args)));
-        case 'fs/rmdir':
-          return res(ok(req.id, await this.#rmdir(pid, req.args)));
-        case 'fs/rename':
-          return res(ok(req.id, await this.#rename(pid, req.args)));
-        case 'fs/symlink':
-          return res(ok(req.id, await this.#symlink(pid, req.args)));
-        case 'fs/readlink':
-          return res(ok(req.id, await this.#readlink(pid, req.args)));
-        case 'fs/link':
-          return res(ok(req.id, await this.#link(pid, req.args)));
-        case 'fs/chmod':
-          return res(ok(req.id, await this.#chmod(pid, req.args)));
-        case 'fs/utimes':
-          return res(ok(req.id, await this.#utimes(pid, req.args)));
-        case 'fs/realpath':
-          return res(ok(req.id, await this.#realpath(pid, req.args)));
-        case 'fs/pipe':
-          return this.#pipe(pid, req.id);
-        case 'ipc/listen':
-          return this.#ipcListen(pid, req.id, req.args);
-        case 'ipc/accept':
-          return this.#ipcAccept(pid, req.id, req.args);
-        case 'ipc/connect':
-          return this.#ipcConnect(pid, req.id, req.args);
-        case 'dom/mutate':
-          return res(ok(req.id, this.#domMutate(pid, req.args)));
-        case 'net/fetch':
-          return res(await this.#netFetch(pid, req.id, req.args));
-        case 'process/spawn':
-          return await this.#spawn(pid, req.id, req.args, ports);
-        case 'process/pipeline':
-          return res(await this.#pipeline(pid, req.id, req.args));
-        case 'process/wait':
-          return res(ok(req.id, await this.#wait(pid, req.args)));
-        case 'process/exit':
-          return res(ok(req.id, this.#processExit(pid, req.args)));
-        case 'process/getpid':
-          return res(ok(req.id, { pid }));
-        case 'process/getppid':
-          return res(ok(req.id, { ppid: this.#ppidOf?.(pid) ?? 0 }));
-        case 'process/getcwd':
-          return res(ok(req.id, { cwd: this.#cwdOf(pid) }));
-        case 'process/chdir':
-          return res(ok(req.id, this.#chdirCall(pid, req.args)));
-        default:
-          return res(fail(req.id, 'ENOSYS', `Unknown syscall: ${req.call}`));
-      }
+      return await this.#handlers[req.call](pid, req, ports);
     } catch (err) {
+      // A parse failure at the boundary surfaces as EINVAL; anything else maps
+      // through the structured-error → errno table. Either way the dispatcher
+      // returns a wire response rather than crashing the kernel.
+      if (ports && (req.call === 'process/spawn')) this.#closePorts(ports);
       return res(fail(req.id, errnoOf(err), messageOf(err)));
     }
   }
@@ -557,8 +603,8 @@ export class SyscallDispatcher {
    * only wait its own children (ppid check). Waiting a non-child / unknown pid
    * returns the no-child sentinel (ECHILD-style) rather than hanging.
    */
-  async #wait(pid: number, args: Record<string, unknown>): Promise<WaitResult> {
-    const target = Number(args.pid);
+  async #wait(pid: number, args: SyscallArgs<'process/wait'>): Promise<WaitResult> {
+    const target = args.pid;
     if (!this.#waitChild) {
       return { pid: target, status: 'no-child', code: -1 };
     }
@@ -580,19 +626,42 @@ export class SyscallDispatcher {
    * `exitProcess` handler is wired, this is a harmless success (the guest's own
    * `guest.exit()` control-port path still drives teardown).
    */
-  #processExit(pid: number, args: Record<string, unknown>): Record<string, never> {
-    const code = Number(args.code ?? 0);
+  #processExit(pid: number, args: SyscallArgs<'process/exit'>): Record<string, never> {
+    const code = args.code ?? 0;
     this.#exitProcess?.(pid, code);
     return {};
   }
 
-  #chdirCall(pid: number, args: Record<string, unknown>): { cwd: string } {
+  #chdirCall(pid: number, args: SyscallArgs<'process/chdir'>): { cwd: string } {
     if (!this.#chdir) {
       throw new FileSystemError('unsupported', 'process/chdir: no chdir handler configured');
     }
-    const path = normalizePath(String(args.path ?? '/'));
+    const path = normalizePath(args.path);
     this.#chdir(pid, path);
     return { cwd: path };
+  }
+
+  /**
+   * C2: `pipe/read {fd, len?}` — first-class relay byte-channel read. On relay
+   * (non-transferable) backends the kernel-held pipe end is driven by fd via the
+   * injected {@link RelayPipeHandlers}. Unset handler = EBADF (a transfer-path
+   * guest holds real ports and never reaches here).
+   */
+  async #pipeRead(pid: number, id: number, args: SyscallArgs<'pipe/read'>): Promise<DispatchResult> {
+    if (!this.#relayPipe) return res(fail(id, 'EBADF', `pipe/read: bad fd ${args.fd}`));
+    return res(relayToResponse(id, await this.#relayPipe.read(pid, args.fd, args.len)));
+  }
+
+  /** C2: `pipe/write {fd, data}` — first-class relay byte-channel write. */
+  async #pipeWrite(pid: number, id: number, args: SyscallArgs<'pipe/write'>): Promise<DispatchResult> {
+    if (!this.#relayPipe) return res(fail(id, 'EBADF', `pipe/write: bad fd ${args.fd}`));
+    return res(relayToResponse(id, await this.#relayPipe.write(pid, args.fd, args.data)));
+  }
+
+  /** C2: `pipe/close {fd}` — first-class relay byte-channel close. */
+  #pipeClose(pid: number, id: number, args: SyscallArgs<'pipe/close'>): DispatchResult {
+    if (!this.#relayPipe) return res(fail(id, 'EBADF', `pipe/close: bad fd ${args.fd}`));
+    return res(relayToResponse(id, this.#relayPipe.close(pid, args.fd)));
   }
 
   /** pid -> set of its live (spawned, not-yet-waited) child pids. */
@@ -622,11 +691,11 @@ export class SyscallDispatcher {
    * Capability-gated: the process must hold an ipc cap listing `path`.
    * Returns `{fd}` — a listener fd. `fs/close` on it unbinds the path.
    */
-  #ipcListen(pid: number, id: number, args: Record<string, unknown>): DispatchResult {
+  #ipcListen(pid: number, id: number, args: SyscallArgs<'ipc/listen'>): DispatchResult {
     if (!this.#ipc) {
       return res(fail(id, 'ENOSYS', 'ipc/listen unavailable: no IPC broker configured'));
     }
-    const path = String(args.path ?? '');
+    const path = args.path;
     if (!this.#caps.checkIpc(pid, path)) {
       return res(fail(id, 'EACCES', `Permission denied: ${path}`));
     }
@@ -645,8 +714,8 @@ export class SyscallDispatcher {
    * calls `ipc/connect`. Returns `{connfd}` with the connection MessagePort
    * transferred to the guest.
    */
-  async #ipcAccept(pid: number, id: number, args: Record<string, unknown>): Promise<DispatchResult> {
-    const fd = Number(args.fd);
+  async #ipcAccept(pid: number, id: number, args: SyscallArgs<'ipc/accept'>): Promise<DispatchResult> {
+    const fd = args.fd;
     const entry = this.#tableFor(pid).get(fd);
     if (!entry || entry.kind !== 'listener') {
       return res(fail(id, 'EBADF', `Bad file descriptor: ${fd}`));
@@ -680,11 +749,11 @@ export class SyscallDispatcher {
    * queues port2 for the listener's next `ipc/accept`.
    * Returns `{connfd}` with port1 transferred to the guest.
    */
-  #ipcConnect(pid: number, id: number, args: Record<string, unknown>): DispatchResult {
+  #ipcConnect(pid: number, id: number, args: SyscallArgs<'ipc/connect'>): DispatchResult {
     if (!this.#ipc) {
       return res(fail(id, 'ENOSYS', 'ipc/connect unavailable: no IPC broker configured'));
     }
-    const path = String(args.path ?? '');
+    const path = args.path;
     if (!this.#caps.checkIpc(pid, path)) {
       return res(fail(id, 'EACCES', `Permission denied: ${path}`));
     }
@@ -733,12 +802,10 @@ export class SyscallDispatcher {
     return false;
   }
 
-  #resolvePath(pid: number, args: Record<string, unknown>): string {
-    const path = String(args.path ?? '');
-    const dirfd = typeof args.dirfd === 'number' ? args.dirfd : AT_FDCWD;
+  #resolvePath(pid: number, path: string): string {
     if (path.startsWith('/')) return normalizePath(path);
-    // dirfd === AT_FDCWD (or unset): resolve relative to the process cwd.
-    void dirfd;
+    // Relative path: resolve against the process cwd. (dirfd-relative resolution
+    // is not yet modeled; AT_FDCWD was the only value, equivalent to cwd.)
     const cwd = this.#cwdOf(pid) || '/';
     return normalizePath(cwd.endsWith('/') ? cwd + path : cwd + '/' + path);
   }
@@ -839,8 +906,8 @@ export class SyscallDispatcher {
     return checkPath;
   }
 
-  async #open(pid: number, args: Record<string, unknown>): Promise<{ fd: number }> {
-    const absPath = this.#resolvePath(pid, args);
+  async #open(pid: number, args: SyscallArgs<'fs/open'>): Promise<{ fd: number }> {
+    const absPath = this.#resolvePath(pid, args.path);
     const oflags = (args.oflags ?? {}) as OpenFlags;
     const op: FsOperation = needsWrite(oflags) ? 'write' : 'read';
     // SEC-2: canonicalize through symlinks and check the CANONICAL path so an
@@ -852,9 +919,9 @@ export class SyscallDispatcher {
     return { fd };
   }
 
-  async #read(pid: number, args: Record<string, unknown>): Promise<Uint8Array> {
-    const entry = this.#fdOf(pid, args);
-    const len = Number(args.len ?? 0);
+  async #read(pid: number, args: SyscallArgs<'fs/read'>): Promise<Uint8Array> {
+    const entry = this.#fdOf(pid, args.fd);
+    const len = args.len ?? 0;
     const offset = typeof args.offset === 'number' ? args.offset : entry.offset;
     const data = await this.#vfs.read(entry.handle, offset, len);
     if (typeof args.offset !== 'number') entry.offset += data.byteLength;
@@ -864,8 +931,8 @@ export class SyscallDispatcher {
     return toTightView(data);
   }
 
-  async #write(pid: number, args: Record<string, unknown>): Promise<{ written: number }> {
-    const entry = this.#fdOf(pid, args);
+  async #write(pid: number, args: SyscallArgs<'fs/write'>): Promise<{ written: number }> {
+    const entry = this.#fdOf(pid, args.fd);
     const data = toBytes(args.data);
     const offset = typeof args.offset === 'number' ? args.offset : entry.offset;
     const written = await this.#vfs.write(entry.handle, data, offset);
@@ -873,8 +940,8 @@ export class SyscallDispatcher {
     return { written };
   }
 
-  #close(pid: number, args: Record<string, unknown>): Record<string, never> {
-    const fd = Number(args.fd);
+  #close(pid: number, args: SyscallArgs<'fs/close'>): Record<string, never> {
+    const fd = args.fd;
     const table = this.#tableFor(pid);
     const entry = table.get(fd);
     if (!entry) throw new BadFdError(fd);
@@ -891,8 +958,8 @@ export class SyscallDispatcher {
     return {};
   }
 
-  async #stat(pid: number, args: Record<string, unknown>): Promise<unknown> {
-    const absPath = this.#resolvePath(pid, args);
+  async #stat(pid: number, args: SyscallArgs<'fs/stat'>): Promise<unknown> {
+    const absPath = this.#resolvePath(pid, args.path);
     // `followSymlinks: false` requests lstat semantics (stat the link itself).
     const followSymlinks = args.followSymlinks !== false;
     // SEC-2: a following stat must be gated on the CANONICAL target (an escaping
@@ -907,15 +974,15 @@ export class SyscallDispatcher {
     return { ...stat, size: Number(stat.size), linkCount: Number(stat.linkCount) };
   }
 
-  async #readdir(pid: number, args: Record<string, unknown>): Promise<unknown> {
-    const absPath = this.#resolvePath(pid, args);
+  async #readdir(pid: number, args: SyscallArgs<'fs/readdir'>): Promise<unknown> {
+    const absPath = this.#resolvePath(pid, args.path);
     // readdir follows symlinks to the directory — gate on the canonical target.
     const canonical = await this.#canonicalCheckedPath(pid, absPath, 'read');
     return await this.#vfs.readdir(canonical);
   }
 
-  async #mkdir(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
-    const absPath = this.#resolvePath(pid, args);
+  async #mkdir(pid: number, args: SyscallArgs<'fs/mkdir'>): Promise<Record<string, never>> {
+    const absPath = this.#resolvePath(pid, args.path);
     // mkdir creates a new leaf; the ancestor path may contain symlinks — gate on
     // the canonical-parent + lexical leaf so an escaping ancestor is caught.
     const checkPath = await this.#linkCheckedPath(pid, absPath, 'write');
@@ -923,8 +990,8 @@ export class SyscallDispatcher {
     return {};
   }
 
-  async #unlink(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
-    const absPath = this.#resolvePath(pid, args);
+  async #unlink(pid: number, args: SyscallArgs<'fs/unlink'>): Promise<Record<string, never>> {
+    const absPath = this.#resolvePath(pid, args.path);
     // unlink removes the link/file itself (does not follow the final symlink) —
     // gate on canonical-parent + lexical leaf.
     const checkPath = await this.#linkCheckedPath(pid, absPath, 'write');
@@ -932,8 +999,8 @@ export class SyscallDispatcher {
     return {};
   }
 
-  async #rmdir(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
-    const absPath = this.#resolvePath(pid, args);
+  async #rmdir(pid: number, args: SyscallArgs<'fs/rmdir'>): Promise<Record<string, never>> {
+    const absPath = this.#resolvePath(pid, args.path);
     const checkPath = await this.#linkCheckedPath(pid, absPath, 'write');
     await this.#vfs.rmdir(checkPath);
     return {};
@@ -944,9 +1011,9 @@ export class SyscallDispatcher {
    * both the source (it is removed) and the destination (it is created).
    * `newPath` is resolved relative to the same cwd/dirfd rules as `path`.
    */
-  async #rename(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
-    const oldPath = this.#resolvePath(pid, args);
-    const newPath = this.#resolvePath(pid, { ...args, path: args.newPath });
+  async #rename(pid: number, args: SyscallArgs<'fs/rename'>): Promise<Record<string, never>> {
+    const oldPath = this.#resolvePath(pid, args.path);
+    const newPath = this.#resolvePath(pid, args.newPath);
     // rename operates on the entries themselves (renaming a symlink renames the
     // link, not its target), but ancestor symlinks must be resolved — gate both
     // on canonical-parent + lexical leaf.
@@ -961,9 +1028,9 @@ export class SyscallDispatcher {
    * `target` string (not resolved — symlink targets may be relative/dangling).
    * Requires write on the link path.
    */
-  async #symlink(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
-    const linkPath = this.#resolvePath(pid, args);
-    const target = String(args.target ?? '');
+  async #symlink(pid: number, args: SyscallArgs<'fs/symlink'>): Promise<Record<string, never>> {
+    const linkPath = this.#resolvePath(pid, args.path);
+    const target = args.target;
     // Creating a symlink writes the LINK at linkPath (the final component must not
     // be followed). Gate on canonical-parent + lexical leaf. NOTE: this gates only
     // WHERE the link is created — the target is not resolved here (targets may be
@@ -974,8 +1041,8 @@ export class SyscallDispatcher {
     return {};
   }
 
-  async #readlink(pid: number, args: Record<string, unknown>): Promise<{ target: string }> {
-    const absPath = this.#resolvePath(pid, args);
+  async #readlink(pid: number, args: SyscallArgs<'fs/readlink'>): Promise<{ target: string }> {
+    const absPath = this.#resolvePath(pid, args.path);
     // readlink reads the LINK itself (does not follow the final component) — gate
     // on canonical-parent + lexical leaf, not the (possibly escaping) target.
     const checkPath = await this.#linkCheckedPath(pid, absPath, 'read');
@@ -987,9 +1054,9 @@ export class SyscallDispatcher {
    * `fs/link {target, path}`: create a hard link at `path` to the existing
    * `target`. Requires read on the target and write on the new link path.
    */
-  async #link(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
-    const linkPath = this.#resolvePath(pid, args);
-    const target = this.#resolvePath(pid, { ...args, path: args.target });
+  async #link(pid: number, args: SyscallArgs<'fs/link'>): Promise<Record<string, never>> {
+    const linkPath = this.#resolvePath(pid, args.path);
+    const target = this.#resolvePath(pid, args.target);
     // A hard link's target is canonicalized (an escaping target symlink must not
     // let a guest hard-link an out-of-grant inode); the new link path is a leaf.
     const targetCheck = await this.#canonicalCheckedPath(pid, target, 'read');
@@ -998,11 +1065,11 @@ export class SyscallDispatcher {
     return {};
   }
 
-  async #chmod(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
-    const absPath = this.#resolvePath(pid, args);
+  async #chmod(pid: number, args: SyscallArgs<'fs/chmod'>): Promise<Record<string, never>> {
+    const absPath = this.#resolvePath(pid, args.path);
     // chmod follows symlinks — gate on the canonical target.
     const canonical = await this.#canonicalCheckedPath(pid, absPath, 'write');
-    await this.#vfs.chmod(canonical, Number(args.mode ?? 0));
+    await this.#vfs.chmod(canonical, args.mode ?? 0);
     return {};
   }
 
@@ -1011,8 +1078,8 @@ export class SyscallDispatcher {
    * accepted as epoch milliseconds; omitted times default to "now". Requires
    * write on the path.
    */
-  async #utimes(pid: number, args: Record<string, unknown>): Promise<Record<string, never>> {
-    const absPath = this.#resolvePath(pid, args);
+  async #utimes(pid: number, args: SyscallArgs<'fs/utimes'>): Promise<Record<string, never>> {
+    const absPath = this.#resolvePath(pid, args.path);
     const now = Date.now();
     const atime = new Date(typeof args.atime === 'number' ? args.atime : now);
     const mtime = new Date(typeof args.mtime === 'number' ? args.mtime : now);
@@ -1027,16 +1094,15 @@ export class SyscallDispatcher {
    * on the path. Falls back to the normalized path when the provider does not
    * implement `realpath`.
    */
-  async #realpath(pid: number, args: Record<string, unknown>): Promise<{ path: string }> {
-    const absPath = this.#resolvePath(pid, args);
+  async #realpath(pid: number, args: SyscallArgs<'fs/realpath'>): Promise<{ path: string }> {
+    const absPath = this.#resolvePath(pid, args.path);
     // realpath REVEALS the canonical (symlink-resolved) path — gate on the
     // canonical target so it cannot disclose a path outside the grant.
     const canonical = await this.#canonicalCheckedPath(pid, absPath, 'read');
     return { path: canonical };
   }
 
-  #fdOf(pid: number, args: Record<string, unknown>): OpenFile {
-    const fd = Number(args.fd);
+  #fdOf(pid: number, fd: number): OpenFile {
     const entry = this.#tableFor(pid).get(fd);
     if (!entry) throw new BadFdError(fd);
     // Pipe and listener fds are not serviced via the dispatcher's read/write path.
@@ -1064,15 +1130,11 @@ export class SyscallDispatcher {
    * record validation is the responsibility of RemoteDomHost (which enforces the
    * allowlist and silently drops invalid records).
    */
-  #domMutate(pid: number, args: Record<string, unknown>): Record<string, never> {
+  #domMutate(pid: number, args: SyscallArgs<'dom/mutate'>): Record<string, never> {
     if (!this.#onDomMutate) {
       throw new FileSystemError('unsupported', 'dom/mutate: no DOM handler configured');
     }
-    const mutations = args.mutations;
-    if (!Array.isArray(mutations)) {
-      throw new FileSystemError('invalid', 'dom/mutate: mutations must be an array');
-    }
-    this.#onDomMutate(pid, mutations as DomMutation[]);
+    this.#onDomMutate(pid, args.mutations as DomMutation[]);
     return {};
   }
 
@@ -1092,7 +1154,7 @@ export class SyscallDispatcher {
    * Returns `{status, headers, body}`. A client/transport failure maps to
    * EHOSTUNREACH so the guest can surface a connection error (curl exit 7).
    */
-  async #netFetch(pid: number, id: number, args: Record<string, unknown>): Promise<SyscallResponse> {
+  async #netFetch(pid: number, id: number, args: NetFetchParsed): Promise<SyscallResponse> {
     if (!this.#httpClient) {
       return fail(id, 'ENOSYS', 'net/fetch: no HTTP client configured');
     }
@@ -1102,20 +1164,22 @@ export class SyscallDispatcher {
     if (this.#limitsOf?.(pid)?.networkDisabled) {
       return fail(id, 'EACCES', 'net/fetch: network disabled for this process (ProcessLimits.networkDisabled)');
     }
-    let url = String(args.url ?? '');
+    let url = args.url;
     // Capability gate FIRST — before any network access. An ungranted origin
     // (or an unparseable URL, which checkNet rejects) is EACCES.
     if (!this.#caps.checkNet(pid, url)) {
       return fail(id, 'EACCES', `Permission denied: ${url}`);
     }
-    let method = typeof args.method === 'string' ? args.method : 'GET';
-    const headers = normalizeHeaders(args.headers);
-    let body: Uint8Array | undefined;
-    const rawBody = args.body;
-    if (rawBody instanceof Uint8Array) body = rawBody;
-    else if (rawBody instanceof ArrayBuffer) body = new Uint8Array(rawBody);
-    else if (typeof rawBody === 'string') body = new TextEncoder().encode(rawBody);
-    const timeoutMs = typeof args.timeoutMs === 'number' ? args.timeoutMs : undefined;
+    let method = args.method;
+    const headers = args.headers;
+    let body = args.body;
+    const timeoutMs = args.timeoutMs;
+    // B1: build ONE timeout signal covering the WHOLE redirect chain (not a fresh
+    // per-hop timeout), so `--max-time` bounds total wall-clock across all hops.
+    // Passed as `request.signal`; the client does NOT re-derive from timeoutMs.
+    const signal = typeof timeoutMs === 'number' && timeoutMs >= 0
+      ? AbortSignal.timeout(timeoutMs)
+      : undefined;
 
     // SEC-1: follow redirects HERE, re-checking the `net` capability against the
     // target of every 3xx hop. The HTTP client is told `redirect:'manual'` so it
@@ -1130,14 +1194,20 @@ export class SyscallDispatcher {
       }
       const request: HttpRequest = { method, url, headers, redirect: 'manual' };
       if (body !== undefined) request.body = body;
-      if (timeoutMs !== undefined) request.timeoutMs = timeoutMs;
+      if (signal !== undefined) request.signal = signal;
 
       let response: HttpResponse;
       try {
         response = await this.#httpClient.send(request);
       } catch (err) {
-        // Transport-level failure (DNS, connection refused, timeout): the request
-        // was authorized but could not complete. Map to a network errno.
+        // B1: a timeout/abort (AbortSignal.timeout → TimeoutError; manual abort →
+        // AbortError) maps to ETIMEDOUT so the guest can surface a real timeout
+        // (curl --max-time → exit 28), distinct from a connection failure.
+        if (isAbortError(err)) {
+          return fail(id, 'ETIMEDOUT', `net/fetch: request timed out after ${timeoutMs}ms`);
+        }
+        // Other transport-level failure (DNS, connection refused): the request was
+        // authorized but could not complete. Map to a generic network errno.
         return fail(id, 'EHOSTUNREACH', messageOf(err));
       }
 
@@ -1221,6 +1291,156 @@ function normalizeHeaders(raw: unknown): [string, string][] {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// C2: boundary parse helpers. Each maps the untrusted `Record<string, unknown>`
+// wire args of ONE syscall into its typed shape, throwing MalformedArgsError
+// (→ EINVAL) on a missing/wrong-typed required field. This is the SINGLE
+// runtime-validation step the typed union does not remove (guest input crossing
+// the postMessage/relay bridge is untrusted). Optional fields are coerced
+// leniently, matching the prior inline behavior.
+// ---------------------------------------------------------------------------
+
+/** Require a numeric `fd`. */
+function reqFd(args: Record<string, unknown>): number {
+  const fd = args.fd;
+  if (typeof fd !== 'number' || !Number.isFinite(fd)) {
+    throw new MalformedArgsError('fd must be a number');
+  }
+  return fd;
+}
+
+/** Require a string `path`. */
+function reqPath(args: Record<string, unknown>): string {
+  const path = args.path;
+  if (typeof path !== 'string') throw new MalformedArgsError('path must be a string');
+  return path;
+}
+
+function parseFd(args: Record<string, unknown>): { fd: number } {
+  return { fd: reqFd(args) };
+}
+
+function parseFsPath(args: Record<string, unknown>): FsPathArgs {
+  return { path: reqPath(args) };
+}
+
+function parseFsOpen(args: Record<string, unknown>): SyscallArgs<'fs/open'> {
+  const out: SyscallArgs<'fs/open'> = { path: reqPath(args) };
+  if (args.oflags && typeof args.oflags === 'object') out.oflags = args.oflags as SyscallArgs<'fs/open'>['oflags'];
+  return out;
+}
+
+function parseFsRead(args: Record<string, unknown>): SyscallArgs<'fs/read'> {
+  const out: SyscallArgs<'fs/read'> = { fd: reqFd(args) };
+  if (typeof args.len === 'number') out.len = args.len;
+  if (typeof args.offset === 'number') out.offset = args.offset;
+  return out;
+}
+
+function parseFsWrite(args: Record<string, unknown>): SyscallArgs<'fs/write'> {
+  const data = args.data;
+  if (!(data instanceof Uint8Array) && !(data instanceof ArrayBuffer) && typeof data !== 'string') {
+    throw new MalformedArgsError('write data must be bytes or a string');
+  }
+  const out: SyscallArgs<'fs/write'> = { fd: reqFd(args), data };
+  if (typeof args.offset === 'number') out.offset = args.offset;
+  return out;
+}
+
+function parseFsStat(args: Record<string, unknown>): SyscallArgs<'fs/stat'> {
+  const out: SyscallArgs<'fs/stat'> = { path: reqPath(args) };
+  if (typeof args.followSymlinks === 'boolean') out.followSymlinks = args.followSymlinks;
+  return out;
+}
+
+function parseFsRename(args: Record<string, unknown>): SyscallArgs<'fs/rename'> {
+  if (typeof args.newPath !== 'string') throw new MalformedArgsError('newPath must be a string');
+  return { path: reqPath(args), newPath: args.newPath };
+}
+
+function parseFsLinkTarget(args: Record<string, unknown>): SyscallArgs<'fs/symlink'> {
+  if (typeof args.target !== 'string') throw new MalformedArgsError('target must be a string');
+  return { path: reqPath(args), target: args.target };
+}
+
+function parseFsChmod(args: Record<string, unknown>): SyscallArgs<'fs/chmod'> {
+  const out: SyscallArgs<'fs/chmod'> = { path: reqPath(args) };
+  if (typeof args.mode === 'number') out.mode = args.mode;
+  return out;
+}
+
+function parseFsUtimes(args: Record<string, unknown>): SyscallArgs<'fs/utimes'> {
+  const out: SyscallArgs<'fs/utimes'> = { path: reqPath(args) };
+  if (typeof args.atime === 'number') out.atime = args.atime;
+  if (typeof args.mtime === 'number') out.mtime = args.mtime;
+  return out;
+}
+
+function parseIpcPath(args: Record<string, unknown>): { path: string } {
+  return { path: reqPath(args) };
+}
+
+function parseDomMutate(args: Record<string, unknown>): SyscallArgs<'dom/mutate'> {
+  if (!Array.isArray(args.mutations)) throw new MalformedArgsError('mutations must be an array');
+  return { mutations: args.mutations };
+}
+
+function parseWait(args: Record<string, unknown>): SyscallArgs<'process/wait'> {
+  if (typeof args.pid !== 'number') throw new MalformedArgsError('pid must be a number');
+  return { pid: args.pid };
+}
+
+function parseExit(args: Record<string, unknown>): SyscallArgs<'process/exit'> {
+  return typeof args.code === 'number' ? { code: args.code } : {};
+}
+
+function parseChdir(args: Record<string, unknown>): SyscallArgs<'process/chdir'> {
+  return { path: typeof args.path === 'string' ? args.path : '/' };
+}
+
+function parsePipeRead(args: Record<string, unknown>): SyscallArgs<'pipe/read'> {
+  const out: SyscallArgs<'pipe/read'> = { fd: reqFd(args) };
+  if (typeof args.len === 'number') out.len = args.len;
+  return out;
+}
+
+function parsePipeWrite(args: Record<string, unknown>): SyscallArgs<'pipe/write'> {
+  const data = args.data;
+  if (!(data instanceof Uint8Array) && !Array.isArray(data) && typeof data !== 'string') {
+    throw new MalformedArgsError('pipe/write data must be bytes, a number[], or a string');
+  }
+  return { fd: reqFd(args), data: data as Uint8Array | number[] | string };
+}
+
+/** Net-fetch parsed args: the wire args coerced into transport-ready shapes. */
+interface NetFetchParsed {
+  method: string;
+  url: string;
+  headers: [string, string][];
+  body: Uint8Array | undefined;
+  timeoutMs: number | undefined;
+}
+
+function parseNetFetch(args: Record<string, unknown>): NetFetchParsed {
+  let body: Uint8Array | undefined;
+  const rawBody = args.body;
+  if (rawBody instanceof Uint8Array) body = rawBody;
+  else if (rawBody instanceof ArrayBuffer) body = new Uint8Array(rawBody);
+  else if (typeof rawBody === 'string') body = new TextEncoder().encode(rawBody);
+  return {
+    method: typeof args.method === 'string' ? args.method : 'GET',
+    url: typeof args.url === 'string' ? args.url : '',
+    headers: normalizeHeaders(args.headers),
+    body,
+    timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : undefined,
+  };
+}
+
+/** Map a {@link RelayPipeResult} to a wire {@link SyscallResponse}. */
+function relayToResponse(id: number, r: RelayPipeResult): SyscallResponse {
+  return r.ok ? ok(id, r.result) : fail(id, r.error.code, r.error.message);
+}
+
 /** Coerce raw syscall args into a validated {@link SpawnArgs}, or undefined. */
 function normalizeSpawnArgs(args: Record<string, unknown>): SpawnArgs | undefined {
   const path = typeof args.path === 'string' ? args.path : undefined;
@@ -1256,6 +1476,18 @@ function errnoOf(err: unknown): ErrnoCode {
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * B1: true if `err` is a fetch abort — either `AbortSignal.timeout` firing
+ * (DOMException name `TimeoutError`) or a manual `AbortController.abort()`
+ * (`AbortError`). These surface a request timeout/cancellation distinct from a
+ * connection failure, so the caller can map them to ETIMEDOUT.
+ */
+function isAbortError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const name = (err as { name?: unknown }).name;
+  return name === 'TimeoutError' || name === 'AbortError';
 }
 
 /**

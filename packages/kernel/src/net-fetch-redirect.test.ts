@@ -135,3 +135,78 @@ test('307 to an UNGRANTED origin is still denied (SSRF per-hop re-check preserve
   // The ungranted target must NEVER be fetched — only the first hop happened.
   expect(client.requests).toHaveLength(1);
 });
+
+// --- B1: AbortSignal/timeout threading for net/fetch ---
+
+/**
+ * A mock client that respects the request's AbortSignal: it never resolves on
+ * its own (a hanging server), so the ONLY way send() settles is the signal
+ * aborting — exactly what `timeoutMs` should produce. Throws a DOMException-like
+ * abort error matching what real `fetch` throws on AbortSignal.timeout.
+ */
+class HangingHttpClient implements HttpClient {
+  lastSignal: AbortSignal | undefined;
+  send(request: HttpRequest): Promise<HttpResponse> {
+    this.lastSignal = request.signal;
+    return new Promise<HttpResponse>((_resolve, reject) => {
+      const onAbort = () => {
+        const err = Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
+        reject(err);
+      };
+      if (request.signal?.aborted) { onAbort(); return; }
+      request.signal?.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+}
+
+test('B1: a fetch with a short timeout against a hanging server aborts with ETIMEDOUT', async () => {
+  const client = new HangingHttpClient();
+  const { d, pid } = dispatcherWith(client);
+
+  const { response } = await d.dispatch(pid, {
+    id: 1, call: 'net/fetch',
+    args: { method: 'GET', url: 'https://api.example.com/slow', timeoutMs: 20 },
+  });
+
+  expect(response.ok).toBe(false);
+  // ETIMEDOUT is the curl-mappable code (curl --max-time → exit 28), distinct
+  // from EHOSTUNREACH (a connection failure → exit 7).
+  expect((response as { ok: false; error: { code: string } }).error.code).toBe('ETIMEDOUT');
+  // The dispatcher derived a real AbortSignal and passed it to the client.
+  expect(client.lastSignal).toBeInstanceOf(AbortSignal);
+});
+
+test('B1: a normal fetch is unaffected — no signal derived when timeoutMs is unset', async () => {
+  const client = new RecordingHttpClient([
+    { status: 200, headers: [['content-type', 'text/plain']], body: new TextEncoder().encode('ok') },
+  ]);
+  const { d, pid } = dispatcherWith(client);
+
+  const { response } = await d.dispatch(pid, {
+    id: 1, call: 'net/fetch', args: { method: 'GET', url: 'https://api.example.com/fast' },
+  });
+
+  expect(response.ok).toBe(true);
+  // No timeoutMs → no signal field threaded to the client (unchanged behavior).
+  expect(client.requests[0].signal).toBeUndefined();
+});
+
+test('B1: the same timeout signal is threaded to EVERY redirect hop (one budget for the whole chain)', async () => {
+  const client = new RecordingHttpClient([
+    { status: 307, headers: [['location', 'https://eu.example.com/v2']] },
+    { status: 200, headers: [], body: new TextEncoder().encode('ok') },
+  ]);
+  const { d, pid } = dispatcherWith(client);
+
+  const { response } = await d.dispatch(pid, {
+    id: 1, call: 'net/fetch',
+    args: { method: 'GET', url: 'https://api.example.com/v1', timeoutMs: 5000 },
+  });
+
+  expect(response.ok).toBe(true);
+  // SSRF per-hop re-check still intact (second hop happened against granted origin)
+  // AND both hops share ONE AbortSignal instance (the chain-wide timeout budget).
+  expect(client.requests).toHaveLength(2);
+  expect(client.requests[0].signal).toBeInstanceOf(AbortSignal);
+  expect(client.requests[1].signal).toBe(client.requests[0].signal);
+});
