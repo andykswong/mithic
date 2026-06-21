@@ -1,7 +1,7 @@
 export { createGuest } from './guest.ts';
 export type { Guest, GuestOptions } from './guest.ts';
 export { createFetch } from './fetch.ts';
-export type { SyscallHook } from './fetch.ts';
+export type { SyscallHook, PortsSyscallHook } from './fetch.ts';
 export {
   openRoot,
   GuestDirectoryHandle,

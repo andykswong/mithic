@@ -683,17 +683,27 @@ test('Fix 3: process/pipeline with 2 stages succeeds when maxChildren:2', async 
 // ── net/fetch syscall ──────────────────────────────────────────────────────
 
 import type { HttpClient, HttpRequest, HttpResponse } from '@mithic/io/net';
+import { bytesToStream } from '@mithic/io/net';
 
-/** A tiny recording HTTP client for dispatcher tests (no real network). */
-function recordingClient(response: HttpResponse): { client: HttpClient; calls: HttpRequest[] } {
+/** A scripted/recorded response authored with BYTES (B6: the wire body is a stream). */
+interface NetResp { status: number; headers: [string, string][]; body?: Uint8Array }
+
+/** A tiny recording HTTP client for dispatcher tests (no real network). Mints a
+ * FRESH stream body per send (a stream is single-use). */
+function recordingClient(response: NetResp): { client: HttpClient; calls: HttpRequest[] } {
   const calls: HttpRequest[] = [];
   const client: HttpClient = {
-    send(req: HttpRequest): HttpResponse { calls.push(req); return response; },
+    send(req: HttpRequest): HttpResponse {
+      calls.push(req);
+      const out: HttpResponse = { status: response.status, headers: response.headers };
+      if (response.body !== undefined) out.body = bytesToStream(response.body);
+      return out;
+    },
   };
   return { client, calls };
 }
 
-function netSetup(opts: { caps?: Parameters<CapabilityManager['grant']>[1]; response?: HttpResponse } = {}) {
+function netSetup(opts: { caps?: Parameters<CapabilityManager['grant']>[1]; response?: NetResp } = {}) {
   const router = new FileSystemRouter();
   const caps = new CapabilityManager();
   caps.grant(1, opts.caps ?? [{ type: 'net', origins: ['https://api.example.com'] }]);
@@ -796,7 +806,7 @@ test('net/fetch with an invalid url returns EACCES (no origin → no capability)
  * `send()`. Records every request URL it was asked to fetch. Used to model a
  * server that 3xx-redirects to another origin.
  */
-function scriptedClient(responses: HttpResponse[]): { client: HttpClient; urls: string[] } {
+function scriptedClient(responses: NetResp[]): { client: HttpClient; urls: string[] } {
   const urls: string[] = [];
   let i = 0;
   const client: HttpClient = {
@@ -804,7 +814,9 @@ function scriptedClient(responses: HttpResponse[]): { client: HttpClient; urls: 
       urls.push(req.url);
       const r = responses[Math.min(i, responses.length - 1)];
       i++;
-      return r;
+      const out: HttpResponse = { status: r.status, headers: r.headers };
+      if (r.body !== undefined) out.body = bytesToStream(r.body);
+      return out;
     },
   };
   return { client, urls };
@@ -904,6 +916,124 @@ test('SEC-1: net/fetch requests redirect:manual from the HTTP client (no interna
   // The dispatcher must instruct the client NOT to follow redirects itself, so
   // the kernel can capability-check each hop.
   expect(seen[0].redirect).toBe('manual');
+});
+
+// ── B6: streaming response body delivery ─────────────────────────────────────
+
+import { portToReadable } from '@mithic/guest-runtime';
+
+/** Drain a transferred read port (the streaming body) into one Uint8Array. */
+async function drainPort(port: MessagePort): Promise<Uint8Array> {
+  const reader = portToReadable(port).getReader();
+  const chunks: Uint8Array[] = [];
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (value) chunks.push(value);
+  }
+  const total = chunks.reduce((n, c) => n + c.byteLength, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.byteLength; }
+  return out;
+}
+
+test('B6: on a transferable backend (ipc + directPipes) net/fetch streams the body over a transferred port', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'net', origins: ['https://api.example.com'] }]);
+  // A multi-chunk body emitted lazily through the kernel pump.
+  const parts = ['alpha-', 'beta-', 'gamma'];
+  const client: HttpClient = {
+    send(): HttpResponse {
+      let i = 0;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (i >= parts.length) { controller.close(); return; }
+          controller.enqueue(new TextEncoder().encode(parts[i]));
+          i++;
+        },
+      });
+      return { status: 200, headers: [['content-type', 'text/plain']], body };
+    },
+  };
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/', httpClient: client,
+    ipc: new IpcBroker(), directPipes: true,
+  });
+
+  const { response, transfer } = await d.dispatch(1, {
+    id: 1, call: 'net/fetch', args: { method: 'GET', url: 'https://api.example.com/big', headers: [] },
+  });
+
+  expect(response.ok).toBe(true);
+  const result = (response as { ok: true; result: { status: number; bodyStream?: boolean; body?: Uint8Array } }).result;
+  expect(result.status).toBe(200);
+  // Streaming delivery: a flag + a transferred read port, NOT inline bytes.
+  expect(result.bodyStream).toBe(true);
+  expect(result.body).toBeUndefined();
+  expect(transfer).toHaveLength(1);
+  expect(transfer![0]).toBeInstanceOf(MessagePort);
+
+  // Draining the transferred port yields the streamed bytes.
+  const bytes = await drainPort(transfer![0] as MessagePort);
+  expect(new TextDecoder().decode(bytes)).toBe('alpha-beta-gamma');
+});
+
+test('B6: cancelling the streamed-body port aborts the source stream (early stop)', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'net', origins: ['https://api.example.com'] }]);
+  let cancelled = false;
+  let produced = 0;
+  const client: HttpClient = {
+    send(): HttpResponse {
+      // An UNBOUNDED body: only the consumer cancelling stops it.
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) { produced++; controller.enqueue(new Uint8Array([produced & 0xff])); },
+        cancel() { cancelled = true; },
+      });
+      return { status: 200, headers: [], body };
+    },
+  };
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/', httpClient: client,
+    ipc: new IpcBroker(), directPipes: true,
+  });
+
+  const { transfer } = await d.dispatch(1, {
+    id: 1, call: 'net/fetch', args: { method: 'GET', url: 'https://api.example.com/infinite', headers: [] },
+  });
+  const stream = portToReadable(transfer![0] as MessagePort);
+  const reader = stream.getReader();
+  await reader.read();             // pull one chunk
+  await reader.cancel();           // consumer stops early → EPIPE up the port
+  // The kernel pump observes the broken pipe and cancels the source stream.
+  await new Promise((r) => setTimeout(r, 20));
+  expect(cancelled).toBe(true);
+});
+
+test('B6: on a NON-transferable backend (no ipc) net/fetch buffers the body inline (fallback)', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'net', origins: ['https://api.example.com'] }]);
+  const client: HttpClient = {
+    send(): HttpResponse {
+      return { status: 200, headers: [], body: bytesToStream(new TextEncoder().encode('buffered-bytes')) };
+    },
+  };
+  // No ipc broker → directPipes can't transfer a body port → buffered fallback.
+  const d = new SyscallDispatcher({ vfs: router, caps, cwdOf: () => '/', httpClient: client });
+
+  const { response, transfer } = await d.dispatch(1, {
+    id: 1, call: 'net/fetch', args: { method: 'GET', url: 'https://api.example.com/x', headers: [] },
+  });
+  expect(response.ok).toBe(true);
+  const result = (response as { ok: true; result: { bodyStream?: boolean; body?: Uint8Array } }).result;
+  // Buffered: inline bytes, no stream flag, no transferred port.
+  expect(result.bodyStream).toBeUndefined();
+  expect(transfer).toBeUndefined();
+  expect(new TextDecoder().decode(result.body)).toBe('buffered-bytes');
 });
 
 // --- C2: typed syscall union + handler map ---

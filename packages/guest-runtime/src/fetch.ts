@@ -1,23 +1,31 @@
 /**
- * B2 — a capability-scoped standard `fetch()` façade over the `net/fetch`
- * syscall.
+ * B2/B6 — a capability-scoped standard `fetch()` façade over the `net/fetch`
+ * syscall, with a STREAMING `Response.body`.
  *
  * ARCHITECTURAL INVARIANT: the wire format is unchanged. `net/fetch` still takes
- * `{method, url, headers, body, timeoutMs?}` and returns `{status, statusText?,
- * headers, body?}`. This module is a pure ADAPTER (Dependency Inversion): guest
- * code depends on the standard WHATWG `fetch`/`Request`/`Response` interfaces,
- * and the adapter depends on the injected syscall port. The integer-free arg-bag
- * stays an internal detail.
+ * `{method, url, headers, body, timeoutMs?}`. This module is a pure ADAPTER
+ * (Dependency Inversion): guest code depends on the standard WHATWG
+ * `fetch`/`Request`/`Response` interfaces, and the adapter depends on the
+ * injected syscall port. The integer-free arg-bag stays an internal detail.
  *
- * SCOPE: the body is the MATERIALIZED bytes returned by `net/fetch`, wrapped in a
- * standard `Response`. The streaming-body (`Response.body` over a transferred
- * port) half is the separate B6 workstream and is intentionally NOT done here.
+ * BODY DELIVERY (B6): the kernel returns one of two shapes —
+ *   - TRANSFERABLE backend: `{status, headers, bodyStream: true}` PLUS a
+ *     transferred read MessagePort. `Response.body` is a live `ReadableStream`
+ *     over that port (via {@link portToReadable}) — a large download never
+ *     buffers wholesale, and cancelling the body (or aborting `init.signal`)
+ *     propagates EPIPE back so the in-flight transport stops.
+ *   - NON-TRANSFERABLE (relay/QuickJS) backend: `{status, headers, body?}` with
+ *     the materialized bytes inline (no port). `Response.body` wraps those bytes.
+ * `res.text()`/`.arrayBuffer()`/`.json()` consume whichever stream they get.
  */
-import type { SyscallCallOptions } from './syscall-client.ts';
+import type { SyscallCallOptions, SyscallResult } from './syscall-client.ts';
+import { portToReadable } from './streams.ts';
 
 /**
- * The syscall hook the façade depends on — exactly the `Guest.syscall` shape, so
- * a guest passes `guest.syscall` and a command passes its `io.syscall`.
+ * The plain syscall hook — the `Guest.syscall` shape, returning only the decoded
+ * result (no ports). Shared by the `fs/*` façade (`fs-access.ts`) which never
+ * needs transferred ports. A guest passes `guest.syscall`; a command passes
+ * `io.syscall`.
  */
 export type SyscallHook = (
   call: string,
@@ -25,25 +33,40 @@ export type SyscallHook = (
   opts?: SyscallCallOptions,
 ) => Promise<unknown>;
 
-/** The shape `net/fetch` returns on the wire (materialized body). */
+/**
+ * B6: the PORTS-AWARE syscall hook the fetch façade depends on — the
+ * `Guest.syscallPorts` shape, returning both the decoded result and any
+ * MessagePorts the kernel transferred (the streaming body's read end).
+ */
+export type PortsSyscallHook = (
+  call: string,
+  args: Record<string, unknown>,
+  opts?: SyscallCallOptions,
+) => Promise<SyscallResult>;
+
+/** The shape `net/fetch` returns on the wire. */
 interface NetFetchResult {
   status: number;
   statusText?: string;
   headers?: [string, string][];
+  /** Buffered fallback body (relay backends). */
   body?: Uint8Array | ArrayBuffer;
+  /** B6: true when the body is delivered as a STREAM over a transferred port. */
+  bodyStream?: boolean;
 }
 
 /**
- * Build a standard `fetch(input, init): Promise<Response>` bound to a syscall
- * hook. `input` is a URL string or a `Request`; `init` is the standard
+ * Build a standard `fetch(input, init): Promise<Response>` bound to a ports-aware
+ * syscall hook. `input` is a URL string or a `Request`; `init` is the standard
  * `RequestInit` (we honour `method`, `headers`, `body`, and `signal`).
  *
  * `init.signal` (an `AbortSignal`) is threaded straight through to the syscall
  * via {@link SyscallCallOptions.signal} (Stage-1 B1), so a guest can cancel or
- * time-bound a request. A rejection carrying `code:'ECANCELED'`/`'ETIMEDOUT'` is
- * surfaced as a DOM `AbortError`/`TimeoutError` to match the platform `fetch`.
+ * time-bound a request; for a STREAMED body the same signal also cancels the
+ * in-flight body stream (B6). A rejection carrying `code:'ECANCELED'`/
+ * `'ETIMEDOUT'` is surfaced as a DOM `AbortError`/`TimeoutError`.
  */
-export function createFetch(syscall: SyscallHook): typeof fetch {
+export function createFetch(syscall: PortsSyscallHook): typeof fetch {
   return async function mithicFetch(
     input: Request | string | URL,
     init?: RequestInit,
@@ -79,9 +102,9 @@ export function createFetch(syscall: SyscallHook): typeof fetch {
     // request signal even when none was supplied; only forward a live one.
     opts.signal = signal;
 
-    let result: NetFetchResult;
+    let settled: SyscallResult;
     try {
-      result = (await syscall('net/fetch', args, opts)) as NetFetchResult;
+      settled = await syscall('net/fetch', args, opts);
     } catch (e) {
       // Surface cancellation/timeout as the standard DOM exceptions a fetch
       // caller expects, so `try { await fetch() } catch (e) { e.name }` works.
@@ -91,22 +114,47 @@ export function createFetch(syscall: SyscallHook): typeof fetch {
       throw e;
     }
 
-    return buildResponse(result);
+    const result = settled.result as NetFetchResult;
+    const ports = settled.ports ?? [];
+    return buildResponse(result, ports, signal);
   } as typeof fetch;
 }
 
 /**
- * Build a standard `Response` from the `net/fetch` wire result. A null body is
- * required for 204/205/304 (the `Response` constructor throws otherwise), so a
- * status that forbids a body gets `null`.
+ * Build a standard `Response` from the `net/fetch` wire result. The body is:
+ *   - a live `ReadableStream` over the transferred read port when the kernel
+ *     streamed it (`bodyStream: true` + a port arrived); aborting `signal`
+ *     cancels the stream;
+ *   - the inline buffered bytes otherwise (relay backends);
+ *   - `null` for a status that forbids a body (204/205/304 — the `Response`
+ *     constructor throws otherwise).
  */
-function buildResponse(result: NetFetchResult): Response {
+function buildResponse(result: NetFetchResult, ports: readonly MessagePort[], signal: AbortSignal): Response {
   const status = result.status;
   const headers = new Headers(result.headers ?? []);
-  const body = nullBodyStatus(status) ? null : (result.body ?? new Uint8Array());
   const init: ResponseInit = { status, headers };
   if (typeof result.statusText === 'string') init.statusText = result.statusText;
-  return new Response(body as BodyInit | null, init);
+
+  if (nullBodyStatus(status)) {
+    // A streamed body for a null-body status should not happen, but if a port
+    // arrived, release it so it does not leak.
+    for (const p of ports) { try { p.close(); } catch { /* neutered */ } }
+    return new Response(null, init);
+  }
+
+  if (result.bodyStream && ports[0]) {
+    // B6: a live ReadableStream over the transferred read port. Passing the
+    // request signal wires abort → tear the stream down: it errors the
+    // controller (unblocking a pending read) AND posts EPIPE up the port so the
+    // kernel net/fetch pump latches broken and aborts the in-flight transport.
+    const stream = portToReadable(ports[0], signal);
+    return new Response(stream, init);
+  }
+
+  // Buffered fallback (relay backend) — or a streamed result that arrived with
+  // no port (defensive: treat as empty).
+  const body = result.body ?? new Uint8Array();
+  return new Response(body as BodyInit, init);
 }
 
 /** Statuses for which a `Response` body MUST be null (per the Fetch spec). */
