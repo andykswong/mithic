@@ -41,6 +41,24 @@ export interface ShellFunction {
 }
 
 /**
+ * Bash identity version (G7). Matches the reference shell's config:
+ * `BASH_VERSION` = `5.3.0(1)-release`; `BASH_VERSINFO` = the 6-element array.
+ */
+const BASH_VERSINFO_ELEMENTS = ['5', '3', '0', '1', 'release', 'mithic'] as const;
+const BASH_VERSION_STRING =
+  `${BASH_VERSINFO_ELEMENTS[0]}.${BASH_VERSINFO_ELEMENTS[1]}.${BASH_VERSINFO_ELEMENTS[2]}` +
+  `(${BASH_VERSINFO_ELEMENTS[3]})-${BASH_VERSINFO_ELEMENTS[4]}`;
+
+/**
+ * Compute `$SHLVL` from an inherited value (G7), per bash: <0 / 0 / >=1000 reset
+ * to 1; otherwise increment.
+ */
+function computeShlvl(inherited: number): number {
+  if (!Number.isFinite(inherited) || inherited < 0 || inherited === 0 || inherited >= 1000) return 1;
+  return inherited + 1;
+}
+
+/**
  * A persistent numbered file descriptor opened by `exec N>file` / `exec N<file`
  * / `exec N<>file`. Output fds carry a write sink + closer; input fds carry the
  * buffered file contents and a read cursor (for `read -u N`).
@@ -156,6 +174,8 @@ export class Executor implements ShellEnv {
   private procSubSeq = 0;
   /** Deferred `>(cmd)` process substitutions to run after the current command. */
   private pendingProcSubs: Array<{ path: string; src: string }> = [];
+  /** LCG state for `$RANDOM` (G7); seedable via `RANDOM=n`. */
+  private randomState = BigInt(Date.now()) ^ 0x9e3779b97f4a7c15n;
 
   constructor(kernel: KernelClient, context: ShellContext, options: ExecutorOptions = {}) {
     this.kernel = kernel;
@@ -168,14 +188,51 @@ export class Executor implements ShellEnv {
     this.stderrSink = options.onStderr ?? ((s) => {
       if (typeof process !== 'undefined' && process.stderr) process.stderr.write(s);
     });
+    // $SHLVL: derive from the inherited value and store it back (G7).
+    const inherited = parseInt(this.context.env.SHLVL ?? '', 10);
+    this.context.env.SHLVL = String(computeShlvl(Number.isNaN(inherited) ? 0 : inherited));
+  }
+
+  /** Advance the LCG and return a 0..32767 pseudo-random integer ($RANDOM). */
+  private nextRandom(): number {
+    this.randomState = (this.randomState * 6364136223846793005n + 1442695040888963407n)
+      & 0xffffffffffffffffn;
+    return Number((this.randomState >> 33n) % 32768n);
   }
 
   // ── ShellEnv implementation (for the Expander) ──────────────────────────────
 
-  get(name: string): string | undefined { return this.context.env[name]; }
-  set(name: string, value: string): void { this.context.env[name] = value; }
-  has(name: string): boolean { return name in this.context.env; }
-  getArray(name: string): string[] | undefined { return this.arrays.get(name); }
+  get(name: string): string | undefined {
+    // `RANDOM` is dynamic — never let a stored value shadow the generator
+    // (assignment seeds it via `set`). `getSpecial` produces the value.
+    if (name === 'RANDOM') return undefined;
+    return this.context.env[name];
+  }
+  set(name: string, value: string): void {
+    // Assigning `RANDOM=n` seeds the generator rather than storing a scalar.
+    if (name === 'RANDOM') {
+      const seed = parseInt(value, 10);
+      if (!Number.isNaN(seed)) this.randomState = BigInt(seed >>> 0);
+      return;
+    }
+    // `SHLVL` is recomputed from the assigned value (bash); `BASH_VERSION` /
+    // `BASH_VERSINFO` are read-only identity vars (G7).
+    if (name === 'SHLVL') {
+      const n = parseInt(value, 10);
+      this.context.env.SHLVL = String(computeShlvl(Number.isNaN(n) ? 0 : n));
+      return;
+    }
+    if (name === 'BASH_VERSION' || name === 'BASH_VERSINFO') return;
+    this.context.env[name] = value;
+  }
+  has(name: string): boolean {
+    if (name === 'RANDOM' || name === 'BASH_VERSION' || name === 'BASH_VERSINFO') return true;
+    return name in this.context.env;
+  }
+  getArray(name: string): string[] | undefined {
+    if (name === 'BASH_VERSINFO') return [...BASH_VERSINFO_ELEMENTS];
+    return this.arrays.get(name);
+  }
   get cwd(): string { return this.context.cwd; }
 
   getSpecial(name: string): string | undefined {
@@ -190,6 +247,10 @@ export class Executor implements ShellEnv {
       case '@':
       case '*': return (this.context.positional ?? []).join(' ');
       case 'PIPESTATUS': return this.pipeStatus.join(' ');
+      // Bash identity/state vars (G7).
+      case 'RANDOM': return String(this.nextRandom());
+      case 'BASH_VERSION': return BASH_VERSION_STRING;
+      case 'BASH_VERSINFO': return BASH_VERSINFO_ELEMENTS[0]; // bare ref → element 0
     }
     if (/^[1-9][0-9]*$/.test(name)) {
       return (this.context.positional ?? [])[parseInt(name, 10) - 1];
