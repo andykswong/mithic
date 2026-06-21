@@ -102,7 +102,6 @@ test('D3: a backgrounded producer NEVER writes into a foreground `> file` redire
   await new Promise((r) => setTimeout(r, 0)); // let bg writeCaptured run
   fgRelease.resolve();              // foreground completes, restores sink
   await run;
-  await (ex as any).waitAllJobs?.();
   await new Promise((r) => setTimeout(r, 0));
 
   // /tmp/f exists (fgcmd's empty redirect) but must NOT contain bg bytes.
@@ -118,13 +117,12 @@ test('D3: a backgrounded producer NEVER pollutes a foreground `$(...)` capture',
   // `captured` and the bg producer's bytes go to its OWN frame's terminal stdout.
   const { k, bgRelease, fgRelease, fgStarted } = mkRaceKernel();
   let out = '';
-  let cap: string | undefined;
   const ex = new Executor(k as any, { cwd: '/', env: { } } as any, {
     onStdout: (s) => { out += s; }, onStderr: () => {}, resolve: (n) => n,
   });
 
-  // `printf %s "[$CAP]"` (no trailing newline) makes the exact captured value
-  // easy to assert from terminal stdout.
+  // `printf "<%s>"` (no trailing newline) makes the exact captured value easy to
+  // assert from terminal stdout.
   const run = ex.exec('bgproducer &\nCAP=$(fgcmd; printf captured)\nprintf "<%s>" "$CAP"');
 
   await fgStarted.promise;
@@ -132,11 +130,9 @@ test('D3: a backgrounded producer NEVER pollutes a foreground `$(...)` capture',
   await new Promise((r) => setTimeout(r, 0));
   fgRelease.resolve();
   await run;
-  await (ex as any).waitAllJobs?.();
   await new Promise((r) => setTimeout(r, 0));
 
   // CAP captured ONLY the cmd-sub body output — never the bg producer's bytes.
   const m = out.match(/<([^>]*)>/);
-  cap = m?.[1];
-  expect(cap).toBe('captured');
+  expect(m?.[1]).toBe('captured');
 });

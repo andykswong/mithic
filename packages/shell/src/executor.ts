@@ -29,6 +29,7 @@ import { isBuiltin, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES } from 
 import type { BuiltinContext, ShellState, ShellOptionName } from './builtins.ts';
 import { Environment, computeShlvl } from './environment.ts';
 import type { EnvHost } from './environment.ts';
+import { JobController } from './job-controller.ts';
 import type {
   DuplexFd,
   FsClient,
@@ -82,6 +83,8 @@ export interface Job {
   command: string;
   state: 'running' | 'done' | 'stopped';
   exitCode?: number;
+  /** Resolves with the job's exit code when the backgrounded work finishes. */
+  promise?: Promise<number>;
 }
 
 /**
@@ -217,7 +220,8 @@ export class Executor {
   private stdinPendingLine: Promise<string | undefined> | undefined;
   private lastStatus = 0;
   private pipeStatus: number[] = [];
-  private lastBgPid = 0;
+  /** C4: the job table + wait/jobs/kill/disown owner. */
+  private jobControl: JobController;
   /** Status of the most recent command substitution (`$(...)`), for M10. */
   private lastCmdSubStatus: number | undefined;
   private exiting: number | undefined;
@@ -237,8 +241,6 @@ export class Executor {
   private arrays = new Map<string, string[]>();
   private localScopes: Array<Set<string>> = [];
   private localSaved: Array<Map<string, string | undefined>> = [];
-  private jobs: Job[] = [];
-  private nextJobId = 1;
   /** `set` options. errexit aborts on nonzero; the rest per their POSIX meaning. */
   private options: Record<ShellOptionName, boolean> = {
     errexit: false,
@@ -290,12 +292,14 @@ export class Executor {
     });
     // The root ambient frame: terminal sinks, no piped stdin, the persistent fd table.
     this.io = { stdout, stderr, stdin: undefined, fdTable: this.fdTable };
+    // C4: the job table + wait/jobs/kill/disown owner (signal delivery via kernel.kill).
+    this.jobControl = new JobController(kernel.kill ? (pid, sig) => kernel.kill!(pid, sig) : undefined);
     // C4: the variable environment. The Executor is the EnvHost — it supplies the
     // status/positional specials and the cross-cutting glob / cmd-sub / flag
     // accessors so Environment stays a focused variable store.
     const host: EnvHost = {
       lastStatus: () => this.lastStatus,
-      lastBgPid: () => this.lastBgPid,
+      lastBgPid: () => this.jobControl.lastBgPid(),
       pipeStatus: () => this.pipeStatus,
       currentFlags: () => this.currentFlags(),
       arrays: () => this.arrays,
@@ -540,7 +544,7 @@ export class Executor {
   private shellState(): ShellState {
     return {
       functions: this.functions,
-      jobs: this.jobs,
+      jobs: this.jobControl.list(),
       positional: this.context.positional ?? [],
       setPositional: (p) => { this.context.positional = p; },
       shiftPositional: (n) => {
@@ -554,9 +558,9 @@ export class Executor {
         delete this.context.env[name];
         this.arrays.delete(name);
       },
-      waitJob: (id) => this.waitForJob(id),
-      waitAll: () => this.waitAllJobs(),
-      waitNext: () => this.waitNextJob(),
+      waitJob: (id) => this.jobControl.waitJob(id),
+      waitAll: () => this.jobControl.waitAll(),
+      waitNext: () => this.jobControl.waitNext(),
       setErrExit: (v) => { this.options.errexit = v; },
       setOption: (name, value) => {
         this.options[name] = value;
@@ -579,32 +583,8 @@ export class Executor {
         add: (line) => this.addHistory(line),
         clear: () => { this.historyLines = []; },
       },
-      removeJob: (spec) => {
-        const idx = this.jobs.findIndex((j) => j.id === spec || j.pids.includes(spec));
-        if (idx < 0) return false;
-        this.jobs.splice(idx, 1);
-        return true;
-      },
-      killJob: (spec, signal) => {
-        const job = this.jobs.find((j) => j.id === spec || j.pids.includes(spec));
-        if (!job) return false;
-        // Deliver the signal to each of the job's processes via the kernel
-        // (M14). `signal` arrives `SIG`-stripped (e.g. 'TERM'); the kernel
-        // wants a `SIG`-prefixed name. When the kernel has no kill method
-        // (minimal mock), we still update the job table best-effort.
-        if (this.kernel.kill) {
-          const sig = signal.startsWith('SIG') ? signal : 'SIG' + signal;
-          for (const pid of job.pids) {
-            try { this.kernel.kill(pid, sig); } catch { /* already gone */ }
-          }
-        }
-        // SIGCONT/SIGSTOP change run state without terminating; everything else
-        // terminates the job in this runtime's job model.
-        if (signal === 'CONT') job.state = 'running';
-        else if (signal === 'STOP' || signal === 'TSTP') job.state = 'stopped';
-        else job.state = 'done';
-        return true;
-      },
+      removeJob: (spec) => this.jobControl.remove(spec),
+      killJob: (spec, signal) => this.jobControl.killJob(spec, signal),
     };
   }
 
@@ -1742,10 +1722,7 @@ export class Executor {
   // ── background / jobs ─────────────────────────────────────────────────────────
 
   private async execBackground(stmt: Statement, io: CommandIO): Promise<number> {
-    const id = this.nextJobId++;
-    const cmdStr = describeStages(stmt.stages ?? []);
-    const job: Job = { id, pids: [], command: cmdStr, state: 'running' };
-    this.jobs.push(job);
+    const job = this.jobControl.register(describeStages(stmt.stages ?? []));
 
     // D3: the background job gets its OWN forked I/O frame, captured NOW. Its
     // sinks + fd-table are independent of the foreground's `io`, so a redirect /
@@ -1765,7 +1742,7 @@ export class Executor {
       try {
         const handle = await this.kernel.spawnStream(external);
         job.pids = [handle.pid];
-        this.lastBgPid = handle.pid;
+        this.jobControl.setLastBgPid(handle.pid);
         // Stream the child's stdout to the bg frame's stdout in the background
         // (fire-and-forget). The job's COMPLETION is the child's exit — awaited
         // directly via kernel.wait — NOT the pump finishing: a killed child may
@@ -1774,10 +1751,9 @@ export class Executor {
         // foreground's later redirects (D3).
         const reader = handle.stdout?.getReader();
         if (reader) void this.pumpReaderToSink(reader, bgIo.stdout);
-        const promise = this.kernel.wait(handle.pid)
+        job.promise = this.kernel.wait(handle.pid)
           .then((w) => { job.state = 'done'; job.exitCode = w.code; if (reader) void reader.cancel().catch(() => {}); return w.code; })
           .catch(() => { job.state = 'done'; job.exitCode = 1; if (reader) void reader.cancel().catch(() => {}); return 1; });
-        (job as Job & { promise?: Promise<number> }).promise = promise;
         return 0;
       } catch {
         // Fall through to the in-process detached path on spawn failure.
@@ -1789,16 +1765,15 @@ export class Executor {
     // has no kernel-side process to signal. The detached statement runs against
     // `bgIo` — its own frame — so an interleaving foreground command's redirect
     // / capture can never re-route this job's output (the D3 race).
-    const pid = 100000 + id;
+    const pid = 100000 + job.id;
     job.pids = [pid];
-    this.lastBgPid = pid;
+    this.jobControl.setLastBgPid(pid);
     const bg = { ...stmt, background: false };
-    const promise = this.execStatement(bg, bgIo).then((code) => {
+    job.promise = this.execStatement(bg, bgIo).then((code) => {
       job.state = 'done';
       job.exitCode = code;
       return code;
     }).catch(() => { job.state = 'done'; job.exitCode = 1; return 1; });
-    (job as Job & { promise?: Promise<number> }).promise = promise;
     return 0;
   }
 
@@ -1901,16 +1876,13 @@ export class Executor {
     this.arrays.set(arrName, [String(readFd), String(writeFd)]);
     delete this.context.env[arrName];
     this.context.env[`${arrName}_PID`] = String(handle.pid);
-    this.lastBgPid = handle.pid;
+    this.jobControl.setLastBgPid(handle.pid);
 
     // Register a background job so `wait`/`jobs` see the coproc child.
-    const id = this.nextJobId++;
-    const job: Job = { id, pids: [handle.pid], command: `coproc ${arrName}`, state: 'running' };
-    this.jobs.push(job);
-    const promise = this.kernel.wait(handle.pid).then((w) => {
+    const job = this.jobControl.register(`coproc ${arrName}`, [handle.pid]);
+    job.promise = this.kernel.wait(handle.pid).then((w) => {
       job.state = 'done'; job.exitCode = w.code; return w.code;
     }).catch(() => { job.state = 'done'; job.exitCode = 1; return 1; });
-    (job as Job & { promise?: Promise<number> }).promise = promise;
     return 0;
   }
 
@@ -1934,46 +1906,6 @@ export class Executor {
       return this.extractSimpleCommand(body.body[0]);
     }
     return undefined;
-  }
-
-  private async waitForJob(spec?: number): Promise<number> {
-    if (spec === undefined) return this.waitAllJobs();
-    // spec may be a pid or %jobid; find the matching job
-    const job = this.jobs.find((j) => j.pids.includes(spec) || j.id === spec);
-    if (!job) return 0;
-    const p = (job as Job & { promise?: Promise<number> }).promise;
-    if (p) return (await p) ?? 0;
-    return job.exitCode ?? 0;
-  }
-
-  private async waitAllJobs(): Promise<number> {
-    let last = 0;
-    for (const job of this.jobs) {
-      const p = (job as Job & { promise?: Promise<number> }).promise;
-      if (p) last = (await p) ?? 0;
-    }
-    return last;
-  }
-
-  /**
-   * `wait -n` (G5): wait for the NEXT job to finish and return its exit code.
-   * Each waited job is removed from the table so a subsequent `wait -n` advances
-   * to the next one (bash reaps the job). Returns 127 when there are no jobs.
-   */
-  private async waitNextJob(): Promise<number> {
-    if (this.jobs.length === 0) return 127;
-    const pending = this.jobs
-      .map((job) => ({ job, p: (job as Job & { promise?: Promise<number> }).promise }))
-      .filter((e): e is { job: Job; p: Promise<number> } => e.p !== undefined);
-    if (pending.length === 0) {
-      // No async promise to await (e.g. already-resolved jobs) — reap the first.
-      const reaped = this.jobs.shift()!;
-      return reaped.exitCode ?? 0;
-    }
-    // Race: whichever job finishes first resolves, then reap it.
-    const code = await Promise.race(pending.map((e) => e.p.then((c) => ({ job: e.job, c }))))
-      .then((r) => { this.jobs = this.jobs.filter((j) => j !== r.job); return r.c ?? 0; });
-    return code;
   }
 
   // ── dispatch helpers ──────────────────────────────────────────────────────────
