@@ -853,3 +853,77 @@ test('SEC-1: net/fetch requests redirect:manual from the HTTP client (no interna
   // the kernel can capability-check each hop.
   expect(seen[0].redirect).toBe('manual');
 });
+
+// --- C2: typed syscall union + handler map ---
+
+test('C2: unknown call still returns ENOSYS', async () => {
+  const d = await setup();
+  const res = (await d.dispatch(1, { id: 99, call: 'totally/bogus', args: {} })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'ENOSYS' } });
+});
+
+test('C2: malformed fs/read args (non-numeric fd) is rejected with EINVAL, not a crash', async () => {
+  const d = await setup();
+  const res = (await d.dispatch(1, { id: 1, call: 'fs/read', args: { fd: 'not-a-number', len: 4 } })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
+});
+
+test('C2: malformed fs/open args (missing path) is rejected with EINVAL', async () => {
+  const d = await setup();
+  const res = (await d.dispatch(1, { id: 2, call: 'fs/open', args: { oflags: { read: true } } })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
+});
+
+test('C2: malformed process/wait args (missing pid) is rejected with EINVAL', async () => {
+  const d = await setup();
+  const res = (await d.dispatch(1, { id: 3, call: 'process/wait', args: {} })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
+});
+
+test('C2: pipe/read|write|close are first-class — EBADF on a transfer-path backend (no relay handler)', async () => {
+  const d = await setup();
+  const r1 = (await d.dispatch(1, { id: 1, call: 'pipe/read', args: { fd: 5 } })).response;
+  const r2 = (await d.dispatch(1, { id: 2, call: 'pipe/write', args: { fd: 5, data: 'hi' } })).response;
+  const r3 = (await d.dispatch(1, { id: 3, call: 'pipe/close', args: { fd: 5 } })).response;
+  expect(r1).toMatchObject({ ok: false, error: { code: 'EBADF' } });
+  expect(r2).toMatchObject({ ok: false, error: { code: 'EBADF' } });
+  expect(r3).toMatchObject({ ok: false, error: { code: 'EBADF' } });
+});
+
+test('C2: injected relayPipe handlers service pipe/* through the dispatcher', async () => {
+  const router = new FileSystemRouter();
+  await router.mount('/', new MemoryFsProvider());
+  const caps = new CapabilityManager();
+  const calls: string[] = [];
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/',
+    relayPipe: {
+      read: async (_pid, fd) => { calls.push(`read:${fd}`); return { ok: true, result: { data: [104, 105] } }; },
+      write: async (_pid, fd, data) => { calls.push(`write:${fd}`); return { ok: true, result: { written: (data as string).length } }; },
+      close: (_pid, fd) => { calls.push(`close:${fd}`); return { ok: true, result: {} }; },
+    },
+  });
+  const read = (await d.dispatch(1, { id: 1, call: 'pipe/read', args: { fd: 3, len: 2 } })).response;
+  expect(read).toMatchObject({ ok: true, result: { data: [104, 105] } });
+  const write = (await d.dispatch(1, { id: 2, call: 'pipe/write', args: { fd: 4, data: 'hey' } })).response;
+  expect(write).toMatchObject({ ok: true, result: { written: 3 } });
+  const close = (await d.dispatch(1, { id: 3, call: 'pipe/close', args: { fd: 3 } })).response;
+  expect(close).toMatchObject({ ok: true });
+  expect(calls).toEqual(['read:3', 'write:4', 'close:3']);
+});
+
+test('C2: malformed pipe/write args (non-numeric fd) is rejected with EINVAL', async () => {
+  const router = new FileSystemRouter();
+  await router.mount('/', new MemoryFsProvider());
+  const caps = new CapabilityManager();
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/',
+    relayPipe: {
+      read: async () => ({ ok: true, result: { data: [] } }),
+      write: async () => ({ ok: true, result: { written: 0 } }),
+      close: () => ({ ok: true, result: {} }),
+    },
+  });
+  const res = (await d.dispatch(1, { id: 1, call: 'pipe/write', args: { fd: {}, data: 'x' } })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
+});

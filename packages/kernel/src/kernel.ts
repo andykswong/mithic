@@ -32,6 +32,7 @@ import type {
   SpawnChildResult,
   PipelineStageSpec,
   PipelineChildResult,
+  RelayPipeResult,
 } from './syscall-dispatch.ts';
 
 export interface KernelOptions {
@@ -358,6 +359,15 @@ export class Kernel {
       ppidOf: (pid) => this.processes.get(pid)?.ppid ?? 0,
       chdir: (pid, path) => { this.#cwds.set(pid, path); },
       exitProcess: (pid, code) => { this.#exit(pid, code); },
+      // C2: relay byte-channel ops (pipe/read|write|close) are first-class
+      // dispatcher members; the kernel owns the RelayEnd table and services them
+      // here. On transfer-path backends the guest holds real ports and never
+      // calls these, so an absent relay end yields EBADF (handled in RelayEnd ops).
+      relayPipe: {
+        read: (pid, fd, len) => this.#relayPipeRead(pid, fd, len),
+        write: (pid, fd, data) => this.#relayPipeWrite(pid, fd, data),
+        close: (pid, fd) => this.#relayPipeClose(pid, fd),
+      },
     });
     this.#launcher = options.launcher ?? new DefaultGuestLauncher();
     this.#relayLauncher = options.relayLauncher;
@@ -1011,11 +1021,9 @@ export class Kernel {
     call: string,
     args: Record<string, unknown>
   ): Promise<RelaySyscallResult> {
-    // K5: relay-only byte operations on kernel-held pipe/IPC fds.
-    if (call === 'pipe/read') return this.#relayPipeRead(pid, args);
-    if (call === 'pipe/write') return this.#relayPipeWrite(pid, args);
-    if (call === 'pipe/close') return this.#relayPipeClose(pid, args);
-
+    // C2: pipe/read|write|close are first-class dispatcher members now (serviced
+    // via the injected relayPipe handlers against the kernel-held RelayEnd table),
+    // so they route through dispatch() like every other call — no side-channel.
     const { response, transfer } = await this.dispatcher.dispatch(pid, { id: 0, call, args });
 
     if (transfer && transfer.length > 0) {
@@ -1066,40 +1074,34 @@ export class Kernel {
     return false;
   }
 
-  /** K5: `pipe/read {fd, len}` over a kernel-held relay end. */
-  async #relayPipeRead(pid: number, args: Record<string, unknown>): Promise<RelaySyscallResult> {
-    const fd = Number(args.fd);
+  /** K5/C2: `pipe/read {fd, len}` over a kernel-held relay end. */
+  async #relayPipeRead(pid: number, fd: number, len?: number): Promise<RelayPipeResult> {
     const end = this.#relayFds.get(pid)?.get(fd);
     if (!end) return { ok: false, error: { code: 'EBADF', message: `pipe/read: bad fd ${fd}` } };
-    const len = typeof args.len === 'number' ? args.len : undefined;
     const chunk = await end.read(len);
     // Return a plain number array so the value JSON-clones cleanly across the
     // relay bridge (Uint8Array does not survive QuickJS's JSON round-trip).
     return { ok: true, result: { data: Array.from(chunk) } };
   }
 
-  /** K5: `pipe/write {fd, data}` over a kernel-held relay end. */
-  async #relayPipeWrite(pid: number, args: Record<string, unknown>): Promise<RelaySyscallResult> {
-    const fd = Number(args.fd);
+  /** K5/C2: `pipe/write {fd, data}` over a kernel-held relay end. */
+  async #relayPipeWrite(pid: number, fd: number, raw: Uint8Array | number[] | string): Promise<RelayPipeResult> {
     const end = this.#relayFds.get(pid)?.get(fd);
     if (!end) return { ok: false, error: { code: 'EBADF', message: `pipe/write: bad fd ${fd}` } };
-    const raw = args.data;
     const chunk = raw instanceof Uint8Array ? raw
-      : Array.isArray(raw) ? new Uint8Array(raw as number[])
-        : typeof raw === 'string' ? new TextEncoder().encode(raw)
-          : new Uint8Array(0);
+      : Array.isArray(raw) ? new Uint8Array(raw)
+        : new TextEncoder().encode(raw);
     await end.write(chunk);
     return { ok: true, result: { written: chunk.byteLength } };
   }
 
-  /** K5: `pipe/close {fd}` — send EOF + close a kernel-held relay end. */
-  #relayPipeClose(pid: number, args: Record<string, unknown>): RelaySyscallResult {
-    const fd = Number(args.fd);
+  /** K5/C2: `pipe/close {fd}` — send EOF + close a kernel-held relay end. */
+  #relayPipeClose(pid: number, fd: number): RelayPipeResult {
     const table = this.#relayFds.get(pid);
     const end = table?.get(fd);
-    if (!end) return { ok: false, error: { code: 'EBADF', message: `pipe/close: bad fd ${fd}` } };
+    if (!table || !end) return { ok: false, error: { code: 'EBADF', message: `pipe/close: bad fd ${fd}` } };
     end.close();
-    table!.delete(fd);
+    table.delete(fd);
     return { ok: true, result: {} };
   }
 
