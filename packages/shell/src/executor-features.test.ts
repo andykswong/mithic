@@ -378,6 +378,63 @@ test('set -o lists option states', async () => {
   expect(out).toMatch(/nounset\s+off/);
 });
 
+// ── G1: select ────────────────────────────────────────────────────────────
+
+test('select picks the item by piped index and runs the body', async () => {
+  const { out } = await run('printf "2\\n" | select x in alpha beta gamma; do echo "got:$x"; break; done');
+  expect(out).toContain('got:beta');
+});
+
+test('select sets $REPLY to the raw input and loops until EOF', async () => {
+  // Two selections then EOF; each iteration prints the chosen value + REPLY.
+  const { out } = await run('printf "1\\n3\\n" | select x in a b c; do echo "$REPLY=>$x"; done');
+  expect(out).toContain('1=>a');
+  expect(out).toContain('3=>c');
+});
+
+test('select prints the numbered menu and PS3 prompt to stderr', async () => {
+  const { err } = await run('printf "1\\n" | select x in one two; do break; done', { env: { PS3: 'pick> ' } });
+  expect(err).toContain('1) one');
+  expect(err).toContain('2) two');
+  expect(err).toContain('pick> ');
+});
+
+test('select with an out-of-range index sets the var empty but still runs the body', async () => {
+  const { out } = await run('printf "9\\n" | select x in a b; do echo "[$x]"; break; done');
+  expect(out).toContain('[]');
+});
+
+test('select reads choices from a < redirect', async () => {
+  const fs = mockFs({ '/sel.in': '2\n' });
+  const { out } = await run('select x in red green blue; do echo "$x"; break; done < /sel.in', {}, fs);
+  expect(out.trim()).toBe('green');
+});
+
+test('select with no input (EOF) runs the body zero times', async () => {
+  const { out } = await run('printf "" | select x in a b c; do echo "ran:$x"; done');
+  expect(out).not.toContain('ran:');
+});
+
+test('break exits the select loop', async () => {
+  const { out } = await run('printf "1\\n1\\n1\\n" | select x in a b; do echo "$x"; break; done');
+  // Only one iteration despite three lines of input.
+  expect(out.trim()).toBe('a');
+});
+
+// ── G4: coproc (documented unsupported) ──────────────────────────────────────
+
+test('coproc emits a clear diagnostic and a non-zero exit (not command-not-found)', async () => {
+  const { err, code } = await run('coproc mycmd { echo hi; }');
+  expect(err).toContain('coproc: not supported');
+  expect(err).not.toContain('command not found');
+  expect(code).not.toBe(0);
+});
+
+test('bare coproc is also diagnosed, not 127 command-not-found', async () => {
+  const { err } = await run('coproc');
+  expect(err).toContain('coproc: not supported');
+});
+
 // ── indexed arrays ──────────────────────────────────────────────────────────
 
 test('array literal + element access ${arr[0]}', async () => {

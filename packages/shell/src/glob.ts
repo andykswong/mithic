@@ -60,12 +60,28 @@ export function globToReSource(pat: string, opts: GlobOptions = {}): string {
       const inner = pat.slice(i + 2, end);
       const alts = splitAlts(inner).map((a) => globToReSource(a, opts));
       const group = '(?:' + alts.join('|') + ')';
+      if (c === '!') {
+        // Negation `!(pat)` matches a span that is NOT matched by `pat`. To stay
+        // correct when embedded mid-pattern (e.g. `x!(foo)y`) we compile the
+        // *suffix* (rest of the pattern) here and emit
+        //   (?!(?:pat)(?:suffix)$) [anychar]* (?:suffix)
+        // The leading negative lookahead, anchored at the start of the negated
+        // span and tempered by the suffix, rejects exactly the splits where
+        // `pat` would cover the negated portion (this also makes `!()` exclude
+        // only the empty string). The greedy run then consumes the negated span
+        // and the suffix matches the rest. The old code anchored the lookahead
+        // to `$`, which only happened to be correct when `!()` was the whole
+        // pattern (R1).
+        const dot = (opts.pathSegment !== false) ? '[^/]' : '[\\s\\S]';
+        const suffix = globToReSource(pat.slice(end + 1), opts);
+        re += '(?!' + group + suffix + '$)' + dot + '*' + suffix;
+        return re; // suffix already consumed
+      }
       switch (c) {
         case '?': re += group + '?'; break;
         case '*': re += group + '*'; break;
         case '+': re += group + '+'; break;
         case '@': re += group; break;
-        case '!': re += '(?:(?!' + group + '$).*)'; break; // negation (whole-string)
       }
       i = end + 1;
       continue;

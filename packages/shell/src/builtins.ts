@@ -12,9 +12,13 @@ export interface ShellState {
   shiftPositional(n: number): void;
   /** Mark a name as local to the current function scope. */
   declareLocal(name: string): void;
+  /** Register a name as an associative array (`declare -A`). */
+  declareAssoc?(name: string): void;
   /** Wait for a job/pid, returning its exit code. */
   waitJob(spec?: number): Promise<number>;
   waitAll(): Promise<number>;
+  /** `wait -n`: wait for the NEXT job to finish; resolves 127 when none exist. */
+  waitNext?(): Promise<number>;
   /** Toggle `set -e` errexit. */
   setErrExit(v: boolean): void;
   /** Set a shell option by its long name (errexit, nounset, xtrace, pipefail, noclobber). */
@@ -45,11 +49,12 @@ export interface ShellState {
 
 /** Long names of the shell options toggled via `set` / `set -o`. */
 export type ShellOptionName =
-  | 'errexit' | 'nounset' | 'xtrace' | 'pipefail' | 'noclobber' | 'verbose' | 'posix';
+  | 'errexit' | 'nounset' | 'xtrace' | 'pipefail' | 'noclobber' | 'verbose' | 'posix'
+  | 'histexpand';
 
 /** `set -o`-settable option names in canonical (sorted) order — drives $SHELLOPTS. */
 export const SET_O_OPTIONS: ShellOptionName[] = [
-  'errexit', 'noclobber', 'nounset', 'pipefail', 'posix', 'verbose', 'xtrace',
+  'errexit', 'histexpand', 'noclobber', 'nounset', 'pipefail', 'posix', 'verbose', 'xtrace',
 ];
 
 /** Map of `set -X` short flags ↔ long option names. */
@@ -59,6 +64,7 @@ export const OPTION_FLAGS: Record<string, ShellOptionName> = {
   x: 'xtrace',
   v: 'verbose',
   C: 'noclobber',
+  H: 'histexpand',
 };
 
 /**
@@ -96,7 +102,7 @@ export const BUILTINS = [
   'test', '[', 'true', 'false', 'exit', 'eval', 'set', 'cat', ':',
   'local', 'declare', 'readonly', 'shift', 'return', 'getopts', 'read',
   'jobs', 'fg', 'bg', 'wait', 'kill', 'break', 'continue', 'source', '.', 'type',
-  'shopt', 'trap', 'disown', 'history', 'fc', 'exec',
+  'shopt', 'trap', 'disown', 'history', 'fc', 'exec', 'coproc',
 ] as const;
 
 const BUILTIN_SET = new Set<string>(BUILTINS);
@@ -186,17 +192,20 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
     case 'readonly': {
       // Assign NAME=value into the (function-local for `local`) env.
       const isLocal = name === 'local';
-      if (name === 'declare' && args.includes('-A') && (ctx.state?.getOption('posix') ?? false)) {
+      const isAssoc = name === 'declare' && args.includes('-A');
+      if (isAssoc && (ctx.state?.getOption('posix') ?? false)) {
         errOut(ctx, 'shell: declare: -A: not supported in POSIX mode\n');
         return 2;
       }
       for (const arg of args) {
         if (arg.startsWith('-')) continue; // ignore option flags (-i, -a, etc.)
         const eq = arg.indexOf('=');
+        const n = eq > 0 ? arg.slice(0, eq) : arg;
+        // `declare -A name` registers an associative array (G6).
+        if (isAssoc) ctx.state?.declareAssoc?.(n);
         if (eq > 0) {
-          const n = arg.slice(0, eq);
           if (isLocal) ctx.state?.declareLocal(n);
-          ctx.env[n] = arg.slice(eq + 1);
+          if (!isAssoc) ctx.env[n] = arg.slice(eq + 1);
         } else if (isLocal) {
           ctx.state?.declareLocal(arg);
           if (!(arg in ctx.env)) ctx.env[arg] = '';
@@ -268,6 +277,11 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
 
     case 'wait': {
       if (!ctx.state) return 0;
+      // `wait -n` — wait for the NEXT job to finish (G5). With no jobs, 127.
+      if (args.includes('-n')) {
+        if (!ctx.state.waitNext) return 127;
+        return ctx.state.waitNext();
+      }
       if (args.length === 0) return ctx.state.waitAll();
       let last = 0;
       for (const a of args) {
@@ -335,6 +349,14 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       if (args.length === 0) return 0;
       if (ctx.eval) return ctx.eval(args.join(' '));
       return 0;
+
+    case 'coproc':
+      // Coprocesses need an async-duplex pipe pair to a background job that this
+      // non-interactive, single-threaded runtime does not model. Emit a clear
+      // diagnostic (and non-zero exit) rather than a confusing
+      // command-not-found (G4 — documented limitation).
+      errOut(ctx, 'shell: coproc: not supported in this runtime\n');
+      return 1;
 
     case 'shopt':
       return runShopt(args, ctx);
@@ -616,7 +638,14 @@ function runGetopts(args: string[], ctx: BuiltinContext): number {
   return 0;
 }
 
-/** read [-r] [-u FD] NAME... — read one line (from stdin or fd FD), split on IFS into NAMEs. */
+/**
+ * read [-r] [-u FD] NAME... — read one line (from stdin or fd FD), split on IFS
+ * into NAMEs.
+ *
+ * G8 limitation: `$TMOUT` (and `read -t`) are accepted but inert. This is a
+ * non-interactive runtime with no line editor or idle-timeout loop, so there is
+ * no wall-clock read timeout to honor; stdin is already-buffered text.
+ */
 function runRead(args: string[], ctx: BuiltinContext): number {
   // Parse `-u FD` (and ignore -r). Remaining bare words are the target names.
   const names: string[] = [];

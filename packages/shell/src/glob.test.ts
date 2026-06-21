@@ -100,6 +100,48 @@ test('extglob with prefix/suffix foo@(bar|baz)', () => {
   expect(globMatch('fooqux', 'foo@(bar|baz)', o)).toBe(false);
 });
 
+// ── R1: !() negation embedded mid-pattern (regression) ───────────────────────
+
+test('embedded !(foo): x!(foo)y does NOT match xfooy, matches xbary', () => {
+  const o = { extglob: true };
+  expect(globMatch('xfooy', 'x!(foo)y', o)).toBe(false);
+  expect(globMatch('xbary', 'x!(foo)y', o)).toBe(true);
+  // empty middle: !(foo) can match the empty string, so "xy" matches
+  expect(globMatch('xy', 'x!(foo)y', o)).toBe(true);
+  // negated span that merely CONTAINS foo (but isn't exactly foo) matches
+  expect(globMatch('xffooy', 'x!(foo)y', o)).toBe(true);
+  expect(globMatch('xfooyfooy', 'x!(foo)y', o)).toBe(true);
+});
+
+test('standalone !(foo) matches multi-copy foofoo (!= foo)', () => {
+  const o = { extglob: true };
+  expect(globMatch('foofoo', '!(foo)', o)).toBe(true);
+  expect(globMatch('foobar', '!(foo)', o)).toBe(true);
+});
+
+test('standalone !(foo) still correct', () => {
+  const o = { extglob: true };
+  expect(globMatch('bar', '!(foo)', o)).toBe(true);
+  expect(globMatch('foo', '!(foo)', o)).toBe(false);
+  expect(globMatch('', '!(foo)', o)).toBe(true);
+});
+
+test('!() with suffix: !(foo).txt', () => {
+  const o = { extglob: true };
+  expect(globMatch('bar.txt', '!(foo).txt', o)).toBe(true);
+  // bash: "foo.txt" does NOT match !(foo).txt because foo is excluded before .txt
+  expect(globMatch('foo.txt', '!(foo).txt', o)).toBe(false);
+  // "foobar.txt" matches (foobar != foo)
+  expect(globMatch('foobar.txt', '!(foo).txt', o)).toBe(true);
+});
+
+test('empty !() negation: !() matches nothing-excluded (any string)', () => {
+  const o = { extglob: true };
+  // !() excludes the empty alternative, so it matches any NON-empty string
+  expect(globMatch('anything', '!()', o)).toBe(true);
+  expect(globMatch('', '!()', o)).toBe(false);
+});
+
 test('@( ) is literal when extglob disabled', () => {
   expect(globMatch('foo', '@(foo)')).toBe(false); // treated literally → no match
 });

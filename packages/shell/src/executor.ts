@@ -25,6 +25,7 @@ import { globMatch } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
 import { Expander, ExpansionError } from './expander.ts';
 import type { ShellEnv } from './expander.ts';
+import { expandHistory, HistoryEventNotFound } from './history-expand.ts';
 import { isBuiltin, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES } from './builtins.ts';
 import type { BuiltinContext, ShellState, ShellOptionName } from './builtins.ts';
 import type {
@@ -37,6 +38,24 @@ import type {
 export interface ShellFunction {
   name: string;
   body: Statement[];
+}
+
+/**
+ * Bash identity version (G7). Matches the reference shell's config:
+ * `BASH_VERSION` = `5.3.0(1)-release`; `BASH_VERSINFO` = the 6-element array.
+ */
+const BASH_VERSINFO_ELEMENTS = ['5', '3', '0', '1', 'release', 'mithic'] as const;
+const BASH_VERSION_STRING =
+  `${BASH_VERSINFO_ELEMENTS[0]}.${BASH_VERSINFO_ELEMENTS[1]}.${BASH_VERSINFO_ELEMENTS[2]}` +
+  `(${BASH_VERSINFO_ELEMENTS[3]})-${BASH_VERSINFO_ELEMENTS[4]}`;
+
+/**
+ * Compute `$SHLVL` from an inherited value (G7), per bash: <0 / 0 / >=1000 reset
+ * to 1; otherwise increment.
+ */
+function computeShlvl(inherited: number): number {
+  if (!Number.isFinite(inherited) || inherited < 0 || inherited === 0 || inherited >= 1000) return 1;
+  return inherited + 1;
 }
 
 /**
@@ -133,6 +152,10 @@ export class Executor implements ShellEnv {
     noclobber: false,
     verbose: false,
     posix: false,
+    // History expansion (`!!`, `!n`, ...) — bash enables `histexpand` for
+    // interactive shells. The Executor `exec()` entry IS the interactive REPL
+    // line here, so default it on; `set +H` disables it (M13).
+    histexpand: true,
   };
   /** `shopt` bash options (extglob/globstar/nullglob/dotglob/nocaseglob/nocasematch). */
   private shoptStore: Record<string, boolean> = {
@@ -151,6 +174,10 @@ export class Executor implements ShellEnv {
   private procSubSeq = 0;
   /** Deferred `>(cmd)` process substitutions to run after the current command. */
   private pendingProcSubs: Array<{ path: string; src: string }> = [];
+  /** LCG state for `$RANDOM` (G7); seedable via `RANDOM=n`. */
+  private randomState = BigInt(Date.now()) ^ 0x9e3779b97f4a7c15n;
+  /** Associative arrays (`declare -A`): name → string-keyed map (G6). Insertion-ordered. */
+  private assocArrays = new Map<string, Map<string, string>>();
 
   constructor(kernel: KernelClient, context: ShellContext, options: ExecutorOptions = {}) {
     this.kernel = kernel;
@@ -163,14 +190,52 @@ export class Executor implements ShellEnv {
     this.stderrSink = options.onStderr ?? ((s) => {
       if (typeof process !== 'undefined' && process.stderr) process.stderr.write(s);
     });
+    // $SHLVL: derive from the inherited value and store it back (G7).
+    const inherited = parseInt(this.context.env.SHLVL ?? '', 10);
+    this.context.env.SHLVL = String(computeShlvl(Number.isNaN(inherited) ? 0 : inherited));
+  }
+
+  /** Advance the LCG and return a 0..32767 pseudo-random integer ($RANDOM). */
+  private nextRandom(): number {
+    this.randomState = (this.randomState * 6364136223846793005n + 1442695040888963407n)
+      & 0xffffffffffffffffn;
+    return Number((this.randomState >> 33n) % 32768n);
   }
 
   // ── ShellEnv implementation (for the Expander) ──────────────────────────────
 
-  get(name: string): string | undefined { return this.context.env[name]; }
-  set(name: string, value: string): void { this.context.env[name] = value; }
-  has(name: string): boolean { return name in this.context.env; }
-  getArray(name: string): string[] | undefined { return this.arrays.get(name); }
+  get(name: string): string | undefined {
+    // `RANDOM` is dynamic — never let a stored value shadow the generator
+    // (assignment seeds it via `set`). `getSpecial` produces the value.
+    if (name === 'RANDOM') return undefined;
+    return this.context.env[name];
+  }
+  set(name: string, value: string): void {
+    // Assigning `RANDOM=n` seeds the generator rather than storing a scalar.
+    if (name === 'RANDOM') {
+      const seed = parseInt(value, 10);
+      if (!Number.isNaN(seed)) this.randomState = BigInt(seed >>> 0);
+      return;
+    }
+    // `SHLVL` is recomputed from the assigned value (bash); `BASH_VERSION` /
+    // `BASH_VERSINFO` are read-only identity vars (G7).
+    if (name === 'SHLVL') {
+      const n = parseInt(value, 10);
+      this.context.env.SHLVL = String(computeShlvl(Number.isNaN(n) ? 0 : n));
+      return;
+    }
+    if (name === 'BASH_VERSION' || name === 'BASH_VERSINFO') return;
+    this.context.env[name] = value;
+  }
+  has(name: string): boolean {
+    if (name === 'RANDOM' || name === 'BASH_VERSION' || name === 'BASH_VERSINFO') return true;
+    return name in this.context.env;
+  }
+  getArray(name: string): string[] | undefined {
+    if (name === 'BASH_VERSINFO') return [...BASH_VERSINFO_ELEMENTS];
+    return this.arrays.get(name);
+  }
+  getAssoc(name: string): Map<string, string> | undefined { return this.assocArrays.get(name); }
   get cwd(): string { return this.context.cwd; }
 
   getSpecial(name: string): string | undefined {
@@ -185,6 +250,10 @@ export class Executor implements ShellEnv {
       case '@':
       case '*': return (this.context.positional ?? []).join(' ');
       case 'PIPESTATUS': return this.pipeStatus.join(' ');
+      // Bash identity/state vars (G7).
+      case 'RANDOM': return String(this.nextRandom());
+      case 'BASH_VERSION': return BASH_VERSION_STRING;
+      case 'BASH_VERSINFO': return BASH_VERSINFO_ELEMENTS[0]; // bare ref → element 0
     }
     if (/^[1-9][0-9]*$/.test(name)) {
       return (this.context.positional ?? [])[parseInt(name, 10) - 1];
@@ -338,15 +407,52 @@ export class Executor implements ShellEnv {
   }
 
   private async execSelect(stmt: Statement): Promise<number> {
-    // No interactive TTY in this runtime: print the numbered menu to stderr and
-    // run the body once with the variable unset (read returns EOF), then stop.
+    // `select VAR in WORDS; do BODY; done` (G1). No interactive TTY here, so we
+    // read the menu choice from stdin (a `<` redirect or an upstream pipe), the
+    // same source `read` uses. Per iteration: print the numbered menu + the
+    // $PS3 prompt to stderr, read a line, set REPLY to the raw line and VAR to
+    // the selected word (empty for a non-numeric/out-of-range choice), then run
+    // the body. Loop until EOF or `break`. An empty (blank) line re-shows the
+    // menu without running the body (bash semantics).
     const exp = this.expander();
     let words: string[];
     if (stmt.words === undefined) words = this.getPositional();
     else { words = []; for (const w of stmt.words) words.push(...await exp.expandWord(w)); }
-    for (let k = 0; k < words.length; k++) this.writeStderr(`${k + 1}) ${words[k]}\n`);
-    this.context.env[stmt.varName!] = '';
-    return 0;
+
+    const ps3 = this.context.env.PS3 ?? '#? ';
+    const input = (await this.resolveStdin(stmt.redirects ?? [])) ?? this.pipeStdin ?? '';
+    const lines = input.length > 0 ? input.split('\n') : [];
+    // A trailing newline yields a final empty element; drop it so it isn't read
+    // as a (blank) selection.
+    if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+
+    const printMenu = (): void => {
+      for (let k = 0; k < words.length; k++) this.writeStderr(`${k + 1}) ${words[k]}\n`);
+    };
+
+    let status = 0;
+    let cursor = 0;
+    let needMenu = true;
+    for (;;) {
+      if (needMenu) { printMenu(); needMenu = false; }
+      this.writeStderr(ps3);
+      if (cursor >= lines.length) break; // EOF
+      const reply = lines[cursor++];
+      this.context.env.REPLY = reply;
+      if (reply.trim() === '') { needMenu = true; continue; } // blank line re-shows menu
+      const n = parseInt(reply.trim(), 10);
+      this.context.env[stmt.varName!] = (Number.isInteger(n) && n >= 1 && n <= words.length)
+        ? words[n - 1] : '';
+      try {
+        status = await this.execList(stmt.body ?? []);
+      } catch (e) {
+        if (e instanceof LoopBreak) { if (e.count > 1) throw new LoopBreak(e.count - 1); break; }
+        if (e instanceof LoopContinue) { if (e.count > 1) throw new LoopContinue(e.count - 1); continue; }
+        throw e;
+      }
+      if (this.exiting !== undefined) return status;
+    }
+    return status;
   }
 
   async runCommandSub(src: string): Promise<string> {
@@ -410,8 +516,15 @@ export class Executor implements ShellEnv {
         this.context.positional = p.slice(n);
       },
       declareLocal: (name) => this.declareLocal(name),
+      declareAssoc: (name) => {
+        if (!this.assocArrays.has(name)) this.assocArrays.set(name, new Map());
+        // An associative declaration shadows any prior scalar/indexed value.
+        delete this.context.env[name];
+        this.arrays.delete(name);
+      },
       waitJob: (id) => this.waitForJob(id),
       waitAll: () => this.waitAllJobs(),
+      waitNext: () => this.waitNextJob(),
       setErrExit: (v) => { this.options.errexit = v; },
       setOption: (name, value) => {
         this.options[name] = value;
@@ -440,13 +553,47 @@ export class Executor implements ShellEnv {
         this.jobs.splice(idx, 1);
         return true;
       },
-      killJob: (spec, _signal) => {
+      killJob: (spec, signal) => {
         const job = this.jobs.find((j) => j.id === spec || j.pids.includes(spec));
         if (!job) return false;
-        job.state = 'done';
+        // Deliver the signal to each of the job's processes via the kernel
+        // (M14). `signal` arrives `SIG`-stripped (e.g. 'TERM'); the kernel
+        // wants a `SIG`-prefixed name. When the kernel has no kill method
+        // (minimal mock), we still update the job table best-effort.
+        if (this.kernel.kill) {
+          const sig = signal.startsWith('SIG') ? signal : 'SIG' + signal;
+          for (const pid of job.pids) {
+            try { this.kernel.kill(pid, sig); } catch { /* already gone */ }
+          }
+        }
+        // SIGCONT/SIGSTOP change run state without terminating; everything else
+        // terminates the job in this runtime's job model.
+        if (signal === 'CONT') job.state = 'running';
+        else if (signal === 'STOP' || signal === 'TSTP') job.state = 'stopped';
+        else job.state = 'done';
         return true;
       },
     };
+  }
+
+  /**
+   * History-expansion stage (M13). Bash runs this on each physical input line
+   * BEFORE parsing when `histexpand` is on. We expand `!`-events against the
+   * recorded history, processing line-by-line so a `!!` on line 2 of a script
+   * can reference line 1 (a working copy is seeded from history and extended
+   * with each line's text). The persistent history is recorded later by `run()`
+   * via `describeStatement`; this stage only reads it.
+   */
+  private expandHistoryStage(src: string): string {
+    if (!src.includes('!')) return src;
+    const working = [...this.historyLines];
+    const lines = src.split('\n');
+    const expanded = lines.map((line) => {
+      const out = expandHistory(line, working);
+      if (line.trim() !== '') working.push(out);
+      return out;
+    });
+    return expanded.join('\n');
   }
 
   /** Append a non-blank line to history, honoring HISTSIZE (default 500). */
@@ -557,6 +704,18 @@ export class Executor implements ShellEnv {
    * entry point the CLI front-end uses.
    */
   async exec(src: string): Promise<number> {
+    if (this.options.histexpand) {
+      try {
+        src = this.expandHistoryStage(src);
+      } catch (e) {
+        if (e instanceof HistoryEventNotFound) {
+          this.writeStderr(`shell: ${e.message}\n`);
+          this.lastStatus = 1;
+          return 1;
+        }
+        throw e;
+      }
+    }
     let program: Program;
     try {
       program = this.parseSrc(src);
@@ -1278,6 +1437,15 @@ export class Executor implements ShellEnv {
       return;
     }
     if (a.index !== undefined) {
+      // Associative array element (`name[key]=v`, name declared via `declare -A`):
+      // the subscript is a STRING key, not a numeric index (G6).
+      const assoc = this.assocArrays.get(a.name);
+      if (assoc !== undefined) {
+        const key = await expander.substituteOnly(a.index);
+        const val = await expander.expandToString(a.value);
+        assoc.set(key, a.append ? (assoc.get(key) ?? '') + val : val);
+        return;
+      }
       const idx = parseInt(await expander.substituteOnly(a.index), 10) || 0;
       const arr = this.arrays.get(a.name) ?? (this.context.env[a.name] !== undefined ? [this.context.env[a.name]] : []);
       const val = await expander.expandToString(a.value);
@@ -1289,6 +1457,14 @@ export class Executor implements ShellEnv {
     // Scalar (possibly append). If the name currently holds an array, `name+=v`
     // appends to element 0 in bash; we keep it simple and treat scalars only.
     const val = await expander.expandToString(a.value);
+    // RANDOM / SHLVL / BASH_VERSION[INFO] have special set() semantics (seed /
+    // recompute / read-only) — route through set() rather than writing env
+    // directly so `RANDOM=42` seeds the generator (G7).
+    if (a.name === 'RANDOM' || a.name === 'SHLVL'
+      || a.name === 'BASH_VERSION' || a.name === 'BASH_VERSINFO') {
+      this.set(a.name, a.append ? (this.context.env[a.name] ?? '') + val : val);
+      return;
+    }
     this.context.env[a.name] = a.append ? (this.context.env[a.name] ?? '') + val : val;
   }
 
@@ -1306,6 +1482,7 @@ export class Executor implements ShellEnv {
       cwd: this.context.cwd,
       nounset: () => this.nounset(),
       getArray: (n) => this.arrays.get(n),
+      getAssoc: (n) => this.assocArrays.get(n),
       posix: () => this.posix(),
       shopt: (n) => this.shopt(n),
       names: () => this.names(),
@@ -1404,6 +1581,27 @@ export class Executor implements ShellEnv {
       if (p) last = (await p) ?? 0;
     }
     return last;
+  }
+
+  /**
+   * `wait -n` (G5): wait for the NEXT job to finish and return its exit code.
+   * Each waited job is removed from the table so a subsequent `wait -n` advances
+   * to the next one (bash reaps the job). Returns 127 when there are no jobs.
+   */
+  private async waitNextJob(): Promise<number> {
+    if (this.jobs.length === 0) return 127;
+    const pending = this.jobs
+      .map((job) => ({ job, p: (job as Job & { promise?: Promise<number> }).promise }))
+      .filter((e): e is { job: Job; p: Promise<number> } => e.p !== undefined);
+    if (pending.length === 0) {
+      // No async promise to await (e.g. already-resolved jobs) — reap the first.
+      const reaped = this.jobs.shift()!;
+      return reaped.exitCode ?? 0;
+    }
+    // Race: whichever job finishes first resolves, then reap it.
+    const code = await Promise.race(pending.map((e) => e.p.then((c) => ({ job: e.job, c }))))
+      .then((r) => { this.jobs = this.jobs.filter((j) => j !== r.job); return r.c ?? 0; });
+    return code;
   }
 
   // ── dispatch helpers ──────────────────────────────────────────────────────────
