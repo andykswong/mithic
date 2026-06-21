@@ -62,6 +62,18 @@ interface ProcessEntry {
    * leave the runtime to GC — same accepted tradeoff as the OOM path.
    */
   interruptDead: boolean;
+  /**
+   * R1: incremented when the guest ENTERS the asyncified `__mithic_syscall`
+   * bridge (the WASM call stack suspends awaiting the host) and decremented when
+   * the host response resumes the stack. While > 0 the guest is Asyncify-SUSPENDED
+   * mid-syscall, and disposing the runtime in that state hits the same C-level
+   * assertion ("Assertion failed: list_empty(&rt->gc_obj_list)" in JS_FreeRuntime)
+   * as the OOM/interrupt paths. An EXTERNAL `kill()`/`dispose()` while this is > 0
+   * (e.g. the kernel's output-cap SIGKILL) therefore SKIPS `qjsRuntime.dispose()`
+   * and leaves the runtime to GC — same accepted tradeoff. A counter (not a bool)
+   * tolerates re-entrant/overlapping syscalls.
+   */
+  suspendedInSyscall: number;
 }
 
 /**
@@ -168,6 +180,7 @@ export class QuickJSRuntime implements Runtime {
       alive: true,
       oomDead: false,
       interruptDead: false,
+      suspendedInSyscall: 0,
     };
 
     // Interrupt handler enforces BOTH a wall-clock deadline (timeoutMs) AND a
@@ -225,8 +238,20 @@ export class QuickJSRuntime implements Runtime {
             error: { code: 'ENOSYS', message: 'fs/port unsupported: QuickJS backend has no transferable ports' },
           });
         }
-        const response = await options.onSyscall(call, args);
-        return jsonToHandle(ctx, response);
+        // R1: the WASM call stack is Asyncify-SUSPENDED for the duration of this
+        // await (awaiting the host). Mark the entry suspended so an external
+        // kill()/dispose() that lands while we are parked here SKIPS
+        // qjsRuntime.dispose() — disposing a suspended runtime aborts at the C
+        // level (list_empty(&rt->gc_obj_list) in JS_FreeRuntime), same as the
+        // OOM/interrupt paths. Cleared in finally so a normal resume re-enables
+        // the common-case clean dispose.
+        entry.suspendedInSyscall++;
+        try {
+          const response = await options.onSyscall(call, args);
+          return jsonToHandle(ctx, response);
+        } finally {
+          entry.suspendedInSyscall--;
+        }
       }
     );
     ctx.setProp(ctx.global, '__mithic_syscall', syscallFn);
@@ -308,7 +333,8 @@ export class QuickJSRuntime implements Runtime {
       } catch { /* ignore */ }
 
       if (promiseState?.type === 'rejected') {
-        // OOM (or other async rejection) propagated through the async wrapper.
+        // OOM (or other async rejection — e.g. an uncaught guest throw) propagated
+        // through the async wrapper.
         let exitCode = 1;
         try {
           if ('error' in promiseState && promiseState.error && ctx.alive) {
@@ -319,6 +345,13 @@ export class QuickJSRuntime implements Runtime {
             ) exitCode = 137;
           }
         } catch { /* ignore */ }
+        // R1: the rejection ERROR handle is caller-owned and MUST be disposed.
+        // Leaving it un-disposed leaves a live object on the runtime's gc_obj_list,
+        // so the later qjsRuntime.dispose() aborts at the C level
+        // ("Assertion failed: list_empty(&rt->gc_obj_list)" in JS_FreeRuntime) —
+        // the exact native abort an uncaught guest throw produced. Disposing it
+        // here lets the common error case dispose cleanly (no leaked runtime).
+        try { if ('error' in promiseState && promiseState.error) promiseState.error.dispose(); } catch { /* ignore */ }
         if (exitCode === 137) entry.oomDead = true;
         try { result.value.dispose(); } catch { /* ignore */ }
         this.#markExit(id, exitCode);
@@ -390,10 +423,16 @@ export class QuickJSRuntime implements Runtime {
     try {
       if (entry.ctx.alive) entry.ctx.dispose();
     } catch { /* already disposed */ }
-    // After OOM or interrupt-kill the runtime is in a corrupted state — disposing
-    // it triggers a C-level assertion ("Assertion failed: list_empty(&rt->gc_obj_list)").
-    // Leave it for GC instead of calling dispose() in either case.
-    if (!entry.oomDead && !entry.interruptDead) {
+    // After OOM, interrupt-kill, OR while the guest is Asyncify-SUSPENDED mid-
+    // syscall, the runtime cannot be disposed without hitting a C-level assertion
+    // ("Assertion failed: list_empty(&rt->gc_obj_list)" in JS_FreeRuntime). The
+    // suspended case is the external-kill scenario (R1): an output-cap SIGKILL (or
+    // any kill/dispose) lands while the guest is parked in `__mithic_syscall`
+    // awaiting a host response that may never come. In all three cases we SKIP
+    // dispose() and leave the runtime to GC — accepted tradeoff to avoid the native
+    // abort. A non-suspended runtime still disposes cleanly (no leak in the common
+    // case).
+    if (!entry.oomDead && !entry.interruptDead && entry.suspendedInSyscall === 0) {
       try {
         if (entry.qjsRuntime.alive) entry.qjsRuntime.dispose();
       } catch { /* already disposed */ }

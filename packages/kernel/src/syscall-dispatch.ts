@@ -412,7 +412,7 @@ export class SyscallDispatcher {
     'ipc/connect': (pid, a) => this.#ipcConnect(pid, a.id, parseIpcPath(a.args)),
     'dom/mutate': (pid, a) => res(ok(a.id, this.#domMutate(pid, parseDomMutate(a.args)))),
     'net/fetch': (pid, a) => this.#netFetch(pid, a.id, parseNetFetch(a.args)),
-    'process/spawn': (pid, a, ports) => this.#spawn(pid, a.id, a.args, ports),
+    'process/spawn': (pid, a, ports) => this.#spawn(pid, a.id, parseSpawn(a.args), ports),
     'process/pipeline': async (pid, a) => res(await this.#pipeline(pid, a.id, a.args)),
     'process/wait': async (pid, a) => res(ok(a.id, await this.#wait(pid, parseWait(a.args)))),
     'process/kill': (pid, a) => res(this.#kill(pid, a.id, parseKill(a.args))),
@@ -487,7 +487,7 @@ export class SyscallDispatcher {
   async #spawn(
     pid: number,
     id: number,
-    args: Record<string, unknown>,
+    spawnArgs: SpawnArgs & { portFds?: number[] },
     ports?: readonly MessagePort[],
   ): Promise<DispatchResult> {
     if (!this.#spawnChild) {
@@ -501,11 +501,6 @@ export class SyscallDispatcher {
     if (!this.#caps.checkProcess(pid, childCount) || !this.#withinChildLimit(pid, childCount + 1)) {
       this.#closePorts(ports);
       return res(fail(id, 'EPERM', 'process/spawn: missing process capability or child limit reached'));
-    }
-    const spawnArgs = normalizeSpawnArgs(args);
-    if (!spawnArgs) {
-      this.#closePorts(ports);
-      return res(fail(id, 'EINVAL', 'process/spawn: invalid arguments'));
     }
     const cwd = spawnArgs.cwd ?? this.#cwdOf(pid);
     const env = spawnArgs.env ?? {};
@@ -531,7 +526,7 @@ export class SyscallDispatcher {
     // Map transferred ports to child fds. `portFds[i]` is the child fd for
     // `ports[i]` (positional). Used by the guest to inject pipe ends it minted.
     const injectedPorts = new Map<number, MessagePort>();
-    const portFds = Array.isArray(args.portFds) ? args.portFds.map(Number) : [];
+    const portFds = spawnArgs.portFds ?? [];
     if (ports) {
       for (let i = 0; i < ports.length; i++) {
         const fd = portFds[i];
@@ -1559,18 +1554,70 @@ function relayToResponse(id: number, r: RelayPipeResult): SyscallResponse {
   return r.ok ? ok(id, r.result) : fail(id, r.error.code, r.error.message);
 }
 
-/** Coerce raw syscall args into a validated {@link SpawnArgs}, or undefined. */
-function normalizeSpawnArgs(args: Record<string, unknown>): SpawnArgs | undefined {
-  const path = typeof args.path === 'string' ? args.path : undefined;
-  const argv = Array.isArray(args.argv) ? args.argv.map(String) : undefined;
-  if (path === undefined || argv === undefined) return undefined;
-  const out: SpawnArgs = { path, argv };
-  if (args.env && typeof args.env === 'object') out.env = args.env as Record<string, string>;
-  if (typeof args.cwd === 'string') out.cwd = args.cwd;
-  if (args.fds && typeof args.fds === 'object') out.fds = args.fds as SpawnArgs['fds'];
+/**
+ * R4: boundary parse for `process/spawn` — validate the untrusted guest args
+ * into a typed {@link SpawnArgs} (plus the positional `portFds`). Unlike the
+ * other syscalls, `process/spawn` previously bypassed the `parse*` boundary and
+ * cast `env`/`fds` unchecked; here we validate every field exactly like the C2
+ * helpers, throwing {@link MalformedArgsError} (→ EINVAL) on bad input rather than
+ * silently dropping/coercing it (a non-object env, an array env, a non-string
+ * argv element, etc. all become EINVAL instead of reaching the spawn path).
+ * Optional fields stay optional; valid input is unchanged in behavior.
+ */
+function parseSpawn(args: Record<string, unknown>): SpawnArgs & { portFds?: number[] } {
+  if (typeof args.path !== 'string') throw new MalformedArgsError('process/spawn: path must be a string');
+  if (!Array.isArray(args.argv)) throw new MalformedArgsError('process/spawn: argv must be an array of strings');
+  const argv: string[] = [];
+  for (const a of args.argv) {
+    if (typeof a !== 'string') throw new MalformedArgsError('process/spawn: argv elements must be strings');
+    argv.push(a);
+  }
+  const out: SpawnArgs & { portFds?: number[] } = { path: args.path, argv };
+  if (args.env !== undefined) out.env = parseEnv(args.env, 'process/spawn');
+  if (args.cwd !== undefined) {
+    if (typeof args.cwd !== 'string') throw new MalformedArgsError('process/spawn: cwd must be a string');
+    out.cwd = args.cwd;
+  }
+  if (args.fds !== undefined) {
+    if (typeof args.fds !== 'object' || args.fds === null || Array.isArray(args.fds)) {
+      throw new MalformedArgsError('process/spawn: fds must be an object keyed by fd');
+    }
+    out.fds = args.fds as SpawnArgs['fds'];
+  }
   // A1: inline stdin bytes (feeds + closes the child's stdin when fd 0 is not
   // otherwise wired). Accept a Uint8Array directly.
-  if (args.stdinData instanceof Uint8Array) out.stdinData = args.stdinData;
+  if (args.stdinData !== undefined) {
+    if (!(args.stdinData instanceof Uint8Array)) {
+      throw new MalformedArgsError('process/spawn: stdinData must be a Uint8Array');
+    }
+    out.stdinData = args.stdinData;
+  }
+  // `portFds[i]` is the child fd for the i-th transferred port (positional). The
+  // ports themselves are mapped in #spawn; here we only validate the shape.
+  if (args.portFds !== undefined) {
+    if (!Array.isArray(args.portFds) || args.portFds.some((f) => typeof f !== 'number')) {
+      throw new MalformedArgsError('process/spawn: portFds must be an array of numbers');
+    }
+    out.portFds = args.portFds as number[];
+  }
+  return out;
+}
+
+/**
+ * R4: validate an `env` arg into a `Record<string, string>`. A plain object with
+ * all-string values passes through; anything else (a string, an array, null, or
+ * an object with a non-string value) is a {@link MalformedArgsError} (→ EINVAL).
+ * Shared by `process/spawn` so the cast that was previously unchecked is gone.
+ */
+function parseEnv(env: unknown, who: string): Record<string, string> {
+  if (typeof env !== 'object' || env === null || Array.isArray(env)) {
+    throw new MalformedArgsError(`${who}: env must be an object of string values`);
+  }
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env as Record<string, unknown>)) {
+    if (typeof v !== 'string') throw new MalformedArgsError(`${who}: env value for "${k}" must be a string`);
+    out[k] = v;
+  }
   return out;
 }
 
