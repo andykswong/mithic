@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MutationSerializer, VNode } from './remote-dom.ts';
+import { openRoot } from './fs-access.ts';
 import type { Guest } from './guest.ts';
 
 // ---------------------------------------------------------------------------
@@ -24,6 +25,7 @@ function makeStubGuest(): Guest {
     stderr: new WritableStream(),
     syscall: async () => undefined,
     fetch: (async () => { throw new Error('fetch not used in this stub'); }) as typeof fetch,
+    fs: openRoot(async () => undefined),
     onSignal: () => undefined,
     exit: () => undefined,
   };

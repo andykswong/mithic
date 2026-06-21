@@ -183,6 +183,64 @@ test('M-Fix 1: dom/event routes through MutationSerializer to the matching VNode
   kernelPort.close();
 });
 
+test('B3: guest.fs is a directory-handle-shaped root that drives fs/* over the control port', async () => {
+  const { guest, kernelPort } = makeGuest();
+  kernelPort.start?.();
+
+  // A minimal kernel fs over the control port: a single in-memory file.
+  let fileData = new Uint8Array();
+  const fds = new Map<number, { write: boolean }>();
+  let nextFd = 3;
+  kernelPort.onmessage = (e) => {
+    const req = e.data as { id: number; call: string; args: Record<string, unknown> };
+    if (req.id == null) return;
+    const reply = (result: unknown): void => { kernelPort.postMessage({ id: req.id, ok: true, result }); };
+    switch (req.call) {
+      case 'fs/open': {
+        const fd = nextFd++;
+        const oflags = (req.args.oflags ?? {}) as { write?: boolean; truncate?: boolean };
+        if (oflags.truncate) fileData = new Uint8Array();
+        fds.set(fd, { write: Boolean(oflags.write) });
+        reply({ fd });
+        break;
+      }
+      case 'fs/write': {
+        const data = req.args.data as Uint8Array;
+        const merged = new Uint8Array(fileData.byteLength + data.byteLength);
+        merged.set(fileData, 0); merged.set(data, fileData.byteLength);
+        fileData = merged;
+        reply({ written: data.byteLength });
+        break;
+      }
+      case 'fs/read': {
+        reply(fileData);
+        fileData = new Uint8Array(); // simple EOF-after-one-read for the test
+        break;
+      }
+      case 'fs/stat': reply({ type: 'file', size: fileData.byteLength }); break;
+      case 'fs/close': reply({}); break;
+      default: kernelPort.postMessage({ id: req.id, ok: false, error: { code: 'ENOSYS', message: req.call } });
+    }
+  };
+
+  expect(guest.fs.kind).toBe('directory');
+  expect(guest.fs.name).toBe('');
+
+  const fh = await guest.fs.getFileHandle('note.txt', { create: true });
+  expect(fh.kind).toBe('file');
+  const w = await fh.createWritable();
+  await w.write('persisted');
+  await w.close();
+
+  const file = await fh.getFile();
+  expect(await file.text()).toBe('persisted');
+
+  // The same handle accessor is memoized (lazy mint).
+  expect(guest.fs).toBe(guest.fs);
+
+  kernelPort.close();
+});
+
 test('B2: guest.fetch round-trips a net/fetch over the control port to a real Response', async () => {
   const { guest, kernelPort } = makeGuest();
   kernelPort.start?.();

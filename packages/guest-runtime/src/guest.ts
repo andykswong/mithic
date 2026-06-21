@@ -5,6 +5,8 @@ import type { SyscallCallOptions } from './syscall-client.ts';
 import { portToReadable, portToWritable } from './streams.ts';
 import type { Transport } from './transport.ts';
 import { createFetch } from './fetch.ts';
+import { openRoot } from './fs-access.ts';
+import type { GuestDirectoryHandle } from './fs-access.ts';
 
 export interface GuestOptions {
   control: MessagePort;
@@ -42,6 +44,14 @@ export interface Guest {
    * materialized bytes wrapped in a `Response` (streaming body is B6).
    */
   fetch: typeof fetch;
+  /**
+   * B3: the VFS root as a standard `FileSystemDirectoryHandle`-shaped handle,
+   * layered over the `fs/*` syscalls. Guest code depends on the WHATWG File
+   * System Access API (`getFileHandle`/`getDirectoryHandle`/`getFile`/
+   * `createWritable`/`keys`/`values`/`entries`); the integer fd stays internal.
+   * A getter so the handle is minted on first use only.
+   */
+  readonly fs: GuestDirectoryHandle;
   onSignal(cb: (signal: string, payload?: unknown) => void): void;
   /**
    * Subscribe to `dom/event` kernel events forwarded from the host (clicks,
@@ -116,6 +126,9 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
   // `exit()` does not double-post.
   let stdinClosed = false;
 
+  // B3: the File System Access root handle, minted lazily on first `guest.fs` use.
+  let fsRoot: GuestDirectoryHandle | undefined;
+
   /**
    * Tear down the stdin READ side on process exit: post an EPIPE up the pipe and
    * close the port, so the UPSTREAM producer (the previous pipeline stage writing
@@ -152,6 +165,7 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
     stderr,
     syscall: (call, args, opts) => client.syscall(call, args, opts),
     fetch: createFetch((call, args, opts) => client.syscall(call, args, opts)),
+    get fs() { return fsRoot ??= openRoot((call, args, opts) => client.syscall(call, args, opts)); },
     onSignal(cb) { signalListeners.push(cb); },
     onDomEvent(cb) { domEventListeners.push(cb); },
     exit(code) {

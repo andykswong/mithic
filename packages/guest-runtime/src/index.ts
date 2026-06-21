@@ -2,6 +2,14 @@ export { createGuest } from './guest.ts';
 export type { Guest, GuestOptions } from './guest.ts';
 export { createFetch } from './fetch.ts';
 export type { SyscallHook } from './fetch.ts';
+export {
+  openRoot,
+  GuestDirectoryHandle,
+  GuestFileHandle,
+  GuestFile,
+  GuestWritableFileStream,
+} from './fs-access.ts';
+export type { GetHandleOptions, WritableChunk } from './fs-access.ts';
 export { FdTable } from './fd-table.ts';
 export type { FdEntry } from './fd-table.ts';
 export { SyscallClient } from './syscall-client.ts';
