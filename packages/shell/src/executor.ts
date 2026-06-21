@@ -343,15 +343,52 @@ export class Executor implements ShellEnv {
   }
 
   private async execSelect(stmt: Statement): Promise<number> {
-    // No interactive TTY in this runtime: print the numbered menu to stderr and
-    // run the body once with the variable unset (read returns EOF), then stop.
+    // `select VAR in WORDS; do BODY; done` (G1). No interactive TTY here, so we
+    // read the menu choice from stdin (a `<` redirect or an upstream pipe), the
+    // same source `read` uses. Per iteration: print the numbered menu + the
+    // $PS3 prompt to stderr, read a line, set REPLY to the raw line and VAR to
+    // the selected word (empty for a non-numeric/out-of-range choice), then run
+    // the body. Loop until EOF or `break`. An empty (blank) line re-shows the
+    // menu without running the body (bash semantics).
     const exp = this.expander();
     let words: string[];
     if (stmt.words === undefined) words = this.getPositional();
     else { words = []; for (const w of stmt.words) words.push(...await exp.expandWord(w)); }
-    for (let k = 0; k < words.length; k++) this.writeStderr(`${k + 1}) ${words[k]}\n`);
-    this.context.env[stmt.varName!] = '';
-    return 0;
+
+    const ps3 = this.context.env.PS3 ?? '#? ';
+    const input = (await this.resolveStdin(stmt.redirects ?? [])) ?? this.pipeStdin ?? '';
+    const lines = input.length > 0 ? input.split('\n') : [];
+    // A trailing newline yields a final empty element; drop it so it isn't read
+    // as a (blank) selection.
+    if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+
+    const printMenu = (): void => {
+      for (let k = 0; k < words.length; k++) this.writeStderr(`${k + 1}) ${words[k]}\n`);
+    };
+
+    let status = 0;
+    let cursor = 0;
+    let needMenu = true;
+    for (;;) {
+      if (needMenu) { printMenu(); needMenu = false; }
+      this.writeStderr(ps3);
+      if (cursor >= lines.length) break; // EOF
+      const reply = lines[cursor++];
+      this.context.env.REPLY = reply;
+      if (reply.trim() === '') { needMenu = true; continue; } // blank line re-shows menu
+      const n = parseInt(reply.trim(), 10);
+      this.context.env[stmt.varName!] = (Number.isInteger(n) && n >= 1 && n <= words.length)
+        ? words[n - 1] : '';
+      try {
+        status = await this.execList(stmt.body ?? []);
+      } catch (e) {
+        if (e instanceof LoopBreak) { if (e.count > 1) throw new LoopBreak(e.count - 1); break; }
+        if (e instanceof LoopContinue) { if (e.count > 1) throw new LoopContinue(e.count - 1); continue; }
+        throw e;
+      }
+      if (this.exiting !== undefined) return status;
+    }
+    return status;
   }
 
   async runCommandSub(src: string): Promise<string> {

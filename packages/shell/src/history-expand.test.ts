@@ -32,7 +32,7 @@ test('embedded !! within a larger command', () => {
 });
 
 test('single-quoted ! is literal', () => {
-  expect(expandHistory("echo 'a!b'", H)).toBe("echo 'a!b'");
+  expect(expandHistory('echo \'a!b\'', H)).toBe('echo \'a!b\'');
 });
 
 test('! followed by space / = / ( is literal', () => {
@@ -60,4 +60,10 @@ test('!! against empty history throws', () => {
 
 test('double-quoted ! is still expanded (bash semantics)', () => {
   expect(expandHistory('echo "x !! y"', H)).toBe('echo "x grep foo bar y"');
+});
+
+test('$! and ${!x} are parameter refs, left untouched', () => {
+  expect(expandHistory('echo "$!"', H)).toBe('echo "$!"');
+  expect(expandHistory('echo $!', H)).toBe('echo $!');
+  expect(expandHistory('echo ${!prefix*}', H)).toBe('echo ${!prefix*}');
 });

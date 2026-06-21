@@ -59,8 +59,12 @@ export function expandHistory(line: string, history: readonly string[]): string 
 
     if (c === '!' && !inSingle) {
       const next = line[i + 1];
+      const prev = line[i - 1];
       // `!` at end of line, or followed by whitespace / `=` / `(` is literal.
-      if (next === undefined || next === ' ' || next === '\t' || next === '=' || next === '(') {
+      // A `!` immediately preceded by `$` or `{` is a parameter ref (`$!`,
+      // `${!x}`), not a history event. (bash protects these.)
+      if (next === undefined || next === ' ' || next === '\t' || next === '=' || next === '('
+        || prev === '$' || prev === '{') {
         out += c; i++; continue;
       }
       const ev = parseEvent(line, i);
