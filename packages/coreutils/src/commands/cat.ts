@@ -15,7 +15,7 @@
  *   - operands: file paths to read in order; `-` (or none) reads stdin.
  *   - `-n` / `--number`: number all output lines, 1-based, right-aligned in 6.
  */
-import { defineCommand, parseArgs, readAll, writeBytes, writeLine } from '../harness.ts';
+import { defineCommand, isBrokenPipe, parseArgs, writeBytes, writeLine } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 /** Read a whole VFS file via the kernel `fs/*` syscalls into bytes. */
@@ -54,22 +54,71 @@ const catCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const err = io.stderr.getWriter();
   let exitCode = 0;
   let lineNo = 1;
+  let stdinAborted = false;
 
   try {
     for (const src of sources) {
-      let bytes: Uint8Array;
       if (src === '-') {
-        bytes = await readAll(io.stdin);
-      } else {
-        try {
-          bytes = await readFile(io, src);
-        } catch (e) {
-          // Mirror coreutils: report per-file error, continue, exit non-zero.
-          const msg = (e as { message?: string }).message ?? 'No such file or directory';
-          await writeLine(err, `${name}: ${src}: ${msg}`);
-          exitCode = 1;
+        if (!number) {
+          // Raw byte passthrough — no line semantics needed.
+          // Stream chunk-by-chunk so `cat bigfile | head -n1` can cancel early
+          // instead of buffering all of bigfile first (D1).
+          const reader = io.stdin.getReader();
+          try {
+            for (;;) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              if (!value || value.byteLength === 0) continue;
+              await writeBytes(out, value);
+            }
+          } catch (e) {
+            if (isBrokenPipe(e)) { stdinAborted = true; }
+            else throw e;
+          } finally {
+            reader.releaseLock();
+          }
           continue;
         }
+        // -n on stdin: buffer stdin fully to number lines (line semantics required).
+        const chunks: Uint8Array[] = [];
+        let total = 0;
+        const reader = io.stdin.getReader();
+        try {
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (value) { chunks.push(value); total += value.byteLength; }
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        const combined = new Uint8Array(total);
+        let off = 0;
+        for (const c of chunks) { combined.set(c, off); off += c.byteLength; }
+        const bytes = combined;
+        const text = new TextDecoder().decode(bytes);
+        if (text === '') continue;
+        const hasTrailing = text.endsWith('\n');
+        const body = hasTrailing ? text.slice(0, -1) : text;
+        const lines = body.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          const prefix = String(lineNo++).padStart(6, ' ') + '\t';
+          const isLast = i === lines.length - 1;
+          const suffix = !isLast || hasTrailing ? '\n' : '';
+          await writeBytes(out, new TextEncoder().encode(prefix + lines[i] + suffix));
+        }
+        continue;
+      }
+
+      let bytes: Uint8Array;
+      try {
+        bytes = await readFile(io, src);
+      } catch (e) {
+        // Mirror coreutils: report per-file error, continue, exit non-zero.
+        const msg = (e as { message?: string }).message ?? 'No such file or directory';
+        await writeLine(err, `${name}: ${src}: ${msg}`);
+        exitCode = 1;
+        continue;
       }
 
       if (!number) {
@@ -92,6 +141,7 @@ const catCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   } finally {
     await out.close().catch(() => { /* already closed */ });
     await err.close().catch(() => { /* already closed */ });
+    if (stdinAborted) await io.stdin.cancel().catch(() => {});
   }
 
   return exitCode;

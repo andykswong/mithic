@@ -2,6 +2,57 @@ import { expect, test, describe } from 'vitest';
 import { catCommand } from './cat.ts';
 import type { CommandIO } from '../harness.ts';
 
+// D1 regression: proves cat stdin passthrough streams incrementally rather than
+// buffering all stdin before writing. If cat uses readAll, it will never return
+// from an infinite stdin; with the streaming byte pump it writes each chunk as
+// it arrives, and a downstream broken-pipe (EPIPE) cancels the read loop.
+test('cat stdin passthrough terminates on downstream broken-pipe without waiting for EOF (D1)', async () => {
+  let stdinCancelledBeforeEof = false;
+  // A stdin that emits one chunk then parks — it will NEVER produce EOF unless cancelled.
+  let stdinController!: ReadableStreamDefaultController<Uint8Array>;
+  const stdin = new ReadableStream<Uint8Array>({
+    start(ctrl) { stdinController = ctrl; },
+    cancel() { stdinCancelledBeforeEof = true; },
+  });
+
+  // Enqueue one chunk so cat has something to read and write.
+  stdinController.enqueue(new TextEncoder().encode('line1\nline2\nline3\n'));
+
+  // A stdout that accepts the first write then throws EPIPE — simulates head closing after N lines.
+  let writeCount = 0;
+  const stdout = new WritableStream<Uint8Array>({
+    write(_chunk) {
+      writeCount++;
+      if (writeCount === 1) {
+        return Promise.reject(Object.assign(new Error('EPIPE'), { code: 'EPIPE' }));
+      }
+    },
+  });
+
+  const io: CommandIO = {
+    args: ['cat'],
+    env: {},
+    cwd: '/',
+    stdin,
+    stdout,
+    stderr: new WritableStream(),
+    syscall: async () => ({}),
+  };
+  const codePromise = catCommand(io);
+
+  // cat should see EPIPE, cancel stdin, and return — not hang waiting for EOF
+  const code = await Promise.race([
+    codePromise,
+    new Promise<number>((_, reject) =>
+      setTimeout(() => reject(new Error('cat did not terminate — likely stuck in readAll')), 2000)),
+  ]);
+
+  // cat terminated (any exit code is fine — it did not hang)
+  expect(typeof code).toBe('number');
+  // stdin was cancelled before reaching EOF — proves streaming, not buffering
+  expect(stdinCancelledBeforeEof).toBe(true);
+});
+
 // In-memory CommandIO builder: a fake VFS for fs/* syscalls, capturing streams.
 function makeIO(opts: {
   args: string[];
