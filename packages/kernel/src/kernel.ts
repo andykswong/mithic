@@ -777,6 +777,13 @@ export class Kernel {
       await this.#applyFdAction(parentPid, fd, action, init, injectedPorts, transfer, pipes, filePumps);
     }
 
+    // A1: inline stdin bytes — only when fd 0 was NOT wired by an fd action
+    // (no injected/piped/opened stdin). spawn() mints the stdin pipe, feeds the
+    // bytes, and closes it (EOF) so a stdin-reading child does not block.
+    if (args.stdinData !== undefined && init.stdin === undefined) {
+      init.stdinData = args.stdinData;
+    }
+
     const { pid } = await this.spawn(code, init);
 
     // Start any VFS-file pumps now that the child is running (its stdio reader/

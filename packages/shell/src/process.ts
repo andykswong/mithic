@@ -12,7 +12,7 @@
  * spawn. The kernel OWNS what commands exist — the shell spawns by NAME and the
  * kernel's command resolver maps it to guest code (or returns ENOENT).
  */
-import { createGuest } from '@mithic/guest-runtime';
+import { createGuest, portToReadable } from '@mithic/guest-runtime';
 import type { Guest } from '@mithic/guest-runtime';
 import { Executor } from './executor.ts';
 import type {
@@ -22,6 +22,7 @@ import type {
   PipelineRunResult,
   PipelineStageParams,
   SpawnHandle,
+  SpawnStreamHandle,
   SpawnParams,
 } from './kernel-client.ts';
 import { parseCliArgs, VERSION, HELP } from './cli.ts';
@@ -217,8 +218,70 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
         return { pid, stdout: Promise.resolve(new Uint8Array()) };
       }
     },
+    // A1: live-stream spawn. `process/spawn` with `fds:{1:{action:'pipe'}}`
+    // makes the kernel mint a stdout pipe, give the child the write end, and
+    // transfer the READ end back to the shell — surfaced here as a live
+    // ReadableStream via B5's port-carrying syscall. The caller pipes it into
+    // its own stdout so a large/unbounded final stage streams (no buffer-all).
+    // On relay backends no port is transferred (pipe-fd spawns ENOSYS-gate), so
+    // we degrade to a buffered `spawn` and return `stdout: undefined`.
+    async spawnStream(params: SpawnParams): Promise<SpawnStreamHandle> {
+      const [name, ...rest] = params.args ?? [];
+      const stage: Record<string, unknown> = {
+        path: params.code instanceof URL ? params.code.href : String(params.code),
+        argv: [name, ...rest],
+        env: params.env,
+        cwd: params.cwd,
+        fds: { 1: { action: 'pipe' } },
+      };
+      if (params.stdinData !== undefined) {
+        stage.stdinData = new TextEncoder().encode(params.stdinData);
+      }
+      try {
+        const { result, ports } = await guest.syscallPorts('process/spawn', stage);
+        const pid = (result as { pid: number }).pid;
+        // The kernel transfers the stdout read end as the (single) port. On a
+        // relay backend ports is empty → fall back to buffered capture.
+        const readPort = ports[0];
+        if (!readPort) {
+          const buffered = await this.spawn(params);
+          let bytes: Uint8Array | undefined;
+          if (buffered.stdout) bytes = await buffered.stdout;
+          exitCodes.set(pid, exitCodes.get(buffered.pid) ?? 0);
+          // Adapt the buffered bytes into a one-shot ReadableStream for a uniform
+          // caller, or leave undefined so the caller writes the captured bytes.
+          if (bytes && bytes.byteLength > 0) {
+            const b = bytes;
+            return { pid, stdout: new ReadableStream<Uint8Array>({ start(c) { c.enqueue(b); c.close(); } }) };
+          }
+          return { pid };
+        }
+        return { pid, stdout: portToReadable(readPort) };
+      } catch (e) {
+        if (!isNotFound(e)) throw e;
+        const pid = synthPid--;
+        onStderr(`shell: ${name}: command not found\n`);
+        exitCodes.set(pid, 127);
+        return { pid };
+      }
+    },
     async wait(pid: number) {
-      return { pid, code: exitCodes.get(pid) ?? 0 };
+      const recorded = exitCodes.get(pid);
+      if (recorded !== undefined) return { pid, code: recorded };
+      // A1/D4: a REAL pid (from spawnStream / direct spawn) has no pre-recorded
+      // code — await its exit via the kernel. Synthetic (negative) pids never
+      // reach here without a recorded code.
+      if (pid > 0) {
+        try {
+          const r = (await guest.syscall('process/wait', { pid })) as { code?: number } | undefined;
+          const code = r?.code ?? 0;
+          exitCodes.set(pid, code);
+          return { pid, code };
+        } catch {
+          return { pid, code: 0 };
+        }
+      }
+      return { pid, code: 0 };
     },
     async runPipeline(stages: PipelineStageParams[]): Promise<PipelineRunResult> {
       const pids = stages.map(() => synthPid--);

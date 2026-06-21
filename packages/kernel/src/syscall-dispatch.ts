@@ -1450,6 +1450,9 @@ function normalizeSpawnArgs(args: Record<string, unknown>): SpawnArgs | undefine
   if (args.env && typeof args.env === 'object') out.env = args.env as Record<string, string>;
   if (typeof args.cwd === 'string') out.cwd = args.cwd;
   if (args.fds && typeof args.fds === 'object') out.fds = args.fds as SpawnArgs['fds'];
+  // A1: inline stdin bytes (feeds + closes the child's stdin when fd 0 is not
+  // otherwise wired). Accept a Uint8Array directly.
+  if (args.stdinData instanceof Uint8Array) out.stdinData = args.stdinData;
   return out;
 }
 

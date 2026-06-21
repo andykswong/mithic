@@ -1573,10 +1573,47 @@ export class Executor implements ShellEnv {
       captureStdout: true,
       stdinData: stdin,
     };
+    // A1: prefer the live-stream spawn path — the child's stdout arrives as a
+    // ReadableStream we pump chunk-by-chunk into our stdout sink, so a large or
+    // unbounded producer streams rather than being buffered to completion (which
+    // defeats the kernel's credit-windowed back-pressure). Falls back to the
+    // buffered spawn on backends that don't transfer ports.
+    if (this.kernel.spawnStream) {
+      const handle = await this.kernel.spawnStream(params);
+      if (handle.stdout) await this.pumpToStdout(handle.stdout);
+      const { code: status } = await this.kernel.wait(handle.pid);
+      return status;
+    }
     const handle = await this.kernel.spawn(params);
     if (handle.stdout) await this.writeCaptured(handle.stdout);
     const { code: status } = await this.kernel.wait(handle.pid);
     return status;
+  }
+
+  /**
+   * A1: drain a live child-stdout ReadableStream into the shell's stdout sink,
+   * decoding incrementally (UTF-8 stream mode) so multi-byte chars spanning a
+   * chunk boundary aren't mangled. Cancels the stream if the sink throws (a
+   * broken downstream), propagating EPIPE up to the child via portToReadable.
+   */
+  private async pumpToStdout(stream: ReadableStream<Uint8Array>): Promise<void> {
+    const reader = stream.getReader();
+    const dec = new TextDecoder();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value && value.byteLength > 0) this.writeStdout(dec.decode(value, { stream: true }));
+      }
+      const tail = dec.decode();
+      if (tail) this.writeStdout(tail);
+    } catch {
+      // Downstream broke or stream errored — stop reading; the cancel below (via
+      // releaseLock + GC) and the kernel EOF wiring tear the child's pipe down.
+      try { await reader.cancel(); } catch { /* already closed */ }
+    } finally {
+      reader.releaseLock();
+    }
   }
 
   private async callFunction(name: string, argv: string[], localEnv: Record<string, string>): Promise<number> {
