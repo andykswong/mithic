@@ -24,10 +24,11 @@ import { evalArith } from './arith.ts';
 import { globMatch } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
 import { Expander, ExpansionError } from './expander.ts';
-import type { ShellEnv } from './expander.ts';
 import { expandHistory, HistoryEventNotFound } from './history-expand.ts';
 import { isBuiltin, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES } from './builtins.ts';
 import type { BuiltinContext, ShellState, ShellOptionName } from './builtins.ts';
+import { Environment, computeShlvl } from './environment.ts';
+import type { EnvHost } from './environment.ts';
 import type {
   DuplexFd,
   FsClient,
@@ -39,24 +40,6 @@ import type {
 export interface ShellFunction {
   name: string;
   body: Statement[];
-}
-
-/**
- * Bash identity version (G7). Matches the reference shell's config:
- * `BASH_VERSION` = `5.3.0(1)-release`; `BASH_VERSINFO` = the 6-element array.
- */
-const BASH_VERSINFO_ELEMENTS = ['5', '3', '0', '1', 'release', 'mithic'] as const;
-const BASH_VERSION_STRING =
-  `${BASH_VERSINFO_ELEMENTS[0]}.${BASH_VERSINFO_ELEMENTS[1]}.${BASH_VERSINFO_ELEMENTS[2]}` +
-  `(${BASH_VERSINFO_ELEMENTS[3]})-${BASH_VERSINFO_ELEMENTS[4]}`;
-
-/**
- * Compute `$SHLVL` from an inherited value (G7), per bash: <0 / 0 / >=1000 reset
- * to 1; otherwise increment.
- */
-function computeShlvl(inherited: number): number {
-  if (!Number.isFinite(inherited) || inherited < 0 || inherited === 0 || inherited >= 1000) return 1;
-  return inherited + 1;
 }
 
 /**
@@ -215,8 +198,10 @@ class FuncReturn extends Error {
 /** A redirect that cannot be performed (e.g. noclobber refusing to overwrite). */
 class RedirectError extends Error {}
 
-export class Executor implements ShellEnv {
+export class Executor {
   readonly context: ShellContext;
+  /** C4: the variable environment (vars/arrays/assoc/RANDOM/SHLVL) — the ShellEnv. */
+  private environment: Environment;
   private kernel: KernelClient;
   private resolve: CommandResolver;
   private fs: FsClient | undefined;
@@ -288,8 +273,6 @@ export class Executor implements ShellEnv {
   private procSubSeq = 0;
   /** Deferred `>(cmd)` process substitutions to run after the current command. */
   private pendingProcSubs: Array<{ path: string; src: string }> = [];
-  /** LCG state for `$RANDOM` (G7); seedable via `RANDOM=n`. */
-  private randomState = BigInt(Date.now()) ^ 0x9e3779b97f4a7c15n;
   /** Associative arrays (`declare -A`): name → string-keyed map (G6). Insertion-ordered. */
   private assocArrays = new Map<string, Map<string, string>>();
 
@@ -307,92 +290,28 @@ export class Executor implements ShellEnv {
     });
     // The root ambient frame: terminal sinks, no piped stdin, the persistent fd table.
     this.io = { stdout, stderr, stdin: undefined, fdTable: this.fdTable };
+    // C4: the variable environment. The Executor is the EnvHost — it supplies the
+    // status/positional specials and the cross-cutting glob / cmd-sub / flag
+    // accessors so Environment stays a focused variable store.
+    const host: EnvHost = {
+      lastStatus: () => this.lastStatus,
+      lastBgPid: () => this.lastBgPid,
+      pipeStatus: () => this.pipeStatus,
+      currentFlags: () => this.currentFlags(),
+      arrays: () => this.arrays,
+      assocArrays: () => this.assocArrays,
+      nounset: () => this.options.nounset,
+      posix: () => this.options.posix,
+      shopt: (n) => this.shoptStore[n] ?? false,
+      runCommandSub: (s) => this.runCommandSub(s),
+      listDir: (p) => this.listDir(p),
+      statPath: (p) => this.statPath(p),
+      procSub: (s, d) => this.procSub(s, d),
+    };
+    this.environment = new Environment(this.context, host);
     // $SHLVL: derive from the inherited value and store it back (G7).
     const inherited = parseInt(this.context.env.SHLVL ?? '', 10);
     this.context.env.SHLVL = String(computeShlvl(Number.isNaN(inherited) ? 0 : inherited));
-  }
-
-  /** Advance the LCG and return a 0..32767 pseudo-random integer ($RANDOM). */
-  private nextRandom(): number {
-    this.randomState = (this.randomState * 6364136223846793005n + 1442695040888963407n)
-      & 0xffffffffffffffffn;
-    return Number((this.randomState >> 33n) % 32768n);
-  }
-
-  // ── ShellEnv implementation (for the Expander) ──────────────────────────────
-
-  get(name: string): string | undefined {
-    // `RANDOM` is dynamic — never let a stored value shadow the generator
-    // (assignment seeds it via `set`). `getSpecial` produces the value.
-    if (name === 'RANDOM') return undefined;
-    return this.context.env[name];
-  }
-  set(name: string, value: string): void {
-    // Assigning `RANDOM=n` seeds the generator rather than storing a scalar.
-    if (name === 'RANDOM') {
-      const seed = parseInt(value, 10);
-      if (!Number.isNaN(seed)) this.randomState = BigInt(seed >>> 0);
-      return;
-    }
-    // `SHLVL` is recomputed from the assigned value (bash); `BASH_VERSION` /
-    // `BASH_VERSINFO` are read-only identity vars (G7).
-    if (name === 'SHLVL') {
-      const n = parseInt(value, 10);
-      this.context.env.SHLVL = String(computeShlvl(Number.isNaN(n) ? 0 : n));
-      return;
-    }
-    if (name === 'BASH_VERSION' || name === 'BASH_VERSINFO') return;
-    this.context.env[name] = value;
-  }
-  has(name: string): boolean {
-    if (name === 'RANDOM' || name === 'BASH_VERSION' || name === 'BASH_VERSINFO') return true;
-    return name in this.context.env;
-  }
-  getArray(name: string): string[] | undefined {
-    if (name === 'BASH_VERSINFO') return [...BASH_VERSINFO_ELEMENTS];
-    return this.arrays.get(name);
-  }
-  getAssoc(name: string): Map<string, string> | undefined { return this.assocArrays.get(name); }
-  get cwd(): string { return this.context.cwd; }
-
-  getSpecial(name: string): string | undefined {
-    switch (name) {
-      case '?': return String(this.lastStatus);
-      case '#': return String((this.context.positional ?? []).length);
-      case '$': return String(this.context.pid ?? 0);
-      // `$!` is empty (not "0") until a background job has been started.
-      case '!': return this.lastBgPid === 0 ? '' : String(this.lastBgPid);
-      case '-': return this.currentFlags();
-      case '0': return this.context.name ?? 'sh';
-      case '@':
-      case '*': return (this.context.positional ?? []).join(' ');
-      case 'PIPESTATUS': return this.pipeStatus.join(' ');
-      // Bash identity/state vars (G7).
-      case 'RANDOM': return String(this.nextRandom());
-      case 'BASH_VERSION': return BASH_VERSION_STRING;
-      case 'BASH_VERSINFO': return BASH_VERSINFO_ELEMENTS[0]; // bare ref → element 0
-    }
-    if (/^[1-9][0-9]*$/.test(name)) {
-      return (this.context.positional ?? [])[parseInt(name, 10) - 1];
-    }
-    if (name === 'PIPESTATUS') return this.pipeStatus.join(' ');
-    return undefined;
-  }
-
-  getPositional(): string[] { return this.context.positional ?? []; }
-
-  /** True when `set -u` (nounset) is active — the expander errors on unset vars. */
-  nounset(): boolean { return this.options.nounset; }
-
-  /** True when POSIX mode is active — the expander disables brace expansion. */
-  posix(): boolean { return this.options.posix; }
-
-  /** Read a `shopt` glob option (extglob/globstar/nullglob/dotglob/...). */
-  shopt(name: string): boolean { return this.shoptStore[name] ?? false; }
-
-  /** All set variable names (scalars + arrays), for `${!prefix*}`/`${!prefix@}`. */
-  names(): string[] {
-    return [...new Set([...Object.keys(this.context.env), ...this.arrays.keys()])];
   }
 
   /**
@@ -530,7 +449,7 @@ export class Executor implements ShellEnv {
     // menu without running the body (bash semantics).
     const exp = this.expander();
     let words: string[];
-    if (stmt.words === undefined) words = this.getPositional();
+    if (stmt.words === undefined) words = this.environment.getPositional();
     else { words = []; for (const w of stmt.words) words.push(...await exp.expandWord(w)); }
 
     const ps3 = this.context.env.PS3 ?? '#? ';
@@ -614,7 +533,7 @@ export class Executor implements ShellEnv {
     catch { return undefined; }
   }
 
-  private expander(): Expander { return new Expander(this); }
+  private expander(): Expander { return new Expander(this.environment); }
 
   // ── ShellState (for builtins that need richer state) ────────────────────────
 
@@ -926,7 +845,7 @@ export class Executor implements ShellEnv {
     const exp = this.expander();
     let words: string[];
     if (stmt.words === undefined) {
-      words = this.getPositional();
+      words = this.environment.getPositional();
     } else {
       words = [];
       for (const w of stmt.words) words.push(...await exp.expandWord(w));
@@ -1606,7 +1525,7 @@ export class Executor implements ShellEnv {
 
     const hasCommand = cmd.name !== '';
     const argExpander = hasCommand && Object.keys(localEnv).length > 0
-      ? new Expander(this.withOverlay(localEnv))
+      ? new Expander(this.environment.child(localEnv))
       : expander;
 
     const { name, argv } = await this.expandCommand(cmd, argExpander);
@@ -1720,32 +1639,13 @@ export class Executor implements ShellEnv {
     // directly so `RANDOM=42` seeds the generator (G7).
     if (a.name === 'RANDOM' || a.name === 'SHLVL'
       || a.name === 'BASH_VERSION' || a.name === 'BASH_VERSINFO') {
-      this.set(a.name, a.append ? (this.context.env[a.name] ?? '') + val : val);
+      // RANDOM / SHLVL / BASH_VERSION[INFO] have special set() semantics (seed /
+      // recompute / read-only) — route through Environment.set so `RANDOM=42`
+      // seeds the generator (G7).
+      this.environment.set(a.name, a.append ? (this.context.env[a.name] ?? '') + val : val);
       return;
     }
     this.context.env[a.name] = a.append ? (this.context.env[a.name] ?? '') + val : val;
-  }
-
-  private withOverlay(overlay: Record<string, string>): ShellEnv {
-    const env = { ...this.context.env, ...overlay };
-    return {
-      get: (n) => env[n],
-      set: (n, v) => { env[n] = v; this.context.env[n] = v; },
-      has: (n) => n in env,
-      getSpecial: (n) => this.getSpecial(n),
-      getPositional: () => this.getPositional(),
-      runCommandSub: (s) => this.runCommandSub(s),
-      listDir: (p) => this.listDir(p),
-      statPath: (p) => this.statPath(p),
-      cwd: this.context.cwd,
-      nounset: () => this.nounset(),
-      getArray: (n) => this.arrays.get(n),
-      getAssoc: (n) => this.assocArrays.get(n),
-      posix: () => this.posix(),
-      shopt: (n) => this.shopt(n),
-      names: () => this.names(),
-      procSub: (src, d) => this.procSub(src, d),
-    };
   }
 
   private async spawnExternal(name: string, argv: string[], localEnv: Record<string, string>, io: CommandIO, stdin?: string): Promise<number> {
