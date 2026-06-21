@@ -120,6 +120,53 @@ export interface ExecutorOptions {
   onStdout?: (s: string) => void;
   onStderr?: (s: string) => void;
   fs?: FsClient;
+  /**
+   * A3 Tier 2: the shell's OWN stdin as a LIVE byte stream. When present, plain
+   * `read` / `read -t` consume successive lines from it (a `read -t` over a
+   * stream with no data yet times out), instead of the pre-materialized string
+   * model. Here-docs / `pipeStdin` / `<` redirects still feed `read` via the
+   * string path. Absent ⇒ plain `read` falls back to the string `ctx.stdin`.
+   */
+  stdinStream?: ReadableStream<Uint8Array>;
+}
+
+/**
+ * A3 Tier 2: an incremental line reader over a live `ReadableStream<Uint8Array>`.
+ * `readLine()` resolves the next `\n`-terminated line (newline stripped), or the
+ * trailing partial line at EOF, or `undefined` once exhausted. A pull that has
+ * no buffered line awaits the next chunk — so a `read -t` can race it against a
+ * timer; a lost race does NOT drop data (consumed bytes stay in `#pending` and
+ * any in-flight chunk read is cached).
+ */
+class StreamLineReader {
+  #reader: ReadableStreamDefaultReader<Uint8Array>;
+  #dec = new TextDecoder();
+  #pending = '';
+  #eof = false;
+  /** A chunk read started by a prior (possibly timed-out) call, not yet used. */
+  #inflight: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
+
+  constructor(stream: ReadableStream<Uint8Array>) {
+    this.#reader = stream.getReader();
+  }
+
+  async readLine(): Promise<string | undefined> {
+    for (;;) {
+      const nl = this.#pending.indexOf('\n');
+      if (nl >= 0) { const line = this.#pending.slice(0, nl); this.#pending = this.#pending.slice(nl + 1); return line; }
+      if (this.#eof) { if (this.#pending.length > 0) { const l = this.#pending; this.#pending = ''; return l; } return undefined; }
+      // Reuse an in-flight chunk read (a prior read -t may have abandoned it on a
+      // timeout) so no chunk is lost; start a fresh one otherwise.
+      const p = this.#inflight ?? this.#reader.read();
+      this.#inflight = p;
+      const { value, done } = await p;
+      this.#inflight = undefined;
+      if (done) { this.#eof = true; continue; }
+      if (value && value.byteLength > 0) this.#pending += this.#dec.decode(value, { stream: true });
+    }
+  }
+
+  cancel(): void { void this.#reader.cancel().catch(() => { /* closed */ }); }
 }
 
 class ShellExit extends Error {
@@ -146,6 +193,16 @@ export class Executor implements ShellEnv {
   private kernel: KernelClient;
   private resolve: CommandResolver;
   private fs: FsClient | undefined;
+  /** A3-T2: the shell's live stdin stream + its lazily-built line reader. */
+  private stdinStream: ReadableStream<Uint8Array> | undefined;
+  private stdinLineReader: StreamLineReader | undefined;
+  /**
+   * A3-T2: an in-flight `readLine()` a prior `read -t` started but abandoned when
+   * its timer won. Cached so the NEXT plain read reuses the SAME promise (and the
+   * line it eventually yields) instead of starting a fresh read that races the
+   * orphan — mirrors the duplex-fd `pendingRead` cache. Cleared on consumption.
+   */
+  private stdinPendingLine: Promise<string | undefined> | undefined;
   private lastStatus = 0;
   private pipeStatus: number[] = [];
   private lastBgPid = 0;
@@ -202,6 +259,7 @@ export class Executor implements ShellEnv {
     this.context = context;
     this.resolve = options.resolve ?? ((name) => name);
     this.fs = options.fs;
+    this.stdinStream = options.stdinStream;
     this.stdoutSink = options.onStdout ?? ((s) => {
       if (typeof process !== 'undefined' && process.stdout) process.stdout.write(s);
     });
@@ -1229,6 +1287,44 @@ export class Executor implements ShellEnv {
     if (entry?.duplex) entry.pendingRead = undefined;
   }
 
+  /**
+   * A3 Tier 2: read one line of PLAIN stdin (no `-u`) for the `read` builtin.
+   *
+   * Precedence:
+   *   1. An active STRING stdin (`stringStdin` — a here-doc / `pipeStdin` / `<`
+   *      redirect): serve the first line. A `-t` over a materialized string is
+   *      immediate (data is already here or it is EOF) — never a timeout.
+   *   2. Otherwise the shell's LIVE stdin stream: read the next line, racing a
+   *      `-t` timer when set. On timeout, `timedOut` is true and the in-flight
+   *      chunk read is retained (no data dropped). No stream ⇒ EOF.
+   */
+  async readStdinLine(stringStdin: string | undefined, timeoutSec: number | undefined): Promise<{ line: string | undefined; timedOut: boolean }> {
+    if (stringStdin !== undefined) {
+      const nl = stringStdin.indexOf('\n');
+      if (stringStdin === '') return { line: undefined, timedOut: false };
+      return { line: nl >= 0 ? stringStdin.slice(0, nl) : stringStdin, timedOut: false };
+    }
+    if (!this.stdinStream) return { line: undefined, timedOut: false };
+    if (!this.stdinLineReader) this.stdinLineReader = new StreamLineReader(this.stdinStream);
+    // Reuse any in-flight line read a prior timed-out read abandoned (no data
+    // dropped); start a fresh one otherwise.
+    const readP = this.stdinPendingLine ?? this.stdinLineReader.readLine();
+    this.stdinPendingLine = readP;
+    if (timeoutSec === undefined) {
+      const line = await readP;
+      this.stdinPendingLine = undefined; // consumed
+      return { line, timedOut: false };
+    }
+    const timedOut = Symbol('t');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timerP = new Promise<typeof timedOut>((resolve) => { timer = setTimeout(() => resolve(timedOut), Math.max(0, timeoutSec * 1000)); });
+    const r = await Promise.race([readP, timerP]);
+    if (timer !== undefined) clearTimeout(timer);
+    if (r === timedOut) return { line: undefined, timedOut: true }; // leave pending cached
+    this.stdinPendingLine = undefined; // consumed
+    return { line: r, timedOut: false };
+  }
+
   private makeFileSink(path: string, append: boolean, closers: Array<() => void>): (s: string) => void {
     if (path === '/dev/null') return () => { /* discard */ };
     if (path === '/dev/stdout') return (s) => this.stdoutSink(s);
@@ -1843,6 +1939,7 @@ export class Executor implements ShellEnv {
       sourceFile: (args) => this.sourceFile(args),
       readFdLine: (fd) => this.readFdLine(fd),
       consumeFdLine: (fd) => this.consumeFdLine(fd),
+      readStdinLine: (s, t) => this.readStdinLine(s, t),
       doBreak: (n) => { throw new LoopBreak(n); },
       doContinue: (n) => { throw new LoopContinue(n); },
       doReturn: (n) => { throw new FuncReturn(n); },

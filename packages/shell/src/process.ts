@@ -428,10 +428,15 @@ export default async function main(boot: unknown): Promise<void> {
     const fsClient = makeFsClient(guest);
 
     // Script source: a `-c` command string, a script FILE read from the VFS, or
-    // (default) stdin.
+    // (default) stdin. When the script comes from `-c` / a file, the guest's
+    // stdin stream stays UNCONSUMED — surface it live to the executor so plain
+    // `read` / `read -t` work over it (A3 Tier 2). When the script IS stdin, it
+    // is drained here and there is no live stdin to offer.
     let script: string;
+    let stdinStream: ReadableStream<Uint8Array> | undefined;
     if (cli.commandString !== undefined) {
       script = cli.commandString;
+      stdinStream = guest.stdin;
     } else if (cli.scriptFile !== undefined) {
       try {
         script = await Promise.resolve(fsClient.fsRead(fsClient.fsOpen(cli.scriptFile, { read: true })));
@@ -441,6 +446,7 @@ export default async function main(boot: unknown): Promise<void> {
         guest.exit(127);
         return;
       }
+      stdinStream = guest.stdin;
     } else {
       script = await readAll(guest);
     }
@@ -456,10 +462,9 @@ export default async function main(boot: unknown): Promise<void> {
       },
       // The shell resolves bare command names by deferring to the KERNEL: it
       // passes the name straight through as spawnable "code" and the kernel's
-      // command resolver maps it (or returns ENOENT). The shell does not itself
-      // enumerate external commands. The FsClient adapter routes redirect I/O
-      // and glob through the guest's fs/* syscalls (best-effort; needs a vfs cap).
-      { onStdout, onStderr, resolve: (name) => name, fs: fsClient },
+      // command resolver maps it (or returns ENOENT). The FsClient adapter
+      // routes redirect I/O and glob through the guest's fs/* syscalls.
+      { onStdout, onStderr, resolve: (name) => name, fs: fsClient, stdinStream },
     );
     // Seam 1 (C1 ↔ M16): wire kernel-delivered signals to the shell's trap
     // dispatch. The kernel posts `{event:'signal', payload:{signal}}` over the
