@@ -110,18 +110,22 @@ test('D3: a backgrounded producer NEVER writes into a foreground `> file` redire
 });
 
 test('D3: a backgrounded producer NEVER pollutes a foreground `$(...)` capture', async () => {
-  // Invariant guard for the SECOND misroute target named in D3 (a `$(...)`
-  // command-substitution capture buffer). The redirect case above is the
-  // failing-first reproduction; this one asserts capture isolation holds both
-  // before and after the fix so the per-command I/O context can never route a
-  // bg producer's bytes into a captured value.
+  // The SECOND misroute target named in D3 — a `$(...)` command-substitution
+  // capture buffer. The bg producer resumes WHILE `CAP=$(fgcmd; echo captured)`
+  // is capturing (fgcmd parked on its wait, the capture sink installed). With the
+  // old shared-field design the bg bytes landed in the capture (CAP would be
+  // `BG_LEAK\ncaptured`); with the per-command I/O context the capture is exactly
+  // `captured` and the bg producer's bytes go to its OWN frame's terminal stdout.
   const { k, bgRelease, fgRelease, fgStarted } = mkRaceKernel();
   let out = '';
-  const ex = new Executor(k as any, { cwd: '/', env: {} } as any, {
+  let cap: string | undefined;
+  const ex = new Executor(k as any, { cwd: '/', env: { } } as any, {
     onStdout: (s) => { out += s; }, onStderr: () => {}, resolve: (n) => n,
   });
 
-  const run = ex.exec('bgproducer &\nCAP=$(fgcmd; echo captured)\necho "[$CAP]"');
+  // `printf %s "[$CAP]"` (no trailing newline) makes the exact captured value
+  // easy to assert from terminal stdout.
+  const run = ex.exec('bgproducer &\nCAP=$(fgcmd; printf captured)\nprintf "<%s>" "$CAP"');
 
   await fgStarted.promise;
   bgRelease.resolve();
@@ -131,6 +135,8 @@ test('D3: a backgrounded producer NEVER pollutes a foreground `$(...)` capture',
   await (ex as any).waitAllJobs?.();
   await new Promise((r) => setTimeout(r, 0));
 
-  expect(out).toContain('[captured]');
-  expect(out).not.toContain('BG_LEAK');
+  // CAP captured ONLY the cmd-sub body output — never the bg producer's bytes.
+  const m = out.match(/<([^>]*)>/);
+  cap = m?.[1];
+  expect(cap).toBe('captured');
 });

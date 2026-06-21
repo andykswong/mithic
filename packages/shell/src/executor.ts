@@ -101,6 +101,33 @@ export interface Job {
   exitCode?: number;
 }
 
+/**
+ * D3: a per-command I/O context. The executor THREADS this through the exec call
+ * chain instead of mutating shared instance fields, so a backgrounded statement
+ * carries its OWN sinks/stdin/fd-table and a foreground command's redirect (or a
+ * `$(...)` capture) installed AFTER the bg job parked can never re-route the bg
+ * producer's bytes — the old shared-mutable-field design's data race.
+ *
+ *   - `stdout` / `stderr`: where this command's output goes (a terminal sink, a
+ *     redirect file sink, a pipeline-stage capture buffer, or a cmd-sub buffer).
+ *   - `stdin`: an inherited compound-pipeline stage's piped stdin (was the
+ *     `pipeStdin` instance field); `undefined` ⇒ none.
+ *   - `fdTable`: the numbered file-descriptor table (`exec N>file`, `>&N`, coproc
+ *     fds). A child context that must isolate fd mutations (a background job)
+ *     gets a COPY; nested foreground contexts share the parent's table (so
+ *     `exec 3>f` persists, matching bash).
+ *
+ * Derive a child context with {@link Executor.deriveIo}. A `fork:true` derive
+ * (background jobs / subshells) snapshots the fd-table so the child's redirects
+ * do not leak back into the parent's live table.
+ */
+export interface CommandIO {
+  stdout: (s: string) => void;
+  stderr: (s: string) => void;
+  stdin: string | undefined;
+  fdTable: Map<number, FdEntry>;
+}
+
 /** Mutable shell state carried across statements. */
 export interface ShellContext {
   cwd: string;
@@ -209,8 +236,17 @@ export class Executor implements ShellEnv {
   /** Status of the most recent command substitution (`$(...)`), for M10. */
   private lastCmdSubStatus: number | undefined;
   private exiting: number | undefined;
-  private stdoutSink: (s: string) => void;
-  private stderrSink: (s: string) => void;
+  /**
+   * D3: the AMBIENT per-command I/O context. Synchronous helpers and the
+   * Expander→`$(...)` boundary read it; the async exec chain THREADS a
+   * {@link CommandIO} parameter and re-asserts it here at each method entry, so
+   * a synchronous write always targets the right frame. Post-`await` writers
+   * (`spawnExternal`/`writeCaptured`/`pumpToStdout`/pipeline drains) take an
+   * EXPLICIT frame param so a value resolved after the foreground swapped the
+   * ambient frame still lands in the original command's sinks — closing the
+   * background-job sink data race.
+   */
+  private io: CommandIO;
   private functions = new Map<string, ShellFunction>();
   /** Indexed arrays (`arr=(a b c)`), kept separate from scalar `context.env`. */
   private arrays = new Map<string, string[]>();
@@ -241,10 +277,13 @@ export class Executor implements ShellEnv {
   private traps = new Map<string, string>();
   /** Command history (most-recent-last). */
   private historyLines: string[] = [];
-  /** Per-shell numbered file-descriptor table (fd → sink/source), for exec/>&N. */
+  /**
+   * Per-shell PERSISTENT numbered file-descriptor table (fd → sink/source), for
+   * `exec N>file` / `>&N`. The ambient {@link io} frame's `fdTable` references
+   * THIS for foreground commands (so `exec` redirects persist); a forked
+   * (background / subshell) frame gets a snapshot copy via {@link deriveIo}.
+   */
   private fdTable = new Map<number, FdEntry>();
-  /** Inherited pipe stdin for a compound pipeline stage (M1); undefined ⇒ none. */
-  private pipeStdin: string | undefined;
   /** Monotonic counter for process-substitution temp file names. */
   private procSubSeq = 0;
   /** Deferred `>(cmd)` process substitutions to run after the current command. */
@@ -260,12 +299,14 @@ export class Executor implements ShellEnv {
     this.resolve = options.resolve ?? ((name) => name);
     this.fs = options.fs;
     this.stdinStream = options.stdinStream;
-    this.stdoutSink = options.onStdout ?? ((s) => {
+    const stdout = options.onStdout ?? ((s: string) => {
       if (typeof process !== 'undefined' && process.stdout) process.stdout.write(s);
     });
-    this.stderrSink = options.onStderr ?? ((s) => {
+    const stderr = options.onStderr ?? ((s: string) => {
       if (typeof process !== 'undefined' && process.stderr) process.stderr.write(s);
     });
+    // The root ambient frame: terminal sinks, no piped stdin, the persistent fd table.
+    this.io = { stdout, stderr, stdin: undefined, fdTable: this.fdTable };
     // $SHLVL: derive from the inherited value and store it back (G7).
     const inherited = parseInt(this.context.env.SHLVL ?? '', 10);
     this.context.env.SHLVL = String(computeShlvl(Number.isNaN(inherited) ? 0 : inherited));
@@ -383,10 +424,9 @@ export class Executor implements ShellEnv {
   /** Run a command-sub body WITHOUT trailing-newline stripping (for procsub files). */
   private async runCommandSubRaw(src: string): Promise<string> {
     let out = '';
-    const savedStdout = this.stdoutSink;
-    this.stdoutSink = (s) => { out += s; };
-    try { await this.run(this.parseSrc(src), true); }
-    finally { this.stdoutSink = savedStdout; }
+    // Capture into a derived child frame; stderr/fd-table inherit the ambient frame.
+    const capIo = this.deriveIo(this.io, { stdout: (s) => { out += s; }, stdin: undefined });
+    await this.run(this.parseSrc(src), true, capIo);
     return out;
   }
 
@@ -398,10 +438,8 @@ export class Executor implements ShellEnv {
     for (const { path, src } of pending) {
       let data = '';
       try { data = await Promise.resolve(this.fs.fsRead(this.fs.fsOpen(path, { read: true }))); } catch { data = ''; }
-      const savedPipe = this.pipeStdin;
-      this.pipeStdin = data;
-      try { await this.run(this.parseSrc(src), true); }
-      finally { this.pipeStdin = savedPipe; }
+      const subIo = this.deriveIo(this.io, { stdin: data });
+      await this.run(this.parseSrc(src), true, subIo);
     }
   }
 
@@ -482,7 +520,7 @@ export class Executor implements ShellEnv {
     catch { /* trap handler errors are non-fatal */ }
   }
 
-  private async execSelect(stmt: Statement): Promise<number> {
+  private async execSelect(stmt: Statement, io: CommandIO): Promise<number> {
     // `select VAR in WORDS; do BODY; done` (G1). No interactive TTY here, so we
     // read the menu choice from stdin (a `<` redirect or an upstream pipe), the
     // same source `read` uses. Per iteration: print the numbered menu + the
@@ -496,14 +534,14 @@ export class Executor implements ShellEnv {
     else { words = []; for (const w of stmt.words) words.push(...await exp.expandWord(w)); }
 
     const ps3 = this.context.env.PS3 ?? '#? ';
-    const input = (await this.resolveStdin(stmt.redirects ?? [])) ?? this.pipeStdin ?? '';
+    const input = (await this.resolveStdin(stmt.redirects ?? [])) ?? io.stdin ?? '';
     const lines = input.length > 0 ? input.split('\n') : [];
     // A trailing newline yields a final empty element; drop it so it isn't read
     // as a (blank) selection.
     if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 
     const printMenu = (): void => {
-      for (let k = 0; k < words.length; k++) this.writeStderr(`${k + 1}) ${words[k]}\n`);
+      for (let k = 0; k < words.length; k++) io.stderr(`${k + 1}) ${words[k]}\n`);
     };
 
     let status = 0;
@@ -511,7 +549,7 @@ export class Executor implements ShellEnv {
     let needMenu = true;
     for (;;) {
       if (needMenu) { printMenu(); needMenu = false; }
-      this.writeStderr(ps3);
+      io.stderr(ps3);
       if (cursor >= lines.length) break; // EOF
       const reply = lines[cursor++];
       this.context.env.REPLY = reply;
@@ -520,7 +558,7 @@ export class Executor implements ShellEnv {
       this.context.env[stmt.varName!] = (Number.isInteger(n) && n >= 1 && n <= words.length)
         ? words[n - 1] : '';
       try {
-        status = await this.execList(stmt.body ?? []);
+        status = await this.execList(stmt.body ?? [], io);
       } catch (e) {
         if (e instanceof LoopBreak) { if (e.count > 1) throw new LoopBreak(e.count - 1); break; }
         if (e instanceof LoopContinue) { if (e.count > 1) throw new LoopContinue(e.count - 1); continue; }
@@ -533,34 +571,33 @@ export class Executor implements ShellEnv {
 
   async runCommandSub(src: string): Promise<string> {
     let out = '';
-    const savedStdout = this.stdoutSink;
-    this.stdoutSink = (s) => { out += s; };
+    // Capture into a derived child frame (stderr/fd-table inherit the ambient
+    // frame). `run` saves+restores `this.io`, so the ambient frame is intact
+    // afterward — and the capture buffer cannot be re-routed by an interleaving
+    // foreground statement (D3).
+    const capIo = this.deriveIo(this.io, { stdout: (s) => { out += s; }, stdin: undefined });
     // `$(< file)` fast-read form (M5): an empty command body whose only content
     // is a single `< file` input redirect reads the file directly.
     const fast = src.match(/^\s*<\s*(\S+)\s*$/);
-    try {
-      if (fast) {
-        this.lastCmdSubStatus = await this.readFileForCmdSub(fast[1]);
-      } else {
-        this.lastCmdSubStatus = await this.run(this.parseSrc(src), /*nested*/ true);
-      }
-    } finally {
-      this.stdoutSink = savedStdout;
+    if (fast) {
+      this.lastCmdSubStatus = await this.readFileForCmdSub(fast[1], capIo);
+    } else {
+      this.lastCmdSubStatus = await this.run(this.parseSrc(src), /*nested*/ true, capIo);
     }
     return out;
   }
 
   /** Read a file for `$(< file)`, writing its contents to the (captured) sink. Returns status. */
-  private async readFileForCmdSub(rawPath: string): Promise<number> {
+  private async readFileForCmdSub(rawPath: string, io: CommandIO): Promise<number> {
     const path = await this.expander().expandToString(rawPath);
     const fs = this.fs;
     if (!fs) return 1;
     try {
       const data = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true })));
-      this.writeStdout(data);
+      io.stdout(data);
       return 0;
     } catch {
-      this.writeStderr(`shell: ${path}: No such file or directory\n`);
+      io.stderr(`shell: ${path}: No such file or directory\n`);
       return 1;
     }
   }
@@ -706,23 +743,28 @@ export class Executor implements ShellEnv {
 
   // ── program / statement execution ──────────────────────────────────────────
 
-  async run(program: Program, nested = false): Promise<number> {
+  async run(program: Program, nested = false, io: CommandIO = this.io): Promise<number> {
+    // D3: run against the supplied frame. Saving + restoring `this.io` lets a
+    // command-sub / procsub / background job pass its OWN frame without leaking
+    // it back to the caller's ambient frame.
+    const savedIo = this.io;
+    this.io = io;
     try {
       for (const stmt of program.body) {
         if (!nested) this.addHistory(describeStatement(stmt));
         try {
-          this.lastStatus = await this.execStatement(stmt);
+          this.lastStatus = await this.execStatement(stmt, io);
         } catch (e) {
           if (e instanceof ExpansionError) {
             // `set -u` unbound var / `${v:?}` — write to stderr and abort nonzero.
-            this.writeStderr(`shell: ${e.message}\n`);
+            io.stderr(`shell: ${e.message}\n`);
             this.lastStatus = 1;
             if (!nested) { this.exiting = 1; return 1; }
             return 1;
           }
           if (e instanceof SyntaxError) {
             // POSIX-mode rejection / bad redirect → diagnostic + nonzero (H1/C2).
-            this.writeStderr(`${e.message}\n`);
+            io.stderr(`${e.message}\n`);
             this.lastStatus = 2;
             if (!nested) { this.exiting = 2; return 2; }
             return 2;
@@ -731,11 +773,11 @@ export class Executor implements ShellEnv {
           // or function) → diagnostic + continue, NOT an uncaught throw (M8). A
           // `return` from a SOURCED script (nested) is valid and re-thrown so
           // sourceFile can use it as the script's exit code.
-          if (e instanceof LoopBreak) { this.writeStderr('shell: break: only meaningful in a `for\', `while\', or `until\' loop\n'); this.lastStatus = 1; continue; }
-          if (e instanceof LoopContinue) { this.writeStderr('shell: continue: only meaningful in a `for\', `while\', or `until\' loop\n'); this.lastStatus = 1; continue; }
+          if (e instanceof LoopBreak) { io.stderr('shell: break: only meaningful in a `for\', `while\', or `until\' loop\n'); this.lastStatus = 1; continue; }
+          if (e instanceof LoopContinue) { io.stderr('shell: continue: only meaningful in a `for\', `while\', or `until\' loop\n'); this.lastStatus = 1; continue; }
           if (e instanceof FuncReturn) {
             if (nested) throw e;
-            this.writeStderr('shell: return: can only `return\' from a function or sourced script\n');
+            io.stderr('shell: return: can only `return\' from a function or sourced script\n');
             this.lastStatus = 1; continue;
           }
           throw e;
@@ -754,6 +796,8 @@ export class Executor implements ShellEnv {
     } catch (e) {
       if (e instanceof ShellExit) return e.code;
       throw e;
+    } finally {
+      this.io = savedIo;
     }
     return this.lastStatus;
   }
@@ -806,65 +850,66 @@ export class Executor implements ShellEnv {
     return this.runTop(program);
   }
 
-  private async execStatement(stmt: Statement): Promise<number> {
+  private async execStatement(stmt: Statement, io: CommandIO): Promise<number> {
+    this.io = io;
     switch (stmt.type) {
-      case 'Pipeline': return this.withRedirects(stmt, () => this.execPipeline(stmt));
+      case 'Pipeline': return this.withRedirects(stmt, io, (cio) => this.execPipeline(stmt, cio));
       case 'And': {
-        const l = await this.execStatement(stmt.left!);
+        const l = await this.execStatement(stmt.left!, io);
         if (this.exiting !== undefined) return l;
-        return l === 0 ? this.execStatement(stmt.right!) : l;
+        return l === 0 ? this.execStatement(stmt.right!, io) : l;
       }
       case 'Or': {
-        const l = await this.execStatement(stmt.left!);
+        const l = await this.execStatement(stmt.left!, io);
         if (this.exiting !== undefined) return l;
-        return l !== 0 ? this.execStatement(stmt.right!) : l;
+        return l !== 0 ? this.execStatement(stmt.right!, io) : l;
       }
-      case 'If': return this.execIf(stmt);
-      case 'While': return this.withRedirects(stmt, () => this.execWhile(stmt));
-      case 'For': return this.withRedirects(stmt, () => this.execFor(stmt));
-      case 'Select': return this.withRedirects(stmt, () => this.execSelect(stmt));
-      case 'Case': return this.execCase(stmt);
+      case 'If': return this.execIf(stmt, io);
+      case 'While': return this.withRedirects(stmt, io, (cio) => this.execWhile(stmt, cio));
+      case 'For': return this.withRedirects(stmt, io, (cio) => this.execFor(stmt, cio));
+      case 'Select': return this.withRedirects(stmt, io, (cio) => this.execSelect(stmt, cio));
+      case 'Case': return this.execCase(stmt, io);
       case 'Function': {
         this.functions.set(stmt.funcName!, { name: stmt.funcName!, body: stmt.funcBody! });
         return 0;
       }
-      case 'Subshell': return this.execSubshell(stmt);
-      case 'Group': return this.withRedirects(stmt, () => this.execList(stmt.body ?? []));
-      case 'Coproc': return this.execCoproc(stmt);
+      case 'Subshell': return this.execSubshell(stmt, io);
+      case 'Group': return this.withRedirects(stmt, io, (cio) => this.execList(stmt.body ?? [], cio));
+      case 'Coproc': return this.execCoproc(stmt, io);
       case 'Arithmetic': return this.execArithCmd(stmt);
       case 'Cond': return this.execCond(stmt);
       default: return 0;
     }
   }
 
-  private async execList(list: Statement[]): Promise<number> {
+  private async execList(list: Statement[], io: CommandIO): Promise<number> {
     let status = 0;
     for (const s of list) {
-      status = await this.execStatement(s);
+      status = await this.execStatement(s, io);
       this.lastStatus = status;
       if (this.exiting !== undefined) return status;
     }
     return status;
   }
 
-  private async execIf(stmt: Statement): Promise<number> {
-    const cond = await this.execList(stmt.condition ?? []);
+  private async execIf(stmt: Statement, io: CommandIO): Promise<number> {
+    const cond = await this.execList(stmt.condition ?? [], io);
     if (this.exiting !== undefined) return cond;
-    if (cond === 0) return this.execList(stmt.then ?? []);
-    if (stmt.else) return this.execList(stmt.else);
+    if (cond === 0) return this.execList(stmt.then ?? [], io);
+    if (stmt.else) return this.execList(stmt.else, io);
     return 0;
   }
 
-  private async execWhile(stmt: Statement): Promise<number> {
+  private async execWhile(stmt: Statement, io: CommandIO): Promise<number> {
     let status = 0;
     const until = stmt.until === true;
     for (;;) {
-      const cond = await this.execList(stmt.condition ?? []);
+      const cond = await this.execList(stmt.condition ?? [], io);
       if (this.exiting !== undefined) return cond;
       const enter = until ? cond !== 0 : cond === 0;
       if (!enter) break;
       try {
-        status = await this.execList(stmt.body ?? []);
+        status = await this.execList(stmt.body ?? [], io);
       } catch (e) {
         if (e instanceof LoopBreak) { if (e.count > 1) throw new LoopBreak(e.count - 1); break; }
         if (e instanceof LoopContinue) { if (e.count > 1) throw new LoopContinue(e.count - 1); continue; }
@@ -875,8 +920,8 @@ export class Executor implements ShellEnv {
     return status;
   }
 
-  private async execFor(stmt: Statement): Promise<number> {
-    if (stmt.arithFor) return this.execArithFor(stmt);
+  private async execFor(stmt: Statement, io: CommandIO): Promise<number> {
+    if (stmt.arithFor) return this.execArithFor(stmt, io);
     let status = 0;
     const exp = this.expander();
     let words: string[];
@@ -889,7 +934,7 @@ export class Executor implements ShellEnv {
     for (const word of words) {
       this.context.env[stmt.varName!] = word;
       try {
-        status = await this.execList(stmt.body ?? []);
+        status = await this.execList(stmt.body ?? [], io);
       } catch (e) {
         if (e instanceof LoopBreak) { if (e.count > 1) throw new LoopBreak(e.count - 1); break; }
         if (e instanceof LoopContinue) { if (e.count > 1) throw new LoopContinue(e.count - 1); continue; }
@@ -906,7 +951,7 @@ export class Executor implements ShellEnv {
    * `incr`. Uses the arithmetic evaluator over a live env proxy so assignments
    * persist. A safety cap prevents a runaway non-terminating loop.
    */
-  private async execArithFor(stmt: Statement): Promise<number> {
+  private async execArithFor(stmt: Statement, io: CommandIO): Promise<number> {
     let status = 0;
     const env = this.arithEnvForExpr();
     if (stmt.arithInit) evalArith(stmt.arithInit, env);
@@ -916,7 +961,7 @@ export class Executor implements ShellEnv {
       if (cond !== '' && evalArith(cond, env) === 0) break;
       if (++guard > 1_000_000) break;
       try {
-        status = await this.execList(stmt.body ?? []);
+        status = await this.execList(stmt.body ?? [], io);
       } catch (e) {
         if (e instanceof LoopBreak) { if (e.count > 1) throw new LoopBreak(e.count - 1); break; }
         if (e instanceof LoopContinue) { if (e.count > 1) throw new LoopContinue(e.count - 1); /* fall to incr */ }
@@ -937,14 +982,14 @@ export class Executor implements ShellEnv {
     }) as Record<string, string>;
   }
 
-  private async execCase(stmt: Statement): Promise<number> {
+  private async execCase(stmt: Statement, io: CommandIO): Promise<number> {
     const exp = this.expander();
     const word = await exp.expandToString(stmt.caseWord!);
     for (const clause of stmt.clauses ?? []) {
       for (const rawPat of clause.patterns) {
         const pat = await exp.expandToString(rawPat);
         if (globMatch(word, pat, this.globMatchOpts())) {
-          return this.execList(clause.body);
+          return this.execList(clause.body, io);
         }
       }
     }
@@ -962,7 +1007,7 @@ export class Executor implements ShellEnv {
    * they are caught and the subshell ends with the appropriate status rather
    * than throwing uncaught into the parent.
    */
-  private async execSubshell(stmt: Statement): Promise<number> {
+  private async execSubshell(stmt: Statement, io: CommandIO): Promise<number> {
     const savedEnv = { ...this.context.env };
     const savedCwd = this.context.cwd;
     const savedPositional = this.context.positional ? [...this.context.positional] : undefined;
@@ -972,8 +1017,11 @@ export class Executor implements ShellEnv {
     const savedArrays = new Map(this.arrays);
     const savedExiting = this.exiting;
     this.exiting = undefined;
+    // A subshell forks its I/O context: redirects / `exec N>f` inside it (its
+    // own fd-table snapshot) must not leak back to the parent's live table.
+    const subIo = this.deriveIo(io, {}, /*fork*/ true);
     try {
-      let status = await this.execList(stmt.body ?? []);
+      let status = await this.execList(stmt.body ?? [], subIo);
       // An `exit` inside the subshell sets `this.exiting`; that is the subshell's
       // own exit code and must NOT propagate to the parent.
       if (this.exiting !== undefined) status = this.exiting;
@@ -1060,18 +1108,18 @@ export class Executor implements ShellEnv {
 
   // ── redirects ───────────────────────────────────────────────────────────────
 
-  /** Run `fn` with the statement's compound redirects applied to the output sinks. */
-  private async withRedirects(stmt: Statement, fn: () => Promise<number>): Promise<number> {
+  /** Run `fn(io)` with the statement's compound redirects applied to a derived frame. */
+  private async withRedirects(stmt: Statement, io: CommandIO, fn: (io: CommandIO) => Promise<number>): Promise<number> {
     const redirects = stmt.redirects;
-    if (!redirects || redirects.length === 0) return fn();
+    if (!redirects || redirects.length === 0) return fn(io);
     let restore: () => void;
     try {
-      restore = await this.applyRedirects(redirects);
+      restore = await this.applyRedirects(redirects, io);
     } catch (e) {
-      if (e instanceof RedirectError) { this.writeStderr(`shell: ${e.message}\n`); return 1; }
+      if (e instanceof RedirectError) { io.stderr(`shell: ${e.message}\n`); return 1; }
       throw e;
     }
-    try { return await fn(); } finally { restore(); }
+    try { return await fn(io); } finally { restore(); }
   }
 
   /**
@@ -1080,19 +1128,19 @@ export class Executor implements ShellEnv {
    * dup like `exec 3>&1` captures stdout's current target without forming a
    * self-referential loop when stdout is later redirected to fd 3.
    */
-  private sinkForFd(fd: number): (s: string) => void {
-    if (fd === 1) return this.stdoutSink;
-    if (fd === 2) return this.stderrSink;
-    const entry = this.fdTable.get(fd);
+  private sinkForFd(fd: number, io: CommandIO): (s: string) => void {
+    if (fd === 1) return io.stdout;
+    if (fd === 2) return io.stderr;
+    const entry = io.fdTable.get(fd);
     if (entry?.sink) return entry.sink;
     return () => { /* fd not open for writing — discard */ };
   }
 
-  /** Point a numbered fd at a sink (temporary, for the duration of a command). */
-  private setFdSink(fd: number, sink: (s: string) => void): void {
-    if (fd === 1) this.stdoutSink = sink;
-    else if (fd === 2) this.stderrSink = sink;
-    else { const e = this.fdTable.get(fd) ?? { mode: 'write' as const }; e.sink = sink; this.fdTable.set(fd, e); }
+  /** Point a numbered fd at a sink in `io` (temporary, for the duration of a command). */
+  private setFdSink(fd: number, sink: (s: string) => void, io: CommandIO): void {
+    if (fd === 1) io.stdout = sink;
+    else if (fd === 2) io.stderr = sink;
+    else { const e = io.fdTable.get(fd) ?? { mode: 'write' as const }; e.sink = sink; io.fdTable.set(fd, e); }
   }
 
   /**
@@ -1101,13 +1149,17 @@ export class Executor implements ShellEnv {
    * `N>&-` (close), numbered fds via the per-shell {@link fdTable}, and the
    * `/dev/null`/`/dev/stdout`/`/dev/stderr` device paths.
    */
-  private async applyRedirects(redirects: Redirect[]): Promise<() => void> {
+  private async applyRedirects(redirects: Redirect[], io: CommandIO): Promise<() => void> {
     const exp = this.expander();
-    const savedStdout = this.stdoutSink;
-    const savedStderr = this.stderrSink;
+    const savedStdout = io.stdout;
+    const savedStderr = io.stderr;
     const savedFds = new Map<number, FdEntry | undefined>();
     const closers: Array<() => void> = [];
-    const snapshotFd = (fd: number): void => { if (fd !== 1 && fd !== 2 && !savedFds.has(fd)) savedFds.set(fd, this.fdTable.get(fd)); };
+    const snapshotFd = (fd: number): void => { if (fd !== 1 && fd !== 2 && !savedFds.has(fd)) savedFds.set(fd, io.fdTable.get(fd)); };
+    // `/dev/stdout` / `/dev/stderr` redirect targets resolve to the frame's
+    // ORIGINAL sinks (captured now), so `cmd 1>&2 2>file` and `> /dev/stdout`
+    // behave like the unredirected destinations rather than chasing the live frame.
+    const base: CommandIO = { stdout: savedStdout, stderr: savedStderr, stdin: io.stdin, fdTable: io.fdTable };
 
     for (const r of redirects) {
       if (r.op === '<' || r.op === '<<' || r.op === '<<<' || r.op === '<>') continue; // stdin handled per-command
@@ -1118,9 +1170,9 @@ export class Executor implements ShellEnv {
         const fd = r.fd ?? 1;
         snapshotFd(fd);
         const tgt = r.target === '-' ? '-' : await exp.expandToString(r.target);
-        if (tgt === '-') { this.setFdSink(fd, () => { /* closed */ }); if (fd > 2) this.fdTable.delete(fd); continue; }
+        if (tgt === '-') { this.setFdSink(fd, () => { /* closed */ }, io); if (fd > 2) io.fdTable.delete(fd); continue; }
         const dst = parseInt(tgt, 10);
-        if (!Number.isNaN(dst)) this.setFdSink(fd, this.sinkForFd(dst));
+        if (!Number.isNaN(dst)) this.setFdSink(fd, this.sinkForFd(dst, base), io);
         continue;
       }
 
@@ -1136,16 +1188,16 @@ export class Executor implements ShellEnv {
           throw new RedirectError(`${path}: cannot overwrite existing file`);
         }
       }
-      const sink = this.makeFileSink(path, append, closers);
-      if (r.op === '&>' || r.op === '&>>') { this.stdoutSink = sink; this.stderrSink = sink; }
-      else { snapshotFd(fd); this.setFdSink(fd, sink); }
+      const sink = this.makeFileSink(path, append, closers, base);
+      if (r.op === '&>' || r.op === '&>>') { io.stdout = sink; io.stderr = sink; }
+      else { snapshotFd(fd); this.setFdSink(fd, sink, io); }
     }
 
     return () => {
       for (const c of closers) c();
-      this.stdoutSink = savedStdout;
-      this.stderrSink = savedStderr;
-      for (const [fd, prev] of savedFds) { if (prev === undefined) this.fdTable.delete(fd); else this.fdTable.set(fd, prev); }
+      io.stdout = savedStdout;
+      io.stderr = savedStderr;
+      for (const [fd, prev] of savedFds) { if (prev === undefined) io.fdTable.delete(fd); else io.fdTable.set(fd, prev); }
     };
   }
 
@@ -1155,21 +1207,21 @@ export class Executor implements ShellEnv {
    * are buffered for `read -u N`; `N>&M` dups; `N>&-` closes. Returns 1 on a
    * missing input file (and writes a diagnostic).
    */
-  private async execBuiltinRedirects(redirects: Redirect[]): Promise<number> {
+  private async execBuiltinRedirects(redirects: Redirect[], io: CommandIO): Promise<number> {
     const exp = this.expander();
     const fs = this.fs;
     for (const r of redirects) {
       const fd = r.fd ?? (r.op === '<' || r.op === '<>' ? 0 : 1);
       if (r.op === '>&') {
         const tgt = r.target === '-' ? '-' : await exp.expandToString(r.target);
-        if (tgt === '-') { this.closeFdEntry(fd); this.fdTable.delete(fd); continue; }
+        if (tgt === '-') { this.closeFdEntry(fd, io); io.fdTable.delete(fd); continue; }
         const dst = parseInt(tgt, 10);
-        if (!Number.isNaN(dst)) { this.closeFdEntry(fd); this.fdTable.set(fd, { mode: 'write', sink: this.sinkForFd(dst) }); }
+        if (!Number.isNaN(dst)) { this.closeFdEntry(fd, io); io.fdTable.set(fd, { mode: 'write', sink: this.sinkForFd(dst, io) }); }
         continue;
       }
       if (r.op === '<' || r.op === '<>') {
         const path = await exp.expandToString(r.target);
-        if (!fs) { this.writeStderr(`shell: exec: ${path}: cannot open\n`); return 1; }
+        if (!fs) { io.stderr(`shell: exec: ${path}: cannot open\n`); return 1; }
         // STREAMING `<>`: when the FsClient can open a LIVE duplex fd, hold ONE
         // fd open across commands instead of buffering. This is what makes
         // `exec 3<>/dev/tcp/host/port; echo >&3; read -u 3` round-trip — the
@@ -1183,11 +1235,11 @@ export class Executor implements ShellEnv {
             duplex = await Promise.resolve(fs.fsOpenDuplex(path));
           } catch (e) {
             // Connection refused / capability denied / no such device → exec fails.
-            this.writeStderr(`shell: ${path}: ${(e as Error)?.message ?? 'cannot open'}\n`);
+            io.stderr(`shell: ${path}: ${(e as Error)?.message ?? 'cannot open'}\n`);
             return 1;
           }
           const entry: FdEntry = { mode: 'rw', duplex, sink: (s) => { void Promise.resolve(duplex.write(s)); }, close: () => { void Promise.resolve(duplex.close()); } };
-          this.fdTable.set(fd, entry);
+          io.fdTable.set(fd, entry);
           continue;
         }
         let input = '';
@@ -1195,12 +1247,12 @@ export class Executor implements ShellEnv {
           try { input = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true }))); }
           catch {
             if (r.op === '<>') { input = ''; /* <> creates if absent */ }
-            else { this.writeStderr(`shell: ${path}: No such file or directory\n`); return 1; }
+            else { io.stderr(`shell: ${path}: No such file or directory\n`); return 1; }
           }
         }
         const entry: FdEntry = { mode: r.op === '<>' ? 'rw' : 'read', input, pos: 0 };
-        if (r.op === '<>') { entry.sink = this.makeFileSink(path, false, []); }
-        this.fdTable.set(fd, entry);
+        if (r.op === '<>') { entry.sink = this.makeFileSink(path, false, [], io); }
+        io.fdTable.set(fd, entry);
         continue;
       }
       // Output: > >> >| (and &> &>> map to fd 1+2)
@@ -1210,12 +1262,12 @@ export class Executor implements ShellEnv {
       if (append && fs && path !== '/dev/null' && path !== '/dev/stdout' && path !== '/dev/stderr') {
         try { seed = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true }))); } catch { seed = ''; }
       }
-      const sink = this.makeExecFileSink(path, seed);
+      const sink = this.makeExecFileSink(path, seed, io);
       if (r.op === '&>' || r.op === '&>>') {
-        this.fdTable.set(1, { mode: 'write', sink });
-        this.fdTable.set(2, { mode: 'write', sink });
+        io.fdTable.set(1, { mode: 'write', sink });
+        io.fdTable.set(2, { mode: 'write', sink });
       } else {
-        this.fdTable.set(fd, { mode: 'write', sink });
+        io.fdTable.set(fd, { mode: 'write', sink });
       }
     }
     return 0;
@@ -1227,10 +1279,10 @@ export class Executor implements ShellEnv {
    * reflects current contents without holding an fd open across commands.
    * `seed` is the pre-read existing contents for append mode.
    */
-  private makeExecFileSink(path: string, seed: string): (s: string) => void {
+  private makeExecFileSink(path: string, seed: string, io: CommandIO): (s: string) => void {
     if (path === '/dev/null') return () => { /* discard */ };
-    if (path === '/dev/stdout') return (s) => this.stdoutSink(s);
-    if (path === '/dev/stderr') return (s) => this.stderrSink(s);
+    if (path === '/dev/stdout') return (s) => io.stdout(s);
+    if (path === '/dev/stderr') return (s) => io.stderr(s);
     const fs = this.fs;
     if (!fs) throw new Error(`shell: exec redirect to '${path}' requires an FsClient`);
     let buffer = seed;
@@ -1243,19 +1295,19 @@ export class Executor implements ShellEnv {
   }
 
   /** Close a numbered fd's underlying resource (e.g. a live `/dev/tcp` socket), if any. */
-  private closeFdEntry(fd: number): void {
-    const entry = this.fdTable.get(fd);
+  private closeFdEntry(fd: number, io: CommandIO): void {
+    const entry = io.fdTable.get(fd);
     if (entry?.close) { try { entry.close(); } catch { /* already closed */ } }
   }
 
   /** Close every open numbered fd's underlying resource. Called when the shell exits. */
   closeAllFds(): void {
-    for (const fd of [...this.fdTable.keys()]) this.closeFdEntry(fd);
+    for (const fd of [...this.fdTable.keys()]) this.closeFdEntry(fd, this.io);
   }
 
   /** Read one line (default) from a numbered input fd, advancing its cursor. For `read -u N`. */
-  readFdLine(fd: number): string | undefined | Promise<string | undefined> {
-    const entry = this.fdTable.get(fd);
+  private readFdLine(fd: number, io: CommandIO): string | undefined | Promise<string | undefined> {
+    const entry = io.fdTable.get(fd);
     // A live duplex fd (e.g. `/dev/tcp`) reads on demand from the stream. Reuse
     // any in-flight read (one a prior `read -t` started but abandoned when its
     // timer fired) so its line is delivered to THIS reader instead of being lost
@@ -1282,8 +1334,8 @@ export class Executor implements ShellEnv {
    * uses the line; on a `read -t` timeout it does NOT, leaving the in-flight
    * read cached for the next reader (no data dropped).
    */
-  consumeFdLine(fd: number): void {
-    const entry = this.fdTable.get(fd);
+  private consumeFdLine(fd: number, io: CommandIO): void {
+    const entry = io.fdTable.get(fd);
     if (entry?.duplex) entry.pendingRead = undefined;
   }
 
@@ -1325,10 +1377,10 @@ export class Executor implements ShellEnv {
     return { line: r, timedOut: false };
   }
 
-  private makeFileSink(path: string, append: boolean, closers: Array<() => void>): (s: string) => void {
+  private makeFileSink(path: string, append: boolean, closers: Array<() => void>, io: CommandIO): (s: string) => void {
     if (path === '/dev/null') return () => { /* discard */ };
-    if (path === '/dev/stdout') return (s) => this.stdoutSink(s);
-    if (path === '/dev/stderr') return (s) => this.stderrSink(s);
+    if (path === '/dev/stdout') return (s) => io.stdout(s);
+    if (path === '/dev/stderr') return (s) => io.stderr(s);
     const fs = this.fs;
     if (!fs) throw new Error(`shell: redirect to '${path}' requires an FsClient (pass 'fs' in ExecutorOptions)`);
     const fd = fs.fsOpen(path, { write: !append, append, create: true, truncate: !append });
@@ -1369,12 +1421,12 @@ export class Executor implements ShellEnv {
 
   // ── pipelines / simple commands ──────────────────────────────────────────────
 
-  private async execPipeline(stmt: Statement): Promise<number> {
+  private async execPipeline(stmt: Statement, io: CommandIO): Promise<number> {
     // General compound-stage pipeline (M1/H8): any stage may be a compound
     // command, and `|&` may funnel stderr. Run stages in-process, capturing each
     // stage's stdout (and optionally stderr) as the next stage's stdin.
     if (stmt.stageNodes && stmt.stageNodes.length > 0) {
-      if (stmt.background) return this.execBackground(stmt);
+      if (stmt.background) return this.execBackground(stmt, io);
       // D5-fix: if EVERY compound-stage reduces to a single simple command and no
       // `|&` join is present, flatten to a flat-`stages` pipeline so it runs
       // through the CONCURRENT kernel path (execMultiStagePipeline → runPipeline),
@@ -1386,11 +1438,11 @@ export class Executor implements ShellEnv {
       // in-process path (their builtin I/O contract is synchronous-string-based).
       const flattened = this.flattenSimpleStageNodes(stmt.stageNodes, stmt.pipeStderr ?? []);
       if (flattened) {
-        let status = await this.execMultiStagePipeline(flattened);
+        let status = await this.execMultiStagePipeline(flattened, io);
         if (stmt.negate) status = status === 0 ? 1 : 0;
         return status;
       }
-      let status = await this.execNodePipeline(stmt.stageNodes, stmt.pipeStderr ?? []);
+      let status = await this.execNodePipeline(stmt.stageNodes, stmt.pipeStderr ?? [], io);
       if (stmt.negate) status = status === 0 ? 1 : 0;
       return status;
     }
@@ -1399,15 +1451,15 @@ export class Executor implements ShellEnv {
     if (stages.length === 0) return 0;
 
     if (stmt.background) {
-      return this.execBackground(stmt);
+      return this.execBackground(stmt, io);
     }
 
     let status: number;
     if (stages.length === 1) {
-      status = await this.execSimple(stages[0]);
+      status = await this.execSimple(stages[0], io);
       this.pipeStatus = [status];
     } else {
-      status = await this.execMultiStagePipeline(stages);
+      status = await this.execMultiStagePipeline(stages, io);
     }
     if (stmt.negate) status = status === 0 ? 1 : 0;
     return status;
@@ -1443,41 +1495,37 @@ export class Executor implements ShellEnv {
    * pipefail, the last nonzero). Compound stages (subshells/groups/if/…) run via
    * {@link execStatement}; the captured stdin is exposed via {@link pipeStdin}.
    */
-  private async execNodePipeline(nodes: Statement[], pipeStderr: boolean[]): Promise<number> {
+  private async execNodePipeline(nodes: Statement[], pipeStderr: boolean[], io: CommandIO): Promise<number> {
     let stdin: string | undefined;
     const codes: number[] = [];
-    const savedStdout = this.stdoutSink;
-    const savedStderr = this.stderrSink;
-    const savedPipeStdin = this.pipeStdin;
-    try {
-      for (let i = 0; i < nodes.length; i++) {
-        const isLast = i === nodes.length - 1;
-        let captured = '';
-        this.pipeStdin = i === 0 ? undefined : stdin;
-        this.stdoutSink = isLast ? savedStdout : (s) => { captured += s; };
-        // `prev |& next` routes the PREVIOUS stage's stderr into the pipe too.
-        this.stderrSink = (!isLast && pipeStderr[i]) ? (s) => { captured += s; } : savedStderr;
-        const code = await this.execStatement(nodes[i]);
-        codes.push(code);
-        if (this.exiting !== undefined) { this.pipeStatus = codes; return code; }
-        stdin = captured;
-      }
-    } finally {
-      this.stdoutSink = savedStdout;
-      this.stderrSink = savedStderr;
-      this.pipeStdin = savedPipeStdin;
+    for (let i = 0; i < nodes.length; i++) {
+      const isLast = i === nodes.length - 1;
+      let captured = '';
+      // Each stage runs against its OWN derived frame: a non-final stage captures
+      // its stdout (and, for `prev |& next`, its stderr) into the buffer that
+      // feeds the next stage's stdin; the final stage writes to `io`. No shared
+      // instance fields are mutated, so a backgrounded stage cannot misroute.
+      const stageIo = this.deriveIo(io, {
+        stdout: isLast ? io.stdout : (s) => { captured += s; },
+        stderr: (!isLast && pipeStderr[i]) ? (s) => { captured += s; } : io.stderr,
+        stdin: i === 0 ? undefined : stdin,
+      });
+      const code = await this.execStatement(nodes[i], stageIo);
+      codes.push(code);
+      if (this.exiting !== undefined) { this.pipeStatus = codes; return code; }
+      stdin = captured;
     }
     this.pipeStatus = codes;
     return this.pipelineStatus(codes, codes[codes.length - 1] ?? 0);
   }
 
-  private async execMultiStagePipeline(stages: SimpleCommand[]): Promise<number> {
+  private async execMultiStagePipeline(stages: SimpleCommand[], io: CommandIO): Promise<number> {
     const expander = this.expander();
     const expanded: Array<{ name: string; argv: string[]; env: Record<string, string> }> = [];
     for (const s of stages) expanded.push(await this.expandCommand(s, expander));
 
     if (this.options.xtrace) {
-      for (const e of expanded) this.writeStderr('+ ' + [e.name, ...e.argv].join(' ') + '\n');
+      for (const e of expanded) io.stderr('+ ' + [e.name, ...e.argv].join(' ') + '\n');
     }
 
     if (expanded.every((e) => (isBuiltin(e.name) && builtinShadowsExternal(e.name, e.argv)) || this.functions.has(e.name))) {
@@ -1488,8 +1536,10 @@ export class Executor implements ShellEnv {
         const isLast = i === expanded.length - 1;
         const { name, argv } = expanded[i];
         let captured = '';
-        const sink = isLast ? (s: string) => this.writeStdout(s) : (s: string) => { captured += s; };
-        status = await this.dispatch(name, argv, { stdin, write: sink });
+        // Each builtin stage gets a derived frame: non-final stages capture into
+        // the buffer feeding the next stage; the final stage writes to `io`.
+        const stageIo = this.deriveIo(io, { stdout: isLast ? io.stdout : (s) => { captured += s; }, stdin });
+        status = await this.dispatch(name, argv, stageIo, { stdin });
         codes.push(status);
         if (this.exiting !== undefined) { this.pipeStatus = codes; return status; }
         stdin = captured;
@@ -1508,20 +1558,20 @@ export class Executor implements ShellEnv {
       const { name, argv, env } = expanded[i];
       const isLast = i === expanded.length - 1;
       const code = this.resolve(name);
-      if (code === undefined) { this.writeStderr(`shell: ${name}: command not found\n`); this.pipeStatus = [127]; return 127; }
+      if (code === undefined) { io.stderr(`shell: ${name}: command not found\n`); this.pipeStatus = [127]; return 127; }
       stageParams.push({ code, args: [name, ...argv], env: { ...this.context.env, ...env }, cwd: this.context.cwd, captureStdout: isLast, stdinData: i === 0 ? headStdin : undefined });
     }
 
     if (this.kernel.runPipeline) {
       const result = await this.kernel.runPipeline(stageParams);
-      if (result.lastStdout) await this.writeCaptured(result.lastStdout);
+      if (result.lastStdout) await this.writeCaptured(result.lastStdout, io);
       this.pipeStatus = result.exitCodes;
       return this.pipelineStatus(result.exitCodes, result.exitCodes[result.exitCodes.length - 1] ?? 0);
     }
 
     const handles = await Promise.all(stageParams.map((p) => this.kernel.spawn(toSpawnParams(p))));
     const last = handles[handles.length - 1];
-    if (last?.stdout) await this.writeCaptured(last.stdout);
+    if (last?.stdout) await this.writeCaptured(last.stdout, io);
     const waits = await Promise.all(handles.map((h) => this.kernel.wait(h.pid)));
     const codes = waits.map((w) => w.code);
     this.pipeStatus = codes;
@@ -1541,7 +1591,7 @@ export class Executor implements ShellEnv {
     return 0;
   }
 
-  private async execSimple(cmd: SimpleCommand): Promise<number> {
+  private async execSimple(cmd: SimpleCommand, io: CommandIO): Promise<number> {
     const expander = this.expander();
 
     // Scalar prefix assignments become a temporary overlay for a command, or are
@@ -1563,7 +1613,7 @@ export class Executor implements ShellEnv {
 
     if (name === '') {
       if (this.options.xtrace && cmd.assignments.length > 0) {
-        this.writeStderr('+ ' + cmd.assignments.map((a) => `${a.name}=${a.value}`).join(' ') + '\n');
+        io.stderr('+ ' + cmd.assignments.map((a) => `${a.name}=${a.value}`).join(' ') + '\n');
       }
       // A bare `x=$(cmd)` takes its status from the LAST command substitution in
       // the RHS (M10): `x=$(false); echo $?` → 1. With no command sub, status 0.
@@ -1579,37 +1629,37 @@ export class Executor implements ShellEnv {
     // `exec 3>&-` etc. With a command, `exec cmd` would replace the shell — we
     // treat it as a normal spawn (the sandbox has no execve).
     if (name === 'exec' && argv.length === 0) {
-      return await this.execBuiltinRedirects(cmd.redirects);
+      return await this.execBuiltinRedirects(cmd.redirects, io);
     }
 
     if (this.options.xtrace) {
-      this.writeStderr('+ ' + [name, ...argv].join(' ') + '\n');
+      io.stderr('+ ' + [name, ...argv].join(' ') + '\n');
     }
 
     // stdin: an explicit `<`/`<<`/`<<<` redirect wins; otherwise inherit a
     // compound-pipeline stage's piped stdin (M1).
     const redirStdin = await this.resolveStdin(cmd.redirects);
-    const stdin = redirStdin ?? this.pipeStdin;
+    const stdin = redirStdin ?? io.stdin;
 
-    // Apply output redirects around the command. A refused redirect (noclobber)
-    // aborts the command with status 1 — it never runs.
+    // Apply output redirects to this command's frame. A refused redirect
+    // (noclobber) aborts the command with status 1 — it never runs.
     let restore: (() => void) | undefined;
     if (cmd.redirects.length) {
       try {
-        restore = await this.applyRedirects(cmd.redirects);
+        restore = await this.applyRedirects(cmd.redirects, io);
       } catch (e) {
-        if (e instanceof RedirectError) { this.writeStderr(`shell: ${e.message}\n`); return 1; }
+        if (e instanceof RedirectError) { io.stderr(`shell: ${e.message}\n`); return 1; }
         throw e;
       }
     }
     try {
       if (this.functions.has(name)) {
-        return await this.callFunction(name, argv, localEnv);
+        return await this.callFunction(name, argv, localEnv, io);
       }
       if (isBuiltin(name) && builtinShadowsExternal(name, argv)) {
         const saved = { ...this.context.env };
         Object.assign(this.context.env, localEnv);
-        const status = await this.dispatch(name, argv, { stdin });
+        const status = await this.dispatch(name, argv, io, { stdin });
         if (cmd.assignments.length > 0 && name !== 'export' && name !== 'unset' && name !== 'local'
           && name !== 'declare' && name !== 'readonly') {
           for (const k of Object.keys(this.context.env)) if (!(k in saved)) delete this.context.env[k];
@@ -1617,7 +1667,7 @@ export class Executor implements ShellEnv {
         }
         return status;
       }
-      return await this.spawnExternal(name, argv, localEnv, stdin);
+      return await this.spawnExternal(name, argv, localEnv, io, stdin);
     } finally {
       if (restore) restore();
       // Run any deferred `>(cmd)` substitutions now that the outer command has
@@ -1698,10 +1748,10 @@ export class Executor implements ShellEnv {
     };
   }
 
-  private async spawnExternal(name: string, argv: string[], localEnv: Record<string, string>, stdin?: string): Promise<number> {
+  private async spawnExternal(name: string, argv: string[], localEnv: Record<string, string>, io: CommandIO, stdin?: string): Promise<number> {
     const code = this.resolve(name);
     if (code === undefined) {
-      this.writeStderr(`shell: ${name}: command not found\n`);
+      io.stderr(`shell: ${name}: command not found\n`);
       return 127;
     }
     const params: SpawnParams = {
@@ -1718,33 +1768,35 @@ export class Executor implements ShellEnv {
     // buffered spawn on backends that don't transfer ports.
     if (this.kernel.spawnStream) {
       const handle = await this.kernel.spawnStream(params);
-      if (handle.stdout) await this.pumpToStdout(handle.stdout);
+      if (handle.stdout) await this.pumpToStdout(handle.stdout, io);
       const { code: status } = await this.kernel.wait(handle.pid);
       return status;
     }
     const handle = await this.kernel.spawn(params);
-    if (handle.stdout) await this.writeCaptured(handle.stdout);
+    if (handle.stdout) await this.writeCaptured(handle.stdout, io);
     const { code: status } = await this.kernel.wait(handle.pid);
     return status;
   }
 
   /**
-   * A1: drain a live child-stdout ReadableStream into the shell's stdout sink,
-   * decoding incrementally (UTF-8 stream mode) so multi-byte chars spanning a
-   * chunk boundary aren't mangled. Cancels the stream if the sink throws (a
+   * A1: drain a live child-stdout ReadableStream into the command's stdout sink
+   * (the EXPLICIT frame `io`, captured here so a post-await chunk lands in this
+   * command's sink — not whatever the foreground swapped the ambient frame to,
+   * D3), decoding incrementally (UTF-8 stream mode) so multi-byte chars spanning
+   * a chunk boundary aren't mangled. Cancels the stream if the sink throws (a
    * broken downstream), propagating EPIPE up to the child via portToReadable.
    */
-  private async pumpToStdout(stream: ReadableStream<Uint8Array>): Promise<void> {
+  private async pumpToStdout(stream: ReadableStream<Uint8Array>, io: CommandIO): Promise<void> {
     const reader = stream.getReader();
     const dec = new TextDecoder();
     try {
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
-        if (value && value.byteLength > 0) this.writeStdout(dec.decode(value, { stream: true }));
+        if (value && value.byteLength > 0) io.stdout(dec.decode(value, { stream: true }));
       }
       const tail = dec.decode();
-      if (tail) this.writeStdout(tail);
+      if (tail) io.stdout(tail);
     } catch {
       // Downstream broke or stream errored — stop reading; the cancel below (via
       // releaseLock + GC) and the kernel EOF wiring tear the child's pipe down.
@@ -1754,7 +1806,7 @@ export class Executor implements ShellEnv {
     }
   }
 
-  private async callFunction(name: string, argv: string[], localEnv: Record<string, string>): Promise<number> {
+  private async callFunction(name: string, argv: string[], localEnv: Record<string, string>, io: CommandIO): Promise<number> {
     const fn = this.functions.get(name)!;
     const savedPositional = this.context.positional;
     this.context.positional = argv;
@@ -1765,7 +1817,7 @@ export class Executor implements ShellEnv {
     for (const k of overlayKeys) { savedOverlay[k] = this.context.env[k]; this.context.env[k] = localEnv[k]; }
     let status = 0;
     try {
-      status = await this.execList(fn.body);
+      status = await this.execList(fn.body, io);
     } catch (e) {
       if (e instanceof FuncReturn) status = e.code;
       else throw e;
@@ -1789,31 +1841,39 @@ export class Executor implements ShellEnv {
 
   // ── background / jobs ─────────────────────────────────────────────────────────
 
-  private async execBackground(stmt: Statement): Promise<number> {
+  private async execBackground(stmt: Statement, io: CommandIO): Promise<number> {
     const id = this.nextJobId++;
     const cmdStr = describeStages(stmt.stages ?? []);
     const job: Job = { id, pids: [], command: cmdStr, state: 'running' };
     this.jobs.push(job);
 
+    // D3: the background job gets its OWN forked I/O frame, captured NOW. Its
+    // sinks + fd-table are independent of the foreground's `io`, so a redirect /
+    // command-sub the FOREGROUND installs after this job parks (mutating its own
+    // frame) can never re-route this job's bytes — and the bg job's own redirects
+    // (which mutate `bgIo`'s fd-table snapshot) do not leak into the parent.
+    const bgIo = this.deriveIo(io, {}, /*fork*/ true);
+
     // D4: a single EXTERNAL command backgrounded gets a REAL kernel pid via the
     // direct-spawn path (spawnStream) — so `$!` is the real leader and `kill %1`
     // / `kill <pid>` reach the live child via kernel.kill. We pump its stdout to
-    // the shell's stdout in the background (not awaited) and resolve the job from
-    // kernel.wait(realPid). Builtins / functions / compound bodies have no kernel
-    // child, so they keep a synthetic pid and run detached in-process.
+    // the bg frame's stdout in the background (not awaited) and resolve the job
+    // from kernel.wait(realPid). Builtins / functions / compound bodies have no
+    // kernel child, so they keep a synthetic pid and run detached in-process.
     const external = await this.backgroundExternal(stmt);
     if (external && this.kernel.spawnStream) {
       try {
         const handle = await this.kernel.spawnStream(external);
         job.pids = [handle.pid];
         this.lastBgPid = handle.pid;
-        // Stream the child's stdout to our stdout in the background (fire-and-
-        // forget). The job's COMPLETION is the child's exit — awaited directly
-        // via kernel.wait — NOT the pump finishing: a killed child may never EOF
-        // its stdout pipe, so chaining wait AFTER the pump would hang `wait`.
-        const sinkAtSpawn = this.stdoutSink;
+        // Stream the child's stdout to the bg frame's stdout in the background
+        // (fire-and-forget). The job's COMPLETION is the child's exit — awaited
+        // directly via kernel.wait — NOT the pump finishing: a killed child may
+        // never EOF its stdout pipe, so chaining wait AFTER the pump would hang
+        // `wait`. The captured `bgIo.stdout` is the original sink, immune to the
+        // foreground's later redirects (D3).
         const reader = handle.stdout?.getReader();
-        if (reader) void this.pumpReaderToSink(reader, sinkAtSpawn);
+        if (reader) void this.pumpReaderToSink(reader, bgIo.stdout);
         const promise = this.kernel.wait(handle.pid)
           .then((w) => { job.state = 'done'; job.exitCode = w.code; if (reader) void reader.cancel().catch(() => {}); return w.code; })
           .catch(() => { job.state = 'done'; job.exitCode = 1; if (reader) void reader.cancel().catch(() => {}); return 1; });
@@ -1826,12 +1886,14 @@ export class Executor implements ShellEnv {
 
     // In-process / synthetic-pid path (builtins, functions, compound bodies, or
     // backends without spawnStream). The synthetic pid models a job leader that
-    // has no kernel-side process to signal.
+    // has no kernel-side process to signal. The detached statement runs against
+    // `bgIo` — its own frame — so an interleaving foreground command's redirect
+    // / capture can never re-route this job's output (the D3 race).
     const pid = 100000 + id;
     job.pids = [pid];
     this.lastBgPid = pid;
     const bg = { ...stmt, background: false };
-    const promise = this.execStatement(bg).then((code) => {
+    const promise = this.execStatement(bg, bgIo).then((code) => {
       job.state = 'done';
       job.exitCode = code;
       return code;
@@ -1887,21 +1949,21 @@ export class Executor implements ShellEnv {
    * On a non-transferable backend `spawnCoproc` rejects ENOSYS and we emit the
    * precise `coproc: requires a transferable backend` diagnostic.
    */
-  private async execCoproc(stmt: Statement): Promise<number> {
+  private async execCoproc(stmt: Statement, io: CommandIO): Promise<number> {
     if (!this.kernel.spawnCoproc) {
-      this.writeStderr('shell: coproc: requires a transferable backend\n');
+      io.stderr('shell: coproc: requires a transferable backend\n');
       return 1;
     }
     const simple = this.extractSimpleCommand(stmt.coprocBody);
     if (!simple) {
-      this.writeStderr('shell: coproc: only a single external command is supported\n');
+      io.stderr('shell: coproc: only a single external command is supported\n');
       return 1;
     }
     const expander = this.expander();
     const { name, argv, env } = await this.expandCommand(simple, expander);
     const code = this.resolve(name);
     if (code === undefined) {
-      this.writeStderr(`shell: ${name}: command not found\n`);
+      io.stderr(`shell: ${name}: command not found\n`);
       return 127;
     }
     let handle;
@@ -1913,19 +1975,21 @@ export class Executor implements ShellEnv {
       });
     } catch (e) {
       const c = (e as { code?: string }).code;
-      if (c === 'ENOSYS') { this.writeStderr('shell: coproc: requires a transferable backend\n'); return 1; }
+      if (c === 'ENOSYS') { io.stderr('shell: coproc: requires a transferable backend\n'); return 1; }
       throw e;
     }
 
     // Allocate two shell fds for the retained ends. Read fd serves `read -u`,
-    // write fd serves `echo >&N` (its sink writes to the child's stdin).
+    // write fd serves `echo >&N` (its sink writes to the child's stdin). These
+    // fds persist for later commands, so they go on the (foreground) frame's
+    // table, which is the persistent fd table.
     const readFd = this.allocCoprocFd();
     const writeFd = this.allocCoprocFd();
-    this.fdTable.set(readFd, {
+    io.fdTable.set(readFd, {
       mode: 'read',
       duplex: { readLine: () => handle.readLine(), write: () => { /* read end: no write */ }, close: () => handle.close() },
     });
-    this.fdTable.set(writeFd, {
+    io.fdTable.set(writeFd, {
       mode: 'write',
       sink: (s: string) => { void Promise.resolve(handle.write(s)); },
       close: () => handle.close(),
@@ -2030,20 +2094,28 @@ export class Executor implements ShellEnv {
     return { name, argv, env };
   }
 
-  /** Dispatch a builtin (with loop/return control surfaced as exceptions). */
-  private async dispatch(name: string, argv: string[], io: { stdin?: string; write?: (s: string) => void } = {}): Promise<number> {
+  /**
+   * Dispatch a builtin (with loop/return control surfaced as exceptions) against
+   * the command's I/O `frame`. The builtin's `write`/`writeErr`/`readFdLine`
+   * route through `frame` so a redirect / pipeline-stage capture / background
+   * job's sinks are honored without touching shared instance fields. `opts.write`
+   * (a pipeline capture sink) overrides the frame's stdout. The ambient `this.io`
+   * is set to `frame` so a builtin's `eval` / `source` runs against it too.
+   */
+  private async dispatch(name: string, argv: string[], frame: CommandIO, opts: { stdin?: string; write?: (s: string) => void } = {}): Promise<number> {
+    this.io = frame;
     const ctx: BuiltinContext = {
       cwd: this.context.cwd,
       env: this.context.env,
-      write: io.write ?? ((s) => this.writeStdout(s)),
-      writeErr: (s) => this.writeStderr(s),
-      stdin: io.stdin,
+      write: opts.write ?? ((s) => frame.stdout(s)),
+      writeErr: (s) => frame.stderr(s),
+      stdin: opts.stdin,
       lastStatus: this.lastStatus,
       exit: (code) => { this.exiting = code; },
       eval: (src) => this.run(this.parseSrc(src), true),
       sourceFile: (args) => this.sourceFile(args),
-      readFdLine: (fd) => this.readFdLine(fd),
-      consumeFdLine: (fd) => this.consumeFdLine(fd),
+      readFdLine: (fd) => this.readFdLine(fd, frame),
+      consumeFdLine: (fd) => this.consumeFdLine(fd, frame),
       readStdinLine: (s, t) => this.readStdinLine(s, t),
       doBreak: (n) => { throw new LoopBreak(n); },
       doContinue: (n) => { throw new LoopContinue(n); },
@@ -2055,13 +2127,30 @@ export class Executor implements ShellEnv {
     return status;
   }
 
-  private async writeCaptured(bytes: Promise<Uint8Array>): Promise<void> {
+  private async writeCaptured(bytes: Promise<Uint8Array>, io: CommandIO): Promise<void> {
     const out = await bytes;
-    if (out.byteLength > 0) this.writeStdout(new TextDecoder().decode(out));
+    // Post-await: write through the EXPLICIT (captured) frame, not the ambient
+    // `this.io` which the foreground may have swapped while we awaited (D3).
+    if (out.byteLength > 0) io.stdout(new TextDecoder().decode(out));
   }
 
-  protected writeStdout(s: string): void { this.stdoutSink(s); }
-  protected writeStderr(s: string): void { this.stderrSink(s); }
+  /**
+   * D3: derive a child I/O context. The default shares the parent's sinks and fd
+   * table (a nested foreground command); pass overrides to install a redirect /
+   * capture sink or piped stdin. `fork:true` (background jobs, subshells)
+   * SNAPSHOTS the fd table so the child's `exec`-style fd mutations stay private.
+   */
+  private deriveIo(parent: CommandIO, overrides: Partial<CommandIO> = {}, fork = false): CommandIO {
+    return {
+      stdout: overrides.stdout ?? parent.stdout,
+      stderr: overrides.stderr ?? parent.stderr,
+      stdin: 'stdin' in overrides ? overrides.stdin : parent.stdin,
+      fdTable: overrides.fdTable ?? (fork ? new Map(parent.fdTable) : parent.fdTable),
+    };
+  }
+
+  protected writeStdout(s: string): void { this.io.stdout(s); }
+  protected writeStderr(s: string): void { this.io.stderr(s); }
 }
 
 /**
