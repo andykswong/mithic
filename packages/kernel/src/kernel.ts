@@ -12,7 +12,6 @@ import {
   isProcessExit,
   isProcessReady,
   isSyscallResponse,
-  isTerminatingSignal,
   signalExitCode,
   PipeReader,
   PipeWriter,
@@ -36,6 +35,8 @@ import type {
 } from './syscall-dispatch.ts';
 import { RelayBridge } from './relay-bridge.ts';
 import type { RelaySyscallResult } from './relay-bridge.ts';
+import { Supervisor } from './supervisor.ts';
+import type { HeartbeatOptions, SupervisorHost } from './supervisor.ts';
 
 export interface KernelOptions {
   runtime: Runtime;
@@ -111,13 +112,7 @@ export interface KernelOptions {
   onLimitUnenforceable?: (pid: number, limit: 'memoryMb' | 'cpuMs', backend: string) => void;
 }
 
-/** K4: heartbeat/health-watchdog configuration (§8.2). */
-export interface HeartbeatOptions {
-  /** Ping interval in ms. Design default: 5000. */
-  intervalMs: number;
-  /** Consecutive missed acks before declaring the process hung. Design default: 3. */
-  maxMissed: number;
-}
+export type { HeartbeatOptions } from './supervisor.ts';
 
 export type { RelaySyscallResult } from './relay-bridge.ts';
 
@@ -321,8 +316,6 @@ export class Kernel {
   #launcher: GuestLauncher;
   #relayLauncher: RelayLauncher | undefined;
   #cwds = new Map<number, string>();
-  #signalGraceMs: number;
-  #heartbeat: HeartbeatOptions | undefined;
   #onLimitUnenforceable: (pid: number, limit: 'memoryMb' | 'cpuMs', backend: string) => void;
   /** K1: per-process limits, consulted by the dispatcher for networkDisabled/maxChildren. */
   #limits = new Map<number, ProcessLimits>();
@@ -332,17 +325,35 @@ export class Kernel {
    * a relay guest's syscall through it and injects its pipe ops into the dispatcher.
    */
   #relay: RelayBridge;
+  /**
+   * C3: per-process lifecycle timers — wall-clock watchdog (LIM-1), terminating-
+   * signal grace window (C1), and the heartbeat/health monitor (K4). Owns the
+   * arm/clear timer Maps and calls back into the kernel via {@link SupervisorHost}.
+   */
+  #supervisor: Supervisor;
 
   constructor(options: KernelOptions) {
     this.#runtime = options.runtime;
     this.#vfs = options.vfs;
-    this.#signalGraceMs = options.signalGraceMs ?? DEFAULT_SIGNAL_GRACE_MS;
-    this.#heartbeat = options.heartbeat;
     this.#onLimitUnenforceable = options.onLimitUnenforceable ?? defaultLimitDiagnostic;
     // C3: route the bridge's syscalls through this kernel's dispatcher with the
     // correct, kernel-owned pid so capability enforcement runs in-kernel.
     this.#relay = new RelayBridge((pid, call, args) =>
       this.dispatcher.dispatch(pid, { id: 0, call, args }));
+    // C3: the Supervisor owns the timers and asks the kernel to act through this
+    // narrow host. `forceExit` is the grace-timer teardown (128+signum) that does
+    // NOT re-deliver a signal; `kill` routes through the normal SIGKILL→137 path.
+    const supervisorHost: SupervisorHost = {
+      isAlive: (pid) => this.processes.get(pid)?.state !== 'DEAD',
+      kill: (pid, signal) => { this.kill(pid, signal); },
+      forceExit: (pid, exitCode) => { this.#forceExit(pid, exitCode); },
+      postEvent: (pid, event) => { this.#postKernelEvent(pid, event); },
+    };
+    this.#supervisor = new Supervisor(
+      supervisorHost,
+      options.signalGraceMs ?? DEFAULT_SIGNAL_GRACE_MS,
+      options.heartbeat,
+    );
     this.dispatcher = new SyscallDispatcher({
       vfs: options.vfs,
       caps: this.capabilities,
@@ -536,9 +547,9 @@ export class Kernel {
     this.#handles.set(pid, handle);
 
     // LIM-1: arm the kernel-side wall-clock timeout watchdog (backend-agnostic).
-    this.#armWatchdog(pid, init.limits);
+    this.#supervisor.armWatchdog(pid, init.limits);
     // K4: arm the heartbeat/health watchdog (opt-in via KernelOptions.heartbeat).
-    this.#armHeartbeat(pid);
+    this.#supervisor.armHeartbeat(pid);
 
     // Surface bootstrap errors from the worker main channel as a crash exit.
     this.#runtime.onMessage(handle, (msg: unknown) => {
@@ -720,9 +731,9 @@ export class Kernel {
     this.#handles.set(pid, handle);
 
     // LIM-1: arm the kernel-side wall-clock timeout watchdog (relay backend too).
-    this.#armWatchdog(pid, init.limits);
+    this.#supervisor.armWatchdog(pid, init.limits);
     // K4: arm the heartbeat/health watchdog (opt-in).
-    this.#armHeartbeat(pid);
+    this.#supervisor.armHeartbeat(pid);
 
     return { pid, stdout, stderr };
   }
@@ -1024,18 +1035,6 @@ export class Kernel {
    * the signal is recorded but not delivered to guest code (still computes 128+N).
    */
   #relaySignalSinks = new Map<number, (event: KernelEvent) => void>();
-  /**
-   * LIM-1: per-process wall-clock timeout watchdog timers. Started by `spawn`/
-   * `#spawnRelay` when `limits.timeoutMs` is set, cleared in `#exit`. Backend-
-   * agnostic — the kernel SIGKILLs an over-time process regardless of whether
-   * the runtime enforces timeouts itself (Worker/iframe do not).
-   */
-  #watchdogs = new Map<number, ReturnType<typeof setTimeout>>();
-  /** C1: per-process grace-window timers armed after a terminating signal is delivered. */
-  #signalGraceTimers = new Map<number, ReturnType<typeof setTimeout>>();
-  /** K4: per-process heartbeat interval timers and missed-ack counters. */
-  #heartbeatTimers = new Map<number, ReturnType<typeof setInterval>>();
-  #heartbeatMissed = new Map<number, number>();
 
   /**
    * K1: record a process's limits (for dispatcher-side networkDisabled/maxChildren
@@ -1056,34 +1055,6 @@ export class Kernel {
     }
   }
 
-  /**
-   * Arm a kernel-side wall-clock watchdog for `pid` if `limits.timeoutMs` is set.
-   * On expiry, if the process is still alive, SIGKILL it — its `wait()` then
-   * resolves with the SIGKILL exit status (137, nonzero). `unref()` (when
-   * available) keeps the timer from holding the event loop open. Idempotent
-   * per pid; cleared by `#clearWatchdog` on exit.
-   */
-  #armWatchdog(pid: number, limits: ProcessLimits | undefined): void {
-    const timeoutMs = limits?.timeoutMs;
-    if (timeoutMs === undefined || timeoutMs <= 0) return;
-    const timer = setTimeout(() => {
-      this.#watchdogs.delete(pid);
-      if (this.processes.get(pid)?.state !== 'DEAD') {
-        try { this.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
-      }
-    }, timeoutMs);
-    (timer as { unref?: () => void }).unref?.();
-    this.#watchdogs.set(pid, timer);
-  }
-
-  /** Clear a process's timeout watchdog (on exit). */
-  #clearWatchdog(pid: number): void {
-    const timer = this.#watchdogs.get(pid);
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      this.#watchdogs.delete(pid);
-    }
-  }
   /**
    * Per-process injected stdio write ports that must be signalled on exit.
    * When `spawn()` wires a pipeline stage (init.stdout is an injected write
@@ -1110,7 +1081,7 @@ export class Kernel {
       }
       // K4: heartbeat liveness ack. Resets the missed-ack counter.
       if (isHeartbeatAck(msg)) {
-        this.#heartbeatMissed.set(pid, 0);
+        this.#supervisor.recordHeartbeatAck(pid);
         return;
       }
       // A syscall response from the guest would be malformed here; the guest
@@ -1140,12 +1111,10 @@ export class Kernel {
 
   #exit(pid: number, code: number): void {
     if (this.processes.get(pid)?.state === 'DEAD') return;
-    // LIM-1: cancel the wall-clock watchdog (if any) so it cannot fire after the
-    // process has already exited (and cannot leak a timer / re-kill a reused pid).
-    this.#clearWatchdog(pid);
-    // C1/K4: cancel any armed signal grace timer and heartbeat monitor.
-    this.#clearSignalGrace(pid);
-    this.#clearHeartbeat(pid);
+    // C3: cancel ALL of this pid's lifecycle timers (wall-clock watchdog, signal
+    // grace window, heartbeat monitor) up-front so none can fire after the process
+    // has exited (and cannot leak a timer / re-kill a reused pid).
+    this.#supervisor.clear(pid);
     // C1/K3: drop the retained control port + relay signal sink.
     const ctrl = this.#controlPorts.get(pid);
     if (ctrl) {
@@ -1280,16 +1249,12 @@ export class Kernel {
   kill(pid: number, signal: Signal = 'SIGKILL'): void {
     const proc = this.processes.get(pid);
     if (!proc || proc.state === 'DEAD') return;
-    const handle = this.#handles.get(pid);
 
     // Always notify the process manager's signal listeners (SIGCHLD wiring etc.).
     this.processes.signal(pid, signal);
 
     if (signal === 'SIGKILL') {
-      if (handle) {
-        if (this.#launcher.kill) this.#launcher.kill(this.#runtime, handle, signal);
-        else this.#runtime.kill(handle, signal);
-      }
+      this.#tearDownSandbox(pid);
       this.#exit(pid, signalExitCode('SIGKILL')); // 137
       return;
     }
@@ -1297,27 +1262,35 @@ export class Kernel {
     // Deliver the signal as a control-port KernelEvent so the guest's onSignal runs.
     this.#deliverSignalEvent(pid, signal);
 
-    if (!isTerminatingSignal(signal)) {
-      // Non-terminating (SIGUSR1/2, SIGCHLD, SIGCONT): deliver only — never tear down.
-      return;
-    }
+    // C3: for a TERMINATING signal the Supervisor arms a grace window (idempotent
+    // per pid); if the guest does not exit within it, the supervisor force-exits
+    // the guest via `#forceExit` with the 128+signum status. For a NON-terminating
+    // signal (SIGUSR1/2, SIGCHLD, SIGCONT) this is a no-op — the event was already
+    // delivered and the process is left running.
+    this.#supervisor.armSignalGrace(pid, signal);
+  }
 
-    // Terminating signal: give the guest a grace window to exit cleanly, then
-    // forcibly tear it down with the 128+signum status if it ignored the signal.
-    if (this.#signalGraceTimers.has(pid)) return; // a grace window is already pending
-    const forced = signalExitCode(signal);
-    const timer = setTimeout(() => {
-      this.#signalGraceTimers.delete(pid);
-      const still = this.processes.get(pid);
-      if (!still || still.state === 'DEAD') return;
-      if (handle) {
-        if (this.#launcher.kill) this.#launcher.kill(this.#runtime, handle, 'SIGKILL');
-        else this.#runtime.kill(handle, 'SIGKILL');
-      }
-      this.#exit(pid, forced);
-    }, this.#signalGraceMs);
-    (timer as { unref?: () => void }).unref?.();
-    this.#signalGraceTimers.set(pid, timer);
+  /**
+   * C3: hard sandbox teardown — kill the runtime handle via the launcher (or the
+   * runtime directly). Shared by the SIGKILL path and the grace-timer force-exit.
+   * Does NOT touch process state; the caller drives `#exit` with the exit code.
+   */
+  #tearDownSandbox(pid: number): void {
+    const handle = this.#handles.get(pid);
+    if (!handle) return;
+    if (this.#launcher.kill) this.#launcher.kill(this.#runtime, handle, 'SIGKILL');
+    else this.#runtime.kill(handle, 'SIGKILL');
+  }
+
+  /**
+   * C3: force a process down with `exitCode` WITHOUT re-delivering a signal —
+   * the Supervisor's grace timer calls this when a guest ignored a terminating
+   * signal, applying the 128+signum status. Idempotent against an already-dead
+   * process via `#exit`.
+   */
+  #forceExit(pid: number, exitCode: number): void {
+    this.#tearDownSandbox(pid);
+    this.#exit(pid, exitCode);
   }
 
   /**
@@ -1348,47 +1321,6 @@ export class Kernel {
    */
   forwardDomEvent(pid: number, payload: { nodeId: number; eventType: string; payload?: Record<string, unknown> }): void {
     this.#postKernelEvent(pid, { event: 'dom/event', payload });
-  }
-
-  /** C1: cancel a pid's pending terminating-signal grace timer (e.g. it exited). */
-  #clearSignalGrace(pid: number): void {
-    const t = this.#signalGraceTimers.get(pid);
-    if (t !== undefined) { clearTimeout(t); this.#signalGraceTimers.delete(pid); }
-  }
-
-  /**
-   * K4 (§8.2): arm the heartbeat watchdog for `pid` if heartbeat monitoring is
-   * enabled. Every `intervalMs` the kernel posts `{event:'heartbeat'}` and counts
-   * it as a missed ack until the guest replies `{type:'heartbeat-ack'}` (handled
-   * in `#wireControl`, which resets the counter). After `maxMissed` consecutive
-   * misses the process is declared hung and SIGKILLed (137).
-   */
-  #armHeartbeat(pid: number): void {
-    const hb = this.#heartbeat;
-    if (!hb || hb.intervalMs <= 0) return;
-    this.#heartbeatMissed.set(pid, 0);
-    const timer = setInterval(() => {
-      const proc = this.processes.get(pid);
-      if (!proc || proc.state === 'DEAD') { this.#clearHeartbeat(pid); return; }
-      const missed = (this.#heartbeatMissed.get(pid) ?? 0) + 1;
-      this.#heartbeatMissed.set(pid, missed);
-      if (missed > hb.maxMissed) {
-        // Declared hung: hard-kill (137). #exit (via kill→#exit) clears the timer.
-        this.#clearHeartbeat(pid);
-        try { this.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
-        return;
-      }
-      this.#postKernelEvent(pid, { event: 'heartbeat' });
-    }, hb.intervalMs);
-    (timer as { unref?: () => void }).unref?.();
-    this.#heartbeatTimers.set(pid, timer);
-  }
-
-  /** K4: cancel a pid's heartbeat monitor. */
-  #clearHeartbeat(pid: number): void {
-    const t = this.#heartbeatTimers.get(pid);
-    if (t !== undefined) { clearInterval(t); this.#heartbeatTimers.delete(pid); }
-    this.#heartbeatMissed.delete(pid);
   }
 }
 
