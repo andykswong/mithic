@@ -303,6 +303,18 @@ export interface GuestLauncher {
  * syscalls through the dispatcher, and posts {@link SyscallResponse}s back.
  * stdio pipes are transferred as `transfer[1..3]`.
  */
+/**
+ * C3: the shared per-process context produced by `Kernel#beginProcess` — the
+ * allocated pid, its resolved parent + cwd, and its NARROWED capability set —
+ * threaded into `Kernel#buildProcessInit` after the caller wires its stdio.
+ */
+interface ProcessContext {
+  pid: number;
+  ppid: number;
+  cwd: string;
+  granted: Capability[];
+}
+
 export class Kernel {
   readonly processes = new ProcessManager();
   readonly capabilities = new CapabilityManager();
@@ -400,6 +412,57 @@ export class Kernel {
     this.#fdWiring = new FdWiring(this.ipc, this.capabilities, this.#vfs);
   }
 
+  /**
+   * C3: the shared process-creation prologue both spawn paths (transfer + relay)
+   * run identically before they diverge on stdio wiring. Allocates a pid under the
+   * resolved parent, records its cwd + limits, and NARROWS its capabilities against
+   * the parent (the kernel-spawn case, ppid 0, grants the requested set verbatim;
+   * a child can only ever hold a SUBSET of its parent). Returns the context the
+   * caller threads into {@link #buildProcessInit} after building its preopens.
+   */
+  #beginProcess(init: SpawnInit): ProcessContext {
+    const ppid = init.ppid ?? 0;
+    const pid = this.processes.allocate(ppid);
+    const cwd = init.cwd ?? '/';
+    this.#cwds.set(pid, cwd);
+    // K1: record limits so the dispatcher can enforce networkDisabled/maxChildren,
+    // and surface a diagnostic for hard limits this backend cannot honor.
+    this.#recordLimits(pid, init.limits);
+    // Capabilities: narrow against the parent unless spawned by the kernel (ppid 0).
+    const requested = init.capabilities ?? [];
+    const granted = ppid === 0 ? requested : this.capabilities.narrow(ppid, requested);
+    this.capabilities.grant(pid, granted);
+    return { pid, ppid, cwd, granted };
+  }
+
+  /**
+   * C3: build the wire {@link ProcessInit} from the shared {@link ProcessContext}
+   * and the caller's `preopens` table. The single source of truth for init
+   * derivation across both spawn paths (transfer path passes stdio+extraFds
+   * preopens; relay path passes the fixed 0/1/2 pipe preopens). LIM-1: limits are
+   * threaded through so a backend that CAN enforce memory/cpu (quickjs/ivm) sees
+   * them; the kernel-side watchdog enforces timeoutMs/maxOutputBytes regardless.
+   */
+  #buildProcessInit(
+    code: string | URL,
+    init: SpawnInit,
+    ctx: ProcessContext,
+    preopens: ProcessInit['preopens'],
+  ): ProcessInit {
+    return {
+      type: 'init',
+      entry: typeof code === 'string' ? 'inline' : code,
+      args: init.args ?? [],
+      env: init.env ?? {},
+      cwd: ctx.cwd,
+      pid: ctx.pid,
+      ppid: ctx.ppid,
+      capabilities: ctx.granted,
+      limits: init.limits,
+      preopens,
+    };
+  }
+
   async spawn(code: string | URL, init: SpawnInit = {}): Promise<SpawnResult> {
     // Non-transferable runtimes (e.g. QuickJS) use the relay path.
     if (!this.#runtime.capabilities.directPipes) {
@@ -409,18 +472,9 @@ export class Kernel {
       throw new Error('Kernel currently requires a transferable runtime backend');
     }
 
-    const ppid = init.ppid ?? 0;
-    const pid = this.processes.allocate(ppid);
-    const cwd = init.cwd ?? '/';
-    this.#cwds.set(pid, cwd);
-    // K1: record limits so the dispatcher can enforce networkDisabled/maxChildren,
-    // and surface a diagnostic for hard limits this backend cannot honor.
-    this.#recordLimits(pid, init.limits);
-
-    // Capabilities: narrow against the parent unless spawned by the kernel (ppid 0).
-    const requested = init.capabilities ?? [];
-    const granted = ppid === 0 ? requested : this.capabilities.narrow(ppid, requested);
-    this.capabilities.grant(pid, granted);
+    // C3: shared prologue — allocate the pid, record cwd/limits, narrow caps.
+    const ctx = this.#beginProcess(init);
+    const { pid } = ctx;
 
     // Control channel: kernel keeps port1, guest gets port2 as transfer[0].
     const control = new MessageChannel();
@@ -521,21 +575,9 @@ export class Kernel {
     if (init.stderr) injected.push(stderrWritePort);
     if (injected.length > 0) this.#injectedWritePorts.set(pid, injected);
 
-    const processInit: ProcessInit = {
-      type: 'init',
-      entry: typeof code === 'string' ? 'inline' : code,
-      args: init.args ?? [],
-      env: init.env ?? {},
-      cwd,
-      pid,
-      ppid,
-      capabilities: granted,
-      // LIM-1: thread limits into ProcessInit so a backend that CAN enforce
-      // memory/cpu (quickjs/ivm) sees them. The kernel-side watchdog enforces
-      // timeoutMs/maxOutputBytes regardless of backend.
-      limits: init.limits,
-      preopens,
-    };
+    // C3: derive the wire ProcessInit from the shared context + this path's
+    // stdio/extraFds preopens (single source of truth across both spawn paths).
+    const processInit = this.#buildProcessInit(code, init, ctx, preopens);
 
     // Wire the kernel-side control port BEFORE launching so no message is lost.
     this.#wireControl(pid, kernelSide);
@@ -639,32 +681,15 @@ export class Kernel {
       );
     }
 
-    const ppid = init.ppid ?? 0;
-    const pid = this.processes.allocate(ppid);
-    const cwd = init.cwd ?? '/';
-    this.#cwds.set(pid, cwd);
-    this.#recordLimits(pid, init.limits);
-
-    const requested = init.capabilities ?? [];
-    const granted = ppid === 0 ? requested : this.capabilities.narrow(ppid, requested);
-    this.capabilities.grant(pid, granted);
-
-    const processInit: ProcessInit = {
-      type: 'init',
-      entry: typeof code === 'string' ? 'inline' : code,
-      args: init.args ?? [],
-      env: init.env ?? {},
-      cwd,
-      pid,
-      ppid,
-      capabilities: granted,
-      limits: init.limits,
-      preopens: {
-        0: { type: 'pipe' },
-        1: { type: 'pipe' },
-        2: { type: 'pipe' },
-      },
-    };
+    // C3: shared prologue + init builder (identical to spawn()); the relay path
+    // diverges only in using the fixed 0/1/2 pipe preopens (no extra fds).
+    const ctx = this.#beginProcess(init);
+    const { pid } = ctx;
+    const processInit = this.#buildProcessInit(code, init, ctx, {
+      0: { type: 'pipe' },
+      1: { type: 'pipe' },
+      2: { type: 'pipe' },
+    });
 
     // Collect stdout/stderr in-memory; resolve when the process closes the pipe.
     // Bound total buffered bytes per stream to avoid an unbounded host-OOM vector:
