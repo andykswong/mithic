@@ -27,7 +27,19 @@ export class NodeHttpServer implements HttpServer {
       const httpResponse = await handler(httpRequest);
       res.writeHead(httpResponse.status, Object.fromEntries(httpResponse.headers));
       if (httpResponse.body) {
-        res.end(httpResponse.body);
+        // B6: the response body is a ReadableStream — pump it to the socket in
+        // chunks rather than buffering it whole.
+        const reader = httpResponse.body.getReader();
+        try {
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (value && value.byteLength > 0) res.write(value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        res.end();
       } else {
         res.end();
       }

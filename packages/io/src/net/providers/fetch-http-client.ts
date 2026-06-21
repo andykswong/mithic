@@ -55,8 +55,13 @@ export class FetchHttpClient implements HttpClient {
       responseHeaders.push([key, value]);
     });
 
-    const arrayBuffer = await response.arrayBuffer();
-    const body = arrayBuffer.byteLength > 0 ? new Uint8Array(arrayBuffer) : undefined;
+    // B6: pump the `Response.body` ReadableStream straight through instead of
+    // `await response.arrayBuffer()`. The bytes are no longer fully buffered
+    // here: the consumer (the kernel net/fetch pump) reads them at its own pace,
+    // and if it cancels the stream the cancellation propagates back to the
+    // underlying transport. A bodyless response (`response.body === null`, e.g.
+    // 204/304/HEAD) yields no `body` field.
+    const body = response.body ?? undefined;
 
     return {
       status: response.status,

@@ -33,8 +33,49 @@ export interface HttpRequest {
 export interface HttpResponse {
   status: number;
   headers: [string, string][];
-  body?: Uint8Array;
+  /**
+   * B6: the response body as a STREAM, not a buffered `Uint8Array`. The
+   * {@link FetchHttpClient} pumps the underlying `fetch` `Response.body`
+   * `ReadableStream` straight through instead of `await response.arrayBuffer()`,
+   * so a large download never buffers wholesale and a consumer that stops reading
+   * (cancels the stream) propagates backpressure/cancellation up to the transport.
+   * A bodyless response (204/304/HEAD) omits the field. Mocks/servers that have
+   * the bytes in hand build a one-shot stream via {@link bytesToStream}; a kernel
+   * (or any consumer) that needs the bytes drains it via {@link streamToBytes}.
+   */
+  body?: ReadableStream<Uint8Array>;
   trailers?: [string, string][];
+}
+
+/** Wrap a byte buffer as a single-chunk `ReadableStream` (for mocks/servers/tests). */
+export function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (bytes.byteLength > 0) controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
+
+/** Drain a `ReadableStream<Uint8Array>` fully into one `Uint8Array` (buffered fallback). */
+export async function streamToBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value && value.byteLength > 0) { chunks.push(value); total += value.byteLength; }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (chunks.length === 1) return chunks[0];
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.byteLength; }
+  return out;
 }
 
 export interface HttpClient<Sync extends boolean = boolean> {
