@@ -205,3 +205,39 @@ test('producer | tee /sink | head -n2 streams (tee passes through as it reads)',
   expect(out.stdout).toBe('y\ny\n');
   expect(out.codes[out.codes.length - 1]).toBe(0);
 }, 10000);
+
+test('producer | tr y Y | head -n3 streams through tr (was: deadlock)', async () => {
+  const k = await bootKernel();
+  const out = await k.pipeline([
+    { code: boundedYes(2000), args: ['yes'] },
+    { code: resolve('tr', '/', {})!, args: ['tr', 'y', 'Y'] },
+    { code: resolve('head', '/', {})!, args: ['head', '-n', '3'] },
+  ]);
+  expect(out.stdout).toBe('Y\nY\nY\n');
+  expect(out.codes[out.codes.length - 1]).toBe(0);
+}, 10000);
+
+test('producer | tr -s y | head -n3 streams with squeeze across chunks', async () => {
+  const k = await bootKernel();
+  // boundedYes produces 'y\n' lines; squeeze on 'y' should keep 'y' (no consecutive ys within
+  // a line), so output passes through unchanged — but it must NOT deadlock.
+  const out = await k.pipeline([
+    { code: boundedYes(2000), args: ['yes'] },
+    { code: resolve('tr', '/', {})!, args: ['tr', '-s', 'y'] },
+    { code: resolve('head', '/', {})!, args: ['head', '-n', '3'] },
+  ]);
+  expect(out.stdout).toBe('y\ny\ny\n');
+  expect(out.codes[out.codes.length - 1]).toBe(0);
+}, 10000);
+
+test('producer | tr -d \\n | head -c6 streams through tr -d (delete mode)', async () => {
+  const k = await bootKernel();
+  // Delete newlines: 'y\ny\ny\n...' → 'yyy...'; head -c6 takes first 6 bytes.
+  const out = await k.pipeline([
+    { code: boundedYes(2000), args: ['yes'] },
+    { code: resolve('tr', '/', {})!, args: ['tr', '-d', '\n'] },
+    { code: resolve('head', '/', {})!, args: ['head', '-c', '6'] },
+  ]);
+  expect(out.stdout).toBe('yyyyyy');
+  expect(out.codes[out.codes.length - 1]).toBe(0);
+}, 10000);
