@@ -29,20 +29,26 @@
  *   6 couldn't-resolve-host, 7 couldn't-connect, 22 http-error (with -f),
  *   28 operation-timeout, 47 too-many-redirects.
  */
-import { defineCommand, parseArgs, readAll, writeBytes, writeLine, writeString } from './harness.ts';
+import { defineCommand, parseArgs, readAll, writeLine, writeString } from './harness.ts';
 import type { CommandFn, CommandIO } from './harness.ts';
 
 /**
- * curl's internal response shape. Originally 1:1 with the `net/fetch` wire
- * result; now produced by adapting the standard {@link Response} the B2 `fetch()`
- * façade returns (see {@link fromResponse}). The redirect loop, header
- * formatting, and `-w` logic all consume this shape.
+ * curl's internal response METADATA — status/headers only, NOT the body. B6: the
+ * body stays a live {@link Response} (`res.body` is a `ReadableStream`) that the
+ * main loop pumps straight to its destination (a VFS file or stdout) WITHOUT
+ * buffering it whole — so `curl big -o file` streams to disk and `curl big | head`
+ * lets the consumer cancel early. The redirect loop, header formatting, and `-w`
+ * logic consume this metadata; the body byte count (`-w %{size_download}`) is
+ * tracked during the pump.
  */
 interface FetchResult {
   status: number;
   statusText?: string;
   headers: [string, string][];
-  body?: Uint8Array;
+  /** The live response whose `body` stream is pumped to the destination. */
+  response: Response;
+  /** Bytes actually downloaded (filled in after the body is pumped). */
+  downloaded?: number;
 }
 
 /** curl exit codes used here (subset of the real curl table). */
@@ -191,8 +197,10 @@ export const curlCommand: CommandFn = async (io: CommandIO): Promise<number> => 
         continue;
       }
 
-      // -f: HTTP >= 400 → no body, exit 22 (last error wins).
+      // -f: HTTP >= 400 → no body, exit 22 (last error wins). Cancel the body
+      // stream so the in-flight transport stops (nothing is downloaded).
       if (failOnError && r.status >= 400) {
+        await cancelResponse(r.response);
         await reportError(`The requested URL returned error: ${r.status}`);
         exitCode = EXIT.HTTP_RETURNED_ERROR;
         continue;
@@ -200,17 +208,24 @@ export const curlCommand: CommandFn = async (io: CommandIO): Promise<number> => 
 
       // Header output: -I always; -i prepends to the body.
       const headerText = (headOnly || includeHeaders) ? formatStatusAndHeaders(r) : '';
+      if (headerText) await writeString(out, headerText);
 
-      // Body destination: -o FILE, -O remote-name, else stdout.
+      // Body destination: -o FILE, -O remote-name, else stdout. HEAD has no body.
       const target = writeToFileNamed ?? (writeToRemoteName ? remoteName(url) : undefined);
 
-      if (target !== undefined) {
-        // Headers (if requested) still go to stdout; the body goes to the file.
-        if (headerText) await writeString(out, headerText);
-        await writeFile(io, target, r.body ?? new Uint8Array());
+      if (headOnly) {
+        // No body for HEAD — discard the stream (the kernel returns none anyway).
+        await cancelResponse(r.response);
+        r.downloaded = 0;
+      } else if (target !== undefined) {
+        // -o/-O: STREAM the body to the VFS file (pump res.body → fs writes), so a
+        // large download never buffers wholesale.
+        r.downloaded = await streamToFile(io, target, r.response);
       } else {
-        if (headerText) await writeString(out, headerText);
-        if (!headOnly && r.body) await writeBytes(out, r.body);
+        // stdout: STREAM the body chunk-by-chunk to stdout. If the downstream
+        // consumer (`| head -c10`) cancels, `out.write` rejects (broken pipe);
+        // we cancel res.body, which aborts the in-flight fetch.
+        r.downloaded = await streamToWriter(out, r.response);
       }
 
       // -w: formatted output to stdout after the transfer.
@@ -260,14 +275,14 @@ async function fetchFollowing(
     let result: FetchResult;
     try {
       // B2: go through the standard `fetch()` façade. `--max-time` becomes an
-      // `AbortSignal.timeout(ms)` (threaded to the syscall via B1); the standard
-      // `Response` is adapted back to curl's internal `{status,headers,body}`
-      // shape that the redirect loop / header formatting / -w logic consume.
+      // `AbortSignal.timeout(ms)` (threaded to the syscall via B1). B6: the
+      // standard `Response` is kept LIVE — its `body` stream is pumped to the
+      // destination later, never buffered here.
       const init: RequestInit = { method, headers: req.headers };
       if (body) init.body = body as BodyInit;
       if (req.timeoutMs !== undefined) init.signal = AbortSignal.timeout(req.timeoutMs);
       const res = await io.fetch(url, init);
-      result = await fromResponse(res);
+      result = metaOf(res);
     } catch (e) {
       return new FetchError(messageOf(e), errnoToExit(errnoOf(e)));
     }
@@ -275,6 +290,9 @@ async function fetchFollowing(
     if (req.followRedirects && isRedirect(result.status)) {
       const loc = headerValue(result.headers, 'location');
       if (loc) {
+        // The intermediate redirect body is discarded — cancel it so the
+        // transport stops (an undrained stream would leak/stall).
+        await cancelResponse(result.response);
         if (hop >= MAX_REDIRECTS) {
           return new FetchError(`Maximum (${MAX_REDIRECTS}) redirects followed`, EXIT.TOO_MANY_REDIRECTS);
         }
@@ -361,25 +379,92 @@ async function traceResponse(trace: (line: string) => Promise<void>, r: FetchRes
 }
 
 /**
- * Adapt a standard {@link Response} (from the B2 `fetch()` façade) back to curl's
- * internal {@link FetchResult} shape. curl's redirect loop, header formatting,
- * and `-w` logic are written against `{status, headers, body}`; this is the one
- * adaptation point that lets the rest stay unchanged. A null body (204/304/HEAD)
- * yields no `body` field.
+ * Extract curl's metadata (status/headers/statusText) from a standard
+ * {@link Response} (from the B2 `fetch()` façade) WITHOUT touching the body. B6:
+ * the body stays live in `result.response.body` and is streamed to its
+ * destination by the main loop.
  */
-async function fromResponse(res: Response): Promise<FetchResult> {
+function metaOf(res: Response): FetchResult {
   const headers: [string, string][] = [];
   res.headers.forEach((value, key) => { headers.push([key, value]); });
-  const result: FetchResult = {
-    status: res.status,
-    statusText: res.statusText,
-    headers,
-  };
-  if (res.body !== null) {
-    const buf = await res.arrayBuffer();
-    result.body = new Uint8Array(buf);
+  return { status: res.status, statusText: res.statusText, headers, response: res };
+}
+
+/** Discard an unconsumed response body (cancel its stream) so the transport stops. */
+async function cancelResponse(res: Response): Promise<void> {
+  if (res.body === null || res.bodyUsed) return;
+  try { await res.body.cancel(); } catch { /* already cancelled/locked */ }
+}
+
+/**
+ * B6: stream a response body to a VFS file (pump `res.body` → `fs/write` calls),
+ * truncating, WITHOUT buffering the whole body. Returns the byte count written.
+ */
+async function streamToFile(io: CommandIO, path: string, res: Response): Promise<number> {
+  const { fd } = (await io.syscall('fs/open', {
+    path,
+    oflags: { create: true, write: true, truncate: true },
+  })) as { fd: number };
+  let total = 0;
+  try {
+    if (res.body !== null) {
+      const reader = res.body.getReader();
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (!value || value.byteLength === 0) continue;
+          let off = 0;
+          while (off < value.byteLength) {
+            const chunk = value.subarray(off, off + 65536);
+            const { written } = (await io.syscall('fs/write', { fd, data: chunk, offset: total })) as { written: number };
+            const n = written > 0 ? written : chunk.byteLength;
+            off += n;
+            total += n;
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    // Ensure the file is created/truncated even for an empty body.
+    if (total === 0) {
+      await io.syscall('fs/write', { fd, data: new Uint8Array(), offset: 0 });
+    }
+  } finally {
+    await io.syscall('fs/close', { fd }).catch(() => { /* best effort */ });
   }
-  return result;
+  return total;
+}
+
+/**
+ * B6: stream a response body to a stdout writer chunk-by-chunk. Returns the byte
+ * count written. If `writer.write` rejects (the downstream consumer closed its
+ * read end — `| head -c10`), cancel `res.body` so the in-flight fetch aborts
+ * (broken pipe → early stop) and stop pumping.
+ */
+async function streamToWriter(writer: WritableStreamDefaultWriter<Uint8Array>, res: Response): Promise<number> {
+  if (res.body === null) return 0;
+  let total = 0;
+  const reader = res.body.getReader();
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      try {
+        await writer.write(value);
+        total += value.byteLength;
+      } catch {
+        // Broken pipe downstream: cancel the source so the fetch aborts, then stop.
+        try { await reader.cancel(); } catch { /* already cancelled */ }
+        break;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return total;
 }
 
 function errnoOf(e: unknown): string | undefined {
@@ -411,7 +496,7 @@ function renderWriteOut(fmt: string, r: FetchResult, url: string): string {
     if (tok === '%') return '%';
     switch (tok) {
       case '{http_code}': return String(r.status);
-      case '{size_download}': return String(r.body?.byteLength ?? 0);
+      case '{size_download}': return String(r.downloaded ?? 0);
       case '{url_effective}': return url;
       case '{content_type}': return headerValue(r.headers, 'content-type') ?? '';
       default: return '';
@@ -471,27 +556,6 @@ function base64(s: string): string {
   if (typeof btoa === 'function') return btoa(s);
   // Node fallback.
   return Buffer.from(s, 'utf-8').toString('base64');
-}
-
-/** Write `bytes` to a VFS file via the kernel `fs/*` syscalls (truncating). */
-async function writeFile(io: CommandIO, path: string, bytes: Uint8Array): Promise<void> {
-  const { fd } = (await io.syscall('fs/open', {
-    path,
-    oflags: { create: true, write: true, truncate: true },
-  })) as { fd: number };
-  try {
-    let off = 0;
-    while (off < bytes.byteLength) {
-      const chunk = bytes.subarray(off, off + 65536);
-      const { written } = (await io.syscall('fs/write', { fd, data: chunk, offset: off })) as { written: number };
-      off += written > 0 ? written : chunk.byteLength;
-    }
-    if (bytes.byteLength === 0) {
-      await io.syscall('fs/write', { fd, data: new Uint8Array(), offset: 0 });
-    }
-  } finally {
-    await io.syscall('fs/close', { fd }).catch(() => { /* best effort */ });
-  }
 }
 
 export default defineCommand(curlCommand);
