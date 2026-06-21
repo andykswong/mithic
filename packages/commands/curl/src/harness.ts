@@ -28,6 +28,13 @@ export interface CommandIO {
   stderr: WritableStream<Uint8Array>;
   /** Kernel syscall hook — e.g. `syscall('net/fetch', { method, url, headers })`. */
   syscall: (call: string, args: Record<string, unknown>) => Promise<unknown>;
+  /**
+   * The standard `fetch()` façade (B2) over the capability-gated `net/fetch`
+   * syscall — guest code (curl) depends on WHATWG `fetch`/`Response` instead of
+   * the bespoke `{status,headers,body}` arg-bag. `init.signal`/`timeoutMs` are
+   * threaded through to the syscall.
+   */
+  fetch: typeof fetch;
 }
 
 /** A command's core logic: operate on {@link CommandIO}, return an exit code. */
@@ -179,6 +186,7 @@ export function defineCommand(fn: CommandFn): (boot: unknown) => Promise<void> {
       stdout: guest.stdout,
       stderr: guest.stderr,
       syscall: (call, args) => guest.syscall(call, args),
+      fetch: guest.fetch,
     };
 
     let code = 0;

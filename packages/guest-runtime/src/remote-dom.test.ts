@@ -23,6 +23,7 @@ function makeStubGuest(): Guest {
     stdout: new WritableStream(),
     stderr: new WritableStream(),
     syscall: async () => undefined,
+    fetch: (async () => { throw new Error('fetch not used in this stub'); }) as typeof fetch,
     onSignal: () => undefined,
     exit: () => undefined,
   };

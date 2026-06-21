@@ -4,6 +4,7 @@ import { SyscallClient } from './syscall-client.ts';
 import type { SyscallCallOptions } from './syscall-client.ts';
 import { portToReadable, portToWritable } from './streams.ts';
 import type { Transport } from './transport.ts';
+import { createFetch } from './fetch.ts';
 
 export interface GuestOptions {
   control: MessagePort;
@@ -33,6 +34,14 @@ export interface Guest {
   stdout: WritableStream<Uint8Array>;
   stderr: WritableStream<Uint8Array>;
   syscall(call: string, args: Record<string, unknown>, opts?: SyscallCallOptions): Promise<unknown>;
+  /**
+   * B2: a capability-scoped standard `fetch(input, init): Promise<Response>`
+   * layered over the `net/fetch` syscall. Guest code depends on the WHATWG
+   * `fetch`/`Request`/`Response` interfaces; the integer-free arg-bag is hidden.
+   * `init.signal` is threaded through to the syscall (B1). The body is the
+   * materialized bytes wrapped in a `Response` (streaming body is B6).
+   */
+  fetch: typeof fetch;
   onSignal(cb: (signal: string, payload?: unknown) => void): void;
   /**
    * Subscribe to `dom/event` kernel events forwarded from the host (clicks,
@@ -142,6 +151,7 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
     stdout,
     stderr,
     syscall: (call, args, opts) => client.syscall(call, args, opts),
+    fetch: createFetch((call, args, opts) => client.syscall(call, args, opts)),
     onSignal(cb) { signalListeners.push(cb); },
     onDomEvent(cb) { domEventListeners.push(cb); },
     exit(code) {

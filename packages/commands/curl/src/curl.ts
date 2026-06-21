@@ -32,9 +32,15 @@
 import { defineCommand, parseArgs, readAll, writeBytes, writeLine, writeString } from './harness.ts';
 import type { CommandFn, CommandIO } from './harness.ts';
 
-/** Shape returned by the kernel `net/fetch` syscall. */
+/**
+ * curl's internal response shape. Originally 1:1 with the `net/fetch` wire
+ * result; now produced by adapting the standard {@link Response} the B2 `fetch()`
+ * façade returns (see {@link fromResponse}). The redirect loop, header
+ * formatting, and `-w` logic all consume this shape.
+ */
 interface FetchResult {
   status: number;
+  statusText?: string;
   headers: [string, string][];
   body?: Uint8Array;
 }
@@ -253,13 +259,15 @@ async function fetchFollowing(
     await traceRequest(trace, method, url, req.headers, body);
     let result: FetchResult;
     try {
-      result = (await io.syscall('net/fetch', {
-        method,
-        url,
-        headers: req.headers,
-        ...(body ? { body } : {}),
-        ...(req.timeoutMs !== undefined ? { timeoutMs: req.timeoutMs } : {}),
-      })) as FetchResult;
+      // B2: go through the standard `fetch()` façade. `--max-time` becomes an
+      // `AbortSignal.timeout(ms)` (threaded to the syscall via B1); the standard
+      // `Response` is adapted back to curl's internal `{status,headers,body}`
+      // shape that the redirect loop / header formatting / -w logic consume.
+      const init: RequestInit = { method, headers: req.headers };
+      if (body) init.body = body as BodyInit;
+      if (req.timeoutMs !== undefined) init.signal = AbortSignal.timeout(req.timeoutMs);
+      const res = await io.fetch(url, init);
+      result = await fromResponse(res);
     } catch (e) {
       return new FetchError(messageOf(e), errnoToExit(errnoOf(e)));
     }
@@ -352,11 +360,36 @@ async function traceResponse(trace: (line: string) => Promise<void>, r: FetchRes
   await trace('<');
 }
 
+/**
+ * Adapt a standard {@link Response} (from the B2 `fetch()` façade) back to curl's
+ * internal {@link FetchResult} shape. curl's redirect loop, header formatting,
+ * and `-w` logic are written against `{status, headers, body}`; this is the one
+ * adaptation point that lets the rest stay unchanged. A null body (204/304/HEAD)
+ * yields no `body` field.
+ */
+async function fromResponse(res: Response): Promise<FetchResult> {
+  const headers: [string, string][] = [];
+  res.headers.forEach((value, key) => { headers.push([key, value]); });
+  const result: FetchResult = {
+    status: res.status,
+    statusText: res.statusText,
+    headers,
+  };
+  if (res.body !== null) {
+    const buf = await res.arrayBuffer();
+    result.body = new Uint8Array(buf);
+  }
+  return result;
+}
+
 function errnoOf(e: unknown): string | undefined {
   if (e && typeof e === 'object') {
-    const o = e as { code?: unknown; errno?: unknown };
+    const o = e as { code?: unknown; errno?: unknown; name?: unknown };
     if (typeof o.code === 'string') return o.code;
     if (typeof o.errno === 'string') return o.errno;
+    // The B2 fetch() façade surfaces cancellation/timeout as DOM exceptions.
+    if (o.name === 'TimeoutError') return 'ETIMEDOUT';
+    if (o.name === 'AbortError') return 'ETIMEDOUT';
   }
   return undefined;
 }

@@ -5,6 +5,7 @@
  * end-to-end wiring (and the capability gate) is proven in `curl-e2e.test.ts`.
  */
 import { expect, test } from 'vitest';
+import { createFetch } from '@mithic/guest-runtime';
 import { curlCommand } from './curl.ts';
 import type { CommandIO } from './harness.ts';
 
@@ -93,6 +94,10 @@ function fakeIO(
       }
       throw new Error(`unexpected syscall: ${call}`);
     },
+    // B2: curl now reaches the network through the standard fetch() façade. The
+    // façade is built over THIS fake `syscall`, so the `net/fetch` responder and
+    // `netCalls` capture above still drive and observe every request.
+    fetch: createFetch((call, sargs) => io.syscall(call, sargs)),
   };
 
   return {
@@ -102,6 +107,17 @@ function fakeIO(
     netCalls,
     fsFiles,
   };
+}
+
+/**
+ * Find a header value case-insensitively. The B2 fetch() façade routes headers
+ * through a WHATWG `Headers` object, which lowercases header names on the wire
+ * (standards-correct — HTTP/2 lowercases too). The header VALUE curl sends is
+ * unchanged; only the name's case normalizes, so assertions match by lower-case.
+ */
+function headerVal(headers: [string, string][], name: string): string | undefined {
+  const lower = name.toLowerCase();
+  return headers.find(([k]) => k.toLowerCase() === lower)?.[1];
 }
 
 function concat(chunks: Uint8Array[]): Uint8Array {
@@ -133,7 +149,8 @@ test('-X sets the method', async () => {
 test('-H adds repeated headers', async () => {
   const f = fakeIO(['curl', '-H', 'X-A: 1', '-H', 'X-B: 2', 'https://api.example.com/x']);
   await curlCommand(f.io);
-  expect(f.netCalls[0].headers).toEqual(expect.arrayContaining([['X-A', '1'], ['X-B', '2']]));
+  expect(headerVal(f.netCalls[0].headers, 'X-A')).toBe('1');
+  expect(headerVal(f.netCalls[0].headers, 'X-B')).toBe('2');
 });
 
 test('-d implies POST and sends the body with form content-type', async () => {
@@ -141,9 +158,7 @@ test('-d implies POST and sends the body with form content-type', async () => {
   await curlCommand(f.io);
   expect(f.netCalls[0].method).toBe('POST');
   expect(new TextDecoder().decode(f.netCalls[0].body)).toBe('a=1&b=2');
-  expect(f.netCalls[0].headers).toEqual(
-    expect.arrayContaining([['Content-Type', 'application/x-www-form-urlencoded']]),
-  );
+  expect(headerVal(f.netCalls[0].headers, 'Content-Type')).toBe('application/x-www-form-urlencoded');
 });
 
 test('--json sets content-type and accept to application/json', async () => {
@@ -151,9 +166,8 @@ test('--json sets content-type and accept to application/json', async () => {
   await curlCommand(f.io);
   expect(f.netCalls[0].method).toBe('POST');
   expect(new TextDecoder().decode(f.netCalls[0].body)).toBe('{"a":1}');
-  expect(f.netCalls[0].headers).toEqual(
-    expect.arrayContaining([['Content-Type', 'application/json'], ['Accept', 'application/json']]),
-  );
+  expect(headerVal(f.netCalls[0].headers, 'Content-Type')).toBe('application/json');
+  expect(headerVal(f.netCalls[0].headers, 'Accept')).toBe('application/json');
 });
 
 test('-G moves data into the query string and keeps GET', async () => {
@@ -233,9 +247,8 @@ test('-u adds a Basic Authorization header', async () => {
 test('-A sets the User-Agent and -e sets the Referer', async () => {
   const f = fakeIO(['curl', '-A', 'mybot/1.0', '-e', 'https://ref.example', 'https://api.example.com/x']);
   await curlCommand(f.io);
-  expect(f.netCalls[0].headers).toEqual(
-    expect.arrayContaining([['User-Agent', 'mybot/1.0'], ['Referer', 'https://ref.example']]),
-  );
+  expect(headerVal(f.netCalls[0].headers, 'User-Agent')).toBe('mybot/1.0');
+  expect(headerVal(f.netCalls[0].headers, 'Referer')).toBe('https://ref.example');
 });
 
 test('-w %{http_code} writes the formatted output after the body', async () => {

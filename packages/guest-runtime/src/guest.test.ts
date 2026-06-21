@@ -183,6 +183,36 @@ test('M-Fix 1: dom/event routes through MutationSerializer to the matching VNode
   kernelPort.close();
 });
 
+test('B2: guest.fetch round-trips a net/fetch over the control port to a real Response', async () => {
+  const { guest, kernelPort } = makeGuest();
+  kernelPort.start?.();
+
+  const enc = new TextEncoder();
+  const seen: Array<{ call: string; args: Record<string, unknown> }> = [];
+  kernelPort.onmessage = (e) => {
+    const req = e.data as { id: number; call: string; args: Record<string, unknown> };
+    if (req.id != null && req.call === 'net/fetch') {
+      seen.push({ call: req.call, args: req.args });
+      kernelPort.postMessage({
+        id: req.id, ok: true,
+        result: { status: 200, statusText: 'OK', headers: [['content-type', 'text/plain']], body: enc.encode('pong') },
+      });
+    }
+  };
+
+  const res = await guest.fetch('http://api/ping', { method: 'POST', body: 'ping' });
+  expect(res).toBeInstanceOf(Response);
+  expect(res.status).toBe(200);
+  expect(res.headers.get('content-type')).toBe('text/plain');
+  expect(await res.text()).toBe('pong');
+
+  expect(seen).toHaveLength(1);
+  expect(seen[0].args.method).toBe('POST');
+  expect(seen[0].args.url).toBe('http://api/ping');
+
+  kernelPort.close();
+});
+
 test('syscall response is NOT delivered to the signal handler', async () => {
   const { guest, kernelPort } = makeGuest();
   kernelPort.start?.();
