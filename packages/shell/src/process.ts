@@ -12,16 +12,18 @@
  * spawn. The kernel OWNS what commands exist — the shell spawns by NAME and the
  * kernel's command resolver maps it to guest code (or returns ENOENT).
  */
-import { createGuest } from '@mithic/guest-runtime';
+import { createGuest, portToReadable, portToWritable } from '@mithic/guest-runtime';
 import type { Guest } from '@mithic/guest-runtime';
 import { Executor } from './executor.ts';
 import type {
+  CoprocHandle,
   DuplexFd,
   FsClient,
   KernelClient,
   PipelineRunResult,
   PipelineStageParams,
   SpawnHandle,
+  SpawnStreamHandle,
   SpawnParams,
 } from './kernel-client.ts';
 import { parseCliArgs, VERSION, HELP } from './cli.ts';
@@ -217,8 +219,141 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
         return { pid, stdout: Promise.resolve(new Uint8Array()) };
       }
     },
+    // A1: live-stream spawn. `process/spawn` with `fds:{1:{action:'pipe'}}`
+    // makes the kernel mint a stdout pipe, give the child the write end, and
+    // transfer the READ end back to the shell — surfaced here as a live
+    // ReadableStream via B5's port-carrying syscall. The caller pipes it into
+    // its own stdout so a large/unbounded final stage streams (no buffer-all).
+    // On relay backends no port is transferred (pipe-fd spawns ENOSYS-gate), so
+    // we degrade to a buffered `spawn` and return `stdout: undefined`.
+    async spawnStream(params: SpawnParams): Promise<SpawnStreamHandle> {
+      const [name, ...rest] = params.args ?? [];
+      const stage: Record<string, unknown> = {
+        path: params.code instanceof URL ? params.code.href : String(params.code),
+        argv: [name, ...rest],
+        env: params.env,
+        cwd: params.cwd,
+        fds: { 1: { action: 'pipe' } },
+      };
+      if (params.stdinData !== undefined) {
+        stage.stdinData = new TextEncoder().encode(params.stdinData);
+      }
+      try {
+        const { result, ports } = await guest.syscallPorts('process/spawn', stage);
+        const pid = (result as { pid: number }).pid;
+        // The kernel transfers the stdout read end as the (single) port. On a
+        // relay backend ports is empty → fall back to buffered capture.
+        const readPort = ports[0];
+        if (!readPort) {
+          const buffered = await this.spawn(params);
+          let bytes: Uint8Array | undefined;
+          if (buffered.stdout) bytes = await buffered.stdout;
+          exitCodes.set(pid, exitCodes.get(buffered.pid) ?? 0);
+          // Adapt the buffered bytes into a one-shot ReadableStream for a uniform
+          // caller, or leave undefined so the caller writes the captured bytes.
+          if (bytes && bytes.byteLength > 0) {
+            const b = bytes;
+            return { pid, stdout: new ReadableStream<Uint8Array>({ start(c) { c.enqueue(b); c.close(); } }) };
+          }
+          return { pid };
+        }
+        return { pid, stdout: portToReadable(readPort) };
+      } catch (e) {
+        if (!isNotFound(e)) throw e;
+        const pid = synthPid--;
+        onStderr(`shell: ${name}: command not found\n`);
+        exitCodes.set(pid, 127);
+        return { pid };
+      }
+    },
+    // A2: start a coproc. Mint two kernel pipes via `fs/pipe`:
+    //   c2s: child writes (its stdout) → shell reads.  Shell keeps c2s READ end.
+    //   s2c: shell writes → child reads (its stdin).    Shell keeps s2c WRITE end.
+    // Spawn the child with the OTHER ends injected at fd 1 (c2s write) and fd 0
+    // (s2c read) via port-injecting `process/spawn` (fds dup2 + portFds). On a
+    // relay backend `fs/pipe` transfers no ports → reject ENOSYS (gated upstream).
+    async spawnCoproc(params: SpawnParams): Promise<CoprocHandle> {
+      const c2s = await guest.syscallPorts('fs/pipe', {});
+      const s2c = await guest.syscallPorts('fs/pipe', {});
+      const c2sRead = c2s.ports[0];
+      const c2sWrite = c2s.ports[1];
+      const s2cRead = s2c.ports[0];
+      const s2cWrite = s2c.ports[1];
+      if (!c2sRead || !c2sWrite || !s2cRead || !s2cWrite) {
+        for (const p of [c2sRead, c2sWrite, s2cRead, s2cWrite]) p?.close();
+        throw Object.assign(new Error('coproc: requires a transferable backend'), { code: 'ENOSYS' });
+      }
+      const [name, ...rest] = params.args ?? [];
+      // Inject child fd 0 = s2cRead (stdin), fd 1 = c2sWrite (stdout). portFds
+      // maps transferred ports[i] → child fd; order must match `transfer`.
+      const spawnArgs: Record<string, unknown> = {
+        path: params.code instanceof URL ? params.code.href : String(params.code),
+        argv: [name, ...rest],
+        env: params.env,
+        cwd: params.cwd,
+        fds: { 0: { action: 'dup2' }, 1: { action: 'dup2' } },
+        portFds: [0, 1],
+      };
+      const { result } = await guest.syscallPorts('process/spawn', spawnArgs, {
+        transfer: [s2cRead, c2sWrite],
+      });
+      const pid = (result as { pid: number }).pid;
+
+      // Shell-retained ends, adapted to streams. Read child stdout line-by-line
+      // from c2sRead; write child stdin to s2cWrite.
+      const readable = portToReadable(c2sRead);
+      const writable = portToWritable(s2cWrite);
+      const reader = readable.getReader();
+      const writer = writable.getWriter();
+      const enc = new TextEncoder();
+      const dec = new TextDecoder();
+      let pending = '';
+      let eof = false;
+      return {
+        pid,
+        async readLine(): Promise<string | undefined> {
+          for (;;) {
+            const nl = pending.indexOf('\n');
+            if (nl >= 0) { const line = pending.slice(0, nl); pending = pending.slice(nl + 1); return line; }
+            if (eof) { if (pending.length > 0) { const l = pending; pending = ''; return l; } return undefined; }
+            const { value, done } = await reader.read();
+            if (done) { eof = true; continue; }
+            if (value && value.byteLength > 0) pending += dec.decode(value, { stream: true });
+          }
+        },
+        async write(s: string): Promise<void> {
+          await writer.write(enc.encode(s));
+        },
+        close(): void {
+          void reader.cancel().catch(() => { /* closed */ });
+          void writer.close().catch(() => { /* closed */ });
+        },
+      };
+    },
+    // D4: deliver a signal to a real child pid via `process/kill`. Synthetic
+    // (negative / >=100000) pids have no kernel process — skip them (the shell
+    // job table is updated best-effort by killJob regardless).
+    kill(pid: number, signal: string): void {
+      if (pid <= 0 || pid >= 100000) return;
+      void guest.syscall('process/kill', { pid, signal }).catch(() => { /* already gone */ });
+    },
     async wait(pid: number) {
-      return { pid, code: exitCodes.get(pid) ?? 0 };
+      const recorded = exitCodes.get(pid);
+      if (recorded !== undefined) return { pid, code: recorded };
+      // A1/D4: a REAL pid (from spawnStream / direct spawn) has no pre-recorded
+      // code — await its exit via the kernel. Synthetic (negative) pids never
+      // reach here without a recorded code.
+      if (pid > 0) {
+        try {
+          const r = (await guest.syscall('process/wait', { pid })) as { code?: number } | undefined;
+          const code = r?.code ?? 0;
+          exitCodes.set(pid, code);
+          return { pid, code };
+        } catch {
+          return { pid, code: 0 };
+        }
+      }
+      return { pid, code: 0 };
     },
     async runPipeline(stages: PipelineStageParams[]): Promise<PipelineRunResult> {
       const pids = stages.map(() => synthPid--);
@@ -300,10 +435,15 @@ export default async function main(boot: unknown): Promise<void> {
     const fsClient = makeFsClient(guest);
 
     // Script source: a `-c` command string, a script FILE read from the VFS, or
-    // (default) stdin.
+    // (default) stdin. When the script comes from `-c` / a file, the guest's
+    // stdin stream stays UNCONSUMED — surface it live to the executor so plain
+    // `read` / `read -t` work over it (A3 Tier 2). When the script IS stdin, it
+    // is drained here and there is no live stdin to offer.
     let script: string;
+    let stdinStream: ReadableStream<Uint8Array> | undefined;
     if (cli.commandString !== undefined) {
       script = cli.commandString;
+      stdinStream = guest.stdin;
     } else if (cli.scriptFile !== undefined) {
       try {
         script = await Promise.resolve(fsClient.fsRead(fsClient.fsOpen(cli.scriptFile, { read: true })));
@@ -313,6 +453,7 @@ export default async function main(boot: unknown): Promise<void> {
         guest.exit(127);
         return;
       }
+      stdinStream = guest.stdin;
     } else {
       script = await readAll(guest);
     }
@@ -328,10 +469,9 @@ export default async function main(boot: unknown): Promise<void> {
       },
       // The shell resolves bare command names by deferring to the KERNEL: it
       // passes the name straight through as spawnable "code" and the kernel's
-      // command resolver maps it (or returns ENOENT). The shell does not itself
-      // enumerate external commands. The FsClient adapter routes redirect I/O
-      // and glob through the guest's fs/* syscalls (best-effort; needs a vfs cap).
-      { onStdout, onStderr, resolve: (name) => name, fs: fsClient },
+      // command resolver maps it (or returns ENOENT). The FsClient adapter
+      // routes redirect I/O and glob through the guest's fs/* syscalls.
+      { onStdout, onStderr, resolve: (name) => name, fs: fsClient, stdinStream },
     );
     // Seam 1 (C1 ↔ M16): wire kernel-delivered signals to the shell's trap
     // dispatch. The kernel posts `{event:'signal', payload:{signal}}` over the

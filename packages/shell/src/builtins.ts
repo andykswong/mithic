@@ -97,6 +97,13 @@ export interface BuiltinContext {
    * leaving the in-flight read available to the next reader (no data dropped).
    */
   consumeFdLine?(fd: number): void;
+  /**
+   * A3 Tier 2: read one line of PLAIN stdin (no `-u`). When `stringStdin` is set
+   * (a here-doc / `pipeStdin` / `<` redirect), serve from it; otherwise from the
+   * shell's LIVE stdin stream, racing `timeoutSec` (for `read -t`). `timedOut`
+   * true ⇒ the timer won (the var is left empty and `read` returns >128).
+   */
+  readStdinLine?(stringStdin: string | undefined, timeoutSec?: number): Promise<{ line: string | undefined; timedOut: boolean }>;
   lastStatus?: number;
   stdin?: string;
   /** Loop/function control — implemented by the executor as thrown unwinds. */
@@ -361,11 +368,11 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       return 0;
 
     case 'coproc':
-      // Coprocesses need an async-duplex pipe pair to a background job that this
-      // non-interactive, single-threaded runtime does not model. Emit a clear
-      // diagnostic (and non-zero exit) rather than a confusing
-      // command-not-found (G4 — documented limitation).
-      errOut(ctx, 'shell: coproc: not supported in this runtime\n');
+      // A2: `coproc` is a reserved word handled by the parser/executor (see
+      // Executor.execCoproc). Reaching the builtin means it was used as a plain
+      // word in a context the grammar did not route — emit the precise
+      // backend-gating diagnostic rather than the old blanket "not supported".
+      errOut(ctx, 'shell: coproc: requires a transferable backend\n');
       return 1;
 
     case 'shopt':
@@ -721,6 +728,18 @@ async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
     }
     ctx.consumeFdLine?.(fdArg); // we used this line; the next read fetches a fresh one
     if (line === undefined) return 1; // EOF or fd not open
+    const fields = line.split(/\s+/).filter((f) => f !== '');
+    assignReadVars(names, fields, line, ctx);
+    return 0;
+  }
+
+  // A3 Tier 2: plain `read` — prefer the live-stdin line reader (supports `-t`
+  // and sequential reads over a stream); fall back to the legacy first-line-of-
+  // `ctx.stdin` string behavior when the executor provides no `readStdinLine`.
+  if (ctx.readStdinLine) {
+    const { line, timedOut } = await ctx.readStdinLine(ctx.stdin, timeoutSec);
+    if (timedOut) { assignReadVars(names, [], '', ctx); return READ_TIMEOUT_STATUS; }
+    if (line === undefined) return 1; // EOF
     const fields = line.split(/\s+/).filter((f) => f !== '');
     assignReadVars(names, fields, line, ctx);
     return 0;

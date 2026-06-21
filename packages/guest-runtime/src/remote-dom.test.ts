@@ -23,6 +23,9 @@ function makeStubGuest(): Guest {
     stdout: new WritableStream(),
     stderr: new WritableStream(),
     syscall: async () => undefined,
+    syscallPorts: async () => ({ result: undefined, ports: [] }),
+    pipe: async () => ({ readfd: 0, writefd: 0 }),
+    connect: async () => ({ connfd: 0 }),
     onSignal: () => undefined,
     exit: () => undefined,
   };

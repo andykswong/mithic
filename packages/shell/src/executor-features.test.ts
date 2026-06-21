@@ -421,18 +421,22 @@ test('break exits the select loop', async () => {
   expect(out.trim()).toBe('a');
 });
 
-// ── G4: coproc (documented unsupported) ──────────────────────────────────────
+// ── A2: coproc (now implemented; gated on a transferable backend) ────────────
+// The mock kernel here has no `spawnCoproc`, modelling a non-transferable
+// backend — so coproc emits the PRECISE backend-gating diagnostic (not the old
+// blanket "not supported in this runtime", and not command-not-found).
 
-test('coproc emits a clear diagnostic and a non-zero exit (not command-not-found)', async () => {
+test('coproc on a non-transferable backend emits the precise diagnostic, non-zero exit', async () => {
   const { err, code } = await run('coproc mycmd { echo hi; }');
-  expect(err).toContain('coproc: not supported');
+  expect(err).toContain('coproc: requires a transferable backend');
+  expect(err).not.toContain('not supported in this runtime');
   expect(err).not.toContain('command not found');
   expect(code).not.toBe(0);
 });
 
 test('bare coproc is also diagnosed, not 127 command-not-found', async () => {
   const { err } = await run('coproc');
-  expect(err).toContain('coproc: not supported');
+  expect(err).toContain('coproc: requires a transferable backend');
 });
 
 // ── indexed arrays ──────────────────────────────────────────────────────────

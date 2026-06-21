@@ -361,6 +361,10 @@ export class Kernel {
       ppidOf: (pid) => this.processes.get(pid)?.ppid ?? 0,
       chdir: (pid, path) => { this.#cwds.set(pid, path); },
       exitProcess: (pid, code) => { this.#exit(pid, code); },
+      // D4: deliver a guest-requested signal to one of its children (ownership
+      // already checked in the dispatcher). Cast: the dispatcher passes a
+      // SIG-prefixed string the kernel's Signal type accepts.
+      killChild: (pid, signal) => { this.kill(pid, signal as Signal); },
       // C2: relay byte-channel ops (pipe/read|write|close) are first-class
       // dispatcher members; the kernel owns the RelayEnd table and services them
       // here. On transfer-path backends the guest holds real ports and never
@@ -775,6 +779,13 @@ export class Kernel {
     for (const [fdStr, action] of Object.entries(fds)) {
       const fd = Number(fdStr);
       await this.#applyFdAction(parentPid, fd, action, init, injectedPorts, transfer, pipes, filePumps);
+    }
+
+    // A1: inline stdin bytes — only when fd 0 was NOT wired by an fd action
+    // (no injected/piped/opened stdin). spawn() mints the stdin pipe, feeds the
+    // bytes, and closes it (EOF) so a stdin-reading child does not block.
+    if (args.stdinData !== undefined && init.stdin === undefined) {
+      init.stdinData = args.stdinData;
     }
 
     const { pid } = await this.spawn(code, init);

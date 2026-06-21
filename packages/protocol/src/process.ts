@@ -65,6 +65,13 @@ export interface SpawnArgs {
   env?: Record<string, string>;
   cwd?: string;
   fds?: Record<number, FdAction>;
+  /**
+   * A1: inline stdin bytes for the child. When set and fd 0 is not otherwise
+   * wired (no `fds[0]` pipe/dup2/open), the kernel mints a stdin pipe, feeds
+   * these bytes, and closes the write end (EOF) so a stdin-reading child does
+   * not block. Mirrors the per-stage `stdinData` of `process/pipeline`.
+   */
+  stdinData?: Uint8Array;
 }
 
 export interface SpawnResult {

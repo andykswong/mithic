@@ -22,10 +22,28 @@ export interface SyscallClientOptions {
 export interface SyscallCallOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
+  /**
+   * A2/B5: MessagePorts to TRANSFER with this syscall request (move, not copy).
+   * Used to inject pipe ends the guest minted into a `process/spawn` (the kernel
+   * maps them to child fds via `portFds`). The transport forwards them to the
+   * kernel-side `dispatch(pid, msg, ports)`.
+   */
+  transfer?: readonly MessagePort[];
+}
+
+/**
+ * B5: the full settled value of a syscall — the decoded `result` plus any
+ * MessagePorts the kernel transferred with the response (e.g. the read/write
+ * ends of an `fs/pipe`, or the connection port of an `ipc/connect`). For calls
+ * that carry no ports, `ports` is an empty array.
+ */
+export interface SyscallResult {
+  result: unknown;
+  ports: readonly MessagePort[];
 }
 
 interface PendingCall {
-  resolve: (v: unknown) => void;
+  resolve: (v: SyscallResult) => void;
   reject: (e: unknown) => void;
   timer?: ReturnType<typeof setTimeout>;
   onAbort?: () => void;
@@ -41,13 +59,14 @@ export class SyscallClient {
   constructor(transport: Transport, options: SyscallClientOptions = {}) {
     this.transport = transport;
     this.timeoutMs = options.timeoutMs;
-    transport.onMessage((msg) => {
+    transport.onMessage((msg, ports) => {
       if (!isSyscallResponse(msg)) return;
       const p = this.pending.get(msg.id);
       if (!p) return;
       this.#settle(msg.id, p);
       if (msg.ok) {
-        p.resolve(msg.result);
+        // B5: surface any transferred ports alongside the result.
+        p.resolve({ result: msg.result, ports: ports ?? [] });
       } else {
         const err = Object.assign(new Error(msg.error.message), { code: msg.error.code });
         p.reject(err);
@@ -62,11 +81,30 @@ export class SyscallClient {
     if (p.signal && p.onAbort) p.signal.removeEventListener('abort', p.onAbort);
   }
 
+  /**
+   * Issue a syscall, returning ONLY the decoded result (the historical shape).
+   * Any transferred ports are dropped. Use {@link syscallPorts} when the call
+   * mints ports (e.g. `fs/pipe`, `ipc/connect`, `ipc/accept`).
+   */
   syscall(call: string, args: Record<string, unknown>, opts: SyscallCallOptions = {}): Promise<unknown> {
+    return this.#dispatch(call, args, opts).then((r) => r.result);
+  }
+
+  /**
+   * B5: issue a syscall and return BOTH the decoded result and any MessagePorts
+   * the kernel transferred with the response. For `fs/pipe` this yields the
+   * `[readPort, writePort]`; for `ipc/connect`/`ipc/accept` the single duplex
+   * port. Calls that carry no ports resolve with `ports: []`.
+   */
+  syscallPorts(call: string, args: Record<string, unknown>, opts: SyscallCallOptions = {}): Promise<SyscallResult> {
+    return this.#dispatch(call, args, opts);
+  }
+
+  #dispatch(call: string, args: Record<string, unknown>, opts: SyscallCallOptions): Promise<SyscallResult> {
     const id = this.nextId++;
     // Per-call timeout takes precedence over the client-wide default.
     const effectiveTimeout = opts.timeoutMs ?? this.timeoutMs;
-    return new Promise((resolve, reject) => {
+    return new Promise<SyscallResult>((resolve, reject) => {
       // Already-aborted signal: reject synchronously without ever sending.
       if (opts.signal?.aborted) {
         reject(Object.assign(new Error(`syscall canceled: ${call}`), { code: 'ECANCELED' }));
@@ -93,7 +131,8 @@ export class SyscallClient {
         opts.signal.addEventListener('abort', entry.onAbort, { once: true });
       }
       this.pending.set(id, entry);
-      this.transport.send({ id, call, args });
+      // A2/B5: forward any ports to transfer with the request (move semantics).
+      this.transport.send({ id, call, args }, opts.transfer ? [...opts.transfer] : undefined);
     });
   }
 

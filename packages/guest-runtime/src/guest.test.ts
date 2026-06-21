@@ -183,6 +183,39 @@ test('M-Fix 1: dom/event routes through MutationSerializer to the matching VNode
   kernelPort.close();
 });
 
+test('B5: guest.pipe() surfaces transferred read/write ends as usable streams', async () => {
+  const { guest, kernelPort } = makeGuest();
+  kernelPort.start?.();
+
+  // Kernel side: mint a MessageChannel and transfer BOTH ends with the response,
+  // exactly as SyscallDispatcher.#pipe does.
+  kernelPort.onmessage = (e) => {
+    const req = e.data as { id: number; call: string };
+    if (req.call !== 'fs/pipe') return;
+    const pipe = new MessageChannel();
+    kernelPort.postMessage(
+      { id: req.id, ok: true, result: { readfd: 3, writefd: 4 } },
+      [pipe.port1, pipe.port2],
+    );
+  };
+
+  const { readfd, writefd, readable, writable } = await guest.pipe();
+  expect(readfd).toBe(3);
+  expect(writefd).toBe(4);
+  expect(readable).toBeInstanceOf(ReadableStream);
+  expect(writable).toBeInstanceOf(WritableStream);
+
+  // The two transferred ends are entangled (writePort → readPort), so bytes
+  // written to `writable` arrive on `readable` over the credit-windowed protocol.
+  const w = writable!.getWriter();
+  const r = readable!.getReader();
+  await w.write(new TextEncoder().encode('round-trip'));
+  const { value } = await r.read();
+  expect(new TextDecoder().decode(value)).toBe('round-trip');
+
+  kernelPort.close();
+});
+
 test('syscall response is NOT delivered to the signal handler', async () => {
   const { guest, kernelPort } = makeGuest();
   kernelPort.start?.();

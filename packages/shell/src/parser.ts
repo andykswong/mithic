@@ -29,7 +29,7 @@ const RESERVED = new Set([
   'if', 'then', 'elif', 'else', 'fi',
   'while', 'until', 'do', 'done',
   'for', 'select', 'in', 'case', 'esac', 'function',
-  '{', '}', '!',
+  '{', '}', '!', 'coproc',
 ]);
 
 interface HereDoc { id: number; body: string; quoted: boolean; }
@@ -92,7 +92,7 @@ class Parser {
     const t = this.peek();
     if (!t) return true;
     if (t.type === 'WORD' && RESERVED.has(t.value)
-      && !['if', 'while', 'until', 'for', 'select', 'case', 'function', '{', '!'].includes(t.value)) {
+      && !['if', 'while', 'until', 'for', 'select', 'case', 'function', '{', '!', 'coproc'].includes(t.value)) {
       return true;
     }
     if (t.type === 'RPAREN' || t.type === 'DSEMI' || t.type === 'DRPAREN') return true;
@@ -167,6 +167,7 @@ class Parser {
     if (this.atType('DLPAREN')) { if (this.posix) this.posixReject('(( ))'); return this.parseArithCmd(); }
     if (this.atType('DLBRACKET')) { if (this.posix) this.posixReject('[[ ]]'); return this.parseCond(); }
     if (this.atReserved('select')) { if (this.posix) this.posixReject('select'); return this.parseSelect(); }
+    if (this.atReserved('coproc')) { if (this.posix) this.posixReject('coproc'); return this.parseCoproc(); }
 
     // function definition: NAME ( )  { ... }
     const t = this.peek();
@@ -180,6 +181,42 @@ class Parser {
 
   private wrapSimple(cmd: SimpleCommand): Statement {
     return { type: 'Pipeline', stages: [cmd] };
+  }
+
+  /**
+   * `coproc [NAME] command` / `coproc NAME { ...; }`.
+   *
+   * Disambiguation (bash): a NAME prefix is recognized ONLY when it is a valid
+   * identifier AND is immediately followed by a COMPOUND command (`{`, `(`, or a
+   * compound keyword). In every other case the word(s) after `coproc` ARE the
+   * (simple) command and the array name defaults to `COPROC`.
+   */
+  private parseCoproc(): Statement {
+    this.next(); // consume `coproc`
+    let coprocName = 'COPROC';
+    const headWord = this.peek();
+    const next = this.at(1);
+    if (
+      headWord?.type === 'WORD'
+      && isName(headWord.value)
+      && !RESERVED.has(headWord.value)
+      && next !== undefined
+      && this.startsCompound(next)
+    ) {
+      coprocName = headWord.value;
+      this.next(); // consume NAME
+    }
+    const coprocBody = this.parseCommand();
+    return { type: 'Coproc', coprocName, coprocBody };
+  }
+
+  /** True if `t` begins a compound command (used by `coproc NAME compound`). */
+  private startsCompound(t: Token): boolean {
+    if (t.type === 'LPAREN' || t.type === 'DLPAREN' || t.type === 'DLBRACKET') return true;
+    if (t.type === 'WORD') {
+      return ['{', 'if', 'while', 'until', 'for', 'case', 'select'].includes(t.value);
+    }
+    return false;
   }
 
   private parseIf(): Statement {

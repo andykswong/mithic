@@ -70,6 +70,7 @@ export type Syscall =
   | { call: 'process/spawn'; args: SpawnArgs & { portFds?: number[] } }
   | { call: 'process/pipeline'; args: { stages: PipelineStageArgs[] } }
   | { call: 'process/wait'; args: { pid: number } }
+  | { call: 'process/kill'; args: { pid: number; signal?: string } }
   | { call: 'process/exit'; args: { code?: number } }
   | { call: 'process/getpid'; args: Record<string, never> }
   | { call: 'process/getppid'; args: Record<string, never> }
@@ -117,6 +118,7 @@ export const SYSCALL_NAMES = [
   'process/spawn',
   'process/pipeline',
   'process/wait',
+  'process/kill',
   'process/exit',
   'process/getpid',
   'process/getppid',

@@ -120,6 +120,53 @@ export interface ExecutorOptions {
   onStdout?: (s: string) => void;
   onStderr?: (s: string) => void;
   fs?: FsClient;
+  /**
+   * A3 Tier 2: the shell's OWN stdin as a LIVE byte stream. When present, plain
+   * `read` / `read -t` consume successive lines from it (a `read -t` over a
+   * stream with no data yet times out), instead of the pre-materialized string
+   * model. Here-docs / `pipeStdin` / `<` redirects still feed `read` via the
+   * string path. Absent ⇒ plain `read` falls back to the string `ctx.stdin`.
+   */
+  stdinStream?: ReadableStream<Uint8Array>;
+}
+
+/**
+ * A3 Tier 2: an incremental line reader over a live `ReadableStream<Uint8Array>`.
+ * `readLine()` resolves the next `\n`-terminated line (newline stripped), or the
+ * trailing partial line at EOF, or `undefined` once exhausted. A pull that has
+ * no buffered line awaits the next chunk — so a `read -t` can race it against a
+ * timer; a lost race does NOT drop data (consumed bytes stay in `#pending` and
+ * any in-flight chunk read is cached).
+ */
+class StreamLineReader {
+  #reader: ReadableStreamDefaultReader<Uint8Array>;
+  #dec = new TextDecoder();
+  #pending = '';
+  #eof = false;
+  /** A chunk read started by a prior (possibly timed-out) call, not yet used. */
+  #inflight: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
+
+  constructor(stream: ReadableStream<Uint8Array>) {
+    this.#reader = stream.getReader();
+  }
+
+  async readLine(): Promise<string | undefined> {
+    for (;;) {
+      const nl = this.#pending.indexOf('\n');
+      if (nl >= 0) { const line = this.#pending.slice(0, nl); this.#pending = this.#pending.slice(nl + 1); return line; }
+      if (this.#eof) { if (this.#pending.length > 0) { const l = this.#pending; this.#pending = ''; return l; } return undefined; }
+      // Reuse an in-flight chunk read (a prior read -t may have abandoned it on a
+      // timeout) so no chunk is lost; start a fresh one otherwise.
+      const p = this.#inflight ?? this.#reader.read();
+      this.#inflight = p;
+      const { value, done } = await p;
+      this.#inflight = undefined;
+      if (done) { this.#eof = true; continue; }
+      if (value && value.byteLength > 0) this.#pending += this.#dec.decode(value, { stream: true });
+    }
+  }
+
+  cancel(): void { void this.#reader.cancel().catch(() => { /* closed */ }); }
 }
 
 class ShellExit extends Error {
@@ -146,6 +193,16 @@ export class Executor implements ShellEnv {
   private kernel: KernelClient;
   private resolve: CommandResolver;
   private fs: FsClient | undefined;
+  /** A3-T2: the shell's live stdin stream + its lazily-built line reader. */
+  private stdinStream: ReadableStream<Uint8Array> | undefined;
+  private stdinLineReader: StreamLineReader | undefined;
+  /**
+   * A3-T2: an in-flight `readLine()` a prior `read -t` started but abandoned when
+   * its timer won. Cached so the NEXT plain read reuses the SAME promise (and the
+   * line it eventually yields) instead of starting a fresh read that races the
+   * orphan — mirrors the duplex-fd `pendingRead` cache. Cleared on consumption.
+   */
+  private stdinPendingLine: Promise<string | undefined> | undefined;
   private lastStatus = 0;
   private pipeStatus: number[] = [];
   private lastBgPid = 0;
@@ -202,6 +259,7 @@ export class Executor implements ShellEnv {
     this.context = context;
     this.resolve = options.resolve ?? ((name) => name);
     this.fs = options.fs;
+    this.stdinStream = options.stdinStream;
     this.stdoutSink = options.onStdout ?? ((s) => {
       if (typeof process !== 'undefined' && process.stdout) process.stdout.write(s);
     });
@@ -772,6 +830,7 @@ export class Executor implements ShellEnv {
       }
       case 'Subshell': return this.execSubshell(stmt);
       case 'Group': return this.withRedirects(stmt, () => this.execList(stmt.body ?? []));
+      case 'Coproc': return this.execCoproc(stmt);
       case 'Arithmetic': return this.execArithCmd(stmt);
       case 'Cond': return this.execCond(stmt);
       default: return 0;
@@ -1054,11 +1113,13 @@ export class Executor implements ShellEnv {
       if (r.op === '<' || r.op === '<<' || r.op === '<<<' || r.op === '<>') continue; // stdin handled per-command
 
       if (r.op === '>&') {
-        // fd-dup: `N>&M` makes fd N write where M writes; `N>&-` closes N.
+        // fd-dup: `N>&M` makes fd N write where M writes; `N>&-` closes N. The
+        // target may need expansion (A2: `>&"${COPROC[1]}"` → the coproc fd).
         const fd = r.fd ?? 1;
         snapshotFd(fd);
-        if (r.target === '-') { this.setFdSink(fd, () => { /* closed */ }); if (fd > 2) this.fdTable.delete(fd); continue; }
-        const dst = parseInt(r.target, 10);
+        const tgt = r.target === '-' ? '-' : await exp.expandToString(r.target);
+        if (tgt === '-') { this.setFdSink(fd, () => { /* closed */ }); if (fd > 2) this.fdTable.delete(fd); continue; }
+        const dst = parseInt(tgt, 10);
         if (!Number.isNaN(dst)) this.setFdSink(fd, this.sinkForFd(dst));
         continue;
       }
@@ -1100,8 +1161,9 @@ export class Executor implements ShellEnv {
     for (const r of redirects) {
       const fd = r.fd ?? (r.op === '<' || r.op === '<>' ? 0 : 1);
       if (r.op === '>&') {
-        if (r.target === '-') { this.closeFdEntry(fd); this.fdTable.delete(fd); continue; }
-        const dst = parseInt(r.target, 10);
+        const tgt = r.target === '-' ? '-' : await exp.expandToString(r.target);
+        if (tgt === '-') { this.closeFdEntry(fd); this.fdTable.delete(fd); continue; }
+        const dst = parseInt(tgt, 10);
         if (!Number.isNaN(dst)) { this.closeFdEntry(fd); this.fdTable.set(fd, { mode: 'write', sink: this.sinkForFd(dst) }); }
         continue;
       }
@@ -1225,6 +1287,44 @@ export class Executor implements ShellEnv {
     if (entry?.duplex) entry.pendingRead = undefined;
   }
 
+  /**
+   * A3 Tier 2: read one line of PLAIN stdin (no `-u`) for the `read` builtin.
+   *
+   * Precedence:
+   *   1. An active STRING stdin (`stringStdin` — a here-doc / `pipeStdin` / `<`
+   *      redirect): serve the first line. A `-t` over a materialized string is
+   *      immediate (data is already here or it is EOF) — never a timeout.
+   *   2. Otherwise the shell's LIVE stdin stream: read the next line, racing a
+   *      `-t` timer when set. On timeout, `timedOut` is true and the in-flight
+   *      chunk read is retained (no data dropped). No stream ⇒ EOF.
+   */
+  async readStdinLine(stringStdin: string | undefined, timeoutSec: number | undefined): Promise<{ line: string | undefined; timedOut: boolean }> {
+    if (stringStdin !== undefined) {
+      const nl = stringStdin.indexOf('\n');
+      if (stringStdin === '') return { line: undefined, timedOut: false };
+      return { line: nl >= 0 ? stringStdin.slice(0, nl) : stringStdin, timedOut: false };
+    }
+    if (!this.stdinStream) return { line: undefined, timedOut: false };
+    if (!this.stdinLineReader) this.stdinLineReader = new StreamLineReader(this.stdinStream);
+    // Reuse any in-flight line read a prior timed-out read abandoned (no data
+    // dropped); start a fresh one otherwise.
+    const readP = this.stdinPendingLine ?? this.stdinLineReader.readLine();
+    this.stdinPendingLine = readP;
+    if (timeoutSec === undefined) {
+      const line = await readP;
+      this.stdinPendingLine = undefined; // consumed
+      return { line, timedOut: false };
+    }
+    const timedOut = Symbol('t');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timerP = new Promise<typeof timedOut>((resolve) => { timer = setTimeout(() => resolve(timedOut), Math.max(0, timeoutSec * 1000)); });
+    const r = await Promise.race([readP, timerP]);
+    if (timer !== undefined) clearTimeout(timer);
+    if (r === timedOut) return { line: undefined, timedOut: true }; // leave pending cached
+    this.stdinPendingLine = undefined; // consumed
+    return { line: r, timedOut: false };
+  }
+
   private makeFileSink(path: string, append: boolean, closers: Array<() => void>): (s: string) => void {
     if (path === '/dev/null') return () => { /* discard */ };
     if (path === '/dev/stdout') return (s) => this.stdoutSink(s);
@@ -1275,6 +1375,21 @@ export class Executor implements ShellEnv {
     // stage's stdout (and optionally stderr) as the next stage's stdin.
     if (stmt.stageNodes && stmt.stageNodes.length > 0) {
       if (stmt.background) return this.execBackground(stmt);
+      // D5-fix: if EVERY compound-stage reduces to a single simple command and no
+      // `|&` join is present, flatten to a flat-`stages` pipeline so it runs
+      // through the CONCURRENT kernel path (execMultiStagePipeline → runPipeline),
+      // which streams stage-to-stage and propagates EPIPE. This is what makes
+      // `yes | { head -n3; }` TERMINATE instead of hard-hanging: the serialized
+      // in-process execNodePipeline buffers stage i to completion (an unbounded
+      // producer never EOFs) before stage i+1 ever spawns to send EPIPE.
+      // Genuinely-compound stages (multi-statement / control-flow) keep the
+      // in-process path (their builtin I/O contract is synchronous-string-based).
+      const flattened = this.flattenSimpleStageNodes(stmt.stageNodes, stmt.pipeStderr ?? []);
+      if (flattened) {
+        let status = await this.execMultiStagePipeline(flattened);
+        if (stmt.negate) status = status === 0 ? 1 : 0;
+        return status;
+      }
       let status = await this.execNodePipeline(stmt.stageNodes, stmt.pipeStderr ?? []);
       if (stmt.negate) status = status === 0 ? 1 : 0;
       return status;
@@ -1296,6 +1411,29 @@ export class Executor implements ShellEnv {
     }
     if (stmt.negate) status = status === 0 ? 1 : 0;
     return status;
+  }
+
+  /**
+   * D5-fix: reduce a list of compound-stage pipeline nodes to a flat
+   * `SimpleCommand[]` IFF every node is (or wraps) a single simple command AND
+   * no inter-stage `|&` is present. Returns undefined otherwise — those
+   * pipelines keep the serialized in-process path. A simple command carrying its
+   * own input redirect on a non-first stage would change semantics, so we only
+   * accept redirects on the first stage (where they become the stage's stdin).
+   */
+  private flattenSimpleStageNodes(nodes: Statement[], pipeStderr: boolean[]): SimpleCommand[] | undefined {
+    if (pipeStderr.some(Boolean)) return undefined;
+    const stages: SimpleCommand[] = [];
+    for (let i = 0; i < nodes.length; i++) {
+      const cmd = this.extractSimpleCommand(nodes[i]);
+      if (!cmd) return undefined;
+      // Only the first stage may carry redirects (its stdin source); a later
+      // stage's redirect would override the inter-stage pipe — keep those
+      // in-process to preserve exact semantics.
+      if (i > 0 && cmd.redirects.length > 0) return undefined;
+      stages.push(cmd);
+    }
+    return stages;
   }
 
   /**
@@ -1573,10 +1711,47 @@ export class Executor implements ShellEnv {
       captureStdout: true,
       stdinData: stdin,
     };
+    // A1: prefer the live-stream spawn path — the child's stdout arrives as a
+    // ReadableStream we pump chunk-by-chunk into our stdout sink, so a large or
+    // unbounded producer streams rather than being buffered to completion (which
+    // defeats the kernel's credit-windowed back-pressure). Falls back to the
+    // buffered spawn on backends that don't transfer ports.
+    if (this.kernel.spawnStream) {
+      const handle = await this.kernel.spawnStream(params);
+      if (handle.stdout) await this.pumpToStdout(handle.stdout);
+      const { code: status } = await this.kernel.wait(handle.pid);
+      return status;
+    }
     const handle = await this.kernel.spawn(params);
     if (handle.stdout) await this.writeCaptured(handle.stdout);
     const { code: status } = await this.kernel.wait(handle.pid);
     return status;
+  }
+
+  /**
+   * A1: drain a live child-stdout ReadableStream into the shell's stdout sink,
+   * decoding incrementally (UTF-8 stream mode) so multi-byte chars spanning a
+   * chunk boundary aren't mangled. Cancels the stream if the sink throws (a
+   * broken downstream), propagating EPIPE up to the child via portToReadable.
+   */
+  private async pumpToStdout(stream: ReadableStream<Uint8Array>): Promise<void> {
+    const reader = stream.getReader();
+    const dec = new TextDecoder();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value && value.byteLength > 0) this.writeStdout(dec.decode(value, { stream: true }));
+      }
+      const tail = dec.decode();
+      if (tail) this.writeStdout(tail);
+    } catch {
+      // Downstream broke or stream errored — stop reading; the cancel below (via
+      // releaseLock + GC) and the kernel EOF wiring tear the child's pipe down.
+      try { await reader.cancel(); } catch { /* already closed */ }
+    } finally {
+      reader.releaseLock();
+    }
   }
 
   private async callFunction(name: string, argv: string[], localEnv: Record<string, string>): Promise<number> {
@@ -1619,8 +1794,39 @@ export class Executor implements ShellEnv {
     const cmdStr = describeStages(stmt.stages ?? []);
     const job: Job = { id, pids: [], command: cmdStr, state: 'running' };
     this.jobs.push(job);
-    // Run the pipeline detached. We DON'T await it (background semantics), but
-    // record completion on the job. A synthetic pid models the job leader.
+
+    // D4: a single EXTERNAL command backgrounded gets a REAL kernel pid via the
+    // direct-spawn path (spawnStream) — so `$!` is the real leader and `kill %1`
+    // / `kill <pid>` reach the live child via kernel.kill. We pump its stdout to
+    // the shell's stdout in the background (not awaited) and resolve the job from
+    // kernel.wait(realPid). Builtins / functions / compound bodies have no kernel
+    // child, so they keep a synthetic pid and run detached in-process.
+    const external = await this.backgroundExternal(stmt);
+    if (external && this.kernel.spawnStream) {
+      try {
+        const handle = await this.kernel.spawnStream(external);
+        job.pids = [handle.pid];
+        this.lastBgPid = handle.pid;
+        // Stream the child's stdout to our stdout in the background (fire-and-
+        // forget). The job's COMPLETION is the child's exit — awaited directly
+        // via kernel.wait — NOT the pump finishing: a killed child may never EOF
+        // its stdout pipe, so chaining wait AFTER the pump would hang `wait`.
+        const sinkAtSpawn = this.stdoutSink;
+        const reader = handle.stdout?.getReader();
+        if (reader) void this.pumpReaderToSink(reader, sinkAtSpawn);
+        const promise = this.kernel.wait(handle.pid)
+          .then((w) => { job.state = 'done'; job.exitCode = w.code; if (reader) void reader.cancel().catch(() => {}); return w.code; })
+          .catch(() => { job.state = 'done'; job.exitCode = 1; if (reader) void reader.cancel().catch(() => {}); return 1; });
+        (job as Job & { promise?: Promise<number> }).promise = promise;
+        return 0;
+      } catch {
+        // Fall through to the in-process detached path on spawn failure.
+      }
+    }
+
+    // In-process / synthetic-pid path (builtins, functions, compound bodies, or
+    // backends without spawnStream). The synthetic pid models a job leader that
+    // has no kernel-side process to signal.
     const pid = 100000 + id;
     job.pids = [pid];
     this.lastBgPid = pid;
@@ -1632,6 +1838,138 @@ export class Executor implements ShellEnv {
     }).catch(() => { job.state = 'done'; job.exitCode = 1; return 1; });
     (job as Job & { promise?: Promise<number> }).promise = promise;
     return 0;
+  }
+
+  /**
+   * D4: if `stmt` is a single EXTERNAL command (one-stage pipeline, not a builtin
+   * that shadows / not a function), expand it and return SpawnParams ready for a
+   * direct kernel spawn. Returns undefined for anything that must run in-process
+   * (builtins, functions, pipelines, compounds).
+   */
+  private async backgroundExternal(stmt: Statement): Promise<SpawnParams | undefined> {
+    if (stmt.type !== 'Pipeline' || !stmt.stages || stmt.stages.length !== 1) return undefined;
+    const cmd = stmt.stages[0];
+    if (cmd.redirects.length > 0) return undefined; // redirects: keep the in-process path
+    const expander = this.expander();
+    const { name, argv, env } = await this.expandCommand(cmd, expander);
+    if (name === '') return undefined;
+    if (this.functions.has(name)) return undefined;
+    if (isBuiltin(name) && builtinShadowsExternal(name, argv)) return undefined;
+    const code = this.resolve(name);
+    if (code === undefined) return undefined;
+    return { code, args: [name, ...argv], env: { ...this.context.env, ...env }, cwd: this.context.cwd };
+  }
+
+  /** D4: pump a live child-stdout reader into a captured sink (background jobs). */
+  private async pumpReaderToSink(reader: ReadableStreamDefaultReader<Uint8Array>, sink: (s: string) => void): Promise<void> {
+    const dec = new TextDecoder();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value && value.byteLength > 0) sink(dec.decode(value, { stream: true }));
+      }
+      const tail = dec.decode();
+      if (tail) sink(tail);
+    } catch {
+      // Cancelled (job ended / stream errored) — stop pumping.
+    }
+  }
+
+  /**
+   * A2: `coproc [NAME] command`. Start `command` as a BACKGROUND child wired to
+   * a bidirectional pipe pair (minted via the kernel). Expose the shell-retained
+   * ends as two numbered fds — `${NAME[0]}` (read child stdout) and `${NAME[1]}`
+   * (write child stdin) — plus `NAME_PID` (the real child pid). `read -u
+   * ${NAME[0]}` and `echo >&${NAME[1]}` then work via the existing fd machinery.
+   *
+   * Requires a transferable backend (the pipe pair is transferred MessagePorts).
+   * On a non-transferable backend `spawnCoproc` rejects ENOSYS and we emit the
+   * precise `coproc: requires a transferable backend` diagnostic.
+   */
+  private async execCoproc(stmt: Statement): Promise<number> {
+    if (!this.kernel.spawnCoproc) {
+      this.writeStderr('shell: coproc: requires a transferable backend\n');
+      return 1;
+    }
+    const simple = this.extractSimpleCommand(stmt.coprocBody);
+    if (!simple) {
+      this.writeStderr('shell: coproc: only a single external command is supported\n');
+      return 1;
+    }
+    const expander = this.expander();
+    const { name, argv, env } = await this.expandCommand(simple, expander);
+    const code = this.resolve(name);
+    if (code === undefined) {
+      this.writeStderr(`shell: ${name}: command not found\n`);
+      return 127;
+    }
+    let handle;
+    try {
+      handle = await this.kernel.spawnCoproc({
+        code, args: [name, ...argv],
+        env: { ...this.context.env, ...env },
+        cwd: this.context.cwd,
+      });
+    } catch (e) {
+      const c = (e as { code?: string }).code;
+      if (c === 'ENOSYS') { this.writeStderr('shell: coproc: requires a transferable backend\n'); return 1; }
+      throw e;
+    }
+
+    // Allocate two shell fds for the retained ends. Read fd serves `read -u`,
+    // write fd serves `echo >&N` (its sink writes to the child's stdin).
+    const readFd = this.allocCoprocFd();
+    const writeFd = this.allocCoprocFd();
+    this.fdTable.set(readFd, {
+      mode: 'read',
+      duplex: { readLine: () => handle.readLine(), write: () => { /* read end: no write */ }, close: () => handle.close() },
+    });
+    this.fdTable.set(writeFd, {
+      mode: 'write',
+      sink: (s: string) => { void Promise.resolve(handle.write(s)); },
+      close: () => handle.close(),
+    });
+
+    // Expose ${NAME[0]} / ${NAME[1]} and NAME_PID. The array holds the fd
+    // NUMBERS (as bash does); NAME_PID is the real child pid.
+    const arrName = stmt.coprocName ?? 'COPROC';
+    this.arrays.set(arrName, [String(readFd), String(writeFd)]);
+    delete this.context.env[arrName];
+    this.context.env[`${arrName}_PID`] = String(handle.pid);
+    this.lastBgPid = handle.pid;
+
+    // Register a background job so `wait`/`jobs` see the coproc child.
+    const id = this.nextJobId++;
+    const job: Job = { id, pids: [handle.pid], command: `coproc ${arrName}`, state: 'running' };
+    this.jobs.push(job);
+    const promise = this.kernel.wait(handle.pid).then((w) => {
+      job.state = 'done'; job.exitCode = w.code; return w.code;
+    }).catch(() => { job.state = 'done'; job.exitCode = 1; return 1; });
+    (job as Job & { promise?: Promise<number> }).promise = promise;
+    return 0;
+  }
+
+  /** Coproc retained-end fds start at 63 and descend (bash uses high fds). */
+  private nextCoprocFd = 63;
+  private allocCoprocFd(): number {
+    while (this.fdTable.has(this.nextCoprocFd) && this.nextCoprocFd > 10) this.nextCoprocFd--;
+    return this.nextCoprocFd--;
+  }
+
+  /**
+   * Extract the single simple command from a coproc body: a one-stage pipeline,
+   * or a Group/Subshell wrapping exactly one such statement. Returns undefined
+   * for genuinely-compound bodies (multiple statements / control flow), which
+   * the coproc path does not spawn as an external.
+   */
+  private extractSimpleCommand(body: Statement | undefined): SimpleCommand | undefined {
+    if (!body) return undefined;
+    if (body.type === 'Pipeline' && body.stages?.length === 1) return body.stages[0];
+    if ((body.type === 'Group' || body.type === 'Subshell') && body.body?.length === 1) {
+      return this.extractSimpleCommand(body.body[0]);
+    }
+    return undefined;
   }
 
   private async waitForJob(spec?: number): Promise<number> {
@@ -1706,6 +2044,7 @@ export class Executor implements ShellEnv {
       sourceFile: (args) => this.sourceFile(args),
       readFdLine: (fd) => this.readFdLine(fd),
       consumeFdLine: (fd) => this.consumeFdLine(fd),
+      readStdinLine: (s, t) => this.readStdinLine(s, t),
       doBreak: (n) => { throw new LoopBreak(n); },
       doContinue: (n) => { throw new LoopContinue(n); },
       doReturn: (n) => { throw new FuncReturn(n); },

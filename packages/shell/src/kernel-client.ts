@@ -31,6 +31,18 @@ export interface SpawnHandle {
   stderr?: Promise<Uint8Array>;
 }
 
+/**
+ * A1: a LIVE spawn handle whose stdout is a `ReadableStream<Uint8Array>` rather
+ * than a buffered `Promise<Uint8Array>`. The shell pipes the stream into its own
+ * stdout so a large/unbounded final stage streams instead of being buffered to
+ * completion (which defeats the kernel's credit-windowed back-pressure).
+ */
+export interface SpawnStreamHandle {
+  pid: number;
+  /** Live child stdout. Undefined on relay backends (no port transfer). */
+  stdout?: ReadableStream<Uint8Array>;
+}
+
 /** One stage of a pipeline. */
 export interface PipelineStageParams {
   code: string | URL;
@@ -55,9 +67,42 @@ export interface WaitOutcome {
   code: number;
 }
 
+/**
+ * A2: a running coproc. The shell holds the two retained pipe ends: `readLine`
+ * reads one line from the child's stdout (over the c2s pipe) and `write` sends
+ * to the child's stdin (over the s2c pipe). `pid` is the REAL child pid (for
+ * `NAME_PID`). The child runs as a background job; `close` tears down the ends.
+ */
+export interface CoprocHandle {
+  pid: number;
+  readLine(): Promise<string | undefined>;
+  write(s: string): void | Promise<void>;
+  close(): void;
+}
+
 export interface KernelClient {
   /** Spawn a single guest program. */
   spawn(params: SpawnParams): Promise<SpawnHandle>;
+  /**
+   * A2: start a coproc. Mints two kernel pipes (c2s, s2c) and spawns `params` as
+   * a child whose stdin reads the shell's writes (s2c) and whose stdout the
+   * shell reads (c2s) — via port-injecting `process/spawn`
+   * (`fds:{0:dup2,1:dup2}` + transferred `portFds`). Returns the live duplex
+   * handle. Requires a transferable backend; rejects with `code:'ENOSYS'`
+   * otherwise. Absent on minimal mocks.
+   */
+  spawnCoproc?(params: SpawnParams): Promise<CoprocHandle>;
+  /** Whether the backend can transfer MessagePorts (coproc / live-stream gate). */
+  transferable?: boolean;
+  /**
+   * A1: optional live-stream spawn. Spawns a single command whose stdout is a
+   * kernel-minted pipe transferred back to the shell as a `ReadableStream`
+   * (`process/spawn` with `fds:{1:{action:'pipe'}}`). The real KernelClient
+   * provides this on transferable backends; on relay backends it returns a
+   * handle with `stdout: undefined` so the caller falls back to buffered spawn.
+   * Absent entirely on minimal mocks (the executor then uses {@link spawn}).
+   */
+  spawnStream?(params: SpawnParams): Promise<SpawnStreamHandle>;
   /** Wait for a process to exit, returning its exit code. */
   wait(pid: number): Promise<WaitOutcome>;
   /**
