@@ -9,9 +9,9 @@
  *   - `-c`: complement SET1 (operate on chars NOT in SET1).
  *   - ranges `a-z`, classes `[:alpha:]`/`[:digit:]`/`[:space:]`/`[:upper:]`/`[:lower:]`.
  *
- * Reads stdin only (standard `tr`).
+ * Reads stdin incrementally (streaming) so `yes | tr … | head` terminates.
  */
-import { defineCommand, parseArgs, readAllText, writeString } from '../harness.ts';
+import { CoalescingWriter, defineCommand, isBrokenPipe, parseArgs, writeString } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 const CLASS_MEMBERS: Record<string, () => string[]> = {
@@ -88,6 +88,7 @@ const trCommand: CommandFn = async (io: CommandIO): Promise<number> => {
 
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
+  let stdinAborted = false;
 
   try {
     if (positionals.length === 0 && !squeeze) {
@@ -98,62 +99,103 @@ const trCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     const set1 = positionals[0] !== undefined ? expandSet(positionals[0]) : [];
     const set2 = positionals[1] !== undefined ? expandSet(positionals[1]) : [];
 
-    const text = await readAllText(io.stdin);
-    const chars = [...text];
-
     // Membership test against set1, honoring complement.
     const set1Set = new Set(set1);
     const inSet1 = (c: string): boolean => complement ? !set1Set.has(c) : set1Set.has(c);
 
-    let result: string[];
+    // Build a per-character transform function.  Returns the output string for a
+    // single input character, or '' to drop it.  The squeeze predicate (which
+    // squeeze set to use) is also resolved here once, before the streaming loop.
+    let translateChar: (c: string) => string;
+    // null means squeeze is not active; a function means "is this char in the squeeze set?"
+    let squeezeInSet: ((c: string) => boolean) | null = null;
 
     if (del) {
-      result = chars.filter((c) => !inSet1(c));
-      if (squeeze && set2.length > 0) result = squeezeChars(result, new Set(set2));
+      translateChar = (c) => inSet1(c) ? '' : c;
+      if (squeeze && set2.length > 0) {
+        const sqSet = new Set(set2);
+        squeezeInSet = (c) => sqSet.has(c);
+      }
     } else if (set2.length > 0) {
-      // Translate: pad set2 to set1 length by repeating its last char (GNU behavior).
-      // With complement, every non-set1 char maps to the last char of set2.
       const lastTo = set2[set2.length - 1];
       if (complement) {
-        result = chars.map((c) => (inSet1(c) ? lastTo : c));
+        translateChar = (c) => inSet1(c) ? lastTo : c;
       } else {
-        const map = new Map<string, string>();
-        for (let k = 0; k < set1.length; k++) map.set(set1[k], set2[k] ?? lastTo);
-        result = chars.map((c) => map.get(c) ?? c);
+        const transMap = new Map<string, string>();
+        for (let k = 0; k < set1.length; k++) transMap.set(set1[k], set2[k] ?? lastTo);
+        translateChar = (c) => transMap.get(c) ?? c;
       }
-      if (squeeze) result = squeezeChars(result, new Set(set2));
+      if (squeeze) {
+        const sqSet = new Set(set2);
+        squeezeInSet = (c) => sqSet.has(c);
+      }
     } else {
-      // Squeeze only (set1 is the squeeze set).
-      const sqSet = complement
-        ? null // squeeze chars NOT in set1 — handle via predicate below
-        : new Set(set1);
-      result = sqSet
-        ? squeezeChars(chars, sqSet)
-        : squeezeByPredicate(chars, (c) => !set1Set.has(c));
+      // Squeeze only (no SET2, no -d): translateChar is identity.
+      translateChar = (c) => c;
+      if (complement) {
+        squeezeInSet = (c) => !set1Set.has(c);
+      } else {
+        const sqSet = new Set(set1);
+        squeezeInSet = (c) => sqSet.has(c);
+      }
     }
 
-    await writeString(out, result.join(''));
+    // Stream stdin chunk by chunk.  tr is a per-character transform, so we
+    // don't need line boundaries — we decode each chunk and process its code
+    // points directly.  The `stream: true` option on TextDecoder preserves
+    // multi-byte character boundaries across chunks.
+    //
+    // Cross-chunk squeeze state: `lastEmitted` remembers the last character
+    // written so that `-s` correctly collapses runs that straddle chunk
+    // boundaries (e.g. the last 'a' of one chunk and the first 'a' of the next
+    // should be collapsed to one 'a').
+    const sink = new CoalescingWriter(out);
+    const decoder = new TextDecoder();
+    let lastEmitted: string | undefined;
+    const reader = io.stdin.getReader();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!value || value.byteLength === 0) continue;
+        const text = decoder.decode(value, { stream: true });
+        let buf = '';
+        for (const c of text) {
+          const mapped = translateChar(c);
+          if (mapped === '') continue; // deleted
+          if (squeezeInSet !== null && squeezeInSet(mapped) && mapped === lastEmitted) continue;
+          buf += mapped;
+          lastEmitted = mapped;
+        }
+        if (buf !== '') await sink.push(buf);
+      }
+      // Flush the TextDecoder's internal multi-byte tail.
+      const tail = decoder.decode();
+      if (tail !== '') {
+        let buf = '';
+        for (const c of tail) {
+          const mapped = translateChar(c);
+          if (mapped === '') continue;
+          if (squeezeInSet !== null && squeezeInSet(mapped) && mapped === lastEmitted) continue;
+          buf += mapped;
+          lastEmitted = mapped;
+        }
+        if (buf !== '') await sink.push(buf);
+      }
+      await sink.flush();
+    } catch (e) {
+      if (isBrokenPipe(e)) { stdinAborted = true; }
+      else throw e;
+    } finally {
+      reader.releaseLock();
+    }
   } finally {
     await out.close().catch(() => {});
     await err.close().catch(() => {});
+    if (stdinAborted) await io.stdin.cancel().catch(() => {});
   }
   return 0;
 };
-
-function squeezeChars(chars: string[], set: Set<string>): string[] {
-  return squeezeByPredicate(chars, (c) => set.has(c));
-}
-
-function squeezeByPredicate(chars: string[], inSet: (c: string) => boolean): string[] {
-  const out: string[] = [];
-  let last: string | undefined;
-  for (const c of chars) {
-    if (inSet(c) && c === last) continue;
-    out.push(c);
-    last = c;
-  }
-  return out;
-}
 
 export default defineCommand(trCommand);
 export { trCommand };
