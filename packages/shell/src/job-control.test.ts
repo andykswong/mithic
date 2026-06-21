@@ -12,6 +12,21 @@ function mk(ctx: Record<string, unknown> = {}) {
   return { ex, get out() { return out; }, get err() { return err; } };
 }
 
+/** Mock kernel that records kill(pid, signal) calls so M14 delivery is observable. */
+function mkKill(ctx: Record<string, unknown> = {}) {
+  const kills: Array<{ pid: number; signal: string }> = [];
+  const k = {
+    async spawn() { return { pid: 1 }; },
+    async wait(p: number) { return { pid: p, code: 0 }; },
+    kill(pid: number, signal: string) { kills.push({ pid, signal }); },
+  };
+  let out = ''; let err = '';
+  const ex = new Executor(k as any, { cwd: '/', env: {}, ...ctx } as any, {
+    onStdout: (s) => { out += s; }, onStderr: (s) => { err += s; }, resolve: (n) => n,
+  });
+  return { ex, kills, get out() { return out; }, get err() { return err; } };
+}
+
 // ── $! ───────────────────────────────────────────────────────────────────────
 
 test('$! is empty when no process was backgrounded', async () => {
@@ -34,6 +49,21 @@ test('wait with no jobs returns 0', async () => {
   expect(h.out.trim()).toBe('0');
 });
 
+// ── G5: wait -n ────────────────────────────────────────────────────────────
+
+test('wait -n with no jobs returns 127', async () => {
+  const h = mk();
+  await h.ex.exec('wait -n\necho $?');
+  expect(h.out.trim()).toBe('127');
+});
+
+test('wait -n waits for the next job to finish', async () => {
+  const h = mk();
+  // Background a job, then `wait -n` reaps it (exit 0 from the mock kernel).
+  await h.ex.exec('true &\nwait -n\necho "rc=$?"');
+  expect(h.out).toContain('rc=0');
+});
+
 // ── jobs ─────────────────────────────────────────────────────────────────────
 
 test('jobs lists nothing when none exist', async () => {
@@ -54,6 +84,29 @@ test('kill with no args prints usage', async () => {
   const h = mk();
   await h.ex.exec('kill');
   expect(h.err).toContain('usage');
+});
+
+// ── M14: kill delivers the signal to the job's processes ─────────────────────
+
+test('kill %1 delivers SIGTERM to the job pid via the kernel', async () => {
+  const h = mkKill();
+  await h.ex.exec('sleep 100 &\nkill %1');
+  expect(h.kills.length).toBe(1);
+  expect(h.kills[0].signal).toBe('SIGTERM');
+  // The job leader pid is the synthetic 100000 + jobId.
+  expect(h.kills[0].pid).toBe(100001);
+});
+
+test('kill -9 %1 delivers SIGKILL', async () => {
+  const h = mkKill();
+  await h.ex.exec('sleep 100 &\nkill -9 %1');
+  expect(h.kills[0].signal).toBe('SIGKILL');
+});
+
+test('kill -INT %1 delivers SIGINT', async () => {
+  const h = mkKill();
+  await h.ex.exec('sleep 100 &\nkill -INT %1');
+  expect(h.kills[0].signal).toBe('SIGINT');
 });
 
 // ── disown ─────────────────────────────────────────────────────────────────────

@@ -15,6 +15,8 @@ export interface ShellState {
   /** Wait for a job/pid, returning its exit code. */
   waitJob(spec?: number): Promise<number>;
   waitAll(): Promise<number>;
+  /** `wait -n`: wait for the NEXT job to finish; resolves 127 when none exist. */
+  waitNext?(): Promise<number>;
   /** Toggle `set -e` errexit. */
   setErrExit(v: boolean): void;
   /** Set a shell option by its long name (errexit, nounset, xtrace, pipefail, noclobber). */
@@ -270,6 +272,11 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
 
     case 'wait': {
       if (!ctx.state) return 0;
+      // `wait -n` — wait for the NEXT job to finish (G5). With no jobs, 127.
+      if (args.includes('-n')) {
+        if (!ctx.state.waitNext) return 127;
+        return ctx.state.waitNext();
+      }
       if (args.length === 0) return ctx.state.waitAll();
       let last = 0;
       for (const a of args) {

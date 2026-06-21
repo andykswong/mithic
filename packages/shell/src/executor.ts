@@ -454,6 +454,7 @@ export class Executor implements ShellEnv {
       declareLocal: (name) => this.declareLocal(name),
       waitJob: (id) => this.waitForJob(id),
       waitAll: () => this.waitAllJobs(),
+      waitNext: () => this.waitNextJob(),
       setErrExit: (v) => { this.options.errexit = v; },
       setOption: (name, value) => {
         this.options[name] = value;
@@ -482,10 +483,24 @@ export class Executor implements ShellEnv {
         this.jobs.splice(idx, 1);
         return true;
       },
-      killJob: (spec, _signal) => {
+      killJob: (spec, signal) => {
         const job = this.jobs.find((j) => j.id === spec || j.pids.includes(spec));
         if (!job) return false;
-        job.state = 'done';
+        // Deliver the signal to each of the job's processes via the kernel
+        // (M14). `signal` arrives `SIG`-stripped (e.g. 'TERM'); the kernel
+        // wants a `SIG`-prefixed name. When the kernel has no kill method
+        // (minimal mock), we still update the job table best-effort.
+        if (this.kernel.kill) {
+          const sig = signal.startsWith('SIG') ? signal : 'SIG' + signal;
+          for (const pid of job.pids) {
+            try { this.kernel.kill(pid, sig); } catch { /* already gone */ }
+          }
+        }
+        // SIGCONT/SIGSTOP change run state without terminating; everything else
+        // terminates the job in this runtime's job model.
+        if (signal === 'CONT') job.state = 'running';
+        else if (signal === 'STOP' || signal === 'TSTP') job.state = 'stopped';
+        else job.state = 'done';
         return true;
       },
     };
@@ -1478,6 +1493,27 @@ export class Executor implements ShellEnv {
       if (p) last = (await p) ?? 0;
     }
     return last;
+  }
+
+  /**
+   * `wait -n` (G5): wait for the NEXT job to finish and return its exit code.
+   * Each waited job is removed from the table so a subsequent `wait -n` advances
+   * to the next one (bash reaps the job). Returns 127 when there are no jobs.
+   */
+  private async waitNextJob(): Promise<number> {
+    if (this.jobs.length === 0) return 127;
+    const pending = this.jobs
+      .map((job) => ({ job, p: (job as Job & { promise?: Promise<number> }).promise }))
+      .filter((e): e is { job: Job; p: Promise<number> } => e.p !== undefined);
+    if (pending.length === 0) {
+      // No async promise to await (e.g. already-resolved jobs) — reap the first.
+      const reaped = this.jobs.shift()!;
+      return reaped.exitCode ?? 0;
+    }
+    // Race: whichever job finishes first resolves, then reap it.
+    const code = await Promise.race(pending.map((e) => e.p.then((c) => ({ job: e.job, c }))))
+      .then((r) => { this.jobs = this.jobs.filter((j) => j !== r.job); return r.c ?? 0; });
+    return code;
   }
 
   // ── dispatch helpers ──────────────────────────────────────────────────────────

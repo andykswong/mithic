@@ -66,6 +66,13 @@ export interface KernelClient {
    * otherwise it spawns each stage via {@link spawn}.
    */
   runPipeline?(stages: PipelineStageParams[]): Promise<PipelineRunResult>;
+  /**
+   * Optional signal delivery (M14). The real `Kernel.kill(pid, signal)` matches
+   * this shape; `signal` is a `SIG`-prefixed name (e.g. `'SIGTERM'`). When
+   * present, the `kill` builtin delivers the signal to each of the job's pids;
+   * otherwise it only updates the shell job table (best-effort).
+   */
+  kill?(pid: number, signal: string): void;
 }
 
 /**
