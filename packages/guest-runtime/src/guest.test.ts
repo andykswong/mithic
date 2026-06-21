@@ -160,8 +160,10 @@ test('M-Fix 1: dom/event routes through MutationSerializer to the matching VNode
 
   const serializer = new MutationSerializer(guest);
   const button = serializer.createElement('div');
-  const clicks: Array<{ nodeId: number }> = [];
-  button.addEventListener('click', (e) => { clicks.push({ nodeId: e.nodeId }); });
+  const clicks: string[] = [];
+  // B4: VNode is a real EventTarget; the listener gets a standard Event whose
+  // target is the node and whose detail carries the forwarded payload.
+  button.addEventListener('click', (e) => { clicks.push(e.type); });
 
   // Host forwards a click on this node's id.
   kernelPort.postMessage({
@@ -170,7 +172,7 @@ test('M-Fix 1: dom/event routes through MutationSerializer to the matching VNode
   });
 
   await new Promise((r) => setTimeout(r, 20));
-  expect(clicks).toEqual([{ nodeId: button.id }]);
+  expect(clicks).toEqual(['click']);
 
   // An event for a different node id must NOT reach this listener.
   kernelPort.postMessage({
@@ -212,6 +214,94 @@ test('B5: guest.pipe() surfaces transferred read/write ends as usable streams', 
   await w.write(new TextEncoder().encode('round-trip'));
   const { value } = await r.read();
   expect(new TextDecoder().decode(value)).toBe('round-trip');
+
+  kernelPort.close();
+});
+
+test('B3: guest.fs is a directory-handle-shaped root that drives fs/* over the control port', async () => {
+  const { guest, kernelPort } = makeGuest();
+  kernelPort.start?.();
+
+  // A minimal kernel fs over the control port: a single in-memory file.
+  let fileData = new Uint8Array();
+  const fds = new Map<number, { write: boolean }>();
+  let nextFd = 3;
+  kernelPort.onmessage = (e) => {
+    const req = e.data as { id: number; call: string; args: Record<string, unknown> };
+    if (req.id == null) return;
+    const reply = (result: unknown): void => { kernelPort.postMessage({ id: req.id, ok: true, result }); };
+    switch (req.call) {
+      case 'fs/open': {
+        const fd = nextFd++;
+        const oflags = (req.args.oflags ?? {}) as { write?: boolean; truncate?: boolean };
+        if (oflags.truncate) fileData = new Uint8Array();
+        fds.set(fd, { write: Boolean(oflags.write) });
+        reply({ fd });
+        break;
+      }
+      case 'fs/write': {
+        const data = req.args.data as Uint8Array;
+        const merged = new Uint8Array(fileData.byteLength + data.byteLength);
+        merged.set(fileData, 0); merged.set(data, fileData.byteLength);
+        fileData = merged;
+        reply({ written: data.byteLength });
+        break;
+      }
+      case 'fs/read': {
+        reply(fileData);
+        fileData = new Uint8Array(); // simple EOF-after-one-read for the test
+        break;
+      }
+      case 'fs/stat': reply({ type: 'file', size: fileData.byteLength }); break;
+      case 'fs/close': reply({}); break;
+      default: kernelPort.postMessage({ id: req.id, ok: false, error: { code: 'ENOSYS', message: req.call } });
+    }
+  };
+
+  expect(guest.fs.kind).toBe('directory');
+  expect(guest.fs.name).toBe('');
+
+  const fh = await guest.fs.getFileHandle('note.txt', { create: true });
+  expect(fh.kind).toBe('file');
+  const w = await fh.createWritable();
+  await w.write('persisted');
+  await w.close();
+
+  const file = await fh.getFile();
+  expect(await file.text()).toBe('persisted');
+
+  // The same handle accessor is memoized (lazy mint).
+  expect(guest.fs).toBe(guest.fs);
+
+  kernelPort.close();
+});
+
+test('B2: guest.fetch round-trips a net/fetch over the control port to a real Response', async () => {
+  const { guest, kernelPort } = makeGuest();
+  kernelPort.start?.();
+
+  const enc = new TextEncoder();
+  const seen: Array<{ call: string; args: Record<string, unknown> }> = [];
+  kernelPort.onmessage = (e) => {
+    const req = e.data as { id: number; call: string; args: Record<string, unknown> };
+    if (req.id != null && req.call === 'net/fetch') {
+      seen.push({ call: req.call, args: req.args });
+      kernelPort.postMessage({
+        id: req.id, ok: true,
+        result: { status: 200, statusText: 'OK', headers: [['content-type', 'text/plain']], body: enc.encode('pong') },
+      });
+    }
+  };
+
+  const res = await guest.fetch('http://api/ping', { method: 'POST', body: 'ping' });
+  expect(res).toBeInstanceOf(Response);
+  expect(res.status).toBe(200);
+  expect(res.headers.get('content-type')).toBe('text/plain');
+  expect(await res.text()).toBe('pong');
+
+  expect(seen).toHaveLength(1);
+  expect(seen[0].args.method).toBe('POST');
+  expect(seen[0].args.url).toBe('http://api/ping');
 
   kernelPort.close();
 });

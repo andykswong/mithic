@@ -81,7 +81,18 @@ let nextNodeId = 1;
 /** A guest-side DOM event listener (mirrors the DOM `EventListener` shape). */
 export type VNodeEventListener = (event: GuestDomEventPayload) => void;
 
-export class VNode {
+/**
+ * B4: a guest-side virtual DOM node that IS a real {@link EventTarget}. The
+ * earlier hand-rolled `addEventListener`/`removeEventListener`/`dispatchEvent`
+ * listener-set is gone — those come straight from `EventTarget`, so guest code
+ * uses the standard `element.addEventListener('click', cb, { signal })` surface
+ * (including `AbortSignal`-scoped removal). A host-forwarded `dom/event` is
+ * dispatched as a standard `CustomEvent(eventType, { detail: payload })`; the
+ * MutationSerializer routes it by node id (internal). `#dispatchForwarded`
+ * carries the full {@link GuestDomEventPayload} on the event's `detail` so a
+ * listener can read `event.detail.payload`.
+ */
+export class VNode extends EventTarget {
   readonly id: number;
   readonly nodeType: 'element' | 'text';
   readonly tagName: string | undefined;
@@ -90,14 +101,15 @@ export class VNode {
   #children: VNode[];
   #parent: VNode | null;
   #serializer: MutationSerializer | null;
-  /** eventType → listeners registered for host-forwarded `dom/event`. */
-  #listeners: Map<string, Set<VNodeEventListener>> | undefined;
+  /** Whether this node has registered with the serializer's event-routing map. */
+  #tracked = false;
 
   constructor(
     nodeType: 'element' | 'text',
     tagOrText: string,
     serializer: MutationSerializer | null,
   ) {
+    super();
     this.id = nextNodeId++;
     this.nodeType = nodeType;
     this.#serializer = serializer;
@@ -177,28 +189,34 @@ export class VNode {
   }
 
   /**
-   * Register a listener for a host-forwarded DOM event (e.g. "click", "input").
-   * The host's RemoteDomHost forwards user interactions on the mirrored real DOM
-   * element via a `dom/event` kernel event; the MutationSerializer demultiplexes
-   * by node id and invokes the listeners registered here.
+   * Standard {@link EventTarget.addEventListener}. The host's RemoteDomHost
+   * forwards user interactions on the mirrored real DOM element via a
+   * `dom/event` kernel event; the MutationSerializer demultiplexes by node id
+   * and calls {@link dispatchForwarded}, which dispatches a real `CustomEvent`
+   * to listeners registered here. Overridden only to register this node with the
+   * serializer's routing map on first listener (the dispatch itself is the real
+   * EventTarget's). `options`/`AbortSignal`-scoped removal work unchanged.
    */
-  addEventListener(type: string, listener: VNodeEventListener): void {
-    if (!this.#listeners) this.#listeners = new Map();
-    let set = this.#listeners.get(type);
-    if (!set) { set = new Set(); this.#listeners.set(type, set); }
-    set.add(listener);
-    this.#serializer?.trackEventNode(this.id, this);
+  override addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject | null,
+    options?: boolean | AddEventListenerOptions,
+  ): void {
+    super.addEventListener(type, listener, options);
+    if (!this.#tracked) {
+      this.#tracked = true;
+      this.#serializer?.trackEventNode(this.id, this);
+    }
   }
 
-  removeEventListener(type: string, listener: VNodeEventListener): void {
-    this.#listeners?.get(type)?.delete(listener);
-  }
-
-  /** Internal: dispatch a forwarded host event to this node's listeners. */
-  dispatchEvent(event: GuestDomEventPayload): void {
-    const set = this.#listeners?.get(event.eventType);
-    if (!set) return;
-    for (const listener of set) listener(event);
+  /**
+   * Internal: dispatch a host-forwarded event as a standard `CustomEvent`. The
+   * event-specific payload (e.g. `{ value }` for an input event) rides on
+   * `detail`, matching the ergonomic DOM convention; `event.target` is this
+   * node. Called by the MutationSerializer's node-id router.
+   */
+  dispatchForwarded(forwarded: GuestDomEventPayload): void {
+    this.dispatchEvent(new CustomEvent(forwarded.eventType, { detail: forwarded.payload ?? {} }));
   }
 }
 
@@ -248,7 +266,7 @@ export class MutationSerializer {
 
   /** Route a host-forwarded event to the matching node's listeners. */
   #dispatch(event: GuestDomEventPayload): void {
-    this.#eventNodes.get(event.nodeId)?.dispatchEvent(event);
+    this.#eventNodes.get(event.nodeId)?.dispatchForwarded(event);
   }
 
   createElement(tag: string): VNode {

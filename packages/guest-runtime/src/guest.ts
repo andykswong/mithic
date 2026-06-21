@@ -4,6 +4,9 @@ import { SyscallClient } from './syscall-client.ts';
 import type { SyscallCallOptions, SyscallResult } from './syscall-client.ts';
 import { portToReadable, portToWritable, portToDuplex } from './streams.ts';
 import type { Transport } from './transport.ts';
+import { createFetch } from './fetch.ts';
+import { openRoot } from './fs-access.ts';
+import type { GuestDirectoryHandle } from './fs-access.ts';
 
 export interface GuestOptions {
   control: MessagePort;
@@ -52,7 +55,37 @@ export interface Guest {
    * relay backends).
    */
   connect(path: string): Promise<{ connfd: number; readable?: ReadableStream<Uint8Array>; writable?: WritableStream<Uint8Array> }>;
+  /**
+   * B2: a capability-scoped standard `fetch(input, init): Promise<Response>`
+   * layered over the `net/fetch` syscall. Guest code depends on the WHATWG
+   * `fetch`/`Request`/`Response` interfaces; the integer-free arg-bag is hidden.
+   * `init.signal` is threaded through to the syscall (B1). The body is the
+   * materialized bytes wrapped in a `Response` (streaming body is B6).
+   */
+  fetch: typeof fetch;
+  /**
+   * B3: the VFS root as a standard `FileSystemDirectoryHandle`-shaped handle,
+   * layered over the `fs/*` syscalls. Guest code depends on the WHATWG File
+   * System Access API (`getFileHandle`/`getDirectoryHandle`/`getFile`/
+   * `createWritable`/`keys`/`values`/`entries`); the integer fd stays internal.
+   * A getter so the handle is minted on first use only.
+   */
+  readonly fs: GuestDirectoryHandle;
+  /**
+   * Subscribe to EVERY kernel signal. This is the MULTI-SHOT primitive: a
+   * repeatable signal (e.g. SIGUSR1/SIGUSR2) fires the callback each time, which
+   * is what the shell needs to route every signal to its traps. Do NOT model the
+   * signal channel on {@link signal} — an `AbortSignal` is one-shot.
+   */
   onSignal(cb: (signal: string, payload?: unknown) => void): void;
+  /**
+   * B4: a DERIVED CONVENIENCE `AbortSignal` that aborts on a TERMINAL signal
+   * (SIGTERM/SIGINT). One-shot by nature — it is a view over the terminal subset
+   * only, NOT a replacement for {@link onSignal}. Pass it to `fetch`/aborting
+   * APIs so in-flight work unwinds when the process is asked to terminate. Its
+   * `reason` is a DOMException naming the terminal signal.
+   */
+  readonly signal: AbortSignal;
   /**
    * Subscribe to `dom/event` kernel events forwarded from the host (clicks,
    * input, etc. on mirrored Remote DOM elements). The guest's remote-dom layer
@@ -64,12 +97,19 @@ export interface Guest {
   exit(code: number): void;
 }
 
+/** Terminal signals over which {@link Guest.signal} aborts (one-shot subset). */
+const TERMINAL_SIGNALS: ReadonlySet<string> = new Set(['SIGTERM', 'SIGINT']);
+
 export function createGuest({ control, init, preopenPorts = {} }: GuestOptions): Guest {
   const signalListeners: Array<(signal: string, payload?: unknown) => void> = [];
   const domEventListeners: Array<(event: GuestDomEventPayload) => void> = [];
   // B5: response listeners now also receive any MessagePorts the kernel
   // transferred with the response (e.g. the fs/pipe / ipc/* ends).
   const responseListeners: Array<(msg: unknown, ports?: readonly MessagePort[]) => void> = [];
+
+  // B4: the derived terminal-only AbortSignal. `onSignal` stays the multi-shot
+  // primitive below; this controller aborts ONCE, on the first terminal signal.
+  const terminalAbort = new AbortController();
 
   // Multiplex the control port: route syscall responses vs kernel events
   control.start?.();
@@ -78,8 +118,14 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
     if (isKernelEvent(msg)) {
       if (msg.event === 'signal') {
         const payload = msg.payload as { signal?: string; extra?: unknown } | undefined;
+        const sig = payload?.signal ?? '';
+        // Multi-shot: every signal reaches every onSignal listener (incl. repeats).
         for (const cb of signalListeners) {
-          cb(payload?.signal ?? '', payload?.extra);
+          cb(sig, payload?.extra);
+        }
+        // Derived one-shot: a TERMINAL signal aborts guest.signal exactly once.
+        if (TERMINAL_SIGNALS.has(sig) && !terminalAbort.signal.aborted) {
+          terminalAbort.abort(new DOMException(`terminated by ${sig}`, 'AbortError'));
         }
       } else if (msg.event === 'dom/event') {
         const p = msg.payload as Partial<GuestDomEventPayload> | undefined;
@@ -130,6 +176,9 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
   // Seam 2: track whether stdin's read-side has already signalled closure, so
   // `exit()` does not double-post.
   let stdinClosed = false;
+
+  // B3: the File System Access root handle, minted lazily on first `guest.fs` use.
+  let fsRoot: GuestDirectoryHandle | undefined;
 
   /**
    * Tear down the stdin READ side on process exit: post an EPIPE up the pipe and
@@ -189,7 +238,10 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
       const { readable, writable } = portToDuplex(port);
       return { connfd: r.connfd, readable, writable };
     },
+    fetch: createFetch((call, args, opts) => client.syscall(call, args, opts)),
+    get fs() { return fsRoot ??= openRoot((call, args, opts) => client.syscall(call, args, opts)); },
     onSignal(cb) { signalListeners.push(cb); },
+    signal: terminalAbort.signal,
     onDomEvent(cb) { domEventListeners.push(cb); },
     exit(code) {
       // Break the stdin pipe so an unconsumed upstream producer gets EPIPE.
