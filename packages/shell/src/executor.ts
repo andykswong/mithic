@@ -81,6 +81,16 @@ interface FdEntry {
    * (which deadlocks on a socket: see {@link DuplexFd}).
    */
   duplex?: DuplexFd;
+  /**
+   * An in-flight `duplex.readLine()` that has not yet been CONSUMED. Cached so a
+   * `read -u N -t T` whose timer wins the `Promise.race` does NOT abandon the
+   * line it started reading: the next `read -u N` reuses this same promise (and
+   * the line it eventually yields), instead of starting a fresh `readLine()`
+   * that would race the abandoned one over the same duplex fd. One reader at a
+   * time per fd, so a single cached promise suffices. Cleared only when a reader
+   * actually consumes the resolved value (see `Executor.consumeFdLine`).
+   */
+  pendingRead?: Promise<string | undefined>;
 }
 
 export interface Job {
@@ -1184,8 +1194,16 @@ export class Executor implements ShellEnv {
   /** Read one line (default) from a numbered input fd, advancing its cursor. For `read -u N`. */
   readFdLine(fd: number): string | undefined | Promise<string | undefined> {
     const entry = this.fdTable.get(fd);
-    // A live duplex fd (e.g. `/dev/tcp`) reads on demand from the stream.
-    if (entry?.duplex) return entry.duplex.readLine();
+    // A live duplex fd (e.g. `/dev/tcp`) reads on demand from the stream. Reuse
+    // any in-flight read (one a prior `read -t` started but abandoned when its
+    // timer fired) so its line is delivered to THIS reader instead of being lost
+    // to an orphaned `readLine()`. The cache is cleared on CONSUMPTION, not on
+    // resolution (see `consumeFdLine`) — so a timed-out read leaves it in place.
+    if (entry?.duplex) {
+      const p = entry.pendingRead ?? Promise.resolve(entry.duplex.readLine());
+      entry.pendingRead = p;
+      return p;
+    }
     if (!entry || entry.input === undefined) return undefined;
     const pos = entry.pos ?? 0;
     if (pos >= entry.input.length) return undefined; // EOF
@@ -1194,6 +1212,17 @@ export class Executor implements ShellEnv {
     const line = entry.input.slice(pos, end);
     entry.pos = nl >= 0 ? nl + 1 : entry.input.length;
     return line;
+  }
+
+  /**
+   * Mark a duplex fd's in-flight `readFdLine` as consumed so the NEXT read
+   * starts a fresh `readLine()`. `read -u N` calls this only when it actually
+   * uses the line; on a `read -t` timeout it does NOT, leaving the in-flight
+   * read cached for the next reader (no data dropped).
+   */
+  consumeFdLine(fd: number): void {
+    const entry = this.fdTable.get(fd);
+    if (entry?.duplex) entry.pendingRead = undefined;
   }
 
   private makeFileSink(path: string, append: boolean, closers: Array<() => void>): (s: string) => void {
@@ -1676,6 +1705,7 @@ export class Executor implements ShellEnv {
       eval: (src) => this.run(this.parseSrc(src), true),
       sourceFile: (args) => this.sourceFile(args),
       readFdLine: (fd) => this.readFdLine(fd),
+      consumeFdLine: (fd) => this.consumeFdLine(fd),
       doBreak: (n) => { throw new LoopBreak(n); },
       doContinue: (n) => { throw new LoopContinue(n); },
       doReturn: (n) => { throw new FuncReturn(n); },

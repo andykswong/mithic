@@ -90,6 +90,13 @@ export interface BuiltinContext {
    * May be async — a live `/dev/tcp` (`<>`) fd reads from the socket on demand.
    */
   readFdLine?(fd: number): string | undefined | Promise<string | undefined>;
+  /**
+   * Mark the line returned by the most recent {@link readFdLine} on `fd` as
+   * consumed (for a live duplex fd). `read` calls this once it uses the line so
+   * the next read fetches a fresh one; on a `read -t` timeout it is NOT called,
+   * leaving the in-flight read available to the next reader (no data dropped).
+   */
+  consumeFdLine?(fd: number): void;
   lastStatus?: number;
   stdin?: string;
   /** Loop/function control — implemented by the executor as thrown unwinds. */
@@ -641,30 +648,78 @@ function runGetopts(args: string[], ctx: BuiltinContext): number {
   return 0;
 }
 
+/** Exit status bash returns when `read -t` times out: >128, specifically 128 + SIGALRM(14). */
+const READ_TIMEOUT_STATUS = 142;
+
+/** A sentinel resolved by the `read -t` timer that loses no information when the read wins. */
+const TIMED_OUT = Symbol('read-timeout');
+
 /**
- * read [-r] [-u FD] NAME... — read one line (from stdin or fd FD), split on IFS
- * into NAMEs.
+ * A timer that resolves to {@link TIMED_OUT} after `seconds` (fractional, like
+ * bash `-t 0.1`), paired with a `cancel()` to clear it so the timer is not left
+ * dangling when the read wins the race.
+ */
+function readTimeout(seconds: number): { promise: Promise<typeof TIMED_OUT>; cancel(): void } {
+  let timer: ReturnType<typeof setTimeout>;
+  const promise = new Promise<typeof TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(TIMED_OUT), Math.max(0, seconds * 1000));
+  });
+  return { promise, cancel: () => clearTimeout(timer) };
+}
+
+/**
+ * read [-r] [-u FD] [-t T] NAME... — read one line (from stdin or fd FD), split
+ * on IFS into NAMEs.
  *
- * G8 limitation: `$TMOUT` (and `read -t`) are accepted but inert. This is a
- * non-interactive runtime with no line editor or idle-timeout loop, so there is
- * no wall-clock read timeout to honor; stdin is already-buffered text.
+ * `read -t T` (A3 Tier 1): the timeout is honored ONLY on the live path — a
+ * `read -u N` over a duplex fd (`exec N<>/dev/tcp/...`), which is an awaited
+ * stream — by racing the read against a timer. On timeout the builtin returns
+ * bash's read-timeout status ({@link READ_TIMEOUT_STATUS}, 128+SIGALRM) and
+ * leaves the target var(s) empty; no data is lost because the executor retains
+ * the in-flight `readLine` (see `Executor.readFdLine` / `FdEntry.pendingRead`),
+ * so the next `read -u N` still sees a late-arriving line.
+ *
+ * Tier-1 scope: plain `read -t` over the pre-materialized stdin STRING honors
+ * `-t` only trivially — the bytes are already present, so the read returns
+ * immediately (it can never block, so the timer never fires). Making `-t`/idle
+ * `TMOUT` block-then-time-out on string stdin needs a live `ReadableStream`-
+ * backed stdin (Tier 2, deferred to a later stage); it is NOT half-built here.
  */
 async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
-  // Parse `-u FD` (and ignore -r). Remaining bare words are the target names.
+  // Parse `-u FD`, `-t T` (and ignore -r). Remaining bare words are the names.
   const names: string[] = [];
   let fdArg: number | undefined;
+  let timeoutSec: number | undefined;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '-u') { fdArg = parseInt(args[++i] ?? '', 10); continue; }
     if (a.startsWith('-u')) { fdArg = parseInt(a.slice(2), 10); continue; }
+    if (a === '-t') { timeoutSec = parseFloat(args[++i] ?? ''); continue; }
+    if (a.startsWith('-t')) { timeoutSec = parseFloat(a.slice(2)); continue; }
     if (a.startsWith('-')) continue; // ignore other flags (-r, -p ...)
     names.push(a);
   }
+  if (timeoutSec !== undefined && Number.isNaN(timeoutSec)) timeoutSec = undefined;
 
   // `read -u N` reads from the numbered fd's buffered input (or, for a live
   // `<>` fd like `/dev/tcp`, from the stream on demand — hence the await).
   if (fdArg !== undefined) {
-    const line = await Promise.resolve(ctx.readFdLine?.(fdArg));
+    const read = Promise.resolve(ctx.readFdLine?.(fdArg));
+    let line: string | undefined | typeof TIMED_OUT;
+    if (timeoutSec !== undefined) {
+      const t = readTimeout(timeoutSec);
+      line = await Promise.race([read, t.promise]);
+      t.cancel();
+    } else {
+      line = await read;
+    }
+    if (line === TIMED_OUT) {
+      // Timed out: do NOT consume — the in-flight read stays cached so its line
+      // reaches the next reader. Clear the named vars and signal >128.
+      assignReadVars(names, [], '', ctx);
+      return READ_TIMEOUT_STATUS;
+    }
+    ctx.consumeFdLine?.(fdArg); // we used this line; the next read fetches a fresh one
     if (line === undefined) return 1; // EOF or fd not open
     const fields = line.split(/\s+/).filter((f) => f !== '');
     assignReadVars(names, fields, line, ctx);
