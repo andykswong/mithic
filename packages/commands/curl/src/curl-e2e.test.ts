@@ -18,12 +18,16 @@
 import { expect, test } from 'vitest';
 import { createCurlResolver } from './index.ts';
 import type { Capability } from '@mithic/protocol';
+import { bytesToStream } from '@mithic/io/net';
 import type { HttpRequest, HttpResponse } from '@mithic/io/net';
 
 const GRANTED_ORIGIN = 'https://api.example.com';
 
+/** A mock response authored with BYTES (the mock mints a fresh stream per send). */
+interface MockResp { status: number; headers: [string, string][]; body?: Uint8Array }
+
 async function bootKernel(mock: {
-  responses?: Record<string, HttpResponse>;
+  responses?: Record<string, MockResp>;
   onSend?: (req: HttpRequest) => void;
 }): Promise<{
   curl: (args: string[], caps?: Capability[]) => Promise<{ stdout: string; stderr: string; code: number }>;
@@ -40,13 +44,20 @@ async function bootKernel(mock: {
   const responses = mock.responses ?? {};
   // An inline mock HTTP client: records every request and answers from the table
   // (exact, then prefix match). This is what the kernel injects — no real fetch.
+  // B6: HttpResponse.body is now a ReadableStream — mint a FRESH one per send
+  // from the byte-authored mock (a stream is single-use).
+  const toResponse = (m: MockResp): HttpResponse => {
+    const out: HttpResponse = { status: m.status, headers: m.headers };
+    if (m.body !== undefined) out.body = bytesToStream(m.body);
+    return out;
+  };
   const httpClient = {
     async send(req: HttpRequest): Promise<HttpResponse> {
       requests.push(req);
       mock.onSend?.(req);
-      if (responses[req.url]) return responses[req.url];
+      if (responses[req.url]) return toResponse(responses[req.url]);
       for (const [pattern, resp] of Object.entries(responses)) {
-        if (req.url.startsWith(pattern)) return resp;
+        if (req.url.startsWith(pattern)) return toResponse(resp);
       }
       throw Object.assign(new Error(`connection refused: ${req.url}`), { code: 'ECONNREFUSED' });
     },

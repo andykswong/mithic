@@ -199,9 +199,10 @@ export function portToDuplex(port: MessagePort): { readable: ReadableStream<Uint
  * A slow consumer that stops pulling stops replenishing, the writer exhausts its
  * credit, and `desiredSize` goes ≤ 0 — genuine back-pressure.
  */
-export function portToReadable(port: MessagePort): ReadableStream<Uint8Array> {
+export function portToReadable(port: MessagePort, signal?: AbortSignal): ReadableStream<Uint8Array> {
   port.start?.();
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+  let closed = false;
   const flow = new PipeReader();
 
   function grant(bytes: number): void {
@@ -210,23 +211,49 @@ export function portToReadable(port: MessagePort): ReadableStream<Uint8Array> {
     port.postMessage(credit);
   }
 
+  /** Tear down: post EPIPE up the port (so the peer writer stops) and close. */
+  function teardown(): void {
+    if (closed) return;
+    closed = true;
+    try {
+      const msg: PipeMessage = { type: 'error', code: 'EPIPE' };
+      port.postMessage(msg);
+      port.close();
+    } catch { /* port already neutered/closed */ }
+  }
+
   return new ReadableStream<Uint8Array>({
     start(ctrl) {
       controller = ctrl;
       port.onmessage = (e: MessageEvent) => {
         const msg = e.data as unknown;
         if (!isPipeMessage(msg)) return;
+        // Once the stream is torn down (cancelled / ended / errored) a late
+        // `data` message can still be dispatched before the port neuters —
+        // enqueuing on a closed controller throws, so drop it.
+        if (closed) return;
         if (msg.type === 'data') {
           flow.recordArrival(msg.chunk.byteLength);
           controller!.enqueue(msg.chunk);
         } else if (msg.type === 'end') {
-          controller!.close();
-          port.close();
+          closed = true; controller!.close(); port.close();
         } else if (msg.type === 'error') {
-          controller!.error(new Error(msg.code));
-          port.close();
+          closed = true; controller!.error(new Error(msg.code)); port.close();
         }
       };
+      // B6: an external AbortSignal (e.g. fetch's `init.signal`) tears the stream
+      // down even while a consumer holds a reader lock — it errors the controller
+      // (unblocking a pending read) AND posts EPIPE up the port so the peer writer
+      // (the kernel net/fetch pump) aborts the in-flight transport.
+      if (signal) {
+        const onAbort = (): void => {
+          if (closed) return;
+          teardown();
+          try { controller!.error(abortReason(signal)); } catch { /* already closed */ }
+        };
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+      }
     },
     pull() {
       // First demand opens the window (grants it whole); subsequent demands
@@ -234,9 +261,13 @@ export function portToReadable(port: MessagePort): ReadableStream<Uint8Array> {
       grant(flow.open() || flow.replenish());
     },
     cancel() {
-      const msg: PipeMessage = { type: 'error', code: 'EPIPE' };
-      port.postMessage(msg);
-      port.close();
+      teardown();
     },
   });
+}
+
+/** The abort reason to error a stream with (an Error, preferring the signal's own). */
+function abortReason(signal: AbortSignal): unknown {
+  const reason = signal.reason;
+  return reason instanceof Error ? reason : new Error('aborted');
 }

@@ -15,17 +15,24 @@ import { expect, test } from 'vitest';
 import { SyscallDispatcher } from './syscall-dispatch.ts';
 import { CapabilityManager } from './capability-manager.ts';
 import type { HttpClient, HttpRequest, HttpResponse } from '@mithic/io/net';
+import { bytesToStream } from '@mithic/io/net';
 import { FileSystemRouter, MemoryFsProvider } from '@mithic/io/vfs';
+
+/** A scripted response authored with BYTES (B6: HttpResponse.body is a stream). */
+interface ScriptedResponse { status: number; headers: [string, string][]; body?: Uint8Array }
 
 /** Records every request it receives, replying with a scripted sequence of responses. */
 class RecordingHttpClient implements HttpClient {
   readonly requests: HttpRequest[] = [];
-  #queue: HttpResponse[];
-  constructor(queue: HttpResponse[]) { this.#queue = queue; }
+  #queue: ScriptedResponse[];
+  constructor(queue: ScriptedResponse[]) { this.#queue = queue; }
   async send(request: HttpRequest): Promise<HttpResponse> {
     // Deep-copy the request so later mutation by the dispatcher can't alter our log.
     this.requests.push({ ...request, headers: [...request.headers] });
-    return this.#queue.shift() ?? { status: 200, headers: [] };
+    const next = this.#queue.shift() ?? { status: 200, headers: [] };
+    const out: HttpResponse = { status: next.status, headers: next.headers };
+    if (next.body !== undefined) out.body = bytesToStream(next.body);
+    return out;
   }
 }
 

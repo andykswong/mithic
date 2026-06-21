@@ -1,6 +1,6 @@
-import assert from 'node:assert/strict';
-import { afterEach, beforeEach, describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { NodeHttpServer } from './node-http-server.ts';
+import { bytesToStream } from '../http.ts';
 import type { HttpRequest } from '../http.ts';
 
 describe('NodeHttpServer', () => {
@@ -22,24 +22,26 @@ describe('NodeHttpServer', () => {
       return {
         status: 200,
         headers: [['content-type', 'text/plain']],
-        body: new Uint8Array(Buffer.from('hello')),
+        body: bytesToStream(new Uint8Array(Buffer.from('hello'))),
       };
     });
 
     const port = server.port;
-    assert.ok(port > 0, `Expected port > 0, got ${port}`);
+    expect(port).toBeGreaterThan(0);
 
     const response = await fetch(`http://127.0.0.1:${port}/test?foo=bar`, {
       method: 'GET',
       headers: { 'x-custom': 'value' },
     });
 
-    assert.strictEqual(response.status, 200);
-    assert.ok(receivedRequest !== null);
-    const request = receivedRequest as HttpRequest;
-    assert.strictEqual(request.method, 'GET');
-    assert.ok(request.url.includes('/test?foo=bar'));
-    assert.ok(request.headers.some(([k, v]) => k === 'x-custom' && v === 'value'));
+    expect(response.status).toBe(200);
+    // TS narrows the closure-assigned `receivedRequest` to its initializer (null)
+    // in this flow; the handler did run, so read through `unknown`.
+    const request = receivedRequest as unknown as HttpRequest;
+    expect(request).not.toBeNull();
+    expect(request.method).toBe('GET');
+    expect(request.url.includes('/test?foo=bar')).toBe(true);
+    expect(request.headers.some(([k, v]) => k === 'x-custom' && v === 'value')).toBe(true);
   });
 
   it('should respond with status and body', async () => {
@@ -47,37 +49,42 @@ describe('NodeHttpServer', () => {
       return {
         status: 201,
         headers: [['x-result', 'created']],
-        body: new Uint8Array(Buffer.from('created resource')),
+        body: bytesToStream(new Uint8Array(Buffer.from('created resource'))),
       };
     });
 
-    const response = await fetch(`http://127.0.0.1:${server.port}/resource`, {
-      method: 'POST',
-    });
+    const response = await fetch(`http://127.0.0.1:${server.port}/resource`, { method: 'POST' });
 
-    assert.strictEqual(response.status, 201);
-    assert.strictEqual(response.headers.get('x-result'), 'created');
-    const text = await response.text();
-    assert.strictEqual(text, 'created resource');
+    expect(response.status).toBe(201);
+    expect(response.headers.get('x-result')).toBe('created');
+    expect(await response.text()).toBe('created resource');
   });
 
-  it('should shut down on close()', async () => {
+  it('B6: streams a multi-chunk response body to the socket', async () => {
     await server.listen(async () => ({
       status: 200,
       headers: [],
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(Buffer.from('chunk-a;')));
+          controller.enqueue(new Uint8Array(Buffer.from('chunk-b;')));
+          controller.enqueue(new Uint8Array(Buffer.from('chunk-c')));
+          controller.close();
+        },
+      }),
     }));
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/stream`);
+    expect(await response.text()).toBe('chunk-a;chunk-b;chunk-c');
+  });
+
+  it('should shut down on close()', async () => {
+    await server.listen(async () => ({ status: 200, headers: [] }));
 
     const port = server.port;
     await server.close();
 
-    // After close, connection should be refused
-    await assert.rejects(
-      () => fetch(`http://127.0.0.1:${port}/`),
-      (err: Error) => {
-        // Node fetch throws on connection refused
-        return err.message.includes('fetch failed') || err.message.includes('ECONNREFUSED');
-      }
-    );
+    await expect(fetch(`http://127.0.0.1:${port}/`)).rejects.toThrow();
   });
 
   it('should handle POST with body', async () => {
@@ -85,11 +92,7 @@ describe('NodeHttpServer', () => {
 
     await server.listen(async (req) => {
       receivedBody = req.body;
-      return {
-        status: 200,
-        headers: [],
-        body: new Uint8Array(Buffer.from('ok')),
-      };
+      return { status: 200, headers: [], body: bytesToStream(new Uint8Array(Buffer.from('ok'))) };
     });
 
     const payload = JSON.stringify({ name: 'test', value: 42 });
@@ -99,9 +102,8 @@ describe('NodeHttpServer', () => {
       body: payload,
     });
 
-    assert.strictEqual(response.status, 200);
-    assert.ok(receivedBody !== undefined);
-    const bodyStr = new TextDecoder().decode(receivedBody);
-    assert.strictEqual(bodyStr, payload);
+    expect(response.status).toBe(200);
+    expect(receivedBody).toBeDefined();
+    expect(new TextDecoder().decode(receivedBody)).toBe(payload);
   });
 });

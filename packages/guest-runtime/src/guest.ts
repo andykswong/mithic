@@ -56,11 +56,13 @@ export interface Guest {
    */
   connect(path: string): Promise<{ connfd: number; readable?: ReadableStream<Uint8Array>; writable?: WritableStream<Uint8Array> }>;
   /**
-   * B2: a capability-scoped standard `fetch(input, init): Promise<Response>`
+   * B2/B6: a capability-scoped standard `fetch(input, init): Promise<Response>`
    * layered over the `net/fetch` syscall. Guest code depends on the WHATWG
    * `fetch`/`Request`/`Response` interfaces; the integer-free arg-bag is hidden.
-   * `init.signal` is threaded through to the syscall (B1). The body is the
-   * materialized bytes wrapped in a `Response` (streaming body is B6).
+   * `init.signal` is threaded through to the syscall (B1). On a transferable
+   * backend `Response.body` is a live `ReadableStream` over the transferred port
+   * (B6 streaming); on a relay backend it is the materialized bytes. Aborting
+   * `init.signal` cancels an in-flight streamed body.
    */
   fetch: typeof fetch;
   /**
@@ -238,7 +240,9 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
       const { readable, writable } = portToDuplex(port);
       return { connfd: r.connfd, readable, writable };
     },
-    fetch: createFetch((call, args, opts) => client.syscall(call, args, opts)),
+    // B6: the fetch façade is ports-aware — it receives the transferred read
+    // port for a streamed body via syscallPorts (and buffers when none arrives).
+    fetch: createFetch((call, args, opts) => client.syscallPorts(call, args, opts)),
     get fs() { return fsRoot ??= openRoot((call, args, opts) => client.syscall(call, args, opts)); },
     onSignal(cb) { signalListeners.push(cb); },
     signal: terminalAbort.signal,

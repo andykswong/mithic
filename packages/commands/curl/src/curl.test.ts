@@ -19,6 +19,8 @@ function fakeIO(
     responder?: (call: NetFetchCall) => NetFetchResult | Error;
     stdin?: string;
     env?: Record<string, string>;
+    /** B6: override the fetch façade to return a live (streaming) Response. */
+    fetch?: typeof fetch;
   } = {},
 ): {
   io: CommandIO;
@@ -94,10 +96,11 @@ function fakeIO(
       }
       throw new Error(`unexpected syscall: ${call}`);
     },
-    // B2: curl now reaches the network through the standard fetch() façade. The
-    // façade is built over THIS fake `syscall`, so the `net/fetch` responder and
-    // `netCalls` capture above still drive and observe every request.
-    fetch: createFetch((call, sargs) => io.syscall(call, sargs)),
+    // B2/B6: curl reaches the network through the standard fetch() façade. The
+    // façade is ports-aware (B6) — wrap THIS fake `syscall`'s buffered result in
+    // a SyscallResult with no ports, so the façade takes its buffered path. The
+    // `net/fetch` responder and `netCalls` capture above still drive every request.
+    fetch: opts.fetch ?? createFetch((call, sargs) => io.syscall(call, sargs).then((result) => ({ result, ports: [] }))),
   };
 
   return {
@@ -470,4 +473,72 @@ test('multiple URLs are each fetched and their bodies concatenated', async () =>
   expect(code).toBe(0);
   expect(f.netCalls).toHaveLength(2);
   expect(f.out()).toBe('AAABBB');
+});
+
+// ── B6: streaming body to disk + early-cancel ─────────────────────────────────
+
+/** Build a Response whose body emits `chunks` lazily, recording which were pulled. */
+function streamingResponse(chunks: string[], onCancel?: () => void): { response: Response; pulled: string[] } {
+  const pulled: string[] = [];
+  let i = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (i >= chunks.length) { controller.close(); return; }
+      pulled.push(chunks[i]);
+      controller.enqueue(enc.encode(chunks[i]));
+      i++;
+    },
+    cancel() { onCancel?.(); },
+  });
+  return { response: new Response(body, { status: 200, headers: { 'content-type': 'text/plain' } }), pulled };
+}
+
+test('B6: curl -o streams the response body to a VFS file in chunks (not one buffer)', async () => {
+  const { response, pulled } = streamingResponse(['chunk-1;', 'chunk-2;', 'chunk-3']);
+  const f = fakeIO(['curl', '-o', '/big.txt', 'https://api.example.com/big'], {
+    fetch: (async () => response) as unknown as typeof fetch,
+  });
+  const code = await curlCommand(f.io);
+  expect(code).toBe(0);
+  // The whole body landed on disk, assembled from the streamed chunks.
+  expect(new TextDecoder().decode(f.fsFiles.get('/big.txt'))).toBe('chunk-1;chunk-2;chunk-3');
+  // Every chunk was pulled on demand (streamed), proving curl drained the stream.
+  expect(pulled).toEqual(['chunk-1;', 'chunk-2;', 'chunk-3']);
+});
+
+test('B6: curl | head-style early cancel — a closing stdout consumer aborts the body stream', async () => {
+  let cancelled = false;
+  let produced = 0;
+  // An UNBOUNDED body: it would stream forever unless the consumer cancels.
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) { produced++; controller.enqueue(enc.encode(`x${produced};`)); },
+    cancel() { cancelled = true; },
+  });
+  const response = new Response(body, { status: 200, headers: {} });
+
+  // A stdout that accepts the first write then REJECTS subsequent writes (mimics a
+  // downstream `head -c N` closing its read end → broken pipe to curl's stdout).
+  let writes = 0;
+  const brokenStdout = new WritableStream<Uint8Array>({
+    write() {
+      writes++;
+      if (writes > 1) return Promise.reject(Object.assign(new Error('EPIPE'), { code: 'EPIPE' }));
+      return Promise.resolve();
+    },
+  });
+
+  const io: CommandIO = {
+    args: ['curl', 'https://api.example.com/infinite'],
+    env: {}, cwd: '/',
+    stdin: new ReadableStream<Uint8Array>({ start(c) { c.close(); } }),
+    stdout: brokenStdout,
+    stderr: new WritableStream<Uint8Array>({ write() { /* discard */ } }),
+    async syscall() { throw new Error('no syscall expected'); },
+    fetch: (async () => response) as unknown as typeof fetch,
+  };
+
+  const code = await curlCommand(io);
+  // curl returns (does not hang) and the unbounded body was cancelled (early stop).
+  expect(cancelled).toBe(true);
+  expect(typeof code).toBe('number');
 });

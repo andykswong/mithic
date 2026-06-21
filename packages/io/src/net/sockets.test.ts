@@ -1,29 +1,19 @@
-import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe, it, expect } from 'vitest';
 import { DisabledSocketProvider } from './sockets.ts';
 
 describe('DisabledSocketProvider', () => {
   it('createTcpSocket() throws with message about disabled', () => {
     const provider = new DisabledSocketProvider();
-    assert.throws(
-      () => provider.createTcpSocket(),
-      (err: unknown) => err instanceof Error && err.message.includes('disabled')
-    );
+    expect(() => provider.createTcpSocket()).toThrow('disabled');
   });
 
   it('createUdpSocket() throws with message about disabled', () => {
     const provider = new DisabledSocketProvider();
-    assert.throws(
-      () => provider.createUdpSocket(),
-      (err: unknown) => err instanceof Error && err.message.includes('disabled')
-    );
+    expect(() => provider.createUdpSocket()).toThrow('disabled');
   });
 
   it('resolveName() throws with message about disabled', () => {
     const provider = new DisabledSocketProvider();
-    assert.throws(
-      () => provider.resolveName('example.com'),
-      (err: unknown) => err instanceof Error && err.message.includes('disabled')
-    );
+    expect(() => provider.resolveName('example.com')).toThrow('disabled');
   });
 });

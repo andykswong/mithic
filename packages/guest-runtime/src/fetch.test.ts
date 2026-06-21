@@ -1,18 +1,21 @@
 import { expect, test, vi } from 'vitest';
 import { createFetch } from './fetch.ts';
-import type { SyscallCallOptions } from './syscall-client.ts';
+import { portToWritable } from './streams.ts';
+import type { SyscallCallOptions, SyscallResult } from './syscall-client.ts';
 
 const enc = new TextEncoder();
 
 /**
- * Build a fake syscall hook that records `net/fetch` calls and answers from
- * `responder`. Mirrors the kernel `net/fetch` wire shape `{status, headers, body}`.
+ * Build a fake ports-aware syscall hook that records `net/fetch` calls and
+ * answers from `responder`. Mirrors the kernel `net/fetch` wire shape: a
+ * buffered `{status, headers, body}` (returned with no ports), which the fake
+ * wraps in a `SyscallResult` so the façade's port plumbing is exercised.
  */
 function fakeSyscall(
   responder: (args: Record<string, unknown>, opts?: SyscallCallOptions) =>
     { status: number; statusText?: string; headers: [string, string][]; body?: Uint8Array } | Error,
 ): {
-  syscall: (call: string, args: Record<string, unknown>, opts?: SyscallCallOptions) => Promise<unknown>;
+  syscall: (call: string, args: Record<string, unknown>, opts?: SyscallCallOptions) => Promise<SyscallResult>;
   calls: Array<{ args: Record<string, unknown>; opts?: SyscallCallOptions }>;
 } {
   const calls: Array<{ args: Record<string, unknown>; opts?: SyscallCallOptions }> = [];
@@ -23,7 +26,7 @@ function fakeSyscall(
       calls.push({ args, opts });
       const r = responder(args, opts);
       if (r instanceof Error) throw r;
-      return r;
+      return { result: r, ports: [] };
     },
   };
 }
@@ -111,7 +114,7 @@ test('B2: init.signal threads a live AbortSignal through to the syscall opts', a
 
 test('B2: an already-aborted signal rejects without ever calling the syscall', async () => {
   const inner = vi.fn();
-  const fetch = createFetch(async (_call, _args, _opts) => { inner(); return { status: 200, headers: [] }; });
+  const fetch = createFetch(async (_call, _args, _opts) => { inner(); return { result: { status: 200, headers: [] }, ports: [] }; });
 
   const ac = new AbortController();
   ac.abort();
@@ -127,7 +130,7 @@ test('B2: aborting mid-flight rejects the fetch (ECANCELED → AbortError)', asy
       opts?.signal?.addEventListener('abort', () => {
         reject(Object.assign(new Error('syscall canceled'), { code: 'ECANCELED' }));
       });
-    }) as Promise<unknown>);
+    }) as Promise<SyscallResult>);
 
   const p = fetch('http://x/slow', { signal: ac.signal });
   ac.abort();
@@ -142,4 +145,103 @@ test('B2: a Headers init is normalized to [name,value][] on the wire', async () 
   const headers = calls[0].args.headers as [string, string][];
   expect(headers.find(([k]) => k.toLowerCase() === 'x-a')?.[1]).toBe('1');
   expect(headers.find(([k]) => k.toLowerCase() === 'x-b')?.[1]).toBe('2');
+});
+
+// ── B6: streaming Response.body over a transferred port ─────────────────────
+
+/**
+ * Mirror the kernel's TRANSFERABLE-backend delivery: return `{status, headers,
+ * bodyStream: true}` plus a transferred read port, and drive the kernel-side
+ * write end with `portToWritable` so the guest reads a live stream. Returns the
+ * write-side WritableStream so the test acts as the "kernel pump".
+ */
+function streamingSyscall(status = 200, headers: [string, string][] = []): {
+  syscall: (call: string, args: Record<string, unknown>, opts?: SyscallCallOptions) => Promise<SyscallResult>;
+  kernelWritable: WritableStream<Uint8Array>;
+} {
+  const channel = new MessageChannel();
+  const kernelWritable = portToWritable(channel.port2);
+  return {
+    kernelWritable,
+    async syscall(call, _args, _opts) {
+      if (call !== 'net/fetch') throw new Error(`unexpected syscall: ${call}`);
+      return { result: { status, headers, bodyStream: true }, ports: [channel.port1] };
+    },
+  };
+}
+
+test('B6: a streamed body (bodyStream + transferred port) is a real ReadableStream', async () => {
+  const { syscall, kernelWritable } = streamingSyscall(200, [['content-type', 'text/plain']]);
+  const fetch = createFetch(syscall);
+
+  const res = await fetch('http://x/big');
+  expect(res.status).toBe(200);
+  expect(res.body).toBeInstanceOf(ReadableStream);
+
+  // Kernel side writes three chunks then closes.
+  const w = kernelWritable.getWriter();
+  await w.write(enc.encode('part-1;'));
+  await w.write(enc.encode('part-2;'));
+  await w.write(enc.encode('part-3'));
+  await w.close();
+
+  expect(await res.text()).toBe('part-1;part-2;part-3');
+});
+
+test('B6: streamed chunks arrive incrementally (not buffered whole before the first read)', async () => {
+  const { syscall, kernelWritable } = streamingSyscall();
+  const fetch = createFetch(syscall);
+  const res = await fetch('http://x/stream');
+  const reader = res.body!.getReader();
+  const w = kernelWritable.getWriter();
+
+  await w.write(enc.encode('A'));
+  const first = await reader.read();
+  expect(first.done).toBe(false);
+  expect(new TextDecoder().decode(first.value)).toBe('A');
+
+  await w.write(enc.encode('B'));
+  const second = await reader.read();
+  expect(new TextDecoder().decode(second.value)).toBe('B');
+
+  await w.close();
+  const end = await reader.read();
+  expect(end.done).toBe(true);
+});
+
+test('B6: cancelling the streamed body propagates EPIPE to the kernel write end (early stop)', async () => {
+  const { syscall, kernelWritable } = streamingSyscall();
+  const fetch = createFetch(syscall);
+  const res = await fetch('http://x/infinite');
+
+  const reader = res.body!.getReader();
+  const w = kernelWritable.getWriter();
+  await w.write(enc.encode('first'));
+  const first = await reader.read();
+  expect(new TextDecoder().decode(first.value)).toBe('first');
+
+  // Consumer cancels (e.g. `head -c5` got enough). portToReadable.cancel() posts
+  // {type:'error', code:'EPIPE'} to the kernel write end, which latches its
+  // PipeWriter broken and rejects further writes — proving the abort propagates.
+  await reader.cancel();
+  await expect(w.write(enc.encode('more'))).rejects.toMatchObject({ code: 'EPIPE' });
+});
+
+test('B6: init.signal aborting cancels the in-flight streamed body', async () => {
+  const { syscall, kernelWritable } = streamingSyscall();
+  const fetch = createFetch(syscall);
+  const ac = new AbortController();
+  const res = await fetch('http://x/abortable', { signal: ac.signal });
+
+  const reader = res.body!.getReader();
+  const w = kernelWritable.getWriter();
+  await w.write(enc.encode('chunk'));
+  await reader.read();
+
+  // Aborting the request signal cancels the body stream; the cancel posts EPIPE
+  // up the port. Let that message round-trip the channel, then the kernel write
+  // end has latched broken and rejects further writes.
+  ac.abort();
+  await new Promise((r) => setTimeout(r, 10));
+  await expect(w.write(enc.encode('more'))).rejects.toMatchObject({ code: 'EPIPE' });
 });

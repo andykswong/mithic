@@ -3,6 +3,8 @@ import { fsErrorToErrno, isSyscallName } from '@mithic/protocol';
 import { FileSystemError, normalizePath } from '@mithic/io/vfs';
 import type { FileSystemProvider, FileHandle, OpenFlags } from '@mithic/io/vfs';
 import type { HttpClient, HttpRequest, HttpResponse } from '@mithic/io/net';
+import { streamToBytes } from '@mithic/io/net';
+import { PipeWriter } from '@mithic/protocol';
 import type { CapabilityManager, FsOperation } from './capability-manager.ts';
 import type { IpcBroker } from './ipc-broker.ts';
 import type { WaitResult } from './process-manager.ts';
@@ -409,7 +411,7 @@ export class SyscallDispatcher {
     'ipc/accept': (pid, a) => this.#ipcAccept(pid, a.id, parseFd(a.args)),
     'ipc/connect': (pid, a) => this.#ipcConnect(pid, a.id, parseIpcPath(a.args)),
     'dom/mutate': (pid, a) => res(ok(a.id, this.#domMutate(pid, parseDomMutate(a.args)))),
-    'net/fetch': async (pid, a) => res(await this.#netFetch(pid, a.id, parseNetFetch(a.args))),
+    'net/fetch': (pid, a) => this.#netFetch(pid, a.id, parseNetFetch(a.args)),
     'process/spawn': (pid, a, ports) => this.#spawn(pid, a.id, a.args, ports),
     'process/pipeline': async (pid, a) => res(await this.#pipeline(pid, a.id, a.args)),
     'process/wait': async (pid, a) => res(ok(a.id, await this.#wait(pid, parseWait(a.args)))),
@@ -1185,21 +1187,21 @@ export class SyscallDispatcher {
    * Returns `{status, headers, body}`. A client/transport failure maps to
    * EHOSTUNREACH so the guest can surface a connection error (curl exit 7).
    */
-  async #netFetch(pid: number, id: number, args: NetFetchParsed): Promise<SyscallResponse> {
+  async #netFetch(pid: number, id: number, args: NetFetchParsed): Promise<DispatchResult> {
     if (!this.#httpClient) {
-      return fail(id, 'ENOSYS', 'net/fetch: no HTTP client configured');
+      return res(fail(id, 'ENOSYS', 'net/fetch: no HTTP client configured'));
     }
     // K1: a process whose limits set `networkDisabled` cannot reach the network
     // at all, even if it holds a matching `net` capability. Deny before any
     // network access (EACCES), so the HTTP client is never invoked for this pid.
     if (this.#limitsOf?.(pid)?.networkDisabled) {
-      return fail(id, 'EACCES', 'net/fetch: network disabled for this process (ProcessLimits.networkDisabled)');
+      return res(fail(id, 'EACCES', 'net/fetch: network disabled for this process (ProcessLimits.networkDisabled)'));
     }
     let url = args.url;
     // Capability gate FIRST — before any network access. An ungranted origin
     // (or an unparseable URL, which checkNet rejects) is EACCES.
     if (!this.#caps.checkNet(pid, url)) {
-      return fail(id, 'EACCES', `Permission denied: ${url}`);
+      return res(fail(id, 'EACCES', `Permission denied: ${url}`));
     }
     let method = args.method;
     const headers = args.headers;
@@ -1221,7 +1223,7 @@ export class SyscallDispatcher {
     // capped at MAX_REDIRECT_HOPS (→ ELOOP) so a redirect cycle cannot hang.
     for (let hop = 0; ; hop++) {
       if (hop > MAX_REDIRECT_HOPS) {
-        return fail(id, 'ELOOP', `net/fetch: too many redirects (> ${MAX_REDIRECT_HOPS})`);
+        return res(fail(id, 'ELOOP', `net/fetch: too many redirects (> ${MAX_REDIRECT_HOPS})`));
       }
       const request: HttpRequest = { method, url, headers, redirect: 'manual' };
       if (body !== undefined) request.body = body;
@@ -1235,27 +1237,30 @@ export class SyscallDispatcher {
         // AbortError) maps to ETIMEDOUT so the guest can surface a real timeout
         // (curl --max-time → exit 28), distinct from a connection failure.
         if (isAbortError(err)) {
-          return fail(id, 'ETIMEDOUT', `net/fetch: request timed out after ${timeoutMs}ms`);
+          return res(fail(id, 'ETIMEDOUT', `net/fetch: request timed out after ${timeoutMs}ms`));
         }
         // Other transport-level failure (DNS, connection refused): the request was
         // authorized but could not complete. Map to a generic network errno.
-        return fail(id, 'EHOSTUNREACH', messageOf(err));
+        return res(fail(id, 'EHOSTUNREACH', messageOf(err)));
       }
 
       if (isRedirectStatus(response.status)) {
         const location = headerValue(response.headers, 'location');
         if (location !== undefined) {
+          // B6: the intermediate 3xx body is discarded — cancel its stream so the
+          // underlying transport stops (an undrained stream would leak/stall).
+          await cancelBody(response.body);
           let nextUrl: string;
           try {
             nextUrl = new URL(location, url).toString();
           } catch {
-            return fail(id, 'EINVAL', `net/fetch: invalid redirect Location: ${location}`);
+            return res(fail(id, 'EINVAL', `net/fetch: invalid redirect Location: ${location}`));
           }
           // Re-run the capability check against the REDIRECT TARGET. Denied →
           // EACCES and we never fetch the target (no body from an ungranted
           // origin ever reaches the guest).
           if (!this.#caps.checkNet(pid, nextUrl)) {
-            return fail(id, 'EACCES', `Permission denied (redirect target): ${nextUrl}`);
+            return res(fail(id, 'EACCES', `Permission denied (redirect target): ${nextUrl}`));
           }
           url = nextUrl;
           // CU1: honor RFC 7231/7538 redirect method/body semantics.
@@ -1282,13 +1287,90 @@ export class SyscallDispatcher {
         // No Location header: surface the 3xx response as-is (can't follow).
       }
 
-      const result: { status: number; headers: [string, string][]; body?: Uint8Array } = {
-        status: response.status,
-        headers: response.headers,
-      };
-      if (response.body) result.body = toTightView(response.body);
-      return ok(id, result);
+      // B6: the redirect chain is done; deliver the FINAL response body.
+      return await this.#deliverNetBody(pid, id, response);
     }
+  }
+
+  /**
+   * B6: deliver a final `net/fetch` response body to the guest.
+   *
+   * TRANSFERABLE backend (`directPipes` + an IPC broker): mint a pipe, transfer
+   * its READ end to the guest, and PUMP the response `ReadableStream` into the
+   * write end honoring the credit protocol (so a large download never buffers
+   * wholesale and the guest cancelling its read propagates EPIPE back to abort
+   * the pump). The result carries `bodyStream: true` and no inline `body`.
+   *
+   * NON-TRANSFERABLE backend (relay/QuickJS — the guest cannot hold a
+   * MessagePort): fall back to BUFFERED delivery — drain the stream to a
+   * `Uint8Array` and return it inline as `body`, exactly as before. This keeps
+   * those backends working at the cost of buffering the whole response.
+   *
+   * A bodyless response (204/304/HEAD → `response.body` undefined) returns
+   * neither field.
+   */
+  async #deliverNetBody(pid: number, id: number, response: HttpResponse): Promise<DispatchResult> {
+    const base = { status: response.status, headers: response.headers };
+    if (!response.body) {
+      return res(ok(id, base));
+    }
+    // Stream over a transferred port only when the backend can transfer ports
+    // (same gate as `fs/pipe`). Otherwise buffer.
+    if (this.#directPipes && this.#ipc) {
+      const { readPort, writePort } = this.#ipc.createPipe();
+      // Fire-and-forget pump: read the response stream → write port, honoring
+      // credit + the sticky broken latch. The guest owns readPort after transfer.
+      void this.#feedStreamToPort(response.body, writePort);
+      return { response: ok(id, { ...base, bodyStream: true }), transfer: [readPort] };
+    }
+    // Buffered fallback: drain the whole stream and return the bytes inline.
+    const bytes = await streamToBytes(response.body);
+    const result: { status: number; headers: [string, string][]; body?: Uint8Array } =
+      bytes.byteLength > 0 ? { ...base, body: toTightView(bytes) } : base;
+    return res(ok(id, result));
+  }
+
+  /**
+   * B6: pump a response-body `ReadableStream` into a pipe WRITE port honoring the
+   * credit protocol, then send EOF and close — the streaming-fetch analogue of
+   * {@link #feedFileToPort} (which streams a VFS file). The shared
+   * {@link PipeWriter} owns credit accounting + the STICKY broken latch: if the
+   * guest cancels its read end (or the peer sends EPIPE), `reserve()` rejects, the
+   * pump ends promptly, AND the source stream is cancelled so an unbounded body
+   * stops instead of streaming forever (`curl big | head -c10`). Fire-and-forget;
+   * any error closes the port (the guest sees EOF/EPIPE).
+   */
+  async #feedStreamToPort(body: ReadableStream<Uint8Array>, writePort: MessagePort): Promise<void> {
+    writePort.start?.();
+    const flow = new PipeWriter();
+    writePort.onmessage = (e: MessageEvent): void => {
+      const msg = e.data as { type?: string; bytes?: number };
+      if (msg?.type === 'credit') flow.addCredit(msg.bytes ?? 0);
+      else if (msg?.type === 'end' || msg?.type === 'error') flow.markBroken('EPIPE');
+    };
+    const reader = body.getReader();
+    let broken = false;
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!value || value.byteLength === 0) continue;
+        const chunk = toTightView(value);
+        // reserve() rejects if the pipe is broken (guest cancelled / EPIPE),
+        // ending the pump and triggering source cancellation below.
+        await flow.reserve(chunk.byteLength);
+        writePort.postMessage({ type: 'data', chunk }, [chunk.buffer as ArrayBuffer]);
+      }
+    } catch {
+      // A broken pipe (or read/transfer failure): stop pumping and cancel the
+      // source so an unbounded upstream stops (early-cancel → broken pipe → abort).
+      broken = true;
+    } finally {
+      reader.releaseLock();
+      if (broken) { try { await body.cancel(); } catch { /* already cancelled */ } }
+    }
+    try { writePort.postMessage({ type: 'end' }); } catch { /* closed */ }
+    try { writePort.close(); } catch { /* closed */ }
   }
 }
 
@@ -1538,6 +1620,16 @@ function isAbortError(err: unknown): boolean {
 function toTightView(view: Uint8Array): Uint8Array {
   if (view.byteOffset === 0 && view.byteLength === view.buffer.byteLength) return view;
   return new Uint8Array(view);
+}
+
+/**
+ * B6: cancel an unconsumed response-body stream (e.g. an intermediate 3xx body
+ * during the redirect loop) so the underlying transport stops. No-op when there
+ * is no body or it is already cancelled/locked.
+ */
+async function cancelBody(body: ReadableStream<Uint8Array> | undefined): Promise<void> {
+  if (!body || body.locked) return;
+  try { await body.cancel(); } catch { /* already cancelled */ }
 }
 
 function res(response: SyscallResponse, transfer?: Transferable[]): DispatchResult {

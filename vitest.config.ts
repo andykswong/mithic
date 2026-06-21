@@ -24,6 +24,8 @@ export default defineConfig({
           include: [
             `packages/${MITHIC_PACKAGES}/src/**/*.test.ts`,
             'packages/io/src/vfs/**/*.test.ts',
+            // B6 hygiene: io/net tests migrated from node:test to vitest.
+            'packages/io/src/net/**/*.test.ts',
             'packages/commands/*/src/**/*.test.ts',
           ],
           exclude: ['**/*.browser.test.ts', '**/node_modules/**', '**/dist/**'],
