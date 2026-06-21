@@ -638,7 +638,14 @@ function runGetopts(args: string[], ctx: BuiltinContext): number {
   return 0;
 }
 
-/** read [-r] [-u FD] NAME... — read one line (from stdin or fd FD), split on IFS into NAMEs. */
+/**
+ * read [-r] [-u FD] NAME... — read one line (from stdin or fd FD), split on IFS
+ * into NAMEs.
+ *
+ * G8 limitation: `$TMOUT` (and `read -t`) are accepted but inert. This is a
+ * non-interactive runtime with no line editor or idle-timeout loop, so there is
+ * no wall-clock read timeout to honor; stdin is already-buffered text.
+ */
 function runRead(args: string[], ctx: BuiltinContext): number {
   // Parse `-u FD` (and ignore -r). Remaining bare words are the target names.
   const names: string[] = [];

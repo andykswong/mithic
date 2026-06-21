@@ -89,3 +89,15 @@ test('$BASH_VERSINFO[4] is the release status', async () => {
   await h.ex.exec('echo "${BASH_VERSINFO[4]}"');
   expect(h.out.trim()).toBe('release');
 });
+
+// ── G8: TMOUT (accepted but inert — non-interactive-runtime limitation) ──────
+
+test('TMOUT is accepted as an ordinary variable and is inert', async () => {
+  const h = mk();
+  // Assigning TMOUT does not error, the value reads back, and subsequent
+  // commands run normally (no idle-timeout exit; there is no interactive line
+  // editor / read timeout in this runtime).
+  await h.ex.exec('TMOUT=1\necho "tmout=$TMOUT"\nsleep_placeholder=ok\necho done');
+  expect(h.out).toContain('tmout=1');
+  expect(h.out).toContain('done');
+});
