@@ -76,6 +76,24 @@ export interface KernelClient {
 }
 
 /**
+ * A LIVE bidirectional descriptor, opened once and held open across commands —
+ * used for `exec N<>path` against a STREAMING target (notably `/dev/tcp/host/port`
+ * and `/dev/udp/...`). Unlike the buffered file path (open → buffer → flush on
+ * close), a duplex fd must not be eagerly drained to EOF at open time (a socket
+ * has no EOF until the peer closes, and the first read depends on a write that
+ * has not happened yet — eager-read deadlocks). Writes go to the live fd
+ * immediately; `readLine` reads on demand.
+ */
+export interface DuplexFd {
+  /** Write bytes to the live fd now (no buffering). */
+  write(s: string): void | Promise<void>;
+  /** Read one line (up to and including `\n`, stripped) from the live fd, or `undefined` at EOF. */
+  readLine(): Promise<string | undefined>;
+  /** Close the underlying fd. */
+  close(): void | Promise<void>;
+}
+
+/**
  * Minimal VFS client for redirect execution. The executor uses this to open,
  * write, read, and close files when executing redirect operators (>, >>, <).
  *
@@ -113,4 +131,15 @@ export interface FsClient {
 
   /** Stat a path. Optional — enables `[[ -f ]]`/`-d` and glob directory descent. */
   fsStat?(path: string): { dir: boolean } | undefined | Promise<{ dir: boolean } | undefined>;
+
+  /**
+   * Open a LIVE bidirectional descriptor for `exec N<>path` (see {@link DuplexFd}).
+   * Optional — when present, the executor uses it for `<>` redirects so a
+   * STREAMING target (e.g. `/dev/tcp/host/port`) round-trips: the fd is held open
+   * across `echo >&N` / `read -u N` instead of being buffered + re-opened per op.
+   * When absent, `<>` falls back to the buffered file path (regular files only).
+   * May reject (e.g. connection refused, capability denied) — the executor maps a
+   * rejection to a non-zero `exec` status.
+   */
+  fsOpenDuplex?(path: string): DuplexFd | Promise<DuplexFd>;
 }

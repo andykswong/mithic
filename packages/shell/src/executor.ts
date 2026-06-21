@@ -29,6 +29,7 @@ import { expandHistory, HistoryEventNotFound } from './history-expand.ts';
 import { isBuiltin, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES } from './builtins.ts';
 import type { BuiltinContext, ShellState, ShellOptionName } from './builtins.ts';
 import type {
+  DuplexFd,
   FsClient,
   KernelClient,
   PipelineStageParams,
@@ -73,6 +74,13 @@ interface FdEntry {
   input?: string;
   /** Read cursor into `input`. */
   pos?: number;
+  /**
+   * A LIVE bidirectional descriptor for a STREAMING `exec N<>path` (e.g.
+   * `/dev/tcp/host/port`). When present, `read -u N` reads from it on demand and
+   * the fd's write sink targets it — instead of the buffered `input`/`sink` path
+   * (which deadlocks on a socket: see {@link DuplexFd}).
+   */
+  duplex?: DuplexFd;
 }
 
 export interface Job {
@@ -1082,14 +1090,34 @@ export class Executor implements ShellEnv {
     for (const r of redirects) {
       const fd = r.fd ?? (r.op === '<' || r.op === '<>' ? 0 : 1);
       if (r.op === '>&') {
-        if (r.target === '-') { this.fdTable.delete(fd); continue; }
+        if (r.target === '-') { this.closeFdEntry(fd); this.fdTable.delete(fd); continue; }
         const dst = parseInt(r.target, 10);
-        if (!Number.isNaN(dst)) this.fdTable.set(fd, { mode: 'write', sink: this.sinkForFd(dst) });
+        if (!Number.isNaN(dst)) { this.closeFdEntry(fd); this.fdTable.set(fd, { mode: 'write', sink: this.sinkForFd(dst) }); }
         continue;
       }
       if (r.op === '<' || r.op === '<>') {
         const path = await exp.expandToString(r.target);
         if (!fs) { this.writeStderr(`shell: exec: ${path}: cannot open\n`); return 1; }
+        // STREAMING `<>`: when the FsClient can open a LIVE duplex fd, hold ONE
+        // fd open across commands instead of buffering. This is what makes
+        // `exec 3<>/dev/tcp/host/port; echo >&3; read -u 3` round-trip — the
+        // buffered path eagerly drains to EOF at open (a socket has none) and
+        // never flushes the write until close, which deadlocks. The duplex path
+        // writes immediately and reads on demand. Regular files still take the
+        // buffered path below (no `fsOpenDuplex`, or it falls through on error).
+        if (r.op === '<>' && fs.fsOpenDuplex) {
+          let duplex: DuplexFd;
+          try {
+            duplex = await Promise.resolve(fs.fsOpenDuplex(path));
+          } catch (e) {
+            // Connection refused / capability denied / no such device → exec fails.
+            this.writeStderr(`shell: ${path}: ${(e as Error)?.message ?? 'cannot open'}\n`);
+            return 1;
+          }
+          const entry: FdEntry = { mode: 'rw', duplex, sink: (s) => { void Promise.resolve(duplex.write(s)); }, close: () => { void Promise.resolve(duplex.close()); } };
+          this.fdTable.set(fd, entry);
+          continue;
+        }
         let input = '';
         if (r.op === '<' || path !== '/dev/null') {
           try { input = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true }))); }
@@ -1142,9 +1170,22 @@ export class Executor implements ShellEnv {
     };
   }
 
-  /** Read one line (default) from a numbered input fd, advancing its cursor. For `read -u N`. */
-  readFdLine(fd: number): string | undefined {
+  /** Close a numbered fd's underlying resource (e.g. a live `/dev/tcp` socket), if any. */
+  private closeFdEntry(fd: number): void {
     const entry = this.fdTable.get(fd);
+    if (entry?.close) { try { entry.close(); } catch { /* already closed */ } }
+  }
+
+  /** Close every open numbered fd's underlying resource. Called when the shell exits. */
+  closeAllFds(): void {
+    for (const fd of [...this.fdTable.keys()]) this.closeFdEntry(fd);
+  }
+
+  /** Read one line (default) from a numbered input fd, advancing its cursor. For `read -u N`. */
+  readFdLine(fd: number): string | undefined | Promise<string | undefined> {
+    const entry = this.fdTable.get(fd);
+    // A live duplex fd (e.g. `/dev/tcp`) reads on demand from the stream.
+    if (entry?.duplex) return entry.duplex.readLine();
     if (!entry || entry.input === undefined) return undefined;
     const pos = entry.pos ?? 0;
     if (pos >= entry.input.length) return undefined; // EOF

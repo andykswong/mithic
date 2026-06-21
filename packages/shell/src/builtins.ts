@@ -85,8 +85,11 @@ export interface BuiltinContext {
   eval?(src: string): Promise<number>;
   /** `source FILE args` — read FILE from the VFS and run it in the current shell. */
   sourceFile?(args: string[]): Promise<number>;
-  /** Read one line from a numbered fd (for `read -u N`); undefined ⇒ EOF/closed. */
-  readFdLine?(fd: number): string | undefined;
+  /**
+   * Read one line from a numbered fd (for `read -u N`); undefined ⇒ EOF/closed.
+   * May be async — a live `/dev/tcp` (`<>`) fd reads from the socket on demand.
+   */
+  readFdLine?(fd: number): string | undefined | Promise<string | undefined>;
   lastStatus?: number;
   stdin?: string;
   /** Loop/function control — implemented by the executor as thrown unwinds. */
@@ -243,7 +246,7 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
     }
 
     case 'read': {
-      return runRead(args, ctx);
+      return await runRead(args, ctx);
     }
 
     case 'set':
@@ -646,7 +649,7 @@ function runGetopts(args: string[], ctx: BuiltinContext): number {
  * non-interactive runtime with no line editor or idle-timeout loop, so there is
  * no wall-clock read timeout to honor; stdin is already-buffered text.
  */
-function runRead(args: string[], ctx: BuiltinContext): number {
+async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
   // Parse `-u FD` (and ignore -r). Remaining bare words are the target names.
   const names: string[] = [];
   let fdArg: number | undefined;
@@ -658,9 +661,10 @@ function runRead(args: string[], ctx: BuiltinContext): number {
     names.push(a);
   }
 
-  // `read -u N` reads from the numbered fd's buffered input.
+  // `read -u N` reads from the numbered fd's buffered input (or, for a live
+  // `<>` fd like `/dev/tcp`, from the stream on demand — hence the await).
   if (fdArg !== undefined) {
-    const line = ctx.readFdLine?.(fdArg);
+    const line = await Promise.resolve(ctx.readFdLine?.(fdArg));
     if (line === undefined) return 1; // EOF or fd not open
     const fields = line.split(/\s+/).filter((f) => f !== '');
     assignReadVars(names, fields, line, ctx);

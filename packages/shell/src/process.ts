@@ -16,6 +16,7 @@ import { createGuest } from '@mithic/guest-runtime';
 import type { Guest } from '@mithic/guest-runtime';
 import { Executor } from './executor.ts';
 import type {
+  DuplexFd,
   FsClient,
   KernelClient,
   PipelineRunResult,
@@ -105,6 +106,42 @@ function makeFsClient(guest: Guest): FsClient & { flush(): Promise<void> } {
         // (not `'dir'`). Honor an explicit `isDir` if present, else match the type.
         return { dir: r.isDir ?? (r.type === 'directory' || r.type === 'dir') };
       } catch { return undefined; }
+    },
+    // STREAMING `exec N<>path` (e.g. `/dev/tcp/host/port`): open ONE real fd via
+    // `fs/open {read,write}` and hold it open across `echo >&N` / `read -u N`.
+    // The buffered file path above re-opens per op and drains to EOF on read,
+    // which deadlocks on a socket (no EOF; the read depends on a write that has
+    // not happened). Writes here hit the live fd immediately; reads accumulate
+    // bytes until a newline. The fd's `fs/open` may reject (connection refused /
+    // capability denied) — that rejection propagates out of `fsOpenDuplex`.
+    async fsOpenDuplex(path): Promise<DuplexFd> {
+      const opened = (await guest.syscall('fs/open', { path, oflags: { read: true, write: true } })) as { fd: number };
+      const fd = opened.fd;
+      const dec = new TextDecoder();
+      const enc = new TextEncoder();
+      let pending = ''; // bytes read past the last delivered line
+      return {
+        async write(s: string): Promise<void> {
+          await guest.syscall('fs/write', { fd, data: enc.encode(s) });
+        },
+        async readLine(): Promise<string | undefined> {
+          for (;;) {
+            const nl = pending.indexOf('\n');
+            if (nl >= 0) { const line = pending.slice(0, nl); pending = pending.slice(nl + 1); return line; }
+            const r = await guest.syscall('fs/read', { fd, len: 65536 });
+            const data = (r instanceof Uint8Array ? r : (r as { data?: Uint8Array } | undefined)?.data) ?? undefined;
+            if (!data || data.byteLength === 0) {
+              // EOF (peer closed). Flush any trailing partial line once.
+              if (pending.length > 0) { const line = pending; pending = ''; return line; }
+              return undefined;
+            }
+            pending += dec.decode(data, { stream: true });
+          }
+        },
+        async close(): Promise<void> {
+          await guest.syscall('fs/close', { fd }).catch(() => { /* already closed */ });
+        },
+      };
     },
   };
   return client;
@@ -317,6 +354,9 @@ export default async function main(boot: unknown): Promise<void> {
 
     code = await executor.exec(script);
     await fsClient.flush();
+    // Close any persistent numbered fds (e.g. a live `/dev/tcp` socket opened by
+    // `exec N<>...`) so the underlying connection is torn down on shell exit.
+    executor.closeAllFds();
   } catch (err) {
     onStderr(`shell: ${(err as Error).message}\n`);
     code = 1;
