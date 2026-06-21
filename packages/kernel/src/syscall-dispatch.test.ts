@@ -1036,6 +1036,157 @@ test('B6: on a NON-transferable backend (no ipc) net/fetch buffers the body inli
   expect(new TextDecoder().decode(result.body)).toBe('buffered-bytes');
 });
 
+/**
+ * R3 (regression): the buffered-fallback path (non-transferable / relay / QuickJS
+ * backends) drains the WHOLE response body into host memory. With no bound an
+ * attacker-controlled large/infinite response OOMs the host. The fallback must
+ * cap the buffered body and, on exceeding the cap, ABORT the read (cancel the
+ * source stream) and return an explicit error — NOT grow unbounded, NOT silently
+ * succeed with a truncated body.
+ */
+test('R3: a buffered-fallback body exceeding the cap is rejected (bounded, not unbounded growth)', { timeout: 5000 }, async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'net', origins: ['https://api.example.com'] }]);
+  let cancelled = false;
+  let produced = 0;
+  const client: HttpClient = {
+    send(): HttpResponse {
+      // An UNBOUNDED body of 256-byte chunks: only the kernel cancelling it stops it.
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) { produced++; controller.enqueue(new Uint8Array(256)); },
+        cancel() { cancelled = true; },
+      });
+      return { status: 200, headers: [], body };
+    },
+  };
+  // No ipc broker → buffered fallback. A tiny cap so the test never allocates much.
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/', httpClient: client, maxBufferedBodyBytes: 1024,
+  });
+
+  const { response } = await d.dispatch(1, {
+    id: 1, call: 'net/fetch', args: { method: 'GET', url: 'https://api.example.com/huge', headers: [] },
+  });
+  // Bounded: an explicit error, NOT a (truncated) success.
+  expect(response.ok).toBe(false);
+  // The source stream was cancelled so the upstream stops (no host-memory DoS).
+  expect(cancelled).toBe(true);
+  // We must not have drained an unbounded number of chunks — only enough to
+  // cross the 1 KiB cap (1024/256 = 4, plus the chunk that trips it).
+  expect(produced).toBeLessThan(16);
+});
+
+test('R3: a normal small buffered-fallback body still succeeds (under the cap)', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'net', origins: ['https://api.example.com'] }]);
+  const client: HttpClient = {
+    send(): HttpResponse {
+      return { status: 200, headers: [], body: bytesToStream(new TextEncoder().encode('small-ok')) };
+    },
+  };
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/', httpClient: client, maxBufferedBodyBytes: 1024,
+  });
+  const { response } = await d.dispatch(1, {
+    id: 1, call: 'net/fetch', args: { method: 'GET', url: 'https://api.example.com/x', headers: [] },
+  });
+  expect(response.ok).toBe(true);
+  const result = (response as { ok: true; result: { body?: Uint8Array } }).result;
+  expect(new TextDecoder().decode(result.body)).toBe('small-ok');
+});
+
+/**
+ * R2 (regression): a real HTTP `response.body` chunk can exceed the guest
+ * reader's credit WINDOW (default 64 KiB via `portToReadable`). The kernel pump
+ * (`#feedStreamToPort`) must NOT `reserve()` more than the window in one go —
+ * otherwise `reserve()` parks forever (the reader can never grant more than its
+ * window) and streaming fetch HANGS. The pump must chunk writes below the window
+ * so any window works. Run through the REAL pump → transferred port →
+ * `portToReadable`, with a tight timeout that fails (rather than hangs) on
+ * regression.
+ */
+test('R2: net/fetch streams a body with a single chunk LARGER than the credit window without deadlocking', { timeout: 5000 }, async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'net', origins: ['https://api.example.com'] }]);
+  // A SINGLE 256 KiB chunk — 4x the default 64 KiB guest reader window. A pump
+  // that reserves the whole chunk at once would park forever here.
+  const big = new Uint8Array(256 * 1024);
+  for (let i = 0; i < big.length; i++) big[i] = i & 0xff;
+  const client: HttpClient = {
+    send(): HttpResponse {
+      let sent = false;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (sent) { controller.close(); return; }
+          sent = true;
+          controller.enqueue(big);
+        },
+      });
+      return { status: 200, headers: [], body };
+    },
+  };
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/', httpClient: client,
+    ipc: new IpcBroker(), directPipes: true,
+  });
+
+  const { response, transfer } = await d.dispatch(1, {
+    id: 1, call: 'net/fetch', args: { method: 'GET', url: 'https://api.example.com/big', headers: [] },
+  });
+  expect(response.ok).toBe(true);
+  expect((response as { ok: true; result: { bodyStream?: boolean } }).result.bodyStream).toBe(true);
+
+  // Draining via the default-window reader yields the full 256 KiB intact.
+  const bytes = await drainPort(transfer![0] as MessagePort);
+  expect(bytes.byteLength).toBe(big.byteLength);
+  expect(bytes).toEqual(big);
+});
+
+test('R2: net/fetch streams MULTIPLE over-window chunks back-to-back without deadlocking', { timeout: 5000 }, async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'net', origins: ['https://api.example.com'] }]);
+  // Several 96 KiB chunks (each > the 64 KiB window).
+  const chunkSize = 96 * 1024;
+  const count = 5;
+  const parts: Uint8Array[] = [];
+  for (let c = 0; c < count; c++) {
+    const part = new Uint8Array(chunkSize);
+    for (let i = 0; i < part.length; i++) part[i] = (c * 7 + i) & 0xff;
+    parts.push(part);
+  }
+  const client: HttpClient = {
+    send(): HttpResponse {
+      let i = 0;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (i >= parts.length) { controller.close(); return; }
+          controller.enqueue(parts[i]);
+          i++;
+        },
+      });
+      return { status: 200, headers: [], body };
+    },
+  };
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/', httpClient: client,
+    ipc: new IpcBroker(), directPipes: true,
+  });
+
+  const { transfer } = await d.dispatch(1, {
+    id: 1, call: 'net/fetch', args: { method: 'GET', url: 'https://api.example.com/big', headers: [] },
+  });
+  const bytes = await drainPort(transfer![0] as MessagePort);
+  const expected = new Uint8Array(chunkSize * count);
+  let off = 0;
+  for (const p of parts) { expected.set(p, off); off += p.byteLength; }
+  expect(bytes.byteLength).toBe(expected.byteLength);
+  expect(bytes).toEqual(expected);
+});
+
 // --- C2: typed syscall union + handler map ---
 
 test('C2: unknown call still returns ENOSYS', async () => {

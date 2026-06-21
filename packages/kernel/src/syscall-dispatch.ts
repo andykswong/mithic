@@ -3,8 +3,7 @@ import { fsErrorToErrno, isSyscallName } from '@mithic/protocol';
 import { FileSystemError, normalizePath } from '@mithic/io/vfs';
 import type { FileSystemProvider, FileHandle, OpenFlags } from '@mithic/io/vfs';
 import type { HttpClient, HttpRequest, HttpResponse } from '@mithic/io/net';
-import { streamToBytes } from '@mithic/io/net';
-import { PipeWriter } from '@mithic/protocol';
+import { PipeWriter, INITIAL_CREDIT_BYTES } from '@mithic/protocol';
 import type { CapabilityManager, FsOperation } from './capability-manager.ts';
 import type { IpcBroker } from './ipc-broker.ts';
 import type { WaitResult } from './process-manager.ts';
@@ -242,6 +241,19 @@ export interface SyscallDispatcherOptions {
    * uses them).
    */
   relayPipe?: RelayPipeHandlers;
+  /**
+   * R3: maximum bytes the BUFFERED-fallback `net/fetch` body delivery
+   * (non-transferable / relay / QuickJS backends) will read into host memory
+   * before aborting. An attacker-controlled large/infinite response would
+   * otherwise OOM the host, since the fallback materializes the WHOLE body inline.
+   * On exceeding the cap the source stream is cancelled and the syscall fails
+   * with ENOSPC (a curl-mappable transport failure) rather than silently
+   * truncating. The TRANSFERABLE streaming path is unaffected — it is already
+   * bounded by credit back-pressure. Defaults to
+   * {@link MAX_BUFFERED_BODY_BYTES} (64 MiB), matching the kernel's
+   * `maxOutputBytes` default.
+   */
+  maxBufferedBodyBytes?: number;
 }
 
 /**
@@ -301,6 +313,7 @@ export class SyscallDispatcher {
   #killChild: ((pid: number, signal: string) => void) | undefined;
   #httpClient: HttpClient | undefined;
   #relayPipe: RelayPipeHandlers | undefined;
+  #maxBufferedBodyBytes: number;
   /** pid -> (fd -> open file or pipe end). */
   #fdTables = new Map<number, Map<number, FdEntry>>();
   /** pid -> next fd to allocate (file fds start above the reserved stdio range). */
@@ -330,6 +343,7 @@ export class SyscallDispatcher {
     this.#killChild = options.killChild;
     this.#httpClient = options.httpClient;
     this.#relayPipe = options.relayPipe;
+    this.#maxBufferedBodyBytes = options.maxBufferedBodyBytes ?? MAX_BUFFERED_BODY_BYTES;
   }
 
   /** Discard a process's fd table (called on process exit). */
@@ -1298,8 +1312,12 @@ export class SyscallDispatcher {
    *
    * NON-TRANSFERABLE backend (relay/QuickJS — the guest cannot hold a
    * MessagePort): fall back to BUFFERED delivery — drain the stream to a
-   * `Uint8Array` and return it inline as `body`, exactly as before. This keeps
-   * those backends working at the cost of buffering the whole response.
+   * `Uint8Array` and return it inline as `body`. R3: the drain is BOUNDED by
+   * {@link #maxBufferedBodyBytes} (default 64 MiB); a body that exceeds the cap
+   * has its source stream cancelled and the syscall fails ENOSPC, so an
+   * attacker-controlled large/infinite response cannot OOM the host. (The
+   * transferable streaming path above is already bounded by credit back-pressure
+   * and is unaffected.)
    *
    * A bodyless response (204/304/HEAD → `response.body` undefined) returns
    * neither field.
@@ -1318,8 +1336,18 @@ export class SyscallDispatcher {
       void this.#feedStreamToPort(response.body, writePort);
       return { response: ok(id, { ...base, bodyStream: true }), transfer: [readPort] };
     }
-    // Buffered fallback: drain the whole stream and return the bytes inline.
-    const bytes = await streamToBytes(response.body);
+    // Buffered fallback: drain the whole stream and return the bytes inline,
+    // BOUNDED by the cap. On overflow, abort (cancel the source) and fail ENOSPC.
+    let bytes: Uint8Array;
+    try {
+      bytes = await drainBounded(response.body, this.#maxBufferedBodyBytes);
+    } catch (err) {
+      if (err instanceof BufferedBodyTooLargeError) {
+        return res(fail(id, 'ENOSPC', err.message));
+      }
+      // A transport-level read failure mid-body: surface as a network error.
+      return res(fail(id, 'EHOSTUNREACH', messageOf(err)));
+    }
     const result: { status: number; headers: [string, string][]; body?: Uint8Array } =
       bytes.byteLength > 0 ? { ...base, body: toTightView(bytes) } : base;
     return res(ok(id, result));
@@ -1334,6 +1362,17 @@ export class SyscallDispatcher {
    * pump ends promptly, AND the source stream is cancelled so an unbounded body
    * stops instead of streaming forever (`curl big | head -c10`). Fire-and-forget;
    * any error closes the port (the guest sees EOF/EPIPE).
+   *
+   * R2: a real HTTP `response.body` chunk can exceed the guest reader's credit
+   * WINDOW (the fetch-body reader is a default {@link INITIAL_CREDIT_BYTES} 64 KiB
+   * `portToReadable`). A `PipeWriter.reserve()` for a whole >window chunk can NEVER
+   * be satisfied — the reader cannot grant more than its window — so it parks
+   * forever and streaming fetch HANGS. We therefore SPLIT each source chunk into
+   * sub-chunks of at most {@link INITIAL_CREDIT_BYTES} before reserving, so the
+   * pump never reserves more than the window ANY guest reader can grant. Each
+   * sub-chunk still flows through `reserve()`, so credit-based back-pressure (a
+   * slow consumer stalling the pump) is preserved — we cap the per-reserve size,
+   * not the total.
    */
   async #feedStreamToPort(body: ReadableStream<Uint8Array>, writePort: MessagePort): Promise<void> {
     writePort.start?.();
@@ -1350,11 +1389,18 @@ export class SyscallDispatcher {
         const { value, done } = await reader.read();
         if (done) break;
         if (!value || value.byteLength === 0) continue;
-        const chunk = toTightView(value);
-        // reserve() rejects if the pipe is broken (guest cancelled / EPIPE),
-        // ending the pump and triggering source cancellation below.
-        await flow.reserve(chunk.byteLength);
-        writePort.postMessage({ type: 'data', chunk }, [chunk.buffer as ArrayBuffer]);
+        // R2: never reserve more than the reader's window in one go (it can never
+        // grant more), or the pump deadlocks. Split a large source chunk into
+        // window-sized sub-chunks; each is reserved + posted independently so a
+        // >window chunk flows over a small (default 64 KiB) window with full
+        // back-pressure preserved.
+        for (let off = 0; off < value.byteLength; off += INITIAL_CREDIT_BYTES) {
+          const sub = toTightView(value.subarray(off, off + INITIAL_CREDIT_BYTES));
+          // reserve() rejects if the pipe is broken (guest cancelled / EPIPE),
+          // ending the pump and triggering source cancellation below.
+          await flow.reserve(sub.byteLength);
+          writePort.postMessage({ type: 'data', chunk: sub }, [sub.buffer as ArrayBuffer]);
+        }
       }
     } catch {
       // A broken pipe (or read/transfer failure): stop pumping and cancel the
@@ -1677,6 +1723,59 @@ function toTightView(view: Uint8Array): Uint8Array {
 async function cancelBody(body: ReadableStream<Uint8Array> | undefined): Promise<void> {
   if (!body || body.locked) return;
   try { await body.cancel(); } catch { /* already cancelled */ }
+}
+
+/**
+ * R3: default cap on the BUFFERED-fallback `net/fetch` body — the maximum bytes
+ * the kernel will read into host memory when it cannot stream the body over a
+ * transferred port. Matches the kernel's `maxOutputBytes` default (64 MiB) so a
+ * large/infinite response on a relay/QuickJS backend cannot OOM the host.
+ */
+const MAX_BUFFERED_BODY_BYTES = 64 * 1024 * 1024;
+
+/** R3: thrown by {@link drainBounded} when the body exceeds the cap. */
+class BufferedBodyTooLargeError extends Error {
+  constructor(limit: number) {
+    super(`net/fetch: response body exceeds the buffered limit of ${limit} bytes`);
+    this.name = 'BufferedBodyTooLargeError';
+  }
+}
+
+/**
+ * R3: drain `stream` fully into one `Uint8Array`, but ABORT once the accumulated
+ * size would exceed `limit` — cancel the source (so the upstream transport stops)
+ * and throw {@link BufferedBodyTooLargeError}. This bounds the buffered-fallback
+ * body path so an attacker-controlled large/infinite response cannot OOM the
+ * host. Unlike the credit-bounded streaming path, the fallback holds the whole
+ * body in memory, so the explicit cap is the only protection here.
+ */
+async function drainBounded(stream: ReadableStream<Uint8Array>, limit: number): Promise<Uint8Array> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      total += value.byteLength;
+      if (total > limit) {
+        // Over the cap: stop reading and cancel the source so the transport stops
+        // (it would otherwise keep delivering an unbounded body to a dead drain).
+        reader.releaseLock();
+        await cancelBody(stream);
+        throw new BufferedBodyTooLargeError(limit);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    try { reader.releaseLock(); } catch { /* already released */ }
+  }
+  if (chunks.length === 1) return chunks[0];
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.byteLength; }
+  return out;
 }
 
 function res(response: SyscallResponse, transfer?: Transferable[]): DispatchResult {
