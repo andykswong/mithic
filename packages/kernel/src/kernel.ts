@@ -1,6 +1,5 @@
 import type {
   Capability,
-  FdAction,
   KernelEvent,
   ProcessInit,
   ProcessLimits,
@@ -17,9 +16,7 @@ import {
   PipeWriter,
 } from '@mithic/protocol';
 import type { Runtime, ProcessHandle } from '@mithic/runtime';
-import type { FileSystemProvider, FileHandle, OpenFlags } from '@mithic/io/vfs';
-import { normalizePath } from '@mithic/io/vfs';
-import type { FsOperation } from './capability-manager.ts';
+import type { FileSystemProvider } from '@mithic/io/vfs';
 import type { HttpClient } from '@mithic/io/net';
 import { FetchHttpClient } from '@mithic/io/net';
 import { CapabilityManager } from './capability-manager.ts';
@@ -37,6 +34,7 @@ import { RelayBridge } from './relay-bridge.ts';
 import type { RelaySyscallResult } from './relay-bridge.ts';
 import { Supervisor } from './supervisor.ts';
 import type { HeartbeatOptions, SupervisorHost } from './supervisor.ts';
+import { FdWiring } from './fd-wiring.ts';
 
 export interface KernelOptions {
   runtime: Runtime;
@@ -331,6 +329,12 @@ export class Kernel {
    * arm/clear timer Maps and calls back into the kernel via {@link SupervisorHost}.
    */
   #supervisor: Supervisor;
+  /**
+   * C3: wires a `process/spawn` child's fds (pipe/dup2/open/inherit/close) into
+   * its {@link SpawnInit}, minting pipes and deferring VFS-file pumps. Mints pipes
+   * via the IPC broker and checks `open` against the parent's fs capability.
+   */
+  #fdWiring: FdWiring;
 
   constructor(options: KernelOptions) {
     this.#runtime = options.runtime;
@@ -391,6 +395,9 @@ export class Kernel {
     });
     this.#launcher = options.launcher ?? new DefaultGuestLauncher();
     this.#relayLauncher = options.relayLauncher;
+    // C3: the fd-wiring strategy mints child pipes via the IPC broker and checks
+    // `open` actions against the parent's fs capability before opening the VFS.
+    this.#fdWiring = new FdWiring(this.ipc, this.capabilities, this.#vfs);
   }
 
   async spawn(code: string | URL, init: SpawnInit = {}): Promise<SpawnResult> {
@@ -792,7 +799,7 @@ export class Kernel {
 
     for (const [fdStr, action] of Object.entries(fds)) {
       const fd = Number(fdStr);
-      await this.#applyFdAction(parentPid, fd, action, init, injectedPorts, transfer, pipes, filePumps);
+      await this.#fdWiring.applyAction(parentPid, fd, action, init, injectedPorts, transfer, pipes, filePumps);
     }
 
     // A1: inline stdin bytes — only when fd 0 was NOT wired by an fd action
@@ -813,179 +820,6 @@ export class Kernel {
     if (Object.keys(pipes).length > 0) result.pipes = pipes;
     if (transfer.length > 0) result.transfer = transfer;
     return result;
-  }
-
-  /**
-   * Wire the child-side preopen port for `fd` into `init`. fds 0/1/2 use the
-   * dedicated stdin/stdout/stderr slots; fds >= 3 go into `init.extraFds`.
-   */
-  #wireChildFd(init: SpawnInit, fd: number, port: MessagePort): void {
-    if (fd === 0) init.stdin = port;
-    else if (fd === 1) init.stdout = port;
-    else if (fd === 2) init.stderr = port;
-    else { (init.extraFds ??= {})[fd] = port; }
-  }
-
-  /**
-   * K2: apply a single {@link FdAction} for the child's `fd`, mutating `init` to
-   * wire the child-side preopen port and pushing parent-facing pipe ports into
-   * `transfer`/`pipes`. Supports all fds (0-2 and >= 3).
-   *
-   *   - `pipe`  — mint a fresh pipe. The child gets the guest-side end (fd 0 →
-   *               read end, else write end); the OTHER end is transferred back to
-   *               the parent.
-   *   - `dup2`  — inject a guest-supplied port at this fd (zero-hop pipe).
-   *   - `open`  — open the VFS `path` (checked against the parent's fs cap) and
-   *               pump it: READ feeds the file into the child's read end; WRITE
-   *               drains the child's write end into the file.
-   *   - `inherit`/`close`/default — default kernel-owned stdio (or an injected
-   *               port already present for this fd).
-   */
-  async #applyFdAction(
-    parentPid: number,
-    fd: number,
-    action: FdAction,
-    init: SpawnInit,
-    injectedPorts: Map<number, MessagePort>,
-    transfer: Transferable[],
-    pipes: Record<number, 'transferred'>,
-    filePumps: Array<() => void>,
-  ): Promise<void> {
-    switch (action.action) {
-      case 'pipe': {
-        const pipe = this.ipc.createPipe();
-        if (fd === 0) {
-          // Child reads: child gets the read end; parent gets the write end.
-          this.#wireChildFd(init, fd, pipe.readPort);
-          transfer.push(pipe.writePort);
-        } else {
-          // Child writes (fd 1/2 or any fd >= 3 by convention): child gets the
-          // write end; parent gets the read end to drain.
-          this.#wireChildFd(init, fd, pipe.writePort);
-          transfer.push(pipe.readPort);
-        }
-        pipes[fd] = 'transferred';
-        break;
-      }
-      case 'dup2': {
-        // The guest injected a port it owns for this fd (port-based dup2).
-        const port = injectedPorts.get(fd);
-        if (!port) break; // No port supplied: leave unwired (close-like).
-        this.#wireChildFd(init, fd, port);
-        break;
-      }
-      case 'open': {
-        // K2: open a VFS file into the child fd. Capability-checked against the
-        // PARENT's fs grants (the child can hold no more than the parent).
-        const cwd = init.cwd ?? '/';
-        const path = action.path.startsWith('/')
-          ? normalizePath(action.path)
-          : normalizePath(cwd.endsWith('/') ? cwd + action.path : cwd + '/' + action.path);
-        const writing = Boolean(
-          action.flags.write || action.flags.create || action.flags.truncate || action.flags.append,
-        );
-        const op: FsOperation = writing ? 'write' : 'read';
-        if (!this.capabilities.checkFs(parentPid, path, op)) {
-          throw Object.assign(
-            new Error(`process/spawn: open fd ${fd}: permission denied: ${path}`),
-            { errno: 'EACCES' as const },
-          );
-        }
-        const handle = await this.#vfs.open(path, action.flags as OpenFlags);
-        const pipe = this.ipc.createPipe();
-        if (writing) {
-          // Child WRITES the fd → child gets the write end; the kernel drains the
-          // read end into the VFS file (offset advancing from 0).
-          this.#wireChildFd(init, fd, pipe.writePort);
-          filePumps.push(() => { void this.#drainPortToFile(pipe.readPort, handle); });
-        } else {
-          // Child READS the fd → child gets the read end; the kernel feeds the
-          // file's bytes into the write end then closes (EOF).
-          this.#wireChildFd(init, fd, pipe.readPort);
-          filePumps.push(() => { void this.#feedFileToPort(handle, pipe.writePort); });
-        }
-        break;
-      }
-      case 'inherit':
-      case 'close':
-      default:
-        // inherit/close: default kernel-owned stdio (spawn() mints a fresh pipe
-        // for any fd not injected here). An injected port for this fd is wired.
-        if (injectedPorts.has(fd)) {
-          this.#wireChildFd(init, fd, injectedPorts.get(fd)!);
-        }
-        break;
-    }
-  }
-
-  /**
-   * K2: stream a VFS file's bytes into a pipe WRITE port (the child's read end),
-   * honoring the credit protocol, then send EOF and close. Reads the file in
-   * chunks so a large file does not buffer wholesale. Fire-and-forget; errors
-   * close the port (the child sees EOF/EPIPE).
-   */
-  async #feedFileToPort(handle: FileHandle, writePort: MessagePort): Promise<void> {
-    writePort.start?.();
-    // C1: the shared PipeWriter owns credit accounting + the STICKY broken latch
-    // (the reader cancelling or sending EPIPE must terminate this pump promptly —
-    // previously the kernel writers lacked the sticky latch the guest writer had).
-    const flow = new PipeWriter();
-    writePort.onmessage = (e: MessageEvent): void => {
-      const msg = e.data as { type?: string; bytes?: number };
-      if (msg?.type === 'credit') flow.addCredit(msg.bytes ?? 0);
-      else if (msg?.type === 'end' || msg?.type === 'error') flow.markBroken('EPIPE');
-    };
-    try {
-      let offset = 0;
-      const CHUNK = 64 * 1024;
-      for (;;) {
-        // Read the next chunk first so we know its exact size, then reserve credit
-        // for it. reserve() rejects if the pipe is broken, ending the pump.
-        const data = await this.#vfs.read(handle, offset, CHUNK);
-        if (data.byteLength === 0) break; // EOF
-        await flow.reserve(data.byteLength);
-        offset += data.byteLength;
-        writePort.postMessage({ type: 'data', chunk: data }, [data.buffer as ArrayBuffer]);
-      }
-    } catch { /* read/transfer failure OR broken pipe: fall through to EOF/close */ }
-    try { writePort.postMessage({ type: 'end' }); } catch { /* closed */ }
-    try { writePort.close(); } catch { /* closed */ }
-    try { await this.#vfs.close(handle); } catch { /* already closed */ }
-  }
-
-  /**
-   * K2: drain a pipe READ port (the child's write end) into a VFS file, advancing
-   * the write offset. Grants credit so the writer flows. On EOF closes the file.
-   * Fire-and-forget; errors close the port and the file.
-   */
-  #drainPortToFile(readPort: MessagePort, handle: FileHandle): Promise<void> {
-    return new Promise<void>((resolve) => {
-      let offset = 0;
-      let chain: Promise<unknown> = Promise.resolve();
-      readPort.start?.();
-      // C1: shared sliding-window reader policy (1 MiB window for file throughput).
-      const flow = new PipeReader(1 << 20);
-      readPort.postMessage({ type: 'credit', bytes: flow.open() });
-      const finish = (): void => {
-        chain = chain.then(() => this.#vfs.close(handle)).catch(() => { /* closed */ });
-        try { readPort.close(); } catch { /* closed */ }
-        resolve();
-      };
-      readPort.onmessage = (e: MessageEvent): void => {
-        const msg = e.data as { type?: string; chunk?: Uint8Array };
-        if (msg?.type === 'data' && msg.chunk) {
-          const chunk = msg.chunk;
-          const at = offset;
-          offset += chunk.byteLength;
-          flow.recordArrival(chunk.byteLength);
-          chain = chain.then(() => this.#vfs.write(handle, chunk, at)).catch(() => { /* write failure */ });
-          const grant = flow.replenish();
-          if (grant > 0) readPort.postMessage({ type: 'credit', bytes: grant });
-        } else if (msg?.type === 'end' || msg?.type === 'error') {
-          finish();
-        }
-      };
-    });
   }
 
   /**
