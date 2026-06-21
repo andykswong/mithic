@@ -45,11 +45,12 @@ export interface ShellState {
 
 /** Long names of the shell options toggled via `set` / `set -o`. */
 export type ShellOptionName =
-  | 'errexit' | 'nounset' | 'xtrace' | 'pipefail' | 'noclobber' | 'verbose' | 'posix';
+  | 'errexit' | 'nounset' | 'xtrace' | 'pipefail' | 'noclobber' | 'verbose' | 'posix'
+  | 'histexpand';
 
 /** `set -o`-settable option names in canonical (sorted) order — drives $SHELLOPTS. */
 export const SET_O_OPTIONS: ShellOptionName[] = [
-  'errexit', 'noclobber', 'nounset', 'pipefail', 'posix', 'verbose', 'xtrace',
+  'errexit', 'histexpand', 'noclobber', 'nounset', 'pipefail', 'posix', 'verbose', 'xtrace',
 ];
 
 /** Map of `set -X` short flags ↔ long option names. */
@@ -59,6 +60,7 @@ export const OPTION_FLAGS: Record<string, ShellOptionName> = {
   x: 'xtrace',
   v: 'verbose',
   C: 'noclobber',
+  H: 'histexpand',
 };
 
 /**

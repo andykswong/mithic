@@ -25,6 +25,7 @@ import { globMatch } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
 import { Expander, ExpansionError } from './expander.ts';
 import type { ShellEnv } from './expander.ts';
+import { expandHistory, HistoryEventNotFound } from './history-expand.ts';
 import { isBuiltin, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES } from './builtins.ts';
 import type { BuiltinContext, ShellState, ShellOptionName } from './builtins.ts';
 import type {
@@ -133,6 +134,10 @@ export class Executor implements ShellEnv {
     noclobber: false,
     verbose: false,
     posix: false,
+    // History expansion (`!!`, `!n`, ...) — bash enables `histexpand` for
+    // interactive shells. The Executor `exec()` entry IS the interactive REPL
+    // line here, so default it on; `set +H` disables it (M13).
+    histexpand: true,
   };
   /** `shopt` bash options (extglob/globstar/nullglob/dotglob/nocaseglob/nocasematch). */
   private shoptStore: Record<string, boolean> = {
@@ -449,6 +454,26 @@ export class Executor implements ShellEnv {
     };
   }
 
+  /**
+   * History-expansion stage (M13). Bash runs this on each physical input line
+   * BEFORE parsing when `histexpand` is on. We expand `!`-events against the
+   * recorded history, processing line-by-line so a `!!` on line 2 of a script
+   * can reference line 1 (a working copy is seeded from history and extended
+   * with each line's text). The persistent history is recorded later by `run()`
+   * via `describeStatement`; this stage only reads it.
+   */
+  private expandHistoryStage(src: string): string {
+    if (!src.includes('!')) return src;
+    const working = [...this.historyLines];
+    const lines = src.split('\n');
+    const expanded = lines.map((line) => {
+      const out = expandHistory(line, working);
+      if (line.trim() !== '') working.push(out);
+      return out;
+    });
+    return expanded.join('\n');
+  }
+
   /** Append a non-blank line to history, honoring HISTSIZE (default 500). */
   private addHistory(line: string): void {
     const trimmed = line.trim();
@@ -557,6 +582,18 @@ export class Executor implements ShellEnv {
    * entry point the CLI front-end uses.
    */
   async exec(src: string): Promise<number> {
+    if (this.options.histexpand) {
+      try {
+        src = this.expandHistoryStage(src);
+      } catch (e) {
+        if (e instanceof HistoryEventNotFound) {
+          this.writeStderr(`shell: ${e.message}\n`);
+          this.lastStatus = 1;
+          return 1;
+        }
+        throw e;
+      }
+    }
     let program: Program;
     try {
       program = this.parseSrc(src);
