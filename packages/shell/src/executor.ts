@@ -1457,6 +1457,14 @@ export class Executor implements ShellEnv {
     // Scalar (possibly append). If the name currently holds an array, `name+=v`
     // appends to element 0 in bash; we keep it simple and treat scalars only.
     const val = await expander.expandToString(a.value);
+    // RANDOM / SHLVL / BASH_VERSION[INFO] have special set() semantics (seed /
+    // recompute / read-only) — route through set() rather than writing env
+    // directly so `RANDOM=42` seeds the generator (G7).
+    if (a.name === 'RANDOM' || a.name === 'SHLVL'
+      || a.name === 'BASH_VERSION' || a.name === 'BASH_VERSINFO') {
+      this.set(a.name, a.append ? (this.context.env[a.name] ?? '') + val : val);
+      return;
+    }
     this.context.env[a.name] = a.append ? (this.context.env[a.name] ?? '') + val : val;
   }
 
