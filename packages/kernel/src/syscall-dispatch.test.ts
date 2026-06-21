@@ -1062,6 +1062,91 @@ test('C2: malformed process/wait args (missing pid) is rejected with EINVAL', as
   expect(res).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
 });
 
+// ── R4: process/spawn args are validated at the untrusted boundary ──────────
+// process/spawn previously passed `a.args` raw and `normalizeSpawnArgs` did
+// unchecked casts of env/fds. At the guest boundary a malformed env/argv/fds/cwd
+// must be rejected with EINVAL (not silently dropped, coerced, or crash). A spawn
+// with malformed args must NOT reach the spawnChild callback (no orphan child).
+
+test('R4: process/spawn with a missing path is rejected with EINVAL (no child)', async () => {
+  const { d, calls } = processSetup();
+  const res = (await d.dispatch(1, { id: 1, call: 'process/spawn', args: { argv: ['cmd'] } })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
+  expect(calls).toHaveLength(0);
+});
+
+test('R4: process/spawn with a non-array argv is rejected with EINVAL (no child)', async () => {
+  const { d, calls } = processSetup();
+  const res = (await d.dispatch(1, { id: 1, call: 'process/spawn', args: { path: 'cmd', argv: 'oops' } })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
+  expect(calls).toHaveLength(0);
+});
+
+test('R4: process/spawn with non-string argv elements is rejected with EINVAL (no silent coercion)', async () => {
+  const { d, calls } = processSetup();
+  const res = (await d.dispatch(1, { id: 1, call: 'process/spawn', args: { path: 'cmd', argv: [1, 2] } })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
+  expect(calls).toHaveLength(0);
+});
+
+test('R4: process/spawn with a non-object env (string) is rejected with EINVAL (not silently dropped)', async () => {
+  const { d, calls } = processSetup();
+  const res = (await d.dispatch(1, { id: 1, call: 'process/spawn', args: { path: 'cmd', argv: ['cmd'], env: 'oops' } })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
+  expect(calls).toHaveLength(0);
+});
+
+test('R4: process/spawn with an array env is rejected with EINVAL (typeof object is not enough)', async () => {
+  const { d, calls } = processSetup();
+  const res = (await d.dispatch(1, { id: 1, call: 'process/spawn', args: { path: 'cmd', argv: ['cmd'], env: ['a', 'b'] } })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
+  expect(calls).toHaveLength(0);
+});
+
+test('R4: process/spawn with non-string env values is rejected with EINVAL', async () => {
+  const { d, calls } = processSetup();
+  const res = (await d.dispatch(1, { id: 1, call: 'process/spawn', args: { path: 'cmd', argv: ['cmd'], env: { K: 123 } } })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
+  expect(calls).toHaveLength(0);
+});
+
+test('R4: process/spawn with a non-string cwd is rejected with EINVAL', async () => {
+  const { d, calls } = processSetup();
+  const res = (await d.dispatch(1, { id: 1, call: 'process/spawn', args: { path: 'cmd', argv: ['cmd'], cwd: 5 } })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
+  expect(calls).toHaveLength(0);
+});
+
+test('R4: process/spawn with a non-object fds is rejected with EINVAL', async () => {
+  const { d, calls } = processSetup();
+  const res = (await d.dispatch(1, { id: 1, call: 'process/spawn', args: { path: 'cmd', argv: ['cmd'], fds: 'oops' } })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
+  expect(calls).toHaveLength(0);
+});
+
+test('R4: a valid process/spawn (with env, cwd, fds) still spawns the child', async () => {
+  const { d, calls } = processSetup();
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'process/spawn',
+    args: {
+      path: 'cat',
+      argv: ['cat', 'a.txt'],
+      env: { HOME: '/home', PATH: '/bin' },
+      cwd: '/work',
+      fds: { 0: { action: 'inherit' }, 1: { action: 'inherit' } },
+    },
+  })).response;
+  expect(res).toMatchObject({ ok: true, result: { pid: 42 } });
+  expect(calls).toHaveLength(1);
+  expect(calls[0].args).toMatchObject({
+    path: 'cat',
+    argv: ['cat', 'a.txt'],
+    env: { HOME: '/home', PATH: '/bin' },
+    cwd: '/work',
+  });
+});
+
 test('C2: pipe/read|write|close are first-class — EBADF on a transfer-path backend (no relay handler)', async () => {
   const d = await setup();
   const r1 = (await d.dispatch(1, { id: 1, call: 'pipe/read', args: { fd: 5 } })).response;
