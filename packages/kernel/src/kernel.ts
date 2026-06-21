@@ -7,7 +7,6 @@ import type {
   Signal,
   SpawnArgs,
   SyscallRequest,
-  SyscallResponse,
 } from '@mithic/protocol';
 import {
   isProcessExit,
@@ -34,8 +33,9 @@ import type {
   SpawnChildResult,
   PipelineStageSpec,
   PipelineChildResult,
-  RelayPipeResult,
 } from './syscall-dispatch.ts';
+import { RelayBridge } from './relay-bridge.ts';
+import type { RelaySyscallResult } from './relay-bridge.ts';
 
 export interface KernelOptions {
   runtime: Runtime;
@@ -119,14 +119,7 @@ export interface HeartbeatOptions {
   maxMissed: number;
 }
 
-/**
- * Result of routing a guest syscall through the kernel on the relay path.
- * Mirrors the shape of {@link SyscallResponse} minus the request id, which the
- * kernel owns internally.
- */
-export type RelaySyscallResult =
-  | { ok: true; result: unknown }
-  | { ok: false; error: { code: string; message: string } };
+export type { RelaySyscallResult } from './relay-bridge.ts';
 
 /**
  * I/O relay context provided to a `RelayLauncher` for non-transferable backends.
@@ -333,6 +326,12 @@ export class Kernel {
   #onLimitUnenforceable: (pid: number, limit: 'memoryMb' | 'cpuMs', backend: string) => void;
   /** K1: per-process limits, consulted by the dispatcher for networkDisabled/maxChildren. */
   #limits = new Map<number, ProcessLimits>();
+  /**
+   * C3/K5: kernel-side byte-relay for `fs/pipe`/`ipc/*` on non-transferable
+   * backends. Owns the per-pid relay-fd table + RelayEnd ports; the kernel routes
+   * a relay guest's syscall through it and injects its pipe ops into the dispatcher.
+   */
+  #relay: RelayBridge;
 
   constructor(options: KernelOptions) {
     this.#runtime = options.runtime;
@@ -340,6 +339,10 @@ export class Kernel {
     this.#signalGraceMs = options.signalGraceMs ?? DEFAULT_SIGNAL_GRACE_MS;
     this.#heartbeat = options.heartbeat;
     this.#onLimitUnenforceable = options.onLimitUnenforceable ?? defaultLimitDiagnostic;
+    // C3: route the bridge's syscalls through this kernel's dispatcher with the
+    // correct, kernel-owned pid so capability enforcement runs in-kernel.
+    this.#relay = new RelayBridge((pid, call, args) =>
+      this.dispatcher.dispatch(pid, { id: 0, call, args }));
     this.dispatcher = new SyscallDispatcher({
       vfs: options.vfs,
       caps: this.capabilities,
@@ -370,9 +373,9 @@ export class Kernel {
       // here. On transfer-path backends the guest holds real ports and never
       // calls these, so an absent relay end yields EBADF (handled in RelayEnd ops).
       relayPipe: {
-        read: (pid, fd, len) => this.#relayPipeRead(pid, fd, len),
-        write: (pid, fd, data) => this.#relayPipeWrite(pid, fd, data),
-        close: (pid, fd) => this.#relayPipeClose(pid, fd),
+        read: this.#relay.pipeRead,
+        write: this.#relay.pipeWrite,
+        close: this.#relay.pipeClose,
       },
     });
     this.#launcher = options.launcher ?? new DefaultGuestLauncher();
@@ -680,7 +683,7 @@ export class Kernel {
     const relayCtx: RelayContext = {
       code,
       init: processInit,
-      onSyscall: (call, args) => this.#relaySyscall(pid, call, args),
+      onSyscall: (call, args) => this.#relay.relaySyscall(pid, call, args),
       writeStdout(chunk) {
         if (outputOverflow) return;
         if (stdoutBytes + chunk.byteLength > maxOutputBytes) {
@@ -1005,125 +1008,6 @@ export class Kernel {
     return { exitCodes: result.exitCodes, lastStdout };
   }
 
-  /**
-   * K5: per-pid kernel-held relay pipe ends, keyed by the fd NUMBER the guest was
-   * given. On non-transferable backends the guest cannot hold a MessagePort, so
-   * `fs/pipe`/`ipc/accept`/`ipc/connect` keep their minted ports HERE and the
-   * guest operates them by fd via `pipe/read`/`pipe/write`/`pipe/close` — a kernel
-   * byte-relay (design §4.8). Cleared per-pid on process exit.
-   */
-  #relayFds = new Map<number, Map<number, RelayEnd>>();
-
-  /**
-   * Kernel-owned syscall routing for the relay path. The launcher passes the
-   * guest's raw `call`+`args`; the kernel binds the correct, kernel-owned `pid`
-   * and dispatches through its own `SyscallDispatcher`, so all capability checks
-   * run in-kernel — identical to the transfer path. The launcher can neither
-   * forge the pid nor reach the dispatcher directly.
-   *
-   * K5: syscalls that mint transferable ports (`fs/pipe`, `ipc/accept`,
-   * `ipc/connect`) are BYTE-RELAYED instead of ENOSYS'd: the kernel retains the
-   * ports keyed by the returned fd numbers and the guest drives them with
-   * `pipe/read`/`pipe/write`/`pipe/close`, which this method services directly.
-   * Any OTHER transferable result (none exist today) still closes + ENOSYSs.
-   */
-  async #relaySyscall(
-    pid: number,
-    call: string,
-    args: Record<string, unknown>
-  ): Promise<RelaySyscallResult> {
-    // C2: pipe/read|write|close are first-class dispatcher members now (serviced
-    // via the injected relayPipe handlers against the kernel-held RelayEnd table),
-    // so they route through dispatch() like every other call — no side-channel.
-    const { response, transfer } = await this.dispatcher.dispatch(pid, { id: 0, call, args });
-
-    if (transfer && transfer.length > 0) {
-      // K5: register the minted ports as kernel-held relay fds keyed by the fd
-      // numbers in the response, then strip the ports from what crosses the
-      // bridge. fs/pipe → {readfd, writefd}; ipc/accept|connect → {connfd}.
-      const registered = this.#registerRelayPorts(pid, response, transfer);
-      if (registered) {
-        return response.ok ? { ok: true, result: response.result } : { ok: false, error: response.error };
-      }
-      // Unknown transferable result: close to avoid a leak and surface ENOSYS.
-      for (const t of transfer) { if (t instanceof MessagePort) t.close(); }
-      return { ok: false, error: { code: 'ENOSYS', message: `${call} unsupported on non-transferable backend` } };
-    }
-    return response.ok
-      ? { ok: true, result: response.result }
-      : { ok: false, error: response.error };
-  }
-
-  /** K5: relay-fd table for a pid (created on demand). */
-  #relayTableFor(pid: number): Map<number, RelayEnd> {
-    let t = this.#relayFds.get(pid);
-    if (!t) { t = new Map(); this.#relayFds.set(pid, t); }
-    return t;
-  }
-
-  /**
-   * K5: register the transferable ports of a port-minting syscall as kernel-held
-   * relay ends keyed by the response's fd numbers. Returns true if the response
-   * shape was recognized (fs/pipe / ipc connection), false otherwise.
-   */
-  #registerRelayPorts(pid: number, response: SyscallResponse, transfer: Transferable[]): boolean {
-    if (!response.ok) return false;
-    const result = response.result as Record<string, unknown>;
-    const table = this.#relayTableFor(pid);
-    if (typeof result.readfd === 'number' && typeof result.writefd === 'number'
-      && transfer[0] instanceof MessagePort && transfer[1] instanceof MessagePort) {
-      // fs/pipe: transfer = [readPort, writePort].
-      table.set(result.readfd, new RelayEnd(transfer[0]));
-      table.set(result.writefd, new RelayEnd(transfer[1]));
-      return true;
-    }
-    if (typeof result.connfd === 'number' && transfer[0] instanceof MessagePort) {
-      // ipc/accept | ipc/connect: transfer = [connectionPort] (bidirectional).
-      table.set(result.connfd, new RelayEnd(transfer[0]));
-      return true;
-    }
-    return false;
-  }
-
-  /** K5/C2: `pipe/read {fd, len}` over a kernel-held relay end. */
-  async #relayPipeRead(pid: number, fd: number, len?: number): Promise<RelayPipeResult> {
-    const end = this.#relayFds.get(pid)?.get(fd);
-    if (!end) return { ok: false, error: { code: 'EBADF', message: `pipe/read: bad fd ${fd}` } };
-    const chunk = await end.read(len);
-    // Return a plain number array so the value JSON-clones cleanly across the
-    // relay bridge (Uint8Array does not survive QuickJS's JSON round-trip).
-    return { ok: true, result: { data: Array.from(chunk) } };
-  }
-
-  /** K5/C2: `pipe/write {fd, data}` over a kernel-held relay end. */
-  async #relayPipeWrite(pid: number, fd: number, raw: Uint8Array | number[] | string): Promise<RelayPipeResult> {
-    const end = this.#relayFds.get(pid)?.get(fd);
-    if (!end) return { ok: false, error: { code: 'EBADF', message: `pipe/write: bad fd ${fd}` } };
-    const chunk = raw instanceof Uint8Array ? raw
-      : Array.isArray(raw) ? new Uint8Array(raw)
-        : new TextEncoder().encode(raw);
-    await end.write(chunk);
-    return { ok: true, result: { written: chunk.byteLength } };
-  }
-
-  /** K5/C2: `pipe/close {fd}` — send EOF + close a kernel-held relay end. */
-  #relayPipeClose(pid: number, fd: number): RelayPipeResult {
-    const table = this.#relayFds.get(pid);
-    const end = table?.get(fd);
-    if (!table || !end) return { ok: false, error: { code: 'EBADF', message: `pipe/close: bad fd ${fd}` } };
-    end.close();
-    table.delete(fd);
-    return { ok: true, result: {} };
-  }
-
-  /** K5: tear down all of a pid's relay ends (process exit). */
-  #closeRelayFds(pid: number): void {
-    const table = this.#relayFds.get(pid);
-    if (!table) return;
-    for (const end of table.values()) { try { end.close(); } catch { /* closed */ } }
-    this.#relayFds.delete(pid);
-  }
-
   #handles = new Map<number, ProcessHandle>();
   /**
    * C1/K3: per-process RETAINED kernel-side control port. The kernel keeps this
@@ -1296,7 +1180,7 @@ export class Kernel {
     this.#cwds.delete(pid);
     this.#limits.delete(pid);
     // K5: tear down any kernel-held relay pipe/IPC ends for this pid.
-    this.#closeRelayFds(pid);
+    this.#relay.closeFds(pid);
   }
 
   /**
@@ -1553,109 +1437,6 @@ function isHeartbeatAck(x: unknown): x is { type: 'heartbeat-ack' } {
   return typeof x === 'object' && x !== null
     && (x as { type?: unknown }).type === 'heartbeat-ack';
 }
-
-/**
- * K5: a kernel-held end of a pipe/IPC MessageChannel used to BYTE-RELAY data to a
- * non-transferable (relay) guest. The guest never holds the port — it operates it
- * by fd via `pipe/read`/`pipe/write`/`pipe/close`, which the kernel services
- * through this wrapper.
- *
- * The wrapper handles BOTH directions so a single object backs both unidirectional
- * pipe ends (fs/pipe) and bidirectional IPC connection ports:
- *   - READ side: grants an initial credit window, buffers incoming `{type:'data'}`
- *     chunks, and observes `{type:'end'}`/`{type:'error'}` (EOF). `read(len)`
- *     returns the next buffered bytes (FIFO), or an empty chunk at EOF, parking
- *     until data arrives if the buffer is empty and the peer has not ended.
- *   - WRITE side: tracks `credit` granted by the peer and `write(chunk)` parks
- *     until enough credit is available, then posts `{type:'data'}`.
- */
-class RelayEnd {
-  #port: MessagePort;
-  #buffer: Uint8Array[] = [];
-  #ended = false;
-  #readWaiters: Array<() => void> = [];
-  #closed = false;
-  // C1: shared flow-control primitives. The READ side uses the canonical sliding
-  // window (1 MiB for relay throughput); the WRITE side uses the shared credit +
-  // STICKY broken latch (so a parked relay writer wakes the instant the peer ends
-  // / breaks, matching the guest writer's protection).
-  #reader = new PipeReader(RELAY_READ_WINDOW);
-  #writer = new PipeWriter();
-
-  constructor(port: MessagePort) {
-    this.#port = port;
-    port.start?.();
-    // Open the read window so the peer writer can flow immediately.
-    port.postMessage({ type: 'credit', bytes: this.#reader.open() });
-    port.onmessage = (e: MessageEvent): void => {
-      const msg = e.data as { type?: string; chunk?: Uint8Array; bytes?: number };
-      if (msg?.type === 'data' && msg.chunk) {
-        this.#buffer.push(msg.chunk);
-        // Replenish read credit for what we consumed into our buffer.
-        this.#reader.recordArrival(msg.chunk.byteLength);
-        const grant = this.#reader.replenish();
-        if (grant > 0) { try { this.#port.postMessage({ type: 'credit', bytes: grant }); } catch { /* closed */ } }
-        this.#wakeReaders();
-      } else if (msg?.type === 'credit') {
-        this.#writer.addCredit(msg.bytes ?? 0);
-      } else if (msg?.type === 'end' || msg?.type === 'error') {
-        this.#ended = true;
-        this.#wakeReaders();
-        // Latch broken so any parked writer wakes (rejects) on the dead peer.
-        this.#writer.markBroken('EPIPE');
-      }
-    };
-  }
-
-  #wakeReaders(): void { for (const w of this.#readWaiters.splice(0)) w(); }
-
-  /** Read up to `len` bytes (or the next buffered chunk). Empty chunk = EOF. */
-  async read(len?: number): Promise<Uint8Array> {
-    for (;;) {
-      if (this.#buffer.length > 0) {
-        const head = this.#buffer[0];
-        if (len === undefined || len >= head.byteLength) { this.#buffer.shift(); return head; }
-        // Partial read: split the head chunk.
-        const out = head.subarray(0, len);
-        this.#buffer[0] = head.subarray(len);
-        return new Uint8Array(out);
-      }
-      if (this.#ended || this.#closed) return new Uint8Array(0);
-      await new Promise<void>((resolve) => this.#readWaiters.push(resolve));
-    }
-  }
-
-  /**
-   * Write `chunk`, parking until the peer grants enough credit. Relay semantics:
-   * a broken/ended/closed peer just STOPS the write (resolves) rather than
-   * throwing — the relay byte API returns `{written}` regardless.
-   */
-  async write(chunk: Uint8Array): Promise<void> {
-    if (this.#closed || chunk.byteLength === 0) return;
-    try {
-      await this.#writer.reserve(chunk.byteLength);
-    } catch {
-      // Pipe broken while parked: stop silently (relay write does not throw).
-      return;
-    }
-    if (this.#closed || this.#ended) return;
-    try { this.#port.postMessage({ type: 'data', chunk }); } catch { /* closed */ }
-  }
-
-  /** Send EOF to the peer and close the port. */
-  close(): void {
-    if (this.#closed) return;
-    this.#closed = true;
-    try { this.#port.postMessage({ type: 'end' }); } catch { /* closed */ }
-    try { this.#port.close(); } catch { /* closed */ }
-    this.#wakeReaders();
-    // Wake any parked writer so it doesn't hang on a now-closed end.
-    this.#writer.markBroken('EPIPE');
-  }
-}
-
-/** K5: initial read-credit window granted to a relay end's peer writer (bytes). */
-const RELAY_READ_WINDOW = 1 << 20; // 1 MiB
 
 /**
  * Write `data` into a kernel-owned pipe WRITE port using the credit protocol the
