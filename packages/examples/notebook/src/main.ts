@@ -28,8 +28,9 @@ import '@xterm/xterm/css/xterm.css';
 import { Terminal } from '@xterm/xterm';
 import { Kernel } from '@mithic/kernel';
 import { IframeRuntime } from '@mithic/runtime/backends/iframe';
-import { FileSystemRouter, MemoryFsProvider } from '@mithic/io/vfs';
+import { FileSystemRouter, MemoryFsProvider, DeviceFsProvider, mountNetworkDevices, netOriginsToAllow } from '@mithic/io/vfs';
 import type { FileSystemProvider, FileHandle } from '@mithic/io/vfs';
+import { DisabledSocketProvider } from '@mithic/io/net';
 import { Executor, parse } from '@mithic/shell';
 import type {
   KernelClient,
@@ -264,6 +265,20 @@ export async function bootNotebook(
   const memfs = new MemoryFsProvider({ files: SEED_FILES });
   const vfs = new FileSystemRouter();
   await vfs.mount('/', memfs);
+  await vfs.mount('/dev', new DeviceFsProvider());
+
+  // Seam 3: mount /dev/tcp + /dev/udp so `exec 3<>/dev/tcp/host/port` is reachable.
+  // The device allowlist (Gate 2) is derived from the net-capability origins the
+  // notebook grants its children; the kernel's `fs` capability on the /dev/tcp
+  // subtree (children inherit fs on `/`) is the per-process Gate 1. In the browser
+  // there is no raw-TCP backend, so the socket provider is disabled — the path is
+  // mounted and correctly gated, and a connection attempt fails gracefully rather
+  // than being unreachable. A native host swaps in a real SocketProvider.
+  const netOrigins = CHILD_CAPABILITIES.flatMap((c) => (c.type === 'net' ? c.origins : []));
+  await mountNetworkDevices(vfs, {
+    sockets: new DisabledSocketProvider(),
+    allow: netOriginsToAllow(netOrigins),
+  });
 
   const runtime = new IframeRuntime({ container: resultsEl });
   const kernel = new Kernel({
