@@ -1036,6 +1036,96 @@ test('B6: on a NON-transferable backend (no ipc) net/fetch buffers the body inli
   expect(new TextDecoder().decode(result.body)).toBe('buffered-bytes');
 });
 
+/**
+ * R2 (regression): a real HTTP `response.body` chunk can exceed the guest
+ * reader's credit WINDOW (default 64 KiB via `portToReadable`). The kernel pump
+ * (`#feedStreamToPort`) must NOT `reserve()` more than the window in one go —
+ * otherwise `reserve()` parks forever (the reader can never grant more than its
+ * window) and streaming fetch HANGS. The pump must chunk writes below the window
+ * so any window works. Run through the REAL pump → transferred port →
+ * `portToReadable`, with a tight timeout that fails (rather than hangs) on
+ * regression.
+ */
+test('R2: net/fetch streams a body with a single chunk LARGER than the credit window without deadlocking', { timeout: 5000 }, async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'net', origins: ['https://api.example.com'] }]);
+  // A SINGLE 256 KiB chunk — 4x the default 64 KiB guest reader window. A pump
+  // that reserves the whole chunk at once would park forever here.
+  const big = new Uint8Array(256 * 1024);
+  for (let i = 0; i < big.length; i++) big[i] = i & 0xff;
+  const client: HttpClient = {
+    send(): HttpResponse {
+      let sent = false;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (sent) { controller.close(); return; }
+          sent = true;
+          controller.enqueue(big);
+        },
+      });
+      return { status: 200, headers: [], body };
+    },
+  };
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/', httpClient: client,
+    ipc: new IpcBroker(), directPipes: true,
+  });
+
+  const { response, transfer } = await d.dispatch(1, {
+    id: 1, call: 'net/fetch', args: { method: 'GET', url: 'https://api.example.com/big', headers: [] },
+  });
+  expect(response.ok).toBe(true);
+  expect((response as { ok: true; result: { bodyStream?: boolean } }).result.bodyStream).toBe(true);
+
+  // Draining via the default-window reader yields the full 256 KiB intact.
+  const bytes = await drainPort(transfer![0] as MessagePort);
+  expect(bytes.byteLength).toBe(big.byteLength);
+  expect(bytes).toEqual(big);
+});
+
+test('R2: net/fetch streams MULTIPLE over-window chunks back-to-back without deadlocking', { timeout: 5000 }, async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'net', origins: ['https://api.example.com'] }]);
+  // Several 96 KiB chunks (each > the 64 KiB window).
+  const chunkSize = 96 * 1024;
+  const count = 5;
+  const parts: Uint8Array[] = [];
+  for (let c = 0; c < count; c++) {
+    const part = new Uint8Array(chunkSize);
+    for (let i = 0; i < part.length; i++) part[i] = (c * 7 + i) & 0xff;
+    parts.push(part);
+  }
+  const client: HttpClient = {
+    send(): HttpResponse {
+      let i = 0;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (i >= parts.length) { controller.close(); return; }
+          controller.enqueue(parts[i]);
+          i++;
+        },
+      });
+      return { status: 200, headers: [], body };
+    },
+  };
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/', httpClient: client,
+    ipc: new IpcBroker(), directPipes: true,
+  });
+
+  const { transfer } = await d.dispatch(1, {
+    id: 1, call: 'net/fetch', args: { method: 'GET', url: 'https://api.example.com/big', headers: [] },
+  });
+  const bytes = await drainPort(transfer![0] as MessagePort);
+  const expected = new Uint8Array(chunkSize * count);
+  let off = 0;
+  for (const p of parts) { expected.set(p, off); off += p.byteLength; }
+  expect(bytes.byteLength).toBe(expected.byteLength);
+  expect(bytes).toEqual(expected);
+});
+
 // --- C2: typed syscall union + handler map ---
 
 test('C2: unknown call still returns ENOSYS', async () => {

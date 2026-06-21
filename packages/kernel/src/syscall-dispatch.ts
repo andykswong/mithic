@@ -4,7 +4,7 @@ import { FileSystemError, normalizePath } from '@mithic/io/vfs';
 import type { FileSystemProvider, FileHandle, OpenFlags } from '@mithic/io/vfs';
 import type { HttpClient, HttpRequest, HttpResponse } from '@mithic/io/net';
 import { streamToBytes } from '@mithic/io/net';
-import { PipeWriter } from '@mithic/protocol';
+import { PipeWriter, INITIAL_CREDIT_BYTES } from '@mithic/protocol';
 import type { CapabilityManager, FsOperation } from './capability-manager.ts';
 import type { IpcBroker } from './ipc-broker.ts';
 import type { WaitResult } from './process-manager.ts';
@@ -1339,6 +1339,17 @@ export class SyscallDispatcher {
    * pump ends promptly, AND the source stream is cancelled so an unbounded body
    * stops instead of streaming forever (`curl big | head -c10`). Fire-and-forget;
    * any error closes the port (the guest sees EOF/EPIPE).
+   *
+   * R2: a real HTTP `response.body` chunk can exceed the guest reader's credit
+   * WINDOW (the fetch-body reader is a default {@link INITIAL_CREDIT_BYTES} 64 KiB
+   * `portToReadable`). A `PipeWriter.reserve()` for a whole >window chunk can NEVER
+   * be satisfied — the reader cannot grant more than its window — so it parks
+   * forever and streaming fetch HANGS. We therefore SPLIT each source chunk into
+   * sub-chunks of at most {@link INITIAL_CREDIT_BYTES} before reserving, so the
+   * pump never reserves more than the window ANY guest reader can grant. Each
+   * sub-chunk still flows through `reserve()`, so credit-based back-pressure (a
+   * slow consumer stalling the pump) is preserved — we cap the per-reserve size,
+   * not the total.
    */
   async #feedStreamToPort(body: ReadableStream<Uint8Array>, writePort: MessagePort): Promise<void> {
     writePort.start?.();
@@ -1355,11 +1366,18 @@ export class SyscallDispatcher {
         const { value, done } = await reader.read();
         if (done) break;
         if (!value || value.byteLength === 0) continue;
-        const chunk = toTightView(value);
-        // reserve() rejects if the pipe is broken (guest cancelled / EPIPE),
-        // ending the pump and triggering source cancellation below.
-        await flow.reserve(chunk.byteLength);
-        writePort.postMessage({ type: 'data', chunk }, [chunk.buffer as ArrayBuffer]);
+        // R2: never reserve more than the reader's window in one go (it can never
+        // grant more), or the pump deadlocks. Split a large source chunk into
+        // window-sized sub-chunks; each is reserved + posted independently so a
+        // >window chunk flows over a small (default 64 KiB) window with full
+        // back-pressure preserved.
+        for (let off = 0; off < value.byteLength; off += INITIAL_CREDIT_BYTES) {
+          const sub = toTightView(value.subarray(off, off + INITIAL_CREDIT_BYTES));
+          // reserve() rejects if the pipe is broken (guest cancelled / EPIPE),
+          // ending the pump and triggering source cancellation below.
+          await flow.reserve(sub.byteLength);
+          writePort.postMessage({ type: 'data', chunk: sub }, [sub.buffer as ArrayBuffer]);
+        }
       }
     } catch {
       // A broken pipe (or read/transfer failure): stop pumping and cancel the
