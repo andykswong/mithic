@@ -241,3 +241,17 @@ test('producer | tr -d \\n | head -c6 streams through tr -d (delete mode)', asyn
   expect(out.stdout).toBe('yyyyyy');
   expect(out.codes[out.codes.length - 1]).toBe(0);
 }, 10000);
+
+// D1 regression: cat was the lone outlier that buffered all stdin before writing
+// (readAll path). This test proves cat streams — a large bounded producer piped
+// through cat into head must terminate quickly without buffering everything.
+test('producer | cat | head -n3 streams through cat without buffering (D1)', async () => {
+  const k = await bootKernel();
+  const out = await k.pipeline([
+    { code: boundedYes(2000), args: ['yes'] },
+    { code: resolve('cat', '/', {})!, args: ['cat'] },
+    { code: resolve('head', '/', {})!, args: ['head', '-n', '3'] },
+  ]);
+  expect(out.stdout).toBe('y\ny\ny\n');
+  expect(out.codes[out.codes.length - 1]).toBe(0);
+}, 5000);
