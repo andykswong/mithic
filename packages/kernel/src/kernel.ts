@@ -361,6 +361,10 @@ export class Kernel {
       ppidOf: (pid) => this.processes.get(pid)?.ppid ?? 0,
       chdir: (pid, path) => { this.#cwds.set(pid, path); },
       exitProcess: (pid, code) => { this.#exit(pid, code); },
+      // D4: deliver a guest-requested signal to one of its children (ownership
+      // already checked in the dispatcher). Cast: the dispatcher passes a
+      // SIG-prefixed string the kernel's Signal type accepts.
+      killChild: (pid, signal) => { this.kill(pid, signal as Signal); },
       // C2: relay byte-channel ops (pipe/read|write|close) are first-class
       // dispatcher members; the kernel owns the RelayEnd table and services them
       // here. On transfer-path backends the guest holds real ports and never

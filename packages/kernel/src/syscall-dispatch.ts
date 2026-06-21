@@ -218,6 +218,13 @@ export interface SyscallDispatcherOptions {
    */
   exitProcess?: (pid: number, code: number) => void;
   /**
+   * D4: deliver a signal to a process (for the `process/kill` syscall). Routes to
+   * `Kernel.kill`. The dispatcher gates delivery on OWNERSHIP — a process may
+   * only signal its own children (ppid check) — so a guest cannot signal
+   * arbitrary pids. Unset = `process/kill` returns ENOSYS.
+   */
+  killChild?: (pid: number, signal: string) => void;
+  /**
    * HTTP client backing the capability-gated `net/fetch` syscall. The dispatcher
    * checks the caller's `net` capability for the request ORIGIN (via
    * `caps.checkNet`) BEFORE ever touching this client; a guest can never reach an
@@ -289,6 +296,7 @@ export class SyscallDispatcher {
   #ppidOf: ((pid: number) => number) | undefined;
   #chdir: ((pid: number, path: string) => void) | undefined;
   #exitProcess: ((pid: number, code: number) => void) | undefined;
+  #killChild: ((pid: number, signal: string) => void) | undefined;
   #httpClient: HttpClient | undefined;
   #relayPipe: RelayPipeHandlers | undefined;
   /** pid -> (fd -> open file or pipe end). */
@@ -317,6 +325,7 @@ export class SyscallDispatcher {
     this.#ppidOf = options.ppidOf;
     this.#chdir = options.chdir;
     this.#exitProcess = options.exitProcess;
+    this.#killChild = options.killChild;
     this.#httpClient = options.httpClient;
     this.#relayPipe = options.relayPipe;
   }
@@ -404,6 +413,7 @@ export class SyscallDispatcher {
     'process/spawn': (pid, a, ports) => this.#spawn(pid, a.id, a.args, ports),
     'process/pipeline': async (pid, a) => res(await this.#pipeline(pid, a.id, a.args)),
     'process/wait': async (pid, a) => res(ok(a.id, await this.#wait(pid, parseWait(a.args)))),
+    'process/kill': (pid, a) => res(this.#kill(pid, a.id, parseKill(a.args))),
     'process/exit': (pid, a) => res(ok(a.id, this.#processExit(pid, parseExit(a.args)))),
     'process/getpid': (pid, a) => res(ok(a.id, { pid })),
     'process/getppid': (pid, a) => res(ok(a.id, { ppid: this.#ppidOf?.(pid) ?? 0 })),
@@ -617,6 +627,27 @@ export class SyscallDispatcher {
     const result = await this.#waitChild(target);
     this.#liveChildPids.get(pid)?.delete(target);
     return result;
+  }
+
+  /**
+   * D4: `process/kill {pid, signal?}` — deliver a signal to one of the caller's
+   * children. Ownership-gated: only a child whose ppid is this process may be
+   * signalled (a guest cannot signal arbitrary pids). Unknown handler ⇒ ENOSYS;
+   * a non-child target ⇒ EPERM. `signal` defaults to SIGTERM.
+   */
+  #kill(pid: number, id: number, args: SyscallArgs<'process/kill'>): SyscallResponse {
+    if (!this.#killChild) {
+      return fail(id, 'ENOSYS', 'process/kill: no kill handler configured');
+    }
+    const target = args.pid;
+    // Ownership: only signal own children. If parentage is unknown, deny.
+    if (!this.#ppidOf || this.#ppidOf(target) !== pid) {
+      return fail(id, 'EPERM', `process/kill: not permitted to signal pid ${target}`);
+    }
+    const signal = args.signal && /^SIG/.test(args.signal) ? args.signal : 'SIG' + (args.signal ?? 'TERM');
+    this.#killChild(target, signal);
+    this.#liveChildPids.get(pid)?.delete(target);
+    return ok(id, {});
   }
 
   /**
@@ -1388,6 +1419,11 @@ function parseDomMutate(args: Record<string, unknown>): SyscallArgs<'dom/mutate'
 function parseWait(args: Record<string, unknown>): SyscallArgs<'process/wait'> {
   if (typeof args.pid !== 'number') throw new MalformedArgsError('pid must be a number');
   return { pid: args.pid };
+}
+
+function parseKill(args: Record<string, unknown>): SyscallArgs<'process/kill'> {
+  if (typeof args.pid !== 'number') throw new MalformedArgsError('pid must be a number');
+  return typeof args.signal === 'string' ? { pid: args.pid, signal: args.signal } : { pid: args.pid };
 }
 
 function parseExit(args: Record<string, unknown>): SyscallArgs<'process/exit'> {

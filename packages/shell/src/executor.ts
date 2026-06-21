@@ -1756,8 +1756,39 @@ export class Executor implements ShellEnv {
     const cmdStr = describeStages(stmt.stages ?? []);
     const job: Job = { id, pids: [], command: cmdStr, state: 'running' };
     this.jobs.push(job);
-    // Run the pipeline detached. We DON'T await it (background semantics), but
-    // record completion on the job. A synthetic pid models the job leader.
+
+    // D4: a single EXTERNAL command backgrounded gets a REAL kernel pid via the
+    // direct-spawn path (spawnStream) — so `$!` is the real leader and `kill %1`
+    // / `kill <pid>` reach the live child via kernel.kill. We pump its stdout to
+    // the shell's stdout in the background (not awaited) and resolve the job from
+    // kernel.wait(realPid). Builtins / functions / compound bodies have no kernel
+    // child, so they keep a synthetic pid and run detached in-process.
+    const external = await this.backgroundExternal(stmt);
+    if (external && this.kernel.spawnStream) {
+      try {
+        const handle = await this.kernel.spawnStream(external);
+        job.pids = [handle.pid];
+        this.lastBgPid = handle.pid;
+        // Stream the child's stdout to our stdout in the background (fire-and-
+        // forget). The job's COMPLETION is the child's exit — awaited directly
+        // via kernel.wait — NOT the pump finishing: a killed child may never EOF
+        // its stdout pipe, so chaining wait AFTER the pump would hang `wait`.
+        const sinkAtSpawn = this.stdoutSink;
+        const reader = handle.stdout?.getReader();
+        if (reader) void this.pumpReaderToSink(reader, sinkAtSpawn);
+        const promise = this.kernel.wait(handle.pid)
+          .then((w) => { job.state = 'done'; job.exitCode = w.code; if (reader) void reader.cancel().catch(() => {}); return w.code; })
+          .catch(() => { job.state = 'done'; job.exitCode = 1; if (reader) void reader.cancel().catch(() => {}); return 1; });
+        (job as Job & { promise?: Promise<number> }).promise = promise;
+        return 0;
+      } catch {
+        // Fall through to the in-process detached path on spawn failure.
+      }
+    }
+
+    // In-process / synthetic-pid path (builtins, functions, compound bodies, or
+    // backends without spawnStream). The synthetic pid models a job leader that
+    // has no kernel-side process to signal.
     const pid = 100000 + id;
     job.pids = [pid];
     this.lastBgPid = pid;
@@ -1769,6 +1800,42 @@ export class Executor implements ShellEnv {
     }).catch(() => { job.state = 'done'; job.exitCode = 1; return 1; });
     (job as Job & { promise?: Promise<number> }).promise = promise;
     return 0;
+  }
+
+  /**
+   * D4: if `stmt` is a single EXTERNAL command (one-stage pipeline, not a builtin
+   * that shadows / not a function), expand it and return SpawnParams ready for a
+   * direct kernel spawn. Returns undefined for anything that must run in-process
+   * (builtins, functions, pipelines, compounds).
+   */
+  private async backgroundExternal(stmt: Statement): Promise<SpawnParams | undefined> {
+    if (stmt.type !== 'Pipeline' || !stmt.stages || stmt.stages.length !== 1) return undefined;
+    const cmd = stmt.stages[0];
+    if (cmd.redirects.length > 0) return undefined; // redirects: keep the in-process path
+    const expander = this.expander();
+    const { name, argv, env } = await this.expandCommand(cmd, expander);
+    if (name === '') return undefined;
+    if (this.functions.has(name)) return undefined;
+    if (isBuiltin(name) && builtinShadowsExternal(name, argv)) return undefined;
+    const code = this.resolve(name);
+    if (code === undefined) return undefined;
+    return { code, args: [name, ...argv], env: { ...this.context.env, ...env }, cwd: this.context.cwd };
+  }
+
+  /** D4: pump a live child-stdout reader into a captured sink (background jobs). */
+  private async pumpReaderToSink(reader: ReadableStreamDefaultReader<Uint8Array>, sink: (s: string) => void): Promise<void> {
+    const dec = new TextDecoder();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value && value.byteLength > 0) sink(dec.decode(value, { stream: true }));
+      }
+      const tail = dec.decode();
+      if (tail) sink(tail);
+    } catch {
+      // Cancelled (job ended / stream errored) — stop pumping.
+    }
   }
 
   /**

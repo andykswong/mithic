@@ -344,6 +344,58 @@ function processSetup(opts: {
   return { d, caps, calls };
 }
 
+// D4: process/kill
+test('process/kill delivers a signal to an OWN child (ppid match) and reports ok', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'process' }]);
+  const kills: Array<{ pid: number; signal: string }> = [];
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/',
+    ppidOf: (pid) => (pid === 7 ? 1 : 0), // pid 7's parent is pid 1
+    killChild: (pid, signal) => { kills.push({ pid, signal }); },
+  });
+  const res = (await d.dispatch(1, { id: 1, call: 'process/kill', args: { pid: 7, signal: 'SIGTERM' } })).response;
+  expect(res).toMatchObject({ ok: true });
+  expect(kills).toEqual([{ pid: 7, signal: 'SIGTERM' }]);
+});
+
+test('process/kill defaults to SIGTERM and SIG-prefixes a bare name', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  const kills: Array<{ pid: number; signal: string }> = [];
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/',
+    ppidOf: () => 1,
+    killChild: (pid, signal) => { kills.push({ pid, signal }); },
+  });
+  await d.dispatch(1, { id: 1, call: 'process/kill', args: { pid: 7 } });
+  await d.dispatch(1, { id: 2, call: 'process/kill', args: { pid: 7, signal: 'KILL' } });
+  expect(kills).toEqual([{ pid: 7, signal: 'SIGTERM' }, { pid: 7, signal: 'SIGKILL' }]);
+});
+
+test('process/kill of a NON-child (ppid mismatch) returns EPERM and does not deliver', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  const kills: Array<{ pid: number; signal: string }> = [];
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/',
+    ppidOf: () => 999, // target's parent is NOT the caller (pid 1)
+    killChild: (pid, signal) => { kills.push({ pid, signal }); },
+  });
+  const res = (await d.dispatch(1, { id: 1, call: 'process/kill', args: { pid: 7 } })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EPERM' } });
+  expect(kills).toEqual([]);
+});
+
+test('process/kill without a kill handler returns ENOSYS', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  const d = new SyscallDispatcher({ vfs: router, caps, cwdOf: () => '/', ppidOf: () => 1 });
+  const res = (await d.dispatch(1, { id: 1, call: 'process/kill', args: { pid: 7 } })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'ENOSYS' } });
+});
+
 test('process/spawn resolves a registered command and spawns a child', async () => {
   const { d, calls } = processSetup();
   const res = (await d.dispatch(1, {

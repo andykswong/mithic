@@ -330,6 +330,13 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
         },
       };
     },
+    // D4: deliver a signal to a real child pid via `process/kill`. Synthetic
+    // (negative / >=100000) pids have no kernel process — skip them (the shell
+    // job table is updated best-effort by killJob regardless).
+    kill(pid: number, signal: string): void {
+      if (pid <= 0 || pid >= 100000) return;
+      void guest.syscall('process/kill', { pid, signal }).catch(() => { /* already gone */ });
+    },
     async wait(pid: number) {
       const recorded = exitCodes.get(pid);
       if (recorded !== undefined) return { pid, code: recorded };
