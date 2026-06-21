@@ -12,6 +12,8 @@ export interface ShellState {
   shiftPositional(n: number): void;
   /** Mark a name as local to the current function scope. */
   declareLocal(name: string): void;
+  /** Register a name as an associative array (`declare -A`). */
+  declareAssoc?(name: string): void;
   /** Wait for a job/pid, returning its exit code. */
   waitJob(spec?: number): Promise<number>;
   waitAll(): Promise<number>;
@@ -190,17 +192,20 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
     case 'readonly': {
       // Assign NAME=value into the (function-local for `local`) env.
       const isLocal = name === 'local';
-      if (name === 'declare' && args.includes('-A') && (ctx.state?.getOption('posix') ?? false)) {
+      const isAssoc = name === 'declare' && args.includes('-A');
+      if (isAssoc && (ctx.state?.getOption('posix') ?? false)) {
         errOut(ctx, 'shell: declare: -A: not supported in POSIX mode\n');
         return 2;
       }
       for (const arg of args) {
         if (arg.startsWith('-')) continue; // ignore option flags (-i, -a, etc.)
         const eq = arg.indexOf('=');
+        const n = eq > 0 ? arg.slice(0, eq) : arg;
+        // `declare -A name` registers an associative array (G6).
+        if (isAssoc) ctx.state?.declareAssoc?.(n);
         if (eq > 0) {
-          const n = arg.slice(0, eq);
           if (isLocal) ctx.state?.declareLocal(n);
-          ctx.env[n] = arg.slice(eq + 1);
+          if (!isAssoc) ctx.env[n] = arg.slice(eq + 1);
         } else if (isLocal) {
           ctx.state?.declareLocal(arg);
           if (!(arg in ctx.env)) ctx.env[arg] = '';

@@ -176,6 +176,8 @@ export class Executor implements ShellEnv {
   private pendingProcSubs: Array<{ path: string; src: string }> = [];
   /** LCG state for `$RANDOM` (G7); seedable via `RANDOM=n`. */
   private randomState = BigInt(Date.now()) ^ 0x9e3779b97f4a7c15n;
+  /** Associative arrays (`declare -A`): name → string-keyed map (G6). Insertion-ordered. */
+  private assocArrays = new Map<string, Map<string, string>>();
 
   constructor(kernel: KernelClient, context: ShellContext, options: ExecutorOptions = {}) {
     this.kernel = kernel;
@@ -233,6 +235,7 @@ export class Executor implements ShellEnv {
     if (name === 'BASH_VERSINFO') return [...BASH_VERSINFO_ELEMENTS];
     return this.arrays.get(name);
   }
+  getAssoc(name: string): Map<string, string> | undefined { return this.assocArrays.get(name); }
   get cwd(): string { return this.context.cwd; }
 
   getSpecial(name: string): string | undefined {
@@ -513,6 +516,12 @@ export class Executor implements ShellEnv {
         this.context.positional = p.slice(n);
       },
       declareLocal: (name) => this.declareLocal(name),
+      declareAssoc: (name) => {
+        if (!this.assocArrays.has(name)) this.assocArrays.set(name, new Map());
+        // An associative declaration shadows any prior scalar/indexed value.
+        delete this.context.env[name];
+        this.arrays.delete(name);
+      },
       waitJob: (id) => this.waitForJob(id),
       waitAll: () => this.waitAllJobs(),
       waitNext: () => this.waitNextJob(),
@@ -1428,6 +1437,15 @@ export class Executor implements ShellEnv {
       return;
     }
     if (a.index !== undefined) {
+      // Associative array element (`name[key]=v`, name declared via `declare -A`):
+      // the subscript is a STRING key, not a numeric index (G6).
+      const assoc = this.assocArrays.get(a.name);
+      if (assoc !== undefined) {
+        const key = await expander.substituteOnly(a.index);
+        const val = await expander.expandToString(a.value);
+        assoc.set(key, a.append ? (assoc.get(key) ?? '') + val : val);
+        return;
+      }
       const idx = parseInt(await expander.substituteOnly(a.index), 10) || 0;
       const arr = this.arrays.get(a.name) ?? (this.context.env[a.name] !== undefined ? [this.context.env[a.name]] : []);
       const val = await expander.expandToString(a.value);
@@ -1456,6 +1474,7 @@ export class Executor implements ShellEnv {
       cwd: this.context.cwd,
       nounset: () => this.nounset(),
       getArray: (n) => this.arrays.get(n),
+      getAssoc: (n) => this.assocArrays.get(n),
       posix: () => this.posix(),
       shopt: (n) => this.shopt(n),
       names: () => this.names(),

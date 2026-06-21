@@ -54,6 +54,8 @@ export interface ShellEnv {
   nounset?(): boolean;
   /** Read an indexed array's elements (undefined ⇒ not an array). Optional. */
   getArray?(name: string): string[] | undefined;
+  /** Read an associative array's map (undefined ⇒ not associative). Optional. */
+  getAssoc?(name: string): Map<string, string> | undefined;
   /** True when POSIX mode is active (disables brace expansion). Optional. */
   posix?(): boolean;
   /** True when the named shopt glob option is enabled (extglob/globstar/nullglob/dotglob/...). */
@@ -457,6 +459,12 @@ export class Expander {
       }
       const sub = matchSubscript(inner);
       if (sub) {
+        const map = this.env.getAssoc?.(sub.name);
+        if (map !== undefined) {
+          if (sub.subscript === '@' || sub.subscript === '*') return String(map.size);
+          const key = await this.substituteOnly(sub.subscript);
+          return String((map.get(key) ?? '').length);
+        }
         const arr = this.env.getArray?.(sub.name) ?? [];
         if (sub.subscript === '@' || sub.subscript === '*') return String(arr.length);
         const idx = await this.resolveIndex(sub.subscript);
@@ -471,6 +479,11 @@ export class Expander {
       const inner = body.slice(1);
       const sub = matchSubscript(inner);
       if (sub && (sub.subscript === '@' || sub.subscript === '*')) {
+        // ${!assoc[@]} → keys; ${!indexed[@]} → numeric indices (G6).
+        const map = this.env.getAssoc?.(sub.name);
+        if (map !== undefined) {
+          return { fields: [...map.keys()], join: sub.subscript === '*' ? this.ifsFirst() : undefined };
+        }
         const arr = this.env.getArray?.(sub.name) ?? [];
         return arr.map((_, i) => i).join(' ');
       }
@@ -495,6 +508,15 @@ export class Expander {
 
     // ${name[subscript]} array element / slice access.
     const subAccess = matchSubscript(body);
+    // Associative array (`declare -A`): string-keyed access (G6).
+    if (subAccess && this.env.getAssoc?.(subAccess.name) !== undefined) {
+      const map = this.env.getAssoc(subAccess.name)!;
+      if (subAccess.subscript === '@' || subAccess.subscript === '*') {
+        return { fields: [...map.values()], join: subAccess.subscript === '*' ? this.ifsFirst() : undefined };
+      }
+      const key = await this.substituteOnly(subAccess.subscript);
+      return map.get(key) ?? '';
+    }
     if (subAccess && this.env.getArray?.(subAccess.name) !== undefined) {
       const arr = this.env.getArray(subAccess.name)!;
       if (subAccess.subscript === '@' || subAccess.subscript === '*') {
