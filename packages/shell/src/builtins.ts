@@ -102,7 +102,7 @@ export const BUILTINS = [
   'test', '[', 'true', 'false', 'exit', 'eval', 'set', 'cat', ':',
   'local', 'declare', 'readonly', 'shift', 'return', 'getopts', 'read',
   'jobs', 'fg', 'bg', 'wait', 'kill', 'break', 'continue', 'source', '.', 'type',
-  'shopt', 'trap', 'disown', 'history', 'fc', 'exec',
+  'shopt', 'trap', 'disown', 'history', 'fc', 'exec', 'coproc',
 ] as const;
 
 const BUILTIN_SET = new Set<string>(BUILTINS);
@@ -349,6 +349,14 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       if (args.length === 0) return 0;
       if (ctx.eval) return ctx.eval(args.join(' '));
       return 0;
+
+    case 'coproc':
+      // Coprocesses need an async-duplex pipe pair to a background job that this
+      // non-interactive, single-threaded runtime does not model. Emit a clear
+      // diagnostic (and non-zero exit) rather than a confusing
+      // command-not-found (G4 — documented limitation).
+      errOut(ctx, 'shell: coproc: not supported in this runtime\n');
+      return 1;
 
     case 'shopt':
       return runShopt(args, ctx);

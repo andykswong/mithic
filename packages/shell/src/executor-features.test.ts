@@ -421,6 +421,20 @@ test('break exits the select loop', async () => {
   expect(out.trim()).toBe('a');
 });
 
+// ── G4: coproc (documented unsupported) ──────────────────────────────────────
+
+test('coproc emits a clear diagnostic and a non-zero exit (not command-not-found)', async () => {
+  const { err, code } = await run('coproc mycmd { echo hi; }');
+  expect(err).toContain('coproc: not supported');
+  expect(err).not.toContain('command not found');
+  expect(code).not.toBe(0);
+});
+
+test('bare coproc is also diagnosed, not 127 command-not-found', async () => {
+  const { err } = await run('coproc');
+  expect(err).toContain('coproc: not supported');
+});
+
 // ── indexed arrays ──────────────────────────────────────────────────────────
 
 test('array literal + element access ${arr[0]}', async () => {
