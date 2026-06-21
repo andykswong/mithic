@@ -12,10 +12,11 @@
  * spawn. The kernel OWNS what commands exist — the shell spawns by NAME and the
  * kernel's command resolver maps it to guest code (or returns ENOENT).
  */
-import { createGuest, portToReadable } from '@mithic/guest-runtime';
+import { createGuest, portToReadable, portToWritable } from '@mithic/guest-runtime';
 import type { Guest } from '@mithic/guest-runtime';
 import { Executor } from './executor.ts';
 import type {
+  CoprocHandle,
   DuplexFd,
   FsClient,
   KernelClient,
@@ -264,6 +265,70 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
         exitCodes.set(pid, 127);
         return { pid };
       }
+    },
+    // A2: start a coproc. Mint two kernel pipes via `fs/pipe`:
+    //   c2s: child writes (its stdout) → shell reads.  Shell keeps c2s READ end.
+    //   s2c: shell writes → child reads (its stdin).    Shell keeps s2c WRITE end.
+    // Spawn the child with the OTHER ends injected at fd 1 (c2s write) and fd 0
+    // (s2c read) via port-injecting `process/spawn` (fds dup2 + portFds). On a
+    // relay backend `fs/pipe` transfers no ports → reject ENOSYS (gated upstream).
+    async spawnCoproc(params: SpawnParams): Promise<CoprocHandle> {
+      const c2s = await guest.syscallPorts('fs/pipe', {});
+      const s2c = await guest.syscallPorts('fs/pipe', {});
+      const c2sRead = c2s.ports[0];
+      const c2sWrite = c2s.ports[1];
+      const s2cRead = s2c.ports[0];
+      const s2cWrite = s2c.ports[1];
+      if (!c2sRead || !c2sWrite || !s2cRead || !s2cWrite) {
+        for (const p of [c2sRead, c2sWrite, s2cRead, s2cWrite]) p?.close();
+        throw Object.assign(new Error('coproc: requires a transferable backend'), { code: 'ENOSYS' });
+      }
+      const [name, ...rest] = params.args ?? [];
+      // Inject child fd 0 = s2cRead (stdin), fd 1 = c2sWrite (stdout). portFds
+      // maps transferred ports[i] → child fd; order must match `transfer`.
+      const spawnArgs: Record<string, unknown> = {
+        path: params.code instanceof URL ? params.code.href : String(params.code),
+        argv: [name, ...rest],
+        env: params.env,
+        cwd: params.cwd,
+        fds: { 0: { action: 'dup2' }, 1: { action: 'dup2' } },
+        portFds: [0, 1],
+      };
+      const { result } = await guest.syscallPorts('process/spawn', spawnArgs, {
+        transfer: [s2cRead, c2sWrite],
+      });
+      const pid = (result as { pid: number }).pid;
+
+      // Shell-retained ends, adapted to streams. Read child stdout line-by-line
+      // from c2sRead; write child stdin to s2cWrite.
+      const readable = portToReadable(c2sRead);
+      const writable = portToWritable(s2cWrite);
+      const reader = readable.getReader();
+      const writer = writable.getWriter();
+      const enc = new TextEncoder();
+      const dec = new TextDecoder();
+      let pending = '';
+      let eof = false;
+      return {
+        pid,
+        async readLine(): Promise<string | undefined> {
+          for (;;) {
+            const nl = pending.indexOf('\n');
+            if (nl >= 0) { const line = pending.slice(0, nl); pending = pending.slice(nl + 1); return line; }
+            if (eof) { if (pending.length > 0) { const l = pending; pending = ''; return l; } return undefined; }
+            const { value, done } = await reader.read();
+            if (done) { eof = true; continue; }
+            if (value && value.byteLength > 0) pending += dec.decode(value, { stream: true });
+          }
+        },
+        async write(s: string): Promise<void> {
+          await writer.write(enc.encode(s));
+        },
+        close(): void {
+          void reader.cancel().catch(() => { /* closed */ });
+          void writer.close().catch(() => { /* closed */ });
+        },
+      };
     },
     async wait(pid: number) {
       const recorded = exitCodes.get(pid);

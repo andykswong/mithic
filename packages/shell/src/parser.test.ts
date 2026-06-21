@@ -142,3 +142,30 @@ test('parses a subshell', () => {
   const ast = parse('( echo hi )');
   expect(ast.body[0].type).toBe('Subshell');
 });
+
+// A2: coproc grammar
+test('parses unnamed coproc with a compound body', () => {
+  const ast = parse('coproc { cat; }');
+  expect(ast.body[0].type).toBe('Coproc');
+  expect(ast.body[0].coprocName).toBe('COPROC');
+  expect(ast.body[0].coprocBody?.type).toBe('Group');
+});
+
+test('parses named coproc with a compound body', () => {
+  const ast = parse('coproc UP { tr a-z A-Z; }');
+  expect(ast.body[0].type).toBe('Coproc');
+  expect(ast.body[0].coprocName).toBe('UP');
+  expect(ast.body[0].coprocBody?.type).toBe('Group');
+});
+
+test('parses unnamed coproc with a simple command (no NAME)', () => {
+  // `coproc cat` — `cat` is the command, NOT a name (no compound follows).
+  const ast = parse('coproc cat');
+  expect(ast.body[0].type).toBe('Coproc');
+  expect(ast.body[0].coprocName).toBe('COPROC');
+  expect(ast.body[0].coprocBody?.stages?.[0].name).toBe('cat');
+});
+
+test('coproc is rejected in POSIX mode', () => {
+  expect(() => parse('coproc { cat; }', { posix: true })).toThrow(/coproc/);
+});

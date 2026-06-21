@@ -73,6 +73,7 @@ export type StatementType =
   | 'Function'
   | 'Subshell'
   | 'Group'
+  | 'Coproc'     // coproc [NAME] command  /  coproc NAME { ...; }
   | 'Arithmetic'
   | 'Cond';      // [[ ... ]]
 
@@ -141,6 +142,13 @@ export interface Statement {
   expr?: string;
   /** Cond `[[ ... ]]`: tokenized words. */
   condWords?: string[];
+  /**
+   * Coproc: the coproc array NAME (default `COPROC`). The shell exposes
+   * `${NAME[0]}` (read fd), `${NAME[1]}` (write fd) and `NAME_PID`.
+   */
+  coprocName?: string;
+  /** Coproc: the command run as the coprocess (a single Statement). */
+  coprocBody?: Statement;
 }
 
 export interface Program {

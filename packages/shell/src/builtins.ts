@@ -361,11 +361,11 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       return 0;
 
     case 'coproc':
-      // Coprocesses need an async-duplex pipe pair to a background job that this
-      // non-interactive, single-threaded runtime does not model. Emit a clear
-      // diagnostic (and non-zero exit) rather than a confusing
-      // command-not-found (G4 — documented limitation).
-      errOut(ctx, 'shell: coproc: not supported in this runtime\n');
+      // A2: `coproc` is a reserved word handled by the parser/executor (see
+      // Executor.execCoproc). Reaching the builtin means it was used as a plain
+      // word in a context the grammar did not route — emit the precise
+      // backend-gating diagnostic rather than the old blanket "not supported".
+      errOut(ctx, 'shell: coproc: requires a transferable backend\n');
       return 1;
 
     case 'shopt':

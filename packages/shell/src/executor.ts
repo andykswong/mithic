@@ -772,6 +772,7 @@ export class Executor implements ShellEnv {
       }
       case 'Subshell': return this.execSubshell(stmt);
       case 'Group': return this.withRedirects(stmt, () => this.execList(stmt.body ?? []));
+      case 'Coproc': return this.execCoproc(stmt);
       case 'Arithmetic': return this.execArithCmd(stmt);
       case 'Cond': return this.execCond(stmt);
       default: return 0;
@@ -1054,11 +1055,13 @@ export class Executor implements ShellEnv {
       if (r.op === '<' || r.op === '<<' || r.op === '<<<' || r.op === '<>') continue; // stdin handled per-command
 
       if (r.op === '>&') {
-        // fd-dup: `N>&M` makes fd N write where M writes; `N>&-` closes N.
+        // fd-dup: `N>&M` makes fd N write where M writes; `N>&-` closes N. The
+        // target may need expansion (A2: `>&"${COPROC[1]}"` → the coproc fd).
         const fd = r.fd ?? 1;
         snapshotFd(fd);
-        if (r.target === '-') { this.setFdSink(fd, () => { /* closed */ }); if (fd > 2) this.fdTable.delete(fd); continue; }
-        const dst = parseInt(r.target, 10);
+        const tgt = r.target === '-' ? '-' : await exp.expandToString(r.target);
+        if (tgt === '-') { this.setFdSink(fd, () => { /* closed */ }); if (fd > 2) this.fdTable.delete(fd); continue; }
+        const dst = parseInt(tgt, 10);
         if (!Number.isNaN(dst)) this.setFdSink(fd, this.sinkForFd(dst));
         continue;
       }
@@ -1100,8 +1103,9 @@ export class Executor implements ShellEnv {
     for (const r of redirects) {
       const fd = r.fd ?? (r.op === '<' || r.op === '<>' ? 0 : 1);
       if (r.op === '>&') {
-        if (r.target === '-') { this.closeFdEntry(fd); this.fdTable.delete(fd); continue; }
-        const dst = parseInt(r.target, 10);
+        const tgt = r.target === '-' ? '-' : await exp.expandToString(r.target);
+        if (tgt === '-') { this.closeFdEntry(fd); this.fdTable.delete(fd); continue; }
+        const dst = parseInt(tgt, 10);
         if (!Number.isNaN(dst)) { this.closeFdEntry(fd); this.fdTable.set(fd, { mode: 'write', sink: this.sinkForFd(dst) }); }
         continue;
       }
@@ -1669,6 +1673,102 @@ export class Executor implements ShellEnv {
     }).catch(() => { job.state = 'done'; job.exitCode = 1; return 1; });
     (job as Job & { promise?: Promise<number> }).promise = promise;
     return 0;
+  }
+
+  /**
+   * A2: `coproc [NAME] command`. Start `command` as a BACKGROUND child wired to
+   * a bidirectional pipe pair (minted via the kernel). Expose the shell-retained
+   * ends as two numbered fds — `${NAME[0]}` (read child stdout) and `${NAME[1]}`
+   * (write child stdin) — plus `NAME_PID` (the real child pid). `read -u
+   * ${NAME[0]}` and `echo >&${NAME[1]}` then work via the existing fd machinery.
+   *
+   * Requires a transferable backend (the pipe pair is transferred MessagePorts).
+   * On a non-transferable backend `spawnCoproc` rejects ENOSYS and we emit the
+   * precise `coproc: requires a transferable backend` diagnostic.
+   */
+  private async execCoproc(stmt: Statement): Promise<number> {
+    if (!this.kernel.spawnCoproc) {
+      this.writeStderr('shell: coproc: requires a transferable backend\n');
+      return 1;
+    }
+    const simple = this.extractSimpleCommand(stmt.coprocBody);
+    if (!simple) {
+      this.writeStderr('shell: coproc: only a single external command is supported\n');
+      return 1;
+    }
+    const expander = this.expander();
+    const { name, argv, env } = await this.expandCommand(simple, expander);
+    const code = this.resolve(name);
+    if (code === undefined) {
+      this.writeStderr(`shell: ${name}: command not found\n`);
+      return 127;
+    }
+    let handle;
+    try {
+      handle = await this.kernel.spawnCoproc({
+        code, args: [name, ...argv],
+        env: { ...this.context.env, ...env },
+        cwd: this.context.cwd,
+      });
+    } catch (e) {
+      const c = (e as { code?: string }).code;
+      if (c === 'ENOSYS') { this.writeStderr('shell: coproc: requires a transferable backend\n'); return 1; }
+      throw e;
+    }
+
+    // Allocate two shell fds for the retained ends. Read fd serves `read -u`,
+    // write fd serves `echo >&N` (its sink writes to the child's stdin).
+    const readFd = this.allocCoprocFd();
+    const writeFd = this.allocCoprocFd();
+    this.fdTable.set(readFd, {
+      mode: 'read',
+      duplex: { readLine: () => handle.readLine(), write: () => { /* read end: no write */ }, close: () => handle.close() },
+    });
+    this.fdTable.set(writeFd, {
+      mode: 'write',
+      sink: (s: string) => { void Promise.resolve(handle.write(s)); },
+      close: () => handle.close(),
+    });
+
+    // Expose ${NAME[0]} / ${NAME[1]} and NAME_PID. The array holds the fd
+    // NUMBERS (as bash does); NAME_PID is the real child pid.
+    const arrName = stmt.coprocName ?? 'COPROC';
+    this.arrays.set(arrName, [String(readFd), String(writeFd)]);
+    delete this.context.env[arrName];
+    this.context.env[`${arrName}_PID`] = String(handle.pid);
+    this.lastBgPid = handle.pid;
+
+    // Register a background job so `wait`/`jobs` see the coproc child.
+    const id = this.nextJobId++;
+    const job: Job = { id, pids: [handle.pid], command: `coproc ${arrName}`, state: 'running' };
+    this.jobs.push(job);
+    const promise = this.kernel.wait(handle.pid).then((w) => {
+      job.state = 'done'; job.exitCode = w.code; return w.code;
+    }).catch(() => { job.state = 'done'; job.exitCode = 1; return 1; });
+    (job as Job & { promise?: Promise<number> }).promise = promise;
+    return 0;
+  }
+
+  /** Coproc retained-end fds start at 63 and descend (bash uses high fds). */
+  private nextCoprocFd = 63;
+  private allocCoprocFd(): number {
+    while (this.fdTable.has(this.nextCoprocFd) && this.nextCoprocFd > 10) this.nextCoprocFd--;
+    return this.nextCoprocFd--;
+  }
+
+  /**
+   * Extract the single simple command from a coproc body: a one-stage pipeline,
+   * or a Group/Subshell wrapping exactly one such statement. Returns undefined
+   * for genuinely-compound bodies (multiple statements / control flow), which
+   * the coproc path does not spawn as an external.
+   */
+  private extractSimpleCommand(body: Statement | undefined): SimpleCommand | undefined {
+    if (!body) return undefined;
+    if (body.type === 'Pipeline' && body.stages?.length === 1) return body.stages[0];
+    if ((body.type === 'Group' || body.type === 'Subshell') && body.body?.length === 1) {
+      return this.extractSimpleCommand(body.body[0]);
+    }
+    return undefined;
   }
 
   private async waitForJob(spec?: number): Promise<number> {

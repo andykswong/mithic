@@ -22,6 +22,13 @@ export interface SyscallClientOptions {
 export interface SyscallCallOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
+  /**
+   * A2/B5: MessagePorts to TRANSFER with this syscall request (move, not copy).
+   * Used to inject pipe ends the guest minted into a `process/spawn` (the kernel
+   * maps them to child fds via `portFds`). The transport forwards them to the
+   * kernel-side `dispatch(pid, msg, ports)`.
+   */
+  transfer?: readonly MessagePort[];
 }
 
 /**
@@ -124,7 +131,8 @@ export class SyscallClient {
         opts.signal.addEventListener('abort', entry.onAbort, { once: true });
       }
       this.pending.set(id, entry);
-      this.transport.send({ id, call, args });
+      // A2/B5: forward any ports to transfer with the request (move semantics).
+      this.transport.send({ id, call, args }, opts.transfer ? [...opts.transfer] : undefined);
     });
   }
 
