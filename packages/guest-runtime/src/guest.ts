@@ -52,7 +52,21 @@ export interface Guest {
    * A getter so the handle is minted on first use only.
    */
   readonly fs: GuestDirectoryHandle;
+  /**
+   * Subscribe to EVERY kernel signal. This is the MULTI-SHOT primitive: a
+   * repeatable signal (e.g. SIGUSR1/SIGUSR2) fires the callback each time, which
+   * is what the shell needs to route every signal to its traps. Do NOT model the
+   * signal channel on {@link signal} — an `AbortSignal` is one-shot.
+   */
   onSignal(cb: (signal: string, payload?: unknown) => void): void;
+  /**
+   * B4: a DERIVED CONVENIENCE `AbortSignal` that aborts on a TERMINAL signal
+   * (SIGTERM/SIGINT). One-shot by nature — it is a view over the terminal subset
+   * only, NOT a replacement for {@link onSignal}. Pass it to `fetch`/aborting
+   * APIs so in-flight work unwinds when the process is asked to terminate. Its
+   * `reason` is a DOMException naming the terminal signal.
+   */
+  readonly signal: AbortSignal;
   /**
    * Subscribe to `dom/event` kernel events forwarded from the host (clicks,
    * input, etc. on mirrored Remote DOM elements). The guest's remote-dom layer
@@ -64,10 +78,17 @@ export interface Guest {
   exit(code: number): void;
 }
 
+/** Terminal signals over which {@link Guest.signal} aborts (one-shot subset). */
+const TERMINAL_SIGNALS: ReadonlySet<string> = new Set(['SIGTERM', 'SIGINT']);
+
 export function createGuest({ control, init, preopenPorts = {} }: GuestOptions): Guest {
   const signalListeners: Array<(signal: string, payload?: unknown) => void> = [];
   const domEventListeners: Array<(event: GuestDomEventPayload) => void> = [];
   const responseListeners: Array<(msg: unknown) => void> = [];
+
+  // B4: the derived terminal-only AbortSignal. `onSignal` stays the multi-shot
+  // primitive below; this controller aborts ONCE, on the first terminal signal.
+  const terminalAbort = new AbortController();
 
   // Multiplex the control port: route syscall responses vs kernel events
   control.start?.();
@@ -76,8 +97,14 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
     if (isKernelEvent(msg)) {
       if (msg.event === 'signal') {
         const payload = msg.payload as { signal?: string; extra?: unknown } | undefined;
+        const sig = payload?.signal ?? '';
+        // Multi-shot: every signal reaches every onSignal listener (incl. repeats).
         for (const cb of signalListeners) {
-          cb(payload?.signal ?? '', payload?.extra);
+          cb(sig, payload?.extra);
+        }
+        // Derived one-shot: a TERMINAL signal aborts guest.signal exactly once.
+        if (TERMINAL_SIGNALS.has(sig) && !terminalAbort.signal.aborted) {
+          terminalAbort.abort(new DOMException(`terminated by ${sig}`, 'AbortError'));
         }
       } else if (msg.event === 'dom/event') {
         const p = msg.payload as Partial<GuestDomEventPayload> | undefined;
@@ -167,6 +194,7 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
     fetch: createFetch((call, args, opts) => client.syscall(call, args, opts)),
     get fs() { return fsRoot ??= openRoot((call, args, opts) => client.syscall(call, args, opts)); },
     onSignal(cb) { signalListeners.push(cb); },
+    signal: terminalAbort.signal,
     onDomEvent(cb) { domEventListeners.push(cb); },
     exit(code) {
       // Break the stdin pipe so an unconsumed upstream producer gets EPIPE.

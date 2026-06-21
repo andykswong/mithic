@@ -160,8 +160,10 @@ test('M-Fix 1: dom/event routes through MutationSerializer to the matching VNode
 
   const serializer = new MutationSerializer(guest);
   const button = serializer.createElement('div');
-  const clicks: Array<{ nodeId: number }> = [];
-  button.addEventListener('click', (e) => { clicks.push({ nodeId: e.nodeId }); });
+  const clicks: string[] = [];
+  // B4: VNode is a real EventTarget; the listener gets a standard Event whose
+  // target is the node and whose detail carries the forwarded payload.
+  button.addEventListener('click', (e) => { clicks.push(e.type); });
 
   // Host forwards a click on this node's id.
   kernelPort.postMessage({
@@ -170,7 +172,7 @@ test('M-Fix 1: dom/event routes through MutationSerializer to the matching VNode
   });
 
   await new Promise((r) => setTimeout(r, 20));
-  expect(clicks).toEqual([{ nodeId: button.id }]);
+  expect(clicks).toEqual(['click']);
 
   // An event for a different node id must NOT reach this listener.
   kernelPort.postMessage({
