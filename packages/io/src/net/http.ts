@@ -5,7 +5,20 @@ export interface HttpRequest {
   url: string;
   headers: [string, string][];
   body?: Uint8Array;
+  /**
+   * Per-request wall-clock timeout in milliseconds. B1: the {@link FetchHttpClient}
+   * now ENFORCES this at the transport level by deriving an `AbortSignal` from it
+   * and passing it to the underlying `fetch` — previously the field was inert. A
+   * request exceeding the timeout aborts (a `TimeoutError`/`AbortError`), which
+   * the caller maps to a timeout errno (the kernel → `ETIMEDOUT` → curl exit 28).
+   */
   timeoutMs?: number;
+  /**
+   * B1: optional caller-supplied cancellation signal. When it (or the derived
+   * timeout signal) aborts, the in-flight request is aborted. Composed with the
+   * `timeoutMs`-derived signal — whichever fires first wins.
+   */
+  signal?: AbortSignal;
   /**
    * Redirect handling, mirroring the Fetch API `RequestInit.redirect`.
    * `'manual'` makes the client return a 3xx response WITHOUT following it, so a

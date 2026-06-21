@@ -1,6 +1,7 @@
 import type { ProcessInit } from '@mithic/protocol';
 import { isKernelEvent } from '@mithic/protocol';
 import { SyscallClient } from './syscall-client.ts';
+import type { SyscallCallOptions } from './syscall-client.ts';
 import { portToReadable, portToWritable } from './streams.ts';
 import type { Transport } from './transport.ts';
 
@@ -31,7 +32,7 @@ export interface Guest {
   stdin: ReadableStream<Uint8Array>;
   stdout: WritableStream<Uint8Array>;
   stderr: WritableStream<Uint8Array>;
-  syscall(call: string, args: Record<string, unknown>): Promise<unknown>;
+  syscall(call: string, args: Record<string, unknown>, opts?: SyscallCallOptions): Promise<unknown>;
   onSignal(cb: (signal: string, payload?: unknown) => void): void;
   /**
    * Subscribe to `dom/event` kernel events forwarded from the host (clicks,
@@ -140,7 +141,7 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
     stdin,
     stdout,
     stderr,
-    syscall: (call, args) => client.syscall(call, args),
+    syscall: (call, args, opts) => client.syscall(call, args, opts),
     onSignal(cb) { signalListeners.push(cb); },
     onDomEvent(cb) { domEventListeners.push(cb); },
     exit(code) {

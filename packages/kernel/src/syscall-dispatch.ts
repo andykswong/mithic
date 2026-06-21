@@ -1174,6 +1174,12 @@ export class SyscallDispatcher {
     const headers = args.headers;
     let body = args.body;
     const timeoutMs = args.timeoutMs;
+    // B1: build ONE timeout signal covering the WHOLE redirect chain (not a fresh
+    // per-hop timeout), so `--max-time` bounds total wall-clock across all hops.
+    // Passed as `request.signal`; the client does NOT re-derive from timeoutMs.
+    const signal = typeof timeoutMs === 'number' && timeoutMs >= 0
+      ? AbortSignal.timeout(timeoutMs)
+      : undefined;
 
     // SEC-1: follow redirects HERE, re-checking the `net` capability against the
     // target of every 3xx hop. The HTTP client is told `redirect:'manual'` so it
@@ -1188,14 +1194,20 @@ export class SyscallDispatcher {
       }
       const request: HttpRequest = { method, url, headers, redirect: 'manual' };
       if (body !== undefined) request.body = body;
-      if (timeoutMs !== undefined) request.timeoutMs = timeoutMs;
+      if (signal !== undefined) request.signal = signal;
 
       let response: HttpResponse;
       try {
         response = await this.#httpClient.send(request);
       } catch (err) {
-        // Transport-level failure (DNS, connection refused, timeout): the request
-        // was authorized but could not complete. Map to a network errno.
+        // B1: a timeout/abort (AbortSignal.timeout → TimeoutError; manual abort →
+        // AbortError) maps to ETIMEDOUT so the guest can surface a real timeout
+        // (curl --max-time → exit 28), distinct from a connection failure.
+        if (isAbortError(err)) {
+          return fail(id, 'ETIMEDOUT', `net/fetch: request timed out after ${timeoutMs}ms`);
+        }
+        // Other transport-level failure (DNS, connection refused): the request was
+        // authorized but could not complete. Map to a generic network errno.
         return fail(id, 'EHOSTUNREACH', messageOf(err));
       }
 
@@ -1464,6 +1476,18 @@ function errnoOf(err: unknown): ErrnoCode {
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * B1: true if `err` is a fetch abort — either `AbortSignal.timeout` firing
+ * (DOMException name `TimeoutError`) or a manual `AbortController.abort()`
+ * (`AbortError`). These surface a request timeout/cancellation distinct from a
+ * connection failure, so the caller can map them to ETIMEDOUT.
+ */
+function isAbortError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const name = (err as { name?: unknown }).name;
+  return name === 'TimeoutError' || name === 'AbortError';
 }
 
 /**

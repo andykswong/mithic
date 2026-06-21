@@ -11,9 +11,30 @@ export interface SyscallClientOptions {
   timeoutMs?: number;
 }
 
+/**
+ * B1: per-call options for {@link SyscallClient.syscall}. A guest can pass a
+ * cancellation `signal` and/or a `timeoutMs` to a single call. When either
+ * fires, the in-flight syscall settles with `code: 'ETIMEDOUT'` (a timeout) or
+ * `code: 'ECANCELED'` (a caller abort) instead of hanging. For `net/fetch` this
+ * is the cancellation primitive that, paired with the transport-level
+ * enforcement in FetchHttpClient, lets a guest bound or cancel a request.
+ */
+export interface SyscallCallOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+interface PendingCall {
+  resolve: (v: unknown) => void;
+  reject: (e: unknown) => void;
+  timer?: ReturnType<typeof setTimeout>;
+  onAbort?: () => void;
+  signal?: AbortSignal;
+}
+
 export class SyscallClient {
   private nextId = 1;
-  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: unknown) => void; timer?: ReturnType<typeof setTimeout> }>();
+  private pending = new Map<number, PendingCall>();
   private transport: Transport;
   private timeoutMs: number | undefined;
 
@@ -24,8 +45,7 @@ export class SyscallClient {
       if (!isSyscallResponse(msg)) return;
       const p = this.pending.get(msg.id);
       if (!p) return;
-      this.pending.delete(msg.id);
-      if (p.timer !== undefined) clearTimeout(p.timer);
+      this.#settle(msg.id, p);
       if (msg.ok) {
         p.resolve(msg.result);
       } else {
@@ -35,18 +55,44 @@ export class SyscallClient {
     });
   }
 
-  syscall(call: string, args: Record<string, unknown>): Promise<unknown> {
+  /** Remove a pending call and tear down its timer + abort listener. */
+  #settle(id: number, p: PendingCall): void {
+    this.pending.delete(id);
+    if (p.timer !== undefined) clearTimeout(p.timer);
+    if (p.signal && p.onAbort) p.signal.removeEventListener('abort', p.onAbort);
+  }
+
+  syscall(call: string, args: Record<string, unknown>, opts: SyscallCallOptions = {}): Promise<unknown> {
     const id = this.nextId++;
+    // Per-call timeout takes precedence over the client-wide default.
+    const effectiveTimeout = opts.timeoutMs ?? this.timeoutMs;
     return new Promise((resolve, reject) => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      if (this.timeoutMs !== undefined) {
-        timer = setTimeout(() => {
-          if (this.pending.delete(id)) {
+      // Already-aborted signal: reject synchronously without ever sending.
+      if (opts.signal?.aborted) {
+        reject(Object.assign(new Error(`syscall canceled: ${call}`), { code: 'ECANCELED' }));
+        return;
+      }
+      const entry: PendingCall = { resolve, reject, signal: opts.signal };
+      if (effectiveTimeout !== undefined) {
+        entry.timer = setTimeout(() => {
+          const p = this.pending.get(id);
+          if (p) {
+            this.#settle(id, p);
             reject(Object.assign(new Error(`syscall timed out: ${call}`), { code: 'ETIMEDOUT' }));
           }
-        }, this.timeoutMs);
+        }, effectiveTimeout);
       }
-      this.pending.set(id, { resolve, reject, timer });
+      if (opts.signal) {
+        entry.onAbort = () => {
+          const p = this.pending.get(id);
+          if (p) {
+            this.#settle(id, p);
+            reject(Object.assign(new Error(`syscall canceled: ${call}`), { code: 'ECANCELED' }));
+          }
+        };
+        opts.signal.addEventListener('abort', entry.onAbort, { once: true });
+      }
+      this.pending.set(id, entry);
       this.transport.send({ id, call, args });
     });
   }
@@ -54,8 +100,10 @@ export class SyscallClient {
   /** Rejects all in-flight syscalls and closes the underlying transport. */
   close(): void {
     const err = Object.assign(new Error('transport closed'), { code: 'EPIPE' });
-    for (const { reject } of this.pending.values()) {
-      reject(err);
+    for (const p of this.pending.values()) {
+      if (p.timer !== undefined) clearTimeout(p.timer);
+      if (p.signal && p.onAbort) p.signal.removeEventListener('abort', p.onAbort);
+      p.reject(err);
     }
     this.pending.clear();
     this.transport.close();

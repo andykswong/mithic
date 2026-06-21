@@ -97,4 +97,61 @@ describe('FetchHttpClient', () => {
     assert.strictEqual(response.status, 200);
     assert.strictEqual(mockFetch.mock.callCount(), 1);
   });
+
+  // B1: timeoutMs is now enforced at the transport level via a derived
+  // AbortSignal passed into the Request.
+  it('B1: derives an AbortSignal from timeoutMs and a hanging fetch aborts', async (t) => {
+    t.after(() => { globalThis.fetch = originalFetch; });
+
+    // A fetch that NEVER resolves on its own — it settles only when its signal
+    // aborts. This is the hanging-server case `--max-time` must bound.
+    const mockFetch = mock.fn((input: RequestInfo | URL) => {
+      const signal = (input as Request).signal;
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    });
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+    const provider = new FetchHttpClient();
+    const start = Date.now();
+    await assert.rejects(
+      () => provider.send({ method: 'GET', url: 'https://example.com/slow', headers: [], timeoutMs: 30 }),
+      (err: unknown) => (err as { name?: string }).name === 'TimeoutError',
+    );
+    // Aborted promptly (well under a second), proving the timeout is real.
+    assert.ok(Date.now() - start < 1000);
+    // The Request carried a real AbortSignal.
+    const req = mockFetch.mock.calls[0].arguments[0] as Request;
+    assert.ok(req.signal instanceof AbortSignal);
+  });
+
+  it('B1: a caller signal aborts the request', async (t) => {
+    t.after(() => { globalThis.fetch = originalFetch; });
+
+    const mockFetch = mock.fn((input: RequestInfo | URL) => {
+      const signal = (input as Request).signal;
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    });
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+    const controller = new AbortController();
+    const provider = new FetchHttpClient();
+    const p = provider.send({ method: 'GET', url: 'https://example.com/x', headers: [], signal: controller.signal });
+    controller.abort();
+    await assert.rejects(() => p);
+  });
+
+  it('B1: no timeout and no signal leaves the request unchanged (no signal field)', async (t) => {
+    t.after(() => { globalThis.fetch = originalFetch; });
+
+    const mockFetch = mock.fn(async (_input: RequestInfo | URL) => new Response(null, { status: 200 }));
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+    const provider = new FetchHttpClient();
+    const response = await provider.send({ method: 'GET', url: 'https://example.com/ok', headers: [] });
+    assert.strictEqual(response.status, 200);
+  });
 });
