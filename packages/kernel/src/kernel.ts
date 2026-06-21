@@ -15,6 +15,8 @@ import {
   isSyscallResponse,
   isTerminatingSignal,
   signalExitCode,
+  PipeReader,
+  PipeWriter,
 } from '@mithic/protocol';
 import type { Runtime, ProcessHandle } from '@mithic/runtime';
 import type { FileSystemProvider, FileHandle, OpenFlags } from '@mithic/io/vfs';
@@ -899,34 +901,28 @@ export class Kernel {
    */
   async #feedFileToPort(handle: FileHandle, writePort: MessagePort): Promise<void> {
     writePort.start?.();
-    let credit = 0;
-    const waiters: Array<() => void> = [];
-    let broken = false;
+    // C1: the shared PipeWriter owns credit accounting + the STICKY broken latch
+    // (the reader cancelling or sending EPIPE must terminate this pump promptly —
+    // previously the kernel writers lacked the sticky latch the guest writer had).
+    const flow = new PipeWriter();
     writePort.onmessage = (e: MessageEvent): void => {
       const msg = e.data as { type?: string; bytes?: number };
-      if (msg?.type === 'credit') {
-        credit += msg.bytes ?? 0;
-        while (waiters.length > 0 && credit > 0) waiters.shift()!();
-      } else if (msg?.type === 'end' || msg?.type === 'error') {
-        broken = true;
-        while (waiters.length > 0) waiters.shift()!();
-      }
+      if (msg?.type === 'credit') flow.addCredit(msg.bytes ?? 0);
+      else if (msg?.type === 'end' || msg?.type === 'error') flow.markBroken('EPIPE');
     };
-    const awaitCredit = (): Promise<void> =>
-      credit > 0 || broken ? Promise.resolve() : new Promise<void>((r) => waiters.push(r));
     try {
       let offset = 0;
       const CHUNK = 64 * 1024;
       for (;;) {
-        await awaitCredit();
-        if (broken) break;
-        const data = await this.#vfs.read(handle, offset, Math.min(CHUNK, credit > 0 ? credit : CHUNK));
+        // Read the next chunk first so we know its exact size, then reserve credit
+        // for it. reserve() rejects if the pipe is broken, ending the pump.
+        const data = await this.#vfs.read(handle, offset, CHUNK);
         if (data.byteLength === 0) break; // EOF
+        await flow.reserve(data.byteLength);
         offset += data.byteLength;
-        credit -= data.byteLength;
         writePort.postMessage({ type: 'data', chunk: data }, [data.buffer as ArrayBuffer]);
       }
-    } catch { /* read/transfer failure: fall through to EOF/close */ }
+    } catch { /* read/transfer failure OR broken pipe: fall through to EOF/close */ }
     try { writePort.postMessage({ type: 'end' }); } catch { /* closed */ }
     try { writePort.close(); } catch { /* closed */ }
     try { await this.#vfs.close(handle); } catch { /* already closed */ }
@@ -942,7 +938,9 @@ export class Kernel {
       let offset = 0;
       let chain: Promise<unknown> = Promise.resolve();
       readPort.start?.();
-      readPort.postMessage({ type: 'credit', bytes: 1 << 20 });
+      // C1: shared sliding-window reader policy (1 MiB window for file throughput).
+      const flow = new PipeReader(1 << 20);
+      readPort.postMessage({ type: 'credit', bytes: flow.open() });
       const finish = (): void => {
         chain = chain.then(() => this.#vfs.close(handle)).catch(() => { /* closed */ });
         try { readPort.close(); } catch { /* closed */ }
@@ -954,8 +952,10 @@ export class Kernel {
           const chunk = msg.chunk;
           const at = offset;
           offset += chunk.byteLength;
+          flow.recordArrival(chunk.byteLength);
           chain = chain.then(() => this.#vfs.write(handle, chunk, at)).catch(() => { /* write failure */ });
-          readPort.postMessage({ type: 'credit', bytes: chunk.byteLength });
+          const grant = flow.replenish();
+          if (grant > 0) readPort.postMessage({ type: 'credit', bytes: grant });
         } else if (msg?.type === 'end' || msg?.type === 'error') {
           finish();
         }
@@ -1312,14 +1312,14 @@ export class Kernel {
       let total = 0;
       let settled = false;
       readPort.start?.();
-      // Sliding credit window. Grant a generous initial window, then REPLENISH
-      // credit as bytes are consumed so a writer producing more than one window
-      // keeps flowing (CAP-2: the previous code granted once and hung past it).
-      // The window is large enough (16MiB) that a single large chunk up to that
-      // size flows without a per-chunk-vs-window deadlock; replenishment then
-      // sustains unbounded total throughput up to `maxOutputBytes`.
-      const window = 1 << 24; // 16MiB window
-      readPort.postMessage({ type: 'credit', bytes: window });
+      // C1: shared sliding-window reader policy. The capture path uses a 16 MiB
+      // window so a single large chunk up to that size flows without a
+      // per-chunk-exceeds-window deadlock; replenishment sustains unbounded total
+      // throughput up to `maxOutputBytes`. The maxOutputBytes cap + SIGKILL stay
+      // layered ON TOP here — they are a host-memory-safety policy, not part of
+      // the flow-control invariant.
+      const flow = new PipeReader(1 << 24); // 16 MiB window
+      readPort.postMessage({ type: 'credit', bytes: flow.open() });
       const finish = (value: Uint8Array): void => {
         if (settled) return;
         settled = true;
@@ -1331,6 +1331,7 @@ export class Kernel {
         if (msg?.type === 'data' && msg.chunk) {
           if (settled) return;
           const chunk = msg.chunk;
+          flow.recordArrival(chunk.byteLength);
           if (total + chunk.byteLength > maxOutputBytes) {
             // Overflow: keep only what fits, truncate, resolve, and kill the guest.
             const room = Math.max(0, maxOutputBytes - total);
@@ -1345,7 +1346,8 @@ export class Kernel {
           total += chunk.byteLength;
           // Replenish credit for the bytes we just consumed so the writer can
           // continue (this is what prevents the >window stall / hang).
-          readPort.postMessage({ type: 'credit', bytes: chunk.byteLength });
+          const grant = flow.replenish();
+          if (grant > 0) readPort.postMessage({ type: 'credit', bytes: grant });
         } else if (msg?.type === 'end') {
           finish(concat(chunks));
         } else if (msg?.type === 'error') {
@@ -1561,40 +1563,40 @@ class RelayEnd {
   #buffer: Uint8Array[] = [];
   #ended = false;
   #readWaiters: Array<() => void> = [];
-  #credit = 0;
-  #creditWaiters: Array<{ needed: number; resolve: () => void }> = [];
   #closed = false;
+  // C1: shared flow-control primitives. The READ side uses the canonical sliding
+  // window (1 MiB for relay throughput); the WRITE side uses the shared credit +
+  // STICKY broken latch (so a parked relay writer wakes the instant the peer ends
+  // / breaks, matching the guest writer's protection).
+  #reader = new PipeReader(RELAY_READ_WINDOW);
+  #writer = new PipeWriter();
 
   constructor(port: MessagePort) {
     this.#port = port;
     port.start?.();
-    // Grant an initial read-credit window so the peer writer can flow immediately.
-    port.postMessage({ type: 'credit', bytes: RELAY_READ_WINDOW });
+    // Open the read window so the peer writer can flow immediately.
+    port.postMessage({ type: 'credit', bytes: this.#reader.open() });
     port.onmessage = (e: MessageEvent): void => {
       const msg = e.data as { type?: string; chunk?: Uint8Array; bytes?: number };
       if (msg?.type === 'data' && msg.chunk) {
         this.#buffer.push(msg.chunk);
         // Replenish read credit for what we consumed into our buffer.
-        try { this.#port.postMessage({ type: 'credit', bytes: msg.chunk.byteLength }); } catch { /* closed */ }
+        this.#reader.recordArrival(msg.chunk.byteLength);
+        const grant = this.#reader.replenish();
+        if (grant > 0) { try { this.#port.postMessage({ type: 'credit', bytes: grant }); } catch { /* closed */ } }
         this.#wakeReaders();
       } else if (msg?.type === 'credit') {
-        this.#credit += msg.bytes ?? 0;
-        this.#wakeWriters();
+        this.#writer.addCredit(msg.bytes ?? 0);
       } else if (msg?.type === 'end' || msg?.type === 'error') {
         this.#ended = true;
         this.#wakeReaders();
-        // Wake any parked writers too so they don't hang on a dead peer.
-        for (const w of this.#creditWaiters.splice(0)) w.resolve();
+        // Latch broken so any parked writer wakes (rejects) on the dead peer.
+        this.#writer.markBroken('EPIPE');
       }
     };
   }
 
   #wakeReaders(): void { for (const w of this.#readWaiters.splice(0)) w(); }
-  #wakeWriters(): void {
-    while (this.#creditWaiters.length > 0 && this.#credit >= this.#creditWaiters[0].needed) {
-      this.#creditWaiters.shift()!.resolve();
-    }
-  }
 
   /** Read up to `len` bytes (or the next buffered chunk). Empty chunk = EOF. */
   async read(len?: number): Promise<Uint8Array> {
@@ -1612,14 +1614,20 @@ class RelayEnd {
     }
   }
 
-  /** Write `chunk`, parking until the peer grants enough credit. */
+  /**
+   * Write `chunk`, parking until the peer grants enough credit. Relay semantics:
+   * a broken/ended/closed peer just STOPS the write (resolves) rather than
+   * throwing — the relay byte API returns `{written}` regardless.
+   */
   async write(chunk: Uint8Array): Promise<void> {
     if (this.#closed || chunk.byteLength === 0) return;
-    if (this.#credit < chunk.byteLength && !this.#ended) {
-      await new Promise<void>((resolve) => this.#creditWaiters.push({ needed: chunk.byteLength, resolve }));
+    try {
+      await this.#writer.reserve(chunk.byteLength);
+    } catch {
+      // Pipe broken while parked: stop silently (relay write does not throw).
+      return;
     }
     if (this.#closed || this.#ended) return;
-    this.#credit -= chunk.byteLength;
     try { this.#port.postMessage({ type: 'data', chunk }); } catch { /* closed */ }
   }
 
@@ -1630,7 +1638,8 @@ class RelayEnd {
     try { this.#port.postMessage({ type: 'end' }); } catch { /* closed */ }
     try { this.#port.close(); } catch { /* closed */ }
     this.#wakeReaders();
-    for (const w of this.#creditWaiters.splice(0)) w.resolve();
+    // Wake any parked writer so it doesn't hang on a now-closed end.
+    this.#writer.markBroken('EPIPE');
   }
 }
 
@@ -1648,28 +1657,27 @@ const RELAY_READ_WINDOW = 1 << 20; // 1 MiB
  */
 function feedPort(writePort: MessagePort, data: Uint8Array): void {
   writePort.start?.();
-  let credit = 0;
+  // C1: the shared PipeWriter owns credit accounting + the sticky broken latch.
+  const flow = new PipeWriter();
   let sent = false;
-  const trySend = (): void => {
-    if (sent) return;
-    if (data.byteLength === 0 || credit >= data.byteLength) {
+  writePort.onmessage = (e: MessageEvent): void => {
+    const msg = e.data as { type?: string; bytes?: number };
+    if (msg?.type === 'credit') flow.addCredit(msg.bytes ?? 0);
+    else if (msg?.type === 'error' || msg?.type === 'end') flow.markBroken('EPIPE');
+  };
+  void (async () => {
+    try {
+      // Empty payload sends EOF immediately (reserve(0) resolves at once).
+      await flow.reserve(data.byteLength);
       sent = true;
       if (data.byteLength > 0) writePort.postMessage({ type: 'data', chunk: data });
       writePort.postMessage({ type: 'end' });
       writePort.close();
+    } catch {
+      // Reader cancelled / closed before credit arrived: stop without sending.
+      if (!sent) { try { writePort.close(); } catch { /* already closed */ } }
     }
-  };
-  writePort.onmessage = (e: MessageEvent): void => {
-    const msg = e.data as { type?: string; bytes?: number };
-    if (msg?.type === 'credit') { credit += msg.bytes ?? 0; trySend(); }
-    else if (msg?.type === 'error' || msg?.type === 'end') {
-      // Reader cancelled / closed: stop without sending.
-      sent = true;
-      try { writePort.close(); } catch { /* already closed */ }
-    }
-  };
-  // Empty payload: deliver EOF immediately without waiting for credit.
-  if (data.byteLength === 0) trySend();
+  })();
 }
 
 function concat(chunks: Uint8Array[]): Uint8Array {
