@@ -1375,6 +1375,21 @@ export class Executor implements ShellEnv {
     // stage's stdout (and optionally stderr) as the next stage's stdin.
     if (stmt.stageNodes && stmt.stageNodes.length > 0) {
       if (stmt.background) return this.execBackground(stmt);
+      // D5-fix: if EVERY compound-stage reduces to a single simple command and no
+      // `|&` join is present, flatten to a flat-`stages` pipeline so it runs
+      // through the CONCURRENT kernel path (execMultiStagePipeline → runPipeline),
+      // which streams stage-to-stage and propagates EPIPE. This is what makes
+      // `yes | { head -n3; }` TERMINATE instead of hard-hanging: the serialized
+      // in-process execNodePipeline buffers stage i to completion (an unbounded
+      // producer never EOFs) before stage i+1 ever spawns to send EPIPE.
+      // Genuinely-compound stages (multi-statement / control-flow) keep the
+      // in-process path (their builtin I/O contract is synchronous-string-based).
+      const flattened = this.flattenSimpleStageNodes(stmt.stageNodes, stmt.pipeStderr ?? []);
+      if (flattened) {
+        let status = await this.execMultiStagePipeline(flattened);
+        if (stmt.negate) status = status === 0 ? 1 : 0;
+        return status;
+      }
       let status = await this.execNodePipeline(stmt.stageNodes, stmt.pipeStderr ?? []);
       if (stmt.negate) status = status === 0 ? 1 : 0;
       return status;
@@ -1396,6 +1411,29 @@ export class Executor implements ShellEnv {
     }
     if (stmt.negate) status = status === 0 ? 1 : 0;
     return status;
+  }
+
+  /**
+   * D5-fix: reduce a list of compound-stage pipeline nodes to a flat
+   * `SimpleCommand[]` IFF every node is (or wraps) a single simple command AND
+   * no inter-stage `|&` is present. Returns undefined otherwise — those
+   * pipelines keep the serialized in-process path. A simple command carrying its
+   * own input redirect on a non-first stage would change semantics, so we only
+   * accept redirects on the first stage (where they become the stage's stdin).
+   */
+  private flattenSimpleStageNodes(nodes: Statement[], pipeStderr: boolean[]): SimpleCommand[] | undefined {
+    if (pipeStderr.some(Boolean)) return undefined;
+    const stages: SimpleCommand[] = [];
+    for (let i = 0; i < nodes.length; i++) {
+      const cmd = this.extractSimpleCommand(nodes[i]);
+      if (!cmd) return undefined;
+      // Only the first stage may carry redirects (its stdin source); a later
+      // stage's redirect would override the inter-stage pipe — keep those
+      // in-process to preserve exact semantics.
+      if (i > 0 && cmd.redirects.length > 0) return undefined;
+      stages.push(cmd);
+    }
+    return stages;
   }
 
   /**

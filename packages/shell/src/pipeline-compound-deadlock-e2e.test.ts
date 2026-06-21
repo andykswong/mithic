@@ -15,11 +15,12 @@
  * (real Kernel + WorkerRuntime + production coreutils resolver, driving the built
  * `@mithic/shell` `dist/process.js`) but with a COMPOUND stage in the pipeline.
  *
- * KNOWN-FAILING until D5-fix (Stage 2): compound-stage pipelines serialize.
- * These tests assert TERMINATION within a tight timeout, so once the Stage-2
- * streaming fix lands they pass; against current code they hang. They are
- * `describe.skip`-ped so the suite stays green while the regression is committed
- * and ready to un-skip — flip `describe.skip` → `describe` to reproduce the hang.
+ * FIXED by D5-fix (Stage 2): a compound-stage pipeline whose stages each reduce
+ * to a single simple command is flattened and routed through the CONCURRENT
+ * kernel pipeline (execMultiStagePipeline → runPipeline), which streams
+ * stage-to-stage and propagates EPIPE — so the unbounded/large producer
+ * terminates when the downstream `head` closes early. These tests assert
+ * TERMINATION within a tight timeout.
  *
  * REQUIRES `npm run build` first (shell `dist/process.js` + coreutils dist guests).
  */
@@ -54,11 +55,10 @@ async function bootShell(): Promise<(script: string) => Promise<{ stdout: string
   };
 }
 
-// Tight timeout: the deadlock must FAIL fast (when un-skipped), not stall CI.
+// Tight timeout: a regression of the deadlock must FAIL fast, not stall CI.
 const T = 8000;
 
-// KNOWN-FAILING until D5-fix (Stage 2): compound-stage pipelines serialize.
-describe.skip('D5: compound-stage pipeline serialization (regression, expected to hang)', () => {
+describe('D5: compound-stage pipeline streaming (regression — terminates, no deadlock)', () => {
   test('yes | { head -n3; } → 3 lines and TERMINATES (unbounded producer into compound stage)', async () => {
     const run = await bootShell();
     const out = await run('yes | { head -n3; }');
