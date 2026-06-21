@@ -1,6 +1,5 @@
-import assert from 'node:assert/strict';
 import * as net from 'node:net';
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it, beforeEach, afterEach, expect } from 'vitest';
 import { NodeSocketProvider } from './node-socket-provider.ts';
 import type { TcpSocket, UdpSocket } from '../sockets.ts';
 
@@ -26,7 +25,6 @@ describe('NodeSocketProvider', () => {
 
   describe('TCP connect and send/receive', () => {
     it('connects to a raw net.Server, sends data, and receives echo', async () => {
-      // Start a raw echo server
       const server = net.createServer((socket) => {
         socket.on('data', (chunk) => socket.write(chunk));
       });
@@ -40,14 +38,14 @@ describe('NodeSocketProvider', () => {
 
       const message = new TextEncoder().encode('hello');
       const sent = await tcp.send(message);
-      assert.equal(sent, 5);
+      expect(sent).toBe(5);
 
       const received = await tcp.receive(1024);
-      assert.equal(new TextDecoder().decode(received), 'hello');
+      expect(new TextDecoder().decode(received)).toBe('hello');
 
-      assert.ok(tcp.localAddress());
-      assert.ok(tcp.remoteAddress());
-      assert.equal(tcp.remoteAddress()!.port, addr.port);
+      expect(tcp.localAddress()).toBeTruthy();
+      expect(tcp.remoteAddress()).toBeTruthy();
+      expect(tcp.remoteAddress()!.port).toBe(addr.port);
     });
   });
 
@@ -58,25 +56,22 @@ describe('NodeSocketProvider', () => {
       await serverSocket.listen();
 
       const serverAddr = serverSocket.localAddress()!;
-      assert.ok(serverAddr.port > 0);
+      expect(serverAddr.port).toBeGreaterThan(0);
 
-      // Connect a client
       const clientSocket: TcpSocket = track(await provider.createTcpSocket());
       const connectPromise = clientSocket.connect({ host: '127.0.0.1', port: serverAddr.port });
 
       const accepted: TcpSocket = track(await serverSocket.accept());
       await connectPromise;
 
-      // Client sends, server-side accepted socket receives
       const payload = new TextEncoder().encode('world');
       await clientSocket.send(payload);
       const data = await accepted.receive(1024);
-      assert.equal(new TextDecoder().decode(data), 'world');
+      expect(new TextDecoder().decode(data)).toBe('world');
 
-      // Server-side sends back, client receives
       await accepted.send(new TextEncoder().encode('reply'));
       const reply = await clientSocket.receive(1024);
-      assert.equal(new TextDecoder().decode(reply), 'reply');
+      expect(new TextDecoder().decode(reply)).toBe('reply');
     });
   });
 
@@ -85,7 +80,7 @@ describe('NodeSocketProvider', () => {
       const receiver: UdpSocket = track(await provider.createUdpSocket());
       await receiver.bind({ host: '127.0.0.1', port: 0 });
       const receiverAddr = receiver.localAddress()!;
-      assert.ok(receiverAddr.port > 0);
+      expect(receiverAddr.port).toBeGreaterThan(0);
 
       const sender: UdpSocket = track(await provider.createUdpSocket());
       await sender.bind({ host: '127.0.0.1', port: 0 });
@@ -96,18 +91,18 @@ describe('NodeSocketProvider', () => {
       await sender.send(payload, receiverAddr);
       const result = await receivePromise;
 
-      assert.equal(new TextDecoder().decode(result.data), 'udp-test');
-      assert.equal(result.remoteAddress.host, '127.0.0.1');
-      assert.equal(result.remoteAddress.port, sender.localAddress()!.port);
+      expect(new TextDecoder().decode(result.data)).toBe('udp-test');
+      expect(result.remoteAddress.host).toBe('127.0.0.1');
+      expect(result.remoteAddress.port).toBe(sender.localAddress()!.port);
     });
   });
 
   describe('resolveName', () => {
     it('resolves localhost to at least one IP address', async () => {
       const addresses = await provider.resolveName('localhost');
-      assert.ok(addresses.length > 0);
-      assert.ok(addresses[0].family === 'ipv4' || addresses[0].family === 'ipv6');
-      assert.ok(addresses[0].address.length > 0);
+      expect(addresses.length).toBeGreaterThan(0);
+      expect(addresses[0].family === 'ipv4' || addresses[0].family === 'ipv6').toBe(true);
+      expect(addresses[0].address.length).toBeGreaterThan(0);
     });
   });
 
@@ -115,18 +110,14 @@ describe('NodeSocketProvider', () => {
     it('TCP socket is destroyed after close', async () => {
       const tcp: TcpSocket = await provider.createTcpSocket();
       await tcp.close();
-      // Calling close again should not throw
-      await tcp.close();
+      await tcp.close(); // Calling close again should not throw
     });
 
     it('UDP socket is closed after close', async () => {
       const udp: UdpSocket = await provider.createUdpSocket();
       await udp.bind({ host: '127.0.0.1', port: 0 });
       await udp.close();
-      // Sending after close should throw
-      await assert.rejects(
-        async () => { await udp.send(new Uint8Array(1), { host: '127.0.0.1', port: 9999 }); },
-      );
+      await expect(udp.send(new Uint8Array(1), { host: '127.0.0.1', port: 9999 })).rejects.toBeDefined();
     });
   });
 });
