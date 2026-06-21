@@ -90,14 +90,26 @@ test('$BASH_VERSINFO[4] is the release status', async () => {
   expect(h.out.trim()).toBe('release');
 });
 
-// ── G8: TMOUT (accepted but inert — non-interactive-runtime limitation) ──────
+// ── A3: TMOUT idle-exit is Tier 2 (inert); `read -t` on string stdin is Tier 1 ──
+//
+// `read -u N -t T` over a LIVE duplex fd now honors the timeout (see
+// `read-timeout.test.ts`). The TMOUT *idle-timeout-exit* and a blocking `read
+// -t` over the pre-materialized stdin STRING are Tier 2 (need a live
+// ReadableStream-backed stdin + the interactive REPL loop), still deferred.
 
-test('TMOUT is accepted as an ordinary variable and is inert', async () => {
+test('TMOUT is accepted as an ordinary variable and does not trigger an idle exit', async () => {
   const h = mk();
   // Assigning TMOUT does not error, the value reads back, and subsequent
-  // commands run normally (no idle-timeout exit; there is no interactive line
-  // editor / read timeout in this runtime).
+  // commands run normally — TMOUT's interactive idle-timeout exit is Tier 2.
   await h.ex.exec('TMOUT=1\necho "tmout=$TMOUT"\nsleep_placeholder=ok\necho done');
   expect(h.out).toContain('tmout=1');
   expect(h.out).toContain('done');
+});
+
+test('read -t on string stdin returns immediately (Tier 1: data already materialized)', async () => {
+  const h = mk();
+  // stdin is a pre-materialized string, so `read -t` can never block: it reads
+  // the available line right away and succeeds (the timer never fires).
+  await h.ex.exec('printf "hello\\n" | { read -t 1 x; echo "rc=$? x=$x"; }');
+  expect(h.out.trim()).toBe('rc=0 x=hello');
 });
