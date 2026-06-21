@@ -148,6 +148,62 @@ test('B1: a per-call timeoutMs overrides the client default and rejects with ETI
   port1.close(); port2.close();
 });
 
+// --- B5: transferred ports surfaced alongside the syscall result ---
+
+test('B5: syscallPorts returns transferred ports alongside the result', async () => {
+  const { port1, port2 } = new MessageChannel();
+  const client = new SyscallClient(new MessagePortTransport(port1));
+
+  // Kernel side: respond to fs/pipe with two transferred ports (read + write).
+  port2.onmessage = (e) => {
+    const req = e.data as { id: number; call: string };
+    const pipe = new MessageChannel();
+    port2.postMessage(
+      { id: req.id, ok: true, result: { readfd: 3, writefd: 4 } },
+      [pipe.port1, pipe.port2],
+    );
+  };
+
+  const { result, ports } = await client.syscallPorts('fs/pipe', {});
+  expect(result).toEqual({ readfd: 3, writefd: 4 });
+  expect(ports).toHaveLength(2);
+  // The ports are entangled with each other — write to one, read on the other.
+  ports[0].start?.();
+  ports[1].start?.();
+  const got = new Promise<unknown>((resolve) => { ports[1].onmessage = (e) => resolve(e.data); });
+  ports[0].postMessage('hi');
+  expect(await got).toBe('hi');
+
+  port1.close(); port2.close();
+});
+
+test('B5: syscallPorts yields an empty port list for a plain result', async () => {
+  const { port1, port2 } = new MessageChannel();
+  const client = new SyscallClient(new MessagePortTransport(port1));
+  port2.onmessage = (e) => {
+    const req = e.data as { id: number };
+    port2.postMessage({ id: req.id, ok: true, result: { pid: 7 } });
+  };
+  const { result, ports } = await client.syscallPorts('process/getpid', {});
+  expect(result).toEqual({ pid: 7 });
+  expect(ports).toEqual([]);
+  port1.close(); port2.close();
+});
+
+test('B5: syscall() (no ports) still works when a response carries ports', async () => {
+  const { port1, port2 } = new MessageChannel();
+  const client = new SyscallClient(new MessagePortTransport(port1));
+  port2.onmessage = (e) => {
+    const req = e.data as { id: number };
+    const pipe = new MessageChannel();
+    port2.postMessage({ id: req.id, ok: true, result: { readfd: 3 } }, [pipe.port1]);
+  };
+  // Legacy callers that ignore ports still get the result.
+  const result = await client.syscall('fs/pipe', {});
+  expect(result).toEqual({ readfd: 3 });
+  port1.close(); port2.close();
+});
+
 test('B1: a normal response settles cleanly even with a signal supplied (no leak)', async () => {
   const { port1, port2 } = new MessageChannel();
   const client = new SyscallClient(new MessagePortTransport(port1));

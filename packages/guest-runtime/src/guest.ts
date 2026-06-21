@@ -1,8 +1,8 @@
 import type { ProcessInit } from '@mithic/protocol';
 import { isKernelEvent } from '@mithic/protocol';
 import { SyscallClient } from './syscall-client.ts';
-import type { SyscallCallOptions } from './syscall-client.ts';
-import { portToReadable, portToWritable } from './streams.ts';
+import type { SyscallCallOptions, SyscallResult } from './syscall-client.ts';
+import { portToReadable, portToWritable, portToDuplex } from './streams.ts';
 import type { Transport } from './transport.ts';
 
 export interface GuestOptions {
@@ -33,6 +33,25 @@ export interface Guest {
   stdout: WritableStream<Uint8Array>;
   stderr: WritableStream<Uint8Array>;
   syscall(call: string, args: Record<string, unknown>, opts?: SyscallCallOptions): Promise<unknown>;
+  /**
+   * B5: like {@link syscall} but also surfaces any MessagePorts the kernel
+   * transferred with the response. Use for `fs/pipe`/`ipc/connect`/`ipc/accept`.
+   */
+  syscallPorts(call: string, args: Record<string, unknown>, opts?: SyscallCallOptions): Promise<SyscallResult>;
+  /**
+   * B5: mint a kernel pipe and receive its read/write ends as live WHATWG
+   * streams (over the transferred MessagePorts). Resolves to the integer fds
+   * (`readfd`/`writefd`) the kernel registered plus the adapted streams. On
+   * relay (non-transferable) backends no ports arrive — `readable`/`writable`
+   * are `undefined` and the caller must fall back to the integer fds.
+   */
+  pipe(): Promise<{ readfd: number; writefd: number; readable?: ReadableStream<Uint8Array>; writable?: WritableStream<Uint8Array> }>;
+  /**
+   * B5: connect to a listening IPC path and receive the duplex connection as a
+   * `{ readable, writable }` pair over the transferred port (or `connfd` only on
+   * relay backends).
+   */
+  connect(path: string): Promise<{ connfd: number; readable?: ReadableStream<Uint8Array>; writable?: WritableStream<Uint8Array> }>;
   onSignal(cb: (signal: string, payload?: unknown) => void): void;
   /**
    * Subscribe to `dom/event` kernel events forwarded from the host (clicks,
@@ -48,7 +67,9 @@ export interface Guest {
 export function createGuest({ control, init, preopenPorts = {} }: GuestOptions): Guest {
   const signalListeners: Array<(signal: string, payload?: unknown) => void> = [];
   const domEventListeners: Array<(event: GuestDomEventPayload) => void> = [];
-  const responseListeners: Array<(msg: unknown) => void> = [];
+  // B5: response listeners now also receive any MessagePorts the kernel
+  // transferred with the response (e.g. the fs/pipe / ipc/* ends).
+  const responseListeners: Array<(msg: unknown, ports?: readonly MessagePort[]) => void> = [];
 
   // Multiplex the control port: route syscall responses vs kernel events
   control.start?.();
@@ -72,7 +93,10 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
         }
       }
     } else {
-      for (const cb of responseListeners) cb(msg);
+      // B5: forward transferred ports (if any) so the SyscallClient can surface
+      // them alongside the response result.
+      const ports = e.ports && e.ports.length > 0 ? e.ports : undefined;
+      for (const cb of responseListeners) cb(msg, ports);
     }
   };
 
@@ -142,6 +166,29 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
     stdout,
     stderr,
     syscall: (call, args, opts) => client.syscall(call, args, opts),
+    syscallPorts: (call, args, opts) => client.syscallPorts(call, args, opts),
+    async pipe() {
+      const { result, ports } = await client.syscallPorts('fs/pipe', {});
+      const r = result as { readfd: number; writefd: number };
+      // Transferable backends: two ports arrive — readPort then writePort.
+      // Relay backends transfer nothing; surface the integer fds only.
+      const readPort = ports[0];
+      const writePort = ports[1];
+      return {
+        readfd: r.readfd,
+        writefd: r.writefd,
+        readable: readPort ? portToReadable(readPort) : undefined,
+        writable: writePort ? portToWritable(writePort) : undefined,
+      };
+    },
+    async connect(path) {
+      const { result, ports } = await client.syscallPorts('ipc/connect', { path });
+      const r = result as { connfd: number };
+      const port = ports[0];
+      if (!port) return { connfd: r.connfd };
+      const { readable, writable } = portToDuplex(port);
+      return { connfd: r.connfd, readable, writable };
+    },
     onSignal(cb) { signalListeners.push(cb); },
     onDomEvent(cb) { domEventListeners.push(cb); },
     exit(code) {

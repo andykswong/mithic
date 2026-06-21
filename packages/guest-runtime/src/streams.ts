@@ -91,6 +91,105 @@ export function portToWritable(port: MessagePort): WritableStream<Uint8Array> {
 }
 
 /**
+ * B5: wrap a single bidirectional MessagePort (an `ipc/connect`/`ipc/accept`
+ * connection end) as a `{ readable, writable }` duplex.
+ *
+ * The peer holds the other end of the SAME channel and is expected to call this
+ * too, so both directions speak the one canonical PipeMessage flow-control
+ * protocol over the single port. Inbound `data` feeds the readable (and we post
+ * `credit` back); inbound `credit`/`end`/`error` drive the writable side. A
+ * single `onmessage` router demultiplexes the two directions — `data` is
+ * always peer→us, `credit` is always the peer crediting OUR writes.
+ */
+export function portToDuplex(port: MessagePort): { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> } {
+  port.start?.();
+  const reader = new PipeReader();
+  const writer = new PipeWriter();
+  let rctrl: ReadableStreamDefaultController<Uint8Array> | null = null;
+  let readClosed = false;
+
+  function grant(bytes: number): void {
+    if (bytes <= 0) return;
+    const credit: PipeMessage = { type: 'credit', bytes };
+    port.postMessage(credit);
+  }
+
+  port.onmessage = (e: MessageEvent) => {
+    const msg = e.data as unknown;
+    if (!isPipeMessage(msg)) return;
+    if (msg.type === 'data') {
+      reader.recordArrival(msg.chunk.byteLength);
+      rctrl?.enqueue(msg.chunk);
+    } else if (msg.type === 'credit') {
+      writer.addCredit(msg.bytes);
+    } else if (msg.type === 'end') {
+      if (!readClosed) { readClosed = true; rctrl?.close(); }
+    } else if (msg.type === 'error') {
+      writer.markBroken(msg.code);
+      if (!readClosed) { readClosed = true; rctrl?.error(new Error(msg.code)); }
+    }
+  };
+
+  const readable = new ReadableStream<Uint8Array>({
+    start(ctrl) { rctrl = ctrl; },
+    pull() { grant(reader.open() || reader.replenish()); },
+    cancel() {
+      // We no longer read; tell the peer to stop writing toward us.
+      const m: PipeMessage = { type: 'error', code: 'EPIPE' };
+      port.postMessage(m);
+    },
+  });
+
+  let buf: Uint8Array[] = [];
+  let bufSize = 0;
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function flushNow(): Promise<void> {
+    if (flushTimer !== null) { clearTimeout(flushTimer); flushTimer = null; }
+    if (buf.length === 0) return writer.broken ? Promise.reject(writer.brokenError()) : Promise.resolve();
+    const chunks = buf;
+    buf = [];
+    bufSize = 0;
+    return (async () => {
+      for (const chunk of chunks) {
+        await writer.reserve(chunk.byteLength);
+        const m: PipeMessage = { type: 'data', chunk };
+        const transfer = chunk.byteLength >= TRANSFER_THRESHOLD_BYTES ? [chunk.buffer as ArrayBuffer] : [];
+        port.postMessage(m, transfer);
+      }
+    })();
+  }
+
+  const writable = new WritableStream<Uint8Array>({
+    write(chunk) {
+      if (writer.broken) return Promise.reject(writer.brokenError());
+      buf.push(chunk);
+      bufSize += chunk.byteLength;
+      if (bufSize >= PIPE_FLUSH_BYTES) return flushNow();
+      if (flushTimer === null) {
+        return new Promise<void>((resolve, reject) => {
+          flushTimer = setTimeout(() => { flushNow().then(resolve, reject); }, PIPE_FLUSH_MS);
+        });
+      }
+      return Promise.resolve();
+    },
+    close() {
+      return flushNow().then(() => {
+        const m: PipeMessage = { type: 'end' };
+        port.postMessage(m);
+      });
+    },
+    abort() {
+      if (flushTimer !== null) { clearTimeout(flushTimer); flushTimer = null; }
+      const m: PipeMessage = { type: 'error', code: 'EPIPE' };
+      port.postMessage(m);
+    },
+  });
+
+  return { readable, writable };
+}
+
+/**
  * Wraps a MessagePort (readable side) as a ReadableStream<Uint8Array>.
  *
  * C1: the sliding credit-window policy is owned by the shared {@link PipeReader}
