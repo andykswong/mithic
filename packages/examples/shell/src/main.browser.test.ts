@@ -65,15 +65,33 @@ function firstLine(a: ShellApp): string {
   return '';
 }
 
-test('banner renders cleanly: heading is the first line and xterm.css hides the helper textarea', async () => {
+/** Read the last non-empty visible buffer line (e.g. the trailing prompt). */
+function lastNonEmptyLine(a: ShellApp): string {
+  const buf = a.terminal.buffer.active;
+  for (let y = buf.length - 1; y >= 0; y--) {
+    const s = buf.getLine(y)?.translateToString(true) ?? '';
+    if (s.trim().length > 0) return s;
+  }
+  return '';
+}
+
+test('banner renders cleanly: ascii-art is the first line and xterm.css hides the helper textarea', async () => {
   const el = mount();
   app = await bootShell(el);
   await flush();
 
-  // The first visible buffer line is the banner heading itself.
+  // The banner is now a SOURCED .bashrc: its `echo -e` lines print the MITHIC
+  // ascii-art block, so the first visible buffer line is the top of that art
+  // (the `█`/`╗` box-drawing row) — not a plain heading and not garbage above it.
   const first = firstLine(app);
-  expect(first.startsWith('mithic shell')).toBe(true);
-  expect(first).toContain('sandboxed POSIX-style shell');
+  expect(first).toMatch(/[█╗]/);
+
+  // The npm-install call-to-action and the GitHub/API-Docs labels appear too,
+  // proving `echo -e` rendered the ANSI/OSC-8 escapes from the bashrc.
+  const buf = readBuffer(app);
+  expect(buf).toContain('npm install mithic');
+  expect(buf).toContain('GitHub');
+  expect(buf).toContain('API Docs');
 
   // ROOT-CAUSE GUARD. The garbage "2…$" row that rendered ABOVE the heading was
   // the xterm helper textarea (composition mirror) painted at top:0 because
@@ -83,6 +101,26 @@ test('banner renders cleanly: heading is the first line and xterm.css hides the 
   const helper = el.querySelector('.xterm-helper-textarea') as HTMLElement | null;
   expect(helper).not.toBeNull();
   expect(getComputedStyle(helper as HTMLElement).opacity).toBe('0');
+}, T);
+
+test('PS1 prompt: after boot the prompt is the bash-style cwd form (HOME=/ collapses to ~)', async () => {
+  app = await bootShell(mount());
+  await flush();
+  // The bashrc's `export PS1="\e[1;32m\w\e[0m\$ "` makes the prompt `~$ ` (cwd
+  // `/` collapsed against HOME=/). translateToString drops the ESC color codes,
+  // so the visible prompt text is `~$`.
+  const last = lastNonEmptyLine(app);
+  expect(last).toMatch(/~\$\s*$/);
+}, T);
+
+test('PS1 prompt: cd /tmp updates the prompt to show /tmp (\\w tracks cwd)', async () => {
+  app = await bootShell(mount());
+  await flush();
+  app.terminal.input('cd /tmp\r', true);
+  await flush();
+  // After cd, the live prompt reflects the new cwd via expandPrompt(\w).
+  const last = lastNonEmptyLine(app);
+  expect(last).toMatch(/\/tmp\$\s*$/);
 }, T);
 
 test('coreutils pipe: echo hello | grep ell -> hello', async () => {

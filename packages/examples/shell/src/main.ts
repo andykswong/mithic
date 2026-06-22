@@ -32,7 +32,7 @@ import { Kernel } from '@mithic/kernel';
 import { WorkerRuntime } from '@mithic/runtime/backends/worker';
 import { FileSystemRouter, MemoryFsProvider, DeviceFsProvider } from '@mithic/io/vfs';
 import type { FileSystemProvider, FileHandle } from '@mithic/io/vfs';
-import { Executor, parse } from '@mithic/shell';
+import { Executor, expandPrompt, parse } from '@mithic/shell';
 import type {
   KernelClient,
   FsClient,
@@ -41,42 +41,8 @@ import type {
   PipelineStageParams,
   PipelineRunResult,
 } from '@mithic/shell';
-import type { Capability } from '@mithic/protocol';
 import { createCommandSuite } from './commands.ts';
-
-/** Capabilities granted to every spawned command: read+write the whole VFS, the
- * device tree (`/dev/zero`, `/dev/random`, `/dev/urandom`, `/dev/null`), and HTTP
- * for curl. The distinct `/dev` grant matches the `/dev` mount below so
- * `head -c N /dev/urandom` / `cat /dev/zero | …` can open the device provider. */
-const CHILD_CAPABILITIES: Capability[] = [
-  { type: 'fs', paths: ['/'], operations: ['read', 'write'] },
-  { type: 'fs', paths: ['/dev'], operations: ['read', 'write'] },
-  { type: 'net', origins: ['*'] },
-];
-
-/** Demo files seeded into the VFS so a fresh terminal has something to explore. */
-const SEED_FILES: Record<string, string> = {
-  '/welcome.txt': 'Welcome to the Mithic shell!\nEverything here runs sandboxed in your browser.\n',
-  '/fruits.txt': 'banana\napple\ncherry\napple\nbanana\napple\n',
-  '/data.json': '{"name":"mithic","stars":42,"tags":["wasm","shell","vfs"]}\n',
-  '/numbers.txt': '3\n1\n4\n1\n5\n9\n2\n6\n',
-  '/tmp/.keep': '',
-};
-
-/** A one-shot greeting + cheat-sheet printed at boot (a lightweight bashrc). */
-const BANNER = [
-  '\x1b[1;35mmithic shell\x1b[0m — a sandboxed POSIX-style shell in your browser',
-  '\x1b[2mThe coreutils + jq + curl suite runs as real sandboxed processes.\x1b[0m',
-  '',
-  '\x1b[2mTry:\x1b[0m',
-  "  \x1b[36mls\x1b[0m                                   list the seeded files",
-  "  \x1b[36mcat welcome.txt\x1b[0m",
-  "  \x1b[36mecho hi | grep h\x1b[0m",
-  "  \x1b[36msort fruits.txt | uniq -c\x1b[0m",
-  "  \x1b[36mseq 1 5 | awk '{s+=$1}END{print s}'\x1b[0m",
-  "  \x1b[36mcat data.json | jq .tags\x1b[0m",
-  '',
-].join('\r\n');
+import { CHILD_CAPABILITIES, SEED_FILES, TERMINAL_CONFIG, getBashrc } from './config.ts';
 
 export interface ShellApp {
   terminal: Terminal;
@@ -234,13 +200,7 @@ export async function bootShell(element: HTMLElement): Promise<ShellApp> {
     launcher: suite.launcher,
   });
 
-  const terminal = new Terminal({
-    convertEol: true,
-    cursorBlink: true,
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-    fontSize: 14,
-    theme: { background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#f5e0dc' },
-  });
+  const terminal = new Terminal(TERMINAL_CONFIG);
   const fit = new FitAddon();
   terminal.loadAddon(fit);
   terminal.open(element);
@@ -254,27 +214,38 @@ export async function bootShell(element: HTMLElement): Promise<ShellApp> {
   const kernelClient = makeKernelClient(kernel);
   const fsClient = makeFsClient(memfs);
 
-  const PROMPT = '\x1b[1;32m$\x1b[0m ';
-  const prompt = (): void => terminal.write(PROMPT);
-
-  terminal.write(BANNER);
-  terminal.write('\r\n');
-  prompt();
+  // The prompt is computed from $PS1 each turn so it reflects cwd changes and the
+  // PS1 the sourced .bashrc set; default to bash's `\w\$ ` until then.
+  const prompt = (): void => terminal.write(expandPrompt(context.env.PS1 ?? '\\w\\$ ', context));
 
   // Run one command line through a fresh executor (sharing the persistent
   // context/env so `cd`, var assignments, etc. carry across lines).
-  const submitLine = async (line: string): Promise<void> => {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) { prompt(); return; }
+  const runScriptLine = async (line: string): Promise<void> => {
     const executor = new Executor(kernelClient, context, {
       resolve: (name) => suite.resolve(name),
       fs: fsClient,
       onStdout: (s) => terminal.write(s),
       onStderr: (s) => terminal.write(s),
     });
+    await executor.run(parse(line));
+    await fsClient.flush();
+  };
+
+  // Boot: SOURCE the .bashrc through the real shell — its `echo -e` lines render
+  // the ANSI/OSC-8 banner and `export PS1=…` sets the prompt — exactly as a login
+  // shell would, instead of a hardcoded terminal.write(BANNER).
+  try {
+    await runScriptLine(getBashrc());
+  } catch (err) {
+    terminal.write(`shell: ${(err as Error).message}\r\n`);
+  }
+  prompt();
+
+  const submitLine = async (line: string): Promise<void> => {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) { prompt(); return; }
     try {
-      await executor.run(parse(trimmed));
-      await fsClient.flush();
+      await runScriptLine(trimmed);
     } catch (err) {
       terminal.write(`shell: ${(err as Error).message}\r\n`);
     }
