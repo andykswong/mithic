@@ -16,8 +16,19 @@ export function installShieldStyle(doc: Document): void {
   doc.head.appendChild(style);
 }
 
-function beginShield(doc: Document): void { doc.body.classList.add(SHIELD_CLASS); }
-function endShield(doc: Document): void { doc.body.classList.remove(SHIELD_CLASS); }
+// Refcount concurrent gestures so two overlapping drags (e.g. multi-touch, or a
+// resize started before a drag ended) don't let the first to finish prematurely
+// clear the shield while another gesture is still live.
+let shieldCount = 0;
+function beginShield(doc: Document): void {
+  if (shieldCount === 0) doc.body.classList.add(SHIELD_CLASS);
+  shieldCount++;
+}
+function endShield(doc: Document): void {
+  if (shieldCount === 0) return;
+  shieldCount--;
+  if (shieldCount === 0) doc.body.classList.remove(SHIELD_CLASS);
+}
 
 export interface DragOptions {
   /** Returns the geometry origin (x,y) at gesture start. */
@@ -35,20 +46,27 @@ export function makeDraggable(handle: HTMLElement, opts: DragOptions): () => voi
     const origin = opts.onStart();
     const startX = e.clientX;
     const startY = e.clientY;
+    const pointerId = e.pointerId;
     beginShield(doc);
     try { handle.setPointerCapture(e.pointerId); } catch { /* not capturable */ }
 
     const onMove = (ev: PointerEvent): void => {
+      if (ev.pointerId !== pointerId) return; // ignore a concurrent gesture's pointer
       opts.onMove(origin.x + (ev.clientX - startX), origin.y + (ev.clientY - startY));
     };
-    const onUp = (): void => {
+    const onUp = (ev: PointerEvent): void => {
+      if (ev.pointerId !== pointerId) return;
       doc.removeEventListener('pointermove', onMove);
       doc.removeEventListener('pointerup', onUp);
+      doc.removeEventListener('pointercancel', onUp);
       endShield(doc);
       opts.onEnd?.();
     };
     doc.addEventListener('pointermove', onMove);
     doc.addEventListener('pointerup', onUp);
+    // pointercancel (OS gesture takeover, contextmenu, etc.) must end the gesture
+    // too, or the shield + move listener leak.
+    doc.addEventListener('pointercancel', onUp);
   };
   handle.addEventListener('pointerdown', onDown);
   return () => handle.removeEventListener('pointerdown', onDown);
@@ -75,23 +93,28 @@ export function makeResizable(handle: HTMLElement, opts: ResizeOptions): () => v
     const start = opts.onStart();
     const startX = e.clientX;
     const startY = e.clientY;
+    const pointerId = e.pointerId;
     beginShield(doc);
     try { handle.setPointerCapture(e.pointerId); } catch { /* not capturable */ }
 
     const onMove = (ev: PointerEvent): void => {
+      if (ev.pointerId !== pointerId) return; // ignore a concurrent gesture's pointer
       opts.onMove(
         Math.max(minW, start.w + (ev.clientX - startX)),
         Math.max(minH, start.h + (ev.clientY - startY)),
       );
     };
-    const onUp = (): void => {
+    const onUp = (ev: PointerEvent): void => {
+      if (ev.pointerId !== pointerId) return;
       doc.removeEventListener('pointermove', onMove);
       doc.removeEventListener('pointerup', onUp);
+      doc.removeEventListener('pointercancel', onUp);
       endShield(doc);
       opts.onEnd?.();
     };
     doc.addEventListener('pointermove', onMove);
     doc.addEventListener('pointerup', onUp);
+    doc.addEventListener('pointercancel', onUp);
   };
   handle.addEventListener('pointerdown', onDown);
   return () => handle.removeEventListener('pointerdown', onDown);

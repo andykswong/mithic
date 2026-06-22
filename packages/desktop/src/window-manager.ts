@@ -113,19 +113,27 @@ export class WindowManager {
       // Tier-1: host DOM.
       await app.mount(ctx, opts.argv ?? []);
     } else if (app.entry != null) {
-      // Tier-2: sandboxed iframe guest mounted INTO win.content.
-      const { pid } = await this.#kernel.spawn(app.entry, {
-        args: [app.name, ...(opts.argv ?? [])],
-        capabilities: app.capabilities ?? [],
-        display: {
-          mode: 'window',
-          container: win.content,
-          width: win.geometry.w,
-          height: win.geometry.h,
-          title: app.title,
-          ...opts.display,
-        },
-      });
+      // Tier-2: sandboxed iframe guest mounted INTO win.content. The frame +
+      // tracked entry were created above; if the spawn rejects we must remove
+      // them (else a ghost frame leaks) and rethrow so the caller sees the error.
+      let pid: number;
+      try {
+        ({ pid } = await this.#kernel.spawn(app.entry, {
+          args: [app.name, ...(opts.argv ?? [])],
+          capabilities: app.capabilities ?? [],
+          display: {
+            mode: 'window',
+            container: win.content,
+            width: win.geometry.w,
+            height: win.geometry.h,
+            title: app.title,
+            ...opts.display,
+          },
+        }));
+      } catch (err) {
+        this.#removeFrame(id);
+        throw err;
+      }
       win.pid = pid;
       // Auto-close the window when the guest exits.
       void this.#kernel.wait(pid).then(() => {

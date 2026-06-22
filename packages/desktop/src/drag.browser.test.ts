@@ -36,3 +36,57 @@ test('installShieldStyle injects a rule that disables iframe pointer events whil
   expect(style!.textContent).toContain(`.${SHIELD_CLASS} iframe`);
   expect(style!.textContent).toContain('pointer-events: none');
 });
+
+test('pointercancel ends the gesture: clears the shield and detaches the move listener (M3)', () => {
+  installShieldStyle(document);
+  const handle = document.createElement('div');
+  document.body.appendChild(handle);
+
+  const moves: Array<{ dx: number; dy: number }> = [];
+  makeDraggable(handle, {
+    onStart: () => ({ x: 0, y: 0 }),
+    onMove: (x, y) => { moves.push({ dx: x, dy: y }); },
+  });
+
+  handle.dispatchEvent(pointer('pointerdown', 10, 10));
+  expect(document.body.classList.contains(SHIELD_CLASS)).toBe(true);
+
+  // A pointercancel (e.g. OS-level gesture takeover) must end the gesture exactly
+  // like pointerup: clear the shield and stop tracking moves.
+  document.dispatchEvent(pointer('pointercancel', 10, 10));
+  expect(document.body.classList.contains(SHIELD_CLASS)).toBe(false);
+
+  const movesAfterCancel = moves.length;
+  document.dispatchEvent(pointer('pointermove', 50, 50));
+  expect(moves.length).toBe(movesAfterCancel); // listener detached — no more moves
+
+  handle.remove();
+});
+
+test('shield is refcounted: two overlapping drags keep it until both end (M3)', () => {
+  installShieldStyle(document);
+  const a = document.createElement('div');
+  const b = document.createElement('div');
+  document.body.appendChild(a);
+  document.body.appendChild(b);
+
+  makeDraggable(a, { onStart: () => ({ x: 0, y: 0 }), onMove: () => {} });
+  makeDraggable(b, { onStart: () => ({ x: 0, y: 0 }), onMove: () => {} });
+
+  a.dispatchEvent(new PointerEvent('pointerdown', { clientX: 0, clientY: 0, pointerId: 1, bubbles: true }));
+  expect(document.body.classList.contains(SHIELD_CLASS)).toBe(true);
+
+  b.dispatchEvent(new PointerEvent('pointerdown', { clientX: 0, clientY: 0, pointerId: 2, bubbles: true }));
+  expect(document.body.classList.contains(SHIELD_CLASS)).toBe(true);
+
+  // Ending A must NOT clear the shield — B's gesture is still active.
+  document.dispatchEvent(new PointerEvent('pointerup', { clientX: 0, clientY: 0, pointerId: 1, bubbles: true }));
+  expect(document.body.classList.contains(SHIELD_CLASS)).toBe(true);
+
+  // Ending B brings the refcount to 0 — now the shield clears.
+  document.dispatchEvent(new PointerEvent('pointerup', { clientX: 0, clientY: 0, pointerId: 2, bubbles: true }));
+  expect(document.body.classList.contains(SHIELD_CLASS)).toBe(false);
+
+  a.remove();
+  b.remove();
+});

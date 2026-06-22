@@ -66,6 +66,26 @@ test('open() of a tier-2 app spawns a guest into the window content container', 
   desktop.remove();
 });
 
+test('a failed tier-2 spawn removes the ghost frame and rethrows (M4)', async () => {
+  const desktop = setupDesktop();
+  // Fake kernel whose spawn always rejects (e.g. runtime/capability failure).
+  const kernel = {
+    async spawn() { throw new Error('spawn failed'); },
+    async wait() { return { code: 0 }; },
+    kill() {},
+  };
+  const apps = new AppRegistry();
+  apps.register({ name: 'viewer', title: 'V', defaultSize: [400, 300], entry: 'CODE;' });
+  const wm = new WindowManager({ desktop, kernel: kernel as any, apps });
+
+  await expect(wm.open('viewer')).rejects.toThrow('spawn failed');
+  // No ghost frame or tracked window must remain after the failed spawn.
+  expect(desktop.querySelector('[data-role="window"]')).toBeNull();
+  expect(wm.windows.length).toBe(0);
+
+  wm.dispose(); desktop.remove();
+});
+
 test('closing a tier-2 window kills the guest with SIGTERM and removes the frame', async () => {
   const desktop = setupDesktop();
   const kernel = fakeKernel();
