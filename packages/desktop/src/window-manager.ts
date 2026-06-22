@@ -1,0 +1,226 @@
+import type { Kernel } from '@mithic/kernel';
+import type { AppDescriptor, MithicWindow, OpenOptions, WindowContext } from './types.ts';
+import type { AppRegistry } from './app-registry.ts';
+import { cascadePlacement, clampToBounds } from './geometry.ts';
+import {
+  createWindowFrame, applyGeometry, applyState, setWindowTitle,
+  type WindowFrameElements,
+} from './window.ts';
+import { installShieldStyle, makeDraggable, makeResizable } from './drag.ts';
+
+/** The slice of Kernel the WM needs (so tests can pass a fake). */
+export interface WmKernel {
+  spawn(code: string | URL, init: Record<string, unknown>): Promise<{ pid: number }>;
+  wait(pid: number): Promise<{ code: number }>;
+  kill(pid: number, signal: string): void;
+}
+
+export interface WindowManagerOptions {
+  desktop: HTMLElement;
+  kernel: WmKernel | Kernel;
+  apps: AppRegistry;
+  /** Optional taskbar element; if present, the WM renders an item per window. */
+  taskbar?: HTMLElement;
+}
+
+interface Tracked {
+  window: MithicWindow;
+  els: WindowFrameElements;
+  app: AppDescriptor;
+  disposers: Array<() => void>;
+  closeCbs: Array<() => void | Promise<void>>;
+  taskbarItem?: HTMLElement;
+  /** Geometry to restore when un-maximizing. */
+  restoreGeometry?: { x: number; y: number; w: number; h: number };
+}
+
+export class WindowManager {
+  readonly #desktop: HTMLElement;
+  readonly #kernel: WmKernel;
+  readonly #apps: AppRegistry;
+  readonly #taskbar: HTMLElement | undefined;
+  readonly #tracked = new Map<number, Tracked>();
+  #nextId = 1;
+  #topZ = 100;
+  #openedCount = 0;
+
+  constructor(opts: WindowManagerOptions) {
+    this.#desktop = opts.desktop;
+    this.#kernel = opts.kernel as WmKernel;
+    this.#apps = opts.apps;
+    this.#taskbar = opts.taskbar;
+    installShieldStyle(opts.desktop.ownerDocument);
+  }
+
+  get windows(): MithicWindow[] {
+    return [...this.#tracked.values()].map((t) => t.window);
+  }
+
+  async open(name: string, opts: OpenOptions = {}): Promise<MithicWindow> {
+    const app = this.#apps.get(name);
+    if (!app) throw new Error(`unknown app: ${name}`);
+
+    // Singleton: focus the existing instance.
+    if (app.singleton) {
+      const existing = [...this.#tracked.values()].find((t) => t.app.name === name);
+      if (existing) { this.focus(existing.window.id); return existing.window; }
+    }
+
+    const bounds = { w: this.#desktop.clientWidth || 1024, h: this.#desktop.clientHeight || 768 };
+    const geometry = clampToBounds(cascadePlacement(this.#openedCount++, app.defaultSize, bounds), bounds);
+    const id = this.#nextId++;
+    const { window: win, els } = createWindowFrame(this.#desktop.ownerDocument, {
+      id, title: app.title, geometry, resizable: app.resizable !== false,
+    });
+
+    const tracked: Tracked = { window: win, els, app, disposers: [], closeCbs: [] };
+    this.#tracked.set(id, tracked);
+
+    // Mount ONCE — never reparent (would reload a tier-2 iframe).
+    this.#desktop.appendChild(win.frame);
+    applyGeometry(win);
+    applyState(win);
+    this.focus(id);
+
+    // Chrome wiring.
+    els.closeBtn.addEventListener('click', () => this.close(id));
+    els.minimizeBtn.addEventListener('click', () => this.minimize(id));
+    els.maximizeBtn.addEventListener('click', () => this.toggleMaximize(id));
+    win.frame.addEventListener('pointerdown', () => this.focus(id), true);
+
+    tracked.disposers.push(makeDraggable(els.titlebar, {
+      onStart: () => ({ x: win.geometry.x, y: win.geometry.y }),
+      onMove: (x, y) => { win.geometry.x = x; win.geometry.y = y; applyGeometry(win); },
+    }));
+    if (app.resizable !== false) {
+      tracked.disposers.push(makeResizable(els.resizeHandle, {
+        onStart: () => ({ w: win.geometry.w, h: win.geometry.h }),
+        onMove: (w, h) => { win.geometry.w = w; win.geometry.h = h; applyGeometry(win); },
+      }));
+    }
+
+    this.#renderTaskbar();
+
+    const ctx: WindowContext = {
+      window: win,
+      content: win.content,
+      kernel: this.#kernel as Kernel,
+      onClose: (cb) => { tracked.closeCbs.push(cb); },
+      setTitle: (t) => { setWindowTitle(win, els, t); this.#renderTaskbar(); },
+    };
+
+    if (app.mount) {
+      // Tier-1: host DOM.
+      await app.mount(ctx, opts.argv ?? []);
+    } else if (app.entry != null) {
+      // Tier-2: sandboxed iframe guest mounted INTO win.content.
+      const { pid } = await this.#kernel.spawn(app.entry, {
+        args: [app.name, ...(opts.argv ?? [])],
+        capabilities: app.capabilities ?? [],
+        display: {
+          mode: 'window',
+          container: win.content,
+          width: win.geometry.w,
+          height: win.geometry.h,
+          title: app.title,
+          ...opts.display,
+        },
+      });
+      win.pid = pid;
+      // Auto-close the window when the guest exits.
+      void this.#kernel.wait(pid).then(() => {
+        if (this.#tracked.has(id)) this.#removeFrame(id);
+      });
+    }
+
+    return win;
+  }
+
+  focus(id: number): void {
+    const t = this.#tracked.get(id);
+    if (!t) return;
+    t.window.z = ++this.#topZ;
+    t.window.frame.style.zIndex = String(t.window.z);
+    this.#renderTaskbar();
+  }
+
+  minimize(id: number): void {
+    const t = this.#tracked.get(id);
+    if (!t) return;
+    t.window.state = 'minimized';
+    applyState(t.window);
+    this.#renderTaskbar();
+  }
+
+  restore(id: number): void {
+    const t = this.#tracked.get(id);
+    if (!t) return;
+    t.window.state = 'normal';
+    applyState(t.window);
+    this.focus(id);
+  }
+
+  toggleMaximize(id: number): void {
+    const t = this.#tracked.get(id);
+    if (!t) return;
+    const win = t.window;
+    if (win.state === 'maximized') {
+      win.state = 'normal';
+      if (t.restoreGeometry) win.geometry = { ...t.restoreGeometry };
+    } else {
+      t.restoreGeometry = { ...win.geometry };
+      win.state = 'maximized';
+      win.geometry = { x: 0, y: 0, w: this.#desktop.clientWidth, h: this.#desktop.clientHeight };
+    }
+    applyGeometry(win);
+    applyState(win);
+  }
+
+  /** Close a window: SIGTERM a tier-2 guest, run tier-1 onClose, then remove the frame. */
+  close(id: number): void {
+    const t = this.#tracked.get(id);
+    if (!t) return;
+    if (t.window.pid != null) {
+      this.#kernel.kill(t.window.pid, 'SIGTERM');
+      // The wait() handler removes the frame on exit; also remove eagerly so the
+      // UI is responsive (idempotent — #removeFrame guards on presence).
+      this.#removeFrame(id);
+    } else {
+      for (const cb of t.closeCbs) { try { void cb(); } catch { /* ignore */ } }
+      this.#removeFrame(id);
+    }
+  }
+
+  dispose(): void {
+    for (const id of [...this.#tracked.keys()]) this.close(id);
+  }
+
+  #removeFrame(id: number): void {
+    const t = this.#tracked.get(id);
+    if (!t) return;
+    for (const d of t.disposers) d();
+    t.window.frame.remove();
+    t.taskbarItem?.remove();
+    this.#tracked.delete(id);
+    this.#renderTaskbar();
+  }
+
+  #renderTaskbar(): void {
+    if (!this.#taskbar) return;
+    this.#taskbar.textContent = '';
+    for (const t of this.#tracked.values()) {
+      const item = this.#desktop.ownerDocument.createElement('button');
+      item.dataset.role = 'taskbar-item';
+      item.dataset.id = String(t.window.id);
+      item.textContent = t.window.title;
+      item.style.cssText = 'font:12px sans-serif;cursor:pointer;max-width:160px;overflow:hidden;text-overflow:ellipsis;'
+        + (t.window.state === 'minimized' ? 'opacity:.6;' : '');
+      item.addEventListener('click', () => {
+        if (t.window.state === 'minimized') this.restore(t.window.id);
+        else this.focus(t.window.id);
+      });
+      t.taskbarItem = item;
+      this.#taskbar.appendChild(item);
+    }
+  }
+}

@@ -15,3 +15,12 @@ export type { EditorFs, EditorDeps, EditorHandle } from './apps/text-editor.ts';
 
 export { createFileManagerModel, renderFileManager, mountFileManager } from './apps/file-manager.ts';
 export type { Entry, FileManagerFs, FileManagerDeps, FileManagerModel, FileManagerHandle } from './apps/file-manager.ts';
+
+export { createWindowFrame, applyGeometry, applyState, setWindowTitle } from './window.ts';
+export type { WindowFrameElements, CreateWindowOptions } from './window.ts';
+
+export { makeDraggable, makeResizable, installShieldStyle, SHIELD_CLASS } from './drag.ts';
+export type { DragOptions, ResizeOptions } from './drag.ts';
+
+export { WindowManager } from './window-manager.ts';
+export type { WindowManagerOptions, WmKernel } from './window-manager.ts';
