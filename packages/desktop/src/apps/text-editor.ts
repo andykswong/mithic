@@ -106,9 +106,10 @@ export function mountTextEditor(ctx: WindowContext, argv: string[], fs: EditorFs
   ctx.content.appendChild(h.root);
   ctx.setTitle(`Editor — ${path}`);
   ctx.onClose(() => {
-    if (h.dirty && typeof confirm === 'function' && !confirm(`Discard unsaved changes to ${path}?`)) {
-      // Best-effort: a real WM may veto; for the minimal OS we just warn and proceed.
-    }
+    // v1 has no unsaved-changes guard: the WM exposes no veto channel for onClose,
+    // so a confirm()-based prompt could never actually cancel the close. We just
+    // warn when dirty and let the close proceed.
+    if (h.dirty) console.warn(`mithic-wm: closing ${path} with unsaved changes`);
   });
   return h;
 }

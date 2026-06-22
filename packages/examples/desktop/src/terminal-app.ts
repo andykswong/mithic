@@ -85,12 +85,15 @@ function makeKernelClient(kernel: Kernel): KernelClient {
   const enc = new TextEncoder();
   return {
     async spawn(params: SpawnParams): Promise<SpawnHandle> {
-      const { pid, stdout } = await kernel.spawn(params.code, {
+      const { pid, stdout, stderr } = await kernel.spawn(params.code, {
         args: params.args, env: params.env, cwd: params.cwd, capabilities: CHILD_CAPABILITIES,
         captureStdout: params.captureStdout, captureStderr: params.captureStderr,
         stdinData: params.stdinData !== undefined ? enc.encode(params.stdinData) : undefined,
       });
-      return { pid, stdout };
+      // C1 (mirrors the shell example's "Bug B"): surface the child's captured
+      // stderr so a failing command's error reaches the terminal (the executor
+      // drains this into its stderr sink).
+      return { pid, stdout, stderr };
     },
     async wait(pid: number) { const { code } = await kernel.wait(pid); return { pid, code }; },
     async runPipeline(stages: PipelineStageParams[]): Promise<PipelineRunResult> {

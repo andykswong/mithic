@@ -1,5 +1,6 @@
-import { describe, expect, test, vi } from 'vitest';
-import { renderTextEditor, type EditorFs } from './text-editor.ts';
+import { describe, expect, test, vi, afterEach } from 'vitest';
+import { renderTextEditor, mountTextEditor, type EditorFs } from './text-editor.ts';
+import type { WindowContext } from '../types.ts';
 
 // Minimal fake document so the pure render fn is node-testable without jsdom.
 function fakeDoc() {
@@ -63,5 +64,45 @@ describe('renderTextEditor', () => {
     expect(h.textarea.readOnly).toBe(true);
     await h.save();
     expect(save).not.toHaveBeenCalled();
+  });
+});
+
+describe('mountTextEditor onClose (H4)', () => {
+  const realConfirm = (globalThis as { confirm?: unknown }).confirm;
+  afterEach(() => {
+    if (realConfirm === undefined) delete (globalThis as { confirm?: unknown }).confirm;
+    else (globalThis as { confirm?: unknown }).confirm = realConfirm;
+  });
+
+  function fakeCtx(doc: Document): { ctx: WindowContext; fireClose(): void } {
+    const content = doc.createElement('div');
+    (content as { ownerDocument: Document }).ownerDocument = doc;
+    let cb: (() => void | Promise<void>) | undefined;
+    const ctx = {
+      content,
+      onClose: (fn: () => void | Promise<void>) => { cb = fn; },
+      setTitle: () => {},
+    } as unknown as WindowContext;
+    return { ctx, fireClose: () => cb?.() };
+  }
+
+  test('closing a dirty editor does not throw and never prompts (v1 has no unsaved guard)', async () => {
+    // H4: the previous code called confirm() but ignored the result, so the prompt
+    // was dead. The honest v1 behavior is no prompt at all — onClose must be a no-op
+    // for the unsaved case and must NOT invoke confirm.
+    const confirmSpy = vi.fn(() => false);
+    (globalThis as { confirm?: unknown }).confirm = confirmSpy;
+
+    const fs = memFs({ '/a.txt': 'x' });
+    const doc = fakeDoc();
+    const { ctx, fireClose } = fakeCtx(doc);
+    const h = mountTextEditor(ctx, ['/a.txt'], fs);
+    await h.ready;
+    h.textarea.value = 'changed';
+    (h.textarea as unknown as { dispatch(t: string): void }).dispatch('input');
+    expect(h.dirty).toBe(true);
+
+    expect(() => fireClose()).not.toThrow();
+    expect(confirmSpy).not.toHaveBeenCalled();
   });
 });
