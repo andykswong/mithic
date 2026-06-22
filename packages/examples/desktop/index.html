@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mithic OS</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { height: 100%; overflow: hidden; font-family: ui-sans-serif, system-ui, sans-serif; }
+      #desktop { position: relative; height: calc(100% - 36px); width: 100%; background: #1e1e2e; overflow: hidden; }
+      #taskbar { position: fixed; bottom: 0; left: 0; right: 0; height: 36px; display: flex; gap: 4px; align-items: center; padding: 0 6px; background: #11111b; }
+    </style>
+  </head>
+  <body>
+    <div id="desktop"></div>
+    <div id="taskbar"></div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

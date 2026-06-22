@@ -7,12 +7,7 @@ export default defineConfig({
       'Cross-Origin-Opener-Policy': 'same-origin',
     },
   },
-  worker: {
-    format: 'es',
-  },
-  build: {
-    target: 'esnext',
-    outDir: 'dist',
-  },
+  worker: { format: 'es' },
+  build: { target: 'esnext', outDir: 'dist' },
   base: './',
 });

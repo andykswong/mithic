@@ -1,33 +1,33 @@
 {
-  "name": "@mithic/example-notebook",
+  "name": "@mithic/example-desktop",
   "version": "2.0.0",
   "private": true,
-  "description": "Mithic example — an xterm.js shell notebook frontend that boots a Kernel running the full coreutils + jq + curl command suite plus an inline GUI image-viewer",
+  "description": "Mithic example — a minimalist browser OS: window manager + terminal, text editor, file manager, image viewer",
   "type": "module",
   "scripts": {
     "clean": "rimraf dist *.tsbuildinfo",
     "build": "vite build",
     "dev": "vite",
+    "start": "vite preview",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/andykswong/mithic.git"
-  },
+  "repository": { "type": "git", "url": "git+https://github.com/andykswong/mithic.git" },
   "author": "Andy K.S. Wong <andykswong@outlook.com>",
   "license": "MIT",
   "dependencies": {
     "@mithic/coreutils": "2.0.0",
     "@mithic/curl": "2.0.0",
+    "@mithic/desktop": "2.0.0",
     "@mithic/guest-runtime": "2.0.0",
     "@mithic/io": "2.0.0",
     "@mithic/jq": "2.0.0",
     "@mithic/kernel": "2.0.0",
-    "@mithic/protocol": "2.0.0",
     "@mithic/runtime": "2.0.0",
     "@mithic/shell": "2.0.0",
-    "@xterm/xterm": "^6.0.0"
+    "@xterm/addon-fit": "^0.11",
+    "@xterm/addon-web-links": "^0.12",
+    "@xterm/xterm": "^6.0"
   }
 }
