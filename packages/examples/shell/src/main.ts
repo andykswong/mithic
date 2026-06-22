@@ -30,7 +30,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Kernel } from '@mithic/kernel';
 import { WorkerRuntime } from '@mithic/runtime/backends/worker';
-import { FileSystemRouter, MemoryFsProvider } from '@mithic/io/vfs';
+import { FileSystemRouter, MemoryFsProvider, DeviceFsProvider } from '@mithic/io/vfs';
 import type { FileSystemProvider, FileHandle } from '@mithic/io/vfs';
 import { Executor, parse } from '@mithic/shell';
 import type {
@@ -44,9 +44,13 @@ import type {
 import type { Capability } from '@mithic/protocol';
 import { createCommandSuite } from './commands.ts';
 
-/** Capabilities granted to every spawned command: read+write the whole VFS, and HTTP for curl. */
+/** Capabilities granted to every spawned command: read+write the whole VFS, the
+ * device tree (`/dev/zero`, `/dev/random`, `/dev/urandom`, `/dev/null`), and HTTP
+ * for curl. The distinct `/dev` grant matches the `/dev` mount below so
+ * `head -c N /dev/urandom` / `cat /dev/zero | …` can open the device provider. */
 const CHILD_CAPABILITIES: Capability[] = [
   { type: 'fs', paths: ['/'], operations: ['read', 'write'] },
+  { type: 'fs', paths: ['/dev'], operations: ['read', 'write'] },
   { type: 'net', origins: ['*'] },
 ];
 
@@ -93,7 +97,7 @@ function makeKernelClient(kernel: Kernel): KernelClient {
   const enc = new TextEncoder();
   return {
     async spawn(params: SpawnParams): Promise<SpawnHandle> {
-      const { pid, stdout } = await kernel.spawn(params.code, {
+      const { pid, stdout, stderr } = await kernel.spawn(params.code, {
         args: params.args,
         env: params.env,
         cwd: params.cwd,
@@ -102,7 +106,9 @@ function makeKernelClient(kernel: Kernel): KernelClient {
         captureStderr: params.captureStderr,
         stdinData: params.stdinData !== undefined ? enc.encode(params.stdinData) : undefined,
       });
-      return { pid, stdout };
+      // Bug B: surface the child's captured stderr so a failing command's error
+      // reaches the terminal (the executor drains this into its stderr sink).
+      return { pid, stdout, stderr };
     },
     async wait(pid: number) {
       const { code } = await kernel.wait(pid);
@@ -214,6 +220,10 @@ export async function bootShell(element: HTMLElement): Promise<ShellApp> {
   const memfs = new MemoryFsProvider({ files: SEED_FILES });
   const vfs = new FileSystemRouter();
   await vfs.mount('/', memfs);
+  // Mount the device tree so spawned commands can open `/dev/zero`, `/dev/random`,
+  // `/dev/urandom`, and `/dev/null` (e.g. `head -c N /dev/urandom`). Without this
+  // mount such paths fail with File not found and the command silently exits 1.
+  await vfs.mount('/dev', new DeviceFsProvider());
 
   const kernel = new Kernel({
     runtime: new WorkerRuntime(),

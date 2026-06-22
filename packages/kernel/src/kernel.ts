@@ -1321,7 +1321,11 @@ type GuestDefault = (boot: unknown) => unknown | Promise<unknown>;
 
 async function loadGuestDefault(code: string | URL): Promise<GuestDefault> {
   if (code instanceof URL) {
-    const mod = await import(code.href);
+    // @vite-ignore: the specifier is a runtime URL Vite cannot statically analyze.
+    // This Node-only path never runs in the browser (the examples use
+    // InProcessCommandLauncher), but Vite analyzes the built kernel.js and warns —
+    // the comment is the documented suppression for an intentionally-dynamic import.
+    const mod = await import(/* @vite-ignore */ code.href);
     return mod.default as GuestDefault;
   }
   // Materialize the inline module so its ESM imports/exports resolve normally.
@@ -1332,6 +1336,7 @@ async function loadGuestDefault(code: string | URL): Promise<GuestDefault> {
   const dir = await mkdtemp(join(tmpdir(), 'mithic-guest-'));
   const file = join(dir, 'guest.mjs');
   await writeFile(file, code);
-  const mod = await import(pathToFileURL(file).href);
+  // @vite-ignore: a runtime temp-file URL — see the URL branch above.
+  const mod = await import(/* @vite-ignore */ pathToFileURL(file).href);
   return mod.default as GuestDefault;
 }

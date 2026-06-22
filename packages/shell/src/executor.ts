@@ -1458,12 +1458,18 @@ export class Executor {
       const isLast = i === expanded.length - 1;
       const code = this.resolve(name);
       if (code === undefined) { io.stderr(`shell: ${name}: command not found\n`); this.pipeStatus = [127]; return 127; }
-      stageParams.push({ code, args: [name, ...argv], env: { ...this.context.env, ...env }, cwd: this.context.cwd, captureStdout: isLast, stdinData: i === 0 ? headStdin : undefined });
+      // Bug B: capture EVERY stage's stderr (each stage keeps its own), so an
+      // early-stage error (e.g. `cat /nonexistent | sort`) reaches the terminal
+      // rather than being discarded. Stdout is captured only on the last stage
+      // (others feed the inter-stage pipe).
+      stageParams.push({ code, args: [name, ...argv], env: { ...this.context.env, ...env }, cwd: this.context.cwd, captureStdout: isLast, captureStderr: true, stdinData: i === 0 ? headStdin : undefined });
     }
 
     if (this.kernel.runPipeline) {
       const result = await this.kernel.runPipeline(stageParams);
       if (result.lastStdout) await this.writeCaptured(result.lastStdout, io);
+      // Surface each stage's stderr in stage order (after stdout is flushed).
+      for (const s of result.stderr) await this.surfaceStderr(s, io);
       this.pipeStatus = result.exitCodes;
       return this.pipelineStatus(result.exitCodes, result.exitCodes[result.exitCodes.length - 1] ?? 0);
     }
@@ -1472,6 +1478,8 @@ export class Executor {
     const last = handles[handles.length - 1];
     if (last?.stdout) await this.writeCaptured(last.stdout, io);
     const waits = await Promise.all(handles.map((h) => this.kernel.wait(h.pid)));
+    // Surface each stage's stderr in stage order.
+    for (const h of handles) await this.surfaceStderr(h.stderr, io);
     const codes = waits.map((w) => w.code);
     this.pipeStatus = codes;
     return this.pipelineStatus(codes, codes[codes.length - 1] ?? 0);
@@ -1639,23 +1647,44 @@ export class Executor {
       env: { ...this.context.env, ...localEnv },
       cwd: this.context.cwd,
       captureStdout: true,
+      // Bug B: capture the child's stderr so its diagnostics reach the shell's
+      // stderr sink instead of being silently discarded (the bug that hid every
+      // external command's errors — e.g. `cat /nonexistent`).
+      captureStderr: true,
       stdinData: stdin,
     };
     // A1: prefer the live-stream spawn path — the child's stdout arrives as a
     // ReadableStream we pump chunk-by-chunk into our stdout sink, so a large or
     // unbounded producer streams rather than being buffered to completion (which
     // defeats the kernel's credit-windowed back-pressure). Falls back to the
-    // buffered spawn on backends that don't transfer ports.
+    // buffered spawn on backends that don't transfer ports. In BOTH branches the
+    // child's stderr is BUFFERED (the live path streams only stdout) and surfaced
+    // to `io.stderr` after the child exits.
     if (this.kernel.spawnStream) {
       const handle = await this.kernel.spawnStream(params);
       if (handle.stdout) await this.pumpToStdout(handle.stdout, io);
       const { code: status } = await this.kernel.wait(handle.pid);
+      await this.surfaceStderr(handle.stderr, io);
       return status;
     }
     const handle = await this.kernel.spawn(params);
     if (handle.stdout) await this.writeCaptured(handle.stdout, io);
     const { code: status } = await this.kernel.wait(handle.pid);
+    await this.surfaceStderr(handle.stderr, io);
     return status;
+  }
+
+  /**
+   * Bug B: drain a child's captured stderr (a `Promise<Uint8Array>`) into the
+   * command's stderr sink (the EXPLICIT frame, captured by the caller — D3), so
+   * an external command's diagnostics reach the terminal. A `undefined` promise
+   * (a backend that does not capture stderr) is a no-op.
+   */
+  private async surfaceStderr(bytes: Promise<Uint8Array> | undefined, io: CommandIO): Promise<void> {
+    if (!bytes) return;
+    let out: Uint8Array;
+    try { out = await bytes; } catch { return; }
+    if (out.byteLength > 0) io.stderr(new TextDecoder().decode(out));
   }
 
   /**

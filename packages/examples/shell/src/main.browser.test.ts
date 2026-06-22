@@ -115,3 +115,28 @@ test('builtin + persistent state: cd /tmp then pwd -> /tmp', async () => {
   await flush();
   expect(readBuffer(app)).toContain('/tmp');
 }, T);
+
+// Bug A coverage: `/dev` must be mounted AND reachable through the example's REAL
+// wiring (the gap that let Bug A ship — the node repro proved /dev was missing).
+// A BOUNDED read of /dev/zero piped through base64 must produce output. 8 zero
+// bytes base64-encode to "AAAAAAAAAAA=". `head -c 8` keeps it deterministic and
+// terminating (no truly-infinite producer in a browser test).
+test('Bug A: head -c 8 /dev/zero | base64 produces output (/dev mounted + reachable)', async () => {
+  app = await bootShell(mount());
+  app.terminal.input('head -c 8 /dev/zero | base64\r', true);
+  await flush();
+  expect(readBuffer(app)).toContain('AAAAAAAAAAA=');
+}, T);
+
+// Bug B coverage: a FAILING external command must show its error in the terminal.
+// Before the fix, `spawnExternal` discarded the child's stderr, so `cat` of a
+// missing file produced NOTHING — not even the diagnostic. Assert the terminal
+// buffer now contains the error text end-to-end through the example wiring.
+test('Bug B: a failing command shows its stderr in the terminal', async () => {
+  app = await bootShell(mount());
+  app.terminal.input('cat /nonexistent\r', true);
+  await flush();
+  const buf = readBuffer(app);
+  expect(buf).toMatch(/nonexistent/);
+  expect(buf).toMatch(/not found|No such file/i);
+}, T);

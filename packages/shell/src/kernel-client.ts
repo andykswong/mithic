@@ -41,6 +41,13 @@ export interface SpawnStreamHandle {
   pid: number;
   /** Live child stdout. Undefined on relay backends (no port transfer). */
   stdout?: ReadableStream<Uint8Array>;
+  /**
+   * Bug B: the child's BUFFERED stderr (fd 2). The live path streams only
+   * stdout, so stderr is captured to bytes and surfaced here for the shell to
+   * drain into its own stderr after the child exits. Undefined when a backend
+   * cannot capture stderr (then the shell surfaces nothing — no regression).
+   */
+  stderr?: Promise<Uint8Array>;
 }
 
 /** One stage of a pipeline. */

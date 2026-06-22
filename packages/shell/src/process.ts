@@ -233,7 +233,11 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
         argv: [name, ...rest],
         env: params.env,
         cwd: params.cwd,
-        fds: { 1: { action: 'pipe' } },
+        // Bug B: pipe BOTH stdout (fd 1, live stream) and stderr (fd 2, buffered)
+        // back to the shell. Object-key order ⇒ ports[0] = fd1 read, ports[1] =
+        // fd2 read. The stderr port is drained to bytes so the executor can write
+        // a failing command's diagnostics to the shell's stderr after it exits.
+        fds: { 1: { action: 'pipe' }, 2: { action: 'pipe' } },
       };
       if (params.stdinData !== undefined) {
         stage.stdinData = new TextEncoder().encode(params.stdinData);
@@ -241,9 +245,10 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
       try {
         const { result, ports } = await guest.syscallPorts('process/spawn', stage);
         const pid = (result as { pid: number }).pid;
-        // The kernel transfers the stdout read end as the (single) port. On a
-        // relay backend ports is empty → fall back to buffered capture.
+        // The kernel transfers the stdout read end as ports[0] and the stderr read
+        // end as ports[1]. On a relay backend ports is empty → fall back to buffered.
         const readPort = ports[0];
+        const errPort = ports[1];
         if (!readPort) {
           const buffered = await this.spawn(params);
           let bytes: Uint8Array | undefined;
@@ -253,11 +258,12 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
           // caller, or leave undefined so the caller writes the captured bytes.
           if (bytes && bytes.byteLength > 0) {
             const b = bytes;
-            return { pid, stdout: new ReadableStream<Uint8Array>({ start(c) { c.enqueue(b); c.close(); } }) };
+            return { pid, stdout: new ReadableStream<Uint8Array>({ start(c) { c.enqueue(b); c.close(); } }), stderr: buffered.stderr };
           }
-          return { pid };
+          return { pid, stderr: buffered.stderr };
         }
-        return { pid, stdout: portToReadable(readPort) };
+        const stderr = errPort ? drainReadable(portToReadable(errPort)) : undefined;
+        return { pid, stdout: portToReadable(readPort), stderr };
       } catch (e) {
         if (!isNotFound(e)) throw e;
         const pid = synthPid--;
@@ -389,6 +395,25 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
       }
     },
   };
+}
+
+/** Bug B: drain a `ReadableStream<Uint8Array>` fully into a single Uint8Array. */
+async function drainReadable(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value && value.byteLength > 0) chunks.push(value);
+    }
+  } catch { /* stream errored — return what we have */ }
+  let total = 0;
+  for (const c of chunks) total += c.byteLength;
+  const buf = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+  return buf;
 }
 
 /** Read the guest's stdin stream fully into a string. */
