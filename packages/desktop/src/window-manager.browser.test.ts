@@ -1,6 +1,7 @@
 import { expect, test, vi } from 'vitest';
 import { WindowManager } from './window-manager.ts';
 import { AppRegistry } from './app-registry.ts';
+import { SHIELD_CLASS } from './drag.ts';
 import type { AppDescriptor } from './types.ts';
 
 // Minimal fake kernel: records spawn/kill and lets us resolve wait() on demand.
@@ -186,4 +187,52 @@ test('taskbar reflects open windows and their titles', async () => {
   expect(items[0].textContent).toContain('Alpha');
 
   wm.dispose(); desktop.remove(); taskbar.remove();
+});
+
+test('dragging a window titlebar across a live iframe still tracks the pointer (H2 — pointer shield)', async () => {
+  const desktop = setupDesktop();
+  const kernel = fakeKernel();
+  const apps = new AppRegistry();
+  apps.register({ name: 'a', title: 'A', defaultSize: [200, 150], mount: () => {} });
+  const wm = new WindowManager({ desktop, kernel: kernel as any, apps });
+
+  // A live iframe sitting in the desktop, overlapping the drag path. Without the
+  // pointer shield (body.mithic-wm-dragging iframe { pointer-events:none }) a real
+  // pointer crossing it would be swallowed by the iframe and the drag would stall.
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:absolute;left:200px;top:150px;width:400px;height:300px;border:0;';
+  iframe.srcdoc = '<!doctype html><html><body style="margin:0;height:100%"></body></html>';
+  desktop.appendChild(iframe);
+
+  const win = await wm.open('a');
+  const titlebar = win.frame.querySelector('[data-role="titlebar"]') as HTMLElement;
+  expect(titlebar).not.toBeNull();
+
+  const startX = 100, startY = 60;
+  const x0 = win.geometry.x, y0 = win.geometry.y;
+
+  // Begin the drag on the titlebar.
+  titlebar.dispatchEvent(new PointerEvent('pointerdown', { clientX: startX, clientY: startY, pointerId: 1, bubbles: true }));
+  // The shield must be on so the (real) iframe is neutralized for the gesture.
+  expect(document.body.classList.contains(SHIELD_CLASS)).toBe(true);
+  // The shield CSS actually applies to the iframe (pointer-events:none).
+  expect(getComputedStyle(iframe).pointerEvents).toBe('none');
+
+  // Move the pointer along a path that crosses the iframe region (200..600, 150..450).
+  const path: Array<[number, number]> = [[250, 200], [400, 300], [550, 420]];
+  for (const [cx, cy] of path) {
+    document.dispatchEvent(new PointerEvent('pointermove', { clientX: cx, clientY: cy, pointerId: 1, bubbles: true }));
+  }
+
+  // Geometry tracked the LAST move: origin + (lastClient - start).
+  const [lx, ly] = path.at(-1)!;
+  expect(win.geometry.x).toBe(x0 + (lx - startX));
+  expect(win.geometry.y).toBe(y0 + (ly - startY));
+  expect(win.frame.style.transform).toBe(`translate3d(${win.geometry.x}px, ${win.geometry.y}px, 0px)`);
+
+  document.dispatchEvent(new PointerEvent('pointerup', { clientX: lx, clientY: ly, pointerId: 1, bubbles: true }));
+  expect(document.body.classList.contains(SHIELD_CLASS)).toBe(false);
+
+  iframe.remove();
+  wm.dispose(); desktop.remove();
 });
