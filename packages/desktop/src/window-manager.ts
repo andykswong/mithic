@@ -1,7 +1,9 @@
 import type { Kernel } from '@mithic/kernel';
+import type { FileSystemProvider } from '@mithic/io/vfs';
 import type { AppDescriptor, MithicWindow, OpenOptions, WindowContext } from './types.ts';
 import type { AppRegistry } from './app-registry.ts';
 import { cascadePlacement, clampToBounds } from './geometry.ts';
+import { loadLayout, saveLayout, type SavedLayout } from './persistence.ts';
 import {
   createWindowFrame, applyGeometry, applyState, setWindowTitle,
   type WindowFrameElements,
@@ -21,6 +23,12 @@ export interface WindowManagerOptions {
   apps: AppRegistry;
   /** Optional taskbar element; if present, the WM renders an item per window. */
   taskbar?: HTMLElement;
+  /**
+   * Optional VFS for persisting per-app window geometry. When set, the WM
+   * restores a window to its last saved rect (clamped to the desktop) and
+   * re-saves on drag/resize end and on close. When absent, no persistence.
+   */
+  storage?: FileSystemProvider;
 }
 
 interface Tracked {
@@ -40,6 +48,11 @@ export class WindowManager {
   readonly #apps: AppRegistry;
   readonly #taskbar: HTMLElement | undefined;
   readonly #tracked = new Map<number, Tracked>();
+  readonly #storage: FileSystemProvider | undefined;
+  /** In-memory cache of the persisted layout (empty until #layoutReady resolves). */
+  #savedLayout: SavedLayout = {};
+  /** Resolves once the initial layout load completes (only when storage is set). */
+  readonly #layoutReady: Promise<void>;
   #nextId = 1;
   #topZ = 100;
   #openedCount = 0;
@@ -49,6 +62,11 @@ export class WindowManager {
     this.#kernel = opts.kernel as WmKernel;
     this.#apps = opts.apps;
     this.#taskbar = opts.taskbar;
+    this.#storage = opts.storage;
+    // Eagerly load the saved layout; open() awaits this before placing a window.
+    this.#layoutReady = this.#storage
+      ? loadLayout(this.#storage).then((l) => { this.#savedLayout = l; }, () => {})
+      : Promise.resolve();
     installShieldStyle(opts.desktop.ownerDocument);
   }
 
@@ -66,8 +84,12 @@ export class WindowManager {
       if (existing) { this.focus(existing.window.id); return existing.window; }
     }
 
+    if (this.#storage) await this.#layoutReady;
     const bounds = { w: this.#desktop.clientWidth || 1024, h: this.#desktop.clientHeight || 768 };
-    const geometry = clampToBounds(cascadePlacement(this.#openedCount++, app.defaultSize, bounds), bounds);
+    const savedRect = this.#storage ? this.#savedLayout[app.name] : undefined;
+    const geometry = savedRect
+      ? clampToBounds(savedRect, bounds)
+      : clampToBounds(cascadePlacement(this.#openedCount++, app.defaultSize, bounds), bounds);
     const id = this.#nextId++;
     const { window: win, els } = createWindowFrame(this.#desktop.ownerDocument, {
       id, title: app.title, geometry, resizable: app.resizable !== false,
@@ -91,11 +113,13 @@ export class WindowManager {
     tracked.disposers.push(makeDraggable(els.titlebar, {
       onStart: () => ({ x: win.geometry.x, y: win.geometry.y }),
       onMove: (x, y) => { win.geometry.x = x; win.geometry.y = y; applyGeometry(win); },
+      onEnd: () => this.#persist(app, win),
     }));
     if (app.resizable !== false) {
       tracked.disposers.push(makeResizable(els.resizeHandle, {
         onStart: () => ({ w: win.geometry.w, h: win.geometry.h }),
         onMove: (w, h) => { win.geometry.w = w; win.geometry.h = h; applyGeometry(win); },
+        onEnd: () => this.#persist(app, win),
       }));
     }
 
@@ -188,6 +212,7 @@ export class WindowManager {
   close(id: number): void {
     const t = this.#tracked.get(id);
     if (!t) return;
+    this.#persist(t.app, t.window);
     if (t.window.pid != null) {
       this.#kernel.kill(t.window.pid, 'SIGTERM');
       // The wait() handler removes the frame on exit; also remove eagerly so the
@@ -201,6 +226,13 @@ export class WindowManager {
 
   dispose(): void {
     for (const id of [...this.#tracked.keys()]) this.close(id);
+  }
+
+  /** Best-effort persist of a window's current geometry, keyed by app name. */
+  #persist(app: AppDescriptor, win: MithicWindow): void {
+    if (!this.#storage) return;
+    this.#savedLayout[app.name] = { ...win.geometry };
+    saveLayout(this.#storage, this.#savedLayout).catch(() => {});
   }
 
   #removeFrame(id: number): void {

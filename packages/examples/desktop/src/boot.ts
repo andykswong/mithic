@@ -81,7 +81,7 @@ export async function bootDesktop(opts: BootOptions): Promise<DesktopHandle> {
   const efs = editorFs(vfs);
   const ffs = fileManagerFs(vfs);
 
-  const wm = new WindowManager({ desktop: opts.desktop, taskbar: opts.taskbar, kernel, apps });
+  const wm = new WindowManager({ desktop: opts.desktop, taskbar: opts.taskbar, kernel, apps, storage: vfs });
 
   apps.register({ name: 'terminal', title: 'Terminal', defaultSize: [640, 400], icon: '🖥️',
     mount: (ctx: WindowContext) => { mountTerminal(ctx, { kernel, vfs, suite }); } });
