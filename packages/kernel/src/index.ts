@@ -2,6 +2,7 @@ export { Kernel, DefaultGuestLauncher } from './kernel.ts';
 export type {
   KernelOptions,
   HeartbeatOptions,
+  DisplayOptions,
   SpawnInit,
   SpawnResult,
   LaunchContext,

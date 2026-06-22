@@ -1,0 +1,27 @@
+{
+  "name": "@mithic/desktop",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Mithic browser-OS window manager — host-side, dependency-free (frames, drag/resize, z-order, taskbar, app registry)",
+  "type": "module",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+  },
+  "files": ["/dist"],
+  "scripts": {
+    "clean": "rimraf dist *.tsbuildinfo",
+    "build": "vite build",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "repository": { "type": "git", "url": "git+https://github.com/andykswong/mithic.git" },
+  "author": "Andy K.S. Wong <andykswong@outlook.com>",
+  "license": "MIT",
+  "dependencies": {
+    "@mithic/protocol": "2.0.0",
+    "@mithic/io": "2.0.0",
+    "@mithic/kernel": "2.0.0",
+    "@mithic/runtime": "2.0.0"
+  }
+}

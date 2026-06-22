@@ -27,6 +27,7 @@ export default defineConfig({
             // B6 hygiene: io/net tests migrated from node:test to vitest.
             'packages/io/src/net/**/*.test.ts',
             'packages/commands/*/src/**/*.test.ts',
+            'packages/desktop/src/**/*.test.ts',
           ],
           exclude: ['**/*.browser.test.ts', '**/node_modules/**', '**/dist/**'],
           environment: 'node',
@@ -42,6 +43,7 @@ export default defineConfig({
             `packages/${MITHIC_PACKAGES}/src/**/*.browser.test.ts`,
             'packages/io/src/vfs/**/*.browser.test.ts',
             'packages/commands/*/src/**/*.browser.test.ts',
+            'packages/desktop/src/**/*.browser.test.ts',
             // Group P example packages (image-viewer GUI process + xterm notebook + shell).
             'packages/examples/{image-viewer,notebook,shell}/src/**/*.browser.test.ts',
           ],
