@@ -334,3 +334,50 @@ test('IframeRuntime: export-default regex does NOT corrupt mid-line string liter
   const midLine = 'foo("export default bar");';
   expect(midLine.replace(regex, 'CORRUPTED')).toBe(midLine);
 });
+
+test('IframeRuntime: window mode mounts into a per-spawn container and fills it', async () => {
+  const runtime = new IframeRuntime(); // no shared container
+  const frame = document.createElement('div');
+  frame.style.width = '300px';
+  frame.style.height = '200px';
+  document.body.appendChild(frame);
+
+  const ch = new MessageChannel();
+  const handle = await runtime.spawn('globalThis.__post?.({ready:true});', {
+    init: { type: 'init', entry: '', args: [], env: {}, cwd: '/', pid: 1, ppid: 0, capabilities: [] },
+    transfer: [ch.port2],
+    display: { mode: 'window', container: frame, width: 300, height: 200, title: 'T' },
+  });
+
+  // The iframe must be a child of the per-spawn frame, NOT document.body.
+  const iframe = frame.querySelector('iframe');
+  expect(iframe).not.toBeNull();
+  expect(iframe!.parentElement).toBe(frame);
+  // Window mode fills the frame (100%), not a fixed px size.
+  expect(iframe!.style.width).toBe('100%');
+  expect(iframe!.style.height).toBe('100%');
+
+  runtime.dispose(handle);
+  frame.remove();
+});
+
+test('IframeRuntime: per-spawn container overrides the constructor container', async () => {
+  const shared = document.createElement('div');
+  document.body.appendChild(shared);
+  const runtime = new IframeRuntime({ container: shared });
+  const frame = document.createElement('div');
+  document.body.appendChild(frame);
+
+  const ch = new MessageChannel();
+  const handle = await runtime.spawn('1;', {
+    init: { type: 'init', entry: '', args: [], env: {}, cwd: '/', pid: 2, ppid: 0, capabilities: [] },
+    transfer: [ch.port2],
+    display: { mode: 'window', container: frame },
+  });
+
+  expect(frame.querySelector('iframe')).not.toBeNull();
+  expect(shared.querySelector('iframe')).toBeNull();
+
+  runtime.dispose(handle);
+  shared.remove(); frame.remove();
+});

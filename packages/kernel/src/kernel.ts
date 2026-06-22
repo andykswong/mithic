@@ -222,6 +222,8 @@ export interface DisplayOptions {
   width?: number;
   height?: number;
   title?: string;
+  /** Host-side per-window mount target; see runtime `SpawnOptions.display.container`. */
+  container?: HTMLElement;
 }
 
 export interface SpawnResult {

@@ -33,6 +33,14 @@ export interface SpawnOptions {
     width?: number;
     height?: number;
     title?: string;
+    /**
+     * Per-process mount target for visible modes. When set, the backend appends the
+     * guest iframe into THIS element instead of the runtime's shared `container`, so
+     * a window manager can create the iframe inside its own window frame and never
+     * reparent it (reparenting reloads the iframe and kills the guest). Host-side
+     * only (an HTMLElement) — deliberately NOT on the protocol wire.
+     */
+    container?: HTMLElement;
   };
 }
 

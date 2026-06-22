@@ -82,7 +82,14 @@ export class IframeRuntime implements Runtime {
       iframe.style.height = '0';
       iframe.style.border = 'none';
       iframe.style.position = 'absolute';
+    } else if (displayMode === 'window' || displayMode === 'fullscreen') {
+      // The window frame (or viewport) owns the pixel size; the iframe fills it.
+      // Resizing the frame then fires a NATIVE resize inside the guest document.
+      iframe.style.width = '100%';
+      iframe.style.height = '100%';
+      iframe.style.border = 'none';
     } else {
+      // 'inline': sized by explicit width/height (or 100% fallback).
       iframe.style.width = options.display?.width != null ? `${options.display.width}px` : '100%';
       iframe.style.height = options.display?.height != null ? `${options.display.height}px` : '100%';
       iframe.style.border = 'none';
@@ -108,10 +115,12 @@ export class IframeRuntime implements Runtime {
     const entry: IframeEntry = { iframe, messageListener, callbacks };
     this.#processes.set(id, entry);
 
-    // Append to DOM so the iframe gets a browsing context and can execute scripts.
-    // Hidden iframes always live off-screen on document.body; visible ones go into
-    // the configured container (defaults to document.body) so a host can place them.
-    const mount = displayMode === 'hidden' ? document.body : (this.#container ?? document.body);
+    // Hidden iframes always live off-screen on document.body. Visible iframes go
+    // into the per-spawn container if supplied (window-manager frame), else the
+    // runtime's shared container, else document.body.
+    const mount = displayMode === 'hidden'
+      ? document.body
+      : (options.display?.container ?? this.#container ?? document.body);
     mount.appendChild(iframe);
 
     // Wait for the iframe to load its srcdoc before posting messages
