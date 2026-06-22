@@ -1,12 +1,11 @@
 {
-  "extends": [
-    "./typedoc.base.json"
-  ],
+  "$schema": "https://typedoc.org/schema.json",
   "name": "mithic",
   "entryPointStrategy": "packages",
   "entryPoints": [
     "packages/*"
   ],
+  "out": "./docs/api",
   "includeVersion": true,
   "validation": {
     "invalidLink": false
