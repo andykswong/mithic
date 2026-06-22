@@ -17,7 +17,7 @@
  * for the honest BRE↔ERE translation story (we translate the common BRE
  * metacharacter-escaping rules and otherwise defer to the JS RegExp engine).
  */
-import { defineCommand, readAllText, writeBytes, writeLine } from '../harness.ts';
+import { CoalescingWriter, defineCommand, isBrokenPipe, readAllText, streamLines, writeBytes, writeLine } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 import { compilePattern, escapeRegExp } from './_regex.ts';
 import type { RegexSyntax } from './_regex.ts';
@@ -337,6 +337,38 @@ function toLines(text: string): string[] {
   return parts;
 }
 
+/**
+ * Format ONE matching line (1-based `lineno`) for the simple mode (no context,
+ * no count, no list). Returns the output text WITH a trailing newline, or '' if
+ * the line is not selected. `-o` may emit multiple output lines for one input
+ * line. This is the streaming-path equivalent of {@link grepLines}.
+ */
+function formatLine(line: string, lineno: number, matcher: CompiledMatcher, o: GrepOptions, prefix: string | undefined): string {
+  const m = matcher.rawMatch(line);
+  const selected = o.invert ? !m : m;
+  if (!selected) return '';
+
+  if (o.onlyMatching && !o.invert) {
+    let out = '';
+    for (const span of matcher.spans(line)) {
+      let piece = line.slice(span.start, span.end);
+      if (o.color) piece = RED + piece + RESET;
+      let s = '';
+      if (prefix !== undefined) s += prefix + ':';
+      if (o.lineNumber) s += `${lineno}:`;
+      out += s + piece + '\n';
+    }
+    return out;
+  }
+
+  let body = line;
+  if (o.color && !o.invert) body = colorize(line, matcher.spans(line));
+  let s = '';
+  if (prefix !== undefined) s += prefix + ':';
+  if (o.lineNumber) s += `${lineno}:`;
+  return s + body + '\n';
+}
+
 const grepCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const name = io.args[0] ?? 'grep';
   const o = parseGrepArgs(io.args.slice(1));
@@ -412,6 +444,28 @@ const grepCommand: CommandFn = async (io: CommandIO): Promise<number> => {
 
     // Normal / count / context modes.
     if (files.length === 0) {
+      // Stream stdin line-by-line for the simple mode (no count, no context) so
+      // `producer | grep x | head` terminates in constant memory and stops on a
+      // broken downstream pipe. Count/context modes need the whole input, so they
+      // buffer via readAllText (now capped to prevent host OOM).
+      const simple = !o.count && o.after === 0 && o.before === 0;
+      if (simple) {
+        const sink = new CoalescingWriter(out);
+        let lineno = 0;
+        let matched = false;
+        try {
+          for await (const { line } of streamLines(io.stdin)) {
+            lineno++;
+            const piece = formatLine(line, lineno, matcher, o, undefined);
+            if (piece !== '') { matched = true; await sink.push(piece); }
+          }
+          await sink.flush();
+        } catch (e) {
+          if (isBrokenPipe(e)) { await io.stdin.cancel().catch(() => {}); return matched ? 0 : 1; }
+          throw e;
+        }
+        return matched ? 0 : 1;
+      }
       const text = await readAllText(io.stdin);
       const res = grepLines(toLines(text), matcher, o, undefined);
       for (const line of res.output) await writeBytes(out, enc.encode(line + '\n'));

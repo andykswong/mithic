@@ -136,8 +136,49 @@ const ENCODER = new TextEncoder();
 
 // ── stdin readers ─────────────────────────────────────────────────────────────
 
-/** Read a ReadableStream fully into a single Uint8Array. */
-export async function readAll(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+/**
+ * Default byte cap for the buffering stdin readers ({@link readAll} /
+ * {@link readAllText}): 256 MiB. This is the Tier-3 OOM backstop.
+ *
+ * Real Unix coreutils stream with bounded memory and terminate on an infinite
+ * producer via SIGPIPE/EPIPE. Most filters here are converted to stream
+ * (constant memory), but a few genuinely whole-input commands (`sort`, `tac`)
+ * and a couple of entangled ones (`sed`, `awk`) still buffer their input. In
+ * real Unix those rely on the OS OOM-killer/ulimit; our sandbox equivalent is
+ * this hard cap, so they error cleanly instead of growing the HOST heap until
+ * the process is OOM-killed (the bug: `cat /dev/urandom | base64 | head -c 10`
+ * grew to 60 GB). 256 MiB matches the kernel's output-cap order of magnitude:
+ * large enough for any legitimate one-shot input, small enough that a runaway
+ * producer is stopped long before the host is endangered.
+ */
+export const READALL_MAX_BYTES = 256 * 1024 * 1024;
+
+/**
+ * Thrown by {@link readAll} / {@link readAllText} when the input exceeds the
+ * byte cap. {@link defineCommand}'s wrapper turns an uncaught throw into a
+ * stderr diagnostic + non-zero exit, so a buffering command on an unbounded
+ * producer reports `<cmd>: input too large` rather than OOM-killing the host.
+ */
+export class InputTooLargeError extends Error {
+  readonly limit: number;
+  constructor(limit: number) {
+    super('input too large');
+    this.name = 'InputTooLargeError';
+    this.limit = limit;
+  }
+}
+
+/**
+ * Read a ReadableStream fully into a single Uint8Array, with a hard byte cap
+ * (default {@link READALL_MAX_BYTES}). If the accumulated input would exceed
+ * `maxBytes`, the source is cancelled (stopping the upstream producer via
+ * EPIPE) and an {@link InputTooLargeError} is thrown. Inputs at/under the cap
+ * are returned unchanged.
+ */
+export async function readAll(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number = READALL_MAX_BYTES,
+): Promise<Uint8Array> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -145,10 +186,19 @@ export async function readAll(stream: ReadableStream<Uint8Array>): Promise<Uint8
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
-      if (value) { chunks.push(value); total += value.byteLength; }
+      if (value) {
+        total += value.byteLength;
+        if (total > maxBytes) {
+          // Stop the upstream producer (EPIPE) and refuse to buffer more.
+          reader.releaseLock();
+          await stream.cancel().catch(() => { /* best effort */ });
+          throw new InputTooLargeError(maxBytes);
+        }
+        chunks.push(value);
+      }
     }
   } finally {
-    reader.releaseLock();
+    try { reader.releaseLock(); } catch { /* already released on the cap path */ }
   }
   const out = new Uint8Array(total);
   let off = 0;
@@ -156,9 +206,12 @@ export async function readAll(stream: ReadableStream<Uint8Array>): Promise<Uint8
   return out;
 }
 
-/** Read a ReadableStream fully and decode it as UTF-8 text. */
-export async function readAllText(stream: ReadableStream<Uint8Array>): Promise<string> {
-  return new TextDecoder().decode(await readAll(stream));
+/** Read a ReadableStream fully and decode it as UTF-8 text (capped — see {@link readAll}). */
+export async function readAllText(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number = READALL_MAX_BYTES,
+): Promise<string> {
+  return new TextDecoder().decode(await readAll(stream, maxBytes));
 }
 
 /**
@@ -233,6 +286,14 @@ export function isBrokenPipe(err: unknown): boolean {
  * keeps per-line streaming semantics (output appears as input is consumed,
  * downstream EPIPE still surfaces on the next flush) while writing in efficient
  * blocks.
+ *
+ * CRITICAL: every individual `writer.write()` it emits is capped at
+ * {@link FLUSH_THRESHOLD} bytes. The kernel pipe credit window is 64 KiB and a
+ * writer parks for the WHOLE chunk size — a single `write()` larger than the
+ * window can never be reserved and deadlocks against a normally-draining
+ * consumer. A 32 KiB cap stays well under the window, so a filter that emits a
+ * large block at once (e.g. `base64` producing ~87 KiB per 64 KiB input chunk)
+ * still streams instead of hanging.
  */
 export class CoalescingWriter {
   static readonly FLUSH_THRESHOLD = 32 * 1024;
@@ -252,13 +313,18 @@ export class CoalescingWriter {
     if (this.#size >= CoalescingWriter.FLUSH_THRESHOLD) await this.flush();
   }
 
-  /** Write any buffered text. */
+  /** Write any buffered text, in writes capped at {@link FLUSH_THRESHOLD} bytes. */
   async flush(): Promise<void> {
     if (this.#parts.length === 0) return;
-    const text = this.#parts.join('');
+    const bytes = ENCODER.encode(this.#parts.join(''));
     this.#parts = [];
     this.#size = 0;
-    await this.#writer.write(ENCODER.encode(text));
+    // Cap each physical write to the threshold so no single write exceeds the
+    // kernel pipe credit window (see the class doc — a >window write deadlocks).
+    const cap = CoalescingWriter.FLUSH_THRESHOLD;
+    for (let off = 0; off < bytes.byteLength; off += cap) {
+      await this.#writer.write(bytes.subarray(off, Math.min(off + cap, bytes.byteLength)));
+    }
   }
 }
 

@@ -7,7 +7,7 @@
  *   - `-s`: serial — concatenate all lines of each file onto one line.
  *   - operands: file paths; `-` (or none) reads stdin.
  */
-import { defineCommand, parseArgs, readAllText, writeString } from '../harness.ts';
+import { CoalescingWriter, defineCommand, isBrokenPipe, parseArgs, readAllText, streamLines, writeString } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 async function readFileText(io: CommandIO, path: string): Promise<string> {
@@ -64,9 +64,31 @@ const pasteCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
   let exitCode = 0;
+  let stdinAborted = false;
 
   try {
     const sources = positionals.length > 0 ? positionals : ['-'];
+
+    // Fast path: a single stdin source in merge mode (no -s) is just a line
+    // passthrough — stream it (constant memory) so `producer | paste | head`
+    // terminates instead of buffering an unbounded input.
+    if (!serial && sources.length === 1 && sources[0] === '-') {
+      // Each input line becomes one output record terminated by '\n' (matching
+      // the buffered path's `rows.join('\n') + '\n'`, which newline-terminates
+      // every row including a final unterminated input line).
+      const sink = new CoalescingWriter(out);
+      try {
+        for await (const { line } of streamLines(io.stdin)) {
+          await sink.push(line + '\n');
+        }
+        await sink.flush();
+      } catch (e) {
+        if (isBrokenPipe(e)) { stdinAborted = true; }
+        else throw e;
+      }
+      return exitCode;
+    }
+
     const fileLines: string[][] = [];
     for (const src of sources) {
       let text: string;
@@ -107,6 +129,7 @@ const pasteCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   } finally {
     await out.close().catch(() => {});
     await err.close().catch(() => {});
+    if (stdinAborted) await io.stdin.cancel().catch(() => {});
   }
 };
 

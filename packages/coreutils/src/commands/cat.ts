@@ -39,6 +39,27 @@ async function readFile(io: CommandIO, path: string): Promise<Uint8Array> {
   }
 }
 
+/**
+ * Stream a VFS file to `out` chunk-by-chunk (constant memory), stopping if the
+ * downstream breaks (EPIPE). Returns true on a broken-pipe stop so the caller
+ * can abort the rest. This lets `cat /dev/zero | head -c4` (a never-EOFing
+ * device) terminate instead of buffering the device forever.
+ */
+async function streamFile(io: CommandIO, path: string, out: WritableStreamDefaultWriter<Uint8Array>): Promise<boolean> {
+  const { fd } = (await io.syscall('fs/open', { path, oflags: {} })) as { fd: number };
+  try {
+    for (;;) {
+      const chunk = (await io.syscall('fs/read', { fd, len: 65536 })) as Uint8Array;
+      if (!chunk || chunk.byteLength === 0) break;
+      try { await writeBytes(out, chunk); }
+      catch (e) { if (isBrokenPipe(e)) return true; throw e; }
+    }
+    return false;
+  } finally {
+    await io.syscall('fs/close', { fd }).catch(() => { /* best effort */ });
+  }
+}
+
 const catCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const { positionals, flags } = parseArgs(io.args.slice(1), {
     boolean: ['n', 'number'],
@@ -110,6 +131,19 @@ const catCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         continue;
       }
 
+      if (!number) {
+        // Stream the file (constant memory) so a never-EOFing device or a huge
+        // file does not buffer; stop early if the downstream breaks (EPIPE).
+        try {
+          if (await streamFile(io, src, out)) { stdinAborted = true; break; }
+        } catch (e) {
+          const msg = (e as { message?: string }).message ?? 'No such file or directory';
+          await writeLine(err, `${name}: ${src}: ${msg}`);
+          exitCode = 1;
+        }
+        continue;
+      }
+
       let bytes: Uint8Array;
       try {
         bytes = await readFile(io, src);
@@ -121,10 +155,6 @@ const catCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         continue;
       }
 
-      if (!number) {
-        await writeBytes(out, bytes);
-        continue;
-      }
       // -n: number every line. Split on \n, preserving a trailing newline.
       const text = new TextDecoder().decode(bytes);
       if (text === '') continue;

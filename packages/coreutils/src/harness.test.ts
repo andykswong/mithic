@@ -9,6 +9,7 @@ import {
   writeLine,
   exitWith,
   defineCommand,
+  InputTooLargeError,
 } from './harness.ts';
 import type { CommandIO } from './harness.ts';
 
@@ -135,6 +136,47 @@ describe('stream read helpers', () => {
 
   test('readLines keeps a final line with no trailing newline', async () => {
     expect(await readLines(streamFromText('a\nb'))).toEqual(['a', 'b']);
+  });
+});
+
+// ── Tier-3 backstop cap: readAll/readAllText cannot OOM on an unbounded stream ──
+
+describe('readAll byte cap (Tier-3 OOM backstop)', () => {
+  // A never-ending producer: enqueues 64 KiB chunks forever. readAll must NOT
+  // buffer it unboundedly — with a small injected cap it throws after the cap.
+  function infiniteStream(): { stream: ReadableStream<Uint8Array>; cancelled: () => boolean } {
+    let cancelled = false;
+    const chunk = new Uint8Array(64 * 1024);
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) { controller.enqueue(chunk.slice()); },
+      cancel() { cancelled = true; },
+    });
+    return { stream, cancelled: () => cancelled };
+  }
+
+  test('readAll throws InputTooLargeError once the injected cap is exceeded', async () => {
+    const { stream, cancelled } = infiniteStream();
+    // 256 KiB cap → exceeded after a handful of 64 KiB chunks, no big alloc.
+    await expect(readAll(stream, 256 * 1024)).rejects.toBeInstanceOf(InputTooLargeError);
+    // The producer is cancelled so it stops (EPIPE upstream).
+    expect(cancelled()).toBe(true);
+  });
+
+  test('readAllText throws InputTooLargeError once the injected cap is exceeded', async () => {
+    const { stream } = infiniteStream();
+    await expect(readAllText(stream, 128 * 1024)).rejects.toBeInstanceOf(InputTooLargeError);
+  });
+
+  test('readAll returns bytes unchanged for inputs at/under the cap', async () => {
+    const bytes = await readAll(streamFrom(new Uint8Array([1, 2, 3])), 1024);
+    expect([...bytes]).toEqual([1, 2, 3]);
+  });
+
+  test('readAll defaults to a large cap (>1 MiB) so ordinary inputs are unaffected', async () => {
+    // 1 MiB of data must pass with the default cap (256 MiB).
+    const oneMiB = new Uint8Array(1024 * 1024);
+    const bytes = await readAll(streamFrom(oneMiB));
+    expect(bytes.byteLength).toBe(1024 * 1024);
   });
 });
 
