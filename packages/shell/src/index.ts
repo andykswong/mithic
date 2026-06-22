@@ -26,6 +26,8 @@ export { parseCliArgs, VERSION, HELP } from './cli.ts';
 export type { CliResult } from './cli.ts';
 export { Executor } from './executor.ts';
 export type { ShellContext, ExecutorOptions, CommandResolver } from './executor.ts';
+export { expandPrompt } from './prompt.ts';
+export type { PromptContext } from './prompt.ts';
 export type {
   KernelClient,
   FsClient,

@@ -179,7 +179,10 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         start++;
       }
       let s = args.slice(start).join(' ');
-      if (interpret) s = s.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r').replace(/\\\\/g, '\\');
+      // `echo -e` interprets the full backslash-escape set (octal `\0NN`/`\NNN`,
+      // hex `\xHH`, `\e`/`\a`/`\b`/`\f`/`\v`/`\t`/`\n`/`\r`/`\\`) so ANSI/OSC
+      // sequences in a sourced .bashrc render — shared with printf via the helper.
+      if (interpret) s = interpretEscapes(s, /*octalBackslashZero*/ true);
       ctx.write(s + (newline ? '\n' : ''));
       return 0;
     }
@@ -975,6 +978,7 @@ function interpretEscapes(s: string, octalBackslashZero: boolean): string {
       case 't': out += '\t'; i += 2; continue;
       case 'r': out += '\r'; i += 2; continue;
       case 'a': out += '\x07'; i += 2; continue;
+      case 'e': out += '\x1b'; i += 2; continue;
       case 'b': out += '\b'; i += 2; continue;
       case 'f': out += '\f'; i += 2; continue;
       case 'v': out += '\v'; i += 2; continue;

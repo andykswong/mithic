@@ -30,6 +30,40 @@ test('BUILTINS lists the documented set', () => {
   }
 });
 
+// ── echo -e escapes (octal/hex/\e) routed through interpretEscapes ───────────
+
+/** Run echo and return what it wrote to stdout. */
+async function echo(...args: string[]): Promise<string> {
+  let out = '';
+  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s) };
+  await runBuiltin('echo', args, ctx);
+  return out;
+}
+
+test('echo -e interprets octal \\033 / \\007 (ANSI + BEL)', async () => {
+  expect(await echo('-e', '\\033[1;35mX\\033[0m')).toBe('\x1b[1;35mX\x1b[0m\n');
+  expect(await echo('-e', '\\007')).toBe('\x07\n');
+});
+
+test('echo -e interprets \\e as ESC', async () => {
+  expect(await echo('-e', '\\e[0m')).toBe('\x1b[0m\n');
+});
+
+test('echo -e interprets \\xHH hex', async () => {
+  expect(await echo('-e', '\\x41')).toBe('A\n');
+});
+
+test('echo -e still handles \\n \\t \\\\ and -n suppresses newline', async () => {
+  expect(await echo('-e', 'a\\tb\\nc')).toBe('a\tb\nc\n');
+  expect(await echo('-e', 'x\\\\y')).toBe('x\\y\n');
+  expect(await echo('-ne', 'no-newline')).toBe('no-newline');
+});
+
+test('echo WITHOUT -e prints escapes literally', async () => {
+  expect(await echo('\\033[1;35mX')).toBe('\\033[1;35mX\n');
+  expect(await echo('a\\tb')).toBe('a\\tb\n');
+});
+
 // ── printf (SH-3) ────────────────────────────────────────────────────────────
 
 /** Run printf and return what it wrote to stdout. */
