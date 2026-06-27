@@ -328,3 +328,49 @@ test('syscall response is NOT delivered to the signal handler', async () => {
 
   kernelPort.close();
 });
+
+test('guest.isatty reflects the preopen tty flags', () => {
+  const ch = new MessageChannel();
+  const guest = createGuest({
+    control: ch.port1,
+    init: {
+      type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 1, ppid: 0, capabilities: [],
+      preopens: { 0: { type: 'pipe', tty: true }, 1: { type: 'pipe', tty: true }, 2: { type: 'pipe', tty: false } },
+    },
+    preopenPorts: {},
+  });
+  expect(guest.isatty(0)).toBe(true);
+  expect(guest.isatty(1)).toBe(true);
+  expect(guest.isatty(2)).toBe(false);
+  // Unknown fd → false (POSIX: not a tty).
+  expect(guest.isatty(3)).toBe(false);
+  guest.exit(0);
+});
+
+test('guest.isatty is false when preopens omit tty (default pipe)', () => {
+  const ch = new MessageChannel();
+  const guest = createGuest({
+    control: ch.port1,
+    init: {
+      type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 2, ppid: 0, capabilities: [],
+      preopens: { 0: { type: 'pipe' }, 1: { type: 'pipe' }, 2: { type: 'pipe' } },
+    },
+    preopenPorts: {},
+  });
+  expect(guest.isatty(0)).toBe(false);
+  expect(guest.isatty(1)).toBe(false);
+  guest.exit(0);
+});
+
+test('guest.isatty is false when init.preopens is entirely absent', () => {
+  const ch = new MessageChannel();
+  const guest = createGuest({
+    control: ch.port1,
+    init: { type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 3, ppid: 0, capabilities: [] },
+    preopenPorts: {},
+  });
+  expect(guest.isatty(0)).toBe(false);
+  expect(guest.isatty(1)).toBe(false);
+  expect(guest.isatty(2)).toBe(false);
+  guest.exit(0);
+});

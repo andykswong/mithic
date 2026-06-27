@@ -96,6 +96,13 @@ export interface Guest {
    * mutations) need not implement it.
    */
   onDomEvent?(cb: (event: GuestDomEventPayload) => void): void;
+  /**
+   * POSIX `isatty`: true if fd (0/1/2) is connected to an interactive terminal
+   * rather than a plain pipe/redirect. Read from `init.preopens[fd].tty`. Use it
+   * to decide whether to colorize output, show an interactive prompt, or run in
+   * batch mode. Returns false for any fd without a tty preopen (incl. unknown fds).
+   */
+  isatty(fd: number): boolean;
   exit(code: number): void;
 }
 
@@ -247,6 +254,9 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
     onSignal(cb) { signalListeners.push(cb); },
     signal: terminalAbort.signal,
     onDomEvent(cb) { domEventListeners.push(cb); },
+    isatty(fd: number) {
+      return init.preopens?.[fd]?.tty === true;
+    },
     exit(code) {
       // Break the stdin pipe so an unconsumed upstream producer gets EPIPE.
       closeStdinPeer();
