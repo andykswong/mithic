@@ -31,6 +31,7 @@ function makeStubGuest(): Guest {
     fs: openRoot(async () => undefined),
     onSignal: () => undefined,
     signal: new AbortController().signal,
+    isatty: () => false,
     exit: () => undefined,
   };
 }
