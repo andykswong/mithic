@@ -56,6 +56,10 @@ export class WindowManager {
   #nextId = 1;
   #topZ = 100;
   #openedCount = 0;
+  /** The host `window` whose blur tells us a tier-2 iframe took focus. */
+  readonly #hostWindow: Window;
+  /** Bound `window` blur handler; installed once, removed in dispose(). */
+  readonly #onHostBlur: () => void;
 
   constructor(opts: WindowManagerOptions) {
     this.#desktop = opts.desktop;
@@ -68,6 +72,25 @@ export class WindowManager {
       ? loadLayout(this.#storage).then((l) => { this.#savedLayout = l; }, () => {})
       : Promise.resolve();
     installShieldStyle(opts.desktop.ownerDocument);
+
+    // Focus bridge across the sandbox (§5.3(4)). Clicking INSIDE a tier-2 iframe
+    // does not bubble a pointerdown to the host frame, but it DOES blur the top
+    // `window` and set document.activeElement to that iframe. On the next tick we
+    // check activeElement and, if it is a tracked window's content iframe, raise
+    // that window. Deferred to a microtask because activeElement is not yet
+    // updated synchronously when the blur fires.
+    this.#hostWindow = opts.desktop.ownerDocument.defaultView ?? globalThis as unknown as Window;
+    this.#onHostBlur = () => { queueMicrotask(() => this.#focusActiveIframe()); };
+    this.#hostWindow.addEventListener('blur', this.#onHostBlur);
+  }
+
+  /** If the focused element is a tracked window's content iframe, raise it. */
+  #focusActiveIframe(): void {
+    const active = this.#desktop.ownerDocument.activeElement;
+    if (!active || active.tagName !== 'IFRAME') return;
+    for (const t of this.#tracked.values()) {
+      if (t.window.content.contains(active)) { this.focus(t.window.id); return; }
+    }
   }
 
   get windows(): MithicWindow[] {
@@ -225,6 +248,7 @@ export class WindowManager {
   }
 
   dispose(): void {
+    this.#hostWindow.removeEventListener('blur', this.#onHostBlur);
     for (const id of [...this.#tracked.keys()]) this.close(id);
   }
 

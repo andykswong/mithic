@@ -6,6 +6,33 @@ import { FileSystemRouter, MemoryFsProvider } from '@mithic/io/vfs';
 import { createCommandSuite } from './commands.ts';
 import { mountTerminal } from './terminal-app.ts';
 
+/** Build a mounted terminal over a fresh kernel + seeded VFS. */
+async function makeTerminal(files: Record<string, string> = {}) {
+  const suite = createCommandSuite();
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider({ files }));
+  const kernel = new Kernel({ runtime: new WorkerRuntime(), vfs, resolveCommand: (n) => suite.resolve(n), launcher: suite.launcher });
+
+  const content = document.createElement('div');
+  content.style.cssText = 'width:600px;height:360px;';
+  document.body.appendChild(content);
+
+  const term = mountTerminal(
+    { window: { content } as any, content, kernel, onClose: () => {}, setTitle: () => {} },
+    { kernel, vfs: vfs as any, suite },
+  );
+  return { term, content };
+}
+
+/** Feed raw keystrokes through xterm's onData line editor. */
+function type(term: { terminal: { input(d: string, wasUserInput?: boolean): void } }, data: string): void {
+  term.terminal.input(data, true);
+}
+
+function drain(term: { terminal: { write(s: string, cb: () => void): void } }): Promise<void> {
+  return new Promise<void>((resolve) => term.terminal.write('', () => resolve()));
+}
+
 test('terminal app runs a command and writes output into the xterm DOM', async () => {
   const suite = createCommandSuite();
   const vfs = new FileSystemRouter();
@@ -32,6 +59,77 @@ test('terminal app runs a command and writes output into the xterm DOM', async (
   let dump = '';
   for (let i = 0; i < text.length; i++) dump += text.getLine(i)?.translateToString() ?? '';
   expect(dump).toContain('hi there');
+
+  term.dispose();
+  content.remove();
+});
+
+test('Up arrow recalls prior commands and Down arrow returns toward the empty line', async () => {
+  const { term, content } = await makeTerminal({ '/hello.txt': 'hi there\n' });
+
+  // Submit two commands through the line editor so they enter history.
+  type(term, 'echo first\r');
+  await drain(term);
+  type(term, 'echo second\r');
+  await drain(term);
+
+  const currentInputLine = (): string => {
+    const buf = term.terminal.buffer.active;
+    return (buf.getLine(buf.cursorY + buf.baseY)?.translateToString(true) ?? '').trim();
+  };
+
+  // Up once recalls the most recent command, Up again the one before it.
+  type(term, '\x1b[A');
+  await drain(term);
+  expect(currentInputLine()).toMatch(/echo second$/);
+
+  type(term, '\x1b[A');
+  await drain(term);
+  expect(currentInputLine()).toMatch(/echo first$/);
+
+  // Down moves back toward the newest entry, then to the empty new line.
+  type(term, '\x1b[B');
+  await drain(term);
+  expect(currentInputLine()).toMatch(/echo second$/);
+
+  type(term, '\x1b[B');
+  await drain(term);
+  expect(currentInputLine()).not.toMatch(/echo/);
+
+  term.dispose();
+  content.remove();
+});
+
+test('Ctrl+C abandons the current line without submitting it', async () => {
+  const { term, content } = await makeTerminal();
+
+  const dumpBuffer = (): string => {
+    const buf = term.terminal.buffer.active;
+    let dump = '';
+    for (let i = 0; i < buf.length; i++) dump += `${buf.getLine(i)?.translateToString() ?? ''}\n`;
+    return dump;
+  };
+
+  // Type partial input that would echo identifiable output if it ever ran, then
+  // Ctrl+C — the line must be discarded (echo's argument never reaches stdout).
+  type(term, 'echo NOTRUN-token');
+  type(term, '\x03');
+  await drain(term);
+
+  // Ctrl+C echoes ^C and shows a fresh prompt.
+  expect(dumpBuffer()).toContain('^C');
+
+  // A subsequent Enter must NOT run the abandoned text — it submits an empty
+  // line, so `echo`'s output token never appears on its own line.
+  type(term, '\r');
+  await drain(term);
+  await new Promise((r) => setTimeout(r, 20));
+  await drain(term);
+
+  // The abandoned command never executed: "NOTRUN-token" appears only on the
+  // input-echo line that was cancelled, never as a fresh echo output line.
+  const lines = dumpBuffer().split('\n').map((l) => l.trim());
+  expect(lines).not.toContain('NOTRUN-token');
 
   term.dispose();
   content.remove();

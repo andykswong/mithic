@@ -39,3 +39,25 @@ test('applyState: minimized hides via display:none (frame stays in DOM)', () => 
   expect(win.frame.style.display).not.toBe('none');
   win.frame.remove();
 });
+
+test('applyState: maximized shows the frame (display:flex)', () => {
+  const { window: win } = createWindowFrame(document, { id: 4, title: 'Mx', geometry: { x: 0, y: 0, w: 200, h: 150 } });
+  document.body.appendChild(win.frame);
+  win.state = 'maximized';
+  applyState(win);
+  expect(win.frame.style.display).toBe('flex');
+  expect(win.frame.isConnected).toBe(true);
+  win.frame.remove();
+});
+
+test('createWindowFrame with resizable:false hides the resize handle (display:none)', () => {
+  const { window: win, els } = createWindowFrame(document, { id: 5, title: 'NR', geometry: { x: 0, y: 0, w: 200, h: 150 }, resizable: false });
+  document.body.appendChild(win.frame);
+  expect(els.resizeHandle.style.display).toBe('none');
+
+  // A resizable window (the default) keeps the handle visible.
+  const { els: els2 } = createWindowFrame(document, { id: 6, title: 'R', geometry: { x: 0, y: 0, w: 200, h: 150 } });
+  expect(els2.resizeHandle.style.display).not.toBe('none');
+
+  win.frame.remove();
+});

@@ -65,6 +65,71 @@ describe('renderTextEditor', () => {
     await h.save();
     expect(save).not.toHaveBeenCalled();
   });
+
+  // The fake textarea has no real `selectionStart`/`selectionEnd`, so the keydown
+  // handler's `?? textarea.value.length` fallback applies: Tab inserts at the end.
+  // That's sufficient to prove the handler inserts a tab char (not focus-out) and
+  // marks dirty. Browser-DOM selection-offset behaviour is covered separately below.
+  test('Tab keydown inserts a tab char (no focus-out) and marks dirty', async () => {
+    const fs = memFs({ '/a.txt': 'ab' });
+    const h = renderTextEditor(fakeDoc(), { fs, path: '/a.txt' });
+    await h.ready;
+    expect(h.textarea.value).toBe('ab');
+
+    const preventDefault = vi.fn();
+    (h.textarea as any).dispatch('keydown', { key: 'Tab', preventDefault });
+
+    expect(preventDefault).toHaveBeenCalledTimes(1); // default tab-navigation prevented
+    expect(h.textarea.value).toBe('ab\t');
+    expect(h.dirty).toBe(true);
+  });
+
+  test('Ctrl+S keydown triggers save (fs.writeFile called) and clears dirty', async () => {
+    const fs = memFs({ '/a.txt': 'orig' });
+    const save = vi.spyOn(fs, 'writeFile');
+    const h = renderTextEditor(fakeDoc(), { fs, path: '/a.txt' });
+    await h.ready;
+    h.textarea.value = 'edited';
+    (h.textarea as any).dispatch('input');
+    expect(h.dirty).toBe(true);
+
+    const preventDefault = vi.fn();
+    (h.textarea as any).dispatch('keydown', { key: 's', ctrlKey: true, preventDefault });
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+
+    // save() is fire-and-forget inside the handler (void); let its microtasks settle.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(save).toHaveBeenCalledWith('/a.txt', 'edited');
+    expect(fs.files['/a.txt']).toBe('edited');
+    expect(h.dirty).toBe(false);
+  });
+
+  test('Cmd+S keydown (metaKey) also triggers save', async () => {
+    const fs = memFs({ '/a.txt': 'x' });
+    const save = vi.spyOn(fs, 'writeFile');
+    const h = renderTextEditor(fakeDoc(), { fs, path: '/a.txt' });
+    await h.ready;
+    h.textarea.value = 'y';
+    (h.textarea as any).dispatch('input');
+
+    (h.textarea as any).dispatch('keydown', { key: 'S', metaKey: true, preventDefault: () => {} });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(save).toHaveBeenCalledWith('/a.txt', 'y');
+  });
+
+  test('a non-special keydown neither saves nor inserts a tab', async () => {
+    const fs = memFs({ '/a.txt': 'ab' });
+    const save = vi.spyOn(fs, 'writeFile');
+    const h = renderTextEditor(fakeDoc(), { fs, path: '/a.txt' });
+    await h.ready;
+    const preventDefault = vi.fn();
+    (h.textarea as any).dispatch('keydown', { key: 'a', preventDefault });
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(h.textarea.value).toBe('ab');
+    expect(save).not.toHaveBeenCalled();
+  });
 });
 
 describe('mountTextEditor onClose (H4)', () => {

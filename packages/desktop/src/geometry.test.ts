@@ -24,6 +24,17 @@ describe('clampToBounds', () => {
     expect(tiny.w).toBe(DEFAULT_MIN_SIZE.w);
     expect(tiny.h).toBe(DEFAULT_MIN_SIZE.h);
   });
+  test('when bounds are smaller than the min size, the size caps at the bounds (cap wins over min)', () => {
+    const small = { w: 50, h: 40 };
+    const out = clampToBounds({ x: 100, y: 100, w: 300, h: 200 }, small);
+    // min would be 160x100, but the bounds cap is applied last so the window
+    // can never exceed the (tiny) desktop.
+    expect(out.w).toBe(50);
+    expect(out.h).toBe(40);
+    // Origin is pulled to 0 since bounds.w - w === 0.
+    expect(out.x).toBe(0);
+    expect(out.y).toBe(0);
+  });
 });
 
 describe('cascadePlacement', () => {
@@ -38,5 +49,20 @@ describe('cascadePlacement', () => {
     expect(r.x).toBeGreaterThanOrEqual(24);
     expect(r.x + r.w).toBeLessThanOrEqual(bounds.w);
     expect(r.y + r.h).toBeLessThanOrEqual(bounds.h);
+  });
+  test('clamps steps to >=1 and stays in bounds when bounds are smaller than the window', () => {
+    // bounds < window size: (bounds.w - w - origin) is negative, so the step count
+    // would go <=0; it must clamp to >=1 (n = index % 1 = 0, no NaN/div-by-zero)
+    // and the result must still be fully inside the (tiny) bounds.
+    const small = { w: 300, h: 250 };
+    for (const index of [0, 3, 40]) {
+      const r = cascadePlacement(index, [400, 300], small);
+      expect(r.x).toBe(0);
+      expect(r.y).toBe(0);
+      expect(r.x + r.w).toBeLessThanOrEqual(small.w);
+      expect(r.y + r.h).toBeLessThanOrEqual(small.h);
+      expect(Number.isFinite(r.x)).toBe(true);
+      expect(Number.isFinite(r.y)).toBe(true);
+    }
   });
 });

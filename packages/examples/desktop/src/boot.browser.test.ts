@@ -87,3 +87,55 @@ test('closing a tier-2 window removes its frame', async () => {
 
   wm.dispose(); desktop.remove(); taskbar.remove();
 });
+
+// --- Image-viewer guest lifecycle coverage ---
+//
+// The image-viewer guest (image-viewer-guest.ts) renders a drop-zone, emits 'ready'
+// then 'img-rendered:<url>' over stdout on drop. Because it runs in an OPAQUE-ORIGIN
+// sandboxed iframe (sandbox="allow-scripts", no allow-same-origin), the host CANNOT
+// reach into the guest's document to fire a synthetic `drop` or inspect <img>/<div>.
+// We therefore assert only what IS observable across that boundary: the sandboxed
+// iframe mounts inside win.content (never document.body), carries a process pid, and
+// the close() SIGTERM lifecycle detaches the iframe from the live DOM.
+
+test('image-viewer guest iframe mounts inside win.content with opaque-origin sandbox and a live pid', async () => {
+  const { desktop, taskbar } = surface();
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const { wm } = await bootDesktop({ desktop, taskbar, vfs });
+
+  const win = await wm.open('image-viewer');
+
+  const iframe = win.content.querySelector('iframe') as HTMLIFrameElement;
+  expect(iframe).not.toBeNull();
+  // The guest iframe lives in the window content, NOT loose on document.body.
+  expect(win.content.contains(iframe)).toBe(true);
+  // Opaque-origin guard at the integration level: allow-scripts only, never same-origin.
+  const sandbox = iframe.getAttribute('sandbox');
+  expect(sandbox).toBe('allow-scripts');
+  expect(sandbox).not.toContain('allow-same-origin');
+  // A real kernel process was spawned for the GUI guest.
+  expect(win.pid).toBeGreaterThan(0);
+
+  wm.dispose(); desktop.remove(); taskbar.remove();
+});
+
+test('closing the image-viewer (SIGTERM) detaches its guest iframe from the live DOM', async () => {
+  const { desktop, taskbar } = surface();
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const { wm } = await bootDesktop({ desktop, taskbar, vfs });
+
+  const win = await wm.open('image-viewer');
+  const iframe = win.content.querySelector('iframe') as HTMLIFrameElement;
+  expect(iframe).not.toBeNull();
+  expect(document.body.contains(iframe)).toBe(true);
+
+  wm.close(win.id);
+
+  // The whole window frame is gone and its guest iframe is no longer in the document.
+  expect(desktop.querySelectorAll('[data-role="window"]').length).toBe(0);
+  expect(document.body.contains(iframe)).toBe(false);
+
+  wm.dispose(); desktop.remove(); taskbar.remove();
+});

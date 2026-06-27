@@ -14,7 +14,7 @@ export { renderTextEditor, mountTextEditor } from './apps/text-editor.ts';
 export type { EditorFs, EditorDeps, EditorHandle } from './apps/text-editor.ts';
 
 export { createFileManagerModel, renderFileManager, mountFileManager } from './apps/file-manager.ts';
-export type { Entry, FileManagerFs, FileManagerDeps, FileManagerModel, FileManagerHandle } from './apps/file-manager.ts';
+export type { Entry, PathSegment, FileManagerFs, FileManagerDeps, FileManagerModel, FileManagerHandle } from './apps/file-manager.ts';
 
 export { createWindowFrame, applyGeometry, applyState, setWindowTitle } from './window.ts';
 export type { WindowFrameElements, CreateWindowOptions } from './window.ts';

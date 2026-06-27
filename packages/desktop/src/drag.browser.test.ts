@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { makeDraggable, SHIELD_CLASS, installShieldStyle } from './drag.ts';
+import { makeDraggable, makeResizable, SHIELD_CLASS, installShieldStyle } from './drag.ts';
 
 function pointer(type: string, x: number, y: number): PointerEvent {
   return new PointerEvent(type, { clientX: x, clientY: y, bubbles: true, pointerId: 1 });
@@ -89,4 +89,53 @@ test('shield is refcounted: two overlapping drags keep it until both end (M3)', 
 
   a.remove();
   b.remove();
+});
+
+test('makeResizable reports new sizes, toggles the shield, and fires onEnd', () => {
+  installShieldStyle(document);
+  const handle = document.createElement('div');
+  document.body.appendChild(handle);
+
+  const sizes: Array<{ w: number; h: number }> = [];
+  let ended = false;
+  makeResizable(handle, {
+    onStart: () => ({ w: 300, h: 200 }),
+    onMove: (w, h) => { sizes.push({ w, h }); },
+    onEnd: () => { ended = true; },
+  });
+
+  handle.dispatchEvent(pointer('pointerdown', 500, 400));
+  expect(document.body.classList.contains(SHIELD_CLASS)).toBe(true);
+
+  // +50 in x, +30 in y from start.
+  document.dispatchEvent(pointer('pointermove', 550, 430));
+  expect(sizes.at(-1)).toEqual({ w: 350, h: 230 });
+
+  document.dispatchEvent(pointer('pointerup', 550, 430));
+  expect(document.body.classList.contains(SHIELD_CLASS)).toBe(false);
+  expect(ended).toBe(true);
+
+  handle.remove();
+});
+
+test('makeResizable clamps to minW/minH when dragging smaller', () => {
+  installShieldStyle(document);
+  const handle = document.createElement('div');
+  document.body.appendChild(handle);
+
+  const sizes: Array<{ w: number; h: number }> = [];
+  makeResizable(handle, {
+    onStart: () => ({ w: 200, h: 150 }),
+    onMove: (w, h) => { sizes.push({ w, h }); },
+    minW: 120,
+    minH: 80,
+  });
+
+  handle.dispatchEvent(pointer('pointerdown', 400, 400));
+  // Drag far up-left (would compute 200-300=-100 / 150-300=-150) → clamps to min.
+  document.dispatchEvent(pointer('pointermove', 100, 100));
+  expect(sizes.at(-1)).toEqual({ w: 120, h: 80 });
+
+  document.dispatchEvent(pointer('pointerup', 100, 100));
+  handle.remove();
 });

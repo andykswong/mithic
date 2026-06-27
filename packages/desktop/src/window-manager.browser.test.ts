@@ -236,3 +236,137 @@ test('dragging a window titlebar across a live iframe still tracks the pointer (
   iframe.remove();
   wm.dispose(); desktop.remove();
 });
+
+test('toggleMaximize fills the desktop, then restores the original geometry', async () => {
+  const desktop = setupDesktop();
+  const kernel = fakeKernel();
+  const apps = new AppRegistry();
+  apps.register({ name: 'a', title: 'A', defaultSize: [400, 300], mount: () => {} });
+  const wm = new WindowManager({ desktop, kernel: kernel as any, apps });
+
+  const win = await wm.open('a');
+  const original = { ...win.geometry };
+  expect(win.state).toBe('normal');
+
+  // Maximize: state flips and geometry becomes the full desktop bounds.
+  wm.toggleMaximize(win.id);
+  expect(win.state).toBe('maximized');
+  expect(win.geometry).toEqual({ x: 0, y: 0, w: desktop.clientWidth, h: desktop.clientHeight });
+  // Geometry is reflected onto the frame (transform + size).
+  expect(win.frame.style.transform).toBe('translate3d(0px, 0px, 0px)');
+  expect(win.frame.style.width).toBe(`${desktop.clientWidth}px`);
+  expect(win.frame.style.height).toBe(`${desktop.clientHeight}px`);
+
+  // Restore: back to 'normal' and the exact original rect.
+  wm.toggleMaximize(win.id);
+  expect(win.state).toBe('normal');
+  expect(win.geometry).toEqual(original);
+  expect(win.frame.style.transform).toBe(`translate3d(${original.x}px, ${original.y}px, 0px)`);
+  expect(win.frame.style.width).toBe(`${original.w}px`);
+
+  wm.dispose(); desktop.remove();
+});
+
+test('maximize then close cleans up the frame and tracked window', async () => {
+  const desktop = setupDesktop();
+  const kernel = fakeKernel();
+  const apps = new AppRegistry();
+  apps.register({ name: 'a', title: 'A', defaultSize: [300, 200], mount: () => {} });
+  const wm = new WindowManager({ desktop, kernel: kernel as any, apps });
+
+  const win = await wm.open('a');
+  wm.toggleMaximize(win.id);
+  expect(win.state).toBe('maximized');
+
+  wm.close(win.id);
+  expect(desktop.querySelector('[data-role="window"]')).toBeNull();
+  expect(wm.windows.length).toBe(0);
+
+  wm.dispose(); desktop.remove();
+});
+
+test('resize-handle drag grows the window geometry and updates the frame size', async () => {
+  const desktop = setupDesktop();
+  const kernel = fakeKernel();
+  const apps = new AppRegistry();
+  apps.register({ name: 'a', title: 'A', defaultSize: [400, 300], resizable: true, mount: () => {} });
+  const wm = new WindowManager({ desktop, kernel: kernel as any, apps });
+
+  const win = await wm.open('a');
+  const handle = win.frame.querySelector('[data-role="resize"]') as HTMLElement;
+  expect(handle).not.toBeNull();
+  const w0 = win.geometry.w, h0 = win.geometry.h;
+
+  const startX = 500, startY = 400, dx = 120, dy = 80;
+  handle.dispatchEvent(new PointerEvent('pointerdown', { clientX: startX, clientY: startY, pointerId: 1, bubbles: true }));
+  document.dispatchEvent(new PointerEvent('pointermove', { clientX: startX + dx, clientY: startY + dy, pointerId: 1, bubbles: true }));
+
+  expect(win.geometry.w).toBe(w0 + dx);
+  expect(win.geometry.h).toBe(h0 + dy);
+  expect(win.frame.style.width).toBe(`${w0 + dx}px`);
+  expect(win.frame.style.height).toBe(`${h0 + dy}px`);
+
+  document.dispatchEvent(new PointerEvent('pointerup', { clientX: startX + dx, clientY: startY + dy, pointerId: 1, bubbles: true }));
+  wm.dispose(); desktop.remove();
+});
+
+test('focus bridge: clicking inside a lower window\'s iframe raises it above the other (§5.3(4))', async () => {
+  const desktop = setupDesktop();
+  const kernel = fakeKernel();
+  const apps = new AppRegistry();
+  // Two tier-1 windows; we inject an iframe into the lower window's content to
+  // stand in for a tier-2 guest (no real Kernel needed — the bridge only reads
+  // document.activeElement, which we drive directly).
+  apps.register({ name: 'a', title: 'A', defaultSize: [300, 200], mount: () => {} });
+  apps.register({ name: 'b', title: 'B', defaultSize: [300, 200], mount: () => {} });
+  const wm = new WindowManager({ desktop, kernel: kernel as any, apps });
+
+  const a = await wm.open('a');
+  const b = await wm.open('b');
+  // b opened last → on top.
+  expect(b.z).toBeGreaterThan(a.z);
+
+  // Put a focusable iframe inside a's content (the lower window).
+  const iframe = document.createElement('iframe');
+  iframe.tabIndex = -1;
+  iframe.style.cssText = 'width:100%;height:100%;border:0;';
+  a.content.appendChild(iframe);
+
+  // Simulate the cross-sandbox focus: the iframe becomes activeElement and the
+  // top window blurs. The WM's blur handler must raise a above b.
+  iframe.focus();
+  window.dispatchEvent(new Event('blur'));
+  await new Promise((r) => setTimeout(r, 0)); // let the queued microtask run
+
+  expect(a.z).toBeGreaterThan(b.z);
+
+  wm.dispose(); desktop.remove();
+});
+
+test('focus bridge ignores a blur when activeElement is not a tracked iframe', async () => {
+  const desktop = setupDesktop();
+  const kernel = fakeKernel();
+  const apps = new AppRegistry();
+  apps.register({ name: 'a', title: 'A', defaultSize: [300, 200], mount: () => {} });
+  apps.register({ name: 'b', title: 'B', defaultSize: [300, 200], mount: () => {} });
+  const wm = new WindowManager({ desktop, kernel: kernel as any, apps });
+
+  const a = await wm.open('a');
+  const b = await wm.open('b');
+  const zB = b.z;
+
+  // An iframe that is NOT inside any tracked window's content.
+  const stray = document.createElement('iframe');
+  stray.tabIndex = -1;
+  document.body.appendChild(stray);
+  stray.focus();
+  window.dispatchEvent(new Event('blur'));
+  await new Promise((r) => setTimeout(r, 0));
+
+  // No tracked iframe matched → z-order unchanged; b stays on top.
+  expect(b.z).toBe(zB);
+  expect(b.z).toBeGreaterThan(a.z);
+
+  stray.remove();
+  wm.dispose(); desktop.remove();
+});

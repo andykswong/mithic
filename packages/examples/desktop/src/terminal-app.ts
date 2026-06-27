@@ -66,12 +66,54 @@ export function mountTerminal(ctx: WindowContext, deps: TerminalDeps): TerminalH
     prompt();
   };
 
+  // ── line editor ──────────────────────────────────────────────────────────
+  // Mirrors @mithic/example-shell's line editor: backspace, Enter, Up/Down
+  // command history, and Ctrl+C cancel.
   let lineBuf = '';
+  const history: string[] = [];
+  let histIndex = 0; // points one past the last entry (= "new line")
+  let running = false;
+
+  const replaceLine = (next: string): void => {
+    // Erase current input (backspace-space-backspace), then write the replacement.
+    if (lineBuf.length > 0) terminal.write('\b'.repeat(lineBuf.length) + ' '.repeat(lineBuf.length) + '\b'.repeat(lineBuf.length));
+    lineBuf = next;
+    terminal.write(next);
+  };
+
   const onData = terminal.onData((data: string) => {
+    if (running) return; // ignore input while a command is executing
+    if (data === '\x1b[A') { // Up — recall previous command
+      if (history.length > 0 && histIndex > 0) { histIndex--; replaceLine(history[histIndex]); }
+      return;
+    }
+    if (data === '\x1b[B') { // Down — move toward the newest / empty line
+      if (histIndex < history.length) {
+        histIndex++;
+        replaceLine(histIndex === history.length ? '' : history[histIndex]);
+      }
+      return;
+    }
     for (const ch of data) {
-      if (ch === '\r' || ch === '\n') { terminal.write('\r\n'); const l = lineBuf; lineBuf = ''; void submitLine(l); }
-      else if (ch === '\x7f') { if (lineBuf.length) { lineBuf = lineBuf.slice(0, -1); terminal.write('\b \b'); } }
-      else { lineBuf += ch; terminal.write(ch); }
+      if (ch === '\r' || ch === '\n') {
+        terminal.write('\r\n');
+        const line = lineBuf;
+        lineBuf = '';
+        if (line.trim().length > 0) history.push(line);
+        histIndex = history.length;
+        running = true;
+        void submitLine(line).finally(() => { running = false; });
+      } else if (ch === '\x7f' || ch === '\b') { // Backspace
+        if (lineBuf.length > 0) { lineBuf = lineBuf.slice(0, -1); terminal.write('\b \b'); }
+      } else if (ch === '\x03') { // Ctrl+C — cancel the current line (do NOT submit)
+        terminal.write('^C\r\n');
+        lineBuf = '';
+        histIndex = history.length;
+        prompt();
+      } else if (ch >= ' ') {
+        lineBuf += ch;
+        terminal.write(ch);
+      }
     }
   });
 

@@ -54,3 +54,207 @@ describe('file manager model', () => {
     expect(m.cwd).toBe('/');
   });
 });
+
+describe('breadcrumb segments', () => {
+  test('root has a single root segment', async () => {
+    const m = createFileManagerModel({ fs: fakeFs({ '/': [] }), onOpen: () => {} });
+    await m.navigate('/');
+    expect(m.segments).toEqual([{ label: '/', path: '/' }]);
+  });
+  test('nested cwd yields cumulative segment paths', async () => {
+    const m = createFileManagerModel({
+      fs: fakeFs({ '/': [{ name: 'foo', kind: 'directory' }], '/foo': [{ name: 'bar', kind: 'directory' }], '/foo/bar': [] }),
+      onOpen: () => {},
+    });
+    await m.navigate('/foo/bar');
+    expect(m.segments).toEqual([
+      { label: '/', path: '/' },
+      { label: 'foo', path: '/foo' },
+      { label: 'bar', path: '/foo/bar' },
+    ]);
+  });
+  test('navigating to a segment path changes cwd', async () => {
+    const m = createFileManagerModel({
+      fs: fakeFs({ '/': [{ name: 'foo', kind: 'directory' }], '/foo': [{ name: 'bar', kind: 'directory' }], '/foo/bar': [] }),
+      onOpen: () => {},
+    });
+    await m.navigate('/foo/bar');
+    await m.navigate(m.segments[1].path);
+    expect(m.cwd).toBe('/foo');
+  });
+});
+
+describe('back / forward history', () => {
+  function nav3() {
+    return createFileManagerModel({
+      fs: fakeFs({ '/': [{ name: 'a', kind: 'directory' }], '/a': [{ name: 'b', kind: 'directory' }], '/a/b': [] }),
+      onOpen: () => {},
+    });
+  }
+  test('canBack/canForward start false at the first navigation', async () => {
+    const m = nav3();
+    await m.navigate('/');
+    expect(m.canBack).toBe(false);
+    expect(m.canForward).toBe(false);
+  });
+  test('back returns to previous path and enables forward', async () => {
+    const m = nav3();
+    await m.navigate('/');
+    await m.navigate('/a');
+    expect(m.canBack).toBe(true);
+    await m.back();
+    expect(m.cwd).toBe('/');
+    expect(m.canForward).toBe(true);
+    await m.forward();
+    expect(m.cwd).toBe('/a');
+  });
+  test('enter() and up() participate in history', async () => {
+    const m = nav3();
+    await m.navigate('/');
+    await m.enter('a');
+    await m.enter('b');
+    expect(m.cwd).toBe('/a/b');
+    await m.back();
+    expect(m.cwd).toBe('/a');
+    await m.back();
+    expect(m.cwd).toBe('/');
+  });
+  test('navigating after going back truncates the forward stack (browser semantics)', async () => {
+    const m = nav3();
+    await m.navigate('/');
+    await m.navigate('/a');
+    await m.navigate('/a/b');
+    await m.back();          // back to /a
+    expect(m.canForward).toBe(true);
+    await m.navigate('/');   // new nav truncates forward
+    expect(m.cwd).toBe('/');
+    expect(m.canForward).toBe(false);
+  });
+  test('back at the start and forward at the end are no-ops', async () => {
+    const m = nav3();
+    await m.navigate('/');
+    await m.back();
+    expect(m.cwd).toBe('/');
+    await m.forward();
+    expect(m.cwd).toBe('/');
+  });
+  test('re-navigating to the current path does not grow history', async () => {
+    const m = nav3();
+    await m.navigate('/');
+    await m.navigate('/');
+    expect(m.canBack).toBe(false);
+  });
+});
+
+describe('selection', () => {
+  test('select highlights an entry and clearSelection resets it', async () => {
+    const m = createFileManagerModel({ fs: fakeFs({ '/': [{ name: 'a.txt', kind: 'file' }] }), onOpen: () => {} });
+    await m.navigate('/');
+    expect(m.selected).toBeNull();
+    m.select('a.txt');
+    expect(m.selected).toBe('a.txt');
+    m.clearSelection();
+    expect(m.selected).toBeNull();
+  });
+  test('navigation clears the current selection', async () => {
+    const m = createFileManagerModel({ fs: fakeFs({ '/': [{ name: 'docs', kind: 'directory' }], '/docs': [] }), onOpen: () => {} });
+    await m.navigate('/');
+    m.select('docs');
+    await m.enter('docs');
+    expect(m.selected).toBeNull();
+  });
+});
+
+describe('move', () => {
+  test('move(name, destDir) renames using correct absolute src/dest paths', async () => {
+    const rename = vi.fn(async () => {});
+    const fs: FileManagerFs = {
+      list: async () => [{ name: 'a.txt', kind: 'file' }, { name: 'docs', kind: 'directory' }],
+      mkdir: async () => {}, createFile: async () => {}, remove: async () => {}, rename,
+    };
+    const m = createFileManagerModel({ fs, onOpen: () => {} });
+    await m.navigate('/');
+    await m.move('a.txt', '/docs');
+    expect(rename).toHaveBeenCalledWith('/a.txt', '/docs/a.txt');
+  });
+  test('move from a nested cwd builds the source from cwd', async () => {
+    const rename = vi.fn(async () => {});
+    const fs: FileManagerFs = {
+      list: async () => [{ name: 'sub', kind: 'directory' }, { name: 'f.txt', kind: 'file' }],
+      mkdir: async () => {}, createFile: async () => {}, remove: async () => {}, rename,
+    };
+    const m = createFileManagerModel({ fs, onOpen: () => {} });
+    await m.navigate('/work');
+    await m.move('f.txt', '/work/sub');
+    expect(rename).toHaveBeenCalledWith('/work/f.txt', '/work/sub/f.txt');
+  });
+  test('moving onto the root dir produces /name', async () => {
+    const rename = vi.fn(async () => {});
+    const fs: FileManagerFs = {
+      list: async () => [{ name: 'f.txt', kind: 'file' }],
+      mkdir: async () => {}, createFile: async () => {}, remove: async () => {}, rename,
+    };
+    const m = createFileManagerModel({ fs, onOpen: () => {} });
+    await m.navigate('/work');
+    await m.move('f.txt', '/');
+    expect(rename).toHaveBeenCalledWith('/work/f.txt', '/f.txt');
+  });
+  test('moving onto the same directory is a no-op (no rename)', async () => {
+    const rename = vi.fn(async () => {});
+    const fs: FileManagerFs = {
+      list: async () => [{ name: 'f.txt', kind: 'file' }],
+      mkdir: async () => {}, createFile: async () => {}, remove: async () => {}, rename,
+    };
+    const m = createFileManagerModel({ fs, onOpen: () => {} });
+    await m.navigate('/work');
+    await m.move('f.txt', '/work');
+    expect(rename).not.toHaveBeenCalled();
+  });
+});
+
+describe('tree children', () => {
+  test('listChildren returns dirs-first sorted entries for a path', async () => {
+    const m = createFileManagerModel({
+      fs: fakeFs({ '/': [], '/foo': [{ name: 'z.txt', kind: 'file' }, { name: 'sub', kind: 'directory' }] }),
+      onOpen: () => {},
+    });
+    await m.navigate('/');
+    const kids = await m.listChildren('/foo');
+    expect(kids.map((e) => e.name)).toEqual(['sub', 'z.txt']);
+  });
+});
+
+describe('error handling', () => {
+  test('refresh surfaces an empty list and an error flag when fs.list rejects', async () => {
+    const fs: FileManagerFs = {
+      list: async () => { throw new Error('EACCES'); },
+      mkdir: async () => {}, createFile: async () => {}, remove: async () => {}, rename: async () => {},
+    };
+    const m = createFileManagerModel({ fs, onOpen: () => {} });
+    await expect(m.navigate('/secret')).resolves.toBeUndefined();
+    expect(m.entries).toEqual([]);
+    expect(m.error).toBe(true);
+    expect(m.cwd).toBe('/secret');
+  });
+  test('a successful navigation clears a prior error flag', async () => {
+    let fail = true;
+    const fs: FileManagerFs = {
+      list: async () => { if (fail) throw new Error('EACCES'); return [{ name: 'ok.txt', kind: 'file' }]; },
+      mkdir: async () => {}, createFile: async () => {}, remove: async () => {}, rename: async () => {},
+    };
+    const m = createFileManagerModel({ fs, onOpen: () => {} });
+    await m.navigate('/secret');
+    expect(m.error).toBe(true);
+    fail = false;
+    await m.navigate('/open');
+    expect(m.error).toBe(false);
+    expect(m.entries.map((e) => e.name)).toEqual(['ok.txt']);
+  });
+  test('navigating to an empty dir yields an empty entry list without error', async () => {
+    const m = createFileManagerModel({ fs: fakeFs({ '/': [{ name: 'empty', kind: 'directory' }], '/empty': [] }), onOpen: () => {} });
+    await m.navigate('/');
+    await m.enter('empty');
+    expect(m.entries).toEqual([]);
+    expect(m.error).toBe(false);
+  });
+});
