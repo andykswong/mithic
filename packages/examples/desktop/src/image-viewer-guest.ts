@@ -20,6 +20,17 @@ export default async (boot) => {
   const g = createGuest(boot);
   const w = g.stdout.getWriter();
   const enc = new TextEncoder();
+  // Display-awareness: the host threads the boot DisplayInfo here. An explicit
+  // available:false (server/Node host, or spawned hidden) means there is NO GUI
+  // surface, so run headless — never touch the DOM — then await a signal + exit.
+  const display = boot.init && boot.init.display;
+  if (display && display.available === false) {
+    await w.write(enc.encode('headless\\n'));
+    await new Promise((resolve) => g.onSignal(() => resolve()));
+    await w.close().catch(() => {});
+    g.exit(0);
+    return;
+  }
   const dz = document.createElement('div');
   dz.id = 'drop-zone'; dz.textContent = 'Drop an image here';
   dz.style.cssText = 'border:2px dashed #888;border-radius:8px;padding:24px;text-align:center;font:14px sans-serif;color:#ccc;margin:12px;';
