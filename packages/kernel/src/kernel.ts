@@ -1,5 +1,6 @@
 import type {
   Capability,
+  DisplayInfo,
   KernelEvent,
   ProcessInit,
   ProcessLimits,
@@ -475,6 +476,7 @@ export class Kernel {
       capabilities: ctx.granted,
       limits: init.limits,
       preopens,
+      display: toDisplayInfo(init.display),
     };
   }
 
@@ -1259,6 +1261,26 @@ function isHeartbeatAck(x: unknown): x is { type: 'heartbeat-ack' } {
  * forget: the kernel does not await stdin delivery (the child drains at its own
  * pace), but errors are swallowed so a closed reader never rejects unhandled.
  */
+/**
+ * Map the host-side {@link DisplayOptions} to the wire {@link DisplayInfo} a guest
+ * learns at boot. `container` (an HTMLElement) is host-only and never crosses the
+ * wire (unserializable / would leak a host ref). A `hidden` mode (or no display)
+ * means no usable GUI surface for the guest, so it collapses to `available:false`
+ * with no geometry. Absent display → `undefined` (the guest treats unknown as
+ * headless).
+ */
+function toDisplayInfo(display: DisplayOptions | undefined): DisplayInfo | undefined {
+  if (!display) return undefined;
+  if (display.mode === 'hidden') return { available: false };
+  return {
+    available: true,
+    mode: display.mode,
+    width: display.width,
+    height: display.height,
+    title: display.title,
+  };
+}
+
 function feedPort(writePort: MessagePort, data: Uint8Array): void {
   writePort.start?.();
   // C1: the shared PipeWriter owns credit accounting + the sticky broken latch.
