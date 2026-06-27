@@ -1,4 +1,4 @@
-import type { ProcessInit } from '@mithic/protocol';
+import type { DisplayInfo, ProcessInit } from '@mithic/protocol';
 import { isKernelEvent } from '@mithic/protocol';
 import { SyscallClient } from './syscall-client.ts';
 import type { SyscallCallOptions, SyscallResult } from './syscall-client.ts';
@@ -103,6 +103,15 @@ export interface Guest {
    * batch mode. Returns false for any fd without a tty preopen (incl. unknown fds).
    */
   isatty(fd: number): boolean;
+  /**
+   * The GUI surface this process was given at boot (from the app manifest's
+   * display config, threaded by the host). `undefined` or `available:false`
+   * means there is NO usable display (server/Node host, or spawned hidden) — the
+   * app should run headless/CLI. When `available:true`, `width`/`height` are the
+   * actual pixel size the host allocated. The guest LEARNS this; it cannot request
+   * a window (geometry is the host/manifest's decision).
+   */
+  readonly display?: DisplayInfo;
   exit(code: number): void;
 }
 
@@ -257,6 +266,7 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
     isatty(fd: number) {
       return init.preopens?.[fd]?.tty === true;
     },
+    display: init.display,
     exit(code) {
       // Break the stdin pipe so an unconsumed upstream producer gets EPIPE.
       closeStdinPeer();

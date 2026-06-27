@@ -1,5 +1,6 @@
 export { createGuest } from './guest.ts';
 export type { Guest, GuestOptions } from './guest.ts';
+export type { DisplayInfo } from '@mithic/protocol';
 export { createFetch } from './fetch.ts';
 export type { SyscallHook, PortsSyscallHook } from './fetch.ts';
 export {

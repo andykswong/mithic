@@ -374,3 +374,47 @@ test('guest.isatty is false when init.preopens is entirely absent', () => {
   expect(guest.isatty(2)).toBe(false);
   guest.exit(0);
 });
+
+test('guest.display surfaces the boot DisplayInfo (available:true + geometry)', () => {
+  const ch = new MessageChannel();
+  const guest = createGuest({
+    control: ch.port1,
+    init: {
+      type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 1, ppid: 0, capabilities: [],
+      display: { available: true, mode: 'window', width: 480, height: 360, title: 'Pic' },
+    },
+    preopenPorts: {},
+  });
+  expect(guest.display?.available).toBe(true);
+  expect(guest.display?.mode).toBe('window');
+  expect(guest.display?.width).toBe(480);
+  expect(guest.display?.height).toBe(360);
+  expect(guest.display?.title).toBe('Pic');
+  guest.exit(0);
+});
+
+test('guest.display surfaces available:false for a no-GUI (hidden/headless) surface', () => {
+  const ch = new MessageChannel();
+  const guest = createGuest({
+    control: ch.port1,
+    init: {
+      type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 2, ppid: 0, capabilities: [],
+      display: { available: false },
+    },
+    preopenPorts: {},
+  });
+  expect(guest.display?.available).toBe(false);
+  expect(guest.display?.width).toBeUndefined();
+  guest.exit(0);
+});
+
+test('guest.display is undefined for a headless/no-display process', () => {
+  const ch = new MessageChannel();
+  const guest = createGuest({
+    control: ch.port1,
+    init: { type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 3, ppid: 0, capabilities: [] },
+    preopenPorts: {},
+  });
+  expect(guest.display).toBeUndefined();
+  guest.exit(0);
+});
