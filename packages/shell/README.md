@@ -146,7 +146,7 @@ the stage `path`, and the kernel's `resolveCommand(name, cwd, env)` maps it to
 spawnable guest code (or returns `ENOENT`, surfaced as exit `127` with a
 `command not found` line on stderr). This is how the shell stays agnostic of the
 command suite: pair it with `@mithic/coreutils`, `@mithic/jq`, and `@mithic/curl`
-(as `@mithic/example-shell` and `@mithic/example-notebook` do) and those commands
+(as `@mithic/example-shell` and `@mithic/example-desktop` do) and those commands
 become spawnable. A single external command is run as a one-stage pipeline so its
 stdout is captured back to the shell.
 

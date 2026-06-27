@@ -22,7 +22,7 @@ This example boots a single `Kernel` (GUI-capable `IframeRuntime`) + a `FileSyst
 |-----|------|-------|
 | **Terminal** | tier-1 (host DOM) | xterm.js + `@mithic/shell` `Executor` + the full coreutils/jq/curl command suite. Line editor with command **history** (↑/↓) and **Ctrl+C**, fit-to-window, clickable links. |
 | **Text editor** | tier-1 | A plain `<textarea>` (no editor library): open from a path, Ctrl+S save, dirty marker, Tab-inserts-tab, read-only mode. |
-| **File manager** | tier-1 | Two-pane tree + list over the VFS: clickable breadcrumb, back/forward, selection, a real context menu (Open / Open With / New / Rename / Delete), drag-to-move, and **Open-With** (extension → app). |
+| **File manager** | tier-1 | Two-pane tree + list over the VFS: clickable breadcrumb, back/forward, selection, a real context menu (Open / Open With / New / Rename / Delete), drag-to-move, and **Open-With** (extension → app; resolves-and-opens via the registry — no app-picker dialog yet). |
 | **Image viewer** | **tier-2 (sandboxed)** | The reference untrusted app: a self-contained inline guest spawned into its window's iframe with only `fs:/tmp` capability. Proves the sandboxed-app path end-to-end. |
 
 ## How it works

@@ -9,12 +9,19 @@
  * that added `allow-same-origin` (e.g. to "fix" a blob: import) would silently destroy
  * the isolation boundary, so we assert it explicitly here.
  *
- * pid↔source binding: the runtime's inbound `message` listener filters by
- * `e.source !== iframe.contentWindow` (iframe.ts ~line 106). A message that does NOT
- * originate from the process's own guest iframe must never reach that process's
- * onMessage callbacks. We prove this by posting a forged SyscallRequest from the top
- * window (whose `e.source` is the top window, not the guest iframe) and asserting it is
- * dropped.
+ * source binding: the runtime's inbound `message` listener filters by
+ * `e.source !== iframe.contentWindow` (iframe.ts ~line 106) — the per-process listener
+ * is a closure over that one iframe, so a message whose `e.source` is NOT the guest's
+ * own contentWindow must never reach that process's onMessage callbacks. We prove this
+ * by posting a forged SyscallRequest from the top window (whose `e.source` is the top
+ * window, not the guest iframe) and asserting it is dropped — for one process and, to
+ * rule out cross-process leakage, for two processes at once.
+ *
+ * NOTE on scope: the binding is by contentWindow IDENTITY (the closure), not by an
+ * explicit pid→source map, and these tests exercise the top-window-source case. A
+ * dedicated test forging from a *second guest's* contentWindow into the first guest's
+ * listener (true cross-iframe spoof) — plus an explicit pid↔source map in the runtime —
+ * remains a hardening follow-up (design doc §9/§15).
  */
 import { expect, test } from 'vitest';
 import { IframeRuntime } from './iframe.ts';
