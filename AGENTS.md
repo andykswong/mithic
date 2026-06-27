@@ -26,13 +26,16 @@ packages/
 │   └── curl/       @mithic/curl           — pure-TS curl-like HTTP client; all network via the capability-gated net/fetch syscall
 ├── server/         @mithic/server         — host-side Hono REST server: POST /exec runs sandboxed code (QuickJS relay path)
 ├── worker/         @mithic/worker         — Web Worker polyfill for Node.js (isomorphic `new Worker()`); built with tsc, tested with node --test
+├── desktop/        @mithic/desktop        — host-side window manager for a browser OS: WindowManager + AppRegistry + drag/resize (iframe pointer-shield) + taskbar + geometry persistence + tier-1 textarea editor / tier-1 file-manager apps; zero third-party deps
 └── examples/       (private)
     ├── shell/        @mithic/example-shell        — xterm.js browser terminal running @mithic/shell with the full coreutils + jq + curl suite
     ├── image-viewer/ @mithic/example-image-viewer — GUI Mithic process: drop-zone + <img> rendered in its own sandboxed iframe DOM
-    └── notebook/     @mithic/example-notebook     — xterm.js shell-notebook frontend booting a Kernel with the full command suite + an inline GUI image-viewer
+    └── desktop/      @mithic/example-desktop      — minimalist browser OS: @mithic/desktop WM + terminal/editor/file-manager + a sandboxed image-viewer over one shared kernel + VFS
 ```
 
-**Dependency layering (bottom → top):** `protocol` → `runtime`/`guest-runtime`/`io` → `kernel` (uses runtime + io + protocol) → `shell`/`coreutils`/`jq`/`curl` (guests on guest-runtime) → `server` and `examples` (compose kernel + runtime + io + shell + command packages). `worker` is standalone and consumed by `runtime` for Node Worker support.
+**Dependency layering (bottom → top):** `protocol` → `runtime`/`guest-runtime`/`io` → `kernel` (uses runtime + io + protocol) → `shell`/`coreutils`/`jq`/`curl` (guests on guest-runtime) → `desktop` (host-side WM over kernel + runtime + io) → `server` and `examples` (compose kernel + runtime + io + shell + command + desktop packages). `worker` is standalone and consumed by `runtime` for Node Worker support.
+
+> **Browser OS:** `@mithic/desktop` is a *host-side* windowing layer (it runs on the trusted host page, never in a sandbox) — the guest never calls into it. The one enabling kernel/runtime change is the per-spawn `display.container?: HTMLElement` on `SpawnOptions`/`DisplayOptions`, so each GUI guest's iframe is created inside its own window frame and **never reparented** (reparenting reloads the iframe and kills the guest). Design + ChromeOS-parity roadmap: `docs/isola/005-browser-os-design.md`.
 
 **Command suite: 56 commands** — 54 coreutils (`COMMAND_NAMES` in `packages/coreutils/src/resolver.ts`) + `jq` (`@mithic/jq`) + `curl` (`@mithic/curl`). The kernel owns the command namespace: a bare command name is mapped to spawnable guest code via `KernelOptions.resolveCommand(name, cwd, env)`.
 
@@ -52,8 +55,8 @@ Individual package: run the same commands inside the package directory.
 
 Test runner is **Vitest** (`vitest.config.ts`), with two projects:
 
-- **`node`** — environment `node`; runs `*.test.ts` matched by the config's include allowlist (`packages/{protocol,runtime,guest-runtime,kernel,shell,coreutils,server}/src/**`, `packages/io/src/vfs/**`, `packages/commands/*/src/**`).
-- **`browser`** — real Chromium via Playwright (headless); runs `*.browser.test.ts` (iframe sandboxing, DOM, MessagePort/ArrayBuffer transfer) plus the three example packages.
+- **`node`** — environment `node`; runs `*.test.ts` matched by the config's include allowlist (`packages/{protocol,runtime,guest-runtime,kernel,shell,coreutils,server}/src/**`, `packages/io/src/vfs/**`, `packages/io/src/net/**`, `packages/commands/*/src/**`, `packages/desktop/src/**`).
+- **`browser`** — real Chromium via Playwright (headless); runs `*.browser.test.ts` (iframe sandboxing, DOM, MessagePort/ArrayBuffer transfer), `packages/desktop/src/**`, plus the example packages (`image-viewer`, `desktop`, `shell`).
 
 The include globs are an **explicit allowlist**, not a `packages/*` sweep — `@mithic/io` net/utils (only `io/src/vfs/**` is in the allowlist) and `@mithic/worker` run via `node --test` through their own package `test` scripts and must not be picked up by vitest. Toolchain: TypeScript 6+, ESM-only, Vite 8, Vitest 3.2.
 

@@ -67,6 +67,7 @@ The **kernel** owns process lifecycle, the command namespace, and the syscall su
 | [`@mithic/curl`](./packages/commands/curl) | Pure-TypeScript curl-like HTTP client, routed through the capability-gated `net/fetch` syscall |
 | [`@mithic/server`](./packages/server) | Host-side Hono REST server: sandboxed code execution over `POST /exec` |
 | [`@mithic/worker`](./packages/worker) | Web Worker polyfill for Node.js (isomorphic `new Worker()`) |
+| [`@mithic/desktop`](./packages/desktop) | Host-side window manager for a browser OS: frames, drag/resize, z-order, taskbar, app registry, geometry persistence — zero third-party deps |
 
 The command suite is **56 commands** total: 54 coreutils plus `jq` and `curl`. The shell dispatches its 35 builtins in-process and spawns everything else as child processes via `process/spawn` and `process/pipeline`.
 
@@ -76,7 +77,7 @@ The command suite is **56 commands** total: 54 coreutils plus `jq` and `curl`. T
 |---------|-------------|
 | [`@mithic/example-shell`](./packages/examples/shell) | xterm.js browser terminal running `@mithic/shell` over a Kernel wired to the full coreutils + jq + curl suite |
 | [`@mithic/example-image-viewer`](./packages/examples/image-viewer) | A GUI Mithic process: drop-zone + `<img>` rendered in its own sandboxed iframe DOM |
-| [`@mithic/example-notebook`](./packages/examples/notebook) | xterm.js shell-notebook frontend booting a Kernel with the full command suite plus an inline GUI image-viewer |
+| [`@mithic/example-desktop`](./packages/examples/desktop) | A minimalist **browser OS**: `@mithic/desktop` window manager + terminal, text editor, file manager, and a sandboxed image viewer over one shared kernel + VFS |
 
 ## Getting Started
 
@@ -95,13 +96,13 @@ npm run dev --workspace=@mithic/example-shell
 
 Opens an xterm.js terminal connected to a Kernel running `@mithic/shell` with the full coreutils + jq + curl command suite. Run pipelines, scripts, and built-in commands against a capability-gated virtual filesystem.
 
-### Run the example notebook (browser)
+### Run the example desktop (browser)
 
 ```shell
-npm run dev --workspace=@mithic/example-notebook
+npm run dev --workspace=@mithic/example-desktop
 ```
 
-A shell-notebook frontend that boots the same command suite and embeds an inline GUI image-viewer process.
+A minimalist **browser OS**: a window manager hosting a terminal, a text editor, a file manager, and a sandboxed image viewer — all over one shared capability-gated kernel and VFS. Each GUI app is a real process; closing a sandboxed window `SIGTERM`s its guest, and files + window geometry persist to OPFS.
 
 ## Development
 

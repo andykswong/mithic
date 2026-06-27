@@ -34,8 +34,9 @@ export default defineConfig({
         },
       },
       {
-        // Pre-bundle xterm so the notebook browser test doesn't trigger a mid-run
-        // Vite dep re-optimization (which warns and can re-run the test).
+        // Pre-bundle xterm so the terminal browser tests (example-shell /
+        // example-desktop) don't trigger a mid-run Vite dep re-optimization
+        // (which warns and can re-run the test).
         optimizeDeps: { include: ['@xterm/xterm'] },
         test: {
           name: 'browser',
@@ -44,7 +45,7 @@ export default defineConfig({
             'packages/io/src/vfs/**/*.browser.test.ts',
             'packages/commands/*/src/**/*.browser.test.ts',
             'packages/desktop/src/**/*.browser.test.ts',
-            // Group P example packages (image-viewer GUI process + xterm notebook + shell).
+            // Example packages: image-viewer GUI process + xterm desktop/shell.
             'packages/examples/{image-viewer,desktop,shell}/src/**/*.browser.test.ts',
           ],
           exclude: ['**/node_modules/**', '**/dist/**'],
