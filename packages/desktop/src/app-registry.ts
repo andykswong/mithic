@@ -1,3 +1,4 @@
+import type { Capability } from '@mithic/protocol';
 import type { AppDescriptor } from './types.ts';
 
 /**
@@ -41,6 +42,62 @@ export class AppRegistry {
     const name = this.#assoc.get(ext);
     return name ? this.#apps.get(name) : undefined;
   }
+}
+
+/** The subset of an app `manifest.json` the desktop consumes. */
+export interface AppManifest {
+  name: string;
+  title?: string;
+  icon?: string;
+  display?: { mode?: 'window' | 'fullscreen' | 'hidden'; defaultSize?: [number, number] };
+  capabilities?: {
+    fs?: { paths: string[]; operations: ('read' | 'write' | 'execute')[] };
+    net?: { origins: string[] };
+    ipc?: { channels: string[] };
+    process?: { maxChildren?: number };
+    env?: boolean;
+  };
+}
+
+/** Extra fields the host supplies that don't live in a manifest (the code hook + UI bits). */
+export interface AppDescriptorExtras {
+  entry?: string | URL;
+  mount?: AppDescriptor['mount'];
+  icon?: string;
+}
+
+/** Default window size used when a manifest declares no `display.defaultSize`. */
+const DEFAULT_MANIFEST_SIZE: [number, number] = [640, 480];
+
+/**
+ * Build an {@link AppDescriptor} from an app `manifest.json` + the host's code
+ * hook (`entry` for a tier-2 sandboxed guest, or `mount` for a tier-1 host-DOM
+ * app). The manifest's nested `capabilities` OBJECT is converted to the flat
+ * `Capability[]` the kernel checks. `display.mode`/`defaultSize` become
+ * `displayMode`/`defaultSize` (the WM threads `displayMode` into the guest's
+ * `guest.display`). An `extras.icon` overrides the manifest icon.
+ */
+export function appDescriptorFromManifest(
+  manifest: AppManifest,
+  extras: AppDescriptorExtras,
+): AppDescriptor {
+  const caps: Capability[] = [];
+  const c = manifest.capabilities ?? {};
+  if (c.fs) caps.push({ type: 'fs', paths: c.fs.paths, operations: c.fs.operations });
+  if (c.net) caps.push({ type: 'net', origins: c.net.origins });
+  if (c.ipc) caps.push({ type: 'ipc', channels: c.ipc.channels });
+  if (c.process) caps.push({ type: 'process', maxChildren: c.process.maxChildren });
+  if (c.env) caps.push({ type: 'env' });
+  return {
+    name: manifest.name,
+    title: manifest.title ?? manifest.name,
+    icon: extras.icon ?? manifest.icon,
+    defaultSize: manifest.display?.defaultSize ?? DEFAULT_MANIFEST_SIZE,
+    displayMode: manifest.display?.mode ?? 'window',
+    capabilities: caps,
+    entry: extras.entry,
+    mount: extras.mount,
+  };
 }
 
 function normalizeExt(ext: string): string {

@@ -20,6 +20,7 @@
     "@mithic/coreutils": "2.0.0",
     "@mithic/curl": "2.0.0",
     "@mithic/desktop": "2.0.0",
+    "@mithic/example-image-viewer": "2.0.0",
     "@mithic/guest-runtime": "2.0.0",
     "@mithic/io": "2.0.0",
     "@mithic/jq": "2.0.0",

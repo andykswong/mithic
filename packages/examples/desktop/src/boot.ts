@@ -2,8 +2,9 @@ import { Kernel } from '@mithic/kernel';
 import { IframeRuntime } from '@mithic/runtime/backends/iframe';
 import { FileSystemRouter, MemoryFsProvider, DeviceFsProvider } from '@mithic/io/vfs';
 import type { FileSystemProvider, FileHandle } from '@mithic/io/vfs';
-import { WindowManager, AppRegistry, mountTextEditor, mountFileManager } from '@mithic/desktop';
-import type { EditorFs, FileManagerFs, Entry, WindowContext } from '@mithic/desktop';
+import { WindowManager, AppRegistry, appDescriptorFromManifest, mountTextEditor, mountFileManager } from '@mithic/desktop';
+import type { AppManifest, EditorFs, FileManagerFs, Entry, WindowContext } from '@mithic/desktop';
+import imageViewerManifest from '@mithic/example-image-viewer/manifest' with { type: 'json' };
 import { createCommandSuite } from './commands.ts';
 import { mountTerminal } from './terminal-app.ts';
 import { IMAGE_VIEWER_GUEST } from './image-viewer-guest.ts';
@@ -97,8 +98,12 @@ export async function bootDesktop(opts: BootOptions): Promise<DesktopHandle> {
       } });
     } });
 
-  apps.register({ name: 'image-viewer', title: 'Image Viewer', defaultSize: [480, 360], icon: '🖼️',
-    entry: IMAGE_VIEWER_GUEST, capabilities: [{ type: 'fs', paths: ['/tmp'], operations: ['read', 'write'] }] });
+  // The image-viewer's display geometry + capabilities come from ITS manifest.json
+  // (display.defaultSize [800,600], mode 'window', fs:/tmp). The host supplies only
+  // the code hook (the inline guest) + an icon.
+  apps.register(appDescriptorFromManifest(imageViewerManifest as unknown as AppManifest, {
+    entry: IMAGE_VIEWER_GUEST, icon: '🖼️',
+  }));
 
   apps.associate('txt', 'editor');
   apps.associate('json', 'editor');

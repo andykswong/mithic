@@ -50,6 +50,21 @@ test('opens the image-viewer as a sandboxed (tier-2) window and reports ready', 
   wm.dispose(); desktop.remove(); taskbar.remove();
 });
 
+test('image-viewer window size comes from its manifest defaultSize (800x600)', async () => {
+  const { desktop, taskbar } = surface();
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const { wm } = await bootDesktop({ desktop, taskbar, vfs });
+
+  const win = await wm.open('image-viewer');
+  // The 1024x700 desktop is large enough that clampToBounds leaves 800x600 intact,
+  // proving the geometry came from the manifest (not the old hard-coded 480x360).
+  expect(win.geometry.w).toBe(800);
+  expect(win.geometry.h).toBe(600);
+
+  wm.dispose(); desktop.remove(); taskbar.remove();
+});
+
 test('file manager "Open With" launches the associated editor window', async () => {
   const { desktop, taskbar } = surface();
   const vfs = new FileSystemRouter();

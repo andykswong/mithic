@@ -5,7 +5,8 @@ export type {
 export { clampToBounds, cascadePlacement, DEFAULT_MIN_SIZE } from './geometry.ts';
 export type { Bounds } from './geometry.ts';
 
-export { AppRegistry } from './app-registry.ts';
+export { AppRegistry, appDescriptorFromManifest } from './app-registry.ts';
+export type { AppManifest, AppDescriptorExtras } from './app-registry.ts';
 
 export { loadLayout, saveLayout, LAYOUT_PATH } from './persistence.ts';
 export type { SavedLayout } from './persistence.ts';

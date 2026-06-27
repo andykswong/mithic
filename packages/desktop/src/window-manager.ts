@@ -169,7 +169,11 @@ export class WindowManager {
           args: [app.name, ...(opts.argv ?? [])],
           capabilities: app.capabilities ?? [],
           display: {
-            mode: 'window',
+            // Thread the app's declared display mode (from its manifest) so the
+            // guest learns it via `guest.display`. A `hidden` app still gets a
+            // frame today (its guest sees `available:false`); suppressing the
+            // frame for hidden apps is a follow-up.
+            mode: app.displayMode ?? 'window',
             container: win.content,
             width: win.geometry.w,
             height: win.geometry.h,

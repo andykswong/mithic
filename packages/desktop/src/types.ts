@@ -40,6 +40,13 @@ export interface AppDescriptor {
   resizable?: boolean;
   singleton?: boolean;
   capabilities?: Capability[];
+  /**
+   * GUI display mode (from the app's manifest `display.mode`). Threaded into the
+   * tier-2 `kernel.spawn` `display.mode` so the guest learns its surface via
+   * `guest.display`. `'hidden'` makes the guest see `available:false` (headless).
+   * Defaults to `'window'` when unset.
+   */
+  displayMode?: 'window' | 'fullscreen' | 'hidden';
   /** Tier-1: render host DOM into the window. */
   mount?: (ctx: WindowContext, argv: string[]) => void | Promise<void>;
   /** Tier-2: sandboxed iframe guest entry (inline source string or URL). */

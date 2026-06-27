@@ -3,6 +3,7 @@
   "compilerOptions": {
     "lib": ["esnext", "dom"],
     "types": ["node", "vite/client"],
+    "resolveJsonModule": true,
     "rootDir": "./src",
     "outDir": "./dist",
     "emitDeclarationOnly": false,
