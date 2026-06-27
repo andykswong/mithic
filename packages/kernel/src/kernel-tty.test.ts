@@ -47,4 +47,26 @@ describe('kernel stdio tty preopens', () => {
     expect(got['1']).toBe(true);
     expect(got['2']).toBe(true);
   }, 15000);
+
+  test('PipelineStage.tty marks a pipeline stage stdio as a terminal', async () => {
+    const kernel = await bootKernel();
+    const { lastStdout } = await kernel.runPipeline([
+      { code: REPORT_TTY, captureStdout: true, tty: true },
+    ]);
+    const got = JSON.parse(new TextDecoder().decode(await lastStdout!));
+    expect(got['0']).toBe(true);
+    expect(got['1']).toBe(true);
+    expect(got['2']).toBe(true);
+  }, 15000);
+
+  test('PipelineStage.tty defaults to falsy when unset', async () => {
+    const kernel = await bootKernel();
+    const { lastStdout } = await kernel.runPipeline([
+      { code: REPORT_TTY, captureStdout: true },
+    ]);
+    const got = JSON.parse(new TextDecoder().decode(await lastStdout!));
+    expect(got['0']).toBe(false);
+    expect(got['1']).toBe(false);
+    expect(got['2']).toBe(false);
+  }, 15000);
 });

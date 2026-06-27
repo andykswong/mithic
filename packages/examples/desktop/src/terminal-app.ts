@@ -43,7 +43,15 @@ export function mountTerminal(ctx: WindowContext, deps: TerminalDeps): TerminalH
   const onResize = (): void => { try { fit.fit(); } catch { /* ignore */ } };
   if (typeof window !== 'undefined') window.addEventListener('resize', onResize);
 
-  const context = { cwd: '/', env: { HOME: '/', PWD: '/', PATH: '/bin', SHELL: 'mithic-sh' } as Record<string, string> };
+  // Seed the POSIX terminal environment so children that branch on $TERM /
+  // window geometry behave interactively. cols/rows come from xterm after fit;
+  // fall back to the conventional 80x24 when the terminal is zero-sized (tests).
+  const context = { cwd: '/', env: {
+    HOME: '/', PWD: '/', PATH: '/bin', SHELL: 'mithic-sh',
+    TERM: 'xterm-256color',
+    COLUMNS: String(terminal.cols || 80),
+    LINES: String(terminal.rows || 24),
+  } as Record<string, string> };
   const kernelClient = makeKernelClient(kernel);
   const fsClient = makeFsClient(vfs);
 
@@ -131,6 +139,9 @@ function makeKernelClient(kernel: Kernel): KernelClient {
         args: params.args, env: params.env, cwd: params.cwd, capabilities: CHILD_CAPABILITIES,
         captureStdout: params.captureStdout, captureStderr: params.captureStderr,
         stdinData: params.stdinData !== undefined ? enc.encode(params.stdinData) : undefined,
+        // The desktop terminal's children are always terminal-connected: mark
+        // their stdio as a TTY so guest.isatty() reports true (colorize/interactive).
+        tty: true,
       });
       // C1 (mirrors the shell example's "Bug B"): surface the child's captured
       // stderr so a failing command's error reaches the terminal (the executor
@@ -143,6 +154,8 @@ function makeKernelClient(kernel: Kernel): KernelClient {
         code: s.code, args: s.args, env: s.env, cwd: s.cwd, capabilities: CHILD_CAPABILITIES,
         captureStdout: i === stages.length - 1 ? s.captureStdout : false, captureStderr: s.captureStderr,
         stdinData: i === 0 && s.stdinData !== undefined ? enc.encode(s.stdinData) : undefined,
+        // The desktop terminal's pipeline children are terminal-connected too.
+        tty: true,
       })));
       return { pids: result.pids, exitCodes: result.exitCodes, lastStdout: result.lastStdout, stderr: result.stderr };
     },

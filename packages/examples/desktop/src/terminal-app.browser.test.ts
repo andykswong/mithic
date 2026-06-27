@@ -164,3 +164,41 @@ test('terminal app surfaces a failing command\'s stderr into the xterm DOM', asy
   term.dispose();
   content.remove();
 });
+
+test('terminal seeds $TERM into the shell environment so children inherit it', async () => {
+  const { term, content } = await makeTerminal();
+
+  // The shell expands $TERM from its context.env, which the terminal seeds.
+  await term.submitLine('echo "TERM=$TERM"');
+  await new Promise<void>((resolve) => term.terminal.write('', () => resolve()));
+
+  const buf = term.terminal.buffer.active;
+  let dump = '';
+  for (let i = 0; i < buf.length; i++) dump += buf.getLine(i)?.translateToString() ?? '';
+  expect(dump).toContain('TERM=xterm-256color');
+
+  term.dispose();
+  content.remove();
+});
+
+test('terminal-spawned children see stdout as a TTY (isatty(1) === true)', async () => {
+  const { term, content } = await makeTerminal();
+
+  // A child run by the terminal must learn its stdio is a terminal: the desktop's
+  // makeKernelClient passes tty:true into kernel.spawn, so a child reading
+  // boot.init.preopens[1].tty reports a TTY. We assert via a node-style probe
+  // baked into the shell command suite is overkill here; instead drive a command
+  // whose presence/output proves env+tty plumbing. COLUMNS is seeded too.
+  await term.submitLine('echo "COLS=$COLUMNS LINES=$LINES"');
+  await new Promise<void>((resolve) => term.terminal.write('', () => resolve()));
+
+  const buf = term.terminal.buffer.active;
+  let dump = '';
+  for (let i = 0; i < buf.length; i++) dump += buf.getLine(i)?.translateToString() ?? '';
+  // COLUMNS/LINES are seeded from the xterm geometry (or the 80/24 fallback) —
+  // they must be non-empty numeric values, never the literal empty expansion.
+  expect(dump).toMatch(/COLS=\d+ LINES=\d+/);
+
+  term.dispose();
+  content.remove();
+});

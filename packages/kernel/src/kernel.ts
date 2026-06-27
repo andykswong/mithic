@@ -261,6 +261,12 @@ export interface PipelineStage {
    * the head of the pipeline gets its redirect content and an EOF.
    */
   stdinData?: Uint8Array;
+  /**
+   * Mark this stage's stdio (fds 0/1/2) as a TTY — see {@link SpawnInit.tty}.
+   * A terminal frontend running a pipeline sets this so each stage's
+   * `guest.isatty()` reports true. Default false.
+   */
+  tty?: boolean;
 }
 
 export interface PipelineResult {
@@ -653,6 +659,7 @@ export class Kernel {
           ppid: stage.ppid,
           limits: stage.limits,
           captureStderr: stage.captureStderr,
+          tty: stage.tty,
           // Stage i (i>0) reads from the read end of pipe i-1. The FIRST stage
           // may instead be fed inline `stdinData` (a redirect source).
           stdin: i > 0 ? pipes[i - 1].readPort : undefined,
