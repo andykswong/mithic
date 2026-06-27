@@ -566,12 +566,7 @@ export class Kernel {
     // K2: positional preopen fds for stdio (0/1/2), extended below with any fd>=3.
     const preopenFds: number[] = [0, 1, 2];
     // A terminal frontend marks stdio as interactive (isatty); fds >= 3 never are.
-    const isTty = init.tty === true;
-    const preopens: ProcessInit['preopens'] = {
-      0: { type: 'pipe', tty: isTty },
-      1: { type: 'pipe', tty: isTty },
-      2: { type: 'pipe', tty: isTty },
-    };
+    const preopens: ProcessInit['preopens'] = stdioPreopens(init.tty === true);
     // K2: wire extra preopen fds (fd >= 3) into the transfer/preopen tables. Each
     // guest-side port is appended to stdio and its fd recorded in preopenFds so
     // the backend bootstrap maps it to the correct preopen index.
@@ -707,12 +702,7 @@ export class Kernel {
     const { pid } = ctx;
     // A terminal frontend marks stdio as interactive (isatty), same as the
     // transfer path — the relay path only differs in I/O transport.
-    const relayIsTty = init.tty === true;
-    const processInit = this.#buildProcessInit(code, init, ctx, {
-      0: { type: 'pipe', tty: relayIsTty },
-      1: { type: 'pipe', tty: relayIsTty },
-      2: { type: 'pipe', tty: relayIsTty },
-    });
+    const processInit = this.#buildProcessInit(code, init, ctx, stdioPreopens(init.tty === true));
 
     // Collect stdout/stderr in-memory; resolve when the process closes the pipe.
     // Bound total buffered bytes per stream to avoid an unbounded host-OOM vector:
@@ -1269,6 +1259,20 @@ function isHeartbeatAck(x: unknown): x is { type: 'heartbeat-ack' } {
  * with no geometry. Absent display → `undefined` (the guest treats unknown as
  * headless).
  */
+/**
+ * Build the positional stdio preopen table (fds 0/1/2) shared by both spawn
+ * paths (transfer and relay). `isTty` marks all three as terminal-connected so a
+ * guest's `isatty()` reports true; fds >= 3 are never a TTY and are wired
+ * separately by the transfer path.
+ */
+function stdioPreopens(isTty: boolean): ProcessInit['preopens'] {
+  return {
+    0: { type: 'pipe', tty: isTty },
+    1: { type: 'pipe', tty: isTty },
+    2: { type: 'pipe', tty: isTty },
+  };
+}
+
 function toDisplayInfo(display: DisplayOptions | undefined): DisplayInfo | undefined {
   if (!display) return undefined;
   if (display.mode === 'hidden') return { available: false };

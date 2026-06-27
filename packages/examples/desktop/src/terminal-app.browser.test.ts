@@ -3,12 +3,14 @@ import { expect, test } from 'vitest';
 import { Kernel } from '@mithic/kernel';
 import { WorkerRuntime } from '@mithic/runtime/backends/worker';
 import { FileSystemRouter, MemoryFsProvider } from '@mithic/io/vfs';
-import { createCommandSuite } from './commands.ts';
+import { createGuest } from '@mithic/guest-runtime';
+import { createCommandSuite, InProcessCommandLauncher } from './commands.ts';
+import type { CommandSuite } from './commands.ts';
 import { mountTerminal } from './terminal-app.ts';
 
 /** Build a mounted terminal over a fresh kernel + seeded VFS. */
-async function makeTerminal(files: Record<string, string> = {}) {
-  const suite = createCommandSuite();
+async function makeTerminal(files: Record<string, string> = {}, suiteOverride?: CommandSuite) {
+  const suite = suiteOverride ?? createCommandSuite();
   const vfs = new FileSystemRouter();
   await vfs.mount('/', new MemoryFsProvider({ files }));
   const kernel = new Kernel({ runtime: new WorkerRuntime(), vfs, resolveCommand: (n) => suite.resolve(n), launcher: suite.launcher });
@@ -22,6 +24,48 @@ async function makeTerminal(files: Record<string, string> = {}) {
     { kernel, vfs: vfs as any, suite },
   );
   return { term, content };
+}
+
+/**
+ * An inline guest that reports whether its stdout (fd 1) is a TTY — exactly the
+ * signal a real terminal child branches on (`isatty(1)`). It reads the truth
+ * straight from its boot preopens and writes `isatty1=<bool>` to stdout. Routed
+ * through the SAME path a normal command takes (resolve → InProcessCommandLauncher
+ * → kernel boot), so its `boot.init.preopens[1].tty` reflects whatever the
+ * terminal's makeKernelClient asked the kernel to spawn it with.
+ */
+const ISATTY_PROBE_GUEST = (boot: unknown): void => {
+  const g = createGuest(boot as Parameters<typeof createGuest>[0]);
+  // `g.isatty(1)` reads the same boot.init.preopens[1].tty a real terminal child
+  // branches on — true only when the kernel was told tty:true at spawn.
+  const isTty = g.isatty(1);
+  void (async () => {
+    const w = g.stdout.getWriter();
+    await w.write(new TextEncoder().encode(`isatty1=${isTty}\n`));
+    await w.close();
+    // The shell spawns with captureStderr:true and awaits the stderr capture, so
+    // (like every coreutils command via defineCommand) we MUST close stderr too,
+    // or the shell's surfaceStderr() blocks forever waiting for EOF.
+    await g.stderr.close().catch(() => { /* already closed */ });
+    g.exit(0);
+  })();
+};
+
+/**
+ * A command suite whose only command is the isatty probe above. `resolve('isattyprobe')`
+ * yields the `command:isattyprobe` sentinel the launcher's registry maps to the probe
+ * guest, so running `isattyprobe` in the terminal exercises makeKernelClient's spawn.
+ * (No shell glob metacharacters in the name — `?`/`*` would be glob-expanded.)
+ */
+function makeProbeSuite(): CommandSuite {
+  const registry = new Map<string, () => Promise<(boot: unknown) => void>>([
+    ['isattyprobe', async () => ISATTY_PROBE_GUEST],
+  ]);
+  return {
+    names: ['isattyprobe'],
+    resolve: (name) => (registry.has(name) ? new URL(`command:${name}`) : undefined),
+    launcher: new InProcessCommandLauncher(registry),
+  };
 }
 
 /** Feed raw keystrokes through xterm's onData line editor. */
@@ -181,14 +225,9 @@ test('terminal seeds $TERM into the shell environment so children inherit it', a
   content.remove();
 });
 
-test('terminal-spawned children see stdout as a TTY (isatty(1) === true)', async () => {
+test('terminal seeds COLUMNS/LINES geometry into the shell environment', async () => {
   const { term, content } = await makeTerminal();
 
-  // A child run by the terminal must learn its stdio is a terminal: the desktop's
-  // makeKernelClient passes tty:true into kernel.spawn, so a child reading
-  // boot.init.preopens[1].tty reports a TTY. We assert via a node-style probe
-  // baked into the shell command suite is overkill here; instead drive a command
-  // whose presence/output proves env+tty plumbing. COLUMNS is seeded too.
   await term.submitLine('echo "COLS=$COLUMNS LINES=$LINES"');
   await new Promise<void>((resolve) => term.terminal.write('', () => resolve()));
 
@@ -198,6 +237,27 @@ test('terminal-spawned children see stdout as a TTY (isatty(1) === true)', async
   // COLUMNS/LINES are seeded from the xterm geometry (or the 80/24 fallback) —
   // they must be non-empty numeric values, never the literal empty expansion.
   expect(dump).toMatch(/COLS=\d+ LINES=\d+/);
+
+  term.dispose();
+  content.remove();
+});
+
+test('terminal-spawned children see stdout as a TTY (isatty(1) === true)', async () => {
+  // Run the isatty probe through the terminal's own command/spawn path. The probe
+  // reports `boot.init.preopens[1].tty`, which is true ONLY because
+  // makeKernelClient passes `tty: true` into kernel.spawn. If that flag is dropped
+  // from terminal-app.ts, the kernel defaults the preopen to non-TTY and the probe
+  // prints `isatty1=false` — failing this assertion (verified red).
+  const { term, content } = await makeTerminal({}, makeProbeSuite());
+
+  await term.submitLine('isattyprobe');
+  await new Promise<void>((resolve) => term.terminal.write('', () => resolve()));
+
+  const buf = term.terminal.buffer.active;
+  let dump = '';
+  for (let i = 0; i < buf.length; i++) dump += buf.getLine(i)?.translateToString() ?? '';
+  expect(dump).toContain('isatty1=true');
+  expect(dump).not.toContain('isatty1=false');
 
   term.dispose();
   content.remove();

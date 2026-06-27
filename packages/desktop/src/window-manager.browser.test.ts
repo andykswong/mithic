@@ -67,6 +67,24 @@ test('open() of a tier-2 app spawns a guest into the window content container', 
   desktop.remove();
 });
 
+test('open() threads an app\'s declared displayMode into the tier-2 spawn display', async () => {
+  const desktop = setupDesktop();
+  const kernel = fakeKernel();
+  const apps = new AppRegistry();
+  // A tier-2 app that declares a non-default display mode in its manifest. The WM
+  // must forward `app.displayMode` (not a hard-coded 'window') into kernel.spawn's
+  // display.mode so the guest learns its true display mode.
+  apps.register({ name: 'bg', title: 'Background', defaultSize: [400, 300], entry: 'CODE;', displayMode: 'hidden' });
+  const wm = new WindowManager({ desktop, kernel: kernel as any, apps });
+
+  await wm.open('bg');
+  expect(kernel.spawnCalls.length).toBe(1);
+  expect(kernel.spawnCalls[0].init.display.mode).toBe('hidden');
+
+  wm.dispose();
+  desktop.remove();
+});
+
 test('a failed tier-2 spawn removes the ghost frame and rethrows (M4)', async () => {
   const desktop = setupDesktop();
   // Fake kernel whose spawn always rejects (e.g. runtime/capability failure).
