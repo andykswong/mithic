@@ -1,5 +1,5 @@
-import { expect, test } from 'vitest';
-import { DEFAULT_FD_ACTIONS, isProcessExit, isProcessReady, type ProcessInit, type Capability } from './process.ts';
+import { describe, expect, test } from 'vitest';
+import { DEFAULT_FD_ACTIONS, isProcessExit, isProcessReady, type ProcessInit, type Capability, type PreopenDescriptor, type DisplayInfo } from './process.ts';
 
 test('DEFAULT_FD_ACTIONS inherits stdio', () => {
   expect(DEFAULT_FD_ACTIONS).toEqual({
@@ -79,4 +79,36 @@ test('isProcessExit accepts {type:"exit",code:number} and rejects other shapes',
   expect(isProcessExit({ type: 'exit', code: 'string' })).toBe(false);
   expect(isProcessExit({ type: 'ready' })).toBe(false);
   expect(isProcessExit({ id: 1, call: 'x', args: {} })).toBe(false);
+});
+
+describe('PreopenDescriptor.tty', () => {
+  test('accepts an optional tty flag on a pipe preopen', () => {
+    const ttyStdin: PreopenDescriptor = { type: 'pipe', tty: true };
+    const plainPipe: PreopenDescriptor = { type: 'pipe' };
+    expect(ttyStdin.tty).toBe(true);
+    expect(plainPipe.tty).toBeUndefined();
+  });
+});
+
+describe('ProcessInit.display', () => {
+  test('accepts an optional display info (available + geometry)', () => {
+    const info: DisplayInfo = { available: true, mode: 'window', width: 800, height: 600 };
+    const init: ProcessInit = {
+      type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 1, ppid: 0,
+      capabilities: [], preopens: { 1: { type: 'pipe', tty: true } }, display: info,
+    };
+    expect(init.display?.available).toBe(true);
+    expect(init.display?.width).toBe(800);
+  });
+  test('display is optional (headless / no-display process)', () => {
+    const init: ProcessInit = {
+      type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 2, ppid: 0, capabilities: [],
+    };
+    expect(init.display).toBeUndefined();
+  });
+  test('a non-GUI environment is represented as available:false', () => {
+    const info: DisplayInfo = { available: false };
+    expect(info.available).toBe(false);
+    expect(info.width).toBeUndefined();
+  });
 });

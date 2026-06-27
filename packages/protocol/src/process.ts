@@ -7,6 +7,15 @@ export interface PreopenDescriptor {
   type: 'pipe' | 'file' | 'directory' | 'socket';
   path?: string;
   rights?: Partial<FdRights>;
+  /**
+   * POSIX `isatty`: true if this fd is connected to an INTERACTIVE terminal
+   * rather than a plain pipe/file/redirect. Only meaningful on stream fds
+   * (stdin/stdout/stderr). Absent/false = a non-interactive pipe. A guest reads
+   * this (via the bootstrap → `guest.isatty(fd)`) to decide whether to colorize,
+   * prompt interactively, or run in batch mode. The kernel sets it from
+   * `SpawnInit.tty`; the shell/terminal mark 0/1/2 true when interactive.
+   */
+  tty?: boolean;
 }
 
 export type Capability =
@@ -25,6 +34,21 @@ export interface ProcessLimits {
   networkDisabled?: boolean;
 }
 
+/**
+ * What the guest learns at boot about its display surface — it does NOT request
+ * one (the host/manifest decides geometry). `available:false` means there is no
+ * GUI surface at all (e.g. a server/Node host, or a process spawned `hidden`), so
+ * an app should run headless/CLI. When `available:true`, `width`/`height` are the
+ * actual pixel size the host allocated (from the app manifest's `defaultSize`).
+ */
+export interface DisplayInfo {
+  available: boolean;
+  mode?: 'inline' | 'window' | 'fullscreen';
+  width?: number;
+  height?: number;
+  title?: string;
+}
+
 export interface ProcessInit {
   type: 'init';
   entry: string | URL;
@@ -37,6 +61,8 @@ export interface ProcessInit {
   capabilities: Capability[];
   limits?: ProcessLimits;
   preopens?: Record<number, PreopenDescriptor>;
+  /** GUI surface info the guest learns at boot (see {@link DisplayInfo}). Absent = unknown/headless. */
+  display?: DisplayInfo;
 }
 
 export interface ProcessReady { type: 'ready' }
