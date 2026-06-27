@@ -214,6 +214,13 @@ export interface SpawnInit {
    * this straight through to the launcher and runtime — see {@link DisplayOptions}.
    */
   display?: DisplayOptions;
+  /**
+   * Mark this process's stdio (fds 0/1/2) as connected to an INTERACTIVE
+   * terminal — sets `PreopenDescriptor.tty` so the guest's `isatty(fd)` returns
+   * true. A terminal frontend (xterm) sets this; a pipeline/redirect/batch spawn
+   * leaves it false. Default false.
+   */
+  tty?: boolean;
 }
 
 /** GUI display placement, mirroring `SpawnOptions.display` on the runtime. */
@@ -550,10 +557,12 @@ export class Kernel {
     const stdio: MessagePort[] = [stdinReadPort, stdoutWritePort, stderrWritePort];
     // K2: positional preopen fds for stdio (0/1/2), extended below with any fd>=3.
     const preopenFds: number[] = [0, 1, 2];
+    // A terminal frontend marks stdio as interactive (isatty); fds >= 3 never are.
+    const isTty = init.tty === true;
     const preopens: ProcessInit['preopens'] = {
-      0: { type: 'pipe' },
-      1: { type: 'pipe' },
-      2: { type: 'pipe' },
+      0: { type: 'pipe', tty: isTty },
+      1: { type: 'pipe', tty: isTty },
+      2: { type: 'pipe', tty: isTty },
     };
     // K2: wire extra preopen fds (fd >= 3) into the transfer/preopen tables. Each
     // guest-side port is appended to stdio and its fd recorded in preopenFds so
@@ -687,10 +696,13 @@ export class Kernel {
     // diverges only in using the fixed 0/1/2 pipe preopens (no extra fds).
     const ctx = this.#beginProcess(init);
     const { pid } = ctx;
+    // A terminal frontend marks stdio as interactive (isatty), same as the
+    // transfer path — the relay path only differs in I/O transport.
+    const relayIsTty = init.tty === true;
     const processInit = this.#buildProcessInit(code, init, ctx, {
-      0: { type: 'pipe' },
-      1: { type: 'pipe' },
-      2: { type: 'pipe' },
+      0: { type: 'pipe', tty: relayIsTty },
+      1: { type: 'pipe', tty: relayIsTty },
+      2: { type: 'pipe', tty: relayIsTty },
     });
 
     // Collect stdout/stderr in-memory; resolve when the process closes the pipe.
