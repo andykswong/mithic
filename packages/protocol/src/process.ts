@@ -82,6 +82,7 @@ export type FdAction =
   | { action: 'inherit' }
   | { action: 'pipe' }
   | { action: 'open'; path: string; flags: OFlags }
+  | { action: 'bytes'; data: Uint8Array }
   | { action: 'close' }
   | { action: 'dup2'; from: number };
 

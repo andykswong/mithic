@@ -77,6 +77,21 @@ const READ_FD3 = `import { createGuest } from '@mithic/guest-runtime';
     g.exit(0);
   };`;
 
+// A child that reads ALL of stdin (fd 0) and echoes the total byte count to
+// stdout as "count:<n>". Proves a `bytes` fd-0 action streams the full buffer in
+// (a deadlock would hang past the test timeout instead of reporting the count).
+const READ_STDIN_COUNT = `import { createGuest } from '@mithic/guest-runtime';
+  export default async (boot) => {
+    const g = createGuest(boot);
+    const rd = g.stdin.getReader();
+    let n = 0;
+    for (;;) { const { value, done } = await rd.read(); if (done) break; n += value.byteLength; }
+    const w = g.stdout.getWriter();
+    await w.write(new TextEncoder().encode('count:' + n));
+    await w.close();
+    g.exit(0);
+  };`;
+
 // A child that writes "written-to-fd3" to preopen fd 3 (no stdout).
 const WRITE_FD3 = `import { createGuest } from '@mithic/guest-runtime';
   import { portToWritable } from '@mithic/guest-runtime/streams';
@@ -96,7 +111,10 @@ function makeKernel(vfs: FileSystemRouter): Kernel {
     runtime: new WorkerRuntime(),
     vfs,
     resolveCommand: (name) =>
-      name === 'readfd3' ? READ_FD3 : name === 'writefd3' ? WRITE_FD3 : undefined,
+      name === 'readfd3' ? READ_FD3
+        : name === 'writefd3' ? WRITE_FD3
+          : name === 'readstdin' ? READ_STDIN_COUNT
+            : undefined,
   });
 }
 
@@ -190,6 +208,74 @@ test('K2: action:open with write flags lands the child writes in the VFS file', 
   const bytes = await vfs.read(fh, 0, 1024);
   await vfs.close(fh);
   expect(new TextDecoder().decode(bytes)).toBe('written-to-fd3');
+}, 12000);
+
+test('R1: a bytes action on fd 0 streams a large byte buffer into the child stdin', async () => {
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = makeKernel(vfs);
+  const parentPid = makeParent(kernel);
+
+  // 256 KiB exceeds the 64 KiB chunk window, so a credit-deadlock would hang past
+  // the tight timeout below rather than report the full count.
+  const data = new Uint8Array(256 * 1024);
+  for (let i = 0; i < data.length; i++) data[i] = i & 0xff;
+
+  const { response, transfer } = await kernel.dispatcher.dispatch(parentPid, {
+    id: 1, call: 'process/spawn',
+    args: {
+      path: 'readstdin', argv: ['readstdin'],
+      fds: { 0: { action: 'bytes', data }, 1: { action: 'pipe' } },
+    },
+  });
+  expect(response.ok).toBe(true);
+  const r = (response as { ok: true; result: { pid: number } }).result;
+  const fd1Read = (transfer as MessagePort[])[0];
+
+  const out = await withTimeout(drainPort(fd1Read), 6000, 'bytes-fed child stdout never closed (R1)');
+  const w = await withTimeout(kernel.wait(r.pid), 6000, 'bytes-fed child never settled (R1)');
+  expect(w.code).toBe(0);
+  expect(out).toBe('count:' + data.length);
+}, 12000);
+
+test('R1: an empty bytes action delivers EOF immediately (count 0)', async () => {
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = makeKernel(vfs);
+  const parentPid = makeParent(kernel);
+
+  const { response, transfer } = await kernel.dispatcher.dispatch(parentPid, {
+    id: 1, call: 'process/spawn',
+    args: {
+      path: 'readstdin', argv: ['readstdin'],
+      fds: { 0: { action: 'bytes', data: new Uint8Array(0) }, 1: { action: 'pipe' } },
+    },
+  });
+  expect(response.ok).toBe(true);
+  const r = (response as { ok: true; result: { pid: number } }).result;
+  const fd1Read = (transfer as MessagePort[])[0];
+
+  const out = await withTimeout(drainPort(fd1Read), 6000, 'empty-bytes child stdout never closed (R1)');
+  const w = await withTimeout(kernel.wait(r.pid), 6000, 'empty-bytes child never settled (R1)');
+  expect(w.code).toBe(0);
+  expect(out).toBe('count:0');
+}, 12000);
+
+test('R1: a bytes action with non-Uint8Array data is rejected (EINVAL)', async () => {
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = makeKernel(vfs);
+  const parentPid = makeParent(kernel);
+
+  const { response } = await kernel.dispatcher.dispatch(parentPid, {
+    id: 1, call: 'process/spawn',
+    args: {
+      path: 'readstdin', argv: ['readstdin'],
+      fds: { 0: { action: 'bytes', data: 'not-bytes' }, 1: { action: 'pipe' } },
+    },
+  });
+  expect(response.ok).toBe(false);
+  expect((response as { ok: false; error: { code: string } }).error.code).toBe('EINVAL');
 }, 12000);
 
 test('K2: a pipe action on a high fd (5) is also supported', async () => {

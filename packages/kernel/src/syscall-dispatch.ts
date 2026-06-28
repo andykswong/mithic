@@ -1679,6 +1679,15 @@ function parseSpawn(args: Record<string, unknown>): SpawnArgs & { portFds?: numb
     if (typeof args.fds !== 'object' || args.fds === null || Array.isArray(args.fds)) {
       throw new MalformedArgsError('process/spawn: fds must be an object keyed by fd');
     }
+    // R1: a `bytes` fd action carries a raw byte buffer (here-string/here-doc
+    // stdin source); reject a non-Uint8Array `data` at the boundary (EINVAL)
+    // rather than letting it reach the pump.
+    for (const action of Object.values(args.fds as Record<number, unknown>)) {
+      if ((action as { action?: string })?.action === 'bytes'
+        && !((action as { data?: unknown }).data instanceof Uint8Array)) {
+        throw new MalformedArgsError('process/spawn: bytes fd action data must be a Uint8Array');
+      }
+    }
     out.fds = args.fds as SpawnArgs['fds'];
   }
   // A1: inline stdin bytes (feeds + closes the child's stdin when fd 0 is not

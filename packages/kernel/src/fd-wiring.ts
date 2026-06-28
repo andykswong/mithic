@@ -107,6 +107,16 @@ export class FdWiring {
         }
         break;
       }
+      case 'bytes': {
+        // R1: feed an in-memory byte buffer into the child's read end (the
+        // here-string/here-doc byte source — no VFS file backing it). fd 0 only
+        // by convention (the only fd a guest reads a buffer from); other fds fall
+        // through to default. Same chunked, credit-windowed pump as `open` read.
+        const pipe = this.#ipc.createPipe();
+        this.#wireChildFd(init, fd, pipe.readPort);
+        filePumps.push(() => { void this.#feedBytesToPort(action.data, pipe.writePort); });
+        break;
+      }
       case 'inherit':
       case 'close':
       default:
@@ -163,6 +173,39 @@ export class FdWiring {
     try { writePort.postMessage({ type: 'end' }); } catch { /* closed */ }
     try { writePort.close(); } catch { /* closed */ }
     try { await this.#vfs.close(handle); } catch { /* already closed */ }
+  }
+
+  /**
+   * R1: stream an in-memory byte buffer into a pipe WRITE port (the child's read
+   * end), honoring the credit protocol, then send EOF and close. Slices into
+   * <= 64 KiB sub-chunks and never reserves more than the credit window — the
+   * sticky-broken-aware replacement for the old inline-`stdinData` `feedPort`.
+   * Fire-and-forget; a broken pipe (reader cancel/EPIPE) ends the pump promptly.
+   */
+  async #feedBytesToPort(data: Uint8Array, writePort: MessagePort): Promise<void> {
+    writePort.start?.();
+    const flow = new PipeWriter();
+    writePort.onmessage = (e: MessageEvent): void => {
+      const msg = e.data as { type?: string; bytes?: number };
+      if (msg?.type === 'credit') flow.addCredit(msg.bytes ?? 0);
+      else if (msg?.type === 'end' || msg?.type === 'error') flow.markBroken('EPIPE');
+    };
+    try {
+      let offset = 0;
+      const CHUNK = 64 * 1024;
+      while (offset < data.byteLength) {
+        const end = Math.min(offset + CHUNK, data.byteLength);
+        // Copy out the sub-chunk so transferring its buffer cannot detach the
+        // caller's source buffer (slice on a Uint8Array view shares the backing
+        // ArrayBuffer; a fresh allocation is owned solely by this message).
+        const chunk = data.slice(offset, end);
+        await flow.reserve(chunk.byteLength);
+        offset = end;
+        writePort.postMessage({ type: 'data', chunk }, [chunk.buffer as ArrayBuffer]);
+      }
+    } catch { /* broken pipe: fall through to EOF/close */ }
+    try { writePort.postMessage({ type: 'end' }); } catch { /* closed */ }
+    try { writePort.close(); } catch { /* closed */ }
   }
 
   /**
