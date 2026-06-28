@@ -36,6 +36,10 @@ import type {
   PipelineRunResult,
 } from '@mithic/shell';
 import { createCommandSuite } from './commands.ts';
+import { installUtility } from './install.ts';
+import { labUtilities } from './utilities.ts';
+
+const SHEBANG = '#!/bin/node\n';
 
 /** The mount points the Lab working tree lives on. */
 const WORK_DIRS = ['/in', '/out', '/work', '/usr', '/usr/bin'];
@@ -221,6 +225,15 @@ export async function createLab(options: LabOptions = {}): Promise<Lab> {
   // The Lab working tree (`/in`, `/out`, `/work`, `/usr/bin`).
   for (const dir of WORK_DIRS) {
     try { await vfs.mkdir(dir); } catch { /* already exists */ }
+  }
+
+  // Install each declared utility into `/usr/bin` as a runnable executable: its
+  // bundled (deps-inlined, exec-from-VFS-runnable) source + `+x` + the manifest's
+  // caps in the file's `security.capability` xattr. Adding the N+1 utility is
+  // adding a manifest + its bundled source — nothing else (RFC 0001 §4.1/§4.8).
+  const enc = new TextEncoder();
+  for (const { name, source, manifest } of labUtilities()) {
+    await installUtility(vfs, `/usr/bin/${name}`, enc.encode(SHEBANG + source), manifest);
   }
 
   const kernel = new Kernel({

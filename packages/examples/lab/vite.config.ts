@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite';
+import { bundleGuestPlugin } from './src/bundle-plugin.ts';
 
 export default defineConfig({
+  plugins: [bundleGuestPlugin()],
   server: {
     headers: {
       'Cross-Origin-Embedder-Policy': 'require-corp',

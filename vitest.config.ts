@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import { bundleGuestPlugin } from './packages/examples/lab/src/bundle-plugin.ts';
 
 // Vitest is the test runner for the Mithic (Mithic 2.0) packages.
 //
@@ -38,6 +39,10 @@ export default defineConfig({
         // example-desktop) don't trigger a mid-run Vite dep re-optimization
         // (which warns and can re-run the test).
         optimizeDeps: { include: ['@xterm/xterm'] },
+        // The Lab installs `defineCommand` utilities into /usr/bin as
+        // exec-from-VFS-runnable source; `?bundle` (this plugin) produces that
+        // dependency-inlined IIFE form at build time.
+        plugins: [bundleGuestPlugin()],
         test: {
           name: 'browser',
           include: [
