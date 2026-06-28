@@ -509,6 +509,13 @@ export default async function main(boot: unknown): Promise<void> {
       void executor.runTrap(name);
     });
 
+    // This guest is never an interactive REPL — it runs a `-c` string, a script
+    // FILE, or piped stdin. Bash enables history expansion (`!`) only for
+    // interactive shells, so a script's `#!/bin/bash` shebang line (and any literal
+    // `!`) must NOT be treated as a history event here. Default it off; an explicit
+    // `set -H` in the script can still re-enable it.
+    executor.setOption('histexpand', false);
+
     // Pre-set the requested options (POSIX mode + -e/-u/-x/-v/-C).
     if (cli.posix) executor.setOption('posix', true);
     for (const opt of cli.options) executor.setOption(opt, true);

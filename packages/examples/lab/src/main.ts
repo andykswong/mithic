@@ -38,11 +38,33 @@ import type {
 import { createCommandSuite } from './commands.ts';
 import { installUtility } from './install.ts';
 import { labUtilities } from './utilities.ts';
+import shellSource from '../../../shell/src/process.ts?bundle';
 
 const SHEBANG = '#!/bin/node\n';
 
 /** The mount points the Lab working tree lives on. */
-const WORK_DIRS = ['/in', '/out', '/work', '/usr', '/usr/bin'];
+const WORK_DIRS = ['/bin', '/in', '/out', '/work', '/usr', '/usr/bin'];
+
+/**
+ * Where the kernel's exec-from-VFS shebang dispatch re-resolves a `#!/bin/bash`
+ * workflow to (RFC 0001 §4.2). The `@mithic/shell` guest is installed here so a
+ * workflow file dispatches to the interpreter exactly as a Unix `binfmt` lookup
+ * would — composition is the shell, all the way down.
+ */
+const BIN_BASH = '/bin/bash';
+
+/**
+ * The `/bin/bash` interpreter's own grant: it reads workflow scripts and the
+ * files its steps name, and forks utility children. Narrowed against whatever
+ * spawned the workflow, so a workflow can never widen the caller's authority.
+ */
+const SHELL_MANIFEST = {
+  name: 'bash',
+  capabilities: {
+    fs: { paths: ['/'], operations: ['read', 'write', 'execute'] as ('read' | 'write' | 'execute')[] },
+    process: { maxChildren: 16 },
+  },
+};
 
 /**
  * Capabilities the shell grants the commands it forks: read+write the working
@@ -227,11 +249,18 @@ export async function createLab(options: LabOptions = {}): Promise<Lab> {
     try { await vfs.mkdir(dir); } catch { /* already exists */ }
   }
 
+  // Install the `@mithic/shell` guest at `/bin/bash` so a `#!/bin/bash` workflow
+  // dispatches there via the kernel's exec-from-VFS shebang path (RFC 0001 §4.2):
+  // the kernel re-resolves the `/bin/bash` interpreter as an ordinary executable
+  // FILE, reads its bytes, and runs the shell guest with the workflow path as its
+  // script argv — composition is the shell, all the way down (Task V4).
+  const enc = new TextEncoder();
+  await installUtility(vfs, BIN_BASH, enc.encode(SHEBANG + shellSource), SHELL_MANIFEST);
+
   // Install each declared utility into `/usr/bin` as a runnable executable: its
   // bundled (deps-inlined, exec-from-VFS-runnable) source + `+x` + the manifest's
   // caps in the file's `security.capability` xattr. Adding the N+1 utility is
   // adding a manifest + its bundled source — nothing else (RFC 0001 §4.1/§4.8).
-  const enc = new TextEncoder();
   for (const { name, source, manifest } of labUtilities()) {
     await installUtility(vfs, `/usr/bin/${name}`, enc.encode(SHEBANG + source), manifest);
   }

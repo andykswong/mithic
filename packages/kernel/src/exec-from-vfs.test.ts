@@ -281,6 +281,46 @@ test('S3: a child cannot elevate beyond its parent — an xattr net request narr
   expect(response.ok).toBe(false);
 }, 20000);
 
+test('S3: a guest-issued process/spawn resolves a BARE NAME via $PATH (no resolveCommand needed)', async () => {
+  // The bug Task V4 surfaced: the syscall spawn path returned ENOENT for a bare
+  // name when `resolveCommand` (host/special + registered commands) missed —
+  // even when the name resolved to a +x VFS file via $PATH. A workflow shell
+  // (itself a guest) spawns its utility steps by BARE NAME through this very
+  // syscall, so PATH→VFS resolution must happen here, not only in kernel.spawn.
+  const { kernel, vfs } = await makeKernel(); // NB: no resolveCommand wired
+  await writeFile(vfs, '/usr/bin/greet', HELLO_SRC);
+  await vfs.chmod('/usr/bin/greet', 0o755);
+
+  const parentPid = kernel.processes.allocate(0);
+  kernel.processes.markReady(parentPid);
+  kernel.capabilities.grant(parentPid, [
+    { type: 'process' },
+    { type: 'fs', paths: ['/'], operations: ['read', 'write', 'execute'] },
+  ]);
+
+  const { response } = await kernel.dispatcher.dispatch(parentPid, {
+    id: 1,
+    call: 'process/spawn',
+    args: { path: 'greet', argv: ['greet'], env: { PATH: '/usr/bin' } },
+  });
+  expect(response.ok).toBe(true);
+}, 20000);
+
+test('S3: a guest-issued process/spawn of a bare name with NO $PATH match still fails ENOENT', async () => {
+  const { kernel } = await makeKernel();
+  const parentPid = kernel.processes.allocate(0);
+  kernel.processes.markReady(parentPid);
+  kernel.capabilities.grant(parentPid, [{ type: 'process' }, { type: 'fs', paths: ['/'], operations: ['read'] }]);
+
+  const { response } = await kernel.dispatcher.dispatch(parentPid, {
+    id: 1,
+    call: 'process/spawn',
+    args: { path: 'nope', argv: ['nope'], env: { PATH: '/usr/bin' } },
+  });
+  expect(response.ok).toBe(false);
+  expect((response as { error?: { code?: string } }).error?.code).toBe('ENOENT');
+}, 20000);
+
 test('S3: a #!/bin/bash file classifies as an interpreter dispatch (re-resolved against $PATH)', async () => {
   const { kernel, vfs } = await makeKernel();
   // Provide a tiny `bash` interpreter guest at /bin/bash that echoes the script

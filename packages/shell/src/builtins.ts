@@ -586,12 +586,26 @@ function runSet(args: string[], ctx: BuiltinContext): number {
         i++; // consumed NAME
         continue;
       }
-      // Cluster of short flags, e.g. `-eux`.
+      // Cluster of short flags, e.g. `-eux`. An `o` within the cluster is the
+      // long-option introducer (bash: `set -euo pipefail` == `-e -u -o pipefail`),
+      // consuming the FOLLOWING word as the option name.
+      let consumedName = false;
       for (const ch of body) {
+        if (ch === 'o') {
+          const name = args[i + 1];
+          if (name === undefined) { listOptions(ctx, enable); return 0; }
+          if (!setLongOption(ctx, name, enable)) {
+            errOut(ctx, `shell: set: ${name}: invalid option name\n`);
+            return 2;
+          }
+          consumedName = true;
+          continue;
+        }
         const long = OPTION_FLAGS[ch];
         if (!long) { errOut(ctx, `shell: set: -${ch}: invalid option\n`); return 2; }
         st?.setOption(long, enable);
       }
+      if (consumedName) i++; // consumed the NAME that followed the cluster
       continue;
     }
     // First non-flag operand: the rest are positional params.

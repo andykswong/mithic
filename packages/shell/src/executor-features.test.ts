@@ -350,6 +350,30 @@ test('set -o pipefail: all-zero pipeline still returns 0', async () => {
   expect((await run('set -o pipefail; true | true; echo $?')).out.trim()).toBe('0');
 });
 
+test('set -euo pipefail: `o` in a flag cluster consumes the following long-option name', async () => {
+  // The canonical strict-mode preamble. `-euo pipefail` == `-e -u -o pipefail`:
+  // `o` introduces a long option taking the NEXT word, even mid-cluster.
+  const { code } = await run('set -euo pipefail; echo "[$-]"; set -o');
+  expect(code).toBe(0);
+  const { out } = await run('set -euo pipefail; set -o');
+  expect(out).toMatch(/pipefail\s+on/);
+  expect(out).toMatch(/errexit\s+on/);
+  expect(out).toMatch(/nounset\s+on/);
+});
+
+test('set +euo pipefail: cluster with `o` also DISABLES the named option', async () => {
+  const { out } = await run('set -euo pipefail; set +euo pipefail; set -o');
+  expect(out).toMatch(/pipefail\s+off/);
+  expect(out).toMatch(/errexit\s+off/);
+  expect(out).toMatch(/nounset\s+off/);
+});
+
+test('set -euo with an unknown long-option name errors (no silent accept)', async () => {
+  const { code, err } = await run('set -euo bogus; echo after');
+  expect(code).not.toBe(0);
+  expect(err).toMatch(/bogus/);
+});
+
 test('noclobber: > refuses to overwrite an existing file; >| forces', async () => {
   const fs = mockFs({ '/exists.txt': 'old\n' });
   const r1 = await run('set -C; echo new > /exists.txt; echo "rc=$?"', {}, fs);

@@ -526,7 +526,7 @@ export class SyscallDispatcher {
     }
     const cwd = spawnArgs.cwd ?? this.#cwdOf(pid);
     const env = spawnArgs.env ?? {};
-    const code = this.#resolveCode(spawnArgs.path, spawnArgs.argv, cwd, env);
+    const code = await this.#resolveCode(spawnArgs.path, spawnArgs.argv, cwd, env);
     if (code === undefined) {
       this.#closePorts(ports);
       return res(fail(id, 'ENOENT', `command not found: ${spawnArgs.path}`));
@@ -568,14 +568,38 @@ export class SyscallDispatcher {
 
   /**
    * Resolve a command spec to spawnable guest code. Absolute paths and URLs are
-   * used directly (a `string` URL becomes a `URL`); bare names defer to
-   * `resolveCommand`. Returns `undefined` when a bare name has no resolver match.
+   * used directly (a `string` URL becomes a `URL`). A bare name resolves first via
+   * the injected `resolveCommand` (host/special + registered commands) and, on a
+   * miss, via a `$PATH` walk to a VFS executable FILE (RFC 0001 §4.2 — so a guest
+   * can spawn a `/usr/bin` utility or workflow by bare NAME, not just the host
+   * `kernel.spawn` entry). The resolved VFS path is re-validated (execute bit,
+   * shebang, xattr caps) by `kernel.spawn` before launch. Returns `undefined` when
+   * neither layer matches.
    */
-  #resolveCode(path: string, argv: string[], cwd: string, env: Record<string, string>): string | URL | undefined {
+  async #resolveCode(path: string, argv: string[], cwd: string, env: Record<string, string>): Promise<string | URL | undefined> {
     if (path.includes('://')) return new URL(path);
     if (path.startsWith('/') || path.startsWith('./') || path.startsWith('../')) return path;
     const name = path || argv[0] || '';
-    return this.#resolveCommand?.(name, cwd, env);
+    const registered = this.#resolveCommand?.(name, cwd, env);
+    if (registered !== undefined) return registered;
+    return this.#resolvePathFile(name, env);
+  }
+
+  /** Walk `$PATH` for a VFS file matching a bare command NAME (RFC 0001 §4.2). */
+  async #resolvePathFile(name: string, env: Record<string, string>): Promise<string | undefined> {
+    if (name === '') return undefined;
+    for (const dir of (env.PATH ?? '').split(':')) {
+      if (dir === '') continue;
+      const candidate = dir.endsWith('/') ? `${dir}${name}` : `${dir}/${name}`;
+      try {
+        await this.#vfs.stat(candidate);
+        return candidate;
+      } catch (err) {
+        if (err instanceof FileSystemError && err.code === 'no-entry') continue;
+        throw err;
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -616,7 +640,7 @@ export class SyscallDispatcher {
       const argv = Array.isArray(r.argv) ? r.argv.map(String) : [];
       const env = (r.env && typeof r.env === 'object' ? r.env : {}) as Record<string, string>;
       const cwd = typeof r.cwd === 'string' ? r.cwd : this.#cwdOf(pid);
-      const code = this.#resolveCode(path, argv, cwd, env);
+      const code = await this.#resolveCode(path, argv, cwd, env);
       if (code === undefined) {
         return fail(id, 'ENOENT', `command not found: ${path}`);
       }
