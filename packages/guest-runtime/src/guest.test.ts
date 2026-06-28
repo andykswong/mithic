@@ -258,10 +258,11 @@ test('B3: guest.fs is a directory-handle-shaped root that drives fs/* over the c
     }
   };
 
-  expect(guest.fs.kind).toBe('directory');
-  expect(guest.fs.name).toBe('');
+  const root = await guest.fs.getDirectory();
+  expect(root.kind).toBe('directory');
+  expect(root.name).toBe('');
 
-  const fh = await guest.fs.getFileHandle('note.txt', { create: true });
+  const fh = await root.getFileHandle('note.txt', { create: true });
   expect(fh.kind).toBe('file');
   const w = await fh.createWritable();
   await w.write('persisted');
@@ -270,8 +271,95 @@ test('B3: guest.fs is a directory-handle-shaped root that drives fs/* over the c
   const file = await fh.getFile();
   expect(await file.text()).toBe('persisted');
 
-  // The same handle accessor is memoized (lazy mint).
+  // The StorageManager object is memoized (lazy mint).
   expect(guest.fs).toBe(guest.fs);
+
+  kernelPort.close();
+});
+
+test('Q1: guest.fs is a StorageManager — getDirectory()=root, getCurrentDirectory()=cwd', async () => {
+  const ctrl = new MessageChannel();
+  const guest = createGuest({
+    control: ctrl.port2,
+    init: {
+      type: 'init', entry: 'inline', args: ['prog'], env: {},
+      cwd: '/work', pid: 9, ppid: 0, capabilities: [],
+    },
+  });
+  const kernelPort = ctrl.port1;
+  kernelPort.start?.();
+
+  // A tiny in-memory kernel fs over the control port (path → bytes/dir).
+  type Node = { type: 'file'; data: Uint8Array } | { type: 'directory' };
+  const tree = new Map<string, Node>([['/', { type: 'directory' }], ['/work', { type: 'directory' }]]);
+  const fds = new Map<number, { path: string; offset: number }>();
+  let nextFd = 3;
+  const norm = (p: string): string => '/' + p.split('/').filter(Boolean).join('/');
+  kernelPort.onmessage = (e) => {
+    const req = e.data as { id?: number; call: string; args: Record<string, unknown> };
+    if (req.id == null) return;
+    const ok = (result: unknown): void => { kernelPort.postMessage({ id: req.id, ok: true, result }); };
+    const err = (code: string): void => { kernelPort.postMessage({ id: req.id, ok: false, error: { code, message: code } }); };
+    const path = typeof req.args.path === 'string' ? norm(req.args.path) : '';
+    switch (req.call) {
+      case 'fs/stat': {
+        const node = tree.get(path);
+        if (!node) return err('ENOENT');
+        ok({ type: node.type, size: node.type === 'file' ? node.data.byteLength : 0 });
+        break;
+      }
+      case 'fs/mkdir': tree.set(path, { type: 'directory' }); ok({}); break;
+      case 'fs/open': {
+        const oflags = (req.args.oflags ?? {}) as { create?: boolean; truncate?: boolean };
+        let node = tree.get(path);
+        if (!node) {
+          if (!oflags.create) return err('ENOENT');
+          node = { type: 'file', data: new Uint8Array() };
+          tree.set(path, node);
+        } else if (node.type === 'file' && oflags.truncate) {
+          node.data = new Uint8Array();
+        }
+        const fd = nextFd++;
+        fds.set(fd, { path, offset: 0 });
+        ok({ fd });
+        break;
+      }
+      case 'fs/read': {
+        const ent = fds.get(Number(req.args.fd))!;
+        const node = tree.get(ent.path) as { type: 'file'; data: Uint8Array };
+        const slice = node.data.subarray(ent.offset);
+        ent.offset += slice.byteLength;
+        ok(new Uint8Array(slice));
+        break;
+      }
+      case 'fs/write': {
+        const ent = fds.get(Number(req.args.fd))!;
+        const node = tree.get(ent.path) as { type: 'file'; data: Uint8Array };
+        const data = req.args.data as Uint8Array;
+        const merged = new Uint8Array(node.data.byteLength + data.byteLength);
+        merged.set(node.data, 0); merged.set(data, node.data.byteLength);
+        node.data = merged;
+        ok({ written: data.byteLength });
+        break;
+      }
+      case 'fs/close': fds.delete(Number(req.args.fd)); ok({}); break;
+      default: err('ENOSYS');
+    }
+  };
+
+  const root = await guest.fs.getDirectory();
+  expect(root.kind).toBe('directory');
+
+  const cwd = await guest.fs.getCurrentDirectory();
+  expect(cwd.name).toBe('work');
+  const fh = await cwd.getFileHandle('out.txt', { create: true });
+  const w = await fh.createWritable();
+  await w.write(new TextEncoder().encode('hi'));
+  await w.close();
+
+  // reachable from root by absolute walk
+  const back = await (await (await root.getDirectoryHandle('work')).getFileHandle('out.txt')).getFile();
+  expect(await back.text()).toBe('hi');
 
   kernelPort.close();
 });

@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { openRoot } from './fs-access.ts';
+import { openRoot, createStorageManager, readPath, writePath } from './fs-access.ts';
 import type { SyscallHook } from './fetch.ts';
 
 const enc = new TextEncoder();
@@ -259,4 +259,152 @@ test('B3: createWritable() truncates by default (overwrites prior content)', asy
 
   const file = await fh.getFile();
   expect(await file.text()).toBe('new');
+});
+
+// ---------------------------------------------------------------------------
+// Q1: StorageManager surface (getDirectory / getCurrentDirectory) + path helpers
+// ---------------------------------------------------------------------------
+
+/** A minimal Guest-shaped stub carrying just what readPath/writePath read. */
+function guestStub(syscall: SyscallHook, cwd: string) {
+  return { cwd, fs: createStorageManager(syscall, cwd) };
+}
+
+test('Q1: getDirectory() returns the VFS root handle', async () => {
+  const { syscall } = mockFs();
+  const fs = createStorageManager(syscall, '/work');
+  const root = await fs.getDirectory();
+  expect(root.kind).toBe('directory');
+  expect(root.name).toBe('');
+});
+
+test('Q1: getCurrentDirectory() returns a handle rooted at cwd', async () => {
+  const { syscall, tree } = mockFs();
+  tree.set('/work', { type: 'directory' });
+  const fs = createStorageManager(syscall, '/work');
+  const cwd = await fs.getCurrentDirectory();
+  expect(cwd.kind).toBe('directory');
+  expect(cwd.name).toBe('work');
+  // writing a name-relative file into cwd lands at /work/<name>
+  const fh = await cwd.getFileHandle('out.txt', { create: true });
+  const w = await fh.createWritable();
+  await w.write('hi');
+  await w.close();
+  expect(tree.get('/work/out.txt')).toMatchObject({ type: 'file' });
+});
+
+test('Q1: getCurrentDirectory() of root cwd is the root handle (name empty)', async () => {
+  const { syscall } = mockFs();
+  const fs = createStorageManager(syscall, '/');
+  const cwd = await fs.getCurrentDirectory();
+  expect(cwd.kind).toBe('directory');
+  expect(cwd.name).toBe('');
+});
+
+test('Q1: getCurrentDirectory() walks a nested cwd path', async () => {
+  const { syscall, tree } = mockFs();
+  tree.set('/a', { type: 'directory' });
+  tree.set('/a/b', { type: 'directory' });
+  const fs = createStorageManager(syscall, '/a/b');
+  const cwd = await fs.getCurrentDirectory();
+  expect(cwd.name).toBe('b');
+  const fh = await cwd.getFileHandle('c.txt', { create: true });
+  const w = await fh.createWritable();
+  await w.write('x');
+  await w.close();
+  expect(tree.get('/a/b/c.txt')).toMatchObject({ type: 'file' });
+});
+
+test('Q1: writePath/readPath round-trip bytes by absolute path', async () => {
+  const { syscall } = mockFs();
+  const g = guestStub(syscall, '/work');
+  const payload = new Uint8Array([0, 255, 128]);
+  await writePath(g, '/a.bin', payload);
+  expect(Array.from(await readPath(g, '/a.bin'))).toEqual([0, 255, 128]);
+});
+
+test('Q1: writePath/readPath resolve a relative path against cwd', async () => {
+  const { syscall, tree } = mockFs();
+  tree.set('/work', { type: 'directory' });
+  const g = guestStub(syscall, '/work');
+  const payload = new Uint8Array([1, 2, 3]);
+  await writePath(g, 'a.bin', payload);
+  // relative 'a.bin' lands at /work/a.bin
+  expect(tree.get('/work/a.bin')).toMatchObject({ type: 'file' });
+  expect(Array.from(await readPath(g, 'a.bin'))).toEqual([1, 2, 3]);
+  // and is reachable by its absolute form
+  expect(Array.from(await readPath(g, '/work/a.bin'))).toEqual([1, 2, 3]);
+});
+
+test('Q1: writePath creates intermediate directories for a deep path', async () => {
+  const { syscall, tree } = mockFs();
+  const g = guestStub(syscall, '/');
+  await writePath(g, '/x/y/z.bin', new Uint8Array([9]));
+  expect(tree.get('/x')).toMatchObject({ type: 'directory' });
+  expect(tree.get('/x/y')).toMatchObject({ type: 'directory' });
+  expect(tree.get('/x/y/z.bin')).toMatchObject({ type: 'file' });
+  expect(Array.from(await readPath(g, '/x/y/z.bin'))).toEqual([9]);
+});
+
+test('Q1: writePath resolves a relative deep path against a nested cwd', async () => {
+  const { syscall, tree } = mockFs();
+  tree.set('/work', { type: 'directory' });
+  const g = guestStub(syscall, '/work');
+  await writePath(g, 'sub/deep.bin', new Uint8Array([7, 7]));
+  expect(tree.get('/work/sub')).toMatchObject({ type: 'directory' });
+  expect(Array.from(await readPath(g, 'sub/deep.bin'))).toEqual([7, 7]);
+});
+
+test('Q1: writePath overwrites an existing file', async () => {
+  const { syscall } = mockFs();
+  const g = guestStub(syscall, '/');
+  await writePath(g, '/f.bin', new Uint8Array([1, 2, 3, 4]));
+  await writePath(g, '/f.bin', new Uint8Array([9]));
+  expect(Array.from(await readPath(g, '/f.bin'))).toEqual([9]);
+});
+
+test('Q1: writePath/readPath handle an empty payload', async () => {
+  const { syscall } = mockFs();
+  const g = guestStub(syscall, '/');
+  await writePath(g, '/empty.bin', new Uint8Array());
+  expect(Array.from(await readPath(g, '/empty.bin'))).toEqual([]);
+});
+
+test('Q1: readPath on a missing file rejects (NotFoundError)', async () => {
+  const { syscall } = mockFs();
+  const g = guestStub(syscall, '/');
+  await expect(readPath(g, '/nope.bin')).rejects.toMatchObject({ name: 'NotFoundError' });
+});
+
+test('Q1: readPath through a missing directory rejects (NotFoundError)', async () => {
+  const { syscall } = mockFs();
+  const g = guestStub(syscall, '/');
+  await expect(readPath(g, '/no/such/dir/file.bin')).rejects.toMatchObject({ name: 'NotFoundError' });
+});
+
+test('Q1: readPath normalizes . and .. and redundant slashes', async () => {
+  const { syscall, tree } = mockFs();
+  tree.set('/work', { type: 'directory' });
+  const g = guestStub(syscall, '/work');
+  await writePath(g, '/work/a.bin', new Uint8Array([42]));
+  expect(Array.from(await readPath(g, './a.bin'))).toEqual([42]);
+  expect(Array.from(await readPath(g, '../work/a.bin'))).toEqual([42]);
+  expect(Array.from(await readPath(g, '/work//a.bin'))).toEqual([42]);
+});
+
+test('Q1: writePath rejects a path that resolves to no file name', async () => {
+  const { syscall } = mockFs();
+  const g = guestStub(syscall, '/');
+  await expect(writePath(g, '/', new Uint8Array([1]))).rejects.toBeInstanceOf(TypeError);
+});
+
+test('Q1: roundtrip larger-than-one-chunk bytes (binary fidelity)', async () => {
+  const { syscall } = mockFs();
+  const g = guestStub(syscall, '/');
+  const big = new Uint8Array(200_000);
+  for (let i = 0; i < big.length; i++) big[i] = (i * 31 + 7) & 0xff;
+  await writePath(g, '/big.bin', big);
+  const back = await readPath(g, '/big.bin');
+  expect(back.byteLength).toBe(big.byteLength);
+  expect(back).toEqual(big);
 });

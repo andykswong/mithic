@@ -5,12 +5,15 @@ export { createFetch } from './fetch.ts';
 export type { SyscallHook, PortsSyscallHook } from './fetch.ts';
 export {
   openRoot,
+  createStorageManager,
+  readPath,
+  writePath,
   GuestDirectoryHandle,
   GuestFileHandle,
   GuestFile,
   GuestWritableFileStream,
 } from './fs-access.ts';
-export type { GetHandleOptions, WritableChunk } from './fs-access.ts';
+export type { GetHandleOptions, WritableChunk, GuestStorageManager, PathContext } from './fs-access.ts';
 export { FdTable } from './fd-table.ts';
 export type { FdEntry } from './fd-table.ts';
 export { SyscallClient } from './syscall-client.ts';

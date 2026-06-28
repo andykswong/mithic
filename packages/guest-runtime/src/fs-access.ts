@@ -392,3 +392,107 @@ export class GuestDirectoryHandle {
 export function openRoot(syscall: SyscallHook): GuestDirectoryHandle {
   return new GuestDirectoryHandle(syscall, '/', '');
 }
+
+// ---------------------------------------------------------------------------
+// Q1 — StorageManager surface + cwd-aware path helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * A `StorageManager`-shaped object (mirrors the web standard
+ * `navigator.storage`). `getDirectory()` returns the VFS root `/` (the web
+ * standard); `getCurrentDirectory()` returns the handle for the process's
+ * `cwd` — a deliberate Mithic extension so relative argv paths resolve the
+ * Unix way. Both return the same `GuestDirectoryHandle` type.
+ */
+export interface GuestStorageManager {
+  getDirectory(): Promise<GuestDirectoryHandle>;
+  getCurrentDirectory(): Promise<GuestDirectoryHandle>;
+}
+
+/** Build the `guest.fs` StorageManager for a process rooted at `cwd`. */
+export function createStorageManager(syscall: SyscallHook, cwd: string): GuestStorageManager {
+  return {
+    async getDirectory() {
+      return openRoot(syscall);
+    },
+    async getCurrentDirectory() {
+      const abs = normalizeAbs(cwd);
+      const name = abs === '/' ? '' : abs.slice(abs.lastIndexOf('/') + 1);
+      return new GuestDirectoryHandle(syscall, abs, name);
+    },
+  };
+}
+
+/** The minimal guest surface the path helpers read (Guest satisfies this). */
+export interface PathContext {
+  cwd: string;
+  fs: GuestStorageManager;
+}
+
+/**
+ * Normalize a possibly-relative path to an absolute, collapsing `.`/`..` and
+ * redundant slashes. A relative path is resolved against `base`.
+ */
+function resolveAbs(base: string, p: string): string {
+  const start = p.startsWith('/') ? '' : normalizeAbs(base);
+  return normalizeAbs(`${start}/${p}`);
+}
+
+/** Collapse `.`/`..`/empty segments into a canonical absolute path. */
+function normalizeAbs(p: string): string {
+  const out: string[] = [];
+  for (const seg of p.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') { out.pop(); continue; }
+    out.push(seg);
+  }
+  return '/' + out.join('/');
+}
+
+/** Split an absolute path into directory segments and a final base name. */
+function splitPath(abs: string): { segments: string[]; base: string } {
+  const parts = abs.split('/').filter(Boolean);
+  const base = parts.pop();
+  if (base === undefined) throw typeError(`path has no file name: ${abs}`);
+  return { segments: parts, base };
+}
+
+/** Walk from the root handle to the directory containing `abs`'s base name. */
+async function walkToParent(
+  root: GuestDirectoryHandle,
+  abs: string,
+  options: { create?: boolean } = {},
+): Promise<{ dir: GuestDirectoryHandle; base: string }> {
+  const { segments, base } = splitPath(abs);
+  let dir = root;
+  for (const seg of segments) {
+    dir = await dir.getDirectoryHandle(seg, options);
+  }
+  return { dir, base };
+}
+
+/**
+ * Read the bytes of `p` (absolute, or relative to `g.cwd`) via the standard
+ * name-relative handle API. A standard-only, cwd-aware helper — not a
+ * non-standard method bolted onto the handle.
+ */
+export async function readPath(g: PathContext, p: string): Promise<Uint8Array> {
+  const abs = resolveAbs(g.cwd, p);
+  const root = await g.fs.getDirectory();
+  const { dir, base } = await walkToParent(root, abs);
+  return (await (await dir.getFileHandle(base)).getFile()).bytes();
+}
+
+/**
+ * Write `bytes` to `p` (absolute, or relative to `g.cwd`), creating any missing
+ * intermediate directories. Truncates an existing file.
+ */
+export async function writePath(g: PathContext, p: string, bytes: Uint8Array): Promise<void> {
+  const abs = resolveAbs(g.cwd, p);
+  const root = await g.fs.getDirectory();
+  const { dir, base } = await walkToParent(root, abs, { create: true });
+  const fh = await dir.getFileHandle(base, { create: true });
+  const w = await fh.createWritable();
+  await w.write(bytes);
+  await w.close();
+}
