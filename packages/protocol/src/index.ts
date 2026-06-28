@@ -5,3 +5,4 @@ export * from './process.ts';
 export * from './pipe.ts';
 export * from './pipe-flow.ts';
 export * from './syscall.ts';
+export * from './xattr.ts';
