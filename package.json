@@ -75,6 +75,7 @@
     "./packages/desktop",
     "./packages/examples/shell",
     "./packages/examples/image-viewer",
-    "./packages/examples/desktop"
+    "./packages/examples/desktop",
+    "./packages/examples/lab"
   ]
 }
