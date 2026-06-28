@@ -45,8 +45,8 @@ export default defineConfig({
             'packages/io/src/vfs/**/*.browser.test.ts',
             'packages/commands/*/src/**/*.browser.test.ts',
             'packages/desktop/src/**/*.browser.test.ts',
-            // Example packages: image-viewer GUI process + xterm desktop/shell.
-            'packages/examples/{image-viewer,desktop,shell}/src/**/*.browser.test.ts',
+            // Example packages: image-viewer GUI process + xterm desktop/shell + the Lab.
+            'packages/examples/{image-viewer,desktop,shell,lab}/src/**/*.browser.test.ts',
           ],
           exclude: ['**/node_modules/**', '**/dist/**'],
           browser: {

@@ -70,6 +70,24 @@ export interface AppDescriptorExtras {
 const DEFAULT_MANIFEST_SIZE: [number, number] = [640, 480];
 
 /**
+ * Flatten a manifest's nested `capabilities` OBJECT to the flat `Capability[]`
+ * the kernel checks. This is the single source of truth for the manifest →
+ * grant conversion — exec-from-VFS install writes the result into a utility's
+ * `security.capability` xattr, and {@link appDescriptorFromManifest} uses it for
+ * desktop spawns. A manifest with no `capabilities` yields `[]` (default-deny).
+ */
+export function manifestCapabilities(manifest: AppManifest): Capability[] {
+  const caps: Capability[] = [];
+  const c = manifest.capabilities ?? {};
+  if (c.fs) caps.push({ type: 'fs', paths: c.fs.paths, operations: c.fs.operations });
+  if (c.net) caps.push({ type: 'net', origins: c.net.origins });
+  if (c.ipc) caps.push({ type: 'ipc', channels: c.ipc.channels });
+  if (c.process) caps.push({ type: 'process', maxChildren: c.process.maxChildren });
+  if (c.env) caps.push({ type: 'env' });
+  return caps;
+}
+
+/**
  * Build an {@link AppDescriptor} from an app `manifest.json` + the host's code
  * hook (`entry` for a tier-2 sandboxed guest, or `mount` for a tier-1 host-DOM
  * app). The manifest's nested `capabilities` OBJECT is converted to the flat
@@ -81,13 +99,7 @@ export function appDescriptorFromManifest(
   manifest: AppManifest,
   extras: AppDescriptorExtras,
 ): AppDescriptor {
-  const caps: Capability[] = [];
-  const c = manifest.capabilities ?? {};
-  if (c.fs) caps.push({ type: 'fs', paths: c.fs.paths, operations: c.fs.operations });
-  if (c.net) caps.push({ type: 'net', origins: c.net.origins });
-  if (c.ipc) caps.push({ type: 'ipc', channels: c.ipc.channels });
-  if (c.process) caps.push({ type: 'process', maxChildren: c.process.maxChildren });
-  if (c.env) caps.push({ type: 'env' });
+  const caps = manifestCapabilities(manifest);
   return {
     name: manifest.name,
     title: manifest.title ?? manifest.name,
