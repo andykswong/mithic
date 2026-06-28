@@ -186,6 +186,75 @@ test('fs/chmod outside a granted prefix returns EACCES', async () => {
   expect(res).toMatchObject({ ok: false, error: { code: 'EACCES' } });
 });
 
+// ── fs/{get,set,list,remove}xattr (capability-gated like chmod) ──────────────
+
+test('xattr: fs/setxattr then fs/getxattr round-trips the value', async () => {
+  const { d } = await fsSetup();
+  const value = new Uint8Array([1, 2, 3, 255]);
+  const set = (await d.dispatch(1, { id: 1, call: 'fs/setxattr', args: { path: '/tmp/a.txt', name: 'user.tag', value } })).response;
+  expect(set.ok).toBe(true);
+  const get = (await d.dispatch(1, { id: 2, call: 'fs/getxattr', args: { path: '/tmp/a.txt', name: 'user.tag' } })).response;
+  expect(Array.from((get as { ok: true; result: Uint8Array }).result)).toEqual([1, 2, 3, 255]);
+});
+
+// No-entry: our errno vocabulary has no ENODATA/ENOATTR, so a missing attr maps
+// to ENOENT (the "no such thing at this name" code) rather than a silent empty.
+test('xattr: fs/getxattr for a missing attr returns ENOENT', async () => {
+  const { d } = await fsSetup();
+  const get = (await d.dispatch(1, { id: 1, call: 'fs/getxattr', args: { path: '/tmp/a.txt', name: 'user.absent' } })).response;
+  expect(get).toMatchObject({ ok: false, error: { code: 'ENOENT' } });
+});
+
+test('xattr: fs/listxattr enumerates set names; fs/removexattr drops one', async () => {
+  const { d } = await fsSetup();
+  await d.dispatch(1, { id: 1, call: 'fs/setxattr', args: { path: '/tmp/a.txt', name: 'user.a', value: new Uint8Array([1]) } });
+  await d.dispatch(1, { id: 2, call: 'fs/setxattr', args: { path: '/tmp/a.txt', name: 'user.b', value: new Uint8Array([2]) } });
+  const list = (await d.dispatch(1, { id: 3, call: 'fs/listxattr', args: { path: '/tmp/a.txt' } })).response;
+  expect((list as { ok: true; result: { names: string[] } }).result.names.sort()).toEqual(['user.a', 'user.b']);
+  const rm = (await d.dispatch(1, { id: 4, call: 'fs/removexattr', args: { path: '/tmp/a.txt', name: 'user.a' } })).response;
+  expect(rm.ok).toBe(true);
+  const after = (await d.dispatch(1, { id: 5, call: 'fs/listxattr', args: { path: '/tmp/a.txt' } })).response;
+  expect((after as { ok: true; result: { names: string[] } }).result.names).toEqual(['user.b']);
+  const gone = (await d.dispatch(1, { id: 6, call: 'fs/getxattr', args: { path: '/tmp/a.txt', name: 'user.a' } })).response;
+  expect(gone).toMatchObject({ ok: false, error: { code: 'ENOENT' } });
+});
+
+test('xattr: fs/setxattr without the write capability returns EACCES', async () => {
+  const { d } = await fsSetup(); // pid 2 holds no grant
+  const set = (await d.dispatch(2, { id: 1, call: 'fs/setxattr', args: { path: '/tmp/a.txt', name: 'user.tag', value: new Uint8Array([1]) } })).response;
+  expect(set).toMatchObject({ ok: false, error: { code: 'EACCES' } });
+});
+
+test('xattr: fs/getxattr without the read capability returns EACCES', async () => {
+  const { d } = await fsSetup(); // pid 2 holds no grant
+  const get = (await d.dispatch(2, { id: 1, call: 'fs/getxattr', args: { path: '/tmp/a.txt', name: 'user.tag' } })).response;
+  expect(get).toMatchObject({ ok: false, error: { code: 'EACCES' } });
+});
+
+test('xattr: fs/listxattr outside a granted prefix returns EACCES', async () => {
+  const { d } = await fsSetup();
+  const list = (await d.dispatch(1, { id: 1, call: 'fs/listxattr', args: { path: '/etc/x' } })).response;
+  expect(list).toMatchObject({ ok: false, error: { code: 'EACCES' } });
+});
+
+test('xattr: fs/removexattr outside a granted prefix returns EACCES', async () => {
+  const { d } = await fsSetup();
+  const rm = (await d.dispatch(1, { id: 1, call: 'fs/removexattr', args: { path: '/etc/x', name: 'user.a' } })).response;
+  expect(rm).toMatchObject({ ok: false, error: { code: 'EACCES' } });
+});
+
+test('xattr: fs/setxattr with a non-bytes value is rejected (EINVAL)', async () => {
+  const { d } = await fsSetup();
+  const set = (await d.dispatch(1, { id: 1, call: 'fs/setxattr', args: { path: '/tmp/a.txt', name: 'user.tag', value: 'not-bytes' as unknown as Uint8Array } })).response;
+  expect(set).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
+});
+
+test('xattr: fs/getxattr with a missing name arg is rejected (EINVAL)', async () => {
+  const { d } = await fsSetup();
+  const get = (await d.dispatch(1, { id: 1, call: 'fs/getxattr', args: { path: '/tmp/a.txt' } as unknown as { path: string; name: string } })).response;
+  expect(get).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
+});
+
 // ── SEC-2: symlink escape past the fs capability prefix ─────────────────────
 
 /**

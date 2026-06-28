@@ -57,6 +57,10 @@ export type Syscall =
   | { call: 'fs/chmod'; args: FsPathArgs & { mode?: number } }
   | { call: 'fs/utimes'; args: FsPathArgs & { atime?: number; mtime?: number } }
   | { call: 'fs/realpath'; args: FsPathArgs }
+  | { call: 'fs/getxattr'; args: FsPathArgs & { name: string } }
+  | { call: 'fs/setxattr'; args: FsPathArgs & { name: string; value: Uint8Array } }
+  | { call: 'fs/listxattr'; args: FsPathArgs }
+  | { call: 'fs/removexattr'; args: FsPathArgs & { name: string } }
   | { call: 'fs/pipe'; args: Record<string, never> }
   // --- ipc/* ---
   | { call: 'ipc/listen'; args: { path: string } }
@@ -109,6 +113,10 @@ export const SYSCALL_NAMES = [
   'fs/chmod',
   'fs/utimes',
   'fs/realpath',
+  'fs/getxattr',
+  'fs/setxattr',
+  'fs/listxattr',
+  'fs/removexattr',
   'fs/pipe',
   'ipc/listen',
   'ipc/accept',

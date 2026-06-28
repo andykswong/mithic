@@ -420,6 +420,10 @@ export class SyscallDispatcher {
     'fs/chmod': async (pid, a) => res(ok(a.id, await this.#chmod(pid, parseFsChmod(a.args)))),
     'fs/utimes': async (pid, a) => res(ok(a.id, await this.#utimes(pid, parseFsUtimes(a.args)))),
     'fs/realpath': async (pid, a) => res(ok(a.id, await this.#realpath(pid, parseFsPath(a.args)))),
+    'fs/getxattr': async (pid, a) => res(ok(a.id, await this.#getxattr(pid, parseFsXattrName(a.args)))),
+    'fs/setxattr': async (pid, a) => res(ok(a.id, await this.#setxattr(pid, parseFsSetxattr(a.args)))),
+    'fs/listxattr': async (pid, a) => res(ok(a.id, await this.#listxattr(pid, parseFsPath(a.args)))),
+    'fs/removexattr': async (pid, a) => res(ok(a.id, await this.#removexattr(pid, parseFsXattrName(a.args)))),
     'fs/pipe': (pid, a) => this.#pipe(pid, a.id),
     'ipc/listen': (pid, a) => this.#ipcListen(pid, a.id, parseIpcPath(a.args)),
     'ipc/accept': (pid, a) => this.#ipcAccept(pid, a.id, parseFd(a.args)),
@@ -1144,6 +1148,42 @@ export class SyscallDispatcher {
     return { path: canonical };
   }
 
+  /**
+   * `fs/getxattr {path, name}`: read an extended attribute. Requires read on the
+   * (canonical, symlink-resolved) path — the same gate `fs/chmod` uses, just on
+   * `read`. A missing attribute is ENOENT (our errno set has no ENODATA/ENOATTR).
+   */
+  async #getxattr(pid: number, args: SyscallArgs<'fs/getxattr'>): Promise<Uint8Array> {
+    const absPath = this.#resolvePath(pid, args.path);
+    const canonical = await this.#canonicalCheckedPath(pid, absPath, 'read');
+    const value = await this.#vfs.getxattr(canonical, args.name);
+    if (value === undefined) throw new FileSystemError('no-entry', `No such attribute: ${args.name}`);
+    return value;
+  }
+
+  /** `fs/setxattr {path, name, value}`: write an extended attribute. Requires write. */
+  async #setxattr(pid: number, args: SyscallArgs<'fs/setxattr'>): Promise<Record<string, never>> {
+    const absPath = this.#resolvePath(pid, args.path);
+    const canonical = await this.#canonicalCheckedPath(pid, absPath, 'write');
+    await this.#vfs.setxattr(canonical, args.name, args.value);
+    return {};
+  }
+
+  /** `fs/listxattr {path}`: enumerate extended-attribute names. Requires read. */
+  async #listxattr(pid: number, args: SyscallArgs<'fs/listxattr'>): Promise<{ names: string[] }> {
+    const absPath = this.#resolvePath(pid, args.path);
+    const canonical = await this.#canonicalCheckedPath(pid, absPath, 'read');
+    return { names: await this.#vfs.listxattr(canonical) };
+  }
+
+  /** `fs/removexattr {path, name}`: drop an extended attribute. Requires write. */
+  async #removexattr(pid: number, args: SyscallArgs<'fs/removexattr'>): Promise<Record<string, never>> {
+    const absPath = this.#resolvePath(pid, args.path);
+    const canonical = await this.#canonicalCheckedPath(pid, absPath, 'write');
+    await this.#vfs.removexattr(canonical, args.name);
+    return {};
+  }
+
   #fdOf(pid: number, fd: number): OpenFile {
     const entry = this.#tableFor(pid).get(fd);
     if (!entry) throw new BadFdError(fd);
@@ -1521,6 +1561,17 @@ function parseFsChmod(args: Record<string, unknown>): SyscallArgs<'fs/chmod'> {
   const out: SyscallArgs<'fs/chmod'> = { path: reqPath(args) };
   if (typeof args.mode === 'number') out.mode = args.mode;
   return out;
+}
+
+function parseFsXattrName(args: Record<string, unknown>): SyscallArgs<'fs/getxattr'> {
+  if (typeof args.name !== 'string') throw new MalformedArgsError('xattr name must be a string');
+  return { path: reqPath(args), name: args.name };
+}
+
+function parseFsSetxattr(args: Record<string, unknown>): SyscallArgs<'fs/setxattr'> {
+  if (typeof args.name !== 'string') throw new MalformedArgsError('xattr name must be a string');
+  if (!(args.value instanceof Uint8Array)) throw new MalformedArgsError('xattr value must be bytes');
+  return { path: reqPath(args), name: args.name, value: args.value };
 }
 
 function parseFsUtimes(args: Record<string, unknown>): SyscallArgs<'fs/utimes'> {
