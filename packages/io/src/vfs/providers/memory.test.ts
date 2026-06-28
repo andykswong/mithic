@@ -522,4 +522,88 @@ describe('MemoryFsProvider', () => {
       await fs.close(handle);
     });
   });
+
+  describe('xattr', () => {
+    async function makeFile(path: string): Promise<void> {
+      const fh = await fs.open(path, { create: true, write: true, truncate: true });
+      await fs.write(fh, new TextEncoder().encode('x'), 0);
+      await fs.close(fh);
+    }
+
+    it('set/get/list/remove round-trip; rename preserves, unlink drops', async () => {
+      await makeFile('/f');
+
+      await fs.setxattr('/f', 'security.capability', new Uint8Array([1, 2, 3]));
+      expect(Array.from((await fs.getxattr('/f', 'security.capability'))!)).toEqual([1, 2, 3]);
+      expect(await fs.listxattr('/f')).toContain('security.capability');
+
+      await fs.rename('/f', '/g');
+      expect(Array.from((await fs.getxattr('/g', 'security.capability'))!)).toEqual([1, 2, 3]);
+
+      await fs.removexattr('/g', 'security.capability');
+      expect(await fs.getxattr('/g', 'security.capability')).toBeUndefined();
+    });
+
+    it('getxattr returns undefined for an unset name', async () => {
+      await makeFile('/f');
+      expect(await fs.getxattr('/f', 'user.missing')).toBeUndefined();
+    });
+
+    it('listxattr returns [] when no xattrs are set', async () => {
+      await makeFile('/f');
+      expect(await fs.listxattr('/f')).toEqual([]);
+    });
+
+    it('supports multiple distinct xattrs and lists them all', async () => {
+      await makeFile('/f');
+      await fs.setxattr('/f', 'user.a', new Uint8Array([1]));
+      await fs.setxattr('/f', 'user.b', new Uint8Array([2]));
+      const names = await fs.listxattr('/f');
+      expect(names).toContain('user.a');
+      expect(names).toContain('user.b');
+      expect(names.length).toBe(2);
+    });
+
+    it('setxattr overwrites an existing value', async () => {
+      await makeFile('/f');
+      await fs.setxattr('/f', 'user.a', new Uint8Array([1]));
+      await fs.setxattr('/f', 'user.a', new Uint8Array([9, 9]));
+      expect(Array.from((await fs.getxattr('/f', 'user.a'))!)).toEqual([9, 9]);
+    });
+
+    it('stores a defensive copy independent of the caller buffer', async () => {
+      await makeFile('/f');
+      const value = new Uint8Array([1, 2, 3]);
+      await fs.setxattr('/f', 'user.a', value);
+      value[0] = 99;
+      expect(Array.from((await fs.getxattr('/f', 'user.a'))!)).toEqual([1, 2, 3]);
+    });
+
+    it('xattr works on directories', async () => {
+      await fs.mkdir('/d');
+      await fs.setxattr('/d', 'user.a', new Uint8Array([5]));
+      expect(Array.from((await fs.getxattr('/d', 'user.a'))!)).toEqual([5]);
+    });
+
+    it('removexattr on an unset name is a no-op', async () => {
+      await makeFile('/f');
+      await fs.removexattr('/f', 'user.absent');
+      expect(await fs.listxattr('/f')).toEqual([]);
+    });
+
+    it('unlink drops xattrs so a recreated file has none', async () => {
+      await makeFile('/f');
+      await fs.setxattr('/f', 'user.a', new Uint8Array([1]));
+      await fs.unlink('/f');
+      await makeFile('/f');
+      expect(await fs.listxattr('/f')).toEqual([]);
+    });
+
+    it('throws no-entry for a missing path', async () => {
+      await expect((async () => fs.setxattr('/nope', 'user.a', new Uint8Array([1])))()).rejects.toThrow(FileSystemError);
+      await expect((async () => fs.getxattr('/nope', 'user.a'))()).rejects.toThrow(FileSystemError);
+      await expect((async () => fs.listxattr('/nope'))()).rejects.toThrow(FileSystemError);
+      await expect((async () => fs.removexattr('/nope', 'user.a'))()).rejects.toThrow(FileSystemError);
+    });
+  });
 });

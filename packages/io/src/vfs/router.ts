@@ -173,6 +173,26 @@ export class FileSystemRouter implements FileSystemProvider {
     return provider.utimes(relativePath, atime, mtime);
   }
 
+  async getxattr(path: string, name: string): Promise<Uint8Array | undefined> {
+    const { provider, relativePath } = this.resolve(path);
+    return provider.getxattr(relativePath, name);
+  }
+
+  async setxattr(path: string, name: string, value: Uint8Array): Promise<void> {
+    const { provider, relativePath } = this.resolve(path);
+    return provider.setxattr(relativePath, name, value);
+  }
+
+  async listxattr(path: string): Promise<string[]> {
+    const { provider, relativePath } = this.resolve(path);
+    return provider.listxattr(relativePath);
+  }
+
+  async removexattr(path: string, name: string): Promise<void> {
+    const { provider, relativePath } = this.resolve(path);
+    return provider.removexattr(relativePath, name);
+  }
+
   async mkfifo(path: string): Promise<void> {
     const { provider, relativePath } = this.resolve(path);
     return provider.mkfifo(relativePath);

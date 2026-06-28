@@ -196,6 +196,22 @@ export class CachingProvider implements FileSystemProvider {
     return this.#remote.utimes(path, atime, mtime);
   }
 
+  async getxattr(path: string, name: string): Promise<Uint8Array | undefined> {
+    return this.#remote.getxattr(path, name);
+  }
+
+  async setxattr(path: string, name: string, value: Uint8Array): Promise<void> {
+    return this.#remote.setxattr(path, name, value);
+  }
+
+  async listxattr(path: string): Promise<string[]> {
+    return this.#remote.listxattr(path);
+  }
+
+  async removexattr(path: string, name: string): Promise<void> {
+    return this.#remote.removexattr(path, name);
+  }
+
   async mkfifo(path: string): Promise<void> {
     return this.#remote.mkfifo(path);
   }

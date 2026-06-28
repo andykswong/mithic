@@ -18,6 +18,7 @@ export class NodeFsProvider implements FileSystemProvider {
   #root: string;
   #nextFd = 3;
   #handles = new Map<number, { nativeHandle: fs.FileHandle; path: string; flags: OpenFlags }>();
+  #xattrs = new Map<string, Map<string, Uint8Array>>();
 
   constructor(options: NodeFsProviderOptions) {
     this.#root = nodePath.resolve(options.root);
@@ -204,6 +205,40 @@ export class NodeFsProvider implements FileSystemProvider {
     const resolved = this.#resolvePath(path);
     try {
       await fs.utimes(resolved, atime, mtime);
+    } catch (e: unknown) {
+      throw this.#mapError(e, path);
+    }
+  }
+
+  async getxattr(path: string, name: string): Promise<Uint8Array | undefined> {
+    await this.#requireExists(path);
+    const value = this.#xattrs.get(this.#resolvePath(path))?.get(name);
+    return value ? value.slice() : undefined;
+  }
+
+  async setxattr(path: string, name: string, value: Uint8Array): Promise<void> {
+    await this.#requireExists(path);
+    const key = this.#resolvePath(path);
+    let map = this.#xattrs.get(key);
+    if (!map) this.#xattrs.set(key, (map = new Map()));
+    map.set(name, value.slice());
+  }
+
+  async listxattr(path: string): Promise<string[]> {
+    await this.#requireExists(path);
+    const map = this.#xattrs.get(this.#resolvePath(path));
+    return map ? [...map.keys()] : [];
+  }
+
+  async removexattr(path: string, name: string): Promise<void> {
+    await this.#requireExists(path);
+    this.#xattrs.get(this.#resolvePath(path))?.delete(name);
+  }
+
+  async #requireExists(path: string): Promise<void> {
+    const resolved = this.#resolvePath(path);
+    try {
+      await fs.lstat(resolved);
     } catch (e: unknown) {
       throw this.#mapError(e, path);
     }

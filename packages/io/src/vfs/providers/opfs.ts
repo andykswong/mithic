@@ -10,6 +10,7 @@ export class OPFSProvider implements FileSystemProvider {
   #storage: OPFSStorageManager;
   #nextFd = 3;
   #handles = new Map<number, { nativeHandle: FileSystemFileHandle; path: string; flags: OpenFlags }>();
+  #xattrs = new Map<string, Map<string, Uint8Array>>();
 
   constructor(storage?: OPFSStorageManager) {
     this.#storage = storage ?? navigator.storage;
@@ -294,6 +295,27 @@ export class OPFSProvider implements FileSystemProvider {
 
   async utimes(_path: string, _atime: Date, _mtime: Date): Promise<void> {
     throw new FileSystemError('unsupported', 'OPFS does not support utimes');
+  }
+
+  async getxattr(path: string, name: string): Promise<Uint8Array | undefined> {
+    const value = this.#xattrs.get(this.#normalizePath(path))?.get(name);
+    return value ? value.slice() : undefined;
+  }
+
+  async setxattr(path: string, name: string, value: Uint8Array): Promise<void> {
+    const key = this.#normalizePath(path);
+    let map = this.#xattrs.get(key);
+    if (!map) this.#xattrs.set(key, (map = new Map()));
+    map.set(name, value.slice());
+  }
+
+  async listxattr(path: string): Promise<string[]> {
+    const map = this.#xattrs.get(this.#normalizePath(path));
+    return map ? [...map.keys()] : [];
+  }
+
+  async removexattr(path: string, name: string): Promise<void> {
+    this.#xattrs.get(this.#normalizePath(path))?.delete(name);
   }
 
   async mkfifo(_path: string): Promise<void> {
