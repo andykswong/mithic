@@ -194,8 +194,8 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
       const [name, ...rest] = params.args ?? [];
       const pid = synthPid--;
       try {
-        // Forward inline stdin (a `<` / `<<` / `<<<` redirect source) as the
-        // first (only) stage's `stdinData` so the kernel feeds it to the child
+        // D8: forward an fd-0 stdin source (a `<` / `<<` / `<<<` redirect) as the
+        // first (only) stage's `fds[0]` action so the kernel pipe-feeds the child
         // and closes stdin (EOF). Without this a stdin-reading external (e.g.
         // `grep foo < file`) blocks forever waiting for an EOF that never comes.
         const stage: Record<string, unknown> = {
@@ -204,9 +204,7 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
           env: params.env,
           cwd: params.cwd,
         };
-        if (params.stdinData !== undefined) {
-          stage.stdinData = new TextEncoder().encode(params.stdinData);
-        }
+        if (params.fds) stage.fds = params.fds;
         const r = (await guest.syscall('process/pipeline', {
           stages: [stage],
         })) as { exitCodes: number[]; stdout: Uint8Array };
@@ -237,11 +235,10 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
         // back to the shell. Object-key order ⇒ ports[0] = fd1 read, ports[1] =
         // fd2 read. The stderr port is drained to bytes so the executor can write
         // a failing command's diagnostics to the shell's stderr after it exits.
-        fds: { 1: { action: 'pipe' }, 2: { action: 'pipe' } },
+        // D8: fds[0] (a redirect-fed stdin source) is merged in before fd 1/2 so
+        // it does NOT take a transferred-port slot (open/bytes are kernel-driven).
+        fds: { ...(params.fds ?? {}), 1: { action: 'pipe' }, 2: { action: 'pipe' } },
       };
-      if (params.stdinData !== undefined) {
-        stage.stdinData = new TextEncoder().encode(params.stdinData);
-      }
       try {
         const { result, ports } = await guest.syscallPorts('process/spawn', stage);
         const pid = (result as { pid: number }).pid;
@@ -372,8 +369,9 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
               env: s.env,
               cwd: s.cwd,
             };
-            // First-stage stdin redirect (later stages read the inter-stage pipe).
-            if (s.stdinData !== undefined) stage.stdinData = new TextEncoder().encode(s.stdinData);
+            // D8: first-stage fd-0 stdin source (later stages read the inter-stage
+            // pipe). The kernel pipe-feeds an `open`/`bytes` fd-0 action.
+            if (s.fds) stage.fds = s.fds;
             return stage;
           }),
         })) as { exitCodes: number[]; stdout: Uint8Array };

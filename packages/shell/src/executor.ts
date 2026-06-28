@@ -36,6 +36,7 @@ import type {
   KernelClient,
   PipelineStageParams,
   SpawnParams,
+  StdinFdSpec,
 } from './kernel-client.ts';
 
 export interface ShellFunction {
@@ -1308,6 +1309,42 @@ export class Executor {
     return stdin;
   }
 
+  /**
+   * D8: resolve an EXTERNAL command's fd-0 (stdin) source into a kernel fd spec.
+   * A `<` redirect becomes an `open` of the (cwd-resolved) path — the kernel
+   * streams the file into fd 0; a `<<`/`<<<` body becomes `bytes` fed into fd 0.
+   * With no input redirect, an inherited piped-stdin STRING (`pipedStdin`, from a
+   * compound-pipeline stage) is encoded to `bytes` so it still reaches the child.
+   * Returns undefined when there is no stdin source (the child gets an EOF).
+   *
+   * `/dev/null` resolves to an empty `bytes` spec (immediate EOF) — the kernel's
+   * VFS has no `/dev/null` handle to `open`.
+   */
+  private async resolveStdinFd(redirects: Redirect[], pipedStdin: string | undefined): Promise<StdinFdSpec | undefined> {
+    const exp = this.expander();
+    let spec: StdinFdSpec | undefined;
+    let sawRedirect = false;
+    for (const r of redirects) {
+      if (r.op === '<<<') {
+        sawRedirect = true;
+        spec = { action: 'bytes', data: new TextEncoder().encode(await exp.expandToString(r.target) + '\n') };
+      } else if (r.op === '<<') {
+        sawRedirect = true;
+        const body = r.hereDocQuoted ? (r.hereDoc ?? '') : await this.expandHereDoc(r.hereDoc ?? '');
+        spec = { action: 'bytes', data: new TextEncoder().encode(body) };
+      } else if (r.op === '<' || r.op === '<>') {
+        sawRedirect = true;
+        const path = await exp.expandToString(r.target);
+        spec = path === '/dev/null'
+          ? { action: 'bytes', data: new Uint8Array() }
+          : { action: 'open', path: this.absPath(path), flags: { read: true } };
+      }
+    }
+    if (sawRedirect) return spec;
+    if (pipedStdin !== undefined) return { action: 'bytes', data: new TextEncoder().encode(pipedStdin) };
+    return undefined;
+  }
+
   private async expandHereDoc(body: string): Promise<string> {
     // Expand $vars/$() line by line but keep newlines verbatim.
     const exp = this.expander();
@@ -1447,10 +1484,12 @@ export class Executor {
       return this.pipelineStatus(codes, status);
     }
 
-    // A `<` / `<<` / `<<<` redirect on the FIRST stage becomes that stage's
-    // inline stdin (later stages read the previous stage's pipe). Without this a
-    // stdin-reading head (`grep foo < file | sort`) would block.
-    const headStdin = await this.resolveStdin(stages[0].redirects);
+    // D8: a `<` / `<<` / `<<<` redirect on the FIRST stage becomes that stage's
+    // fd-0 source (later stages read the previous stage's pipe). Without this a
+    // stdin-reading head (`grep foo < file | sort`) would block. The kernel
+    // pipe-feeds it — an `open` is streamed in-kernel, a `<<`/`<<<` body is
+    // fed as bytes.
+    const headFd0 = await this.resolveStdinFd(stages[0].redirects, undefined);
 
     const stageParams: PipelineStageParams[] = [];
     for (let i = 0; i < expanded.length; i++) {
@@ -1462,7 +1501,7 @@ export class Executor {
       // early-stage error (e.g. `cat /nonexistent | sort`) reaches the terminal
       // rather than being discarded. Stdout is captured only on the last stage
       // (others feed the inter-stage pipe).
-      stageParams.push({ code, args: [name, ...argv], env: { ...this.context.env, ...env }, cwd: this.context.cwd, captureStdout: isLast, captureStderr: true, stdinData: i === 0 ? headStdin : undefined });
+      stageParams.push({ code, args: [name, ...argv], env: { ...this.context.env, ...env }, cwd: this.context.cwd, captureStdout: isLast, captureStderr: true, fds: i === 0 && headFd0 ? { 0: headFd0 } : undefined });
     }
 
     if (this.kernel.runPipeline) {
@@ -1544,7 +1583,10 @@ export class Executor {
     }
 
     // stdin: an explicit `<`/`<<`/`<<<` redirect wins; otherwise inherit a
-    // compound-pipeline stage's piped stdin (M1).
+    // compound-pipeline stage's piped stdin (M1). BUILTINS consume the string
+    // (`read`/`cat`-builtin); EXTERNALS get a kernel fd-0 spec instead (D8): a
+    // `<` redirect opens the VFS path in-kernel (streamed), a `<<`/`<<<` body or
+    // an inherited piped-stdin string is fed as fd-0 bytes — no inline copy.
     const redirStdin = await this.resolveStdin(cmd.redirects);
     const stdin = redirStdin ?? io.stdin;
 
@@ -1574,7 +1616,8 @@ export class Executor {
         }
         return status;
       }
-      return await this.spawnExternal(name, argv, localEnv, io, stdin);
+      const fd0 = await this.resolveStdinFd(cmd.redirects, io.stdin);
+      return await this.spawnExternal(name, argv, localEnv, io, fd0);
     } finally {
       if (restore) restore();
       // Run any deferred `>(cmd)` substitutions now that the outer command has
@@ -1636,7 +1679,7 @@ export class Executor {
     this.context.env[a.name] = a.append ? (this.context.env[a.name] ?? '') + val : val;
   }
 
-  private async spawnExternal(name: string, argv: string[], localEnv: Record<string, string>, io: CommandIO, stdin?: string): Promise<number> {
+  private async spawnExternal(name: string, argv: string[], localEnv: Record<string, string>, io: CommandIO, fd0?: StdinFdSpec): Promise<number> {
     const code = this.resolve(name);
     if (code === undefined) {
       io.stderr(`shell: ${name}: command not found\n`);
@@ -1651,7 +1694,10 @@ export class Executor {
       // stderr sink instead of being silently discarded (the bug that hid every
       // external command's errors — e.g. `cat /nonexistent`).
       captureStderr: true,
-      stdinData: stdin,
+      // D8: pipe-fed stdin. fds[0] open (a `< file`, streamed in-kernel) or bytes
+      // (a `<<`/`<<<` body or inherited piped-stdin string). Absent ⇒ the kernel
+      // delivers an immediate EOF so a stdin-reading child does not block.
+      fds: fd0 ? { 0: fd0 } : undefined,
     };
     // A1: prefer the live-stream spawn path — the child's stdout arrives as a
     // ReadableStream we pump chunk-by-chunk into our stdout sink, so a large or
@@ -2032,7 +2078,7 @@ function builtinShadowsExternal(name: string, argv: string[]): boolean {
 }
 
 function toSpawnParams(p: PipelineStageParams): SpawnParams {
-  return { code: p.code, args: p.args, env: p.env, cwd: p.cwd, captureStdout: p.captureStdout, captureStderr: p.captureStderr, stdinData: p.stdinData };
+  return { code: p.code, args: p.args, env: p.env, cwd: p.cwd, captureStdout: p.captureStdout, captureStderr: p.captureStderr, fds: p.fds };
 }
 
 function describeStages(stages: SimpleCommand[]): string {

@@ -36,7 +36,12 @@ export interface PipelineStageArgs {
   argv?: string[];
   env?: Record<string, string>;
   cwd?: string;
-  stdinData?: Uint8Array;
+  /**
+   * D8: fd wiring for this stage. Only `fds[0]` on the FIRST stage is honored
+   * (the redirect-fed stdin source — `open` a VFS file or feed `bytes`); later
+   * stages read the inter-stage pipe. Replaces the old inline `stdinData`.
+   */
+  fds?: Record<number, FdAction>;
 }
 
 export type Syscall =

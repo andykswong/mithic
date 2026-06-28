@@ -60,23 +60,33 @@ export interface ShellApp {
  * (`params.code`), which the kernel's {@link InProcessCommandLauncher} runs.
  */
 function makeKernelClient(kernel: Kernel): KernelClient {
-  const enc = new TextEncoder();
+  // runPipeline awaits + REAPS each stage, so record exit codes by pid here and
+  // serve a later wait(pid) from the map (a second kernel.wait would find the
+  // pid already reaped and report -1).
+  const exitCodes = new Map<number, number>();
   return {
     async spawn(params: SpawnParams): Promise<SpawnHandle> {
-      const { pid, stdout, stderr } = await kernel.spawn(params.code, {
+      // D8: route a single command through runPipeline (one stage) so a
+      // redirect-fed `fds[0]` stdin source is pipe-fed by the kernel — the same
+      // path the pipeline uses. (kernel.spawn's SpawnInit has no fds wiring.)
+      const result = await kernel.runPipeline([{
+        code: params.code,
         args: params.args,
         env: params.env,
         cwd: params.cwd,
         capabilities: CHILD_CAPABILITIES,
         captureStdout: params.captureStdout,
         captureStderr: params.captureStderr,
-        stdinData: params.stdinData !== undefined ? enc.encode(params.stdinData) : undefined,
-      });
+        fds: params.fds,
+      }]);
+      exitCodes.set(result.pids[0], result.exitCodes[0] ?? 0);
       // Bug B: surface the child's captured stderr so a failing command's error
       // reaches the terminal (the executor drains this into its stderr sink).
-      return { pid, stdout, stderr };
+      return { pid: result.pids[0], stdout: result.lastStdout, stderr: result.stderr[0] };
     },
     async wait(pid: number) {
+      const recorded = exitCodes.get(pid);
+      if (recorded !== undefined) return { pid, code: recorded };
       const { code } = await kernel.wait(pid);
       return { pid, code };
     },
@@ -90,7 +100,7 @@ function makeKernelClient(kernel: Kernel): KernelClient {
           capabilities: CHILD_CAPABILITIES,
           captureStdout: i === stages.length - 1 ? s.captureStdout : false,
           captureStderr: s.captureStderr,
-          stdinData: i === 0 && s.stdinData !== undefined ? enc.encode(s.stdinData) : undefined,
+          fds: i === 0 ? s.fds : undefined,
         })),
       );
       return {

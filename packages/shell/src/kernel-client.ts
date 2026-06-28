@@ -8,6 +8,19 @@
  * works — the executor falls back to spawning each stage itself).
  */
 
+/**
+ * D8: the shell's fd-0 (stdin) source for an EXTERNAL command, mapped by the
+ * KernelClient onto a kernel `fds` action. The kernel pipe-feeds the child's
+ * stdin in BOTH cases (credit-windowed, no whole-buffer copy, works on every
+ * backend) — the inline `stdinData` blob is gone (RFC 0001 D8).
+ *   - `open`  — a `< path` redirect: the kernel streams the VFS file into fd 0.
+ *   - `bytes` — a `<<`/`<<<` body (or an inherited piped-stdin string): the
+ *               kernel feeds the buffer into fd 0 then closes it (EOF).
+ */
+export type StdinFdSpec =
+  | { action: 'open'; path: string; flags: { read: true } }
+  | { action: 'bytes'; data: Uint8Array };
+
 /** Per-stage / per-command spawn parameters, mirroring the kernel's SpawnInit subset. */
 export interface SpawnParams {
   /** Guest program code (inline ESM source string) or a module URL. */
@@ -17,8 +30,12 @@ export interface SpawnParams {
   cwd?: string;
   captureStdout?: boolean;
   captureStderr?: boolean;
-  /** Inline stdin contents to feed the child (e.g. from a `<` redirect). */
-  stdinData?: string;
+  /**
+   * D8: kernel fd actions. The shell only ever sets `fds[0]` — the stdin source
+   * for a `<`/`<<`/`<<<` redirect (or an inherited piped-stdin string). The
+   * KernelClient forwards it as the child's fd-0 wiring.
+   */
+  fds?: Record<number, StdinFdSpec>;
   /** Injected stdio ports for manual pipe wiring (zero-hop dup2). */
   stdin?: MessagePort;
   stdout?: MessagePort;
@@ -58,8 +75,12 @@ export interface PipelineStageParams {
   cwd?: string;
   captureStdout?: boolean;
   captureStderr?: boolean;
-  /** Inline stdin for the FIRST stage (a `<` / `<<` / `<<<` redirect source). */
-  stdinData?: string;
+  /**
+   * D8: fd-0 stdin source for the FIRST stage (a `<` / `<<` / `<<<` redirect);
+   * later stages read the inter-stage pipe. The KernelClient maps it to the
+   * stage's fd-0 wiring (open VFS file, or feed a byte buffer).
+   */
+  fds?: Record<number, StdinFdSpec>;
 }
 
 export interface PipelineRunResult {

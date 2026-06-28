@@ -219,30 +219,44 @@ test('process/spawn fd pipe-back: parent drains a child stdout pipe (dispatcher 
   expect(new TextDecoder().decode(bytes)).toBe('piped');
 }, 20000);
 
-test('kernel.spawn feeds stdinData into a stdin-reading child (no hang, gets EOF)', async () => {
+test('D8: runPipeline feeds an fds[0] bytes source into a stdin-reading child (no hang, gets EOF)', async () => {
   const kernel = await makeKernel();
-  // `upper` reads stdin to EOF. With stdinData supplied, the kernel writes the
-  // bytes into the child's stdin pipe and closes it (EOF) — so the child does
-  // not block. Without this fix the child would hang waiting for stdin.
-  const { pid, stdout } = await kernel.spawn(UPPER_CMD, {
+  // `upper` reads stdin to EOF. With an fds[0] `bytes` action, the kernel
+  // pipe-feeds the buffer into the child's stdin and closes it (EOF) — so the
+  // child does not block. (Replaces the removed inline stdinData path, D8.)
+  const result = await kernel.runPipeline([{
+    code: UPPER_CMD,
     args: ['upper'],
     capabilities: [{ type: 'process' }],
     captureStdout: true,
-    stdinData: new TextEncoder().encode('hello stdin'),
-  });
-  const { code } = await kernel.wait(pid);
-  expect(code).toBe(0);
-  expect(new TextDecoder().decode(await stdout!)).toBe('HELLO STDIN');
+    fds: { 0: { action: 'bytes', data: new TextEncoder().encode('hello stdin') } },
+  }]);
+  // runPipeline awaits + reaps the stages; read the exit code from the result.
+  expect(result.exitCodes[0]).toBe(0);
+  expect(new TextDecoder().decode(await result.lastStdout!)).toBe('HELLO STDIN');
 }, 20000);
 
-test('process/pipeline forwards first-stage stdinData (grep-like child < data)', async () => {
+test('D8: an EMPTY fds[0] bytes source delivers immediate EOF (child reads "" and exits)', async () => {
+  const kernel = await makeKernel();
+  const result = await kernel.runPipeline([{
+    code: UPPER_CMD,
+    args: ['upper'],
+    capabilities: [{ type: 'process' }],
+    captureStdout: true,
+    fds: { 0: { action: 'bytes', data: new Uint8Array() } },
+  }]);
+  expect(result.exitCodes[0]).toBe(0);
+  expect(new TextDecoder().decode(await result.lastStdout!)).toBe('');
+}, 20000);
+
+test('D8: process/pipeline forwards a first-stage fds[0] bytes source (grep-like child < data)', async () => {
   const kernel = await makeKernel();
   // A single-stage pipeline where the only stage reads stdin. The shell uses
-  // exactly this shape for `cmd < file` / `cmd <<< str`. stdinData must reach
-  // the child's stdin and close it so the child terminates.
+  // exactly this shape for `cmd <<< str`. The fds[0] bytes must reach the
+  // child's stdin and close it (EOF) so the child terminates.
   const parent = parentGuest(`
     const r = await g.syscall('process/pipeline', { stages: [
-      { path: 'upper', argv: ['upper'], stdinData: new TextEncoder().encode('from redirect') },
+      { path: 'upper', argv: ['upper'], fds: { 0: { action: 'bytes', data: new TextEncoder().encode('from redirect') } } },
     ]});
     const out = g.stdout.getWriter();
     await out.write(r.stdout);
@@ -257,4 +271,51 @@ test('process/pipeline forwards first-stage stdinData (grep-like child < data)',
   const { code } = await kernel.wait(pid);
   expect(code).toBe(0);
   expect(new TextDecoder().decode(await stdout!)).toBe('FROM REDIRECT');
+}, 20000);
+
+test('D8: process/pipeline forwards a first-stage fds[0] OPEN source (cmd < file, streamed in-kernel)', async () => {
+  const kernel = await makeKernel();
+  // Seed a VFS file the child reads via an fds[0] open (the `cmd < file` path).
+  // The parent needs an fs grant for the open cap check; the child narrows from it.
+  const parent = parentGuest(`
+    const o = await g.syscall('fs/open', { path: '/in.txt', oflags: { write: true, create: true, truncate: true } });
+    await g.syscall('fs/write', { fd: o.fd, data: new TextEncoder().encode('from a file') });
+    await g.syscall('fs/close', { fd: o.fd });
+    const r = await g.syscall('process/pipeline', { stages: [
+      { path: 'upper', argv: ['upper'], fds: { 0: { action: 'open', path: '/in.txt', flags: { read: true } } } },
+    ]});
+    const out = g.stdout.getWriter();
+    await out.write(r.stdout);
+    await out.close();
+    g.exit(r.exitCodes[r.exitCodes.length - 1] ?? 0);
+  `);
+  const { pid, stdout } = await kernel.spawn(parent, {
+    args: ['parent'],
+    capabilities: [{ type: 'process' }, { type: 'fs', paths: ['/'], operations: ['read', 'write'] }],
+    captureStdout: true,
+  });
+  const { code } = await kernel.wait(pid);
+  expect(code).toBe(0);
+  expect(new TextDecoder().decode(await stdout!)).toBe('FROM A FILE');
+}, 20000);
+
+test('D8: process/pipeline rejects a non-Uint8Array fds[0] bytes data (EINVAL)', async () => {
+  const kernel = await makeKernel();
+  const parent = parentGuest(`
+    let errCode = 'NONE';
+    try { await g.syscall('process/pipeline', { stages: [
+      { path: 'upper', argv: ['upper'], fds: { 0: { action: 'bytes', data: 'not-bytes' } } },
+    ]}); } catch (e) { errCode = e.code || e.errno || (e.message||''); }
+    const out = g.stdout.getWriter();
+    await out.write(new TextEncoder().encode(String(errCode)));
+    await out.close();
+    g.exit(0);
+  `);
+  const { pid, stdout } = await kernel.spawn(parent, {
+    args: ['parent'],
+    capabilities: [{ type: 'process' }],
+    captureStdout: true,
+  });
+  await kernel.wait(pid);
+  expect(new TextDecoder().decode(await stdout!)).toContain('EINVAL');
 }, 20000);

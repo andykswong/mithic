@@ -39,21 +39,26 @@ async function bootExecutor(): Promise<(script: string) => Promise<{ code: numbe
   const resolve = createCoreutilsResolver();
 
   // A KernelClient that threads BOTH stdout and stderr capture through.
-  const enc = new TextEncoder();
+  const exitCodes = new Map<number, number>();
   const kernelClient: KernelClient = {
     async spawn(params: SpawnParams): Promise<SpawnHandle> {
-      const { pid, stdout, stderr } = await kernel.spawn(params.code, {
+      // D8: one-stage runPipeline so a redirect-fed fds[0] is pipe-fed.
+      const result = await kernel.runPipeline([{
+        code: params.code,
         args: params.args,
         env: params.env,
         cwd: params.cwd,
         capabilities: CHILD_CAPS,
         captureStdout: params.captureStdout,
         captureStderr: params.captureStderr,
-        stdinData: params.stdinData !== undefined ? enc.encode(params.stdinData) : undefined,
-      });
-      return { pid, stdout, stderr };
+        fds: params.fds,
+      }]);
+      exitCodes.set(result.pids[0], result.exitCodes[0] ?? 0);
+      return { pid: result.pids[0], stdout: result.lastStdout, stderr: result.stderr[0] };
     },
     async wait(pid: number) {
+      const recorded = exitCodes.get(pid);
+      if (recorded !== undefined) return { pid, code: recorded };
       const { code } = await kernel.wait(pid);
       return { pid, code };
     },
@@ -67,7 +72,7 @@ async function bootExecutor(): Promise<(script: string) => Promise<{ code: numbe
           capabilities: CHILD_CAPS,
           captureStdout: i === stages.length - 1 ? s.captureStdout : false,
           captureStderr: s.captureStderr,
-          stdinData: i === 0 && s.stdinData !== undefined ? enc.encode(s.stdinData) : undefined,
+          fds: i === 0 ? s.fds : undefined,
         })),
       );
       return {

@@ -91,14 +91,13 @@ export interface SpawnArgs {
   argv: string[];
   env?: Record<string, string>;
   cwd?: string;
-  fds?: Record<number, FdAction>;
   /**
-   * A1: inline stdin bytes for the child. When set and fd 0 is not otherwise
-   * wired (no `fds[0]` pipe/dup2/open), the kernel mints a stdin pipe, feeds
-   * these bytes, and closes the write end (EOF) so a stdin-reading child does
-   * not block. Mirrors the per-stage `stdinData` of `process/pipeline`.
+   * fd wiring actions. D8: stdin (`fds[0]`) is fed through a kernel pipe — an
+   * `open` (a `< file` redirect, streamed in-kernel) or `bytes` (a `<<`/`<<<`
+   * body / piped-stdin buffer, credit-windowed). There is no inline `stdinData`
+   * blob: one pipe-fed stdin path on every backend.
    */
-  stdinData?: Uint8Array;
+  fds?: Record<number, FdAction>;
 }
 
 export interface SpawnResult {

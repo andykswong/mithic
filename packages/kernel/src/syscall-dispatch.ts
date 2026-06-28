@@ -1,4 +1,4 @@
-import type { SyscallResponse, ErrnoCode, SpawnArgs, ProcessLimits, SyscallName, SyscallArgs, FsPathArgs } from '@mithic/protocol';
+import type { SyscallResponse, ErrnoCode, SpawnArgs, ProcessLimits, SyscallName, SyscallArgs, FsPathArgs, FdAction } from '@mithic/protocol';
 import { fsErrorToErrno, isSyscallName } from '@mithic/protocol';
 import { FileSystemError, normalizePath } from '@mithic/io/vfs';
 import type { FileSystemProvider, FileHandle, OpenFlags } from '@mithic/io/vfs';
@@ -134,8 +134,12 @@ export interface PipelineStageSpec {
   argv: string[];
   env?: Record<string, string>;
   cwd?: string;
-  /** Inline stdin for the FIRST stage (a `<` / `<<<` redirect source). */
-  stdinData?: Uint8Array;
+  /**
+   * D8: fd wiring for this stage. Only `fds[0]` on the FIRST stage is honored (a
+   * `<` / `<<` / `<<<` redirect source — `open` a VFS file or feed `bytes`); the
+   * kernel pipe-feeds it. Replaces the old inline `stdinData`.
+   */
+  fds?: Record<number, FdAction>;
 }
 
 /** Result of running a guest-requested pipeline: per-stage codes + last stdout. */
@@ -616,8 +620,22 @@ export class SyscallDispatcher {
       if (code === undefined) {
         return fail(id, 'ENOENT', `command not found: ${path}`);
       }
-      const stdinData = r.stdinData instanceof Uint8Array ? r.stdinData : undefined;
-      resolved.push({ code, spec: { path, argv, env, cwd, stdinData } });
+      // D8: an fd-0 stdin source (a `<` open / `<<`/`<<<` bytes). Validate a
+      // `bytes` action's data at the boundary (EINVAL) before it reaches the pump.
+      let fds: Record<number, FdAction> | undefined;
+      if (r.fds !== undefined) {
+        if (typeof r.fds !== 'object' || r.fds === null) {
+          return fail(id, 'EINVAL', 'process/pipeline: fds must be an object keyed by fd');
+        }
+        for (const action of Object.values(r.fds as Record<number, unknown>)) {
+          if ((action as { action?: string })?.action === 'bytes'
+            && !((action as { data?: unknown }).data instanceof Uint8Array)) {
+            return fail(id, 'EINVAL', 'process/pipeline: bytes fd action data must be a Uint8Array');
+          }
+        }
+        fds = r.fds as Record<number, FdAction>;
+      }
+      resolved.push({ code, spec: { path, argv, env, cwd, fds } });
     }
     const result = await this.#pipelineChild(pid, resolved);
     return ok(id, { exitCodes: result.exitCodes, stdout: result.lastStdout });
@@ -1689,14 +1707,6 @@ function parseSpawn(args: Record<string, unknown>): SpawnArgs & { portFds?: numb
       }
     }
     out.fds = args.fds as SpawnArgs['fds'];
-  }
-  // A1: inline stdin bytes (feeds + closes the child's stdin when fd 0 is not
-  // otherwise wired). Accept a Uint8Array directly.
-  if (args.stdinData !== undefined) {
-    if (!(args.stdinData instanceof Uint8Array)) {
-      throw new MalformedArgsError('process/spawn: stdinData must be a Uint8Array');
-    }
-    out.stdinData = args.stdinData;
   }
   // `portFds[i]` is the child fd for the i-th transferred port (positional). The
   // ports themselves are mapped in #spawn; here we only validate the shape.
