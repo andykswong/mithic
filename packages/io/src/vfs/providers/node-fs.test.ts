@@ -167,3 +167,61 @@ describe('NodeFsProvider', () => {
     ).rejects.toSatisfy((err: unknown) => err instanceof FileSystemError && err.code === 'no-entry');
   });
 });
+
+describe('NodeFsProvider xattr persistence', () => {
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vfs-node-xattr-'));
+  });
+
+  afterAll(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('xattr set/get/list/remove round-trip survives a fresh provider over the same root', async () => {
+    const a = new NodeFsProvider({ root: tmpDir });
+    await a.init();
+    const fh = await a.open('/cap.bin', { create: true, write: true, truncate: true });
+    await a.write(fh, new TextEncoder().encode('x'), 0);
+    await a.close(fh);
+    await a.setxattr('/cap.bin', 'security.capability', new Uint8Array([7, 7]));
+    expect(await a.listxattr('/cap.bin')).toContain('security.capability');
+    await a.dispose();
+
+    const b = new NodeFsProvider({ root: tmpDir });
+    await b.init();
+    expect(Array.from((await b.getxattr('/cap.bin', 'security.capability'))!)).toEqual([7, 7]);
+    expect(await b.listxattr('/cap.bin')).toContain('security.capability');
+
+    await b.removexattr('/cap.bin', 'security.capability');
+    expect(await b.getxattr('/cap.bin', 'security.capability')).toBeUndefined();
+    await b.dispose();
+
+    const c = new NodeFsProvider({ root: tmpDir });
+    await c.init();
+    expect(await c.getxattr('/cap.bin', 'security.capability')).toBeUndefined();
+    await c.dispose();
+  });
+
+  it('setxattr on a missing path throws no-entry', async () => {
+    const p = new NodeFsProvider({ root: tmpDir });
+    await p.init();
+    await expect(
+      p.setxattr('/ghost.bin', 'security.capability', new Uint8Array([1])),
+    ).rejects.toSatisfy((err: unknown) => err instanceof FileSystemError && err.code === 'no-entry');
+    await p.dispose();
+  });
+
+  it('getxattr returns a copy: mutating the result does not corrupt the store', async () => {
+    const p = new NodeFsProvider({ root: tmpDir });
+    await p.init();
+    const fh = await p.open('/copy.bin', { create: true, write: true, truncate: true });
+    await p.close(fh);
+    await p.setxattr('/copy.bin', 'user.x', new Uint8Array([1, 2, 3]));
+    const got = (await p.getxattr('/copy.bin', 'user.x'))!;
+    got[0] = 99;
+    expect(Array.from((await p.getxattr('/copy.bin', 'user.x'))!)).toEqual([1, 2, 3]);
+    await p.dispose();
+  });
+});

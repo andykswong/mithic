@@ -3,6 +3,9 @@ import * as nodePath from 'node:path';
 import type { Stats, Dirent } from 'node:fs';
 import type { FileHandle, OpenFlags, DirEntry, FileSystemProvider, FileStat, DescriptorType } from '../provider.ts';
 import { FileSystemError } from '../provider.ts';
+import { MetadataStore } from '../metadata-store.ts';
+
+const META_FILE = '.mithic-meta.json';
 
 /** Options for constructing a NodeFsProvider. */
 export interface NodeFsProviderOptions {
@@ -18,13 +21,28 @@ export class NodeFsProvider implements FileSystemProvider {
   #root: string;
   #nextFd = 3;
   #handles = new Map<number, { nativeHandle: fs.FileHandle; path: string; flags: OpenFlags }>();
-  #xattrs = new Map<string, Map<string, Uint8Array>>();
+  #meta: MetadataStore;
 
   constructor(options: NodeFsProviderOptions) {
     this.#root = nodePath.resolve(options.root);
+    const metaPath = nodePath.join(this.#root, META_FILE);
+    this.#meta = new MetadataStore({
+      load: async () => {
+        try {
+          return await fs.readFile(metaPath, 'utf8');
+        } catch {
+          return undefined;
+        }
+      },
+      flush: async (json) => {
+        await fs.writeFile(metaPath, json, 'utf8');
+      },
+    });
   }
 
-  async init(): Promise<void> {}
+  async init(): Promise<void> {
+    await this.#meta.load();
+  }
   async dispose(): Promise<void> {
     for (const { nativeHandle } of this.#handles.values()) {
       await nativeHandle.close();
@@ -110,10 +128,13 @@ export class NodeFsProvider implements FileSystemProvider {
     const resolved = this.#resolvePath(path);
     try {
       const entries = await fs.readdir(resolved, { withFileTypes: true });
-      const result: DirEntry[] = entries.map(entry => ({
-        name: entry.name,
-        type: this.#direntType(entry),
-      }));
+      const atRoot = resolved === this.#root;
+      const result: DirEntry[] = entries
+        .filter(entry => !(atRoot && entry.name === META_FILE))
+        .map(entry => ({
+          name: entry.name,
+          type: this.#direntType(entry),
+        }));
       result.sort((a, b) => a.name.localeCompare(b.name));
       return result;
     } catch (e: unknown) {
@@ -137,6 +158,7 @@ export class NodeFsProvider implements FileSystemProvider {
     } catch (e: unknown) {
       throw this.#mapError(e, path);
     }
+    await this.#meta.drop(this.#metaKey(path));
   }
 
   async rmdir(path: string): Promise<void> {
@@ -156,6 +178,7 @@ export class NodeFsProvider implements FileSystemProvider {
     } catch (e: unknown) {
       throw this.#mapError(e, oldPath);
     }
+    await this.#meta.rename(this.#metaKey(oldPath), this.#metaKey(newPath));
   }
 
   async symlink(target: string, linkPath: string): Promise<void> {
@@ -212,27 +235,26 @@ export class NodeFsProvider implements FileSystemProvider {
 
   async getxattr(path: string, name: string): Promise<Uint8Array | undefined> {
     await this.#requireExists(path);
-    const value = this.#xattrs.get(this.#resolvePath(path))?.get(name);
-    return value ? value.slice() : undefined;
+    return this.#meta.getxattr(this.#metaKey(path), name);
   }
 
   async setxattr(path: string, name: string, value: Uint8Array): Promise<void> {
     await this.#requireExists(path);
-    const key = this.#resolvePath(path);
-    let map = this.#xattrs.get(key);
-    if (!map) this.#xattrs.set(key, (map = new Map()));
-    map.set(name, value.slice());
+    await this.#meta.setxattr(this.#metaKey(path), name, value);
   }
 
   async listxattr(path: string): Promise<string[]> {
     await this.#requireExists(path);
-    const map = this.#xattrs.get(this.#resolvePath(path));
-    return map ? [...map.keys()] : [];
+    return this.#meta.listxattr(this.#metaKey(path));
   }
 
   async removexattr(path: string, name: string): Promise<void> {
     await this.#requireExists(path);
-    this.#xattrs.get(this.#resolvePath(path))?.delete(name);
+    await this.#meta.removexattr(this.#metaKey(path), name);
+  }
+
+  #metaKey(path: string): string {
+    return nodePath.posix.normalize(path.startsWith('/') ? path : '/' + path);
   }
 
   async #requireExists(path: string): Promise<void> {

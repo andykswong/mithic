@@ -1,5 +1,8 @@
 import type { FileHandle, OpenFlags, DirEntry, FileSystemProvider, FileStat } from '../provider.ts';
 import { FileSystemError } from '../provider.ts';
+import { MetadataStore } from '../metadata-store.ts';
+
+const META_FILE = '.mithic-meta.json';
 
 export interface OPFSStorageManager {
   getDirectory(): Promise<FileSystemDirectoryHandle>;
@@ -10,14 +13,31 @@ export class OPFSProvider implements FileSystemProvider {
   #storage: OPFSStorageManager;
   #nextFd = 3;
   #handles = new Map<number, { nativeHandle: FileSystemFileHandle; path: string; flags: OpenFlags }>();
-  #xattrs = new Map<string, Map<string, Uint8Array>>();
+  #meta: MetadataStore;
 
   constructor(storage?: OPFSStorageManager) {
     this.#storage = storage ?? navigator.storage;
+    this.#meta = new MetadataStore({
+      load: async () => {
+        try {
+          const handle = await this.#root!.getFileHandle(META_FILE);
+          return await (await handle.getFile()).text();
+        } catch {
+          return undefined;
+        }
+      },
+      flush: async (json) => {
+        const handle = await this.#root!.getFileHandle(META_FILE, { create: true });
+        const writable = await handle.createWritable();
+        await writable.write(json);
+        await writable.close();
+      },
+    });
   }
 
   async init(): Promise<void> {
     this.#root = await this.#storage.getDirectory();
+    await this.#meta.load();
   }
 
   async dispose(): Promise<void> {
@@ -102,8 +122,11 @@ export class OPFSProvider implements FileSystemProvider {
     if (!openHandle) {
       throw new FileSystemError('invalid', `Invalid file descriptor: ${handle.fd}`);
     }
+    const writeOffset = openHandle.flags.append
+      ? (await openHandle.nativeHandle.getFile()).size
+      : offset;
     const writable = await openHandle.nativeHandle.createWritable({ keepExistingData: true });
-    await writable.seek(offset);
+    await writable.seek(writeOffset);
     await writable.write(data as unknown as FileSystemWriteChunkType);
     await writable.close();
     return data.length;
@@ -152,13 +175,14 @@ export class OPFSProvider implements FileSystemProvider {
     }
 
     const file = await fileHandle.getFile();
+    const meta = await this.#meta.getMeta(normalized);
     return {
       type: 'file',
       size: BigInt(file.size),
-      mode: 0o644,
-      mtime: new Date(file.lastModified),
-      atime: new Date(file.lastModified),
-      ctime: new Date(file.lastModified),
+      mode: meta?.mode ?? 0o644,
+      mtime: new Date(meta?.mtime ?? file.lastModified),
+      atime: new Date(meta?.atime ?? file.lastModified),
+      ctime: new Date(meta?.mtime ?? file.lastModified),
       linkCount: 1n,
     };
   }
@@ -171,8 +195,10 @@ export class OPFSProvider implements FileSystemProvider {
       throw new FileSystemError('not-directory', `Not a directory: ${path}`);
     }
 
+    const atRoot = normalized === '/';
     const entries: DirEntry[] = [];
     for await (const [name, handle] of dirHandle.entries()) {
+      if (atRoot && name === META_FILE) continue;
       entries.push({
         name,
         type: handle.kind === 'file' ? 'file' : 'directory',
@@ -220,6 +246,7 @@ export class OPFSProvider implements FileSystemProvider {
       }
       throw e;
     }
+    await this.#meta.drop(normalized);
   }
 
   async rmdir(path: string): Promise<void> {
@@ -275,6 +302,7 @@ export class OPFSProvider implements FileSystemProvider {
     await writable.close();
 
     await oldParent.removeEntry(oldBase);
+    await this.#meta.rename(oldNormalized, newNormalized);
   }
 
   async symlink(_target: string, _linkPath: string): Promise<void> {
@@ -289,33 +317,47 @@ export class OPFSProvider implements FileSystemProvider {
     throw new FileSystemError('unsupported', 'OPFS does not support hard links');
   }
 
-  async chmod(_path: string, _mode: number): Promise<void> {
-    throw new FileSystemError('unsupported', 'OPFS does not support chmod');
+  async chmod(path: string, mode: number): Promise<void> {
+    this.#ensureInit();
+    const normalized = this.#normalizePath(path);
+    await this.#requireExists(normalized, path);
+    await this.#meta.setMode(normalized, mode);
   }
 
-  async utimes(_path: string, _atime: Date, _mtime: Date): Promise<void> {
-    throw new FileSystemError('unsupported', 'OPFS does not support utimes');
+  async utimes(path: string, atime: Date, mtime: Date): Promise<void> {
+    this.#ensureInit();
+    const normalized = this.#normalizePath(path);
+    await this.#requireExists(normalized, path);
+    await this.#meta.setTimes(normalized, atime.getTime(), mtime.getTime());
   }
 
   async getxattr(path: string, name: string): Promise<Uint8Array | undefined> {
-    const value = this.#xattrs.get(this.#normalizePath(path))?.get(name);
-    return value ? value.slice() : undefined;
+    return this.#meta.getxattr(this.#normalizePath(path), name);
   }
 
   async setxattr(path: string, name: string, value: Uint8Array): Promise<void> {
-    const key = this.#normalizePath(path);
-    let map = this.#xattrs.get(key);
-    if (!map) this.#xattrs.set(key, (map = new Map()));
-    map.set(name, value.slice());
+    await this.#meta.setxattr(this.#normalizePath(path), name, value);
   }
 
   async listxattr(path: string): Promise<string[]> {
-    const map = this.#xattrs.get(this.#normalizePath(path));
-    return map ? [...map.keys()] : [];
+    return this.#meta.listxattr(this.#normalizePath(path));
   }
 
   async removexattr(path: string, name: string): Promise<void> {
-    this.#xattrs.get(this.#normalizePath(path))?.delete(name);
+    await this.#meta.removexattr(this.#normalizePath(path), name);
+  }
+
+  async #requireExists(normalized: string, original: string): Promise<void> {
+    const { dir, base } = this.#splitPath(normalized);
+    const parent = await this.#getDirectoryHandle(dir);
+    if (!parent) throw new FileSystemError('no-entry', `No such file or directory: ${original}`);
+    try {
+      await parent.getFileHandle(base);
+    } catch {
+      if (!(await this.#getDirectoryHandle(normalized))) {
+        throw new FileSystemError('no-entry', `No such file or directory: ${original}`);
+      }
+    }
   }
 
   async mkfifo(_path: string): Promise<void> {
