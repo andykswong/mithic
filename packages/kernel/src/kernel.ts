@@ -18,6 +18,7 @@ import {
 } from '@mithic/protocol';
 import type { Runtime, ProcessHandle } from '@mithic/runtime';
 import type { FileSystemProvider } from '@mithic/io/vfs';
+import { FileSystemError } from '@mithic/io/vfs';
 import type { HttpClient } from '@mithic/io/net';
 import { FetchHttpClient } from '@mithic/io/net';
 import { CapabilityManager } from './capability-manager.ts';
@@ -36,6 +37,20 @@ import type { RelaySyscallResult } from './relay-bridge.ts';
 import { Supervisor } from './supervisor.ts';
 import type { HeartbeatOptions, SupervisorHost } from './supervisor.ts';
 import { FdWiring } from './fd-wiring.ts';
+
+/**
+ * Thrown when sourcing an executable from a VFS path fails. Carries a POSIX
+ * `errno` so the dispatcher's `process/spawn` catch surfaces it to the guest
+ * (ENOENT for a missing file, EACCES when the execute bit is unset).
+ */
+class ExecError extends Error {
+  readonly errno: 'ENOENT' | 'EACCES';
+  constructor(errno: 'ENOENT' | 'EACCES', message: string) {
+    super(message);
+    this.errno = errno;
+    this.name = 'ExecError';
+  }
+}
 
 export interface KernelOptions {
   runtime: Runtime;
@@ -472,7 +487,61 @@ export class Kernel {
     };
   }
 
+  /**
+   * RFC 0001 §4.2: resolve a `code` spec into spawnable guest source. A string
+   * naming a VFS path (`/…`, `./…`, `../…`, never a `://` URL) is an executable
+   * FILE: stat it (missing → ENOENT), require the execute bit (`mode & 0o111`,
+   * else EACCES), read its bytes, and strip a leading `#!` shebang line so the
+   * remainder is valid ESM. URLs and inline source strings pass through
+   * unchanged. Shebang INTERPRETER dispatch (`#!/bin/bash` → the shell) is S3.
+   */
+  async #sourceFromVfs(code: string | URL): Promise<string | URL> {
+    if (typeof code !== 'string') return code;
+    if (code.includes('://')) return code;
+    if (!(code.startsWith('/') || code.startsWith('./') || code.startsWith('../'))) return code;
+
+    let stat;
+    try {
+      stat = await this.#vfs.stat(code);
+    } catch (err) {
+      if (err instanceof FileSystemError && err.code === 'no-entry') {
+        throw new ExecError('ENOENT', `exec: no such file: ${code}`);
+      }
+      throw err;
+    }
+    if ((stat.mode & 0o111) === 0) {
+      throw new ExecError('EACCES', `exec: permission denied (not executable): ${code}`);
+    }
+
+    const handle = await this.#vfs.open(code, { read: true });
+    try {
+      const chunks: Uint8Array[] = [];
+      let offset = 0;
+      for (;;) {
+        const chunk = await this.#vfs.read(handle, offset, 1 << 16);
+        if (chunk.byteLength === 0) break;
+        chunks.push(chunk);
+        offset += chunk.byteLength;
+      }
+      let total = 0;
+      for (const c of chunks) total += c.byteLength;
+      const bytes = new Uint8Array(total);
+      let pos = 0;
+      for (const c of chunks) { bytes.set(c, pos); pos += c.byteLength; }
+      const source = new TextDecoder().decode(bytes);
+      if (!source.startsWith('#!')) return source;
+      const newline = source.indexOf('\n');
+      return newline === -1 ? '' : source.slice(newline + 1);
+    } finally {
+      await this.#vfs.close(handle);
+    }
+  }
+
   async spawn(code: string | URL, init: SpawnInit = {}): Promise<SpawnResult> {
+    // RFC 0001 §4.2: an absolute VFS path is an executable FILE, not a host
+    // module specifier — read its bytes, require the execute bit, strip a
+    // leading `#!` line, and run the result as inline guest source.
+    code = await this.#sourceFromVfs(code);
     // Non-transferable runtimes (e.g. QuickJS) use the relay path.
     if (!this.#runtime.capabilities.directPipes) {
       return this.#spawnRelay(code, init);
