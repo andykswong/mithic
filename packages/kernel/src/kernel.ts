@@ -15,6 +15,8 @@ import {
   isSyscallResponse,
   signalExitCode,
   PipeReader,
+  decodeCapabilities,
+  SECURITY_CAPABILITY_XATTR,
 } from '@mithic/protocol';
 import type { Runtime, ProcessHandle } from '@mithic/runtime';
 import type { FileSystemProvider } from '@mithic/io/vfs';
@@ -37,6 +39,7 @@ import type { RelaySyscallResult } from './relay-bridge.ts';
 import { Supervisor } from './supervisor.ts';
 import type { HeartbeatOptions, SupervisorHost } from './supervisor.ts';
 import { FdWiring } from './fd-wiring.ts';
+import { classifyExecutable, resolveName } from './exec-resolve.ts';
 
 /**
  * Thrown when sourcing an executable from a VFS path fails. Carries a POSIX
@@ -487,33 +490,52 @@ export class Kernel {
     };
   }
 
-  /**
-   * RFC 0001 §4.2: resolve a `code` spec into spawnable guest source. A string
-   * naming a VFS path (`/…`, `./…`, `../…`, never a `://` URL) is an executable
-   * FILE: stat it (missing → ENOENT), require the execute bit (`mode & 0o111`,
-   * else EACCES), read its bytes, and strip a leading `#!` shebang line so the
-   * remainder is valid ESM. URLs and inline source strings pass through
-   * unchanged. Shebang INTERPRETER dispatch (`#!/bin/bash` → the shell) is S3.
-   */
-  async #sourceFromVfs(code: string | URL): Promise<string | URL> {
-    if (typeof code !== 'string') return code;
-    if (code.includes('://')) return code;
-    if (!(code.startsWith('/') || code.startsWith('./') || code.startsWith('../'))) return code;
+  /** True when `code` names a VFS path (`/…`, `./…`, `../…`) rather than a URL. */
+  #isVfsPath(code: string): boolean {
+    if (code.includes('://')) return false;
+    return code.startsWith('/') || code.startsWith('./') || code.startsWith('../');
+  }
 
-    let stat;
+  /** VFS existence probe used by the `$PATH` resolver (a missing file → false). */
+  async #vfsExists(path: string): Promise<boolean> {
     try {
-      stat = await this.#vfs.stat(code);
+      await this.#vfs.stat(path);
+      return true;
     } catch (err) {
-      if (err instanceof FileSystemError && err.code === 'no-entry') {
-        throw new ExecError('ENOENT', `exec: no such file: ${code}`);
-      }
+      if (err instanceof FileSystemError && err.code === 'no-entry') return false;
       throw err;
     }
-    if ((stat.mode & 0o111) === 0) {
-      throw new ExecError('EACCES', `exec: permission denied (not executable): ${code}`);
-    }
+  }
 
-    const handle = await this.#vfs.open(code, { read: true });
+  /**
+   * RFC 0001 §4.2: resolve a bare command NAME to a VFS file via `$PATH`. The
+   * kernel never holds shell builtins (those resolve in-process in the shell and
+   * never reach here), so `builtins` is empty; we walk `env.PATH` (`:`-separated)
+   * for a matching VFS file. An explicit path / URL, or a name with no `$PATH`
+   * hit, is returned unchanged for the launcher (`resolveCommand` already ran in
+   * the dispatcher for guest-requested spawns).
+   */
+  async #resolvePathName(code: string, env: Record<string, string>): Promise<string> {
+    if (this.#isVfsPath(code) || code.includes('://')) return code;
+    const pathDirs = (env.PATH ?? '').split(':').filter(Boolean);
+    if (pathDirs.length === 0) return code;
+    // Probe each candidate up-front so the pure resolver can stay synchronous.
+    const exists = new Set<string>();
+    for (const dir of pathDirs) {
+      const candidate = dir.endsWith('/') ? `${dir}${code}` : `${dir}/${code}`;
+      if (await this.#vfsExists(candidate)) exists.add(candidate);
+    }
+    const resolution = resolveName(code, {
+      builtins: new Set(),
+      pathDirs,
+      exists: (p) => exists.has(p),
+    });
+    return resolution.layer === 'file' ? resolution.path : code;
+  }
+
+  /** Read + concatenate a VFS file's bytes (chunked). */
+  async #readVfsBytes(path: string): Promise<Uint8Array> {
+    const handle = await this.#vfs.open(path, { read: true });
     try {
       const chunks: Uint8Array[] = [];
       let offset = 0;
@@ -528,20 +550,88 @@ export class Kernel {
       const bytes = new Uint8Array(total);
       let pos = 0;
       for (const c of chunks) { bytes.set(c, pos); pos += c.byteLength; }
-      const source = new TextDecoder().decode(bytes);
-      if (!source.startsWith('#!')) return source;
-      const newline = source.indexOf('\n');
-      return newline === -1 ? '' : source.slice(newline + 1);
+      return bytes;
     } finally {
       await this.#vfs.close(handle);
     }
   }
 
+  /** Strip a leading `#!…\n` shebang line so the remainder is valid ESM. */
+  #stripShebang(source: string): string {
+    if (!source.startsWith('#!')) return source;
+    const newline = source.indexOf('\n');
+    return newline === -1 ? '' : source.slice(newline + 1);
+  }
+
+  /** Read the `security.capability` xattr → the requested `Capability[]` (default-deny). */
+  async #readVfsCaps(path: string): Promise<Capability[]> {
+    const value = await this.#vfs.getxattr(path, SECURITY_CAPABILITY_XATTR);
+    return decodeCapabilities(value ?? undefined);
+  }
+
+  /**
+   * RFC 0001 §4.2/§4.8: resolve a `code` spec into spawnable guest source + the
+   * file-borne capabilities + the argv for interpreter dispatch.
+   *
+   * A bare NAME first resolves via `$PATH` (S3); an explicit VFS path (`/…`,
+   * `./…`, `../…`) is an executable FILE: stat it (missing → ENOENT), require the
+   * execute bit (`mode & 0o111`, else EACCES), read its bytes + its
+   * `security.capability` xattr (the REQUESTED caps, narrowed against the parent
+   * later in `#beginProcess`). The shebang then classifies the file:
+   *   - `guest` (`#!/bin/node` or no shebang) → run the (shebang-stripped) source.
+   *   - `interpreter` (`#!/bin/bash`, `#!/usr/bin/python`, …) → re-resolve THAT
+   *     interpreter by the same rules and run `interpreter <file> <args…>`: the
+   *     script PATH is prepended to argv and the spawned process is the
+   *     interpreter's source carrying the INTERPRETER's xattr caps.
+   *
+   * URLs and inline source strings (a non-path, unresolved name) pass through
+   * unchanged with no file-borne caps.
+   */
+  async #resolveExecutable(
+    code: string | URL,
+    init: SpawnInit,
+  ): Promise<{ code: string | URL; init: SpawnInit }> {
+    if (typeof code !== 'string') return { code, init };
+    const resolved = await this.#resolvePathName(code, init.env ?? {});
+    if (!this.#isVfsPath(resolved)) return { code: resolved, init };
+
+    let stat;
+    try {
+      stat = await this.#vfs.stat(resolved);
+    } catch (err) {
+      if (err instanceof FileSystemError && err.code === 'no-entry') {
+        throw new ExecError('ENOENT', `exec: no such file: ${resolved}`);
+      }
+      throw err;
+    }
+    if ((stat.mode & 0o111) === 0) {
+      throw new ExecError('EACCES', `exec: permission denied (not executable): ${resolved}`);
+    }
+
+    const source = new TextDecoder().decode(await this.#readVfsBytes(resolved));
+    const caps = await this.#readVfsCaps(resolved);
+    const classification = classifyExecutable(source);
+    if (classification.kind === 'interpreter') {
+      // Re-resolve the interpreter by the same rules and run `interp <file> …`.
+      // The script path is prepended to argv (after argv0) and the SPAWNED
+      // process is the interpreter, carrying ITS xattr caps.
+      const interpInit: SpawnInit = {
+        ...init,
+        args: [init.args?.[0] ?? classification.interpreter, resolved, ...(init.args ?? []).slice(1)],
+      };
+      return this.#resolveExecutable(classification.interpreter, interpInit);
+    }
+    return {
+      code: this.#stripShebang(source),
+      init: { ...init, capabilities: caps },
+    };
+  }
+
   async spawn(code: string | URL, init: SpawnInit = {}): Promise<SpawnResult> {
-    // RFC 0001 §4.2: an absolute VFS path is an executable FILE, not a host
-    // module specifier — read its bytes, require the execute bit, strip a
-    // leading `#!` line, and run the result as inline guest source.
-    code = await this.#sourceFromVfs(code);
+    // RFC 0001 §4.2/§4.8: resolve the spec — a bare name via `$PATH`, an explicit
+    // VFS path as an executable FILE (execute-bit + shebang dispatch + xattr
+    // caps). URLs / inline source pass through unchanged.
+    ({ code, init } = await this.#resolveExecutable(code, init));
     // Non-transferable runtimes (e.g. QuickJS) use the relay path.
     if (!this.#runtime.capabilities.directPipes) {
       return this.#spawnRelay(code, init);
