@@ -42,6 +42,26 @@ test('plain read treats backslash as an escape (the documented bash default)', a
   expect(h.out.trim()).toBe('[ab]');
 });
 
+// ── clustered short flags (bash: `read -ra arr`, `read -rn3 x`) ──────────────
+
+test('read -ra splits into an array (clustered -r + -a)', async () => {
+  const h = mk();
+  await h.ex.exec('printf \'%s\\n\' \'one two three\' | { read -ra parts; echo "${parts[0]}-${parts[2]} n=${#parts[@]}"; }');
+  expect(h.out.trim()).toBe('one-three n=3');
+});
+
+test('read -rn3 reads at most 3 chars (clustered -r + -n with attached count)', async () => {
+  const h = mk();
+  await h.ex.exec('printf \'%s\\n\' \'abcdef\' | { read -rn3 x; echo "[$x]"; }');
+  expect(h.out.trim()).toBe('[abc]');
+});
+
+test('read -ra preserves backslashes in array fields (raw applies across the cluster)', async () => {
+  const h = mk();
+  await h.ex.exec('printf \'%s\\n\' \'a\\b c\' | { read -ra parts; echo "${parts[0]}|${parts[1]}"; }');
+  expect(h.out.trim()).toBe('a\\b|c');
+});
+
 // ── read -a (split into an array) ────────────────────────────────────────────
 
 test('read -a splits a line into an indexed array variable', async () => {

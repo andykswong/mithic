@@ -62,7 +62,7 @@ tests; they are the parity items this wave closed.
 | POSIX special-builtin fatality (POSIX 2.8.1) — **partial** | A bad `set` option now aborts a non-interactive shell in posix mode (no silent continue), via `PosixSpecialBuiltinError`. **Scope today: only `set`'s bad-option path throws.** The canonical redirect/assignment-error-on-a-special-builtin case (`export x=1 >/bad`) still returns 1 and continues — wiring `withRedirects`/assignment errors to the same fatal path is a follow-up (see "Pending"). | **partial** |
 | Process substitution `<(…)`/`>(…)` rejected in POSIX mode | Agents in strict posix mode get a clear rejection instead of a bash-only extension | **done** |
 | `read -r` (raw — no backslash mangling) | `read -r line` preserves backslashes; the prior silent `-r` ignore was a correctness trap | **done** |
-| `read -a` / `read -d` / `read -n` / `read -N` | Parse a line into an array; NUL/custom delimiters (`find -print0`); `-n` (≤N, stop at delim) and `-N` (exactly N, ignore delim) | **done** |
+| `read -a` / `read -d` / `read -n` / `read -N` (incl. clustered `-ra`/`-rn3`) | Parse a line into an array; NUL/custom delimiters (`find -print0`); `-n` (≤N, stop at delim) and `-N` (exactly N, ignore delim); short flags cluster like bash (`read -ra arr`, `read -rn3 x`) | **done** |
 | `mapfile` / `readarray` | Slurp multi-line output into an array (`mapfile -t lines`) | **done** |
 
 ---

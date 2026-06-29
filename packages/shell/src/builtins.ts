@@ -763,28 +763,33 @@ async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
   let delim: string | undefined; // undefined ⇒ default '\n'; '' ⇒ NUL
   let maxChars: number | undefined;
   let ignoreDelim = false; // `-N` reads EXACTLY N chars, ignoring the delimiter; `-n` stops at it
+  // getopts-style: walk each `-` token char by char so SHORT FLAGS CLUSTER like
+  // bash (`-ra name`, `-rn3`, `-rd';'`). `r` is a boolean; `a`/`d`/`n`/`N`/`u`/`t`
+  // take an argument from the rest of the token (`-n3`) or the next argv (`-n 3`).
+  // Unknown letters (`-s`/`-p`) are no-ops. Non-`-` args are variable names.
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === '-u') { fdArg = parseInt(args[++i] ?? '', 10); continue; }
-    if (a.startsWith('-u')) { fdArg = parseInt(a.slice(2), 10); continue; }
-    if (a === '-t') { timeoutSec = parseFloat(args[++i] ?? ''); continue; }
-    if (a.startsWith('-t')) { timeoutSec = parseFloat(a.slice(2)); continue; }
-    if (a === '-a') { arrayName = args[++i] ?? ''; continue; }
-    if (a.startsWith('-a') && a.length > 2) { arrayName = a.slice(2); continue; }
-    if (a === '-d') { delim = args[++i] ?? ''; continue; }
-    if (a.startsWith('-d') && a.length > 2) { delim = a.slice(2); continue; }
-    if (a === '-n') { maxChars = parseInt(args[++i] ?? '', 10); continue; }
-    if (a === '-N') { maxChars = parseInt(args[++i] ?? '', 10); ignoreDelim = true; continue; }
-    if (a.startsWith('-n') && a.length > 2) { maxChars = parseInt(a.slice(2), 10); continue; }
-    if (a.startsWith('-N') && a.length > 2) { maxChars = parseInt(a.slice(2), 10); ignoreDelim = true; continue; }
-    // Combined short flags (a leading `-r` cluster, e.g. `-ra`). Pull out `r`;
-    // a non-cluster unknown flag is ignored (e.g. `-s`, `-p` are no-ops here).
-    if (a.startsWith('-') && a.length > 1 && /^-[a-zA-Z]+$/.test(a)) {
-      if (a.includes('r')) raw = true;
-      continue;
+    if (a === '--' ) { names.push(...args.slice(i + 1)); break; }
+    if (!a.startsWith('-') || a.length < 2) { names.push(a); continue; }
+    let j = 1;
+    while (j < a.length) {
+      const ch = a[j];
+      // For an arg-taking flag: the operand is the rest of THIS token, else the next
+      // argv. Either way the token is fully consumed (set j = a.length) so the loop ends.
+      const operand = (): string => {
+        const v = j + 1 < a.length ? a.slice(j + 1) : (args[++i] ?? '');
+        j = a.length;
+        return v;
+      };
+      if (ch === 'r') { raw = true; j++; continue; }
+      if (ch === 'u') { fdArg = parseInt(operand(), 10); continue; }
+      if (ch === 't') { timeoutSec = parseFloat(operand()); continue; }
+      if (ch === 'a') { arrayName = operand(); continue; }
+      if (ch === 'd') { delim = operand(); continue; }
+      if (ch === 'n') { maxChars = parseInt(operand(), 10); continue; }
+      if (ch === 'N') { maxChars = parseInt(operand(), 10); ignoreDelim = true; continue; }
+      j++; // unknown short flag (e.g. -s/-p): no-op
     }
-    if (a.startsWith('-')) continue; // ignore other flags
-    names.push(a);
   }
   if (timeoutSec !== undefined && Number.isNaN(timeoutSec)) timeoutSec = undefined;
   if (maxChars !== undefined && Number.isNaN(maxChars)) maxChars = undefined;
