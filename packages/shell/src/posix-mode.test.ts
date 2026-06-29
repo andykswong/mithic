@@ -89,14 +89,17 @@ test('process substitution <(…) rejected in POSIX mode', async () => {
   const { promise, h } = runPosix('cat <(echo hi)');
   const code = await promise;
   expect(code).not.toBe(0);
-  expect(h.err).toMatch(/not supported in POSIX mode/);
+  // Assert the full bash-style diagnostic incl. the `syntax error:` prefix, and a
+  // single `shell:` prefix (the executor adds it; the message must not carry its own).
+  expect(h.err).toMatch(/syntax error:.*process substitution is not supported in POSIX mode/);
+  expect(h.err).not.toMatch(/shell: shell:/);
 });
 
 test('process substitution >(…) rejected in POSIX mode', async () => {
   const { promise, h } = runPosix('echo hello > >(cat)');
   const code = await promise;
   expect(code).not.toBe(0);
-  expect(h.err).toMatch(/not supported in POSIX mode/);
+  expect(h.err).toMatch(/syntax error:.*process substitution is not supported in POSIX mode/);
 });
 
 // ── POSIX: special-builtin fatality (POSIX 2.8.1) ───────────────────────────
@@ -107,7 +110,10 @@ test('POSIX: a bad `set` option is fatal — script aborts', async () => {
   const { promise, h } = runPosix('set -o bogusoption; echo SHOULD_NOT_PRINT');
   const code = await promise;
   expect(h.out).not.toContain('SHOULD_NOT_PRINT');
-  expect(code).not.toBe(0);
+  expect(code).toBe(2); // PosixSpecialBuiltinError('set', 2, …) → exiting=2
+  // The diagnostic reaches stderr with a SINGLE `shell:` prefix (not doubled).
+  expect(h.err).toMatch(/invalid option name/);
+  expect(h.err).not.toMatch(/shell: shell:/);
 });
 
 test('non-POSIX: the same bad `set` option is NOT fatal — script continues', async () => {

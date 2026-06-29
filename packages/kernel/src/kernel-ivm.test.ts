@@ -92,7 +92,7 @@ test.skipIf(!ivmAvailable)(
       new Promise<{ code: number }>((_, rej) => setTimeout(() => rej(new Error('cpuLimit watchdog never fired (H3)')), 8000)),
     ]);
     const elapsed = Date.now() - t0;
-    expect(result.code).not.toBe(0); // killed (137)
+    expect(result.code).toBe(137); // CPU-limit kill → exit 137 (ivm.ts:211 marks it; kernel passes it through)
     expect(elapsed).toBeLessThan(6000);
   },
   12000,

@@ -44,6 +44,11 @@ describe('classifyExecutable', () => {
   it('carries the resolved interpreter for #!/usr/bin/env bash', () => {
     expect(classifyExecutable('#!/usr/bin/env bash\necho hi')).toEqual({ kind: 'interpreter', interpreter: 'bash' });
   });
+  it('treats a bare #!/usr/bin/env with no arg as interpreter dispatch (no crash)', () => {
+    // No interpreter follows env → there is no real interpreter to defer to, so env
+    // itself becomes the interpreter (and the kernel re-resolves it like any name).
+    expect(classifyExecutable('#!/usr/bin/env\nx')).toEqual({ kind: 'interpreter', interpreter: '/usr/bin/env' });
+  });
   it('does not leak a trailing \\r from a CRLF shebang line into the interpreter/arg', () => {
     expect(classifyExecutable('#!/usr/bin/env node\r\nconsole.log(1)')).toEqual({ kind: 'guest' });
     expect(classifyExecutable('#!/bin/bash\r\necho hi')).toEqual({ kind: 'interpreter', interpreter: '/bin/bash' });

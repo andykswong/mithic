@@ -650,7 +650,9 @@ function runSet(args: string[], ctx: BuiltinContext): number {
  */
 function failSet(ctx: BuiltinContext, message: string): number {
   if (ctx.state?.getOption('posix') ?? false) {
-    throw new PosixSpecialBuiltinError('set', 2, message.replace(/\n$/, ''));
+    // The executor prepends `shell: ` when it surfaces a PosixSpecialBuiltinError,
+    // so strip the message's own leading `shell: ` to avoid a doubled prefix.
+    throw new PosixSpecialBuiltinError('set', 2, message.replace(/\n$/, '').replace(/^shell: /, ''));
   }
   errOut(ctx, message);
   return 2;

@@ -30,8 +30,10 @@
  *
  * ## stdin
  *
- * `stdin` is not yet supported.  If provided, the request is rejected with 400.
- * Wire-up to the process's stdin pipe is reserved for a future release.
+ * An optional UTF-8 `stdin` string is fed to the guest's fd 0 as a here-string
+ * bytes source (the QuickJS relay backend serves it via `pipe/read {fd:0}` until
+ * EOF). A non-string `stdin` is rejected with 400. Binary / streaming stdin upload
+ * (beyond the in-body string) remains future work (G4).
  */
 
 import { Hono } from 'hono';
