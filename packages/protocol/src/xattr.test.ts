@@ -61,4 +61,62 @@ describe('security.capability xattr', () => {
     const text = new TextDecoder().decode(encodeCapabilities(caps));
     expect(JSON.parse(text)).toEqual(caps);
   });
+
+  const encode = (value: unknown): Uint8Array =>
+    new TextEncoder().encode(JSON.stringify(value));
+
+  it('rejects the whole array if any element has an unknown type (default-deny)', () => {
+    expect(decodeCapabilities(encode([{ type: 'bogus' }]))).toEqual([]);
+    expect(decodeCapabilities(encode([
+      { type: 'env' },
+      { type: 'bogus' },
+    ]))).toEqual([]);
+  });
+
+  it('rejects the whole array if any element is not an object (default-deny)', () => {
+    expect(decodeCapabilities(encode([42, 'x']))).toEqual([]);
+    expect(decodeCapabilities(encode([{ type: 'env' }, null]))).toEqual([]);
+    expect(decodeCapabilities(encode([{ type: 'env' }, []]))).toEqual([]);
+  });
+
+  it('rejects fs caps missing or mistyped required fields (default-deny)', () => {
+    expect(decodeCapabilities(encode([{ type: 'fs' }]))).toEqual([]);
+    expect(decodeCapabilities(encode([{ type: 'fs', paths: ['/x'] }]))).toEqual([]);
+    expect(decodeCapabilities(encode([{ type: 'fs', operations: ['read'] }]))).toEqual([]);
+    expect(decodeCapabilities(encode([{ type: 'fs', paths: 'x', operations: ['read'] }]))).toEqual([]);
+    expect(decodeCapabilities(encode([{ type: 'fs', paths: [1], operations: ['read'] }]))).toEqual([]);
+    expect(decodeCapabilities(encode([{ type: 'fs', paths: ['/x'], operations: ['delete'] }]))).toEqual([]);
+  });
+
+  it('rejects net caps with mistyped origins (default-deny)', () => {
+    expect(decodeCapabilities(encode([{ type: 'net' }]))).toEqual([]);
+    expect(decodeCapabilities(encode([{ type: 'net', origins: 'x' }]))).toEqual([]);
+    expect(decodeCapabilities(encode([{ type: 'net', origins: [1] }]))).toEqual([]);
+  });
+
+  it('rejects ipc caps with mistyped channels (default-deny)', () => {
+    expect(decodeCapabilities(encode([{ type: 'ipc' }]))).toEqual([]);
+    expect(decodeCapabilities(encode([{ type: 'ipc', channels: [1] }]))).toEqual([]);
+  });
+
+  it('rejects process caps with a mistyped maxChildren (default-deny)', () => {
+    expect(decodeCapabilities(encode([{ type: 'process', maxChildren: 'lots' }]))).toEqual([]);
+  });
+
+  it('accepts process caps with or without maxChildren', () => {
+    expect(decodeCapabilities(encode([{ type: 'process' }]))).toEqual([{ type: 'process' }]);
+    expect(decodeCapabilities(encode([{ type: 'process', maxChildren: 4 }])))
+      .toEqual([{ type: 'process', maxChildren: 4 }]);
+  });
+
+  it('accepts a well-formed array of every variant', () => {
+    const caps: Capability[] = [
+      { type: 'fs', paths: ['/usr/bin'], operations: ['read', 'write', 'execute'] },
+      { type: 'net', origins: ['https://example.com'] },
+      { type: 'ipc', channels: ['ch1'] },
+      { type: 'process', maxChildren: 2 },
+      { type: 'env' },
+    ];
+    expect(decodeCapabilities(encode(caps))).toEqual(caps);
+  });
 });
