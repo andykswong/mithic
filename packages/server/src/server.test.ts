@@ -248,8 +248,32 @@ describe('POST /exec', () => {
     expect(body.error).toMatch(/memoryMb/);
   }, SUITE_TIMEOUT);
 
-  // Fix 5: stdin field is rejected with 400.
-  test('Fix 5: stdin field returns 400 (not yet supported)', async () => {
+  // stdin is fed to the guest's fd 0 (relay backend reads it via pipe/read).
+  test('stdin is fed to the guest fd 0 and read back via pipe/read', async () => {
+    const app = createApp();
+
+    const res = await app.request('/exec', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        code: `
+          let out = '';
+          for (;;) { const r = __mithic_syscall('pipe/read', { fd: 0 }); const d = r&&r.data?r.data:[]; if(!d.length)break; out += String.fromCharCode.apply(null, d); }
+          __mithic_syscall('pipe/write', { fd: 1, data: 'echo:' + out });
+          __mithic_syscall('process/exit', { code: 0 });
+        `,
+        stdin: 'hello stdin',
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as ExecResponse;
+    expect(body.exitCode).toBe(0);
+    expect(body.stdout).toBe('echo:hello stdin');
+  }, SUITE_TIMEOUT);
+
+  // A non-string stdin is rejected with 400.
+  test('non-string stdin returns 400', async () => {
     const app = createApp();
 
     const res = await app.request('/exec', {
@@ -259,7 +283,7 @@ describe('POST /exec', () => {
         code: `
           __mithic_syscall('process/exit', { code: 0 });
         `,
-        stdin: 'some input',
+        stdin: 123,
       }),
     });
 
