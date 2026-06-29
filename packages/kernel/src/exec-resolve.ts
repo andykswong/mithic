@@ -39,8 +39,13 @@ export type Classification =
  */
 export function classifyExecutable(source: string): Classification {
   const shebang = parseShebang(source);
-  if (!shebang || shebang.interpreter === '/bin/node') return { kind: 'guest' };
-  return { kind: 'interpreter', interpreter: shebang.interpreter };
+  if (!shebang) return { kind: 'guest' };
+  // `#!/usr/bin/env X` defers to X as the real interpreter (the env indirection).
+  // Compare the basename so `/usr/bin/env` and a bare `env` both match.
+  const base = shebang.interpreter.slice(shebang.interpreter.lastIndexOf('/') + 1);
+  const interpreter = base === 'env' && shebang.arg ? shebang.arg : shebang.interpreter;
+  if (interpreter === '/bin/node' || interpreter === 'node') return { kind: 'guest' };
+  return { kind: 'interpreter', interpreter };
 }
 
 export interface ResolveNameOptions {

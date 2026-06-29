@@ -61,6 +61,33 @@ test('S2: spawning a +x VFS path sources the guest bytes and runs it', async () 
   expect(new TextDecoder().decode(await stdout!)).toBe('hello from hello');
 }, 20000);
 
+// A `#!/usr/bin/env node` guest: `env`'s first arg (`node`) is the real
+// interpreter, so this must classify as a JS guest (Task 1) and run verbatim —
+// NOT as an attempt to exec interpreter `/usr/bin/env`.
+const ENV_NODE_SRC = `#!/usr/bin/env node
+import { createGuest } from '@mithic/guest-runtime';
+export default async (boot) => {
+  const g = createGuest(boot);
+  const w = g.stdout.getWriter();
+  await w.write(new TextEncoder().encode('ok'));
+  await w.close();
+  g.exit(0);
+};`;
+
+test('S2: a #!/usr/bin/env node script runs as a JS guest (env arg honored)', async () => {
+  const { kernel, vfs } = await makeKernel();
+  await writeFile(vfs, '/usr/bin/envnode', ENV_NODE_SRC);
+  await vfs.chmod('/usr/bin/envnode', 0o755);
+
+  const { pid, stdout } = await kernel.spawn('/usr/bin/envnode', {
+    args: ['/usr/bin/envnode'],
+    captureStdout: true,
+  });
+  const { code } = await kernel.wait(pid);
+  expect(code).toBe(0);
+  expect(new TextDecoder().decode(await stdout!)).toBe('ok');
+}, 20000);
+
 test('S2: spawning a VFS path WITHOUT the execute bit fails EACCES', async () => {
   const { kernel, vfs } = await makeKernel();
   await writeFile(vfs, '/usr/bin/noexec', HELLO_SRC); // default mode 0o644, no +x

@@ -37,6 +37,13 @@ describe('classifyExecutable', () => {
       interpreter: '/usr/bin/python',
     });
   });
+  it('treats #!/usr/bin/env node as the guest case (env arg honored)', () => {
+    // env's first arg is the real interpreter; `node` → the JS guest, not interpreter '/usr/bin/env'.
+    expect(classifyExecutable('#!/usr/bin/env node\nconsole.log(1)')).toEqual({ kind: 'guest' });
+  });
+  it('carries the resolved interpreter for #!/usr/bin/env bash', () => {
+    expect(classifyExecutable('#!/usr/bin/env bash\necho hi')).toEqual({ kind: 'interpreter', interpreter: 'bash' });
+  });
 });
 
 describe('resolveName', () => {
