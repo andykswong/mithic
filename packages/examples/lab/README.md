@@ -72,12 +72,15 @@ npm test           # the Chromium browser tests (vitest --project browser)
 
 ## How utilities load in the browser
 
-The WorkerRuntime bootstrap `eval`s a guest's source as a **classic script** and reads
-`globalThis.__mithic_default`. A raw dist-ESM module (with a bare `@mithic/guest-runtime`
-import and `export default`) cannot run that way, so a build-time `?bundle` esbuild plugin
-(`src/bundle-plugin.ts`) emits a **self-contained classic-IIFE** for each utility; that is
-what `installUtility` writes into `/usr/bin/<name>` with a `#!/bin/node` shebang. So
-in-browser today, "drop a file into `/usr/bin`" means *drop a bundled IIFE* — a
-per-backend sandbox-side module resolver (import-map / Worker module bootstrap) is the
-deferred Phase-1.2 work that would let an unbundled guest run in-sandbox (RFC 0001
-§4.2 "As-built"). On Node the launcher loads a real ESM graph and has no such constraint.
+This is about the **module form of a guest's bytes**, not how the file gets into the VFS
+(`echo … > /usr/bin/foo` works — exec-from-VFS reads and runs those bytes). When the
+kernel execs a `#!/bin/node` file, the WorkerRuntime bootstrap runs the (shebang-stripped)
+source via `(0,eval)(source)` and reads `globalThis.__mithic_default`. So the bytes must be
+a **self-contained classic-script IIFE**: a top-level `export default` is a `SyntaxError`
+under `eval`, and a bare `import '@mithic/guest-runtime'` can't resolve in an opaque-origin
+worker. A normal hand-authored ESM guest therefore won't run from VFS bytes in-browser
+today — so a build-time `?bundle` esbuild plugin (`src/bundle-plugin.ts`) emits the IIFE
+form for each utility, which `installUtility` writes to `/usr/bin/<name>`. Letting an
+*unbundled* ESM guest run from VFS in-sandbox needs a per-backend resolver (a worker
+import-map / `blob:` module bootstrap) — deferred Phase-1.2 work (RFC 0001 §4.2
+"As-built"). On Node the launcher loads a real ESM graph, so it has no such constraint.
