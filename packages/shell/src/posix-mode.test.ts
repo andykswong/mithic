@@ -85,6 +85,20 @@ test('declare -A rejected in POSIX mode', async () => {
   expect(h.err).toMatch(/not supported in POSIX mode/);
 });
 
+test('process substitution <(…) rejected in POSIX mode', async () => {
+  const { promise, h } = runPosix('cat <(echo hi)');
+  const code = await promise;
+  expect(code).not.toBe(0);
+  expect(h.err).toMatch(/not supported in POSIX mode/);
+});
+
+test('process substitution >(…) rejected in POSIX mode', async () => {
+  const { promise, h } = runPosix('echo hello > >(cat)');
+  const code = await promise;
+  expect(code).not.toBe(0);
+  expect(h.err).toMatch(/not supported in POSIX mode/);
+});
+
 // ── POSIX: special-builtin fatality (POSIX 2.8.1) ───────────────────────────
 
 test('POSIX: a bad `set` option is fatal — script aborts', async () => {
