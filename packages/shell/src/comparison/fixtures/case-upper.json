@@ -1,0 +1,6 @@
+{
+  "src": "s=hello; echo \"${s^^}\"",
+  "stdout": "HELLO\n",
+  "stderr": "",
+  "code": 0
+}

@@ -1,0 +1,6 @@
+{
+  "src": "x=; echo \"${x:-fallback}\"",
+  "stdout": "fallback\n",
+  "stderr": "",
+  "code": 0
+}
