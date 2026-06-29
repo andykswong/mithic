@@ -128,6 +128,20 @@ export function isBuiltin(name: string): boolean {
   return BUILTIN_SET.has(name);
 }
 
+/** POSIX 2.8.1 special builtins — an error here is FATAL to a non-interactive shell in POSIX mode. */
+export const POSIX_SPECIAL_BUILTINS: ReadonlySet<string> = new Set([
+  ':', '.', 'break', 'continue', 'eval', 'exec', 'exit',
+  'export', 'readonly', 'return', 'set', 'shift', 'trap', 'unset',
+]);
+
+/** Thrown by a special builtin on a fatal error in POSIX mode; the executor aborts the script. */
+export class PosixSpecialBuiltinError extends Error {
+  constructor(public readonly builtin: string, public readonly code: number, message: string) {
+    super(message);
+    this.name = 'PosixSpecialBuiltinError';
+  }
+}
+
 function errOut(ctx: BuiltinContext, s: string): void {
   (ctx.writeErr ?? ctx.write)(s);
 }
@@ -580,8 +594,7 @@ function runSet(args: string[], ctx: BuiltinContext): number {
         const name = args[i + 1];
         if (name === undefined) { listOptions(ctx, enable); return 0; }
         if (!setLongOption(ctx, name, enable)) {
-          errOut(ctx, `shell: set: ${name}: invalid option name\n`);
-          return 2;
+          return failSet(ctx, `shell: set: ${name}: invalid option name\n`);
         }
         i++; // consumed NAME
         continue;
@@ -595,14 +608,13 @@ function runSet(args: string[], ctx: BuiltinContext): number {
           const name = args[i + 1];
           if (name === undefined) { listOptions(ctx, enable); return 0; }
           if (!setLongOption(ctx, name, enable)) {
-            errOut(ctx, `shell: set: ${name}: invalid option name\n`);
-            return 2;
+            return failSet(ctx, `shell: set: ${name}: invalid option name\n`);
           }
           consumedName = true;
           continue;
         }
         const long = OPTION_FLAGS[ch];
-        if (!long) { errOut(ctx, `shell: set: -${ch}: invalid option\n`); return 2; }
+        if (!long) return failSet(ctx, `shell: set: -${ch}: invalid option\n`);
         st?.setOption(long, enable);
       }
       if (consumedName) i++; // consumed the NAME that followed the cluster
@@ -613,6 +625,19 @@ function runSet(args: string[], ctx: BuiltinContext): number {
     return 0;
   }
   return 0;
+}
+
+/**
+ * A `set` bad-option failure. In POSIX mode this is a fatal error in a special
+ * builtin (POSIX 2.8.1) — throw so the executor aborts the script; otherwise
+ * report the diagnostic and return 2 (the prior, non-fatal behavior).
+ */
+function failSet(ctx: BuiltinContext, message: string): number {
+  if (ctx.state?.getOption('posix') ?? false) {
+    throw new PosixSpecialBuiltinError('set', 2, message.replace(/\n$/, ''));
+  }
+  errOut(ctx, message);
+  return 2;
 }
 
 function setLongOption(ctx: BuiltinContext, name: string, value: boolean): boolean {

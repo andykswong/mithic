@@ -85,6 +85,24 @@ test('declare -A rejected in POSIX mode', async () => {
   expect(h.err).toMatch(/not supported in POSIX mode/);
 });
 
+// ── POSIX: special-builtin fatality (POSIX 2.8.1) ───────────────────────────
+
+test('POSIX: a bad `set` option is fatal — script aborts', async () => {
+  // `set` is a POSIX special builtin; a bad option must abort a non-interactive
+  // shell in POSIX mode, so the following echo must NOT run.
+  const { promise, h } = runPosix('set -o bogusoption; echo SHOULD_NOT_PRINT');
+  const code = await promise;
+  expect(h.out).not.toContain('SHOULD_NOT_PRINT');
+  expect(code).not.toBe(0);
+});
+
+test('non-POSIX: the same bad `set` option is NOT fatal — script continues', async () => {
+  const h = harness();
+  // default (non-posix) mode: error is reported (status 2), execution continues.
+  await h.ex.exec('set -o bogusoption; echo STILL_RUNS');
+  expect(h.out).toContain('STILL_RUNS');
+});
+
 // ── POSIX: activation methods ────────────────────────────────────────────────
 
 test('set -o posix activates brace-expansion suppression at runtime', async () => {

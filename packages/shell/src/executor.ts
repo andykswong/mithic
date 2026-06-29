@@ -25,7 +25,7 @@ import { globMatch } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
 import { Expander, ExpansionError } from './expander.ts';
 import { expandHistory, HistoryEventNotFound } from './history-expand.ts';
-import { isBuiltin, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES } from './builtins.ts';
+import { isBuiltin, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES, PosixSpecialBuiltinError } from './builtins.ts';
 import type { BuiltinContext, ShellState, ShellOptionName } from './builtins.ts';
 import { Environment, computeShlvl } from './environment.ts';
 import type { EnvHost } from './environment.ts';
@@ -668,6 +668,14 @@ export class Executor {
             this.lastStatus = 2;
             if (!nested) { this.exiting = 2; return 2; }
             return 2;
+          }
+          if (e instanceof PosixSpecialBuiltinError) {
+            // POSIX 2.8.1: a fatal error in a special builtin (bad option, etc.)
+            // aborts a non-interactive shell in POSIX mode → no further statements.
+            io.stderr(`shell: ${e.message}\n`);
+            this.lastStatus = e.code;
+            this.exiting = e.code;
+            return e.code;
           }
           // break/continue/return that reached the top level (no enclosing loop
           // or function) → diagnostic + continue, NOT an uncaught throw (M8). A
