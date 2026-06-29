@@ -67,3 +67,33 @@ test.skipIf(!(await isIvmAvailable()))(
     expect(rt.isAlive(handle)).toBe(false);
   },
 );
+
+test.skipIf(!(await isIvmAvailable()))(
+  'IvmRuntime enforces memoryLimit — a runaway allocation kills the isolate (exit 137)',
+  async () => {
+    const rt = await IvmRuntime.create(16); // 16 MiB cap
+    // Grow the V8 *heap* (retained live set of plain arrays) past the cap so the
+    // isolate's `memoryLimit` triggers a TERMINATING OOM — "Isolate was disposed
+    // during execution due to memory limit", disposed=true — which the backend
+    // classifies as exit 137. NOTE: large `Uint8Array`s instead trip a CATCHABLE
+    // `RangeError: Array buffer allocation failed` (external-memory allocation
+    // failure) before the heap cap engages, so they do NOT exercise the advertised
+    // heap `memoryLimit` enforcement. Retained heap arrays do.
+    const code = `
+      const root = [];
+      for (let i = 0; i < 100000; i++) {
+        const a = new Array(50000);
+        for (let j = 0; j < 50000; j++) a[j] = i * j;
+        root.push(a);
+      }
+      __mithic_syscall('process/exit', { code: 0 });
+    `;
+    const handle = await rt.spawn(code, {
+      init: { type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 1, ppid: 0, capabilities: [], limits: { memoryMb: 16 } },
+      onSyscall: async () => ({ ok: true, result: {} }),
+    });
+    const { code: exitCode } = await rt.waitExit(handle);
+    expect(exitCode).toBe(137);
+  },
+  20000,
+);
