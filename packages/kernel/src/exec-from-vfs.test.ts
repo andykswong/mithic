@@ -400,6 +400,104 @@ test('S3: a guest-issued process/spawn of a bare name with NO $PATH match still 
   expect((response as { error?: { code?: string } }).error?.code).toBe('ENOENT');
 }, 20000);
 
+/**
+ * FIX-B (SE-1/TC-2): the interpreter-chain re-resolution must be bounded
+ * binfmt-style (Linux caps at BINPRM_MAX_RECURSION). A shebang CYCLE or a chain
+ * deeper than the cap must yield a bounded ELOOP error, never unbounded
+ * recursion (stack overflow / hang).
+ */
+
+// A real interpreter guest at an absolute path. `#!/bin/node` makes it a guest
+// (the chain TERMINATES here); it echoes the script path it was handed.
+const TERMINAL_INTERP = `#!/bin/node
+import { createGuest } from '@mithic/guest-runtime';
+export default async (boot) => {
+  const g = createGuest(boot);
+  const w = g.stdout.getWriter();
+  await w.write(new TextEncoder().encode('ran ' + g.args[1]));
+  await w.close();
+  g.exit(0);
+};`;
+
+test('FIX-B: a 2-file shebang CYCLE yields a bounded ELOOP, not a hang', async () => {
+  const { kernel, vfs } = await makeKernel();
+  // /bin/a is an interpreter pointing at /bin/b; /bin/b points back at /bin/a.
+  // Each re-resolution flips to the other → unbounded recursion without a guard.
+  await writeFile(vfs, '/bin/a', '#!/bin/b\n');
+  await vfs.chmod('/bin/a', 0o755);
+  await writeFile(vfs, '/bin/b', '#!/bin/a\n');
+  await vfs.chmod('/bin/b', 0o755);
+  await writeFile(vfs, '/usr/bin/script', '#!/bin/a\nbody\n');
+  await vfs.chmod('/usr/bin/script', 0o755);
+
+  await expect(
+    kernel.spawn('/usr/bin/script', { args: ['/usr/bin/script'], captureStdout: true }),
+  ).rejects.toMatchObject({ errno: 'ELOOP' });
+  // Tight timeout: a regression (no guard) blows the stack or hangs rather than
+  // returning, so this test would FAIL instead of passing slowly.
+}, 5000);
+
+test('FIX-B: a legitimate 2-level interpreter chain (within the cap) still runs', async () => {
+  const { kernel, vfs } = await makeKernel();
+  // script → #!/bin/wrap → #!/bin/node (terminal). Two interpreter hops, well
+  // under the cap, so the chain resolves and the terminal interpreter runs.
+  await writeFile(vfs, '/bin/wrap', TERMINAL_INTERP);
+  await vfs.chmod('/bin/wrap', 0o755);
+  await writeFile(vfs, '/usr/bin/script', '#!/bin/wrap\nbody\n');
+  await vfs.chmod('/usr/bin/script', 0o755);
+
+  const { pid, stdout } = await kernel.spawn('/usr/bin/script', {
+    args: ['/usr/bin/script'],
+    captureStdout: true,
+  });
+  const { code } = await kernel.wait(pid);
+  expect(code).toBe(0);
+  expect(new TextDecoder().decode(await stdout!)).toBe('ran /usr/bin/script');
+}, 20000);
+
+test('FIX-B: the cap boundary — a chain AT the limit runs, one PAST it errors ELOOP', async () => {
+  // Build a straight chain of interpreter hops: /bin/i0 → /bin/i1 → … each a
+  // shebang pointing at the next, terminating at a real /bin/node guest. The
+  // number of interpreter re-resolutions equals the chain length.
+  const MAX_INTERPRETER_DEPTH = 8;
+
+  async function runChain(hops: number): Promise<void> {
+    const { kernel, vfs } = await makeKernel();
+    // /bin/i{n} → /bin/i{n+1}; the last link is the terminal #!/bin/node guest.
+    for (let i = 0; i < hops; i++) {
+      const next = i === hops - 1 ? TERMINAL_INTERP : `#!/bin/i${i + 1}\n`;
+      await writeFile(vfs, `/bin/i${i}`, next);
+      await vfs.chmod(`/bin/i${i}`, 0o755);
+    }
+    await writeFile(vfs, '/usr/bin/script', '#!/bin/i0\nbody\n');
+    await vfs.chmod('/usr/bin/script', 0o755);
+    const { pid } = await kernel.spawn('/usr/bin/script', {
+      args: ['/usr/bin/script'],
+      captureStdout: true,
+    });
+    const { code } = await kernel.wait(pid);
+    expect(code).toBe(0);
+  }
+
+  // The first re-resolution is the script's own #!/bin/i0 (hop 1); each /bin/i{n}
+  // shebang adds another. A chain whose interpreter re-resolutions exactly reach
+  // the cap must still run; one more hop must error ELOOP.
+  await runChain(MAX_INTERPRETER_DEPTH - 1);
+
+  const { kernel, vfs } = await makeKernel();
+  const over = MAX_INTERPRETER_DEPTH + 2;
+  for (let i = 0; i < over; i++) {
+    const next = i === over - 1 ? TERMINAL_INTERP : `#!/bin/i${i + 1}\n`;
+    await writeFile(vfs, `/bin/i${i}`, next);
+    await vfs.chmod(`/bin/i${i}`, 0o755);
+  }
+  await writeFile(vfs, '/usr/bin/script', '#!/bin/i0\nbody\n');
+  await vfs.chmod('/usr/bin/script', 0o755);
+  await expect(
+    kernel.spawn('/usr/bin/script', { args: ['/usr/bin/script'], captureStdout: true }),
+  ).rejects.toMatchObject({ errno: 'ELOOP' });
+}, 20000);
+
 test('S3: a #!/bin/bash file classifies as an interpreter dispatch (re-resolved against $PATH)', async () => {
   const { kernel, vfs } = await makeKernel();
   // Provide a tiny `bash` interpreter guest at /bin/bash that echoes the script

@@ -42,13 +42,21 @@ import { FdWiring } from './fd-wiring.ts';
 import { classifyExecutable, resolveName } from './exec-resolve.ts';
 
 /**
+ * Binfmt-style cap on interpreter-chain re-resolution (a `#!` whose interpreter
+ * is itself a `#!` script). Mirrors Linux's `BINPRM_MAX_RECURSION`: bounds both
+ * shebang cycles and over-deep chains so they error rather than recurse forever.
+ */
+const MAX_INTERPRETER_DEPTH = 8;
+
+/**
  * Thrown when sourcing an executable from a VFS path fails. Carries a POSIX
  * `errno` so the dispatcher's `process/spawn` catch surfaces it to the guest
- * (ENOENT for a missing file, EACCES when the execute bit is unset).
+ * (ENOENT for a missing file, EACCES when the execute bit is unset, ELOOP when
+ * the interpreter chain exceeds `MAX_INTERPRETER_DEPTH`).
  */
 class ExecError extends Error {
-  readonly errno: 'ENOENT' | 'EACCES';
-  constructor(errno: 'ENOENT' | 'EACCES', message: string) {
+  readonly errno: 'ENOENT' | 'EACCES' | 'ELOOP';
+  constructor(errno: 'ENOENT' | 'EACCES' | 'ELOOP', message: string) {
     super(message);
     this.errno = errno;
     this.name = 'ExecError';
@@ -590,7 +598,14 @@ export class Kernel {
   async #resolveExecutable(
     code: string | URL,
     init: SpawnInit,
+    depth = 0,
   ): Promise<{ code: string | URL; init: SpawnInit }> {
+    // Bound the interpreter chain binfmt-style (Linux caps re-resolution at
+    // BINPRM_MAX_RECURSION): a shebang cycle (a→#!/b, b→#!/a) or an over-deep
+    // chain must error, not recurse unboundedly into a stack overflow / hang.
+    if (depth > MAX_INTERPRETER_DEPTH) {
+      throw new ExecError('ELOOP', `exec: interpreter chain too deep (> ${MAX_INTERPRETER_DEPTH})`);
+    }
     if (typeof code !== 'string') return { code, init };
     const resolved = await this.#resolvePathName(code, init.env ?? {});
     if (!this.#isVfsPath(resolved)) return { code: resolved, init };
@@ -619,7 +634,7 @@ export class Kernel {
         ...init,
         args: [init.args?.[0] ?? classification.interpreter, resolved, ...(init.args ?? []).slice(1)],
       };
-      return this.#resolveExecutable(classification.interpreter, interpInit);
+      return this.#resolveExecutable(classification.interpreter, interpInit, depth + 1);
     }
     return {
       code: this.#stripShebang(source),
