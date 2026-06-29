@@ -963,7 +963,11 @@ export class Kernel {
     if (fd0) {
       const stdinInit: SpawnInit = { cwd: init.cwd };
       const filePumps: Array<() => void> = [];
-      await this.#fdWiring.applyAction(ctx.ppid ?? 0, 0, fd0, stdinInit, new Map(), [], {}, filePumps);
+      // Cap-check the `open` source against THIS process's already-narrowed grants
+      // (registered under ctx.pid by #beginProcess) — it reads its own stdin file.
+      // Unlike the process/spawn child path (checked pre-grant against the parent),
+      // a top-level relay spawn's parent is the kernel (ppid 0, no grants).
+      await this.#fdWiring.applyAction(ctx.pid, 0, fd0, stdinInit, new Map(), [], {}, filePumps);
       // applyAction wired the child-side read port into stdinInit.stdin; the kernel
       // holds it as the relay stdin end and drives the pump's write peer.
       if (stdinInit.stdin) {

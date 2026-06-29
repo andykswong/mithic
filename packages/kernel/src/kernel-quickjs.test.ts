@@ -420,3 +420,32 @@ test('kernel relay: quickjs guest reads fd-0 stdin via pipe/read (D8 bytes sourc
   expect(result.code).toBe(0);
   expect(new TextDecoder().decode(await stdout!)).toBe('got:hello-stdin');
 }, 15000);
+
+test('kernel relay: quickjs guest reads fd-0 stdin from an opened VFS file', async () => {
+  const qjsRt = await QuickJSRuntime.create();
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  // Seed the file the guest will read via fd 0.
+  const h = await vfs.open('/in.txt', { write: true, create: true });
+  await vfs.write(h, new TextEncoder().encode('file-bytes'), 0);
+  await vfs.close(h);
+
+  const kernel = new Kernel({ runtime: qjsRt, vfs, relayLauncher: new QuickJSGuestLauncher(qjsRt) });
+
+  const code = `
+    let out = '';
+    for (;;) { const r = __mithic_syscall('pipe/read', { fd: 0 }); const d = r&&r.data?r.data:[]; if(!d.length)break; out += String.fromCharCode.apply(null, d); }
+    __mithic_syscall('pipe/write', { fd: 1, data: out });
+    __mithic_syscall('process/exit', { code: 0 });
+  `;
+
+  const { pid, stdout } = await kernel.spawn(code, {
+    args: ['prog'],
+    capabilities: [{ type: 'fs', paths: ['/'], operations: ['read'] }],
+    captureStdout: true,
+    fds: { 0: { action: 'open', path: '/in.txt', flags: { read: true } } },
+  });
+
+  expect((await kernel.wait(pid)).code).toBe(0);
+  expect(new TextDecoder().decode(await stdout!)).toBe('file-bytes');
+}, 15000);
