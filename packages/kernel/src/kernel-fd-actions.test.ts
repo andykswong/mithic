@@ -261,6 +261,70 @@ test('R1: an empty bytes action delivers EOF immediately (count 0)', async () =>
   expect(out).toBe('count:0');
 }, 12000);
 
+test('B1: a top-level kernel.spawn honors an fds[0] bytes stdin source (transferable backend)', async () => {
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = makeKernel(vfs);
+
+  // 256 KiB exceeds the 64 KiB chunk window — a credit-deadlock would hang past
+  // the timeout rather than report the full byte count.
+  const data = new Uint8Array(256 * 1024);
+  for (let i = 0; i < data.length; i++) data[i] = i & 0xff;
+
+  const { pid, stdout } = await kernel.spawn(READ_STDIN_COUNT, {
+    args: ['readstdin'],
+    capabilities: [],
+    captureStdout: true,
+    fds: { 0: { action: 'bytes', data } },
+  });
+
+  const out = new TextDecoder().decode(
+    await withTimeout(stdout!, 6000, 'bytes-fed top-level spawn stdout never resolved (B1)'),
+  );
+  const w = await withTimeout(kernel.wait(pid), 6000, 'bytes-fed top-level spawn never settled (B1)');
+  expect(w.code).toBe(0);
+  expect(out).toBe('count:' + data.length);
+}, 12000);
+
+test('B1: a top-level kernel.spawn honors an fds[0] open stdin source, capability-checked', async () => {
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = makeKernel(vfs);
+  const fh = await vfs.open('/in.bin', { write: true, create: true });
+  await vfs.write(fh, new TextEncoder().encode('0123456789'), 0);
+  await vfs.close(fh);
+
+  const { pid, stdout } = await kernel.spawn(READ_STDIN_COUNT, {
+    args: ['readstdin'],
+    capabilities: [{ type: 'fs', paths: ['/'], operations: ['read'] }],
+    captureStdout: true,
+    fds: { 0: { action: 'open', path: '/in.bin', flags: { read: true } } },
+  });
+
+  const out = new TextDecoder().decode(
+    await withTimeout(stdout!, 6000, 'open-fed top-level spawn stdout never resolved (B1)'),
+  );
+  expect((await withTimeout(kernel.wait(pid), 6000, 'open-fed spawn never settled (B1)')).code).toBe(0);
+  expect(out).toBe('count:10');
+}, 12000);
+
+test('B1: a top-level fds[0] open stdin source is capability-checked (EACCES, no leaked pid)', async () => {
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = makeKernel(vfs);
+  const fh = await vfs.open('/secret.bin', { write: true, create: true });
+  await vfs.write(fh, new TextEncoder().encode('nope'), 0);
+  await vfs.close(fh);
+
+  // No fs grant → the fd-0 open source must be denied before the process runs.
+  await expect(kernel.spawn('readstdin', {
+    args: ['readstdin'],
+    capabilities: [],
+    captureStdout: true,
+    fds: { 0: { action: 'open', path: '/secret.bin', flags: { read: true } } },
+  })).rejects.toThrow(/EACCES|permission denied/i);
+}, 12000);
+
 test('R1: a bytes action with non-Uint8Array data is rejected (EINVAL)', async () => {
   const vfs = new FileSystemRouter();
   await vfs.mount('/', new MemoryFsProvider());
