@@ -559,6 +559,13 @@ export class Executor {
         delete this.context.env[name];
         this.arrays.delete(name);
       },
+      setArray: (name, values) => {
+        // Mirror the `name=(a b c)` assignment path so `read -a` / `mapfile`
+        // values are seen by ${name[i]}/${name[@]}/${#name[@]} expansion.
+        this.declareLocal(name);
+        this.arrays.set(name, values);
+        delete this.context.env[name];
+      },
       waitJob: (id) => this.jobControl.waitJob(id),
       waitAll: () => this.jobControl.waitAll(),
       waitNext: () => this.jobControl.waitNext(),
