@@ -130,6 +130,17 @@ export class RelayBridge {
     this.#relayFds.delete(pid);
   }
 
+  /**
+   * Register a READ-only stdin end at fd 0 for a relay guest. The kernel holds the
+   * `port` (a pipe read end); the guest drains it via `pipe/read {fd:0}` through the
+   * same `RelayEnd` path as `fs/pipe`. Symmetric to how stdout/stderr are bridged via
+   * `RelayContext.writeStdout`/`writeStderr`, this is the fd-0 INPUT half (D8 on relay).
+   * Torn down per-pid by {@link closeFds} on process exit.
+   */
+  registerStdin(pid: number, port: MessagePort): void {
+    this.#relayTableFor(pid).set(0, new RelayEnd(port));
+  }
+
   /** K5: relay-fd table for a pid (created on demand). */
   #relayTableFor(pid: number): Map<number, RelayEnd> {
     let t = this.#relayFds.get(pid);
