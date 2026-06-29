@@ -36,7 +36,12 @@ export interface PipelineStageArgs {
   argv?: string[];
   env?: Record<string, string>;
   cwd?: string;
-  stdinData?: Uint8Array;
+  /**
+   * D8: fd wiring for this stage. Only `fds[0]` on the FIRST stage is honored
+   * (the redirect-fed stdin source — `open` a VFS file or feed `bytes`); later
+   * stages read the inter-stage pipe. Replaces the old inline `stdinData`.
+   */
+  fds?: Record<number, FdAction>;
 }
 
 export type Syscall =
@@ -57,6 +62,10 @@ export type Syscall =
   | { call: 'fs/chmod'; args: FsPathArgs & { mode?: number } }
   | { call: 'fs/utimes'; args: FsPathArgs & { atime?: number; mtime?: number } }
   | { call: 'fs/realpath'; args: FsPathArgs }
+  | { call: 'fs/getxattr'; args: FsPathArgs & { name: string } }
+  | { call: 'fs/setxattr'; args: FsPathArgs & { name: string; value: Uint8Array } }
+  | { call: 'fs/listxattr'; args: FsPathArgs }
+  | { call: 'fs/removexattr'; args: FsPathArgs & { name: string } }
   | { call: 'fs/pipe'; args: Record<string, never> }
   // --- ipc/* ---
   | { call: 'ipc/listen'; args: { path: string } }
@@ -109,6 +118,10 @@ export const SYSCALL_NAMES = [
   'fs/chmod',
   'fs/utimes',
   'fs/realpath',
+  'fs/getxattr',
+  'fs/setxattr',
+  'fs/listxattr',
+  'fs/removexattr',
   'fs/pipe',
   'ipc/listen',
   'ipc/accept',

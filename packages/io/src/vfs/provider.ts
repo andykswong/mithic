@@ -62,6 +62,10 @@ export interface FileSystemProvider {
   link(existingPath: string, newPath: string): Promise<void> | void;
   chmod(path: string, mode: number): Promise<void> | void;
   utimes(path: string, atime: Date, mtime: Date): Promise<void> | void;
+  getxattr(path: string, name: string): Promise<Uint8Array | undefined> | Uint8Array | undefined;
+  setxattr(path: string, name: string, value: Uint8Array): Promise<void> | void;
+  listxattr(path: string): Promise<string[]> | string[];
+  removexattr(path: string, name: string): Promise<void> | void;
   mkfifo(path: string): Promise<void> | void;
   watch?(path: string, callback: (event: WatchEvent) => void): () => void;
   sync?(): Promise<void> | void;

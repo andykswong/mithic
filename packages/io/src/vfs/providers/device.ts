@@ -112,6 +112,10 @@ export class DeviceFsProvider implements FileSystemProvider {
   link(_e: string, _n: string): void { throw new FileSystemError('not-permitted', 'Cannot link in /dev'); }
   chmod(_path: string, _mode: number): void {}
   utimes(_path: string, _atime: Date, _mtime: Date): void {}
+  getxattr(_path: string, _name: string): undefined { return undefined; }
+  setxattr(_path: string, _name: string, _value: Uint8Array): void { throw new FileSystemError('unsupported', 'xattr unsupported in /dev'); }
+  listxattr(_path: string): string[] { return []; }
+  removexattr(_path: string, _name: string): void {}
   mkfifo(_path: string): void { throw new FileSystemError('not-permitted', 'Cannot mkfifo in /dev'); }
 
   #resolveDevice(path: string): DeviceName {

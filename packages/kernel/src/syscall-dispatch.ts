@@ -1,4 +1,4 @@
-import type { SyscallResponse, ErrnoCode, SpawnArgs, ProcessLimits, SyscallName, SyscallArgs, FsPathArgs } from '@mithic/protocol';
+import type { SyscallResponse, ErrnoCode, SpawnArgs, ProcessLimits, SyscallName, SyscallArgs, FsPathArgs, FdAction } from '@mithic/protocol';
 import { fsErrorToErrno, isSyscallName } from '@mithic/protocol';
 import { FileSystemError, normalizePath } from '@mithic/io/vfs';
 import type { FileSystemProvider, FileHandle, OpenFlags } from '@mithic/io/vfs';
@@ -134,8 +134,12 @@ export interface PipelineStageSpec {
   argv: string[];
   env?: Record<string, string>;
   cwd?: string;
-  /** Inline stdin for the FIRST stage (a `<` / `<<<` redirect source). */
-  stdinData?: Uint8Array;
+  /**
+   * D8: fd wiring for this stage. Only `fds[0]` on the FIRST stage is honored (a
+   * `<` / `<<` / `<<<` redirect source — `open` a VFS file or feed `bytes`); the
+   * kernel pipe-feeds it. Replaces the old inline `stdinData`.
+   */
+  fds?: Record<number, FdAction>;
 }
 
 /** Result of running a guest-requested pipeline: per-stage codes + last stdout. */
@@ -420,6 +424,10 @@ export class SyscallDispatcher {
     'fs/chmod': async (pid, a) => res(ok(a.id, await this.#chmod(pid, parseFsChmod(a.args)))),
     'fs/utimes': async (pid, a) => res(ok(a.id, await this.#utimes(pid, parseFsUtimes(a.args)))),
     'fs/realpath': async (pid, a) => res(ok(a.id, await this.#realpath(pid, parseFsPath(a.args)))),
+    'fs/getxattr': async (pid, a) => res(ok(a.id, await this.#getxattr(pid, parseFsXattrName(a.args)))),
+    'fs/setxattr': async (pid, a) => res(ok(a.id, await this.#setxattr(pid, parseFsSetxattr(a.args)))),
+    'fs/listxattr': async (pid, a) => res(ok(a.id, await this.#listxattr(pid, parseFsPath(a.args)))),
+    'fs/removexattr': async (pid, a) => res(ok(a.id, await this.#removexattr(pid, parseFsXattrName(a.args)))),
     'fs/pipe': (pid, a) => this.#pipe(pid, a.id),
     'ipc/listen': (pid, a) => this.#ipcListen(pid, a.id, parseIpcPath(a.args)),
     'ipc/accept': (pid, a) => this.#ipcAccept(pid, a.id, parseFd(a.args)),
@@ -518,7 +526,7 @@ export class SyscallDispatcher {
     }
     const cwd = spawnArgs.cwd ?? this.#cwdOf(pid);
     const env = spawnArgs.env ?? {};
-    const code = this.#resolveCode(spawnArgs.path, spawnArgs.argv, cwd, env);
+    const code = await this.#resolveCode(spawnArgs.path, spawnArgs.argv, cwd, env);
     if (code === undefined) {
       this.#closePorts(ports);
       return res(fail(id, 'ENOENT', `command not found: ${spawnArgs.path}`));
@@ -560,14 +568,38 @@ export class SyscallDispatcher {
 
   /**
    * Resolve a command spec to spawnable guest code. Absolute paths and URLs are
-   * used directly (a `string` URL becomes a `URL`); bare names defer to
-   * `resolveCommand`. Returns `undefined` when a bare name has no resolver match.
+   * used directly (a `string` URL becomes a `URL`). A bare name resolves first via
+   * the injected `resolveCommand` (host/special + registered commands) and, on a
+   * miss, via a `$PATH` walk to a VFS executable FILE (RFC 0001 §4.2 — so a guest
+   * can spawn a `/usr/bin` utility or workflow by bare NAME, not just the host
+   * `kernel.spawn` entry). The resolved VFS path is re-validated (execute bit,
+   * shebang, xattr caps) by `kernel.spawn` before launch. Returns `undefined` when
+   * neither layer matches.
    */
-  #resolveCode(path: string, argv: string[], cwd: string, env: Record<string, string>): string | URL | undefined {
+  async #resolveCode(path: string, argv: string[], cwd: string, env: Record<string, string>): Promise<string | URL | undefined> {
     if (path.includes('://')) return new URL(path);
     if (path.startsWith('/') || path.startsWith('./') || path.startsWith('../')) return path;
     const name = path || argv[0] || '';
-    return this.#resolveCommand?.(name, cwd, env);
+    const registered = this.#resolveCommand?.(name, cwd, env);
+    if (registered !== undefined) return registered;
+    return this.#resolvePathFile(name, env);
+  }
+
+  /** Walk `$PATH` for a VFS file matching a bare command NAME (RFC 0001 §4.2). */
+  async #resolvePathFile(name: string, env: Record<string, string>): Promise<string | undefined> {
+    if (name === '') return undefined;
+    for (const dir of (env.PATH ?? '').split(':')) {
+      if (dir === '') continue;
+      const candidate = dir.endsWith('/') ? `${dir}${name}` : `${dir}/${name}`;
+      try {
+        await this.#vfs.stat(candidate);
+        return candidate;
+      } catch (err) {
+        if (err instanceof FileSystemError && err.code === 'no-entry') continue;
+        throw err;
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -608,12 +640,26 @@ export class SyscallDispatcher {
       const argv = Array.isArray(r.argv) ? r.argv.map(String) : [];
       const env = (r.env && typeof r.env === 'object' ? r.env : {}) as Record<string, string>;
       const cwd = typeof r.cwd === 'string' ? r.cwd : this.#cwdOf(pid);
-      const code = this.#resolveCode(path, argv, cwd, env);
+      const code = await this.#resolveCode(path, argv, cwd, env);
       if (code === undefined) {
         return fail(id, 'ENOENT', `command not found: ${path}`);
       }
-      const stdinData = r.stdinData instanceof Uint8Array ? r.stdinData : undefined;
-      resolved.push({ code, spec: { path, argv, env, cwd, stdinData } });
+      // D8: an fd-0 stdin source (a `<` open / `<<`/`<<<` bytes). Validate a
+      // `bytes` action's data at the boundary (EINVAL) before it reaches the pump.
+      let fds: Record<number, FdAction> | undefined;
+      if (r.fds !== undefined) {
+        if (typeof r.fds !== 'object' || r.fds === null) {
+          return fail(id, 'EINVAL', 'process/pipeline: fds must be an object keyed by fd');
+        }
+        for (const action of Object.values(r.fds as Record<number, unknown>)) {
+          if ((action as { action?: string })?.action === 'bytes'
+            && !((action as { data?: unknown }).data instanceof Uint8Array)) {
+            return fail(id, 'EINVAL', 'process/pipeline: bytes fd action data must be a Uint8Array');
+          }
+        }
+        fds = r.fds as Record<number, FdAction>;
+      }
+      resolved.push({ code, spec: { path, argv, env, cwd, fds } });
     }
     const result = await this.#pipelineChild(pid, resolved);
     return ok(id, { exitCodes: result.exitCodes, stdout: result.lastStdout });
@@ -1144,6 +1190,42 @@ export class SyscallDispatcher {
     return { path: canonical };
   }
 
+  /**
+   * `fs/getxattr {path, name}`: read an extended attribute. Requires read on the
+   * (canonical, symlink-resolved) path — the same gate `fs/chmod` uses, just on
+   * `read`. A missing attribute is ENOENT (our errno set has no ENODATA/ENOATTR).
+   */
+  async #getxattr(pid: number, args: SyscallArgs<'fs/getxattr'>): Promise<Uint8Array> {
+    const absPath = this.#resolvePath(pid, args.path);
+    const canonical = await this.#canonicalCheckedPath(pid, absPath, 'read');
+    const value = await this.#vfs.getxattr(canonical, args.name);
+    if (value === undefined) throw new FileSystemError('no-entry', `No such attribute: ${args.name}`);
+    return value;
+  }
+
+  /** `fs/setxattr {path, name, value}`: write an extended attribute. Requires write. */
+  async #setxattr(pid: number, args: SyscallArgs<'fs/setxattr'>): Promise<Record<string, never>> {
+    const absPath = this.#resolvePath(pid, args.path);
+    const canonical = await this.#canonicalCheckedPath(pid, absPath, 'write');
+    await this.#vfs.setxattr(canonical, args.name, args.value);
+    return {};
+  }
+
+  /** `fs/listxattr {path}`: enumerate extended-attribute names. Requires read. */
+  async #listxattr(pid: number, args: SyscallArgs<'fs/listxattr'>): Promise<{ names: string[] }> {
+    const absPath = this.#resolvePath(pid, args.path);
+    const canonical = await this.#canonicalCheckedPath(pid, absPath, 'read');
+    return { names: await this.#vfs.listxattr(canonical) };
+  }
+
+  /** `fs/removexattr {path, name}`: drop an extended attribute. Requires write. */
+  async #removexattr(pid: number, args: SyscallArgs<'fs/removexattr'>): Promise<Record<string, never>> {
+    const absPath = this.#resolvePath(pid, args.path);
+    const canonical = await this.#canonicalCheckedPath(pid, absPath, 'write');
+    await this.#vfs.removexattr(canonical, args.name);
+    return {};
+  }
+
   #fdOf(pid: number, fd: number): OpenFile {
     const entry = this.#tableFor(pid).get(fd);
     if (!entry) throw new BadFdError(fd);
@@ -1523,6 +1605,17 @@ function parseFsChmod(args: Record<string, unknown>): SyscallArgs<'fs/chmod'> {
   return out;
 }
 
+function parseFsXattrName(args: Record<string, unknown>): SyscallArgs<'fs/getxattr'> {
+  if (typeof args.name !== 'string') throw new MalformedArgsError('xattr name must be a string');
+  return { path: reqPath(args), name: args.name };
+}
+
+function parseFsSetxattr(args: Record<string, unknown>): SyscallArgs<'fs/setxattr'> {
+  if (typeof args.name !== 'string') throw new MalformedArgsError('xattr name must be a string');
+  if (!(args.value instanceof Uint8Array)) throw new MalformedArgsError('xattr value must be bytes');
+  return { path: reqPath(args), name: args.name, value: args.value };
+}
+
 function parseFsUtimes(args: Record<string, unknown>): SyscallArgs<'fs/utimes'> {
   const out: SyscallArgs<'fs/utimes'> = { path: reqPath(args) };
   if (typeof args.atime === 'number') out.atime = args.atime;
@@ -1628,15 +1721,16 @@ function parseSpawn(args: Record<string, unknown>): SpawnArgs & { portFds?: numb
     if (typeof args.fds !== 'object' || args.fds === null || Array.isArray(args.fds)) {
       throw new MalformedArgsError('process/spawn: fds must be an object keyed by fd');
     }
-    out.fds = args.fds as SpawnArgs['fds'];
-  }
-  // A1: inline stdin bytes (feeds + closes the child's stdin when fd 0 is not
-  // otherwise wired). Accept a Uint8Array directly.
-  if (args.stdinData !== undefined) {
-    if (!(args.stdinData instanceof Uint8Array)) {
-      throw new MalformedArgsError('process/spawn: stdinData must be a Uint8Array');
+    // R1: a `bytes` fd action carries a raw byte buffer (here-string/here-doc
+    // stdin source); reject a non-Uint8Array `data` at the boundary (EINVAL)
+    // rather than letting it reach the pump.
+    for (const action of Object.values(args.fds as Record<number, unknown>)) {
+      if ((action as { action?: string })?.action === 'bytes'
+        && !((action as { data?: unknown }).data instanceof Uint8Array)) {
+        throw new MalformedArgsError('process/spawn: bytes fd action data must be a Uint8Array');
+      }
     }
-    out.stdinData = args.stdinData;
+    out.fds = args.fds as SpawnArgs['fds'];
   }
   // `portFds[i]` is the child fd for the i-th transferred port (positional). The
   // ports themselves are mapped in #spawn; here we only validate the shape.

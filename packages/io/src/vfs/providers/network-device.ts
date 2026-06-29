@@ -222,6 +222,10 @@ export class NetworkDeviceFsProvider implements FileSystemProvider {
   link(_e: string, _n: string): void { throw new FileSystemError('not-permitted', 'Cannot link network devices'); }
   chmod(_path: string, _mode: number): void {}
   utimes(_path: string, _atime: Date, _mtime: Date): void {}
+  getxattr(_path: string, _name: string): undefined { return undefined; }
+  setxattr(_path: string, _name: string, _value: Uint8Array): void { throw new FileSystemError('unsupported', 'xattr unsupported on network devices'); }
+  listxattr(_path: string): string[] { return []; }
+  removexattr(_path: string, _name: string): void {}
   mkfifo(_path: string): void { throw new FileSystemError('not-permitted', 'Cannot mkfifo on network devices'); }
 
   dispose(): void {

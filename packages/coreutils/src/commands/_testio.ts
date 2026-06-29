@@ -27,6 +27,8 @@ export function makeIO(opts: {
   env?: Record<string, string>;
   stdinText?: string;
   files?: Record<string, string | Uint8Array | { content: string | Uint8Array; mode?: number; mtime?: Date }>;
+  /** Extended attributes to seed onto already-created files: path → { name → bytes }. */
+  xattrs?: Record<string, Record<string, Uint8Array>>;
   pid?: number;
   /**
    * Optional handler for `process/pipeline` spawns. Receives each spawn's stages
@@ -38,6 +40,9 @@ export function makeIO(opts: {
 }): TestHarness {
   const enc = new TextEncoder();
   const fs = new MemoryFsProvider({ files: opts.files });
+  for (const [path, attrs] of Object.entries(opts.xattrs ?? {})) {
+    for (const [name, value] of Object.entries(attrs)) fs.setxattr(path, name, value);
+  }
 
   const stdin = new ReadableStream<Uint8Array>({
     start(c) { if (opts.stdinText) c.enqueue(enc.encode(opts.stdinText)); c.close(); },
@@ -103,6 +108,14 @@ export function makeIO(opts: {
         await fs.utimes(path!, new Date(typeof args.atime === 'number' ? args.atime : now), new Date(typeof args.mtime === 'number' ? args.mtime : now));
         return {};
       }
+      case 'fs/getxattr': {
+        const value = await fs.getxattr(path!, String(args.name));
+        if (value === undefined) throw Object.assign(new Error('no-entry'), { code: 'no-entry' });
+        return new Uint8Array(value);
+      }
+      case 'fs/setxattr': await fs.setxattr(path!, String(args.name), args.value as Uint8Array); return {};
+      case 'fs/listxattr': return { names: await fs.listxattr(path!) };
+      case 'fs/removexattr': await fs.removexattr(path!, String(args.name)); return {};
       case 'fs/realpath': return { path: fs.realpath(path!) };
       case 'process/getpid': return { pid: opts.pid ?? 7 };
       case 'process/pipeline': {

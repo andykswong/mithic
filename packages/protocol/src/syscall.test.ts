@@ -7,7 +7,8 @@ test('SYSCALL_NAMES covers all dispatcher call families', () => {
   const expected = [
     'fs/open', 'fs/read', 'fs/write', 'fs/close', 'fs/stat', 'fs/readdir',
     'fs/mkdir', 'fs/unlink', 'fs/rmdir', 'fs/rename', 'fs/symlink', 'fs/readlink',
-    'fs/link', 'fs/chmod', 'fs/utimes', 'fs/realpath', 'fs/pipe',
+    'fs/link', 'fs/chmod', 'fs/utimes', 'fs/realpath',
+    'fs/getxattr', 'fs/setxattr', 'fs/listxattr', 'fs/removexattr', 'fs/pipe',
     'ipc/listen', 'ipc/accept', 'ipc/connect',
     'dom/mutate', 'net/fetch',
     'process/spawn', 'process/pipeline', 'process/wait', 'process/kill', 'process/exit',

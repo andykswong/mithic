@@ -2,9 +2,9 @@ import { INITIAL_CREDIT_BYTES } from './pipe.ts';
 
 /**
  * C1: the ONE canonical credit-based pipe flow-control primitive, shared by all
- * six former hand-rolled consumers (`portToReadable`/`portToWritable` in
- * guest-runtime, and the kernel's `#feedFileToPort`, `#drainPortToFile`,
- * `#drainPort`, `feedPort`, and `RelayEnd`).
+ * former hand-rolled consumers (`portToReadable`/`portToWritable` in
+ * guest-runtime, and the kernel's `#feedFileToPort`, `#feedBytesToPort`,
+ * `#drainPortToFile`, `#drainPort`, and `RelayEnd`).
  *
  * It lives in `@mithic/protocol` — the package that already owns `PipeMessage`
  * and the credit constants and that BOTH the kernel and guest-runtime depend on

@@ -9,6 +9,7 @@ interface MemFileEntry {
   mtime: Date;
   atime: Date;
   ctime: Date;
+  xattrs?: Map<string, Uint8Array>;
 }
 
 /** In-memory directory entry. */
@@ -19,6 +20,7 @@ interface MemDirectoryEntry {
   mtime: Date;
   atime: Date;
   ctime: Date;
+  xattrs?: Map<string, Uint8Array>;
 }
 
 /** In-memory symlink entry. */
@@ -29,6 +31,7 @@ interface MemSymlinkEntry {
   mtime: Date;
   atime: Date;
   ctime: Date;
+  xattrs?: Map<string, Uint8Array>;
 }
 
 /** In-memory FIFO (named pipe) entry. */
@@ -39,6 +42,7 @@ interface MemFifoEntry {
   mtime: Date;
   atime: Date;
   ctime: Date;
+  xattrs?: Map<string, Uint8Array>;
 }
 
 type MemEntry = MemFileEntry | MemDirectoryEntry | MemSymlinkEntry | MemFifoEntry;
@@ -432,6 +436,30 @@ export class MemoryFsProvider implements FileSystemProvider {
     entry.mtime = mtime;
   }
 
+  getxattr(path: string, name: string): Uint8Array | undefined {
+    const entry = this.resolveXattrEntry(path);
+    const value = entry.xattrs?.get(name);
+    return value ? value.slice() : undefined;
+  }
+
+  setxattr(path: string, name: string, value: Uint8Array): void {
+    const entry = this.resolveXattrEntry(path);
+    (entry.xattrs ??= new Map()).set(name, value.slice());
+    entry.ctime = new Date();
+  }
+
+  listxattr(path: string): string[] {
+    const entry = this.resolveXattrEntry(path);
+    return entry.xattrs ? [...entry.xattrs.keys()] : [];
+  }
+
+  removexattr(path: string, name: string): void {
+    const entry = this.resolveXattrEntry(path);
+    if (entry.xattrs?.delete(name)) {
+      entry.ctime = new Date();
+    }
+  }
+
   mkfifo(path: string): void {
     const normalized = this.normalizePath(path);
     const { dir, base } = this.splitPath(normalized);
@@ -460,6 +488,15 @@ export class MemoryFsProvider implements FileSystemProvider {
   }
 
   // --- Private helpers ---
+
+  private resolveXattrEntry(path: string): MemEntry {
+    const normalized = this.normalizePath(path);
+    const entry = this.resolveEntry(normalized, true);
+    if (!entry) {
+      throw new FileSystemError('no-entry', `No such file or directory: ${path}`);
+    }
+    return entry;
+  }
 
   private normalizePath(path: string): string {
     if (!path || path === '/') return '/';

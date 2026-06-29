@@ -181,10 +181,11 @@ test('multi-stage pipe: producer | grep x | sort | head -n 2', async () => {
   expect(out.code).toBe(0);
 }, T);
 
-// FIXED — a single EXTERNAL command fed by a `<` redirect (or here-string) now
-// gets its stdin: the shell forwards `stdinData` to the one-stage
-// `process/pipeline` and the kernel writes it into the child's stdin and closes
-// it (EOF), so the child reads the redirect content and terminates (no hang).
+// D8 — a single EXTERNAL command fed by a `<` redirect (or here-string) gets its
+// stdin pipe-fed: the shell forwards an `fds[0]` action (open the VFS path /
+// feed the here-string bytes) to the one-stage `process/pipeline`, and the
+// kernel streams it into the child's stdin and closes it (EOF), so the child
+// reads the redirect content and terminates (no hang, works on every backend).
 test('input redirect into a lone external (grep < file) feeds stdin', async () => {
   const k = await bootShell({ '/log.txt': 'foo\nbar\nfoobar\n' });
   const out = await k.run('grep foo < /log.txt');

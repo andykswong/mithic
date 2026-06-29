@@ -153,3 +153,101 @@ describe('OPFSProvider (real OPFS, browser)', () => {
     });
   });
 });
+
+describe('OPFSProvider persistence (metadata store + append, browser)', () => {
+  /** A storage manager pinned to a single fresh OPFS subdirectory, so two
+   *  providers built from it share the same backing root (simulating reload). */
+  async function makeSharedRoot(testId: string): Promise<{ getDirectory: () => Promise<FileSystemDirectoryHandle> }> {
+    const root = await navigator.storage.getDirectory();
+    const sub = await root.getDirectoryHandle(`test-${testId}-${Date.now()}`, { create: true });
+    return { getDirectory: async () => sub };
+  }
+
+  it('xattr persists across a fresh provider over the same OPFS root', async () => {
+    const storage = await makeSharedRoot('opfs-xattr-persist');
+    const a = new OPFSProvider(storage);
+    await a.init();
+    const fh = await a.open('/u', { create: true, write: true, truncate: true });
+    await a.write(fh, enc.encode('hi'), 0);
+    await a.close(fh);
+    await a.setxattr('/u', 'security.capability', new Uint8Array([7, 7]));
+    expect(await a.listxattr('/u')).toContain('security.capability');
+    await a.dispose();
+
+    const b = new OPFSProvider(storage); // simulate reload
+    await b.init();
+    expect(Array.from((await b.getxattr('/u', 'security.capability'))!)).toEqual([7, 7]);
+    expect(await b.listxattr('/u')).toContain('security.capability');
+
+    await b.removexattr('/u', 'security.capability');
+    await b.dispose();
+
+    const c = new OPFSProvider(storage);
+    await c.init();
+    expect(await c.getxattr('/u', 'security.capability')).toBeUndefined();
+    await c.dispose();
+  });
+
+  it('mode set via chmod persists across a fresh provider', async () => {
+    const storage = await makeSharedRoot('opfs-mode-persist');
+    const a = new OPFSProvider(storage);
+    await a.init();
+    const fh = await a.open('/bin', { create: true, write: true, truncate: true });
+    await a.close(fh);
+    await a.chmod('/bin', 0o755);
+    expect((await a.stat('/bin')).mode).toBe(0o755);
+    await a.dispose();
+
+    const b = new OPFSProvider(storage);
+    await b.init();
+    expect((await b.stat('/bin')).mode).toBe(0o755);
+    await b.dispose();
+  });
+
+  it('the metadata file is not surfaced by readdir', async () => {
+    const storage = await makeSharedRoot('opfs-meta-hidden');
+    const a = new OPFSProvider(storage);
+    await a.init();
+    const fh = await a.open('/real.txt', { create: true, write: true, truncate: true });
+    await a.close(fh);
+    await a.setxattr('/real.txt', 'security.capability', new Uint8Array([1]));
+    const names = (await a.readdir('/')).map(e => e.name);
+    expect(names).toContain('real.txt');
+    expect(names).not.toContain('.mithic-meta.json');
+    await a.dispose();
+  });
+
+  it('append-mode write lands at EOF, not offset 0', async () => {
+    const storage = await makeSharedRoot('opfs-append');
+    const fs = new OPFSProvider(storage);
+    await fs.init();
+    const h1 = await fs.open('/a.txt', { create: true, write: true, truncate: true });
+    await fs.write(h1, enc.encode('abc'), 0);
+    await fs.close(h1);
+    const h2 = await fs.open('/a.txt', { write: true, append: true, truncate: false });
+    await fs.write(h2, enc.encode('def'), 0);
+    await fs.close(h2);
+    const h3 = await fs.open('/a.txt', { read: true });
+    expect(dec.decode(await fs.read(h3, 0, 64))).toBe('abcdef');
+    await fs.close(h3);
+    await fs.dispose();
+  });
+
+  it('xattr survives rename and is dropped on unlink', async () => {
+    const storage = await makeSharedRoot('opfs-xattr-rename');
+    const fs = new OPFSProvider(storage);
+    await fs.init();
+    const fh = await fs.open('/f', { create: true, write: true, truncate: true });
+    await fs.write(fh, enc.encode('x'), 0);
+    await fs.close(fh);
+    await fs.setxattr('/f', 'security.capability', new Uint8Array([1, 2, 3]));
+
+    await fs.rename('/f', '/g');
+    expect(Array.from((await fs.getxattr('/g', 'security.capability'))!)).toEqual([1, 2, 3]);
+    expect(await fs.getxattr('/f', 'security.capability')).toBeUndefined();
+
+    await fs.unlink('/g');
+    expect(await fs.getxattr('/g', 'security.capability')).toBeUndefined();
+    await fs.dispose();
+  });
+});

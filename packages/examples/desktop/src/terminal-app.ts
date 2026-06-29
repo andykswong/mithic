@@ -132,28 +132,38 @@ export function mountTerminal(ctx: WindowContext, deps: TerminalDeps): TerminalH
 }
 
 function makeKernelClient(kernel: Kernel): KernelClient {
-  const enc = new TextEncoder();
+  // runPipeline awaits + REAPS each stage; record exit codes by pid so a later
+  // wait(pid) is served from the map (a second kernel.wait would report -1).
+  const exitCodes = new Map<number, number>();
   return {
     async spawn(params: SpawnParams): Promise<SpawnHandle> {
-      const { pid, stdout, stderr } = await kernel.spawn(params.code, {
-        args: params.args, env: params.env, cwd: params.cwd, capabilities: CHILD_CAPABILITIES,
+      // D8: route a single command through runPipeline (one stage) so a
+      // redirect-fed `fds[0]` stdin source is pipe-fed by the kernel.
+      const result = await kernel.runPipeline([{
+        code: params.code, args: params.args, env: params.env, cwd: params.cwd, capabilities: CHILD_CAPABILITIES,
         captureStdout: params.captureStdout, captureStderr: params.captureStderr,
-        stdinData: params.stdinData !== undefined ? enc.encode(params.stdinData) : undefined,
+        fds: params.fds,
         // The desktop terminal's children are always terminal-connected: mark
         // their stdio as a TTY so guest.isatty() reports true (colorize/interactive).
         tty: true,
-      });
+      }]);
+      exitCodes.set(result.pids[0], result.exitCodes[0] ?? 0);
       // C1 (mirrors the shell example's "Bug B"): surface the child's captured
       // stderr so a failing command's error reaches the terminal (the executor
       // drains this into its stderr sink).
-      return { pid, stdout, stderr };
+      return { pid: result.pids[0], stdout: result.lastStdout, stderr: result.stderr[0] };
     },
-    async wait(pid: number) { const { code } = await kernel.wait(pid); return { pid, code }; },
+    async wait(pid: number) {
+      const recorded = exitCodes.get(pid);
+      if (recorded !== undefined) return { pid, code: recorded };
+      const { code } = await kernel.wait(pid);
+      return { pid, code };
+    },
     async runPipeline(stages: PipelineStageParams[]): Promise<PipelineRunResult> {
       const result = await kernel.runPipeline(stages.map((s, i) => ({
         code: s.code, args: s.args, env: s.env, cwd: s.cwd, capabilities: CHILD_CAPABILITIES,
         captureStdout: i === stages.length - 1 ? s.captureStdout : false, captureStderr: s.captureStderr,
-        stdinData: i === 0 && s.stdinData !== undefined ? enc.encode(s.stdinData) : undefined,
+        fds: i === 0 ? s.fds : undefined,
         // The desktop terminal's pipeline children are terminal-connected too.
         tty: true,
       })));

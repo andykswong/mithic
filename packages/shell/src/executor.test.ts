@@ -167,34 +167,102 @@ test('redirect target path is expanded from env', async () => {
   expect(fs.files.get('/tmp/env-out.txt')).toBe('hi\n');
 });
 
-// ── Fix: stdin redirect / here-string into an EXTERNAL command wires stdinData ──
+// ── D8: stdin redirect / here-string into an EXTERNAL command wires fds[0] ─────
+// (RFC 0001 D8): the shell no longer ships an inline `stdinData` blob. A `<`
+// redirect becomes a kernel-side `fds:{0:{action:'open',path}}` (the kernel
+// streams the file into fd 0); a `<<`/`<<<` body becomes a byte buffer fed via
+// `fds:{0:{action:'bytes',data}}`. One pipe-fed stdin path on every backend.
 
-test('< file into an external command passes file contents as spawn stdinData', async () => {
+const dec = new TextDecoder();
+
+test('< file into an external command wires fds[0] open of the redirect path', async () => {
   const k = mockKernel();
   const fs = mockFs();
   fs.files.set('/tmp/in.txt', 'line1\nline2\n');
-  // `grepx` is external (not a builtin) so it spawns; the redirect must arrive
-  // as stdinData on the spawn params (otherwise the child would block on stdin).
   const ex = new Executor(k as any, { cwd: '/', env: {} }, { fs, resolve: (n) => n });
   await ex.run(parse('grepx < /tmp/in.txt'));
   expect(k.spawned).toHaveLength(1);
-  expect(k.spawned[0].stdinData).toBe('line1\nline2\n');
+  expect(k.spawned[0].stdinData).toBeUndefined();
+  expect(k.spawned[0].fds?.[0]).toEqual({ action: 'open', path: '/tmp/in.txt', flags: { read: true } });
 });
 
-test('<<< here-string into an external command passes the word + newline as stdinData', async () => {
+test('< file: a RELATIVE redirect path is resolved against cwd for fds[0] open', async () => {
+  const k = mockKernel();
+  const fs = mockFs();
+  fs.files.set('/work/in.txt', 'x\n');
+  const ex = new Executor(k as any, { cwd: '/work', env: {} }, { fs, resolve: (n) => n });
+  await ex.run(parse('grepx < in.txt'));
+  expect(k.spawned[0].fds?.[0]).toEqual({ action: 'open', path: '/work/in.txt', flags: { read: true } });
+});
+
+test('<<< here-string into an external command feeds the word + newline as fds[0] bytes', async () => {
   const k = mockKernel();
   const ex = new Executor(k as any, { cwd: '/', env: {} }, { resolve: (n) => n });
   await ex.run(parse('grepx <<< "data here"'));
   expect(k.spawned).toHaveLength(1);
-  expect(k.spawned[0].stdinData).toBe('data here\n');
+  const spec = k.spawned[0].fds?.[0];
+  expect(spec.action).toBe('bytes');
+  expect(spec.data).toBeInstanceOf(Uint8Array);
+  expect(dec.decode(spec.data)).toBe('data here\n');
 });
 
-test('<< heredoc into an external command passes the body as stdinData', async () => {
+test('<< heredoc into an external command feeds the (expanded) body as fds[0] bytes', async () => {
   const k = mockKernel();
   const ex = new Executor(k as any, { cwd: '/', env: { U: 'bob' } }, { resolve: (n) => n });
   await ex.run(parse('grepx <<EOF\nhello $U\nEOF'));
   expect(k.spawned).toHaveLength(1);
-  expect(k.spawned[0].stdinData).toBe('hello bob\n');
+  const spec = k.spawned[0].fds?.[0];
+  expect(spec.action).toBe('bytes');
+  expect(dec.decode(spec.data)).toBe('hello bob\n');
+});
+
+test('an external command with NO stdin redirect emits no fds[0] (default stdin/EOF)', async () => {
+  const k = mockKernel();
+  const ex = new Executor(k as any, { cwd: '/', env: {} }, { resolve: (n) => n });
+  await ex.run(parse('grepx'));
+  expect(k.spawned).toHaveLength(1);
+  expect(k.spawned[0].fds?.[0]).toBeUndefined();
+  expect(k.spawned[0].stdinData).toBeUndefined();
+});
+
+test('an inherited piped-stdin string is fed to a downstream external as fds[0] bytes', async () => {
+  // A genuinely-COMPOUND first stage (a multi-statement group) keeps the
+  // serialized in-process pipeline path: it captures the upstream output and
+  // passes it to the external second stage as `io.stdin`. With no port-transfer
+  // mock that string must still reach the child as fd-0 bytes (not be dropped).
+  const k = mockKernel();
+  const ex = new Executor(k as any, { cwd: '/', env: {} }, { resolve: (n) => n });
+  await ex.run(parse('{ echo hi; echo bye; } | grepx'));
+  // Only `grepx` spawns (the group's `echo`s are in-process builtins).
+  expect(k.spawned).toHaveLength(1);
+  const spec = k.spawned[0].fds?.[0];
+  expect(spec.action).toBe('bytes');
+  expect(dec.decode(spec.data)).toBe('hi\nbye\n');
+});
+
+test('a large (>64 KiB) < redirect into an external command wires fds[0] open without buffering the bytes inline', async () => {
+  const k = mockKernel();
+  const fs = mockFs();
+  const big = 'a'.repeat(100 * 1024);
+  fs.files.set('/tmp/big.txt', big);
+  const ex = new Executor(k as any, { cwd: '/', env: {} }, { fs, resolve: (n) => n });
+  const code = await ex.run(parse('grepx < /tmp/big.txt'));
+  expect(code).toBe(0);
+  // The kernel streams the file (credit-windowed) — the shell ships only the
+  // path, never a 100 KiB inline blob.
+  expect(k.spawned[0].fds?.[0]).toEqual({ action: 'open', path: '/tmp/big.txt', flags: { read: true } });
+  expect(k.spawned[0].stdinData).toBeUndefined();
+});
+
+test('a large (>64 KiB) <<< here-string into an external command feeds fds[0] bytes', async () => {
+  const k = mockKernel();
+  const big = 'z'.repeat(100 * 1024);
+  const ex = new Executor(k as any, { cwd: '/', env: { BIG: big } }, { resolve: (n) => n });
+  const code = await ex.run(parse('grepx <<< "$BIG"'));
+  expect(code).toBe(0);
+  const spec = k.spawned[0].fds?.[0];
+  expect(spec.action).toBe('bytes');
+  expect(spec.data.byteLength).toBe(big.length + 1); // + trailing newline
 });
 
 // ── SH-1: argument forwarding via "$@" preserves field count ────────────────

@@ -5,8 +5,8 @@ import type { SyscallCallOptions, SyscallResult } from './syscall-client.ts';
 import { portToReadable, portToWritable, portToDuplex } from './streams.ts';
 import type { Transport } from './transport.ts';
 import { createFetch } from './fetch.ts';
-import { openRoot } from './fs-access.ts';
-import type { GuestDirectoryHandle } from './fs-access.ts';
+import { createStorageManager } from './fs-access.ts';
+import type { GuestStorageManager } from './fs-access.ts';
 
 export interface GuestOptions {
   control: MessagePort;
@@ -66,13 +66,17 @@ export interface Guest {
    */
   fetch: typeof fetch;
   /**
-   * B3: the VFS root as a standard `FileSystemDirectoryHandle`-shaped handle,
-   * layered over the `fs/*` syscalls. Guest code depends on the WHATWG File
-   * System Access API (`getFileHandle`/`getDirectoryHandle`/`getFile`/
-   * `createWritable`/`keys`/`values`/`entries`); the integer fd stays internal.
-   * A getter so the handle is minted on first use only.
+   * B3/Q1: a `StorageManager`-shaped surface (mirrors the web standard
+   * `navigator.storage`) layered over the `fs/*` syscalls. `getDirectory()`
+   * yields the VFS root `/` as a standard `FileSystemDirectoryHandle`-shaped
+   * handle; `getCurrentDirectory()` yields the handle for this process's `cwd`
+   * (a Mithic extension so relative argv paths resolve the Unix way). Guest
+   * code depends on the WHATWG File System Access API
+   * (`getFileHandle`/`getDirectoryHandle`/`getFile`/`createWritable`/
+   * `keys`/`values`/`entries`); the integer fd stays internal. A getter so the
+   * object is minted on first use only.
    */
-  readonly fs: GuestDirectoryHandle;
+  readonly fs: GuestStorageManager;
   /**
    * Subscribe to EVERY kernel signal. This is the MULTI-SHOT primitive: a
    * repeatable signal (e.g. SIGUSR1/SIGUSR2) fires the callback each time, which
@@ -195,8 +199,8 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
   // `exit()` does not double-post.
   let stdinClosed = false;
 
-  // B3: the File System Access root handle, minted lazily on first `guest.fs` use.
-  let fsRoot: GuestDirectoryHandle | undefined;
+  // B3/Q1: the StorageManager surface, minted lazily on first `guest.fs` use.
+  let storage: GuestStorageManager | undefined;
 
   /**
    * Tear down the stdin READ side on process exit: post an EPIPE up the pipe and
@@ -259,7 +263,7 @@ export function createGuest({ control, init, preopenPorts = {} }: GuestOptions):
     // B6: the fetch façade is ports-aware — it receives the transferred read
     // port for a streamed body via syscallPorts (and buffers when none arrives).
     fetch: createFetch((call, args, opts) => client.syscallPorts(call, args, opts)),
-    get fs() { return fsRoot ??= openRoot((call, args, opts) => client.syscall(call, args, opts)); },
+    get fs() { return storage ??= createStorageManager((call, args, opts) => client.syscall(call, args, opts), init.cwd); },
     onSignal(cb) { signalListeners.push(cb); },
     signal: terminalAbort.signal,
     onDomEvent(cb) { domEventListeners.push(cb); },

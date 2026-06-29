@@ -1,6 +1,7 @@
 import type {
   Capability,
   DisplayInfo,
+  FdAction,
   KernelEvent,
   ProcessInit,
   ProcessLimits,
@@ -14,10 +15,12 @@ import {
   isSyscallResponse,
   signalExitCode,
   PipeReader,
-  PipeWriter,
+  decodeCapabilities,
+  SECURITY_CAPABILITY_XATTR,
 } from '@mithic/protocol';
 import type { Runtime, ProcessHandle } from '@mithic/runtime';
 import type { FileSystemProvider } from '@mithic/io/vfs';
+import { FileSystemError } from '@mithic/io/vfs';
 import type { HttpClient } from '@mithic/io/net';
 import { FetchHttpClient } from '@mithic/io/net';
 import { CapabilityManager } from './capability-manager.ts';
@@ -36,6 +39,21 @@ import type { RelaySyscallResult } from './relay-bridge.ts';
 import { Supervisor } from './supervisor.ts';
 import type { HeartbeatOptions, SupervisorHost } from './supervisor.ts';
 import { FdWiring } from './fd-wiring.ts';
+import { classifyExecutable, resolveName } from './exec-resolve.ts';
+
+/**
+ * Thrown when sourcing an executable from a VFS path fails. Carries a POSIX
+ * `errno` so the dispatcher's `process/spawn` catch surfaces it to the guest
+ * (ENOENT for a missing file, EACCES when the execute bit is unset).
+ */
+class ExecError extends Error {
+  readonly errno: 'ENOENT' | 'EACCES';
+  constructor(errno: 'ENOENT' | 'EACCES', message: string) {
+    super(message);
+    this.errno = errno;
+    this.name = 'ExecError';
+  }
+}
 
 export interface KernelOptions {
   runtime: Runtime;
@@ -200,15 +218,6 @@ export interface SpawnInit {
    */
   extraFds?: Record<number, MessagePort>;
   /**
-   * Inline stdin payload. When set (and `stdin` is NOT injected), the kernel
-   * mints the stdin pipe, gives the child the read end, then writes these bytes
-   * into the write end and closes it (EOF). Used for `cmd < file` / `cmd <<<`
-   * where the shell has the stdin content in hand and the child must NOT block
-   * waiting for a stdin that no peer stage will ever produce. Ignored when an
-   * external `stdin` port is injected (the peer owns that stream).
-   */
-  stdinData?: Uint8Array;
-  /**
    * GUI display placement for runtimes that render the guest (e.g. IframeRuntime).
    * `mode: 'inline'` places a visible iframe sized `width`x`height`; the default
    * `'hidden'` keeps it off-screen. Ignored by non-GUI runtimes. The kernel threads
@@ -257,11 +266,12 @@ export interface PipelineStage {
   /** Capture this stage's stderr (each stage keeps its own stderr). */
   captureStderr?: boolean;
   /**
-   * Inline stdin for this stage. Only honored on the FIRST stage (later stages
-   * read from the previous stage's pipe). Used for `cmd < file` / `cmd <<<` so
-   * the head of the pipeline gets its redirect content and an EOF.
+   * D8: fd wiring for this stage. Only `fds[0]` on the FIRST stage is honored
+   * (later stages read the previous stage's pipe): the redirect-fed stdin source
+   * — `open` a VFS file (streamed in-kernel) or feed a `bytes` buffer (a `<<` /
+   * `<<<` body), credit-windowed, then EOF. Replaces the inline `stdinData`.
    */
-  stdinData?: Uint8Array;
+  fds?: Record<number, FdAction>;
   /**
    * Mark this stage's stdio (fds 0/1/2) as a TTY — see {@link SpawnInit.tty}.
    * A terminal frontend running a pipeline sets this so each stage's
@@ -480,7 +490,148 @@ export class Kernel {
     };
   }
 
+  /** True when `code` names a VFS path (`/…`, `./…`, `../…`) rather than a URL. */
+  #isVfsPath(code: string): boolean {
+    if (code.includes('://')) return false;
+    return code.startsWith('/') || code.startsWith('./') || code.startsWith('../');
+  }
+
+  /** VFS existence probe used by the `$PATH` resolver (a missing file → false). */
+  async #vfsExists(path: string): Promise<boolean> {
+    try {
+      await this.#vfs.stat(path);
+      return true;
+    } catch (err) {
+      if (err instanceof FileSystemError && err.code === 'no-entry') return false;
+      throw err;
+    }
+  }
+
+  /**
+   * RFC 0001 §4.2: resolve a bare command NAME to a VFS file via `$PATH`. The
+   * kernel never holds shell builtins (those resolve in-process in the shell and
+   * never reach here), so `builtins` is empty; we walk `env.PATH` (`:`-separated)
+   * for a matching VFS file. An explicit path / URL, or a name with no `$PATH`
+   * hit, is returned unchanged for the launcher (`resolveCommand` already ran in
+   * the dispatcher for guest-requested spawns).
+   */
+  async #resolvePathName(code: string, env: Record<string, string>): Promise<string> {
+    if (this.#isVfsPath(code) || code.includes('://')) return code;
+    const pathDirs = (env.PATH ?? '').split(':').filter(Boolean);
+    if (pathDirs.length === 0) return code;
+    // Probe each candidate up-front so the pure resolver can stay synchronous.
+    const exists = new Set<string>();
+    for (const dir of pathDirs) {
+      const candidate = dir.endsWith('/') ? `${dir}${code}` : `${dir}/${code}`;
+      if (await this.#vfsExists(candidate)) exists.add(candidate);
+    }
+    const resolution = resolveName(code, {
+      builtins: new Set(),
+      pathDirs,
+      exists: (p) => exists.has(p),
+    });
+    return resolution.layer === 'file' ? resolution.path : code;
+  }
+
+  /** Read + concatenate a VFS file's bytes (chunked). */
+  async #readVfsBytes(path: string): Promise<Uint8Array> {
+    const handle = await this.#vfs.open(path, { read: true });
+    try {
+      const chunks: Uint8Array[] = [];
+      let offset = 0;
+      for (;;) {
+        const chunk = await this.#vfs.read(handle, offset, 1 << 16);
+        if (chunk.byteLength === 0) break;
+        chunks.push(chunk);
+        offset += chunk.byteLength;
+      }
+      let total = 0;
+      for (const c of chunks) total += c.byteLength;
+      const bytes = new Uint8Array(total);
+      let pos = 0;
+      for (const c of chunks) { bytes.set(c, pos); pos += c.byteLength; }
+      return bytes;
+    } finally {
+      await this.#vfs.close(handle);
+    }
+  }
+
+  /** Strip a leading `#!…\n` shebang line so the remainder is valid ESM. */
+  #stripShebang(source: string): string {
+    if (!source.startsWith('#!')) return source;
+    const newline = source.indexOf('\n');
+    return newline === -1 ? '' : source.slice(newline + 1);
+  }
+
+  /** Read the `security.capability` xattr → the requested `Capability[]` (default-deny). */
+  async #readVfsCaps(path: string): Promise<Capability[]> {
+    const value = await this.#vfs.getxattr(path, SECURITY_CAPABILITY_XATTR);
+    return decodeCapabilities(value ?? undefined);
+  }
+
+  /**
+   * RFC 0001 §4.2/§4.8: resolve a `code` spec into spawnable guest source + the
+   * file-borne capabilities + the argv for interpreter dispatch.
+   *
+   * A bare NAME first resolves via `$PATH` (S3); an explicit VFS path (`/…`,
+   * `./…`, `../…`) is an executable FILE: stat it (missing → ENOENT), require the
+   * execute bit (`mode & 0o111`, else EACCES), read its bytes + its
+   * `security.capability` xattr (the REQUESTED caps, narrowed against the parent
+   * later in `#beginProcess`). The shebang then classifies the file:
+   *   - `guest` (`#!/bin/node` or no shebang) → run the (shebang-stripped) source.
+   *   - `interpreter` (`#!/bin/bash`, `#!/usr/bin/python`, …) → re-resolve THAT
+   *     interpreter by the same rules and run `interpreter <file> <args…>`: the
+   *     script PATH is prepended to argv and the spawned process is the
+   *     interpreter's source carrying the INTERPRETER's xattr caps.
+   *
+   * URLs and inline source strings (a non-path, unresolved name) pass through
+   * unchanged with no file-borne caps.
+   */
+  async #resolveExecutable(
+    code: string | URL,
+    init: SpawnInit,
+  ): Promise<{ code: string | URL; init: SpawnInit }> {
+    if (typeof code !== 'string') return { code, init };
+    const resolved = await this.#resolvePathName(code, init.env ?? {});
+    if (!this.#isVfsPath(resolved)) return { code: resolved, init };
+
+    let stat;
+    try {
+      stat = await this.#vfs.stat(resolved);
+    } catch (err) {
+      if (err instanceof FileSystemError && err.code === 'no-entry') {
+        throw new ExecError('ENOENT', `exec: no such file: ${resolved}`);
+      }
+      throw err;
+    }
+    if ((stat.mode & 0o111) === 0) {
+      throw new ExecError('EACCES', `exec: permission denied (not executable): ${resolved}`);
+    }
+
+    const source = new TextDecoder().decode(await this.#readVfsBytes(resolved));
+    const caps = await this.#readVfsCaps(resolved);
+    const classification = classifyExecutable(source);
+    if (classification.kind === 'interpreter') {
+      // Re-resolve the interpreter by the same rules and run `interp <file> …`.
+      // The script path is prepended to argv (after argv0) and the SPAWNED
+      // process is the interpreter, carrying ITS xattr caps.
+      const interpInit: SpawnInit = {
+        ...init,
+        args: [init.args?.[0] ?? classification.interpreter, resolved, ...(init.args ?? []).slice(1)],
+      };
+      return this.#resolveExecutable(classification.interpreter, interpInit);
+    }
+    return {
+      code: this.#stripShebang(source),
+      init: { ...init, capabilities: caps },
+    };
+  }
+
   async spawn(code: string | URL, init: SpawnInit = {}): Promise<SpawnResult> {
+    // RFC 0001 §4.2/§4.8: resolve the spec — a bare name via `$PATH`, an explicit
+    // VFS path as an executable FILE (execute-bit + shebang dispatch + xattr
+    // caps). URLs / inline source pass through unchanged.
+    ({ code, init } = await this.#resolveExecutable(code, init));
     // Non-transferable runtimes (e.g. QuickJS) use the relay path.
     if (!this.#runtime.capabilities.directPipes) {
       return this.#spawnRelay(code, init);
@@ -506,21 +657,16 @@ export class Kernel {
     // guest — that's the zero-hop pipeline path where the peer stage owns the
     // other end. The kernel does not retain a read end for an injected stream, so
     // capture is only possible for kernel-owned (minted) streams.
-    // stdin: an injected port (pipeline peer) wins. Otherwise mint a pipe and,
-    // if the caller supplied inline `stdinData`, feed those bytes into the write
-    // end and close it (EOF) so a stdin-reading child does not block forever.
+    // stdin: an injected port (a pipeline peer, or a D8 fd-0 pipe wired by
+    // FdWiring/runPipeline) wins. Otherwise mint a fresh pipe; the kernel-owned
+    // write end is left unattached (a stdin-reading child gets no producer — the
+    // caller must wire fds[0] to deliver bytes/EOF).
     let stdinReadPort: MessagePort;
     if (init.stdin) {
       stdinReadPort = init.stdin;
     } else {
       const stdinPipe = this.ipc.createPipe();
       stdinReadPort = stdinPipe.readPort;
-      if (init.stdinData !== undefined) {
-        feedPort(stdinPipe.writePort, init.stdinData);
-      }
-      // else: legacy behavior — the kernel-owned write end is left unattached.
-      // A child that reads stdin with neither an injected peer nor stdinData has
-      // no producer; supply `stdinData` (e.g. an empty buffer) to deliver EOF.
     }
 
     // CAP-2: cap captured output and replenish credit as chunks are consumed so
@@ -645,30 +791,43 @@ export class Kernel {
 
     const pids: number[] = [];
     const stderr: Array<Promise<Uint8Array> | undefined> = [];
-    const spawned = await Promise.all(
-      stages.map((stage, i) => {
-        const isLast = i === stages.length - 1;
-        const init: SpawnInit = {
-          args: stage.args,
-          env: stage.env,
-          cwd: stage.cwd,
-          capabilities: stage.capabilities,
-          ppid: stage.ppid,
-          limits: stage.limits,
-          captureStderr: stage.captureStderr,
-          tty: stage.tty,
-          // Stage i (i>0) reads from the read end of pipe i-1. The FIRST stage
-          // may instead be fed inline `stdinData` (a redirect source).
-          stdin: i > 0 ? pipes[i - 1].readPort : undefined,
-          stdinData: i === 0 ? stage.stdinData : undefined,
-          // Stage i (i<last) writes into the write end of pipe i.
-          stdout: !isLast ? pipes[i].writePort : undefined,
-          // Final stage may capture stdout (it keeps a kernel-owned stdout pipe).
-          captureStdout: isLast ? stage.captureStdout : false,
-        };
-        return this.spawn(stage.code, init);
-      })
-    );
+    // D8: stage-0 fd-0 pumps (an `open`/`bytes` stdin source) are deferred until
+    // AFTER the stages spawn, so the child's read end has a reader granting
+    // credit before bytes flow — same ordering as `#spawnChild`.
+    const filePumps: Array<() => void> = [];
+    const inits: SpawnInit[] = [];
+    for (let i = 0; i < stages.length; i++) {
+      const stage = stages[i];
+      const isLast = i === stages.length - 1;
+      const init: SpawnInit = {
+        args: stage.args,
+        env: stage.env,
+        cwd: stage.cwd,
+        capabilities: stage.capabilities,
+        ppid: stage.ppid,
+        limits: stage.limits,
+        captureStderr: stage.captureStderr,
+        tty: stage.tty,
+        // Stage i (i>0) reads from the read end of pipe i-1. The FIRST stage may
+        // instead get a D8 fd-0 source (a `< file` open or a `<<`/`<<<` bytes
+        // buffer), wired below via FdWiring (which sets init.stdin to a pipe end).
+        stdin: i > 0 ? pipes[i - 1].readPort : undefined,
+        // Stage i (i<last) writes into the write end of pipe i.
+        stdout: !isLast ? pipes[i].writePort : undefined,
+        // Final stage may capture stdout (it keeps a kernel-owned stdout pipe).
+        captureStdout: isLast ? stage.captureStdout : false,
+      };
+      // Apply a first-stage fd-0 action (open/bytes). The cap check on `open`
+      // uses the stage's ppid (the parent whose fs grants gate the file).
+      const fd0 = i === 0 ? stage.fds?.[0] : undefined;
+      if (fd0) {
+        await this.#fdWiring.applyAction(stage.ppid ?? 0, 0, fd0, init, new Map(), [], {}, filePumps);
+      }
+      inits.push(init);
+    }
+    const spawned = await Promise.all(stages.map((stage, i) => this.spawn(stage.code, inits[i])));
+    // Start the fd-0 pumps now that the children are live (their read ends grant credit).
+    for (const start of filePumps) start();
 
     for (const s of spawned) { pids.push(s.pid); stderr.push(s.stderr); }
     const lastStdout = spawned[spawned.length - 1]?.stdout;
@@ -840,13 +999,6 @@ export class Kernel {
       await this.#fdWiring.applyAction(parentPid, fd, action, init, injectedPorts, transfer, pipes, filePumps);
     }
 
-    // A1: inline stdin bytes — only when fd 0 was NOT wired by an fd action
-    // (no injected/piped/opened stdin). spawn() mints the stdin pipe, feeds the
-    // bytes, and closes it (EOF) so a stdin-reading child does not block.
-    if (args.stdinData !== undefined && init.stdin === undefined) {
-      init.stdinData = args.stdinData;
-    }
-
     const { pid } = await this.spawn(code, init);
 
     // Start any VFS-file pumps now that the child is running (its stdio reader/
@@ -883,8 +1035,8 @@ export class Kernel {
         capabilities: parentCaps,
         ppid: parentPid,
         captureStdout: i === stages.length - 1,
-        // Only the first stage may carry an inline stdin (redirect source).
-        stdinData: i === 0 ? spec.stdinData : undefined,
+        // D8: only the first stage may carry an fd-0 stdin source (redirect).
+        fds: i === 0 ? spec.fds : undefined,
       })),
     );
     const lastStdout = result.lastStdout ? await result.lastStdout : new Uint8Array();
@@ -1285,30 +1437,6 @@ function toDisplayInfo(display: DisplayOptions | undefined): DisplayInfo | undef
   };
 }
 
-function feedPort(writePort: MessagePort, data: Uint8Array): void {
-  writePort.start?.();
-  // C1: the shared PipeWriter owns credit accounting + the sticky broken latch.
-  const flow = new PipeWriter();
-  let sent = false;
-  writePort.onmessage = (e: MessageEvent): void => {
-    const msg = e.data as { type?: string; bytes?: number };
-    if (msg?.type === 'credit') flow.addCredit(msg.bytes ?? 0);
-    else if (msg?.type === 'error' || msg?.type === 'end') flow.markBroken('EPIPE');
-  };
-  void (async () => {
-    try {
-      // Empty payload sends EOF immediately (reserve(0) resolves at once).
-      await flow.reserve(data.byteLength);
-      sent = true;
-      if (data.byteLength > 0) writePort.postMessage({ type: 'data', chunk: data });
-      writePort.postMessage({ type: 'end' });
-      writePort.close();
-    } catch {
-      // Reader cancelled / closed before credit arrived: stop without sending.
-      if (!sent) { try { writePort.close(); } catch { /* already closed */ } }
-    }
-  })();
-}
 
 function concat(chunks: Uint8Array[]): Uint8Array {
   let total = 0;
