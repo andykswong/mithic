@@ -136,9 +136,13 @@ export const POSIX_SPECIAL_BUILTINS: ReadonlySet<string> = new Set([
 
 /** Thrown by a special builtin on a fatal error in POSIX mode; the executor aborts the script. */
 export class PosixSpecialBuiltinError extends Error {
-  constructor(public readonly builtin: string, public readonly code: number, message: string) {
+  readonly builtin: string;
+  readonly code: number;
+  constructor(builtin: string, code: number, message: string) {
     super(message);
     this.name = 'PosixSpecialBuiltinError';
+    this.builtin = builtin;
+    this.code = code;
   }
 }
 
