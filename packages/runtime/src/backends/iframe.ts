@@ -95,6 +95,12 @@ export class IframeRuntime implements Runtime {
       iframe.style.border = 'none';
     }
 
+    // Apply the window title (a11y + dev-tools labeling). The protocol carries it
+    // and the desktop WM passes app.title; reflect it onto the element.
+    if (options.display?.title != null) {
+      iframe.title = options.display.title;
+    }
+
     const callbacks: ((msg: SyscallRequest) => void)[] = [];
 
     // Listen for messages from this iframe; use window.onmessage filtering by source.
