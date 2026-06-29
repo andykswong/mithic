@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest';
+import type { Runtime } from '../runtime.ts';
 import { isIvmAvailable, IvmRuntime } from './ivm.ts';
 
 // Test 1: isIvmAvailable() must always return a boolean — never throw.
@@ -130,4 +131,10 @@ test.skipIf(!(await isIvmAvailable()))('IvmRuntime runs two isolates concurrentl
   expect(rt.isAlive(h1)).toBe(true);
   expect(rt.isAlive(h2)).toBe(true);
   rt.dispose(h1); rt.dispose(h2);
+});
+
+test('IvmRuntime exposes waitExit (Runtime optional member)', async () => {
+  if (!(await isIvmAvailable())) return;
+  const rt: Runtime = await IvmRuntime.create(64);
+  expect(typeof rt.waitExit).toBe('function');
 });

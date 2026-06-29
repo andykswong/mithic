@@ -61,6 +61,14 @@ export interface Runtime {
   onMessage(handle: ProcessHandle, cb: (msg: SyscallRequest) => void): void;
   isAlive(handle: ProcessHandle): boolean;
   dispose(handle: ProcessHandle): void;
+  /**
+   * Resolve when the process exits, with its exit code. Provided by RELAY backends
+   * (quickjs/ivm) where the kernel relay launcher needs the exit code to notify the
+   * kernel. Transferable backends (worker/iframe) omit it — they have no exit-code
+   * channel; exit is observed via the control port / DOM teardown instead. A relay
+   * launcher MUST feature-detect (`if (rt.waitExit)`) before calling.
+   */
+  waitExit?(handle: ProcessHandle): Promise<{ code: number }>;
 }
 
 export const WORKER_CAPABILITIES: RuntimeCapabilities = {
