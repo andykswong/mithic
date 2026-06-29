@@ -382,3 +382,41 @@ test('kernel relay: stdout is bounded at maxOutputBytes (no unbounded host growt
   expect(out.byteLength).toBeLessThanOrEqual(cap);
   expect(out.byteLength).toBeGreaterThan(0);
 }, 15000);
+
+test('kernel relay: quickjs guest reads fd-0 stdin via pipe/read (D8 bytes source)', async () => {
+  const qjsRt = await QuickJSRuntime.create();
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+
+  const kernel = new Kernel({
+    runtime: qjsRt,
+    vfs,
+    relayLauncher: new QuickJSGuestLauncher(qjsRt),
+  });
+
+  // Guest reads all of fd 0 (looping pipe/read until an empty chunk = EOF),
+  // then echoes it to stdout. __mithic_syscall returns {data:number[]} on read.
+  const code = `
+    let out = '';
+    for (;;) {
+      const r = __mithic_syscall('pipe/read', { fd: 0 });
+      const data = r && r.data ? r.data : [];
+      if (data.length === 0) break;
+      out += String.fromCharCode.apply(null, data);
+    }
+    __mithic_syscall('pipe/write', { fd: 1, data: 'got:' + out });
+    __mithic_syscall('process/exit', { code: 0 });
+  `;
+
+  const { pid, stdout } = await kernel.spawn(code, {
+    args: ['prog'],
+    capabilities: [],
+    captureStdout: true,
+    // D8 fd-0 source: a here-string-style bytes buffer.
+    fds: { 0: { action: 'bytes', data: new TextEncoder().encode('hello-stdin') } },
+  });
+
+  const result = await kernel.wait(pid);
+  expect(result.code).toBe(0);
+  expect(new TextDecoder().decode(await stdout!)).toBe('got:hello-stdin');
+}, 15000);
