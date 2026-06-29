@@ -18,7 +18,7 @@ adapter.
 - **Resource limits** — forwards `ProcessLimits` (`timeoutMs`, `cpuMs`,
   `memoryMb`, `maxOutputBytes`) to the kernel and reports whether a limit was
   hit.
-- **Request validation** — rejects malformed bodies, empty `code`, unsupported
+- **Request validation** — rejects malformed bodies, empty `code`, non-string
   `stdin`, and non-positive limit values with `4xx` before any process is
   spawned.
 - **Isolation** — each request gets its own kernel, QuickJS runtime, and an
@@ -78,7 +78,7 @@ limited to **1 MiB** (`413` on overflow).
 | `code`   | `string` (required)      | Guest source. Uses the QuickJS relay (`__mithic_syscall`) directly.   |
 | `env`    | `Record<string, string>` | Environment variables forwarded to the guest. Optional.               |
 | `limits` | `ProcessLimits`          | Resource limits for this execution. Optional.                         |
-| `stdin`  | `string`                 | **Not yet supported** — passing it returns `400`. Use `env` instead.  |
+| `stdin`  | `string`                 | Optional UTF-8 stdin fed to the guest's fd 0 (read via `pipe/read {fd:0}` until EOF). A non-string value returns `400`. |
 
 `limits` accepts the `ProcessLimits` fields from `@mithic/protocol`. The server
 validates `timeoutMs`, `cpuMs`, `memoryMb`, and `maxOutputBytes`: each, if
@@ -134,7 +134,7 @@ non-zero (a plain program error is not a limit hit).
 | Status | When                                                                           |
 |--------|--------------------------------------------------------------------------------|
 | `200`  | Execution completed (the result, including a non-zero `exitCode`, is in the body). |
-| `400`  | Invalid JSON, empty/non-string `code`, `stdin` provided, or a non-positive limit value. |
+| `400`  | Invalid JSON, empty/non-string `code`, non-string `stdin`, or a non-positive limit value. |
 | `413`  | Request body exceeds 1 MiB.                                                    |
 | `500`  | Internal execution error (e.g. the kernel threw); any spawned process is killed. |
 
@@ -144,6 +144,7 @@ non-zero (a plain program error is not a limit hit).
 npm test    # vitest — exercises the Hono app via app.request() (no socket)
 ```
 
-> **Note:** stdin and warm-VM pooling are not yet implemented. Each request
-> currently creates a fresh `QuickJSRuntime`; the WASM module is loaded once and
-> shared, so per-request overhead is a new QuickJS runtime + context.
+> **Note:** warm-VM pooling is not yet implemented. Each request currently
+> creates a fresh `QuickJSRuntime`; the WASM module is loaded once and shared, so
+> per-request overhead is a new QuickJS runtime + context. (Binary / streaming
+> stdin upload — beyond the in-body UTF-8 `stdin` string — is also future work.)
