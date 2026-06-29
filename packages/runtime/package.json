@@ -58,13 +58,23 @@
   },
   "homepage": "https://github.com/andykswong/mithic",
   "dependencies": {
-    "@mithic/protocol": "2.0.0",
-    "quickjs-emscripten": "^0.31.0"
+    "@mithic/protocol": "2.0.0"
+  },
+  "peerDependencies": {
+    "quickjs-emscripten": "^0.31.0",
+    "isolated-vm": "^7.0.0"
+  },
+  "peerDependenciesMeta": {
+    "quickjs-emscripten": {
+      "optional": true
+    },
+    "isolated-vm": {
+      "optional": true
+    }
   },
   "devDependencies": {
-    "@mithic/worker": "^0.1"
-  },
-  "optionalDependencies": {
+    "@mithic/worker": "^0.1",
+    "quickjs-emscripten": "^0.31.0",
     "isolated-vm": "^7.0.0"
   }
 }

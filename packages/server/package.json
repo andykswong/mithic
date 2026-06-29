@@ -45,6 +45,7 @@
     "@mithic/kernel": "2.0.0",
     "@mithic/runtime": "2.0.0",
     "@mithic/io": "2.0.0",
-    "hono": "^4.0.0"
+    "hono": "^4.0.0",
+    "quickjs-emscripten": "^0.31.0"
   }
 }
