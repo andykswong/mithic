@@ -381,3 +381,14 @@ test('IframeRuntime: per-spawn container overrides the constructor container', a
   runtime.dispose(handle);
   shared.remove(); frame.remove();
 });
+
+test('spawn applies display.title to the iframe element', async () => {
+  const rt = new IframeRuntime();
+  const handle = await rt.spawn('globalThis.__mithic_default = () => {};', {
+    init: { type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 1, ppid: 0, capabilities: [] },
+    display: { mode: 'inline', width: 200, height: 100, title: 'My Window' },
+  });
+  const iframe = document.querySelector('iframe[title="My Window"]');
+  expect(iframe).not.toBeNull();
+  rt.dispose(handle);
+});

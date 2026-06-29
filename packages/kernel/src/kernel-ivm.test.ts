@@ -107,3 +107,24 @@ test('H3: IvmRuntime advertises cpuLimit + a relay launcher exists (compile-time
   expect(IVM_CAPABILITIES.cpuLimit).toBe(true);
   expect(typeof IvmRelayLauncher).toBe('function');
 });
+
+test.skipIf(!ivmAvailable)('kernel relay: ivm guest reads fd-0 stdin (bytes source)', async () => {
+  const ivmRt = await IvmRuntime.create(64);
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = new Kernel({ runtime: ivmRt, vfs, relayLauncher: new IvmRelayLauncher(ivmRt) });
+
+  const code = `
+    let out = '';
+    for (;;) { const r = __mithic_syscall('pipe/read', { fd: 0 }); const d = r&&r.data?r.data:[]; if(!d.length)break; out += String.fromCharCode.apply(null, d); }
+    __mithic_syscall('pipe/write', { fd: 1, data: 'ivm:' + out });
+    __mithic_syscall('process/exit', { code: 0 });
+  `;
+
+  const { pid, stdout } = await kernel.spawn(code, {
+    args: ['prog'], capabilities: [], captureStdout: true,
+    fds: { 0: { action: 'bytes', data: new TextEncoder().encode('xyz') } },
+  });
+  expect((await kernel.wait(pid)).code).toBe(0);
+  expect(new TextDecoder().decode(await stdout!)).toBe('ivm:xyz');
+}, 15000);

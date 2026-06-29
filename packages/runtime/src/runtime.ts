@@ -47,11 +47,28 @@ export interface SpawnOptions {
 export interface Runtime {
   readonly capabilities: RuntimeCapabilities;
   spawn(code: string | URL, options: SpawnOptions): Promise<ProcessHandle>;
+  /**
+   * Terminate the process. The `signal` is ADVISORY: every backend hard-kills
+   * regardless of which signal is passed — worker/iframe tear down the worker/iframe,
+   * quickjs/ivm dispose the runtime/isolate and report exit code 137. Backends do
+   * NOT deliver the signal to the guest for graceful handling; the kernel computes
+   * any 128+N exit semantics on its side. The iframe backend additionally has no
+   * exit-code channel (DOM removal is the only signal). Callers needing graceful
+   * shutdown must coordinate via a kernel-level signal event, not `kill`.
+   */
   kill(handle: ProcessHandle, signal: Signal): void;
   postMessage(handle: ProcessHandle, msg: SyscallResponse | KernelEvent, transfer?: Transferable[]): void;
   onMessage(handle: ProcessHandle, cb: (msg: SyscallRequest) => void): void;
   isAlive(handle: ProcessHandle): boolean;
   dispose(handle: ProcessHandle): void;
+  /**
+   * Resolve when the process exits, with its exit code. Provided by RELAY backends
+   * (quickjs/ivm) where the kernel relay launcher needs the exit code to notify the
+   * kernel. Transferable backends (worker/iframe) omit it — they have no exit-code
+   * channel; exit is observed via the control port / DOM teardown instead. A relay
+   * launcher MUST feature-detect (`if (rt.waitExit)`) before calling.
+   */
+  waitExit?(handle: ProcessHandle): Promise<{ code: number }>;
 }
 
 export const WORKER_CAPABILITIES: RuntimeCapabilities = {

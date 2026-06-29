@@ -120,14 +120,15 @@ export class WorkerRuntime implements Runtime {
       }
     };
 
-    // Deliver boot object: __mithic_init + transfer list [controlPort, stdinPort, stdoutPort, stderrPort, ...extra]
+    // Always deliver the boot metadata (__mithic_init); attach the transfer list
+    // only when there are ports. A guest with no ports still learns its
+    // args/env/cwd/pid from boot.init instead of silently receiving null.
     // K2: preopenFds (when present) maps the stdio ports to arbitrary guest fds.
-    if (options.transfer && options.transfer.length > 0) {
-      worker.postMessage(
-        { __mithic_init: options.init, ports: options.transfer, preopenFds: options.preopenFds },
-        options.transfer,
-      );
-    }
+    const hasPorts = options.transfer != null && options.transfer.length > 0;
+    worker.postMessage(
+      { __mithic_init: options.init, ports: options.transfer ?? [], preopenFds: options.preopenFds },
+      hasPorts ? options.transfer : undefined,
+    );
 
     worker.postMessage({ __mithic_run: codeStr });
 

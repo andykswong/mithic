@@ -226,6 +226,15 @@ export interface SpawnInit {
    */
   extraFds?: Record<number, MessagePort>;
   /**
+   * D8: fd actions wiring the spawned process's stdio source. Currently only
+   * `fds[0]` (the stdin source) is honored, and only on the relay path
+   * (`#spawnRelay`): `bytes` feeds a here-string-style buffer, `open` streams a
+   * VFS file (capability-checked against the parent's fs grants). The kernel mints
+   * a pipe, registers its read end as a kernel-held relay stdin end at fd 0, and
+   * pumps the source into the write end. Mirrors {@link PipelineStage.fds}.
+   */
+  fds?: Record<number, FdAction>;
+  /**
    * GUI display placement for runtimes that render the guest (e.g. IframeRuntime).
    * `mode: 'inline'` places a visible iframe sized `width`x`height`; the default
    * `'hidden'` keeps it off-screen. Ignored by non-GUI runtimes. The kernel threads
@@ -943,6 +952,43 @@ export class Kernel {
       // dom-event / heartbeat KernelEvents to the guest over the relay bridge.
       onKernelEvent: (sink) => { this.#relaySignalSinks.set(pid, sink); },
     };
+
+    // D8 (relay): if the caller wired an fd-0 stdin source (`bytes`/`open`), mint a
+    // pipe, register its READ end as a kernel-held relay stdin end at fd 0 (the guest
+    // drains it via `pipe/read {fd:0}`), and start the source pump feeding the WRITE
+    // end. Symmetric to the transferable path's FdWiring, but the read end stays
+    // kernel-side because a relay guest cannot hold a port. No fds[0] → fd 0 stays
+    // unregistered and `pipe/read {fd:0}` yields EBADF (no-stdin / /dev/null).
+    const fd0 = init.fds?.[0];
+    // Only an input source the kernel can feed makes sense as relay stdin. A `pipe`
+    // action would mint a read end whose write peer nothing drives → the guest's
+    // `pipe/read {fd:0}` would hang; relay guests have no port to dup2 either. So
+    // restrict to `bytes`/`open` and ignore the rest (fd 0 stays unregistered → EBADF).
+    if (fd0 && (fd0.action === 'bytes' || fd0.action === 'open')) {
+      const stdinInit: SpawnInit = { cwd: init.cwd };
+      const filePumps: Array<() => void> = [];
+      try {
+        // Cap-check the `open` source against THIS process's already-narrowed grants
+        // (registered under ctx.pid by #beginProcess) — it reads its own stdin file.
+        // Unlike the process/spawn child path (checked pre-grant against the parent),
+        // a top-level relay spawn's parent is the kernel (ppid 0, no grants).
+        await this.#fdWiring.applyAction(ctx.pid, 0, fd0, stdinInit, new Map(), [], {}, filePumps);
+      } catch (err) {
+        // A denied/failed stdin source (e.g. EACCES on an ungranted `open`) must not
+        // leak the just-allocated pid: tear it down (revokes caps, settles wait())
+        // and rethrow so the caller sees the failure instead of a process stuck in
+        // LOADING. Mirrors the transferable child path, where applyAction runs before
+        // the pid is allocated and a throw leaks nothing.
+        this.#exit(pid, 1);
+        throw err;
+      }
+      // applyAction wired the child-side read port into stdinInit.stdin; the kernel
+      // holds it as the relay stdin end and drives the pump's write peer.
+      if (stdinInit.stdin) {
+        this.#relay.registerStdin(pid, stdinInit.stdin);
+        for (const start of filePumps) start();
+      }
+    }
 
     this.processes.markReady(pid);
 

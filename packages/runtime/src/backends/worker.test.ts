@@ -31,11 +31,15 @@ function makeTestFactory(): WorkerFactory {
           if (data != null && typeof data === 'object') {
             const d = data as Record<string, unknown>;
             if ('__mithic_init' in d) {
-              // Reconstruct the boot object exactly as BOOTSTRAP_SOURCE does
+              // Reconstruct the boot object exactly as BOOTSTRAP_SOURCE does —
+              // honoring data.preopenFds (K2) rather than positional mapping.
               const ports = Array.isArray(d['ports']) ? d['ports'] as unknown[] : [];
+              const preopenFds = Array.isArray(d['preopenFds']) ? d['preopenFds'] as number[] : null;
               const preopenPorts: Record<number, unknown> = {};
               for (let i = 1; i < ports.length; i++) {
-                if (ports[i] != null) preopenPorts[i - 1] = ports[i];
+                if (ports[i] == null) continue;
+                const fd = preopenFds ? preopenFds[i - 1] : i - 1;
+                if (typeof fd === 'number') preopenPorts[fd] = ports[i];
               }
               pendingBoot = { control: ports[0], init: d['__mithic_init'], preopenPorts };
               return;
@@ -237,4 +241,71 @@ test('init handshake delivers boot object to default-export guest', async () => 
 
   rt.dispose(handle);
   _controlPortGuest.close();
+});
+
+test('init handshake delivers boot object even with an empty transfer list', async () => {
+  const rt = new WorkerRuntime(makeTestFactory());
+  const code = `
+    globalThis.__mithic_default = async (boot) => {
+      self.__post({ id: 5, call: 'boot-check', args: { hasInit: boot != null && 'init' in boot, pid: boot != null ? boot.init.pid : -1 } });
+    };
+  `;
+  const received: unknown[] = [];
+  const handle = await rt.spawn(code, {
+    init: { type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 77, ppid: 0, capabilities: [] },
+    transfer: [],
+  });
+  rt.onMessage(handle, (m) => received.push(m));
+  await new Promise<void>((r) => setTimeout(r, 200));
+  expect(received).toContainEqual({ id: 5, call: 'boot-check', args: { hasInit: true, pid: 77 } });
+  rt.dispose(handle);
+});
+
+test('preopenFds maps stdio ports to non-positional guest fds (K2)', async () => {
+  const rt = new WorkerRuntime(makeTestFactory());
+  const code = `
+    globalThis.__mithic_default = async (boot) => {
+      const fds = boot != null ? Object.keys(boot.preopenPorts).map(Number).sort((a,b)=>a-b) : [];
+      self.__post({ id: 8, call: 'fd-check', args: { fds } });
+    };
+  `;
+  // control + one extra port destined for guest fd 5 (not positional fd 0).
+  const { port1: control } = new MessageChannel();
+  const { port1: extra } = new MessageChannel();
+  const received: unknown[] = [];
+  const handle = await rt.spawn(code, {
+    init: { type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 1, ppid: 0, capabilities: [] },
+    transfer: [control, extra],
+    preopenFds: [5],
+  });
+  rt.onMessage(handle, (m) => received.push(m));
+  await new Promise<void>((r) => setTimeout(r, 200));
+  expect(received).toContainEqual({ id: 8, call: 'fd-check', args: { fds: [5] } });
+  rt.dispose(handle);
+});
+
+test('postMessage forwards a transfer list to the worker', async () => {
+  const rt = new WorkerRuntime(makeTestFactory());
+  const code = `
+    globalThis.__mithic_main = () => {
+      globalThis.__mithic_recv = (msg) => { self.__post({ id: 11, call: 'recv', args: { hasPort: msg != null && typeof msg === 'object' && 'port' in msg } }); };
+    };
+  `;
+  const received: unknown[] = [];
+  const handle = await rt.spawn(code, { init: { type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 1, ppid: 0, capabilities: [] } });
+  rt.onMessage(handle, (m) => received.push(m));
+  await new Promise<void>((r) => setTimeout(r, 100));
+  const { port1, port2 } = new MessageChannel();
+  rt.postMessage(handle, { id: 1, ok: true, result: { port: port1 } } as never, [port1]);
+  await new Promise<void>((r) => setTimeout(r, 200));
+  // postMessage forwards the message (and its transfer list) to the worker; the
+  // guest recv hook FIRES on delivery. The MockWorker does NOT perform real
+  // structured-clone port transfer, so the transferred port is not reconstructed
+  // on the guest side (`hasPort` is false here) — true transfer semantics (the
+  // port being moved/detached) are exercised by the iframe/worker browser path,
+  // not this in-process mock. We assert DELIVERY (the recv fired), per plan note,
+  // rather than forcing a brittle port-liveness assertion the mock can't satisfy.
+  expect(received).toContainEqual({ id: 11, call: 'recv', args: { hasPort: false } });
+  port2.close();
+  rt.dispose(handle);
 });
