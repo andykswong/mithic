@@ -760,6 +760,7 @@ async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
   let arrayName: string | undefined;
   let delim: string | undefined; // undefined ⇒ default '\n'; '' ⇒ NUL
   let maxChars: number | undefined;
+  let ignoreDelim = false; // `-N` reads EXACTLY N chars, ignoring the delimiter; `-n` stops at it
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '-u') { fdArg = parseInt(args[++i] ?? '', 10); continue; }
@@ -770,8 +771,10 @@ async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
     if (a.startsWith('-a') && a.length > 2) { arrayName = a.slice(2); continue; }
     if (a === '-d') { delim = args[++i] ?? ''; continue; }
     if (a.startsWith('-d') && a.length > 2) { delim = a.slice(2); continue; }
-    if (a === '-n' || a === '-N') { maxChars = parseInt(args[++i] ?? '', 10); continue; }
-    if ((a.startsWith('-n') || a.startsWith('-N')) && a.length > 2) { maxChars = parseInt(a.slice(2), 10); continue; }
+    if (a === '-n') { maxChars = parseInt(args[++i] ?? '', 10); continue; }
+    if (a === '-N') { maxChars = parseInt(args[++i] ?? '', 10); ignoreDelim = true; continue; }
+    if (a.startsWith('-n') && a.length > 2) { maxChars = parseInt(a.slice(2), 10); continue; }
+    if (a.startsWith('-N') && a.length > 2) { maxChars = parseInt(a.slice(2), 10); ignoreDelim = true; continue; }
     // Combined short flags (a leading `-r` cluster, e.g. `-ra`). Pull out `r`;
     // a non-cluster unknown flag is ignored (e.g. `-s`, `-p` are no-ops here).
     if (a.startsWith('-') && a.length > 1 && /^-[a-zA-Z]+$/.test(a)) {
@@ -802,10 +805,16 @@ async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
   if ((delim !== undefined || maxChars !== undefined) && fdArg === undefined) {
     const stdin = ctx.stdin ?? '';
     if (stdin === '') return 1; // EOF
-    const term = delim === undefined ? '\n' : (delim === '' ? '\0' : delim[0]);
-    let end = stdin.indexOf(term);
-    if (end < 0) end = stdin.length; // no terminator ⇒ read to EOF (success in bash if non-empty)
-    if (maxChars !== undefined && maxChars >= 0 && maxChars < end) end = maxChars;
+    let end: number;
+    if (ignoreDelim) {
+      // `-N N`: read exactly N chars (or to EOF), ignoring any delimiter.
+      end = maxChars !== undefined && maxChars >= 0 ? Math.min(maxChars, stdin.length) : stdin.length;
+    } else {
+      const term = delim === undefined ? '\n' : (delim === '' ? '\0' : delim[0]);
+      end = stdin.indexOf(term);
+      if (end < 0) end = stdin.length; // no terminator ⇒ read to EOF (success in bash if non-empty)
+      if (maxChars !== undefined && maxChars >= 0 && maxChars < end) end = maxChars; // `-n N`: stop at delim OR N
+    }
     return finish(stdin.slice(0, end));
   }
 

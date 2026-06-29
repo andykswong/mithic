@@ -80,6 +80,29 @@ test('read -n reads at most N characters', async () => {
   expect(h.out.trim()).toBe('[abc]');
 });
 
+test('read -n stops at the delimiter before N chars', async () => {
+  const h = mk();
+  // 'ab' is only 2 chars before the newline, so `-n 5` stops at the newline.
+  await h.ex.exec('printf \'%s\\n\' \'ab\' | { read -n 5 x; echo "[$x]"; }');
+  expect(h.out.trim()).toBe('[ab]');
+});
+
+test('read -N reads exactly N chars, IGNORING the delimiter', async () => {
+  const h = mk();
+  // Input 'a\nb' — `-N 3` reads across the newline (delimiter ignored), so the var
+  // holds all 3 chars incl. the embedded newline. Assert on length (the embedded
+  // newline is preserved in storage; double-quote expansion renders it as a space).
+  await h.ex.exec('printf \'a\\nb\' | { read -N 3 x; printf \'len=%s\' "${#x}"; }');
+  expect(h.out).toBe('len=3');
+});
+
+test('read -n (lowercase) stops at the delimiter, unlike -N', async () => {
+  const h = mk();
+  // Same 'a\nb' input: `-n 3` stops at the newline → only 'a' (1 char).
+  await h.ex.exec('printf \'a\\nb\' | { read -n 3 x; printf \'len=%s\' "${#x}"; }');
+  expect(h.out).toBe('len=1');
+});
+
 // ── mapfile / readarray ──────────────────────────────────────────────────────
 
 test('mapfile -t slurps lines into a 3-element array', async () => {

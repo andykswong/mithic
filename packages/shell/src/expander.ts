@@ -276,7 +276,7 @@ export class Expander {
       // the rejection fires even when no FsClient is present.
       if ((c === '<' || c === '>') && word[i + 1] === '(') {
         if (this.env.posix?.()) {
-          throw new ExpansionError('shell: syntax error: process substitution is not supported in POSIX mode');
+          throw new ExpansionError('syntax error: process substitution is not supported in POSIX mode');
         }
         if (this.env.procSub) {
           const end = findMatchingParen(word, i + 2);
