@@ -138,15 +138,14 @@ export class IframeRuntime implements Runtime {
       iframe.addEventListener('load', () => resolve(), { once: true });
     });
 
-    // Deliver boot object: __mithic_init + transfer list [controlPort, stdinPort, stdoutPort, stderrPort, ...]
+    // Always deliver boot metadata; attach the transfer list only when non-empty.
     // K2: preopenFds (when present) maps the stdio ports to arbitrary guest fds.
-    if (options.transfer && options.transfer.length > 0) {
-      iframe.contentWindow!.postMessage(
-        { __mithic_init: options.init, ports: options.transfer, preopenFds: options.preopenFds },
-        '*',
-        options.transfer as Transferable[],
-      );
-    }
+    const hasPorts = options.transfer != null && options.transfer.length > 0;
+    iframe.contentWindow!.postMessage(
+      { __mithic_init: options.init, ports: options.transfer ?? [], preopenFds: options.preopenFds },
+      '*',
+      hasPorts ? (options.transfer as Transferable[]) : [],
+    );
 
     iframe.contentWindow!.postMessage({ __mithic_run: codeStr }, '*');
 

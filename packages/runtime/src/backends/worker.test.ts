@@ -238,3 +238,21 @@ test('init handshake delivers boot object to default-export guest', async () => 
   rt.dispose(handle);
   _controlPortGuest.close();
 });
+
+test('init handshake delivers boot object even with an empty transfer list', async () => {
+  const rt = new WorkerRuntime(makeTestFactory());
+  const code = `
+    globalThis.__mithic_default = async (boot) => {
+      self.__post({ id: 5, call: 'boot-check', args: { hasInit: boot != null && 'init' in boot, pid: boot != null ? boot.init.pid : -1 } });
+    };
+  `;
+  const received: unknown[] = [];
+  const handle = await rt.spawn(code, {
+    init: { type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 77, ppid: 0, capabilities: [] },
+    transfer: [],
+  });
+  rt.onMessage(handle, (m) => received.push(m));
+  await new Promise<void>((r) => setTimeout(r, 200));
+  expect(received).toContainEqual({ id: 5, call: 'boot-check', args: { hasInit: true, pid: 77 } });
+  rt.dispose(handle);
+});
