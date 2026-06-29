@@ -18,6 +18,14 @@ test('quickjs process performs an async syscall via the asyncified bridge', asyn
   rt.dispose(h);
 });
 
+test('QuickJSRuntime rejects a URL entry with a clear error (no module loader)', async () => {
+  const rt = await QuickJSRuntime.create();
+  await expect(rt.spawn(new URL('https://example.com/x.js'), {
+    init: { type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 1, ppid: 0, capabilities: [] },
+    onSyscall: async () => ({ ok: true, result: {} }),
+  })).rejects.toThrow(/URL entry/i);
+});
+
 test('memory limit aborts an over-allocating process', async () => {
   const rt = await QuickJSRuntime.create();
   const code = 'const a=[]; while(true){ a.push(new Array(100000).fill(0)); }';

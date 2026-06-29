@@ -281,7 +281,12 @@ export class QuickJSRuntime implements Runtime {
     if (typeof code === 'string') {
       codeStr = code;
     } else {
-      codeStr = `await import(${JSON.stringify(code instanceof URL ? code.href : String(code))});`;
+      // The QuickJS context configures no module loader (`setModuleLoader`), so a
+      // dynamic `import(url)` would fail at guest runtime as an opaque exit-1.
+      // Reject early with a clear error — same posture as IvmRuntime (which also
+      // has no host module loader in its sandbox). Inline source is the supported
+      // entry form for this backend.
+      throw new Error('QuickJSRuntime: URL entry not supported (no module loader); pass inline source');
     }
 
     // Wrap in async IIFE to support top-level `await` in guest code.
