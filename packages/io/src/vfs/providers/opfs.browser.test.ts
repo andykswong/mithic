@@ -9,6 +9,7 @@
  */
 import { expect, describe, it, beforeEach } from 'vitest';
 import { OPFSProvider } from './opfs.ts';
+import { FileSystemError } from '../provider.ts';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -282,6 +283,65 @@ describe('OPFSProvider persistence (metadata store + append, browser)', () => {
     await fs.mkdir('/gone');
     expect(await fs.getxattr('/gone', 'security.capability')).toBeUndefined();
     expect(await fs.listxattr('/gone')).toEqual([]);
+    await fs.dispose();
+  });
+
+  it('the metadata sidecar is not a reachable VFS path', async () => {
+    const META = '/.mithic-meta.json';
+    const isNoEntry = (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry';
+
+    const storage = await makeSharedRoot('opfs-meta-guard');
+    const fs = new OPFSProvider(storage);
+    await fs.init();
+    // Materialize the sidecar by setting an xattr on a real file.
+    const sh = await fs.open('/seed.bin', { create: true, write: true, truncate: true });
+    await fs.close(sh);
+    await fs.setxattr('/seed.bin', 'security.capability', new Uint8Array([1]));
+
+    // open (read + write/create), stat, unlink, rename (src + dest) all rejected.
+    await expect(fs.open(META, { read: true })).rejects.toSatisfy(isNoEntry);
+    await expect(
+      fs.open(META, { write: true, create: true, truncate: true }),
+    ).rejects.toSatisfy(isNoEntry);
+    await expect(fs.stat(META)).rejects.toSatisfy(isNoEntry);
+    await expect(fs.unlink(META)).rejects.toSatisfy(isNoEntry);
+    await expect(fs.rename(META, '/stolen.json')).rejects.toSatisfy(isNoEntry);
+    await expect(fs.rename('/seed.bin', META)).rejects.toSatisfy(isNoEntry);
+
+    // The legit grant is intact and reachable only via the capability-checked
+    // setxattr path — a direct write could not forge it.
+    expect(Array.from((await fs.getxattr('/seed.bin', 'security.capability'))!)).toEqual([1]);
+    await fs.dispose();
+  });
+
+  it('setxattr on a normal file still works (legit path unaffected)', async () => {
+    const storage = await makeSharedRoot('opfs-meta-guard-legit');
+    const fs = new OPFSProvider(storage);
+    await fs.init();
+    const h = await fs.open('/normal.bin', { create: true, write: true, truncate: true });
+    await fs.close(h);
+    await fs.setxattr('/normal.bin', 'security.capability', new Uint8Array([5, 6]));
+    expect(Array.from((await fs.getxattr('/normal.bin', 'security.capability'))!)).toEqual([5, 6]);
+    await fs.dispose();
+  });
+
+  it('a .mithic-meta.json file in a SUBDIR is a normal usable file', async () => {
+    const storage = await makeSharedRoot('opfs-meta-guard-subdir');
+    const fs = new OPFSProvider(storage);
+    await fs.init();
+    await fs.mkdir('/sub');
+    const subMeta = '/sub/.mithic-meta.json';
+    const h = await fs.open(subMeta, { create: true, write: true, truncate: true });
+    const payload = enc.encode('user data');
+    await fs.write(h, payload, 0);
+    await fs.close(h);
+
+    expect((await fs.stat(subMeta)).type).toBe('file');
+    const rh = await fs.open(subMeta, { read: true });
+    expect(dec.decode(await fs.read(rh, 0, payload.length))).toBe('user data');
+    await fs.close(rh);
+    await fs.setxattr(subMeta, 'user.x', new Uint8Array([1]));
+    expect(Array.from((await fs.getxattr(subMeta, 'user.x'))!)).toEqual([1]);
     await fs.dispose();
   });
 });

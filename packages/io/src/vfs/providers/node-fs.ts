@@ -19,6 +19,7 @@ export interface NodeFsProviderOptions {
  */
 export class NodeFsProvider implements FileSystemProvider {
   #root: string;
+  #metaPath: string;
   #nextFd = 3;
   #handles = new Map<number, { nativeHandle: fs.FileHandle; path: string; flags: OpenFlags }>();
   #meta: MetadataStore;
@@ -26,6 +27,7 @@ export class NodeFsProvider implements FileSystemProvider {
   constructor(options: NodeFsProviderOptions) {
     this.#root = nodePath.resolve(options.root);
     const metaPath = nodePath.join(this.#root, META_FILE);
+    this.#metaPath = metaPath;
     this.#meta = new MetadataStore({
       load: async () => {
         try {
@@ -296,6 +298,14 @@ export class NodeFsProvider implements FileSystemProvider {
     // Ensure the resolved path is within root
     if (!resolvedNormalized.startsWith(this.#root + nodePath.sep) && resolvedNormalized !== this.#root) {
       throw new FileSystemError('access', `Path traversal detected: ${path}`);
+    }
+
+    // The mount-root metadata sidecar is provider-internal: it backs every
+    // file's mode + xattr store. Reject it as an ordinary VFS path so a process
+    // cannot open/stat/rename/unlink it and forge another file's capability
+    // grant. It stays indistinguishable from a non-existent file.
+    if (resolvedNormalized === this.#metaPath) {
+      throw new FileSystemError('no-entry', `No such file or directory: ${path}`);
     }
 
     return resolvedNormalized;

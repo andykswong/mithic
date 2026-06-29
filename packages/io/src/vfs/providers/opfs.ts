@@ -426,7 +426,18 @@ export class OPFSProvider implements FileSystemProvider {
         resolved.push(part);
       }
     }
-    return '/' + resolved.join('/');
+    const normalized = '/' + resolved.join('/');
+
+    // The mount-root metadata sidecar is provider-internal: it backs every
+    // file's mode + xattr store. Reject it as an ordinary VFS path so a process
+    // cannot open/stat/rename/unlink it and forge another file's capability
+    // grant. It stays indistinguishable from a non-existent file. A file named
+    // META_FILE in a subdirectory is a normal, usable file.
+    if (normalized === '/' + META_FILE) {
+      throw new FileSystemError('no-entry', `No such file or directory: ${path}`);
+    }
+
+    return normalized;
   }
 
   #splitPath(path: string): { dir: string; base: string } {

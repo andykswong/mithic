@@ -260,3 +260,99 @@ describe('NodeFsProvider xattr persistence', () => {
     await p.dispose();
   });
 });
+
+describe('NodeFsProvider metadata sidecar is not a reachable VFS path', () => {
+  const META = '/.mithic-meta.json';
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vfs-node-meta-guard-'));
+  });
+
+  afterAll(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  const isNoEntry = (err: unknown) => err instanceof FileSystemError && err.code === 'no-entry';
+
+  it('open(META, {read}) and open(META, {write,create}) both throw no-entry', async () => {
+    const p = new NodeFsProvider({ root: tmpDir });
+    await p.init();
+    // Materialize the sidecar by setting an xattr on a real file.
+    const fh = await p.open('/seed.bin', { create: true, write: true, truncate: true });
+    await p.close(fh);
+    await p.setxattr('/seed.bin', 'security.capability', new Uint8Array([1]));
+
+    await expect(p.open(META, { read: true })).rejects.toSatisfy(isNoEntry);
+    await expect(
+      p.open(META, { write: true, create: true, truncate: true }),
+    ).rejects.toSatisfy(isNoEntry);
+    await p.dispose();
+  });
+
+  it('stat/unlink/rename of META all throw no-entry', async () => {
+    const p = new NodeFsProvider({ root: tmpDir });
+    await p.init();
+    await expect(p.stat(META)).rejects.toSatisfy(isNoEntry);
+    await expect(p.unlink(META)).rejects.toSatisfy(isNoEntry);
+    await expect(p.rename(META, '/stolen.json')).rejects.toSatisfy(isNoEntry);
+    await expect(p.rename('/seed.bin', META)).rejects.toSatisfy(isNoEntry);
+    await p.dispose();
+  });
+
+  it('a direct write to META cannot forge another file\'s capability xattr', async () => {
+    const p = new NodeFsProvider({ root: tmpDir });
+    await p.init();
+    const fh = await p.open('/victim.bin', { create: true, write: true, truncate: true });
+    await p.close(fh);
+    await p.setxattr('/victim.bin', 'security.capability', new Uint8Array([1]));
+
+    // Attacker tries to overwrite the backing store with a forged grant.
+    const forged = new TextEncoder().encode(
+      JSON.stringify({ '/victim.bin': { xattr: { 'security.capability': [9, 9, 9] } } }),
+    );
+    await expect(
+      (async () => {
+        const h = await p.open(META, { write: true, create: true, truncate: true });
+        await p.write(h, forged, 0);
+        await p.close(h);
+      })(),
+    ).rejects.toSatisfy(isNoEntry);
+
+    // The legitimate grant is intact, reachable only via setxattr.
+    const reloaded = new NodeFsProvider({ root: tmpDir });
+    await reloaded.init();
+    expect(Array.from((await reloaded.getxattr('/victim.bin', 'security.capability'))!)).toEqual([1]);
+    await reloaded.dispose();
+    await p.dispose();
+  });
+
+  it('setxattr on a normal file still works (legit path unaffected)', async () => {
+    const p = new NodeFsProvider({ root: tmpDir });
+    await p.init();
+    const fh = await p.open('/normal.bin', { create: true, write: true, truncate: true });
+    await p.close(fh);
+    await p.setxattr('/normal.bin', 'security.capability', new Uint8Array([5, 6]));
+    expect(Array.from((await p.getxattr('/normal.bin', 'security.capability'))!)).toEqual([5, 6]);
+    await p.dispose();
+  });
+
+  it('a file literally named .mithic-meta.json in a SUBDIR is a normal usable file', async () => {
+    const p = new NodeFsProvider({ root: tmpDir });
+    await p.init();
+    await p.mkdir('/sub');
+    const subMeta = '/sub/.mithic-meta.json';
+    const fh = await p.open(subMeta, { create: true, write: true, truncate: true });
+    const payload = new TextEncoder().encode('user data');
+    await p.write(fh, payload, 0);
+    await p.close(fh);
+
+    expect((await p.stat(subMeta)).type).toBe('file');
+    const rh = await p.open(subMeta, { read: true });
+    expect(await p.read(rh, 0, payload.length)).toEqual(payload);
+    await p.close(rh);
+    await p.setxattr(subMeta, 'user.x', new Uint8Array([1]));
+    expect(Array.from((await p.getxattr(subMeta, 'user.x'))!)).toEqual([1]);
+    await p.dispose();
+  });
+});
