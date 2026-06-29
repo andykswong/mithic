@@ -41,7 +41,7 @@
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-The **kernel** owns process lifecycle, the command namespace, and the syscall surface (`fs/*`, `net/fetch`, `ipc/*`, `process/*`, `dom/mutate`). Guests never hold a socket or a raw file handle — they issue syscalls that the kernel checks against the process's granted capabilities before touching the VFS or `HttpClient`. Each process runs in a **pluggable runtime backend**:
+The **kernel** owns process lifecycle, the command namespace, and the syscall surface (`fs/*` including `fs/{get,set,list,remove}xattr`, `net/fetch`, `ipc/*`, `process/*`, `dom/mutate`). Guests never hold a socket or a raw file handle — they issue syscalls that the kernel checks against the process's granted capabilities before touching the VFS or `HttpClient`. Following the Linux file-capabilities model, an executable's `security.capability` xattr is its grant: `exec` reads it and narrows against the parent. Each process runs in a **pluggable runtime backend**:
 
 - **Worker** — true parallelism with direct `MessagePort` pipe transfer.
 - **iframe** — the only GUI backend; renders a sanitized Remote-DOM tree in an opaque-origin sandboxed iframe.
@@ -60,16 +60,16 @@ The **kernel** owns process lifecycle, the command namespace, and the syscall su
 | [`@mithic/runtime`](./packages/runtime) | Pluggable isolation backends (iframe, Worker, QuickJS, isolated-vm), capability descriptors, and `selectBackend()` |
 | [`@mithic/guest-runtime`](./packages/guest-runtime) | In-sandbox guest API: `createGuest()` → syscall client, stdio streams, signal/DOM hooks, Remote-DOM client |
 | [`@mithic/kernel`](./packages/kernel) | The microkernel: process lifecycle, IPC broker, capability manager, syscall dispatch, pipelines, Remote-DOM host |
-| [`@mithic/io`](./packages/io) | I/O engine: VFS router + providers (memory, OPFS, Node FS, device, caching), HTTP/socket abstractions |
+| [`@mithic/io`](./packages/io) | I/O engine: VFS router + providers (memory, OPFS, Node FS, device, caching) with extended-attribute support (a per-mount metadata store backs xattr + mode/mtime on OPFS/Node FS), HTTP/socket abstractions |
 | [`@mithic/shell`](./packages/shell) | POSIX-style shell interpreter (lexer/parser/expander/executor, 35 builtins) running as a regular Mithic process |
-| [`@mithic/coreutils`](./packages/coreutils) | 54 pure-TypeScript Unix coreutils, one sandboxed guest module per command |
+| [`@mithic/coreutils`](./packages/coreutils) | 56 pure-TypeScript Unix coreutils (including `getcap`/`setcap` over the `fs/*xattr` syscalls), one sandboxed guest module per command |
 | [`@mithic/jq`](./packages/commands/jq) | Pure-TypeScript jq JSON processor as a sandboxed process |
 | [`@mithic/curl`](./packages/commands/curl) | Pure-TypeScript curl-like HTTP client, routed through the capability-gated `net/fetch` syscall |
 | [`@mithic/server`](./packages/server) | Host-side Hono REST server: sandboxed code execution over `POST /exec` |
 | [`@mithic/worker`](./packages/worker) | Web Worker polyfill for Node.js (isomorphic `new Worker()`) |
 | [`@mithic/desktop`](./packages/desktop) | Host-side window manager for a browser OS: frames, drag/resize, z-order, taskbar, app registry, geometry persistence — zero third-party deps |
 
-The command suite is **56 commands** total: 54 coreutils plus `jq` and `curl`. The shell dispatches its 35 builtins in-process and spawns everything else as child processes via `process/spawn` and `process/pipeline`.
+The command suite is **58 commands** total: 56 coreutils plus `jq` and `curl`. The shell dispatches its 35 builtins in-process and spawns everything else as child processes via `process/spawn` and `process/pipeline`. `process/spawn` resolves a bare name via `$PATH` against a VFS file first (checking the execute bit and dispatching by shebang), falling back to the command registry for bootstrap.
 
 ### Examples
 
@@ -78,6 +78,7 @@ The command suite is **56 commands** total: 54 coreutils plus `jq` and `curl`. T
 | [`@mithic/example-shell`](./packages/examples/shell) | xterm.js browser terminal running `@mithic/shell` over a Kernel wired to the full coreutils + jq + curl suite |
 | [`@mithic/example-image-viewer`](./packages/examples/image-viewer) | A GUI Mithic process: drop-zone + `<img>` rendered in its own sandboxed iframe DOM |
 | [`@mithic/example-desktop`](./packages/examples/desktop) | A minimalist **browser OS**: `@mithic/desktop` window manager + terminal, text editor, file manager, and a sandboxed image viewer over one shared kernel + VFS |
+| [`@mithic/example-lab`](./packages/examples/lab) | An in-browser automation Lab: installs web-API utilities (`copy`, `csvcols`, `imgresize`, `imgconvert`) into `/usr/bin` with manifest-sourced capability xattrs, composes them as shell-script workflows, and persists to OPFS |
 
 ## Getting Started
 

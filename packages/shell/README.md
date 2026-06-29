@@ -94,7 +94,10 @@ dup/merge (e.g. `2>&1`, `>&2`), and `&>` (both stdout+stderr). Leading fd digits
 (`2>`, `1>>`) are parsed. `/dev/null`, `/dev/stdout`, and `/dev/stderr` are
 handled specially; file targets go through the injected `FsClient` (so redirects
 require a `vfs` capability). Redirects can attach to compound commands
-(`while …; done > f`).
+(`while …; done > f`). For an external command, `<` / `<<` / `<<<` (and an
+inherited piped stdin) are **pipe-fed into fd 0 by the kernel** — a `<` becomes a
+kernel-side `open` of the path streamed into fd 0, a `<<`/`<<<` body becomes a
+`bytes` feed — rather than being read into an inline blob by the shell.
 
 **Assignments** — scalar `name=v`, append `name+=v`, indexed-array literals
 `name=(a b c)` (and `name+=(…)`), and element `name[i]=v` (and `name[i]+=v`).

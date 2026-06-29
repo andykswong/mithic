@@ -29,7 +29,9 @@ All provider interfaces are async: filesystem and network methods return `T | Pr
 
 ### Virtual File System
 
-`FileSystemProvider` is the core interface. It exposes POSIX-style operations — `open`, `read`, `write`, `truncate`, `close`, `stat`, `readdir`, `mkdir`, `unlink`, `rmdir`, `rename`, `symlink`, `readlink`, `link`, `chmod`, `utimes`, `mkfifo`, optional `realpath` / `watch` / `sync`, and optional `init` / `dispose` lifecycle hooks. Errors are thrown as `FileSystemError` carrying a `FileSystemErrorCode` (`'no-entry'`, `'access'`, `'exist'`, `'not-directory'`, `'is-directory'`, `'cross-device'`, …) aligned with the WASI `wasi:filesystem` error-code names.
+`FileSystemProvider` is the core interface. It exposes POSIX-style operations — `open`, `read`, `write`, `truncate`, `close`, `stat`, `readdir`, `mkdir`, `unlink`, `rmdir`, `rename`, `symlink`, `readlink`, `link`, `chmod`, `utimes`, the extended-attribute ops `getxattr` / `setxattr` / `listxattr` / `removexattr`, `mkfifo`, optional `realpath` / `watch` / `sync`, and optional `init` / `dispose` lifecycle hooks. Errors are thrown as `FileSystemError` carrying a `FileSystemErrorCode` (`'no-entry'`, `'access'`, `'exist'`, `'not-directory'`, `'is-directory'`, `'cross-device'`, …) aligned with the WASI `wasi:filesystem` error-code names.
+
+Providers whose backing store cannot carry extended attributes natively — `OPFSProvider` (which also loses `mode`/`mtime`) and `NodeFsProvider` — persist xattrs plus `mode`/`mtime` in a per-mount sidecar `MetadataStore`, a single reserved `.mithic-meta.json` blob at the mount root keyed by canonical path. That sidecar is hidden from `readdir` and guarded from direct VFS access at the root.
 
 #### Providers
 

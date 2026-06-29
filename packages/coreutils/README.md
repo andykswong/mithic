@@ -13,21 +13,30 @@ Node.
 
 ## Commands
 
-54 commands, one module per command under `src/commands/`:
+56 commands, one module per command under `src/commands/`:
 
 ```
 awk, base32, base64, basename, cat, chmod, cksum, comm, cp, cut, date,
-diff, dirname, echo, egrep, env, expr, false, fgrep, find, fold, grep,
-head, ln, ls, mkdir, mktemp, mv, nl, paste, printf, pwd, readlink,
-realpath, rev, rm, rmdir, sed, seq, shuf, sleep, sort, stat, sum, tac,
-tail, tee, touch, tr, true, uniq, wc, xargs, yes
+diff, dirname, echo, egrep, env, expr, false, fgrep, find, fold, getcap,
+grep, head, ln, ls, mkdir, mktemp, mv, nl, paste, printf, pwd, readlink,
+realpath, rev, rm, rmdir, sed, seq, setcap, shuf, sleep, sort, stat, sum,
+tac, tail, tee, touch, tr, true, uniq, wc, xargs, yes
 ```
 
 The authoritative list is the `COMMAND_NAMES` array in `src/resolver.ts`; each
 name has a matching `src/commands/<name>.ts`. (`grep` family: `grep`, `egrep`,
 `fgrep`; `awk` carries its own sub-engine in `src/commands/awk/` — lexer →
-parser → interp.) `jq` and `curl` live in their own packages (`@mithic/jq`,
+parser → interp.) `getcap`/`setcap` read and write a file's
+`security.capability` xattr (the file-capabilities grant) via `fs/getxattr` and
+`fs/setxattr`. `jq` and `curl` live in their own packages (`@mithic/jq`,
 `@mithic/curl`), not here.
+
+In addition, `src/commands/` carries a few path-arg "Lab" utilities — `copy`,
+`csvcols`, and the OffscreenCanvas-backed `imgresize`/`imgconvert` — that take
+their input/output as argv VFS paths (via `guest.fs` `readPath`/`writePath`)
+rather than streaming over stdio. These are not in `COMMAND_NAMES` and so are
+not exposed by `createCoreutilsResolver`; they are installed into `/usr/bin` by
+the Lab app (`@mithic/example-lab`) with manifest-sourced capability xattrs.
 
 ## Command-module convention
 

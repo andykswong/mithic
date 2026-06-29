@@ -20,7 +20,7 @@ packages/
 ├── kernel/         @mithic/kernel         — the Kernel: process lifecycle, IPC broker, capability manager, syscall dispatch, pipelines, Remote-DOM host
 ├── io/             @mithic/io             — VFS router + providers (memory/device/node-fs/opfs/caching), HTTP/socket abstractions, sync-bridge utils
 ├── shell/          @mithic/shell          — POSIX-style shell interpreter (lexer/parser/expander/executor/builtins) running as a regular Mithic process
-├── coreutils/      @mithic/coreutils      — pure-TS Unix coreutils (54 commands), one guest module per command, + createCoreutilsResolver
+├── coreutils/      @mithic/coreutils      — pure-TS Unix coreutils (56 commands, incl. getcap/setcap over fs/*xattr), one guest module per command, + 4 web-API utility executables (copy/csvcols/imgresize/imgconvert via OffscreenCanvas) + createCoreutilsResolver
 ├── commands/
 │   ├── jq/         @mithic/jq             — pure-TS jq JSON processor as a sandboxed process (+ standalone ./engine)
 │   └── curl/       @mithic/curl           — pure-TS curl-like HTTP client; all network via the capability-gated net/fetch syscall
@@ -30,14 +30,15 @@ packages/
 └── examples/       (private)
     ├── shell/        @mithic/example-shell        — xterm.js browser terminal running @mithic/shell with the full coreutils + jq + curl suite
     ├── image-viewer/ @mithic/example-image-viewer — GUI Mithic process: drop-zone + <img> rendered in its own sandboxed iframe DOM
-    └── desktop/      @mithic/example-desktop      — minimalist browser OS: @mithic/desktop WM + terminal/editor/file-manager + a sandboxed image-viewer over one shared kernel + VFS
+    ├── desktop/      @mithic/example-desktop      — minimalist browser OS: @mithic/desktop WM + terminal/editor/file-manager + a sandboxed image-viewer over one shared kernel + VFS
+    └── lab/          @mithic/example-lab          — in-browser file-automation Lab (RFC 0001): installs utility executables into /usr/bin with manifest-sourced security.capability xattr caps, composes a shell-script workflow, RemoteDomHost blob: preview, OPFS persistence; demonstrates exec-from-VFS
 ```
 
 **Dependency layering (bottom → top):** `protocol` → `runtime`/`guest-runtime`/`io` → `kernel` (uses runtime + io + protocol) → `shell`/`coreutils`/`jq`/`curl` (guests on guest-runtime) → `desktop` (host-side WM over kernel + runtime + io) → `server` and `examples` (compose kernel + runtime + io + shell + command + desktop packages). `worker` is standalone and consumed by `runtime` for Node Worker support.
 
 > **Browser OS:** `@mithic/desktop` is a *host-side* windowing layer (it runs on the trusted host page, never in a sandbox) — the guest never calls into it. The one enabling kernel/runtime change is the per-spawn `display.container?: HTMLElement` on `SpawnOptions`/`DisplayOptions`, so each GUI guest's iframe is created inside its own window frame and **never reparented** (reparenting reloads the iframe and kills the guest). Design + ChromeOS-parity roadmap: `docs/isola/005-browser-os-design.md`.
 
-**Command suite: 56 commands** — 54 coreutils (`COMMAND_NAMES` in `packages/coreutils/src/resolver.ts`) + `jq` (`@mithic/jq`) + `curl` (`@mithic/curl`). The kernel owns the command namespace: a bare command name is mapped to spawnable guest code via `KernelOptions.resolveCommand(name, cwd, env)`.
+**Command suite: 58 commands** — 56 coreutils (`COMMAND_NAMES` in `packages/coreutils/src/resolver.ts`, incl. `getcap`/`setcap`) + `jq` (`@mithic/jq`) + `curl` (`@mithic/curl`); plus 4 web-API utility executables (`copy`/`csvcols`/`imgresize`/`imgconvert`) shipped as guest modules but not in `COMMAND_NAMES`. The kernel owns the command namespace: a bare command name is mapped to spawnable guest code via `KernelOptions.resolveCommand(name, cwd, env)` — or, since RFC 0001, resolved from a `$PATH` VFS file first (exec-from-VFS).
 
 ## Build & Test
 
@@ -69,7 +70,7 @@ The include globs are an **explicit allowlist**, not a `packages/*` sweep — `@
 
 ## Architecture Principles
 
-- **Capability-gated** — Every privileged operation is a syscall brokered by the kernel. A process only acts on resources granted by its `Capability` set (`fs | net | ipc | process | env`); the `CapabilityManager` checks each `fs/*`, `net/fetch`, `ipc/*`, and `process/*` call before it reaches a provider. Guests never hold a raw socket or fd — e.g. `@mithic/curl` issues `net/fetch` and the kernel runs the capability check before invoking the `HttpClient`.
+- **Capability-gated** — Every privileged operation is a syscall brokered by the kernel. A process only acts on resources granted by its `Capability` set (`fs | net | ipc | process | env`); the `CapabilityManager` checks each `fs/*`, `net/fetch`, `ipc/*`, and `process/*` call before it reaches a provider. Guests never hold a raw socket or fd — e.g. `@mithic/curl` issues `net/fetch` and the kernel runs the capability check before invoking the `HttpClient`. Since RFC 0001 capabilities can also be **file metadata**: a `security.capability` xattr (serialized `Capability[]`) on an executable is the grant set at install time, and exec narrows it against the parent (Linux file-capabilities model). xattrs are themselves capability-gated (`fs/{get,set,list,remove}xattr`) and persisted via a per-mount `.mithic-meta.json` sidecar on OPFS/NodeFs; protocol exports `SECURITY_CAPABILITY_XATTR` / `encodeCapabilities` / `decodeCapabilities`.
 - **Pluggable components** — VFS providers, HTTP/socket clients, and runtime backends are interfaces with injectable implementations, wired through `KernelOptions` (`runtime`, `vfs`, `httpClient`, `resolveCommand`, `launcher`/`relayLauncher`, `onDomMutate`). SOLID-style loose coupling for testability and isomorphism.
 - **Isomorphic by design** — The same kernel, VFS, and command suite run unchanged in the browser and on Node. Backends differ in capability, not in API:
   - **Worker** (`WorkerRuntime`) — true parallelism via Web Workers; transferable MessagePort pipes (direct pipes); no resource limits.

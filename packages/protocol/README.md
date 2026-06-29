@@ -11,7 +11,7 @@ and guards from here so both sides stay compatible.
 ## What's in it
 
 Everything is re-exported from the single entry point (`@mithic/protocol`), which
-aggregates five source modules.
+aggregates the source modules below.
 
 ### Process & capabilities (`process.ts`)
 
@@ -32,8 +32,10 @@ model.
   `isProcessReady` and `isProcessExit`.
 - **Spawn** — `SpawnArgs` (`path`, `argv`, optional `env`/`cwd`/`fds`),
   `SpawnResult` (`pid` + optional transferred-pipe map), `FdAction`
-  (`inherit | pipe | open | close | dup2`), and `DEFAULT_FD_ACTIONS`
-  (fds 0/1/2 → `inherit`).
+  (`inherit | pipe | open | bytes | close | dup2`), and `DEFAULT_FD_ACTIONS`
+  (fds 0/1/2 → `inherit`). There is no inline `stdinData`: a redirect feeds
+  stdin (`fds[0]`) through a kernel pipe via the `open` (`< file`, streamed) or
+  `bytes` (`<<`/`<<<` body, credit-windowed) action.
 - **Descriptors** — `OFlags`, `FdRights`, `FdFlags`, and `PreopenDescriptor`.
 
 ### Syscall messages (`messages.ts`)
@@ -48,6 +50,10 @@ events.
 - **`KernelEvent`** — unsolicited kernel → guest events `{ event, payload? }`
   (e.g. signal delivery, DOM events). Guard: `isKernelEvent` (distinguishes an
   event from a response by the absence of `id`).
+- **`PROGRESS_EVENT`** / **`ProgressPayload`** — the well-known `KernelEvent.event`
+  name (`'progress'`) and its typed payload (`fraction` in `[0, 1]`, optional
+  `message`) for a long-running guest's progress updates. `KernelEvent` stays
+  open-ended; this is one typed variant, not a closed union.
 
 ### Errno & signals (`errno.ts`)
 
@@ -85,6 +91,22 @@ processes.
   are transferred rather than copied), `PIPE_FLUSH_BYTES` (16 KiB),
   `PIPE_FLUSH_MS` (4 ms), and `INITIAL_CREDIT_BYTES` (64 KiB starting flow-control
   window).
+
+### Extended attributes & file capabilities (`xattr.ts`)
+
+The wire constant + codec for storing a capability grant as an `xattr` on an
+executable (the Linux file-capabilities model: `exec` reads the grant and narrows
+it against the parent).
+
+- **`SECURITY_CAPABILITY_XATTR`** — the well-known xattr name (`security.capability`)
+  whose value is a serialized `Capability[]` granting the executable's caps.
+- **`encodeCapabilities(caps)`** / **`decodeCapabilities(bytes)`** — JSON codec for
+  that value. `decodeCapabilities` is **default-deny**: undefined, unparseable, or
+  any malformed element rejects the whole array (no partially-trusted grant).
+
+The matching syscalls — `fs/getxattr`, `fs/setxattr`, `fs/listxattr`,
+`fs/removexattr` (in the `Syscall` union of `syscall.ts`, capability-gated like
+`fs/chmod`) — read and write these attributes through the VFS.
 
 ## Quick start
 

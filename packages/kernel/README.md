@@ -32,7 +32,8 @@ control port. For a **non-transferable** backend (QuickJS,
   reaping, a backend-agnostic wall-clock timeout watchdog.
 - **IPC** — mints credit-based pipes; wires zero-hop guest→guest pipelines.
 - **Capabilities** — grants and narrows capabilities against the parent process.
-- **Syscall dispatch** — VFS (`fs/*`), process (`process/*`), IPC (`ipc/*`),
+- **Syscall dispatch** — VFS (`fs/*`, incl. `fs/{get,set,list,remove}xattr`),
+  process (`process/*`, incl. exec-from-VFS resolution), IPC (`ipc/*`),
   network (`net/fetch`), and optional `dom/mutate`.
 - **GUI** — threads `display` placement to the runtime; hosts Remote DOM.
 
@@ -109,9 +110,13 @@ Spawns one guest. `code` is either an inline ESM source string or a module
   injected port is transferred straight to the guest (the zero-hop pipeline
   peer owns the other end); the kernel does not retain a read end, so an
   injected stream cannot be captured.
-- `stdinData` (`Uint8Array`) — inline stdin for `cmd < file` / `cmd <<<`: the
-  kernel mints the stdin pipe, feeds the bytes, then closes it (EOF) so a
-  stdin-reading child does not block on a producer that will never come.
+- Redirected stdin (`cmd < file` / `cmd <<<` / `cmd <<EOF`) is **pipe-fed**, not
+  inline: `process/spawn`'s per-fd actions wire fd 0 to a kernel pipe — an `open`
+  action streams a VFS file's bytes (capability-checked against the parent) and a
+  `bytes` action streams an in-memory buffer (here-string/here-doc). Both pump in
+  64 KiB credit-windowed chunks, then send EOF/close so a stdin-reading child does
+  not block on a producer that will never come. (Relay/QuickJS backends are a
+  known gap — pipe-fed stdin needs a transferable backend.)
 - `limits` — `ProcessLimits` (memory/cpu/timeout/output/children). The kernel
   arms a wall-clock `timeoutMs` watchdog that SIGKILLs an over-time process
   regardless of backend (Worker/iframe do not self-enforce).
@@ -129,8 +134,9 @@ kernel mints N−1 pipes and transfers stage *i*'s stdout write end and stage
 respective guests — bytes hop guest→guest with no kernel relay in the data path.
 All stages run concurrently; the kernel awaits each exit and returns
 `exitCodes` in stage order. Only the **last** stage may `captureStdout`; the
-**first** stage may carry inline `stdinData`. On abnormal stage exit the kernel
-posts EOF on any injected write port so downstream readers never hang.
+**first** stage may have its stdin pipe-fed (a redirect `open`/`bytes` fd action).
+On abnormal stage exit the kernel posts EOF on any injected write port so
+downstream readers never hang.
 
 ```ts
 const { pids, exitCodes, lastStdout } = await kernel.runPipeline([
@@ -154,11 +160,13 @@ Every guest syscall is dispatched by `SyscallDispatcher.dispatch(pid, req)` via 
 relay launcher) cannot forge it — so capability checks always run against the
 real caller. Unknown calls return `ENOSYS`. The families:
 
-- **`fs/*`** (17) — `open`, `read`, `write`, `close`, `stat`, `readdir`,
+- **`fs/*`** (21) — `open`, `read`, `write`, `close`, `stat`, `readdir`,
   `mkdir`, `unlink`, `rmdir`, `rename`, `symlink`, `readlink`, `link`, `chmod`,
-  `utimes`, `realpath`, `pipe`. Path syscalls are routed through `fs`
-  capability checks to the VFS; a per-process fd table maps fds → open files.
-  `fs/pipe` mints a `MessageChannel` and transfers **both** ends to the guest.
+  `utimes`, `realpath`, `pipe`, and the extended-attribute ops `getxattr`,
+  `setxattr`, `listxattr`, `removexattr` (gated by the `fs` capability like
+  `chmod`). Path syscalls are routed through `fs` capability checks to the VFS; a
+  per-process fd table maps fds → open files. `fs/pipe` mints a `MessageChannel`
+  and transfers **both** ends to the guest.
 - **`ipc/*`** (3) — `listen`, `accept`, `connect` over named channels, gated by
   the `ipc` capability for the path. `accept` suspends until a peer connects;
   connection `MessagePort`s are transferred to the guest.
@@ -200,18 +208,39 @@ dispatcher, identically on the transfer and relay paths.
 - **Revocation** — on exit the kernel revokes the pid's capabilities, closes its
   fd tables, and releases its pipes.
 
-## Command resolution
+## Command resolution & exec-from-VFS
 
-`process/spawn` and `process/pipeline` take a command **path**:
+`process/spawn` and `process/pipeline` take a command **path**, resolved
+Unix-style (RFC 0001 §4.2):
 
-- Absolute paths (`/…`, `./…`, `../…`) and URLs (containing `://`) are spawned
+- URLs (containing `://`) and explicit paths (`/…`, `./…`, `../…`) are used
   **directly**.
-- A bare **name** (`cat`) defers to `resolveCommand(name, cwd, env)` from
-  `KernelOptions`. The kernel owns what commands exist — guests spawn by name
-  and the kernel maps it to code (e.g. `@mithic/coreutils`'
-  `createCoreutilsResolver` returns the `dist/commands/<name>.js` URL).
-- An unresolved name yields `ENOENT`. With no resolver configured, only
-  paths/URLs are spawnable.
+- A bare **name** (`cat`) resolves first by walking `$PATH` (`env.PATH`,
+  `:`-separated) for a matching VFS file; on a miss it falls back to
+  `resolveCommand(name, cwd, env)` from `KernelOptions` (the registry — used for
+  bootstrap and host-special commands, e.g. `@mithic/coreutils`'
+  `createCoreutilsResolver`). `$PATH`→VFS-file wins over the registry, so an
+  installed `/usr/bin` utility whose name also appears in the registry resolves
+  to its file. An unresolved name yields `ENOENT`.
+
+A resolved **VFS file** is run as an executable (`binfmt`-style; pure helpers in
+`exec-resolve.ts`):
+
+- It must have the **execute bit** set (`mode & 0o111`, else `EACCES`); a missing
+  file is `ENOENT`.
+- Its `security.capability` xattr (a serialized `Capability[]`,
+  `decodeCapabilities`) is the file's grant — read at exec, then **narrowed
+  against the parent** like any spawn (Linux file-capabilities model;
+  default-deny when absent).
+- Its leading shebang dispatches: `#!/bin/node` or no shebang → run the
+  (shebang-stripped) source as a JS guest; any other interpreter → re-resolve
+  that interpreter by the same rules and run `interpreter <file> <args…>`
+  (carrying the **interpreter's** xattr caps). The interpreter chain is bounded
+  (→ `ELOOP`).
+
+URLs and inline source strings (a non-path, unresolved name) pass through with no
+file-borne caps. With no `$PATH` entry and no resolver configured, only
+paths/URLs are spawnable.
 
 ## GuestLauncher — how a guest actually starts
 
