@@ -132,8 +132,10 @@ export interface ExecRequest {
   /** Guest source code (QuickJS relay: uses __mithic_syscall directly). */
   code: string;
   /**
-   * stdin is reserved for future use.  Passing it currently returns 400.
-   * If you need to pass data into the guest, use `env` instead.
+   * Optional UTF-8 stdin fed to the guest's fd 0. The guest reads it via
+   * `pipe/read {fd:0}` (relay backend) until EOF. Encoded to bytes and delivered
+   * as a here-string-style fd-0 source; binary stdin / streaming upload is a
+   * separate future surface (see TODO G4).
    */
   stdin?: string;
   /** Environment variables forwarded to the guest. */
@@ -214,10 +216,9 @@ export function createApp(): Hono {
         return c.json({ error: '`code` must be a non-empty string' }, 400);
       }
 
-      // stdin is not yet wired to the process pipe — reject explicitly so callers
-      // get a clear error rather than silent data loss.
-      if (body.stdin != null) {
-        return c.json({ error: '`stdin` is not yet supported; omit the field' }, 400);
+      // stdin (when present) must be a string; it's fed to the guest's fd 0 below.
+      if (body.stdin != null && typeof body.stdin !== 'string') {
+        return c.json({ error: '`stdin` must be a string' }, 400);
       }
 
       // Validate limit fields: negative / non-numeric values are rejected.
@@ -249,6 +250,11 @@ export function createApp(): Hono {
           captureStdout: true,
           captureStderr: true,
           limits: body.limits,
+          // Feed the request's stdin to fd 0 as a here-string-style bytes source;
+          // the relay backend's kernel-held fd-0 end serves the guest's pipe/read.
+          ...(body.stdin != null
+            ? { fds: { 0: { action: 'bytes' as const, data: new TextEncoder().encode(body.stdin) } } }
+            : {}),
         });
         pid = spawnResult.pid;
 

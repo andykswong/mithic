@@ -668,6 +668,25 @@ export class Kernel {
     const ctx = this.#beginProcess(init);
     const { pid } = ctx;
 
+    // D8: a top-level fd-0 stdin source (`bytes`/`open`) wires this process's stdin
+    // the same way a pipeline's first stage does — via FdWiring, which sets
+    // `init.stdin` to a fresh pipe READ end and defers the source pump until the
+    // guest is live (its read end grants credit first). Only `bytes`/`open` make
+    // sense as a single-process stdin source; a `pipe`/`dup2` here would mint an
+    // unfed/peerless end. An explicit `init.stdin` port (pipeline peer) still wins —
+    // the two are mutually exclusive in practice. Cap-check uses ctx.pid: the
+    // process reads its OWN stdin file, gated by its already-narrowed grants.
+    const fd0Pumps: Array<() => void> = [];
+    const fd0 = init.fds?.[0];
+    if (fd0 && (fd0.action === 'bytes' || fd0.action === 'open') && init.stdin == null) {
+      try {
+        await this.#fdWiring.applyAction(ctx.pid, 0, fd0, init, new Map(), [], {}, fd0Pumps);
+      } catch (err) {
+        this.#exit(pid, 1);
+        throw err;
+      }
+    }
+
     // Control channel: kernel keeps port1, guest gets port2 as transfer[0].
     const control = new MessageChannel();
     const kernelSide = control.port1;
@@ -778,6 +797,10 @@ export class Kernel {
     });
 
     this.#handles.set(pid, handle);
+
+    // D8: start the fd-0 stdin source pump now that the guest is live (its read end
+    // grants credit), then bytes flow + EOF. Same ordering as the pipeline path.
+    for (const start of fd0Pumps) start();
 
     // LIM-1: arm the kernel-side wall-clock timeout watchdog (backend-agnostic).
     this.#supervisor.armWatchdog(pid, init.limits);
