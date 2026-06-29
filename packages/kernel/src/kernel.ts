@@ -960,14 +960,28 @@ export class Kernel {
     // kernel-side because a relay guest cannot hold a port. No fds[0] → fd 0 stays
     // unregistered and `pipe/read {fd:0}` yields EBADF (no-stdin / /dev/null).
     const fd0 = init.fds?.[0];
-    if (fd0) {
+    // Only an input source the kernel can feed makes sense as relay stdin. A `pipe`
+    // action would mint a read end whose write peer nothing drives → the guest's
+    // `pipe/read {fd:0}` would hang; relay guests have no port to dup2 either. So
+    // restrict to `bytes`/`open` and ignore the rest (fd 0 stays unregistered → EBADF).
+    if (fd0 && (fd0.action === 'bytes' || fd0.action === 'open')) {
       const stdinInit: SpawnInit = { cwd: init.cwd };
       const filePumps: Array<() => void> = [];
-      // Cap-check the `open` source against THIS process's already-narrowed grants
-      // (registered under ctx.pid by #beginProcess) — it reads its own stdin file.
-      // Unlike the process/spawn child path (checked pre-grant against the parent),
-      // a top-level relay spawn's parent is the kernel (ppid 0, no grants).
-      await this.#fdWiring.applyAction(ctx.pid, 0, fd0, stdinInit, new Map(), [], {}, filePumps);
+      try {
+        // Cap-check the `open` source against THIS process's already-narrowed grants
+        // (registered under ctx.pid by #beginProcess) — it reads its own stdin file.
+        // Unlike the process/spawn child path (checked pre-grant against the parent),
+        // a top-level relay spawn's parent is the kernel (ppid 0, no grants).
+        await this.#fdWiring.applyAction(ctx.pid, 0, fd0, stdinInit, new Map(), [], {}, filePumps);
+      } catch (err) {
+        // A denied/failed stdin source (e.g. EACCES on an ungranted `open`) must not
+        // leak the just-allocated pid: tear it down (revokes caps, settles wait())
+        // and rethrow so the caller sees the failure instead of a process stuck in
+        // LOADING. Mirrors the transferable child path, where applyAction runs before
+        // the pid is allocated and a throw leaks nothing.
+        this.#exit(pid, 1);
+        throw err;
+      }
       // applyAction wired the child-side read port into stdinInit.stdin; the kernel
       // holds it as the relay stdin end and drives the pump's write peer.
       if (stdinInit.stdin) {

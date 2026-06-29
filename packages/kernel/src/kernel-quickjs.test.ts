@@ -449,3 +449,26 @@ test('kernel relay: quickjs guest reads fd-0 stdin from an opened VFS file', asy
   expect((await kernel.wait(pid)).code).toBe(0);
   expect(new TextDecoder().decode(await stdout!)).toBe('file-bytes');
 }, 15000);
+
+test('kernel relay: an fd-0 open stdin source is capability-checked (EACCES, no leaked pid)', async () => {
+  const qjsRt = await QuickJSRuntime.create();
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const h = await vfs.open('/secret.txt', { write: true, create: true });
+  await vfs.write(h, new TextEncoder().encode('classified'), 0);
+  await vfs.close(h);
+
+  const kernel = new Kernel({ runtime: qjsRt, vfs, relayLauncher: new QuickJSGuestLauncher(qjsRt) });
+
+  // The guest holds NO fs grant, so wiring its fd-0 `open` stdin source must be
+  // denied before the process runs — a relay guest cannot read via stdin a file it
+  // could not read via fs/read. The spawn rejects rather than leaking a LOADING pid.
+  await expect(kernel.spawn(`
+    __mithic_syscall('process/exit', { code: 0 });
+  `, {
+    args: ['prog'],
+    capabilities: [],
+    captureStdout: true,
+    fds: { 0: { action: 'open', path: '/secret.txt', flags: { read: true } } },
+  })).rejects.toThrow(/EACCES|permission denied/i);
+}, 15000);
