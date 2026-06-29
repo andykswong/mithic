@@ -224,4 +224,39 @@ describe('NodeFsProvider xattr persistence', () => {
     expect(Array.from((await p.getxattr('/copy.bin', 'user.x'))!)).toEqual([1, 2, 3]);
     await p.dispose();
   });
+
+  it('directory rename migrates descendant xattrs to the new path (none orphaned)', async () => {
+    const p = new NodeFsProvider({ root: tmpDir });
+    await p.init();
+    await p.mkdir('/rdir');
+    const fh = await p.open('/rdir/child.bin', { create: true, write: true, truncate: true });
+    await p.close(fh);
+    await p.setxattr('/rdir', 'security.capability', new Uint8Array([1]));
+    await p.setxattr('/rdir/child.bin', 'security.capability', new Uint8Array([2]));
+
+    await p.rename('/rdir', '/rmoved');
+
+    expect(Array.from((await p.getxattr('/rmoved', 'security.capability'))!)).toEqual([1]);
+    expect(Array.from((await p.getxattr('/rmoved/child.bin', 'security.capability'))!)).toEqual([2]);
+    await p.dispose();
+  });
+
+  it('rmdir drops sidecar metadata so a recreated same-named dir inherits nothing', async () => {
+    const p = new NodeFsProvider({ root: tmpDir });
+    await p.init();
+    await p.mkdir('/gone');
+    await p.setxattr('/gone', 'security.capability', new Uint8Array([7, 7]));
+    await p.rmdir('/gone');
+
+    await p.mkdir('/gone');
+    expect(await p.getxattr('/gone', 'security.capability')).toBeUndefined();
+    expect(await p.listxattr('/gone')).toEqual([]);
+
+    // Survives a reload over the same root.
+    const reloaded = new NodeFsProvider({ root: tmpDir });
+    await reloaded.init();
+    expect(await reloaded.getxattr('/gone', 'security.capability')).toBeUndefined();
+    await reloaded.dispose();
+    await p.dispose();
+  });
 });

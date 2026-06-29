@@ -98,18 +98,33 @@ export class MetadataStore {
     await this.#flush();
   }
 
-  /** Track a structural rename so metadata follows the entry. */
+  /**
+   * Track a structural rename so metadata follows the entry. Prefix-aware: the
+   * exact key AND every descendant under `oldPath + '/'` migrate to the new
+   * subtree, and any pre-existing dest entry + subtree is cleared first so a
+   * later same-named entry can't inherit stale (or forged) metadata.
+   */
   async rename(oldPath: string, newPath: string): Promise<void> {
     await this.#ensureLoaded();
-    const meta = this.#data[oldPath];
-    delete this.#data[newPath];
-    if (meta) {
-      this.#data[newPath] = meta;
-      delete this.#data[oldPath];
-      await this.#flush();
-    } else if (this.#data[newPath] !== undefined) {
-      await this.#flush();
+    let changed = false;
+
+    if (this.#deleteSubtree(newPath)) changed = true;
+
+    const oldPrefix = oldPath + '/';
+    const newPrefix = newPath + '/';
+    for (const key of Object.keys(this.#data)) {
+      if (key === oldPath) {
+        this.#data[newPath] = this.#data[key];
+        delete this.#data[key];
+        changed = true;
+      } else if (key.startsWith(oldPrefix)) {
+        this.#data[newPrefix + key.slice(oldPrefix.length)] = this.#data[key];
+        delete this.#data[key];
+        changed = true;
+      }
     }
+
+    if (changed) await this.#flush();
   }
 
   /** Drop all metadata for a removed path. */
@@ -119,5 +134,25 @@ export class MetadataStore {
       delete this.#data[path];
       await this.#flush();
     }
+  }
+
+  /** Drop the exact path AND every descendant under it (used by rmdir). */
+  async dropSubtree(path: string): Promise<void> {
+    await this.#ensureLoaded();
+    if (this.#deleteSubtree(path)) {
+      await this.#flush();
+    }
+  }
+
+  #deleteSubtree(path: string): boolean {
+    const prefix = path + '/';
+    let changed = false;
+    for (const key of Object.keys(this.#data)) {
+      if (key === path || key.startsWith(prefix)) {
+        delete this.#data[key];
+        changed = true;
+      }
+    }
+    return changed;
   }
 }

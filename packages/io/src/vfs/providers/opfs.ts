@@ -269,6 +269,7 @@ export class OPFSProvider implements FileSystemProvider {
       }
       throw e;
     }
+    await this.#meta.dropSubtree(normalized);
   }
 
   async rename(oldPath: string, newPath: string): Promise<void> {
@@ -286,23 +287,49 @@ export class OPFSProvider implements FileSystemProvider {
       throw new FileSystemError('no-entry', 'Parent directory not found');
     }
 
-    let sourceHandle: FileSystemFileHandle;
+    let sourceFile: FileSystemFileHandle | undefined;
     try {
-      sourceHandle = await oldParent.getFileHandle(oldBase);
+      sourceFile = await oldParent.getFileHandle(oldBase);
     } catch {
-      throw new FileSystemError('no-entry', `No such file: ${oldPath}`);
+      sourceFile = undefined;
     }
 
-    const file = await sourceHandle.getFile();
-    const data = new Uint8Array(await file.arrayBuffer());
+    if (sourceFile) {
+      const file = await sourceFile.getFile();
+      const data = new Uint8Array(await file.arrayBuffer());
+      const destHandle = await newParent.getFileHandle(newBase, { create: true });
+      const writable = await destHandle.createWritable();
+      await writable.write(data);
+      await writable.close();
+      await oldParent.removeEntry(oldBase);
+    } else {
+      const sourceDir = await this.#getDirectoryHandle(oldNormalized);
+      if (!sourceDir) {
+        throw new FileSystemError('no-entry', `No such file or directory: ${oldPath}`);
+      }
+      const destDir = await newParent.getDirectoryHandle(newBase, { create: true });
+      await this.#copyDirectory(sourceDir, destDir);
+      await oldParent.removeEntry(oldBase, { recursive: true });
+    }
 
-    const destHandle = await newParent.getFileHandle(newBase, { create: true });
-    const writable = await destHandle.createWritable();
-    await writable.write(data);
-    await writable.close();
-
-    await oldParent.removeEntry(oldBase);
     await this.#meta.rename(oldNormalized, newNormalized);
+  }
+
+  async #copyDirectory(src: FileSystemDirectoryHandle, dest: FileSystemDirectoryHandle): Promise<void> {
+    for await (const [name, handle] of src.entries()) {
+      if (handle.kind === 'file') {
+        const file = await (handle as FileSystemFileHandle).getFile();
+        const data = new Uint8Array(await file.arrayBuffer());
+        const destFile = await dest.getFileHandle(name, { create: true });
+        const writable = await destFile.createWritable();
+        await writable.write(data);
+        await writable.close();
+      } else {
+        const childSrc = handle as FileSystemDirectoryHandle;
+        const childDest = await dest.getDirectoryHandle(name, { create: true });
+        await this.#copyDirectory(childSrc, childDest);
+      }
+    }
   }
 
   async symlink(_target: string, _linkPath: string): Promise<void> {
@@ -332,19 +359,31 @@ export class OPFSProvider implements FileSystemProvider {
   }
 
   async getxattr(path: string, name: string): Promise<Uint8Array | undefined> {
-    return this.#meta.getxattr(this.#normalizePath(path), name);
+    this.#ensureInit();
+    const normalized = this.#normalizePath(path);
+    await this.#requireExists(normalized, path);
+    return this.#meta.getxattr(normalized, name);
   }
 
   async setxattr(path: string, name: string, value: Uint8Array): Promise<void> {
-    await this.#meta.setxattr(this.#normalizePath(path), name, value);
+    this.#ensureInit();
+    const normalized = this.#normalizePath(path);
+    await this.#requireExists(normalized, path);
+    await this.#meta.setxattr(normalized, name, value);
   }
 
   async listxattr(path: string): Promise<string[]> {
-    return this.#meta.listxattr(this.#normalizePath(path));
+    this.#ensureInit();
+    const normalized = this.#normalizePath(path);
+    await this.#requireExists(normalized, path);
+    return this.#meta.listxattr(normalized);
   }
 
   async removexattr(path: string, name: string): Promise<void> {
-    await this.#meta.removexattr(this.#normalizePath(path), name);
+    this.#ensureInit();
+    const normalized = this.#normalizePath(path);
+    await this.#requireExists(normalized, path);
+    await this.#meta.removexattr(normalized, name);
   }
 
   async #requireExists(normalized: string, original: string): Promise<void> {

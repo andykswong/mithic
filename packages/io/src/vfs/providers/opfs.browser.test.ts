@@ -244,10 +244,44 @@ describe('OPFSProvider persistence (metadata store + append, browser)', () => {
 
     await fs.rename('/f', '/g');
     expect(Array.from((await fs.getxattr('/g', 'security.capability'))!)).toEqual([1, 2, 3]);
-    expect(await fs.getxattr('/f', 'security.capability')).toBeUndefined();
+    // The old path no longer exists, so xattr reads against it are rejected.
+    await expect(fs.getxattr('/f', 'security.capability')).rejects.toThrow();
 
     await fs.unlink('/g');
-    expect(await fs.getxattr('/g', 'security.capability')).toBeUndefined();
+    await expect(fs.getxattr('/g', 'security.capability')).rejects.toThrow();
+    await fs.dispose();
+  });
+
+  it('directory rename migrates descendant xattrs to the new path', async () => {
+    const storage = await makeSharedRoot('opfs-xattr-dir-rename');
+    const fs = new OPFSProvider(storage);
+    await fs.init();
+    await fs.mkdir('/d');
+    const fh = await fs.open('/d/child', { create: true, write: true, truncate: true });
+    await fs.write(fh, enc.encode('x'), 0);
+    await fs.close(fh);
+    await fs.setxattr('/d', 'security.capability', new Uint8Array([1]));
+    await fs.setxattr('/d/child', 'security.capability', new Uint8Array([2]));
+
+    await fs.rename('/d', '/moved');
+
+    expect(Array.from((await fs.getxattr('/moved', 'security.capability'))!)).toEqual([1]);
+    expect(Array.from((await fs.getxattr('/moved/child', 'security.capability'))!)).toEqual([2]);
+    expect(await fs.getxattr('/moved', 'security.capability')).toBeDefined();
+    await fs.dispose();
+  });
+
+  it('rmdir drops sidecar metadata so a recreated same-named dir inherits nothing', async () => {
+    const storage = await makeSharedRoot('opfs-xattr-rmdir');
+    const fs = new OPFSProvider(storage);
+    await fs.init();
+    await fs.mkdir('/gone');
+    await fs.setxattr('/gone', 'security.capability', new Uint8Array([7, 7]));
+    await fs.rmdir('/gone');
+
+    await fs.mkdir('/gone');
+    expect(await fs.getxattr('/gone', 'security.capability')).toBeUndefined();
+    expect(await fs.listxattr('/gone')).toEqual([]);
     await fs.dispose();
   });
 });

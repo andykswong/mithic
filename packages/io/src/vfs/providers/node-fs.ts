@@ -168,6 +168,7 @@ export class NodeFsProvider implements FileSystemProvider {
     } catch (e: unknown) {
       throw this.#mapError(e, path);
     }
+    await this.#meta.dropSubtree(this.#metaKey(path));
   }
 
   async rename(oldPath: string, newPath: string): Promise<void> {
