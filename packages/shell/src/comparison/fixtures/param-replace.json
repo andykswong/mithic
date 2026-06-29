@@ -1,0 +1,6 @@
+{
+  "src": "s=aXbXc; echo \"${s//X/-}\"",
+  "stdout": "a-b-c\n",
+  "stderr": "",
+  "code": 0
+}

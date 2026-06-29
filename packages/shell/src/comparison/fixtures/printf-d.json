@@ -1,0 +1,6 @@
+{
+  "src": "printf \"%03d\\n\" 7",
+  "stdout": "007\n",
+  "stderr": "",
+  "code": 0
+}

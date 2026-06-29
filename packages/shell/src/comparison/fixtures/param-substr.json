@@ -1,0 +1,6 @@
+{
+  "src": "s=abcdef; echo \"${s:1:3}\"",
+  "stdout": "bcd\n",
+  "stderr": "",
+  "code": 0
+}

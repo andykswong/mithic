@@ -1,0 +1,6 @@
+{
+  "src": "echo {a,b,c}",
+  "stdout": "a b c\n",
+  "stderr": "",
+  "code": 0
+}

@@ -1,0 +1,6 @@
+{
+  "src": "for i in 1 2 3; do echo \"n$i\"; done",
+  "stdout": "n1\nn2\nn3\n",
+  "stderr": "",
+  "code": 0
+}

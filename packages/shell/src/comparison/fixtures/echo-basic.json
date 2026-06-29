@@ -1,0 +1,6 @@
+{
+  "src": "echo hello world",
+  "stdout": "hello world\n",
+  "stderr": "",
+  "code": 0
+}

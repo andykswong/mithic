@@ -1,0 +1,6 @@
+{
+  "src": "p=/a/b/c.txt; echo \"${p##*/}\"",
+  "stdout": "c.txt\n",
+  "stderr": "",
+  "code": 0
+}

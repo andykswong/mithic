@@ -14,6 +14,12 @@ export interface ShellState {
   declareLocal(name: string): void;
   /** Register a name as an associative array (`declare -A`). */
   declareAssoc?(name: string): void;
+  /**
+   * Set an indexed array variable (`read -a` / `mapfile`). Reuses the same
+   * storage the `name=(a b c)` assignment path writes, so the values are visible
+   * to `${name[i]}` / `${name[@]}` / `${#name[@]}` expansion.
+   */
+  setArray?(name: string, values: string[]): void;
   /** Wait for a job/pid, returning its exit code. */
   waitJob(spec?: number): Promise<number>;
   waitAll(): Promise<number>;
@@ -118,6 +124,7 @@ export const BUILTINS = [
   'cd', 'pwd', 'export', 'unset', 'echo', 'printf',
   'test', '[', 'true', 'false', 'exit', 'eval', 'set', 'cat', ':',
   'local', 'declare', 'readonly', 'shift', 'return', 'getopts', 'read',
+  'mapfile', 'readarray',
   'jobs', 'fg', 'bg', 'wait', 'kill', 'break', 'continue', 'source', '.', 'type',
   'shopt', 'trap', 'disown', 'history', 'fc', 'exec', 'coproc',
 ] as const;
@@ -126,6 +133,24 @@ const BUILTIN_SET = new Set<string>(BUILTINS);
 
 export function isBuiltin(name: string): boolean {
   return BUILTIN_SET.has(name);
+}
+
+/** POSIX 2.8.1 special builtins — an error here is FATAL to a non-interactive shell in POSIX mode. */
+export const POSIX_SPECIAL_BUILTINS: ReadonlySet<string> = new Set([
+  ':', '.', 'break', 'continue', 'eval', 'exec', 'exit',
+  'export', 'readonly', 'return', 'set', 'shift', 'trap', 'unset',
+]);
+
+/** Thrown by a special builtin on a fatal error in POSIX mode; the executor aborts the script. */
+export class PosixSpecialBuiltinError extends Error {
+  readonly builtin: string;
+  readonly code: number;
+  constructor(builtin: string, code: number, message: string) {
+    super(message);
+    this.name = 'PosixSpecialBuiltinError';
+    this.builtin = builtin;
+    this.code = code;
+  }
 }
 
 function errOut(ctx: BuiltinContext, s: string): void {
@@ -264,6 +289,11 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
 
     case 'read': {
       return await runRead(args, ctx);
+    }
+
+    case 'mapfile':
+    case 'readarray': {
+      return await runMapfile(args, ctx);
     }
 
     case 'set':
@@ -580,8 +610,7 @@ function runSet(args: string[], ctx: BuiltinContext): number {
         const name = args[i + 1];
         if (name === undefined) { listOptions(ctx, enable); return 0; }
         if (!setLongOption(ctx, name, enable)) {
-          errOut(ctx, `shell: set: ${name}: invalid option name\n`);
-          return 2;
+          return failSet(ctx, `shell: set: ${name}: invalid option name\n`);
         }
         i++; // consumed NAME
         continue;
@@ -595,14 +624,13 @@ function runSet(args: string[], ctx: BuiltinContext): number {
           const name = args[i + 1];
           if (name === undefined) { listOptions(ctx, enable); return 0; }
           if (!setLongOption(ctx, name, enable)) {
-            errOut(ctx, `shell: set: ${name}: invalid option name\n`);
-            return 2;
+            return failSet(ctx, `shell: set: ${name}: invalid option name\n`);
           }
           consumedName = true;
           continue;
         }
         const long = OPTION_FLAGS[ch];
-        if (!long) { errOut(ctx, `shell: set: -${ch}: invalid option\n`); return 2; }
+        if (!long) return failSet(ctx, `shell: set: -${ch}: invalid option\n`);
         st?.setOption(long, enable);
       }
       if (consumedName) i++; // consumed the NAME that followed the cluster
@@ -613,6 +641,19 @@ function runSet(args: string[], ctx: BuiltinContext): number {
     return 0;
   }
   return 0;
+}
+
+/**
+ * A `set` bad-option failure. In POSIX mode this is a fatal error in a special
+ * builtin (POSIX 2.8.1) — throw so the executor aborts the script; otherwise
+ * report the diagnostic and return 2 (the prior, non-fatal behavior).
+ */
+function failSet(ctx: BuiltinContext, message: string): number {
+  if (ctx.state?.getOption('posix') ?? false) {
+    throw new PosixSpecialBuiltinError('set', 2, message.replace(/\n$/, ''));
+  }
+  errOut(ctx, message);
+  return 2;
 }
 
 function setLongOption(ctx: BuiltinContext, name: string, value: boolean): boolean {
@@ -710,20 +751,72 @@ function readTimeout(seconds: number): { promise: Promise<typeof TIMED_OUT>; can
  * backed stdin (Tier 2, deferred to a later stage); it is NOT half-built here.
  */
 async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
-  // Parse `-u FD`, `-t T` (and ignore -r). Remaining bare words are the names.
+  // Parse flags. `-r` raw (no backslash escapes), `-a NAME` split into an array,
+  // `-d DELIM` line terminator (empty ⇒ NUL), `-n N` max chars, plus `-u`/`-t`.
   const names: string[] = [];
   let fdArg: number | undefined;
   let timeoutSec: number | undefined;
+  let raw = false;
+  let arrayName: string | undefined;
+  let delim: string | undefined; // undefined ⇒ default '\n'; '' ⇒ NUL
+  let maxChars: number | undefined;
+  let ignoreDelim = false; // `-N` reads EXACTLY N chars, ignoring the delimiter; `-n` stops at it
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '-u') { fdArg = parseInt(args[++i] ?? '', 10); continue; }
     if (a.startsWith('-u')) { fdArg = parseInt(a.slice(2), 10); continue; }
     if (a === '-t') { timeoutSec = parseFloat(args[++i] ?? ''); continue; }
     if (a.startsWith('-t')) { timeoutSec = parseFloat(a.slice(2)); continue; }
-    if (a.startsWith('-')) continue; // ignore other flags (-r, -p ...)
+    if (a === '-a') { arrayName = args[++i] ?? ''; continue; }
+    if (a.startsWith('-a') && a.length > 2) { arrayName = a.slice(2); continue; }
+    if (a === '-d') { delim = args[++i] ?? ''; continue; }
+    if (a.startsWith('-d') && a.length > 2) { delim = a.slice(2); continue; }
+    if (a === '-n') { maxChars = parseInt(args[++i] ?? '', 10); continue; }
+    if (a === '-N') { maxChars = parseInt(args[++i] ?? '', 10); ignoreDelim = true; continue; }
+    if (a.startsWith('-n') && a.length > 2) { maxChars = parseInt(a.slice(2), 10); continue; }
+    if (a.startsWith('-N') && a.length > 2) { maxChars = parseInt(a.slice(2), 10); ignoreDelim = true; continue; }
+    // Combined short flags (a leading `-r` cluster, e.g. `-ra`). Pull out `r`;
+    // a non-cluster unknown flag is ignored (e.g. `-s`, `-p` are no-ops here).
+    if (a.startsWith('-') && a.length > 1 && /^-[a-zA-Z]+$/.test(a)) {
+      if (a.includes('r')) raw = true;
+      continue;
+    }
+    if (a.startsWith('-')) continue; // ignore other flags
     names.push(a);
   }
   if (timeoutSec !== undefined && Number.isNaN(timeoutSec)) timeoutSec = undefined;
+  if (maxChars !== undefined && Number.isNaN(maxChars)) maxChars = undefined;
+
+  const finish = (line: string): number => {
+    const cooked = raw ? line : unescapeReadLine(line);
+    if (arrayName !== undefined) {
+      const fields = cooked.split(/\s+/).filter((f) => f !== '');
+      ctx.state?.setArray?.(arrayName, fields);
+      return 0;
+    }
+    const fields = cooked.split(/\s+/).filter((f) => f !== '');
+    assignReadVars(names, fields, cooked, ctx);
+    return 0;
+  };
+
+  // `-d`/`-n` operate on the raw stdin STRING directly (the live-stream line
+  // reader is newline-/line-oriented and does not model these). The harness
+  // feeds `read` via a materialized `ctx.stdin`, which covers these cases.
+  if ((delim !== undefined || maxChars !== undefined) && fdArg === undefined) {
+    const stdin = ctx.stdin ?? '';
+    if (stdin === '') return 1; // EOF
+    let end: number;
+    if (ignoreDelim) {
+      // `-N N`: read exactly N chars (or to EOF), ignoring any delimiter.
+      end = maxChars !== undefined && maxChars >= 0 ? Math.min(maxChars, stdin.length) : stdin.length;
+    } else {
+      const term = delim === undefined ? '\n' : (delim === '' ? '\0' : delim[0]);
+      end = stdin.indexOf(term);
+      if (end < 0) end = stdin.length; // no terminator ⇒ read to EOF (success in bash if non-empty)
+      if (maxChars !== undefined && maxChars >= 0 && maxChars < end) end = maxChars; // `-n N`: stop at delim OR N
+    }
+    return finish(stdin.slice(0, end));
+  }
 
   // `read -u N` reads from the numbered fd's buffered input (or, for a live
   // `<>` fd like `/dev/tcp`, from the stream on demand — hence the await).
@@ -740,14 +833,13 @@ async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
     if (line === TIMED_OUT) {
       // Timed out: do NOT consume — the in-flight read stays cached so its line
       // reaches the next reader. Clear the named vars and signal >128.
-      assignReadVars(names, [], '', ctx);
+      if (arrayName !== undefined) ctx.state?.setArray?.(arrayName, []);
+      else assignReadVars(names, [], '', ctx);
       return READ_TIMEOUT_STATUS;
     }
     ctx.consumeFdLine?.(fdArg); // we used this line; the next read fetches a fresh one
     if (line === undefined) return 1; // EOF or fd not open
-    const fields = line.split(/\s+/).filter((f) => f !== '');
-    assignReadVars(names, fields, line, ctx);
-    return 0;
+    return finish(line);
   }
 
   // A3 Tier 2: plain `read` — prefer the live-stdin line reader (supports `-t`
@@ -755,20 +847,40 @@ async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
   // `ctx.stdin` string behavior when the executor provides no `readStdinLine`.
   if (ctx.readStdinLine) {
     const { line, timedOut } = await ctx.readStdinLine(ctx.stdin, timeoutSec);
-    if (timedOut) { assignReadVars(names, [], '', ctx); return READ_TIMEOUT_STATUS; }
+    if (timedOut) {
+      if (arrayName !== undefined) ctx.state?.setArray?.(arrayName, []);
+      else assignReadVars(names, [], '', ctx);
+      return READ_TIMEOUT_STATUS;
+    }
     if (line === undefined) return 1; // EOF
-    const fields = line.split(/\s+/).filter((f) => f !== '');
-    assignReadVars(names, fields, line, ctx);
-    return 0;
+    return finish(line);
   }
 
   const stdin = ctx.stdin ?? '';
   const nl = stdin.indexOf('\n');
   const line = nl >= 0 ? stdin.slice(0, nl) : stdin;
   if (stdin === '') return 1; // EOF
-  const fields = line.split(/\s+/).filter((f) => f !== '');
-  assignReadVars(names, fields, line, ctx);
-  return 0;
+  return finish(line);
+}
+
+/**
+ * Plain `read` (no `-r`) treats backslash as an escape: a backslash removes
+ * itself and the following char is taken literally (`a\b` → `ab`); a trailing
+ * backslash is dropped. This is the line-continuation/quote-removal bash applies
+ * before IFS splitting; `read -r` skips it entirely.
+ */
+function unescapeReadLine(line: string): string {
+  if (!line.includes('\\')) return line;
+  let out = '';
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === '\\') {
+      if (i + 1 < line.length) { out += line[i + 1]; i++; }
+      // a trailing backslash is dropped
+    } else {
+      out += line[i];
+    }
+  }
+  return out;
 }
 
 /** Assign a read line's fields to NAMEs (last name absorbs the rest); no names → $REPLY. */
@@ -778,6 +890,69 @@ function assignReadVars(names: string[], fields: string[], line: string, ctx: Bu
     if (i === names.length - 1) ctx.env[names[i]] = fields.slice(i).join(' ');
     else ctx.env[names[i]] = fields[i] ?? '';
   }
+}
+
+/**
+ * `mapfile`/`readarray [-t] [-d DELIM] [-u FD] [NAME]` — slurp ALL of stdin (or
+ * fd `FD`) and split into the indexed array NAME (default `MAPFILE`). Lines are
+ * split on `\n` (or `-d DELIM`); `-t` strips the trailing delimiter from each
+ * element. A trailing empty segment after the final delimiter is not stored.
+ */
+async function runMapfile(args: string[], ctx: BuiltinContext): Promise<number> {
+  let strip = false;
+  let delim = '\n';
+  let fdArg: number | undefined;
+  let name = 'MAPFILE';
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '-t') { strip = true; continue; }
+    if (a === '-d') { const d = args[++i] ?? ''; delim = d === '' ? '\0' : d[0]; continue; }
+    if (a.startsWith('-d') && a.length > 2) { delim = a.slice(2)[0]; continue; }
+    if (a === '-u') { fdArg = parseInt(args[++i] ?? '', 10); continue; }
+    if (a.startsWith('-u') && a.length > 2) { fdArg = parseInt(a.slice(2), 10); continue; }
+    if (a.startsWith('-')) continue; // -O/-s/-n/-c/-C unsupported: ignore
+    name = a;
+  }
+
+  // Read ALL available input. From a numbered fd, drain successive lines; from
+  // plain stdin, the materialized `ctx.stdin` string holds the whole input.
+  let data: string;
+  if (fdArg !== undefined) {
+    const parts: string[] = [];
+    for (;;) {
+      const line = await Promise.resolve(ctx.readFdLine?.(fdArg));
+      if (line === undefined) break;
+      ctx.consumeFdLine?.(fdArg);
+      parts.push(line.endsWith('\n') ? line : line + '\n');
+    }
+    data = parts.join('');
+  } else {
+    data = ctx.stdin ?? '';
+  }
+
+  const elements = splitKeepingDelimiter(data, delim);
+  const values = strip ? elements.map((e) => (e.endsWith(delim) ? e.slice(0, -delim.length) : e)) : elements;
+  ctx.state?.setArray?.(name, values);
+  return 0;
+}
+
+/**
+ * Split `data` on `delim` into records, each KEEPING its trailing delimiter
+ * (so `mapfile` without `-t` retains the newline). A trailing empty record after
+ * a final delimiter is dropped (bash does not store it).
+ */
+function splitKeepingDelimiter(data: string, delim: string): string[] {
+  if (data === '') return [];
+  const out: string[] = [];
+  let start = 0;
+  for (;;) {
+    const idx = data.indexOf(delim, start);
+    if (idx < 0) { out.push(data.slice(start)); break; }
+    out.push(data.slice(start, idx + delim.length));
+    start = idx + delim.length;
+    if (start >= data.length) break; // final delimiter ⇒ no trailing empty record
+  }
+  return out;
 }
 
 function evalTest(args: string[]): boolean {

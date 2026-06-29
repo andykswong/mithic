@@ -37,6 +37,20 @@ describe('classifyExecutable', () => {
       interpreter: '/usr/bin/python',
     });
   });
+  it('treats #!/usr/bin/env node as the guest case (env arg honored)', () => {
+    // env's first arg is the real interpreter; `node` → the JS guest, not interpreter '/usr/bin/env'.
+    expect(classifyExecutable('#!/usr/bin/env node\nconsole.log(1)')).toEqual({ kind: 'guest' });
+  });
+  it('carries the resolved interpreter for #!/usr/bin/env bash', () => {
+    expect(classifyExecutable('#!/usr/bin/env bash\necho hi')).toEqual({ kind: 'interpreter', interpreter: 'bash' });
+  });
+  it('does not leak a trailing \\r from a CRLF shebang line into the interpreter/arg', () => {
+    expect(classifyExecutable('#!/usr/bin/env node\r\nconsole.log(1)')).toEqual({ kind: 'guest' });
+    expect(classifyExecutable('#!/bin/bash\r\necho hi')).toEqual({ kind: 'interpreter', interpreter: '/bin/bash' });
+  });
+  it('handles a shebang-only file with no trailing newline (must not throw)', () => {
+    expect(classifyExecutable('#!/bin/node')).toEqual({ kind: 'guest' });
+  });
 });
 
 describe('resolveName', () => {

@@ -1,0 +1,6 @@
+{
+  "src": "p=file.tar.gz; echo \"${p%.*}\"",
+  "stdout": "file.tar\n",
+  "stderr": "",
+  "code": 0
+}

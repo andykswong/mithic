@@ -271,12 +271,20 @@ export class Expander {
       if (c === '`') { const r = await this.readBacktick(word, i); addText(r.value, false); i = r.next; continue; }
 
       // Process substitution `<(cmd)` / `>(cmd)` (M4) — substitute a VFS path.
-      if ((c === '<' || c === '>') && word[i + 1] === '(' && this.env.procSub) {
-        const end = findMatchingParen(word, i + 2);
-        const src = word.slice(i + 2, end);
-        const path = await this.env.procSub(src, c === '<' ? 'in' : 'out');
-        addText(path, false);
-        i = end + 1; continue;
+      // Rejected in POSIX mode (a bash extension), matching the parser's other
+      // posix-reject diagnostics; checked before the optional procSub wiring so
+      // the rejection fires even when no FsClient is present.
+      if ((c === '<' || c === '>') && word[i + 1] === '(') {
+        if (this.env.posix?.()) {
+          throw new ExpansionError('syntax error: process substitution is not supported in POSIX mode');
+        }
+        if (this.env.procSub) {
+          const end = findMatchingParen(word, i + 2);
+          const src = word.slice(i + 2, end);
+          const path = await this.env.procSub(src, c === '<' ? 'in' : 'out');
+          addText(path, false);
+          i = end + 1; continue;
+        }
       }
 
       addText(c, false); i++;
