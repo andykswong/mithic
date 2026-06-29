@@ -47,6 +47,15 @@ export interface SpawnOptions {
 export interface Runtime {
   readonly capabilities: RuntimeCapabilities;
   spawn(code: string | URL, options: SpawnOptions): Promise<ProcessHandle>;
+  /**
+   * Terminate the process. The `signal` is ADVISORY: every backend hard-kills
+   * regardless of which signal is passed — worker/iframe tear down the worker/iframe,
+   * quickjs/ivm dispose the runtime/isolate and report exit code 137. Backends do
+   * NOT deliver the signal to the guest for graceful handling; the kernel computes
+   * any 128+N exit semantics on its side. The iframe backend additionally has no
+   * exit-code channel (DOM removal is the only signal). Callers needing graceful
+   * shutdown must coordinate via a kernel-level signal event, not `kill`.
+   */
   kill(handle: ProcessHandle, signal: Signal): void;
   postMessage(handle: ProcessHandle, msg: SyscallResponse | KernelEvent, transfer?: Transferable[]): void;
   onMessage(handle: ProcessHandle, cb: (msg: SyscallRequest) => void): void;
