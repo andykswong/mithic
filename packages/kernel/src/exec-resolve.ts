@@ -21,7 +21,8 @@ export function parseShebang(source: string): Shebang | undefined {
   if (!source.startsWith('#!')) return undefined;
   const newline = source.indexOf('\n');
   const line = newline === -1 ? source : source.slice(0, newline);
-  const rest = line.slice(2).trim();
+  // Tolerate CRLF line endings: drop a trailing \r so it never rides on the arg.
+  const rest = line.slice(2).replace(/\r$/, '').trim();
   if (rest === '') return undefined;
   const [interpreter, ...args] = rest.split(/\s+/);
   return args.length > 0 ? { interpreter, arg: args.join(' ') } : { interpreter };
