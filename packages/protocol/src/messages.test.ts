@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 import {
-  makeSyscallRequest, isSyscallResponse, isKernelEvent, type SyscallResponse,
+  makeSyscallRequest, isSyscallResponse, isKernelEvent, PROGRESS_EVENT,
+  type SyscallResponse, type ProgressPayload, type KernelEvent,
 } from './messages.ts';
 
 test('makeSyscallRequest builds a correlatable request', () => {
@@ -34,4 +35,25 @@ test('isKernelEvent rejects wrong field types and non-objects', () => {
   for (const v of [null, undefined, 42, 'str', {}, []]) {
     expect(isKernelEvent(v)).toBe(false);
   }
+});
+
+test('PROGRESS_EVENT is the well-known progress event name', () => {
+  expect(PROGRESS_EVENT).toBe('progress');
+});
+
+test('a typed progress KernelEvent round-trips through the open-ended union', () => {
+  const payload: ProgressPayload = { fraction: 0.42, message: 'resizing' };
+  const ev: KernelEvent = { event: PROGRESS_EVENT, payload };
+  // KernelEvent stays open-ended — a typed progress event is still a KernelEvent.
+  expect(isKernelEvent(ev)).toBe(true);
+  expect(ev.event).toBe('progress');
+  const got = ev.payload as ProgressPayload;
+  expect(got.fraction).toBe(0.42);
+  expect(got.message).toBe('resizing');
+});
+
+test('ProgressPayload message is optional', () => {
+  const payload: ProgressPayload = { fraction: 1 };
+  expect(payload.message).toBeUndefined();
+  expect(payload.fraction).toBe(1);
 });

@@ -19,7 +19,8 @@
  * (V2), ingest/download (V3), preview (V5), and persistence wiring (V6) layer on
  * top of the `kernel` + `vfs` this exposes.
  */
-import { Kernel } from '@mithic/kernel';
+import { Kernel, RemoteDomHost } from '@mithic/kernel';
+import type { DomMutation } from '@mithic/guest-runtime/remote-dom';
 import { WorkerRuntime } from '@mithic/runtime/backends/worker';
 import { FileSystemRouter, MemoryFsProvider, DeviceFsProvider } from '@mithic/io/vfs';
 import { OPFSProvider } from '@mithic/io/vfs/providers/opfs';
@@ -87,6 +88,14 @@ export interface LabOptions {
    * (e.g. environments without OPFS).
    */
   persistStorage?: OPFSStorageManager | null;
+  /**
+   * Resolve the host DOM container a GUI guest's mutations paint into, keyed by
+   * its pid (RFC 0001 §4.5). When set, `createLab` wires `KernelOptions.onDomMutate`
+   * to a per-pid {@link RemoteDomHost} over the returned container, so each window
+   * demuxes its own guest's DOM. A pid with no container is a safe drop. When
+   * unset, `dom/mutate` returns ENOSYS to the guest (no preview pane).
+   */
+  resolveDomContainer?: (pid: number) => Element | undefined;
 }
 
 export interface Lab {
@@ -265,11 +274,30 @@ export async function createLab(options: LabOptions = {}): Promise<Lab> {
     await installUtility(vfs, `/usr/bin/${name}`, enc.encode(SHEBANG + source), manifest);
   }
 
+  // Per-pid preview wiring (RFC 0001 §4.5): a GUI guest's batched DomMutation
+  // records are demuxed by pid to that window's RemoteDomHost, which applies them
+  // (allowlist-enforced) to the container the host resolved for the pid. The host
+  // is minted lazily on the pid's first mutation and reused across batches.
+  const domHosts = new Map<number, RemoteDomHost>();
+  const onDomMutate = options.resolveDomContainer
+    ? (pid: number, mutations: DomMutation[]): void => {
+        let host = domHosts.get(pid);
+        if (!host) {
+          const container = options.resolveDomContainer!(pid);
+          if (!container) return; // unknown/closed window — safe drop
+          host = new RemoteDomHost({ container });
+          domHosts.set(pid, host);
+        }
+        host.applyMutations(mutations);
+      }
+    : undefined;
+
   const kernel = new Kernel({
     runtime: new WorkerRuntime(),
     vfs,
     resolveCommand: (name) => suite.resolve(name),
     launcher: suite.launcher,
+    onDomMutate,
   });
 
   const kernelClient = makeKernelClient(kernel);
@@ -293,7 +321,12 @@ export async function createLab(options: LabOptions = {}): Promise<Lab> {
     kernel,
     vfs,
     run,
-    dispose() { /* WorkerRuntime workers are GC'd with the kernel; no handles held here. */ },
+    dispose() {
+      // WorkerRuntime workers are GC'd with the kernel; tear down any preview
+      // hosts so their forwarded event listeners don't leak.
+      for (const host of domHosts.values()) host.dispose();
+      domHosts.clear();
+    },
   };
 }
 
