@@ -1,6 +1,33 @@
 import { expect, test } from 'vitest';
 import { QuickJSRuntime } from './quickjs.ts';
 
+test('onResult fires every registered callback with the __mithic_done value', async () => {
+  const rt = await QuickJSRuntime.create();
+  const seen: unknown[] = [];
+  rt.onResult((v) => seen.push(v));
+  rt.onResult((v) => seen.push(v));
+  const code = `
+    __mithic_done({ a: 1, list: [1,2,3] });
+    __mithic_syscall('process/exit', { code: 0 });
+  `;
+  await rt.spawn(code, {
+    init: { type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 1, ppid: 0, capabilities: [] },
+    onSyscall: async () => ({ ok: true, result: {} }),
+  });
+  await new Promise<void>((r) => setTimeout(r, 300));
+  expect(seen).toHaveLength(2);
+  expect(seen[0]).toEqual({ a: 1, list: [1, 2, 3] });
+});
+
+test('isAlive/dispose/kill/waitExit tolerate a non-existent handle', async () => {
+  const rt = await QuickJSRuntime.create();
+  const ghost = { id: 9999 };
+  expect(rt.isAlive(ghost)).toBe(false);
+  expect(() => rt.dispose(ghost)).not.toThrow();
+  expect(() => rt.kill(ghost, 'SIGKILL')).not.toThrow();
+  await expect(rt.waitExit(ghost)).resolves.toEqual({ code: 1 });
+});
+
 test('quickjs process performs an async syscall via the asyncified bridge', async () => {
   const rt = await QuickJSRuntime.create();
   const code = `

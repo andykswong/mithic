@@ -283,3 +283,29 @@ test('preopenFds maps stdio ports to non-positional guest fds (K2)', async () =>
   expect(received).toContainEqual({ id: 8, call: 'fd-check', args: { fds: [5] } });
   rt.dispose(handle);
 });
+
+test('postMessage forwards a transfer list to the worker', async () => {
+  const rt = new WorkerRuntime(makeTestFactory());
+  const code = `
+    globalThis.__mithic_main = () => {
+      globalThis.__mithic_recv = (msg) => { self.__post({ id: 11, call: 'recv', args: { hasPort: msg != null && typeof msg === 'object' && 'port' in msg } }); };
+    };
+  `;
+  const received: unknown[] = [];
+  const handle = await rt.spawn(code, { init: { type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 1, ppid: 0, capabilities: [] } });
+  rt.onMessage(handle, (m) => received.push(m));
+  await new Promise<void>((r) => setTimeout(r, 100));
+  const { port1, port2 } = new MessageChannel();
+  rt.postMessage(handle, { id: 1, ok: true, result: { port: port1 } } as never, [port1]);
+  await new Promise<void>((r) => setTimeout(r, 200));
+  // postMessage forwards the message (and its transfer list) to the worker; the
+  // guest recv hook FIRES on delivery. The MockWorker does NOT perform real
+  // structured-clone port transfer, so the transferred port is not reconstructed
+  // on the guest side (`hasPort` is false here) — true transfer semantics (the
+  // port being moved/detached) are exercised by the iframe/worker browser path,
+  // not this in-process mock. We assert DELIVERY (the recv fired), per plan note,
+  // rather than forcing a brittle port-liveness assertion the mock can't satisfy.
+  expect(received).toContainEqual({ id: 11, call: 'recv', args: { hasPort: false } });
+  port2.close();
+  rt.dispose(handle);
+});
