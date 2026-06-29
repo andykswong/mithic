@@ -281,6 +281,85 @@ test('S3: a child cannot elevate beyond its parent — an xattr net request narr
   expect(response.ok).toBe(false);
 }, 20000);
 
+// A guest that reads argv[1] and writes either its bytes or 'READ-DENIED:<code>'
+// to argv[2] (a VFS path), so the outcome survives the child's exit for the test
+// to read back (child-spawn stdout isn't captured through the dispatcher).
+const READ_TO_FILE_SRC = `#!/bin/node
+import { createGuest } from '@mithic/guest-runtime';
+export default async (boot) => {
+  const g = createGuest(boot);
+  let outcome;
+  try {
+    const o = await g.syscall('fs/open', { path: g.args[1], oflags: { read: true } });
+    const data = await g.syscall('fs/read', { fd: o.fd, len: 4096 });
+    await g.syscall('fs/close', { fd: o.fd });
+    outcome = new TextDecoder().decode(new Uint8Array(data));
+  } catch (e) {
+    outcome = 'READ-DENIED:' + (e.code || e.errno || e.message);
+  }
+  const w = await g.syscall('fs/open', { path: g.args[2], oflags: { write: true, create: true, truncate: true } });
+  await g.syscall('fs/write', { fd: w.fd, data: new TextEncoder().encode(outcome) });
+  await g.syscall('fs/close', { fd: w.fd });
+  g.exit(0);
+};`;
+
+test('FIX-A: for a bare name in BOTH the registry and $PATH, the VFS file (and its xattr caps) WINS over resolveCommand', async () => {
+  // RFC 0001 §4.2 mandates builtins → $PATH→VFS-file → host/special; the VFS file
+  // REPLACES the per-command registry. The dispatcher's #resolveCode previously
+  // inverted this (registry FIRST), so an installed utility whose name ALSO appears
+  // in the registry resolved to the in-process sentinel — the kernel never read its
+  // `security.capability` xattr and it ran with the PARENT's broad caps (D7/§4.8
+  // silently defeated). This drives the SYSCALL spawn path a workflow shell uses.
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+
+  await writeFile(vfs, '/secret', 'secret-bytes');
+  await vfs.mkdir('/out').catch(() => {});
+  // The installed utility: a +x VFS file whose xattr grants ONLY /secret-excluding
+  // reads — fs:read on /in and fs:write on /out, NOT /secret.
+  await writeFile(vfs, '/usr/bin/probe', READ_TO_FILE_SRC);
+  await vfs.chmod('/usr/bin/probe', 0o755);
+  await setCaps(vfs, '/usr/bin/probe', [
+    { type: 'fs', paths: ['/in'], operations: ['read'] },
+    { type: 'fs', paths: ['/out'], operations: ['read', 'write'] },
+  ]);
+
+  // `probe` ALSO exists in the registry, returning the SAME source inline (a
+  // non-sentinel string → default launcher → runs verbatim with the PARENT-narrowed
+  // caps, i.e. the broad '/' grant). If the registry won, the read of /secret would
+  // SUCCEED; with PATH-first, the file's xattr (no /secret) governs → READ-DENIED.
+  const kernel = new Kernel({
+    runtime: new WorkerRuntime(),
+    vfs,
+    resolveCommand: (name) =>
+      name === 'probe' ? READ_TO_FILE_SRC.slice(READ_TO_FILE_SRC.indexOf('\n') + 1) : undefined,
+  });
+
+  const parentPid = kernel.processes.allocate(0);
+  kernel.processes.markReady(parentPid);
+  // The PARENT holds fs:read+write on ALL of '/' — strictly broader than the xattr.
+  kernel.capabilities.grant(parentPid, [
+    { type: 'process' },
+    { type: 'fs', paths: ['/'], operations: ['read', 'write', 'execute'] },
+  ]);
+
+  const { response } = await kernel.dispatcher.dispatch(parentPid, {
+    id: 1,
+    call: 'process/spawn',
+    args: { path: 'probe', argv: ['probe', '/secret', '/out/result'], env: { PATH: '/usr/bin' } },
+  });
+  expect(response.ok).toBe(true);
+  const childPid = (response as { result: { pid: number } }).result.pid;
+  await kernel.wait(childPid);
+
+  // The VFS file's xattr (no /secret) governs the child, NOT the parent's '/': the
+  // read of /secret is DENIED even though the parent could read it.
+  const fh = await vfs.open('/out/result', { read: true });
+  const bytes = await vfs.read(fh, 0, 4096);
+  await vfs.close(fh);
+  expect(new TextDecoder().decode(bytes)).toContain('READ-DENIED');
+}, 20000);
+
 test('S3: a guest-issued process/spawn resolves a BARE NAME via $PATH (no resolveCommand needed)', async () => {
   // The bug Task V4 surfaced: the syscall spawn path returned ENOENT for a bare
   // name when `resolveCommand` (host/special + registered commands) missed —

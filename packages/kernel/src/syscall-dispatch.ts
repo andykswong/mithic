@@ -569,20 +569,27 @@ export class SyscallDispatcher {
   /**
    * Resolve a command spec to spawnable guest code. Absolute paths and URLs are
    * used directly (a `string` URL becomes a `URL`). A bare name resolves first via
-   * the injected `resolveCommand` (host/special + registered commands) and, on a
-   * miss, via a `$PATH` walk to a VFS executable FILE (RFC 0001 §4.2 — so a guest
-   * can spawn a `/usr/bin` utility or workflow by bare NAME, not just the host
-   * `kernel.spawn` entry). The resolved VFS path is re-validated (execute bit,
-   * shebang, xattr caps) by `kernel.spawn` before launch. Returns `undefined` when
-   * neither layer matches.
+   * a `$PATH` walk to a VFS executable FILE (RFC 0001 §4.2 — this REPLACES the
+   * per-command map) and, on a miss, falls back to the injected `resolveCommand`
+   * (host/special + registry-only commands like the bundled coreutils + bootstrap).
+   *
+   * `$PATH`→VFS-file MUST win over `resolveCommand` for bare names: a `/usr/bin`
+   * utility whose name ALSO appears in the registry (e.g. an installed Lab
+   * `imgresize`/`copy`) must resolve to its FILE so `kernel.spawn` reads its
+   * `security.capability` xattr and the child runs with its manifest-narrowed
+   * grant — not to the in-process registry sentinel, which would silently run it
+   * with the parent's broad caps (D7/§4.8). The resolved VFS path is re-validated
+   * (execute bit, shebang, xattr caps) by `kernel.spawn` before launch. With no
+   * `$PATH` hit this is identical to the old registry-first behavior. Returns
+   * `undefined` when neither layer matches.
    */
   async #resolveCode(path: string, argv: string[], cwd: string, env: Record<string, string>): Promise<string | URL | undefined> {
     if (path.includes('://')) return new URL(path);
     if (path.startsWith('/') || path.startsWith('./') || path.startsWith('../')) return path;
     const name = path || argv[0] || '';
-    const registered = this.#resolveCommand?.(name, cwd, env);
-    if (registered !== undefined) return registered;
-    return this.#resolvePathFile(name, env);
+    const fromPath = await this.#resolvePathFile(name, env);
+    if (fromPath !== undefined) return fromPath;
+    return this.#resolveCommand?.(name, cwd, env);
   }
 
   /** Walk `$PATH` for a VFS file matching a bare command NAME (RFC 0001 §4.2). */

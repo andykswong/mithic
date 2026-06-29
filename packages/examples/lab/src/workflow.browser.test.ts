@@ -145,6 +145,64 @@ test('a workflow is itself an executable: another script can call it by name', a
   expect(Array.from(out.subarray(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
 }, T);
 
+test('a bare-name utility spawned FROM a workflow runs with its manifest-narrowed caps, not the parent shell grant (FIX-A)', async () => {
+  // FIX-A regression (RFC-1/§4.2/§4.8, D7). This drives the kernel's *syscall* spawn
+  // path (`process/spawn` issued by the running shell guest), which is the Lab's
+  // PRIMARY bare-name-in-a-workflow path and the one that was inverted: the
+  // dispatcher's #resolveCode consulted the in-process registry FIRST. Because
+  // `copy` is ALSO a registry command, the old order resolved it to the registry
+  // sentinel — the kernel never read /usr/bin/copy's `security.capability` xattr, so
+  // the child ran with the SHELL parent's broad fs-write on '/' and the escape write
+  // to /etc SUCCEEDED (the §4.8 "caps live in the file" promise silently defeated).
+  //
+  // With $PATH→VFS-file winning, `copy` resolves to /usr/bin/copy, the kernel reads
+  // its xattr (granted /in,/out,/work only) and narrows the child to it — so the
+  // write to /etc is DENIED (EACCES → non-zero exit) even though the workflow's
+  // shell parent holds fs-write on all of '/'.
+  lab = await createLab({ persistStorage: null });
+  await seed(lab, '/in/secret.txt', new TextEncoder().encode('topsecret'));
+
+  await installWorkflow(
+    lab,
+    '/usr/bin/escape',
+    // `copy` is a bare name resolved on PATH by the shell's process/spawn syscall.
+    'copy "$1" /etc/escape.txt\n',
+  );
+
+  const { pid, stdout } = await lab.kernel.spawn('escape', {
+    args: ['escape', '/in/secret.txt'],
+    // The SHELL parent (and thus the spawning context) holds fs-write on ALL of '/'.
+    env: { PATH: '/usr/bin', PWD: '/' },
+    cwd: '/',
+    capabilities: PARENT_CAPS,
+    captureStdout: true,
+    captureStderr: true,
+  });
+  const { code } = await lab.kernel.wait(pid);
+  if (stdout) await stdout;
+
+  // The inode xattr grant (no '/etc') governs the child, not the parent's '/'.
+  expect(code).not.toBe(0);
+  await expect(readVfs(lab, '/etc/escape.txt')).rejects.toBeTruthy();
+
+  // PATH-first must NOT have broken running the installed utility: the SAME `copy`,
+  // by bare name from a workflow, still succeeds WITHIN its grant (and the manifest
+  // xattr is what governs — it is only narrowed, never failed to launch).
+  await installWorkflow(lab, '/usr/bin/inbounds', 'copy "$1" /work/copy.txt\n');
+  const ok = await lab.kernel.spawn('inbounds', {
+    args: ['inbounds', '/in/secret.txt'],
+    env: { PATH: '/usr/bin', PWD: '/' },
+    cwd: '/',
+    capabilities: PARENT_CAPS,
+    captureStdout: true,
+    captureStderr: true,
+  });
+  const okWait = await lab.kernel.wait(ok.pid);
+  if (ok.stdout) await ok.stdout;
+  expect(okWait.code).toBe(0);
+  expect(new TextDecoder().decode(await readVfs(lab, '/work/copy.txt'))).toBe('topsecret');
+}, T);
+
 test('set -e aborts the workflow on a failing stage (non-zero exit)', async () => {
   lab = await createLab({ persistStorage: null });
   await seed(lab, '/in/photo.png', await fixturePng(40, 20));
