@@ -65,8 +65,10 @@ export interface Runtime {
    * Resolve when the process exits, with its exit code. Provided by RELAY backends
    * (quickjs/ivm) where the kernel relay launcher needs the exit code to notify the
    * kernel. Transferable backends (worker/iframe) omit it — they have no exit-code
-   * channel; exit is observed via the control port / DOM teardown instead. A relay
-   * launcher MUST feature-detect (`if (rt.waitExit)`) before calling.
+   * channel; exit is observed via the control port / DOM teardown instead. A caller
+   * holding only the `Runtime` interface type MUST feature-detect (`if (rt.waitExit)`)
+   * before calling; a launcher typed against the concrete relay backend
+   * (`IvmRuntime`/`QuickJSRuntime`, where `waitExit` is non-optional) may call it directly.
    */
   waitExit?(handle: ProcessHandle): Promise<{ code: number }>;
 }
