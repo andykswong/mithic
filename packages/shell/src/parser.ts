@@ -100,6 +100,8 @@ class Parser {
   }
 
   private parseAndOr(): Statement {
+    // The statement's source line = the line its first token starts on.
+    const line = this.peek()?.line;
     let left = this.parsePipeline();
     for (;;) {
       if (this.atType('AND_IF') || this.atType('OR_IF')) {
@@ -109,6 +111,7 @@ class Parser {
         left = { type: op, left, right };
       } else break;
     }
+    if (line !== undefined) left.line = line;
     return left;
   }
 

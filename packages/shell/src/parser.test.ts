@@ -16,6 +16,21 @@ test('parses output redirect', () => {
   expect(cmd.redirects[0]).toMatchObject({ op: '>', target: 'out.txt' });
 });
 
+test('each top-level statement records its source line', () => {
+  const prog = parse('echo a\nfalse\necho c');
+  expect(prog.body[0].line).toBe(1);
+  expect(prog.body[1].line).toBe(2);
+  expect(prog.body[2].line).toBe(3);
+});
+
+test('statements inside a compound body record their source line', () => {
+  const prog = parse('if true\nthen\n  echo a\n  echo b\nfi');
+  const ifStmt = prog.body[0];
+  expect(ifStmt.line).toBe(1);
+  expect(ifStmt.then![0].line).toBe(3);
+  expect(ifStmt.then![1].line).toBe(4);
+});
+
 test('parses variable assignment prefix', () => {
   const ast = parse('FOO=bar echo $FOO');
   expect(ast.body[0].stages![0].assignments[0]).toEqual({ name: 'FOO', value: 'bar' });
