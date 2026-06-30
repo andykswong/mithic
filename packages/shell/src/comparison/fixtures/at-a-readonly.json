@@ -1,0 +1,6 @@
+{
+  "src": "readonly v=1; echo \"${v@a}\"",
+  "stdout": "r\n",
+  "stderr": "",
+  "code": 0
+}
