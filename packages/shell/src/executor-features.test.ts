@@ -565,3 +565,15 @@ test('let multiple expressions take status from the last', async () => {
   const { out } = await run('let "a=1" "b=0"; echo "$a $b $?"');
   expect(out.trim()).toBe('1 0 1');
 });
+
+// ── declare -n namerefs (single-level) ───────────────────────────────────────
+
+test('declare -n nameref reads through to the target', async () => {
+  const { out } = await run('target=hi; declare -n ref=target; echo $ref');
+  expect(out.trim()).toBe('hi');
+});
+
+test('assigning through a nameref writes the target', async () => {
+  const { out } = await run('target=1; declare -n ref=target; ref=2; echo $target');
+  expect(out.trim()).toBe('2');
+});

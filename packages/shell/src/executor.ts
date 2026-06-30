@@ -246,6 +246,8 @@ export class Executor {
   private localSaved: Array<Map<string, string | undefined>> = [];
   /** Names marked `readonly` — reassigning one is rejected (fatal in POSIX mode). */
   private readonlyNames = new Set<string>();
+  /** `declare -n ref=target` namerefs (ref → target). Single-level only. */
+  private namerefs = new Map<string, string>();
   /** `set` options. errexit aborts on nonzero; the rest per their POSIX meaning. */
   private options: Record<ShellOptionName, boolean> = {
     errexit: false,
@@ -317,6 +319,7 @@ export class Executor {
       listDir: (p) => this.listDir(p),
       statPath: (p) => this.statPath(p),
       procSub: (s, d) => this.procSub(s, d),
+      resolveNameref: (n) => this.namerefs.get(n),
     };
     this.environment = new Environment(this.context, host);
     // $SHLVL: derive from the inherited value and store it back (G7).
@@ -600,6 +603,8 @@ export class Executor {
       killJob: (spec, signal) => this.jobControl.killJob(spec, signal),
       markReadonly: (name) => { this.readonlyNames.add(name); },
       isReadonly: (name) => this.readonlyNames.has(name),
+      setNameref: (ref, target) => { this.namerefs.set(ref, target); },
+      resolveNameref: (name) => this.namerefs.get(name),
     };
   }
 
@@ -1692,6 +1697,10 @@ export class Executor {
       this.lastStatus = 1;
       return true;
     }
+    // `declare -n ref=target`: a write to `ref` is redirected to `target`
+    // (single-level). Rewrite the assignment name before applying it.
+    const nameref = this.namerefs.get(a.name);
+    if (nameref !== undefined) a = { ...a, name: nameref };
     this.declareLocal(a.name);
     if (a.array !== undefined) {
       const elems: string[] = [];

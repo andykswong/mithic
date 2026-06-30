@@ -58,6 +58,10 @@ export interface ShellState {
   markReadonly?(name: string): void;
   /** True when the name was marked `readonly`. */
   isReadonly?(name: string): boolean;
+  /** Record a `declare -n ref=target` nameref (single-level). */
+  setNameref?(ref: string, target: string): void;
+  /** Resolve a nameref to its target (single-level), or undefined if not a nameref. */
+  resolveNameref?(name: string): string | undefined;
 }
 
 /** Long names of the shell options toggled via `set` / `set -o`. */
@@ -252,6 +256,10 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       const isLocal = name === 'local';
       const isReadonly = name === 'readonly';
       const isAssoc = name === 'declare' && args.includes('-A');
+      // `declare -n ref=target` declares a nameref (single-level): reads of `ref`
+      // and writes to `ref` are redirected to `target` (the latter in the
+      // executor's applyAssignment). Recorded instead of storing a literal value.
+      const isNameref = name === 'declare' && args.includes('-n');
       if (isAssoc && (ctx.state?.getOption('posix') ?? false)) {
         errOut(ctx, 'shell: declare: -A: not supported in POSIX mode\n');
         return 2;
@@ -260,6 +268,11 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         if (arg.startsWith('-')) continue; // ignore option flags (-i, -a, etc.)
         const eq = arg.indexOf('=');
         const n = eq > 0 ? arg.slice(0, eq) : arg;
+        if (isNameref) {
+          // `declare -n ref=target`: record the mapping (no literal value stored).
+          if (eq > 0) ctx.state?.setNameref?.(n, arg.slice(eq + 1));
+          continue;
+        }
         // `declare -A name` registers an associative array (G6).
         if (isAssoc) ctx.state?.declareAssoc?.(n);
         if (eq > 0) {
