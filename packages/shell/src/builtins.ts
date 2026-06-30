@@ -3,7 +3,7 @@
  * state (cwd, env, functions, jobs) and/or writing to the current stdout/stderr.
  */
 
-import { shellQuote } from './quote.ts';
+import { shellQuoteBackslash } from './quote.ts';
 import { interpretEscapes } from './escape.ts';
 
 /** Richer shell state surface a few builtins need (functions, jobs, positionals). */
@@ -1069,8 +1069,9 @@ function formatOne(conv: string, flags: string, width: number | undefined, prec:
       return pad(body, width, left, false);
     }
     case 'q':
-      // Shell-quote for safe re-input (width/precision/flags do not apply).
-      return shellQuote(arg);
+      // Shell-quote for safe re-input, bash `printf %q` backslash style; honors
+      // width/left-justify like the other string conversions.
+      return pad(shellQuoteBackslash(arg), width, left, false);
     case 'd': case 'i': case 'u': {
       let v = parseIntArg(arg);
       if (conv === 'u' && v < 0) v = v >>> 0;
