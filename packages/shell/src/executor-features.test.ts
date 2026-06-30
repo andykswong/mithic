@@ -612,6 +612,13 @@ test('assigning through a nameref writes the target', async () => {
   expect(out.trim()).toBe('2');
 });
 
+test('${ref:=x} default-assign through a nameref writes the target, not the ref name', async () => {
+  // target unset; `${ref:=hi}` must assign `target`, so `$target` and `$ref`
+  // both read `hi` afterwards.
+  const { out } = await run('declare -n ref=target; : "${ref:=hi}"; echo "$target"; echo "$ref"');
+  expect(out.trim().split('\n')).toEqual(['hi', 'hi']);
+});
+
 // ── dirs / pushd / popd directory stack ──────────────────────────────────────
 
 test('pushd/dirs/popd manage the directory stack', async () => {

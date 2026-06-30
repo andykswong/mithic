@@ -76,6 +76,27 @@ test('${VAR:=default} assigns when unset', async () => {
   expect(env._env.V).toBe('set');
 });
 
+test('${ref:=x} default-assign through a nameref writes the target, not the ref name', async () => {
+  // A faithful nameref env: get/has/set all dereference `ref` → `target`,
+  // mirroring the real Environment (which derefs centrally in set()).
+  const vars: Record<string, string> = {};
+  const deref = (n: string) => (n === 'ref' ? 'target' : n);
+  const env = {
+    get: (n: string) => vars[deref(n)],
+    set: (n: string, v: string) => { vars[deref(n)] = v; },
+    has: (n: string) => deref(n) in vars,
+    getSpecial: () => undefined,
+    runCommandSub: async () => '',
+    listDir: async () => undefined,
+    statPath: async () => undefined,
+    resolveNameref: (n: string) => (n === 'ref' ? 'target' : undefined),
+  } as unknown as ShellEnv;
+  const e = new Expander(env);
+  expect(await e.expandWord('${ref:=hi}')).toEqual(['hi']);
+  expect(vars.target).toBe('hi');
+  expect(vars.ref).toBeUndefined();
+});
+
 test('${#VAR} length', async () => {
   expect(await E({ V: 'hello' }).expandWord('${#V}')).toEqual(['5']);
   expect(await E({ V: '' }).expandWord('${#V}')).toEqual(['0']);

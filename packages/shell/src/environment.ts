@@ -142,6 +142,10 @@ export class Environment implements ShellEnv {
   }
 
   set(name: string, value: string): void {
+    // A `declare -n ref=target` write lands on the TARGET — deref first, mirroring
+    // get()/has(). This makes `${ref:=x}` default-assign write `target`, not `ref`.
+    // It is idempotent for applyAssignment (which pre-derefs before calling set).
+    name = this.deref(name);
     // Assigning `RANDOM=n` seeds the generator rather than storing a scalar.
     if (name === 'RANDOM') {
       const seed = parseInt(value, 10);
