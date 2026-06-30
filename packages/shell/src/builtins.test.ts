@@ -183,3 +183,34 @@ test('getopts into a writable variable still parses normally', async () => {
   expect(code).toBe(0);
   expect(ctx.env.opt).toBe('a');
 });
+
+// ── A5: hash builtin (sandbox-inert) ─────────────────────────────────────────
+
+test('hash with no args succeeds (empty table)', async () => {
+  let out = ''; let err = '';
+  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s), writeErr: (s: string) => (err += s) };
+  expect(await runBuiltin('hash', [], ctx)).toBe(0);
+  expect(out).toBe('');
+  expect(err).toBe('');
+});
+
+test('hash -r succeeds (clear is a no-op in the sandbox)', async () => {
+  const ctx: any = { cwd: '/', env: {}, write: () => {} };
+  expect(await runBuiltin('hash', ['-r'], ctx)).toBe(0);
+});
+
+test('hash NAME succeeds', async () => {
+  const ctx: any = { cwd: '/', env: {}, write: () => {} };
+  expect(await runBuiltin('hash', ['ls'], ctx)).toBe(0);
+});
+
+test('hash with an unknown flag fails with status 2 + usage', async () => {
+  let err = '';
+  const ctx: any = { cwd: '/', env: {}, write: () => {}, writeErr: (s: string) => (err += s) };
+  expect(await runBuiltin('hash', ['-z'], ctx)).toBe(2);
+  expect(err).toMatch(/invalid option/);
+});
+
+test('hash is listed in BUILTINS', () => {
+  expect(BUILTINS).toContain('hash');
+});

@@ -150,7 +150,7 @@ export const BUILTINS = [
   'mapfile', 'readarray',
   'jobs', 'fg', 'bg', 'wait', 'kill', 'break', 'continue', 'source', '.', 'type',
   'shopt', 'trap', 'disown', 'history', 'fc', 'exec', 'coproc',
-  'dirs', 'pushd', 'popd',
+  'dirs', 'pushd', 'popd', 'hash',
 ] as const;
 
 const BUILTIN_SET = new Set<string>(BUILTINS);
@@ -581,6 +581,20 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       // backend-gating diagnostic rather than the old blanket "not supported".
       errOut(ctx, 'shell: coproc: requires a transferable backend\n');
       return 1;
+
+    case 'hash': {
+      // No PATH hash table exists in the sandbox (commands resolve fresh on every
+      // spawn via resolveCommand / exec-from-VFS), so `hash` is inert — but scripts
+      // call it and expect success. Accept the documented option surface and return
+      // 0; reject an unknown flag like bash (status 2).
+      for (const a of args) {
+        if (a.startsWith('-') && !['-r', '-p', '-d', '-t', '-l'].includes(a)) {
+          errOut(ctx, `shell: hash: ${a}: invalid option\nhash: usage: hash [-lr] [-p pathname] [-dt] [name ...]\n`);
+          return 2;
+        }
+      }
+      return 0;
+    }
 
     case 'shopt':
       return runShopt(args, ctx);
