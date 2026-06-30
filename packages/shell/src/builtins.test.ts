@@ -138,3 +138,15 @@ test('printf integer arg accepts hex 0x and char code \'c', async () => {
 test('printf %i is an alias for %d', async () => {
   expect(await printf('%i', '7')).toBe('7');
 });
+
+test('printf %q quotes a value for safe re-input', async () => {
+  expect(await printf('%q\n', 'a b')).toBe('\'a b\'\n');
+});
+
+test('printf %q leaves a safe word bare', async () => {
+  expect(await printf('%q', 'abc')).toBe('abc');
+});
+
+test('printf %q uses ANSI-C $\'…\' for control chars', async () => {
+  expect(await printf('%q', 'a\nb')).toBe('$\'a\\nb\'');
+});

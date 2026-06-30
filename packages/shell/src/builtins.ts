@@ -3,6 +3,8 @@
  * state (cwd, env, functions, jobs) and/or writing to the current stdout/stderr.
  */
 
+import { shellQuote } from './quote.ts';
+
 /** Richer shell state surface a few builtins need (functions, jobs, positionals). */
 export interface ShellState {
   functions: Map<string, { name: string; body: unknown }>;
@@ -995,7 +997,7 @@ function evalTest(args: string[]): boolean {
 
 /**
  * GNU/bash-compatible printf. Supports:
- *   - conversions: %s %b %c %d %i %u %o %x %X %f %e %E %g %G %%
+ *   - conversions: %s %b %c %d %i %u %o %x %X %f %e %E %g %G %q %%
  *   - flags `-` (left), `+` (sign), space, `0` (zero-pad), `#` (alt)
  *   - width and precision, including `*` taking them from args
  *   - format-string recycling: extra args reapply the format
@@ -1020,7 +1022,7 @@ function formatPrintf(format: string, args: string[]): string {
       if (c !== '%') { out += c; i++; continue; }
       if (fmt[i + 1] === '%') { out += '%'; i += 2; continue; }
       // Parse a conversion spec: %[flags][width][.precision]conv
-      const m = /^%([-+ 0#]*)(\*|\d+)?(?:\.(\*|\d+))?([sbcdiuoxXeEfgG])/.exec(fmt.slice(i));
+      const m = /^%([-+ 0#]*)(\*|\d+)?(?:\.(\*|\d+))?([sbcdiuoxXeEfgGq])/.exec(fmt.slice(i));
       if (!m) { out += c; i++; continue; } // lone % with no valid conversion
       consumedConversion = true;
       const [whole, flags] = m;
@@ -1065,6 +1067,9 @@ function formatOne(conv: string, flags: string, width: number | undefined, prec:
       body = arg.slice(0, 1);
       return pad(body, width, left, false);
     }
+    case 'q':
+      // Shell-quote for safe re-input (width/precision/flags do not apply).
+      return shellQuote(arg);
     case 'd': case 'i': case 'u': {
       let v = parseIntArg(arg);
       if (conv === 'u' && v < 0) v = v >>> 0;

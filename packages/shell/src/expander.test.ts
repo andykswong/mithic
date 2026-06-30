@@ -248,6 +248,28 @@ test('"pre${arr[@]}post" boundary semantics', async () => {
   expect(await e.expandWord('"pre${a[@]}post"')).toEqual(['pre1', '2', '3post']);
 });
 
+// ── ${var@Q} parameter transform (quote for re-input) ────────────────────────
+
+test('${var@Q} quotes the value for safe re-input', async () => {
+  const e = E({ x: 'a b' });
+  expect(await e.expandWord('"${x@Q}"')).toEqual(["'a b'"]);
+});
+
+test('${var@Q} leaves a safe word bare', async () => {
+  const e = E({ x: 'abc.txt' });
+  expect(await e.expandWord('${x@Q}')).toEqual(['abc.txt']);
+});
+
+test('${var@Q} does not break ${arr[@]} expansion', async () => {
+  const e = E({}, { getArray: (n) => (n === 'a' ? ['1', '2 3', '4'] : undefined) });
+  expect(await e.expandWord('"${a[@]}"')).toEqual(['1', '2 3', '4']);
+});
+
+test('unsupported @-transform returns the value unchanged', async () => {
+  const e = E({ x: 'Hello' });
+  expect(await e.expandWord('${x@U}')).toEqual(['Hello']);
+});
+
 // ── glob ──────────────────────────────────────────────────────────────────
 
 test('glob * matches files in a directory', async () => {
