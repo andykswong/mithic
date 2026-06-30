@@ -1,10 +1,11 @@
 import type { FdAction } from '@mithic/protocol';
-import { PipeReader, PipeWriter } from '@mithic/protocol';
+import { PipeReader, INITIAL_CREDIT_BYTES } from '@mithic/protocol';
 import type { FileSystemProvider, FileHandle, OpenFlags } from '@mithic/io/vfs';
 import { normalizePath } from '@mithic/io/vfs';
 import type { CapabilityManager, FsOperation } from './capability-manager.ts';
 import type { IpcBroker } from './ipc-broker.ts';
 import type { SpawnInit } from './kernel.ts';
+import { pumpToPort } from './pump.ts';
 
 /**
  * C3 — wires a child process's file descriptors for `process/spawn`'s `fds`
@@ -143,69 +144,42 @@ export class FdWiring {
   /**
    * K2: stream a VFS file's bytes into a pipe WRITE port (the child's read end),
    * honoring the credit protocol, then send EOF and close. Reads the file in
-   * chunks so a large file does not buffer wholesale. Fire-and-forget; errors
-   * close the port (the child sees EOF/EPIPE).
+   * chunks so a large file does not buffer wholesale, delegating the credit/EOF
+   * loop to the shared {@link pumpToPort}. Fire-and-forget; errors close the port
+   * (the child sees EOF/EPIPE) and the file handle is always closed.
    */
   async #feedFileToPort(handle: FileHandle, writePort: MessagePort): Promise<void> {
-    writePort.start?.();
-    // C1: the shared PipeWriter owns credit accounting + the STICKY broken latch
-    // (the reader cancelling or sending EPIPE must terminate this pump promptly —
-    // previously the kernel writers lacked the sticky latch the guest writer had).
-    const flow = new PipeWriter();
-    writePort.onmessage = (e: MessageEvent): void => {
-      const msg = e.data as { type?: string; bytes?: number };
-      if (msg?.type === 'credit') flow.addCredit(msg.bytes ?? 0);
-      else if (msg?.type === 'end' || msg?.type === 'error') flow.markBroken('EPIPE');
+    let offset = 0;
+    const next = async (): Promise<Uint8Array | null> => {
+      // Read the next chunk first so its size is known before reserving credit.
+      const data = await this.#vfs.read(handle, offset, INITIAL_CREDIT_BYTES);
+      if (data.byteLength === 0) return null; // EOF
+      offset += data.byteLength;
+      return data;
     };
     try {
-      let offset = 0;
-      const CHUNK = 64 * 1024;
-      for (;;) {
-        // Read the next chunk first so we know its exact size, then reserve credit
-        // for it. reserve() rejects if the pipe is broken, ending the pump.
-        const data = await this.#vfs.read(handle, offset, CHUNK);
-        if (data.byteLength === 0) break; // EOF
-        await flow.reserve(data.byteLength);
-        offset += data.byteLength;
-        writePort.postMessage({ type: 'data', chunk: data }, [data.buffer as ArrayBuffer]);
-      }
-    } catch { /* read/transfer failure OR broken pipe: fall through to EOF/close */ }
-    try { writePort.postMessage({ type: 'end' }); } catch { /* closed */ }
-    try { writePort.close(); } catch { /* closed */ }
-    try { await this.#vfs.close(handle); } catch { /* already closed */ }
+      await pumpToPort(writePort, next, INITIAL_CREDIT_BYTES);
+    } finally {
+      try { await this.#vfs.close(handle); } catch { /* already closed */ }
+    }
   }
 
   /**
    * R1: stream an in-memory byte buffer into a pipe WRITE port (the child's read
-   * end), honoring the credit protocol, then send EOF and close. Slices into
-   * <= 64 KiB sub-chunks and never reserves more than the credit window — the
-   * sticky-broken-aware replacement for the old inline-`stdinData` `feedPort`.
-   * Fire-and-forget; a broken pipe (reader cancel/EPIPE) ends the pump promptly.
+   * end), honoring the credit protocol, then send EOF and close. The shared
+   * {@link pumpToPort} sub-chunks the buffer to the credit window so it never
+   * reserves more than a reader can grant. Fire-and-forget; a broken pipe
+   * (reader cancel/EPIPE) ends the pump promptly.
    */
   async #feedBytesToPort(data: Uint8Array, writePort: MessagePort): Promise<void> {
-    writePort.start?.();
-    const flow = new PipeWriter();
-    writePort.onmessage = (e: MessageEvent): void => {
-      const msg = e.data as { type?: string; bytes?: number };
-      if (msg?.type === 'credit') flow.addCredit(msg.bytes ?? 0);
-      else if (msg?.type === 'end' || msg?.type === 'error') flow.markBroken('EPIPE');
+    let sent = false;
+    // Hand the whole buffer to the pump once; it sub-chunks to the window itself.
+    const next = (): Promise<Uint8Array | null> => {
+      if (sent) return Promise.resolve(null);
+      sent = true;
+      return Promise.resolve(data);
     };
-    try {
-      let offset = 0;
-      const CHUNK = 64 * 1024;
-      while (offset < data.byteLength) {
-        const end = Math.min(offset + CHUNK, data.byteLength);
-        // Copy out the sub-chunk so transferring its buffer cannot detach the
-        // caller's source buffer (slice on a Uint8Array view shares the backing
-        // ArrayBuffer; a fresh allocation is owned solely by this message).
-        const chunk = data.slice(offset, end);
-        await flow.reserve(chunk.byteLength);
-        offset = end;
-        writePort.postMessage({ type: 'data', chunk }, [chunk.buffer as ArrayBuffer]);
-      }
-    } catch { /* broken pipe: fall through to EOF/close */ }
-    try { writePort.postMessage({ type: 'end' }); } catch { /* closed */ }
-    try { writePort.close(); } catch { /* closed */ }
+    await pumpToPort(writePort, next, INITIAL_CREDIT_BYTES);
   }
 
   /**

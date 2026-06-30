@@ -3,11 +3,12 @@ import { fsErrorToErrno, isSyscallName } from '@mithic/protocol';
 import { FileSystemError, normalizePath } from '@mithic/io/vfs';
 import type { FileSystemProvider, FileHandle, OpenFlags } from '@mithic/io/vfs';
 import type { HttpClient, HttpRequest, HttpResponse } from '@mithic/io/net';
-import { PipeWriter, INITIAL_CREDIT_BYTES } from '@mithic/protocol';
+import { INITIAL_CREDIT_BYTES } from '@mithic/protocol';
 import type { CapabilityManager, FsOperation } from './capability-manager.ts';
 import type { IpcBroker } from './ipc-broker.ts';
 import type { WaitResult } from './process-manager.ts';
 import type { DomMutation } from '@mithic/guest-runtime/remote-dom';
+import { pumpToPort } from './pump.ts';
 
 /** Thrown when a process references an fd it does not own (wrong pid or never opened). */
 class BadFdError extends Error {
@@ -1464,43 +1465,22 @@ export class SyscallDispatcher {
    * not the total.
    */
   async #feedStreamToPort(body: ReadableStream<Uint8Array>, writePort: MessagePort): Promise<void> {
-    writePort.start?.();
-    const flow = new PipeWriter();
-    writePort.onmessage = (e: MessageEvent): void => {
-      const msg = e.data as { type?: string; bytes?: number };
-      if (msg?.type === 'credit') flow.addCredit(msg.bytes ?? 0);
-      else if (msg?.type === 'end' || msg?.type === 'error') flow.markBroken('EPIPE');
-    };
     const reader = body.getReader();
+    // The shared pump sub-chunks each source value to INITIAL_CREDIT_BYTES (R2)
+    // and owns the credit/markBroken handling; `next` pulls from the body reader.
+    const next = async (): Promise<Uint8Array | null> => {
+      const { value, done } = await reader.read();
+      return done ? null : (value ?? new Uint8Array(0));
+    };
     let broken = false;
     try {
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        if (!value || value.byteLength === 0) continue;
-        // R2: never reserve more than the reader's window in one go (it can never
-        // grant more), or the pump deadlocks. Split a large source chunk into
-        // window-sized sub-chunks; each is reserved + posted independently so a
-        // >window chunk flows over a small (default 64 KiB) window with full
-        // back-pressure preserved.
-        for (let off = 0; off < value.byteLength; off += INITIAL_CREDIT_BYTES) {
-          const sub = toTightView(value.subarray(off, off + INITIAL_CREDIT_BYTES));
-          // reserve() rejects if the pipe is broken (guest cancelled / EPIPE),
-          // ending the pump and triggering source cancellation below.
-          await flow.reserve(sub.byteLength);
-          writePort.postMessage({ type: 'data', chunk: sub }, [sub.buffer as ArrayBuffer]);
-        }
-      }
-    } catch {
-      // A broken pipe (or read/transfer failure): stop pumping and cancel the
-      // source so an unbounded upstream stops (early-cancel → broken pipe → abort).
-      broken = true;
+      broken = await pumpToPort(writePort, next, INITIAL_CREDIT_BYTES);
     } finally {
       reader.releaseLock();
+      // A broken pipe (or read failure): cancel the source so an unbounded
+      // upstream stops (early-cancel → broken pipe → abort).
       if (broken) { try { await body.cancel(); } catch { /* already cancelled */ } }
     }
-    try { writePort.postMessage({ type: 'end' }); } catch { /* closed */ }
-    try { writePort.close(); } catch { /* closed */ }
   }
 }
 
