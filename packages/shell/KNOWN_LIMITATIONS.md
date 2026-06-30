@@ -61,12 +61,7 @@ Prioritized for agents. Each row: the gap + a one-line agent use case.
 
 | Feature | AI-agent use case | Status |
 |---------|-------------------|--------|
-| **remaining `${var@OP}` transforms** (`@A @a @P @K @k`) | `@Q @U @u @L @E` are done; the rest (declare-form `@A`/`@a`, prompt-expand `@P`, key/value quote `@K`/`@k`) are format/context-dependent and low agent value — accepted but return the value unchanged | **pending** |
-| **`pushd +N` / `popd +N` rotation** | Rotating the directory stack by index; the core `pushd DIR`/bare-`pushd`-swap/`popd`/`dirs` forms are implemented, the numeric-rotation forms are a follow-up | **pending** |
-| **`readonly` enforcement — narrow gaps** | Core `readonly` enforcement is implemented; still NOT enforced: a `for X in …` loop variable, a `getopts` var, and a `X=2 cmd` prefix-overlay can overwrite a readonly, and `${ref:=x}` default-assign through a nameref writes the literal ref name | **pending** |
-| **completion builtins** (`complete`/`compgen`/`compopt`) | Interactive completion — low priority for non-interactive agents | **pending** |
-| **`read -s` (silent)** | No TTY in the sandbox; secret prompting not meaningful here | **pending** |
-| **`hash`** | Command-location caching — irrelevant in the sandbox (no PATH hash table to manage) | **pending** |
+| **remaining `${var@OP}` transforms** (`@A @P @K @k`) | `@Q @U @u @L @E @a` are done (`@a` returns attribute flags `r`/`n`/`a`/`A`); the rest (declare-statement reconstruction `@A`, prompt-expand `@P`, assoc key/value quote `@K`/`@k`) are format/context-dependent and low agent value — accepted but return the value unchanged | **pending** |
 | **`coproc` on relay backends** | `coproc` is fully implemented (grammar, `execCoproc`, `COPROC`/`COPROC_PID`, e2e tests) on the TRANSFERABLE backends (Worker/iframe); on the relay backends (quickjs/ivm) it emits `shell: coproc: requires a transferable backend` (status 1) — the same relay-port limitation as relay stdin. Closing it needs a relay duplex-pipe channel. | **pending** (runtime done) |
 | **pipeline final-stage streaming** | Simple-command pipelines stream via the concurrent kernel path; a COMPOUND-stage pipeline (`yes \| { head -n3; }`) routes to the serialized in-process `execNodePipeline`, which buffers a stage to completion. Deadlock regression test closed; principled fix routes simple-command stages through `runPipeline`. | **pending** |
 
