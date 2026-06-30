@@ -2,7 +2,7 @@
 import { expect, test } from 'vitest';
 import { Executor } from './executor.ts';
 
-function harness(ctx: Record<string, unknown> = {}) {
+function harness(ctx: Record<string, unknown> = {}, opts: Record<string, unknown> = {}) {
   const spawned: any[] = [];
   const k = {
     spawned,
@@ -14,14 +14,30 @@ function harness(ctx: Record<string, unknown> = {}) {
     onStdout: (s) => { out += s; },
     onStderr: (s) => { err += s; },
     resolve: (n) => n,
+    ...opts,
   });
   return { ex, get out() { return out; }, get err() { return err; } };
 }
 
-function runPosix(s: string) {
-  const h = harness();
+function runPosix(s: string, opts: Record<string, unknown> = {}) {
+  const h = harness({}, opts);
   h.ex.setOption('posix', true);
   return { promise: h.ex.exec(s), h };
+}
+
+/**
+ * A minimal FsClient stub whose `fsStat` reports a fixed set of paths as existing
+ * regular files. Used to make `set -C` (noclobber) deterministically throw a
+ * RedirectError for `> EXISTING` without a real VFS.
+ */
+function noclobberFs(existing: Set<string>) {
+  return {
+    fsOpen: () => 1,
+    fsWrite: () => {},
+    fsRead: () => '',
+    fsClose: () => {},
+    fsStat: (p: string) => (existing.has(p) ? { dir: false } : undefined),
+  };
 }
 
 // ── POSIX: disabled bash extensions ─────────────────────────────────────────
@@ -120,6 +136,45 @@ test('non-POSIX: the same bad `set` option is NOT fatal — script continues', a
   const h = harness();
   // default (non-posix) mode: error is reported (status 2), execution continues.
   await h.ex.exec('set -o bogusoption; echo STILL_RUNS');
+  expect(h.out).toContain('STILL_RUNS');
+});
+
+// POSIX 2.8.1: a REDIRECTION error on a special builtin (`:`, `export`, …) must
+// abort a non-interactive shell in posix mode. The harness drives a deterministic
+// RedirectError via `set -C` (noclobber) over a stubbed FsClient that reports the
+// target as an existing regular file — `: > existing` then refuses to overwrite.
+test('POSIX: a redirection error on a special builtin (:) is fatal — script aborts', async () => {
+  const fs = noclobberFs(new Set(['/exists']));
+  const { promise, h } = runPosix('set -C; : > /exists; echo SHOULD_NOT_PRINT', { fs });
+  const code = await promise;
+  expect(h.out).not.toContain('SHOULD_NOT_PRINT');
+  expect(code).not.toBe(0);
+  // The diagnostic reaches stderr with a SINGLE `shell:` prefix (not doubled).
+  expect(h.err).toMatch(/cannot overwrite existing file/);
+  expect(h.err).not.toMatch(/shell: shell:/);
+});
+
+test('POSIX: a redirection error on `export` (special builtin) is fatal', async () => {
+  const fs = noclobberFs(new Set(['/exists']));
+  const { promise, h } = runPosix('set -C; export X=1 > /exists; echo SHOULD_NOT_PRINT', { fs });
+  const code = await promise;
+  expect(h.out).not.toContain('SHOULD_NOT_PRINT');
+  expect(code).not.toBe(0);
+});
+
+test('POSIX: a redirection error on a NON-special builtin (echo) is NOT fatal', async () => {
+  // `echo` is a regular builtin, not a POSIX special builtin: a redirect error
+  // is non-fatal even in posix mode — the next statement still runs.
+  const fs = noclobberFs(new Set(['/exists']));
+  const { promise, h } = runPosix('set -C; echo hi > /exists; echo STILL_RUNS', { fs });
+  await promise;
+  expect(h.out).toContain('STILL_RUNS');
+});
+
+test('non-POSIX: the same redirection error on a special builtin is NOT fatal', async () => {
+  const fs = noclobberFs(new Set(['/exists']));
+  const h = harness({}, { fs });
+  await h.ex.exec('set -C; : > /exists; echo STILL_RUNS');
   expect(h.out).toContain('STILL_RUNS');
 });
 

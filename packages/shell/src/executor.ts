@@ -25,7 +25,7 @@ import { globMatch } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
 import { Expander, ExpansionError } from './expander.ts';
 import { expandHistory, HistoryEventNotFound } from './history-expand.ts';
-import { isBuiltin, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES, PosixSpecialBuiltinError } from './builtins.ts';
+import { isBuiltin, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES, PosixSpecialBuiltinError, POSIX_SPECIAL_BUILTINS } from './builtins.ts';
 import type { BuiltinContext, ShellState, ShellOptionName } from './builtins.ts';
 import { Environment, computeShlvl } from './environment.ts';
 import type { EnvHost } from './environment.ts';
@@ -1035,10 +1035,27 @@ export class Executor {
     try {
       restore = await this.applyRedirects(redirects, io);
     } catch (e) {
-      if (e instanceof RedirectError) { io.stderr(`shell: ${e.message}\n`); return 1; }
+      // A compound statement (pipeline/group/loop) is never a special builtin, so
+      // pass no name — a redirect error here is reported non-fatally (returns 1).
+      if (e instanceof RedirectError) return this.onRedirectError(undefined, e, io);
       throw e;
     }
     try { return await fn(io); } finally { restore(); }
+  }
+
+  /**
+   * Surface a {@link RedirectError}: write the diagnostic and return 1. POSIX
+   * 2.8.1 — when the failing command is a SPECIAL builtin (`POSIX_SPECIAL_BUILTINS`)
+   * and posix mode is on, the error is FATAL to a non-interactive shell, so throw
+   * {@link PosixSpecialBuiltinError} instead; the statement-loop in {@link run}
+   * catches it and aborts the script.
+   */
+  private onRedirectError(name: string | undefined, e: RedirectError, io: CommandIO): number {
+    if (this.options.posix && name !== undefined && POSIX_SPECIAL_BUILTINS.has(name)) {
+      throw new PosixSpecialBuiltinError(name, 1, e.message);
+    }
+    io.stderr(`shell: ${e.message}\n`);
+    return 1;
   }
 
   /**
@@ -1616,7 +1633,7 @@ export class Executor {
       try {
         restore = await this.applyRedirects(cmd.redirects, io);
       } catch (e) {
-        if (e instanceof RedirectError) { io.stderr(`shell: ${e.message}\n`); return 1; }
+        if (e instanceof RedirectError) return this.onRedirectError(name, e, io);
         throw e;
       }
     }

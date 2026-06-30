@@ -59,7 +59,7 @@ tests; they are the parity items this wave closed.
 |------|-------------------|--------|
 | `#!/usr/bin/env <interp>` shebang arg honored | Exec-from-VFS scripts with the portable `env` shebang dispatch correctly (was dropped → misdispatch as interpreter `/usr/bin/env`) | **done** |
 | CRLF shebang lines tolerated | Scripts authored on Windows (CRLF) parse the interpreter without a trailing `\r` leak | **done** |
-| POSIX special-builtin fatality (POSIX 2.8.1) — **partial** | A bad `set` option now aborts a non-interactive shell in posix mode (no silent continue), via `PosixSpecialBuiltinError`. **Scope today: only `set`'s bad-option path throws.** The canonical redirect/assignment-error-on-a-special-builtin case (`export x=1 >/bad`) still returns 1 and continues — wiring `withRedirects`/assignment errors to the same fatal path is a follow-up (see "Pending"). | **partial** |
+| POSIX special-builtin fatality (POSIX 2.8.1) | A fatal error in a special builtin aborts a non-interactive shell in posix mode (no silent continue), via `PosixSpecialBuiltinError`. Covers BOTH (a) a bad `set` option (`set -o bogus`) and (b) the canonical **redirection error** on a special builtin (`: > existing` under `set -C`, `export X=1 > /bad`) — the `execSimple`/`withRedirects` redirect-error path now throws `PosixSpecialBuiltinError` when the failing command is in `POSIX_SPECIAL_BUILTINS` and posix mode is on, instead of returning 1. A redirect error on a NON-special builtin (`echo`) stays non-fatal. (Variable-assignment errors share the same fatal path; assignment-to-`readonly` enforcement itself is not yet modeled — see Pending.) | **done** |
 | Process substitution `<(…)`/`>(…)` rejected in POSIX mode | Agents in strict posix mode get a clear rejection instead of a bash-only extension | **done** |
 | `read -r` (raw — no backslash mangling) | `read -r line` preserves backslashes; the prior silent `-r` ignore was a correctness trap | **done** |
 | `read -a` / `read -d` / `read -n` / `read -N` (incl. clustered `-ra`/`-rn3`) | Parse a line into an array; NUL/custom delimiters (`find -print0`); `-n` (≤N, stop at delim) and `-N` (exactly N, ignore delim); short flags cluster like bash (`read -ra arr`, `read -rn3 x`) | **done** |
@@ -83,7 +83,7 @@ Prioritized for agents. Each row: the gap + a one-line agent use case.
 | **`read -s` (silent)** | No TTY in the sandbox; secret prompting not meaningful here | **pending** |
 | **full coproc** | Bidirectional co-process pipes; only partial support today | **pending** |
 | **pipeline final-stage streaming** | The last pipeline stage streaming output incrementally (vs buffering) for long-running agent pipelines | **pending** |
-| **special-builtin fatality: redirect/assignment path** | POSIX 2.8.1's canonical case — a redirection or assignment error on a special builtin (`export`/`readonly`/`.`) aborts the shell in posix mode. Only `set`'s bad-option path is fatal today; thread `withRedirects`/assignment errors through `PosixSpecialBuiltinError` too | **pending** |
+| **`readonly` re-assignment rejection** | `readonly RO=1; RO=2` should fail (a variable-assignment error). The `readonly` builtin does not yet track read-only-ness, so the assignment succeeds. Once enforced, the assignment error already routes through the special-builtin fatal path in posix mode (the redirect path is done — see "Closed"). | **pending** |
 
 ---
 
