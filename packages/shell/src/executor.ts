@@ -2085,6 +2085,7 @@ export class Executor {
       doBreak: (n) => { throw new LoopBreak(n); },
       doContinue: (n) => { throw new LoopContinue(n); },
       doReturn: (n) => { throw new FuncReturn(n); },
+      evalArith: (expr) => evalArith(expr, this.arithEnvForExpr()),
       state: this.shellState(),
     };
     const status = await runBuiltin(name, argv, ctx);

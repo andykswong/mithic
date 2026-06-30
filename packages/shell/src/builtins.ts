@@ -123,6 +123,12 @@ export interface BuiltinContext {
   doBreak?(n: number): never;
   doContinue?(n: number): never;
   doReturn?(n: number): never;
+  /**
+   * Evaluate a single arithmetic expression over the live shell env (assignments
+   * mutate the env), returning its integer value — backs the `let` builtin.
+   * Implemented by the executor over the same env proxy `(( ))` uses.
+   */
+  evalArith?(expr: string): number;
   /** Richer state for local/declare/shift/getopts/jobs/wait. */
   state?: ShellState;
 }
@@ -130,7 +136,7 @@ export interface BuiltinContext {
 export const BUILTINS = [
   'cd', 'pwd', 'export', 'unset', 'echo', 'printf',
   'test', '[', 'true', 'false', 'exit', 'eval', 'set', 'cat', ':',
-  'local', 'declare', 'readonly', 'shift', 'return', 'getopts', 'read',
+  'local', 'declare', 'readonly', 'let', 'shift', 'return', 'getopts', 'read',
   'mapfile', 'readarray',
   'jobs', 'fg', 'bg', 'wait', 'kill', 'break', 'continue', 'source', '.', 'type',
   'shopt', 'trap', 'disown', 'history', 'fc', 'exec', 'coproc',
@@ -269,6 +275,16 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         if (isReadonly) ctx.state?.markReadonly?.(n);
       }
       return 0;
+    }
+
+    case 'let': {
+      // Evaluate each arithmetic expression over the live env (assignments take).
+      // Exit status mirrors bash: 1 when the LAST expression evaluates to 0, else
+      // 0. No expressions → status 1.
+      if (args.length === 0) return 1;
+      let last = 0;
+      for (const expr of args) last = ctx.evalArith?.(expr) ?? 0;
+      return last === 0 ? 1 : 0;
     }
 
     case 'shift': {

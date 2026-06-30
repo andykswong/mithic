@@ -547,3 +547,21 @@ test('readonly NAME=val sets the value (first assignment succeeds)', async () =>
   const { out } = await run('readonly RO=hello; echo "$RO"');
   expect(out.trim()).toBe('hello');
 });
+
+// ── let (arithmetic-evaluation builtin) ──────────────────────────────────────
+
+test('let evaluates arithmetic and assigns', async () => {
+  const { out } = await run('let "x = 2 + 3"; echo $x');
+  expect(out.trim()).toBe('5');
+});
+
+test('let exit status is 1 when the last expr is 0, 0 otherwise', async () => {
+  expect((await run('let "0"; echo $?')).out.trim()).toBe('1');
+  expect((await run('let "1"; echo $?')).out.trim()).toBe('0');
+});
+
+test('let multiple expressions take status from the last', async () => {
+  // last expr (b=0) evaluates to 0 → status 1, but both assignments take.
+  const { out } = await run('let "a=1" "b=0"; echo "$a $b $?"');
+  expect(out.trim()).toBe('1 0 1');
+});
