@@ -40,7 +40,7 @@ export const COMMAND_NAMES = [
   // xargs
   'xargs',
   // coreutils expansion batch (B1)
-  'printenv', 'which', 'split', 'od', 'strings', 'du', 'join',
+  'printenv', 'which', 'split', 'od', 'strings', 'du', 'join', 'expand', 'unexpand',
 ] as const;
 
 export type CoreutilsCommandName = typeof COMMAND_NAMES[number];
