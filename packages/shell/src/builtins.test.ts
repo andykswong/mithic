@@ -159,3 +159,27 @@ test('printf %q honors width (right-justified)', async () => {
 test('printf %q empty string', async () => {
   expect(await printf('%q', '')).toBe('\'\'');
 });
+
+// ── A2: readonly enforcement on a getopts variable ──────────────────────────
+
+test('getopts into a readonly variable is rejected (status 1, no write)', async () => {
+  let err = '';
+  const ctx: any = {
+    cwd: '/', env: { OPTIND: '1' }, write: () => {}, writeErr: (s: string) => (err += s),
+    state: { positional: ['-a'], isReadonly: (n: string) => n === 'opt' },
+  };
+  const code = await runBuiltin('getopts', ['ab', 'opt'], ctx);
+  expect(code).toBe(1);
+  expect(err).toMatch(/readonly variable/);
+  expect(ctx.env.opt).toBeUndefined();
+});
+
+test('getopts into a writable variable still parses normally', async () => {
+  const ctx: any = {
+    cwd: '/', env: { OPTIND: '1' }, write: () => {},
+    state: { positional: ['-a'], isReadonly: () => false },
+  };
+  const code = await runBuiltin('getopts', ['ab', 'opt'], ctx);
+  expect(code).toBe(0);
+  expect(ctx.env.opt).toBe('a');
+});

@@ -810,6 +810,12 @@ function listOptions(ctx: BuiltinContext, dashForm: boolean): void {
 function runGetopts(args: string[], ctx: BuiltinContext): number {
   const optstring = args[0] ?? '';
   const varName = args[1] ?? '';
+  // getopts writes its NAME variable in several places below; a readonly NAME is
+  // rejected up front (status 1, no write) like bash, covering all write sites.
+  if (ctx.state?.isReadonly?.(varName)) {
+    errOut(ctx, `shell: getopts: ${varName}: readonly variable\n`);
+    return 1;
+  }
   const params = args.length > 2 ? args.slice(2) : (ctx.state?.positional ?? []);
   let optind = parseInt(ctx.env.OPTIND ?? '1', 10) || 1;
 
