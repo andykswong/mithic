@@ -322,6 +322,16 @@ export class Executor {
       statPath: (p) => this.statPath(p),
       procSub: (s, d) => this.procSub(s, d),
       resolveNameref: (n) => this.namerefs.get(n),
+      attrFlags: (name) => {
+        // bash `${var@a}`: attribute-type letter (A assoc / a indexed) then `n`
+        // (nameref) then `r` (readonly). Single-attribute cases are unambiguous.
+        let f = '';
+        if (this.assocArrays.has(name)) f += 'A';
+        else if (this.arrays.has(name)) f += 'a';
+        if (this.namerefs.has(name)) f += 'n';
+        if (this.readonlyNames.has(name)) f += 'r';
+        return f;
+      },
     };
     this.environment = new Environment(this.context, host);
     // $SHLVL: derive from the inherited value and store it back (G7).

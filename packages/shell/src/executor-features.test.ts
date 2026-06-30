@@ -619,6 +619,20 @@ test('${ref:=x} default-assign through a nameref writes the target, not the ref 
   expect(out.trim().split('\n')).toEqual(['hi', 'hi']);
 });
 
+// ── A8: ${var@a} attribute-flags transform ───────────────────────────────────
+
+test('${var@a} reports readonly (r), nameref (n), indexed (a) and associative (A) flags', async () => {
+  const { out } = await run([
+    'ro=1; readonly ro;',
+    'declare -n ref=ro;',
+    'idx=(x y);',
+    'declare -A m;',
+    'plain=hi;',
+    'echo "[${ro@a}][${ref@a}][${idx@a}][${m@a}][${plain@a}]"',
+  ].join(' '));
+  expect(out.trim()).toBe('[r][n][a][A][]');
+});
+
 // ── dirs / pushd / popd directory stack ──────────────────────────────────────
 
 test('pushd/dirs/popd manage the directory stack', async () => {

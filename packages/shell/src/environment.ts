@@ -66,6 +66,11 @@ export interface EnvHost {
    * `name` is not a nameref. Variable reads dereference through this. Optional.
    */
   resolveNameref?(name: string): string | undefined;
+  /**
+   * Attribute flags of a variable for `${var@a}` (`r`/`n`/`a`/`A`; scalar → '').
+   * Derived from the executor's readonly/nameref/array/assoc state. Optional.
+   */
+  attrFlags?(name: string): string;
 }
 
 export class Environment implements ShellEnv {
@@ -210,6 +215,9 @@ export class Environment implements ShellEnv {
   names(): string[] {
     return [...new Set([...Object.keys(this.vars), ...this.arrays.keys()])];
   }
+
+  /** `${var@a}` attribute flags — delegated to the executor host (scalar → ''). */
+  attrFlags(name: string): string { return this.host.attrFlags?.(name) ?? ''; }
 
   // ── ShellEnv: cross-cutting (delegated to the executor host) ────────────────
 

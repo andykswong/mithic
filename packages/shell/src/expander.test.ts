@@ -311,6 +311,21 @@ test('unsupported @-transform (@A) returns the value unchanged', async () => {
   expect(await e.expandWord('${x@A}')).toEqual(['Hello']);
 });
 
+test('${var@a} returns attribute flags (readonly → r)', async () => {
+  const e = E({ x: 'v' }, { attrFlags: (n) => (n === 'x' ? 'r' : '') });
+  expect(await e.expandWord('${x@a}')).toEqual(['r']);
+});
+
+test('${var@a} of a plain scalar is empty', async () => {
+  const e = E({ y: 'v' }, { attrFlags: () => '' });
+  expect(await e.expandWord('${y@a}')).toEqual(['']);
+});
+
+test('${var@a} without an attrFlags hook is empty', async () => {
+  const e = E({ z: 'v' });
+  expect(await e.expandWord('${z@a}')).toEqual(['']);
+});
+
 // ── glob ──────────────────────────────────────────────────────────────────
 
 test('glob * matches files in a directory', async () => {

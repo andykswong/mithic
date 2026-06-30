@@ -65,6 +65,11 @@ export interface ShellEnv {
   /** All currently-set variable names, for `${!prefix*}` / `${!prefix@}`. Optional. */
   names?(): string[];
   /**
+   * Attribute flags of a variable for `${var@a}`: `r` readonly, `n` nameref,
+   * `a` indexed array, `A` associative array; a plain scalar → `''`. Optional.
+   */
+  attrFlags?(name: string): string;
+  /**
    * Process substitution `<(cmd)` / `>(cmd)`: run `cmd` and return a VFS path the
    * surrounding command reads (`dir: 'in'`) or writes (`dir: 'out'`). Optional —
    * undefined ⇒ the construct is left literal.
@@ -561,7 +566,9 @@ export class Expander {
       if (op === 'u') return value.length > 0 ? value[0].toUpperCase() + value.slice(1) : value;
       if (op === 'L') return value.toLowerCase();
       if (op === 'E') return interpretEscapes(value, /*octalBackslashZero*/ false);
-      // Other transforms (@P @A @a @K @k) are not yet supported — return the value
+      // `@a` reports the variable's attribute FLAGS (keyed by NAME, not value).
+      if (op === 'a') return this.env.attrFlags?.(name) ?? '';
+      // Other transforms (@P @A @K @k) are not yet supported — return the value
       // unchanged rather than erroring (forward-compatible; documented).
       return value;
     }
