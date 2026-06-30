@@ -642,3 +642,37 @@ test('dirs abbreviates $HOME with ~ unless -l', async () => {
   const { out } = await run('cd /home/u; dirs; dirs -l', { cwd: '/', env: { HOME: '/home/u' } });
   expect(out.trim().split('\n')).toEqual(['~', '/home/u']);
 });
+
+// ── A4: pushd/popd +N/-N directory-stack rotation ────────────────────────────
+// Build dirs = "/a /b /c" by pushing in reverse: cwd ends at /a, stack = [/b, /c].
+
+test('pushd +1 rotates the directory stack left by 1', async () => {
+  const { out } = await run('cd /c; pushd /b; pushd /a; pushd +1; pwd', { cwd: '/' });
+  // pushd /b → "/b /c"; pushd /a → "/a /b /c"; pushd +1 → "/b /c /a"; pwd → /b
+  expect(out.trim().split('\n')).toEqual(['/b /c', '/a /b /c', '/b /c /a', '/b']);
+});
+
+test('pushd -0 rotates so the last entry becomes the top', async () => {
+  const { out } = await run('cd /c; pushd /b; pushd /a; pushd -0; pwd', { cwd: '/' });
+  // dirs "/a /b /c"; -0 = last (/c) → top → "/c /a /b"; pwd → /c
+  expect(out.trim().split('\n')).toEqual(['/b /c', '/a /b /c', '/c /a /b', '/c']);
+});
+
+test('popd +1 removes the entry at index 1 (cwd unchanged)', async () => {
+  const { out } = await run('cd /c; pushd /b; pushd /a; popd +1; pwd', { cwd: '/' });
+  // dirs "/a /b /c"; popd +1 removes /b → "/a /c"; pwd → /a (unchanged)
+  expect(out.trim().split('\n')).toEqual(['/b /c', '/a /b /c', '/a /c', '/a']);
+});
+
+test('popd +0 removes the current dir (top) and cds to the next', async () => {
+  const { out } = await run('cd /c; pushd /b; pushd /a; popd +0; pwd', { cwd: '/' });
+  // dirs "/a /b /c"; popd +0 removes /a → cwd=/b → "/b /c"; pwd → /b
+  expect(out.trim().split('\n')).toEqual(['/b /c', '/a /b /c', '/b /c', '/b']);
+});
+
+test('pushd +9 out of range reports an error and leaves the stack unchanged', async () => {
+  const { out, err } = await run('cd /c; pushd /b; pushd /a; pushd +9; pwd', { cwd: '/' });
+  expect(err).toMatch(/directory stack index out of range/);
+  // No rotation: pwd stays /a.
+  expect(out.trim().split('\n')).toEqual(['/b /c', '/a /b /c', '/a']);
+});
