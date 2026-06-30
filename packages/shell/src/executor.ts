@@ -1638,23 +1638,31 @@ export class Executor {
 
   private async execSimple(cmd: SimpleCommand, io: CommandIO): Promise<number> {
     const expander = this.expander();
+    const hasCommand = cmd.name !== '';
 
-    // Scalar prefix assignments become a temporary overlay for a command, or are
-    // applied to the env for a bare assignment. Array / element / append forms
-    // only make sense as bare assignments (handled below).
+    // Scalar prefix assignments become a temporary overlay for a command. Build
+    // it ONLY when there is a command to run it for — a bare assignment (no
+    // command) is applied via applyAssignment below, so expanding its RHS here
+    // too would evaluate it (and run any command substitution) an extra time.
+    // Array / element / append forms only make sense as bare assignments.
     const localEnv: Record<string, string> = {};
-    for (const a of cmd.assignments) {
-      if (a.array === undefined && a.index === undefined && !a.append) {
-        localEnv[a.name] = await expander.expandToString(a.value);
+    if (hasCommand) {
+      for (const a of cmd.assignments) {
+        if (a.array === undefined && a.index === undefined && !a.append) {
+          localEnv[a.name] = await expander.expandToString(a.value);
+        }
       }
     }
 
-    const hasCommand = cmd.name !== '';
     const argExpander = hasCommand && Object.keys(localEnv).length > 0
       ? new Expander(this.environment.child(localEnv))
       : expander;
 
-    const { name, argv } = await this.expandCommand(cmd, argExpander);
+    // Expand the command NAME + ARGS only. The assignments are already handled
+    // (localEnv overlay above for a command, or applyAssignment below for a bare
+    // assignment), so skip expandCommand's own assignment expansion — re-expanding
+    // here would double-run any command substitution in an assignment RHS.
+    const { name, argv } = await this.expandCommand(cmd, argExpander, /*includeAssignmentEnv*/ false);
 
     if (name === '') {
       if (this.options.xtrace && cmd.assignments.length > 0) {
@@ -1662,6 +1670,17 @@ export class Executor {
       }
       // A bare `x=$(cmd)` takes its status from the LAST command substitution in
       // the RHS (M10): `x=$(false); echo $?` → 1. With no command sub, status 0.
+      // applyAssignment is the SOLE expansion of the RHS here (localEnv is not
+      // built when hasCommand is false, and expandCommand no longer re-expands),
+      // so any command substitution runs exactly once.
+      // EDGE CASE: a PREFIX assignment whose command word expands to '' (e.g.
+      // `x=$(cmd) $emptyvar` — a leading assignment plus a name that expands away).
+      // There hasCommand is true so localEnv IS built (one expansion of the RHS),
+      // yet expandCommand resolves the name to '' so we still land here and
+      // applyAssignment runs (a second expansion). That rare form therefore stays
+      // at 2× — acceptable; reordering to fix it would break the
+      // prefix-overlay-affects-argv semantics. (`$emptyvar x=1`, by contrast, has
+      // NO leading assignment — `x=1` is a plain argument — so it expands once.)
       this.lastCmdSubStatus = undefined;
       let rejected = false;
       for (const a of cmd.assignments) {
@@ -2107,13 +2126,18 @@ export class Executor {
 
   // ── dispatch helpers ──────────────────────────────────────────────────────────
 
-  private async expandCommand(cmd: SimpleCommand, expander: Expander): Promise<{ name: string; argv: string[]; env: Record<string, string> }> {
+  private async expandCommand(cmd: SimpleCommand, expander: Expander, includeAssignmentEnv = true): Promise<{ name: string; argv: string[]; env: Record<string, string> }> {
     const env: Record<string, string> = {};
     // Only scalar prefix assignments form the command-prefix env overlay; array /
     // element / append forms are handled as bare assignments by the executor.
-    for (const a of cmd.assignments) {
-      if (a.array === undefined && a.index === undefined && !a.append) {
-        env[a.name] = await expander.expandToString(a.value);
+    // `execSimple` passes includeAssignmentEnv=false because it builds its own
+    // overlay (a command) or applies via applyAssignment (a bare assignment), so
+    // re-expanding the RHS here would double-run any command substitution.
+    if (includeAssignmentEnv) {
+      for (const a of cmd.assignments) {
+        if (a.array === undefined && a.index === undefined && !a.append) {
+          env[a.name] = await expander.expandToString(a.value);
+        }
       }
     }
     const nameFields = cmd.name === '' ? [] : await expander.expandWord(cmd.name);

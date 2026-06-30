@@ -44,6 +44,35 @@ test('command sub exit code does not clobber a later real status', async () => {
   expect(h.out.trim()).toBe('1');
 });
 
+// ── cmd-sub in an assignment RHS evaluates exactly once ─────────────────────
+
+test('x=$(cmd) runs its command substitution exactly once', async () => {
+  // The cmd-sub body echoes a marker to stderr; it must appear exactly ONCE.
+  const h = run('x=$( echo RAN >&2; echo hi )');
+  await h.run();
+  expect((h.err.match(/RAN/g) ?? []).length).toBe(1);
+});
+
+test('x=$(cmd) still captures the substitution value', async () => {
+  const h = run('x=$(echo hello); echo "[$x]"');
+  await h.run();
+  expect(h.out).toContain('[hello]');
+});
+
+test('prefix assignment v=$(cmd) command runs the substitution once', async () => {
+  // `v=$( echo RAN >&2; echo 1 ) :` — the `:` builtin is the command.
+  const h = run('v=$( echo RAN >&2; echo 1 ) :');
+  await h.run();
+  expect((h.err.match(/RAN/g) ?? []).length).toBe(1);
+});
+
+test('prefix assignment overlay is still visible to the command env + argv', async () => {
+  // The overlay value must reach the command's environment and argv expansion.
+  const h = run('v=$(echo bar) echo "[$v]"', {}, {});
+  await h.run();
+  expect(h.out).toContain('[bar]');
+});
+
 // ── M11: $((1/0)) errors with exit 1, not Infinity ──────────────────────────
 
 test('echo $((1/0)) prints error to stderr and aborts nonzero', async () => {
