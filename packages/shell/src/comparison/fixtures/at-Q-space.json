@@ -1,0 +1,6 @@
+{
+  "src": "s=\"a b\"; echo \"${s@Q}\"",
+  "stdout": "'a b'\n",
+  "stderr": "",
+  "code": 0
+}

@@ -33,12 +33,26 @@ dev machine). bash 3.2 LACKS bash-4+ features (case modification `${s^^}`/`${s,,
 
 - Fixtures **SHOULD be (re)recorded on the CI bash version** (newer, typically
   bash 5.x on Linux) via `RECORD_FIXTURES=1` to avoid platform drift. Every case in
-  the first committed suite was chosen to produce **identical** output on bash 3.2
-  AND bash 5.x.
-- **bash-4+ cases** (e.g. `case-upper` / `${s^^}`) are hand-recorded from known
-  bash-5 output, because recording them on bash 3.2 would capture a `bad
-  substitution` error as golden. `compareWithBash4(...)` refuses to record on the
-  default host unless `RECORD_BASH4=1` is also set (signalling a bash-4+ host).
+  the `CASES` list is chosen to produce **identical** output on bash 3.2 AND bash
+  5.x (verified locally), so re-recording on 3.2 is a no-op — the local dev host
+  (bash 3.2) does NOT churn these fixtures, and **CI (Linux bash 5.x) owns
+  re-recording the full suite**.
+- **bash-4+ cases** (`case-upper` / `${s^^}`, `${var@Q}` quoting, single-line
+  `$LINENO`) are hand-recorded from known bash-5 output, because recording them on
+  bash 3.2 would capture a `bad substitution` error (or, for `$LINENO`, the 3.2
+  value `0` rather than the modern `1`) as golden. `compareWithBash4(...)` refuses
+  to record on the default host unless `RECORD_BASH4=1` is also set (signalling a
+  bash-4+ host). mithic matches the bash-5 golden for all of these.
+
+#### `printf %q` quoting-style divergence (not in the suite)
+
+`printf %q` produces a re-inputtable quoting, but the *style* differs from bash for
+words containing shell-special characters: mithic emits the single-quote form
+(`'a b'`, via the shared `shellQuote` in `quote.ts`), whereas bash emits the
+backslash-escaped form (`a\ b`). Both round-trip to the same shell word, but the
+bytes differ, so only the already-safe case (`printf %q hello` → `hello`, identical
+everywhere) is in the comparison suite. The special-char `printf %q` case is a
+deliberate, documented style divergence, not a regression.
 
 ---
 

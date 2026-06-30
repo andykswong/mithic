@@ -1,0 +1,6 @@
+{
+  "src": "printf \"%q\\n\" hello",
+  "stdout": "hello\n",
+  "stderr": "",
+  "code": 0
+}
