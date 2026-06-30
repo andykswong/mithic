@@ -251,6 +251,21 @@ test('compgen -W with an empty prefix prints all words', async () => {
   expect(out).toBe('a\nb\nc\n');
 });
 
+test('compgen -W honors a -- separator for the prefix operand', async () => {
+  let out = '';
+  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s) };
+  expect(await runBuiltin('compgen', ['-W', 'a ab', '--', 'a'], ctx)).toBe(0);
+  expect(out).toBe('a\nab\n');
+});
+
+test('compgen -W with -- and a dash-prefixed prefix filters by that prefix', async () => {
+  let out = '';
+  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s) };
+  // After `--`, a leading-dash token is the literal prefix, not an option.
+  expect(await runBuiltin('compgen', ['-W', '-a -b xx', '--', '-a'], ctx)).toBe(0);
+  expect(out).toBe('-a\n');
+});
+
 test('compgen -A function (no sandbox source) exits 1', async () => {
   let out = '';
   const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s) };

@@ -617,8 +617,15 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       const wIdx = args.indexOf('-W');
       if (wIdx >= 0 && args[wIdx + 1] !== undefined) {
         const words = args[wIdx + 1].split(/\s+/).filter((w) => w !== '');
-        // The prefix is the first non-option trailing operand after the wordlist.
-        const prefix = args.slice(wIdx + 2).find((a) => !a.startsWith('-')) ?? '';
+        // The prefix is the trailing operand after the wordlist. Honor an explicit
+        // `--` end-of-options marker: when present, the prefix is the first token
+        // AFTER `--` (so even a leading-dash prefix is taken literally). Otherwise
+        // fall back to the first non-option token after the wordlist.
+        const tail = args.slice(wIdx + 2);
+        const ddIdx = tail.indexOf('--');
+        const prefix = ddIdx >= 0
+          ? (tail[ddIdx + 1] ?? '')
+          : (tail.find((a) => !a.startsWith('-')) ?? '');
         const matches = words.filter((w) => w.startsWith(prefix));
         for (const m of matches) ctx.write(m + '\n');
         return matches.length > 0 ? 0 : 1;
