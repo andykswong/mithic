@@ -10,12 +10,18 @@
  * The `-t` table mode is faithful to GNU `column -t` (2-space inter-column gap,
  * trailing column not padded, ragged rows align by column index).
  *
- * The default (non-`-t`) "fill" mode is column-major (GNU): entries (one per
- * input line) are laid DOWN each column then across. The column count is the
- * largest whose laid-out width (sum of per-column max-widths + 2-space gutters)
- * fits the line; each column is padded to its own max entry width + gutter, the
- * last column unpadded. Residual simplification: the line width is a fixed 80
- * columns rather than honouring `$COLUMNS`.
+ * The default (non-`-t`) "fill" mode is column-major fill with a UNIFORM column
+ * width (the util-linux `columnate_fillcols` model): one width `colw = maxlen +
+ * gutter` is derived from the WIDEST entry, the column count is the direct
+ * division `cols = max(1, floor(width / colw))`, and entries are laid DOWN each
+ * column then across (`entries[c*rows + r]`). Every cell is padded to the uniform
+ * `colw` except the last populated cell in a row (no trailing whitespace).
+ *
+ * Residual simplifications (NOT full util-linux parity for fill mode):
+ *   - entries are whole input lines, not whitespace-split words — util-linux
+ *     splits on whitespace so `printf 'a b\nc d\n' | column` yields 4 entries,
+ *     whereas this yields 2 (one per line);
+ *   - the line width is a fixed 80 columns rather than honouring `$COLUMNS`.
  */
 import { defineCommand, parseArgs, readAllText, writeString } from '../harness.ts';
 import { readFile } from '../fs.ts';
@@ -50,39 +56,24 @@ export function table(rows: string[][]): string {
 }
 
 /**
- * Column-major fill (GNU `column` default mode): entries are laid DOWN each
- * column then across. The column count is the largest whose laid-out width
- * (sum of per-column max-widths + gutters) fits {@link TERM_WIDTH}; each column
- * is padded to its own max entry width + {@link GUTTER}, last column unpadded.
+ * Column-major fill with a uniform column width (util-linux `column` default
+ * mode, `columnate_fillcols`): one width `colw = maxlen + {@link GUTTER}` is
+ * derived from the WIDEST entry; the column count is the direct division
+ * `cols = max(1, floor({@link TERM_WIDTH} / colw))`; entries are laid DOWN each
+ * column then across (`entries[c*rows + r]`). Every cell is padded to the
+ * uniform `colw` except the last populated cell in a row (no trailing ws).
  */
 export function fill(entries: string[]): string {
   const n = entries.length;
   if (n === 0) return '';
 
-  // Per-column widths for a given column count, laid out column-major.
-  const layout = (cols: number): { rows: number; widths: number[] } => {
-    const rows = Math.ceil(n / cols);
-    const widths: number[] = [];
-    for (let c = 0; c < cols; c++) {
-      let w = 0;
-      for (let r = 0; r < rows; r++) {
-        const e = entries[c * rows + r];
-        if (e !== undefined) w = Math.max(w, e.length);
-      }
-      widths[c] = w;
-    }
-    return { rows, widths };
-  };
-  const lineWidth = (widths: number[]): number =>
-    widths.reduce((s, w) => s + w, 0) + GUTTER * (widths.length - 1);
+  let maxlen = 0;
+  for (const e of entries) maxlen = Math.max(maxlen, e.length);
 
-  // Largest column count that fits; always at least 1.
-  let cols = 1;
-  for (let c = n; c >= 1; c--) {
-    if (lineWidth(layout(c).widths) <= TERM_WIDTH) { cols = c; break; }
-  }
+  const colw = maxlen + GUTTER;
+  const cols = Math.max(1, Math.floor(TERM_WIDTH / colw));
+  const rows = Math.ceil(n / cols);
 
-  const { rows, widths } = layout(cols);
   let out = '';
   for (let r = 0; r < rows; r++) {
     let line = '';
@@ -90,7 +81,7 @@ export function fill(entries: string[]): string {
       const e = entries[c * rows + r];
       if (e === undefined) continue;       // missing trailing entry
       const isLastInRow = c === cols - 1 || entries[(c + 1) * rows + r] === undefined;
-      line += isLastInRow ? e : e.padEnd(widths[c] + GUTTER);
+      line += isLastInRow ? e : e.padEnd(colw);
     }
     out += line + '\n';
   }
