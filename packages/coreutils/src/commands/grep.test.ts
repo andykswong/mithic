@@ -290,6 +290,26 @@ describe('grep', () => {
     expect(h.out()).toBe('');
   });
 
+  // C3: GNU `-q` precedence — error(2) > no-match(1), but a match(0) wins over error.
+  test('-q returns 2 on a read error (missing file), no output', async () => {
+    const h = makeIO({ args: ['grep', '-q', 'x', '/nonexistent'] });
+    expect(await grepCommand(h.io)).toBe(2);
+    expect(h.out()).toBe('');
+    expect(h.err()).toBe('');
+  });
+
+  test('-q returns 0 when a match is found before an unreadable file', async () => {
+    const h = makeIO({ args: ['grep', '-q', 'hit', '/a', '/nonexistent'], files: { '/a': 'hit\n' } });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('');
+  });
+
+  test('-q returns 2 when a read error occurs without any match', async () => {
+    const h = makeIO({ args: ['grep', '-q', 'zzz', '/a', '/nonexistent'], files: { '/a': 'foo\n' } });
+    expect(await grepCommand(h.io)).toBe(2);
+    expect(h.out()).toBe('');
+  });
+
   test('-m 2 stops after 2 matches', async () => {
     const h = makeIO({ args: ['grep', '-m', '2', 'a'], stdinText: 'a\na\na\na\n' });
     expect(await grepCommand(h.io)).toBe(0);

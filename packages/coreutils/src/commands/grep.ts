@@ -500,7 +500,9 @@ const grepCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     }
 
     // -q / --quiet / --silent: no output; exit 0 on the FIRST match (and stop
-    // reading), exit 1 if nothing matches. Overrides all output modes.
+    // reading), exit 1 if nothing matches, exit 2 on a read error WITHOUT a
+    // match. GNU precedence: a match (0) wins over a read error. Overrides all
+    // output modes.
     if (o.quiet) {
       const test = (l: string): boolean => (o.invert ? !matcher.rawMatch(l) : matcher.rawMatch(l));
       if (files.length === 0) {
@@ -517,9 +519,11 @@ const grepCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         let text: string;
         try { text = await readFileText(io, f); }
         catch { hadError = true; continue; }
+        // A match wins over any prior read error (GNU precedence: match → 0).
         if (toLines(text).some(test)) return 0;
       }
-      return 1;
+      // No match: a read error makes the exit 2 (GNU), else 1.
+      return hadError ? 2 : 1;
     }
 
     // Normal / count / context modes.
