@@ -322,6 +322,20 @@ export class Executor {
       statPath: (p) => this.statPath(p),
       procSub: (s, d) => this.procSub(s, d),
       resolveNameref: (n) => this.namerefs.get(n),
+      attrFlags: (name) => {
+        // bash `${var@a}`: attribute-type letter (A assoc / a indexed) then `n`
+        // (nameref) then `r` (readonly). Single-attribute cases are unambiguous.
+        let f = '';
+        if (this.assocArrays.has(name)) f += 'A';
+        else if (this.arrays.has(name)) f += 'a';
+        if (this.namerefs.has(name)) f += 'n';
+        if (this.readonlyNames.has(name)) f += 'r';
+        return f;
+      },
+      isReadonly: (name) => this.readonlyNames.has(name),
+      // The expander's `${var:=x}` readonly warning routes here; mirror the other
+      // readonly diagnostics' `shell: ` prefix and the current stderr frame.
+      warn: (msg) => this.io.stderr(`shell: ${msg}\n`),
     };
     this.environment = new Environment(this.context, host);
     // $SHLVL: derive from the inherited value and store it back (G7).
@@ -862,6 +876,17 @@ export class Executor {
       words = [];
       for (const w of stmt.words) words.push(...await exp.expandWord(w));
     }
+    // A `for X in …` over a readonly `X` is a variable-assignment error: bash
+    // reports `X: readonly variable` and runs no iteration. In POSIX
+    // non-interactive mode it is fatal (the statement-loop aborts); otherwise
+    // report to stderr and end the for-statement with status 1.
+    if (this.readonlyNames.has(stmt.varName!)) {
+      const msg = `${stmt.varName!}: readonly variable`;
+      if (this.options.posix) throw new PosixSpecialBuiltinError(stmt.varName!, 1, msg);
+      io.stderr(`shell: ${msg}\n`);
+      this.lastStatus = 1;
+      return 1;
+    }
     for (const word of words) {
       this.context.env[stmt.varName!] = word;
       try {
@@ -884,8 +909,13 @@ export class Executor {
    */
   private async execArithFor(stmt: Statement, io: CommandIO): Promise<number> {
     let status = 0;
-    const env = this.arithEnvForExpr();
+    // Track refused readonly writes so a counter that can never advance breaks
+    // the loop instead of spinning to the 1M guard. bash infinite-loops here
+    // (the readonly assignment fails every iteration); mithic is SAFER and stops.
+    const rejected = new Set<string>();
+    const env = this.arithEnvForExpr(rejected);
     if (stmt.arithInit) evalArith(stmt.arithInit, env);
+    if (rejected.size > 0) return 1; // init targeted a readonly var → cannot start
     const cond = stmt.arithCond ?? '';
     let guard = 0;
     for (;;) {
@@ -900,15 +930,36 @@ export class Executor {
       }
       if (this.exiting !== undefined) return status;
       if (stmt.arithIncr) evalArith(stmt.arithIncr, env);
+      // A readonly increment target can never advance — break (divergence from
+      // bash, which hangs). The warning was already emitted (warn-once per name).
+      if (rejected.size > 0) break;
     }
     return status;
   }
 
-  /** A live env proxy (bare-name read/write to the shell env) for arithmetic-for. */
-  private arithEnvForExpr(): Record<string, string> {
+  /**
+   * A live env proxy (bare-name read/write to the shell env) for arithmetic-for
+   * and `let`. A write to a `readonly` variable is refused: warn ONCE per name
+   * (so a non-advancing `for ((x=0;...;x++))` over a readonly counter does not
+   * flood stderr) and SKIP the write, but return true so the expression still
+   * yields its RHS value (bash returns the RHS even for a readonly target).
+   *
+   * `rejectedReadonly` collects the names whose write was refused so the caller
+   * (`execArithFor`) can break a loop that can no longer make progress — a
+   * deliberate divergence from bash, which infinite-loops on a readonly counter.
+   */
+  private arithEnvForExpr(rejectedReadonly?: Set<string>): Record<string, string> {
+    const warned = new Set<string>();
     return new Proxy({}, {
       get: (_t, p: string) => this.context.env[p] ?? '',
-      set: (_t, p: string, v) => { this.context.env[p] = String(v); return true; },
+      set: (_t, p: string, v) => {
+        if (this.readonlyNames.has(p)) {
+          rejectedReadonly?.add(p);
+          if (!warned.has(p)) { warned.add(p); this.io.stderr(`shell: ${p}: readonly variable\n`); }
+          return true;
+        }
+        this.context.env[p] = String(v); return true;
+      },
       has: (_t, p: string) => p in this.context.env,
     }) as Record<string, string>;
   }

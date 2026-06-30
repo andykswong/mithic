@@ -190,6 +190,17 @@ test('POSIX: assigning a readonly variable is fatal — script aborts', async ()
   expect(h.err).not.toMatch(/shell: shell:/);
 });
 
+// A `for X in …` over a readonly loop variable is a fatal assignment error in
+// POSIX mode — the for-statement (and the script) aborts before any iteration.
+test('POSIX: readonly for-loop variable is a fatal error — script aborts', async () => {
+  const { promise, h } = runPosix('readonly i; for i in 1 2; do echo X; done; echo AFTER');
+  const code = await promise;
+  expect(h.out).not.toContain('X');
+  expect(h.out).not.toContain('AFTER');
+  expect(code).not.toBe(0);
+  expect(h.err).toMatch(/i: readonly variable/);
+});
+
 // ── POSIX: activation methods ────────────────────────────────────────────────
 
 test('set -o posix activates brace-expansion suppression at runtime', async () => {

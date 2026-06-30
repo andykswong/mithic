@@ -150,7 +150,8 @@ export const BUILTINS = [
   'mapfile', 'readarray',
   'jobs', 'fg', 'bg', 'wait', 'kill', 'break', 'continue', 'source', '.', 'type',
   'shopt', 'trap', 'disown', 'history', 'fc', 'exec', 'coproc',
-  'dirs', 'pushd', 'popd',
+  'dirs', 'pushd', 'popd', 'hash',
+  'compgen', 'complete', 'compopt',
 ] as const;
 
 const BUILTIN_SET = new Set<string>(BUILTINS);
@@ -209,6 +210,17 @@ function formatDirStack(cwd: string, below: string[], long: boolean, home: strin
   return [cwd, ...below].map(abbrev).join(' ');
 }
 
+/**
+ * Resolve a `+N`/`-N` dir-stack token to a 0-based index into the full list
+ * (`[cwd, ...stack]`). `+N` counts from the LEFT, `-N` from the RIGHT
+ * (`-0` = last). Returns undefined if out of range.
+ */
+function rotIndex(token: string, len: number): number | undefined {
+  const n = parseInt(token.slice(1), 10);
+  const idx = token[0] === '+' ? n : len - 1 - n;
+  return idx >= 0 && idx < len ? idx : undefined;
+}
+
 export async function runBuiltin(name: string, args: string[], ctx: BuiltinContext): Promise<number> {
   switch (name) {
     case ':':
@@ -241,7 +253,22 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
     case 'pushd': {
       const stack = ctx.state?.dirStack?.();
       if (stack === undefined) { errOut(ctx, 'shell: pushd: directory stack not available\n'); return 1; }
-      const dir = args.find((a) => !a.startsWith('-'));
+      // `pushd +N`/`-N` rotates the full list `[cwd, ...stack]` so its Nth entry
+      // becomes the new top (`+` from the left, `-` from the right).
+      const rot = args.find((a) => /^[+-]\d+$/.test(a));
+      if (rot !== undefined) {
+        const full = [ctx.cwd, ...stack];
+        const idx = rotIndex(rot, full.length);
+        if (idx === undefined) { errOut(ctx, `shell: pushd: ${rot}: directory stack index out of range\n`); return 1; }
+        const rotated = full.slice(idx).concat(full.slice(0, idx));
+        ctx.cwd = rotated[0];
+        ctx.env.PWD = ctx.cwd;
+        stack.length = 0;
+        stack.push(...rotated.slice(1));
+        ctx.write(formatDirStack(ctx.cwd, stack, false, ctx.env.HOME) + '\n');
+        return 0;
+      }
+      const dir = args.find((a) => !a.startsWith('-') && !/^[+-]\d+$/.test(a));
       if (dir === undefined) {
         // No argument: swap the top two entries (cwd ↔ stack top).
         if (stack.length === 0) { errOut(ctx, 'shell: pushd: no other directory\n'); return 1; }
@@ -263,6 +290,21 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       const stack = ctx.state?.dirStack?.();
       if (stack === undefined) { errOut(ctx, 'shell: popd: directory stack not available\n'); return 1; }
       if (stack.length === 0) { errOut(ctx, 'shell: popd: directory stack empty\n'); return 1; }
+      // `popd +N`/`-N` removes the Nth entry of the full list `[cwd, ...stack]`
+      // (`+0` removes cwd → the next entry becomes cwd).
+      const rot = args.find((a) => /^[+-]\d+$/.test(a));
+      if (rot !== undefined) {
+        const full = [ctx.cwd, ...stack];
+        const idx = rotIndex(rot, full.length);
+        if (idx === undefined) { errOut(ctx, `shell: popd: ${rot}: directory stack index out of range\n`); return 1; }
+        full.splice(idx, 1);
+        ctx.cwd = full[0];
+        ctx.env.PWD = ctx.cwd;
+        stack.length = 0;
+        stack.push(...full.slice(1));
+        ctx.write(formatDirStack(ctx.cwd, stack, false, ctx.env.HOME) + '\n');
+        return 0;
+      }
       ctx.cwd = stack.shift()!;
       ctx.env.PWD = ctx.cwd;
       ctx.write(formatDirStack(ctx.cwd, stack, false, ctx.env.HOME) + '\n');
@@ -541,6 +583,56 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       errOut(ctx, 'shell: coproc: requires a transferable backend\n');
       return 1;
 
+    case 'hash': {
+      // No PATH hash table exists in the sandbox (commands resolve fresh on every
+      // spawn via resolveCommand / exec-from-VFS), so `hash` is inert — but scripts
+      // call it and expect success. Accept the documented option surface and return
+      // 0; reject an unknown flag like bash (status 2).
+      // Flags may be CLUSTERED (e.g. `-lr`, `-dt`), so validate each letter of a
+      // `-…` token against the allowed set rather than matching the whole token.
+      const allowed = 'lrpdt';
+      for (const a of args) {
+        if (a.startsWith('-') && a !== '-') {
+          for (const ch of a.slice(1)) {
+            if (!allowed.includes(ch)) {
+              errOut(ctx, `shell: hash: ${a}: invalid option\nhash: usage: hash [-lr] [-p pathname] [-dt] [name ...]\n`);
+              return 2;
+            }
+          }
+        }
+      }
+      return 0;
+    }
+
+    case 'complete':
+    case 'compopt':
+      // Interactive completion specs — there is no line editor in the sandbox, so
+      // these register/modify nothing. Accept and ignore (exit 0, no output).
+      return 0;
+
+    case 'compgen': {
+      // `compgen -W WORDLIST [PREFIX]` filters a wordlist by prefix — the one form
+      // with non-interactive value (usable in scripts). Other actions (-A/-c/-f …)
+      // have no source in the sandbox → exit 1 (honest "no matches").
+      const wIdx = args.indexOf('-W');
+      if (wIdx >= 0 && args[wIdx + 1] !== undefined) {
+        const words = args[wIdx + 1].split(/\s+/).filter((w) => w !== '');
+        // The prefix is the trailing operand after the wordlist. Honor an explicit
+        // `--` end-of-options marker: when present, the prefix is the first token
+        // AFTER `--` (so even a leading-dash prefix is taken literally). Otherwise
+        // fall back to the first non-option token after the wordlist.
+        const tail = args.slice(wIdx + 2);
+        const ddIdx = tail.indexOf('--');
+        const prefix = ddIdx >= 0
+          ? (tail[ddIdx + 1] ?? '')
+          : (tail.find((a) => !a.startsWith('-')) ?? '');
+        const matches = words.filter((w) => w.startsWith(prefix));
+        for (const m of matches) ctx.write(m + '\n');
+        return matches.length > 0 ? 0 : 1;
+      }
+      return 1;
+    }
+
     case 'shopt':
       return runShopt(args, ctx);
 
@@ -810,6 +902,12 @@ function listOptions(ctx: BuiltinContext, dashForm: boolean): void {
 function runGetopts(args: string[], ctx: BuiltinContext): number {
   const optstring = args[0] ?? '';
   const varName = args[1] ?? '';
+  // getopts writes its NAME variable in several places below; a readonly NAME is
+  // rejected up front (status 1, no write) like bash, covering all write sites.
+  if (ctx.state?.isReadonly?.(varName)) {
+    errOut(ctx, `shell: getopts: ${varName}: readonly variable\n`);
+    return 1;
+  }
   const params = args.length > 2 ? args.slice(2) : (ctx.state?.positional ?? []);
   let optind = parseInt(ctx.env.OPTIND ?? '1', 10) || 1;
 
@@ -899,7 +997,8 @@ async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
   // getopts-style: walk each `-` token char by char so SHORT FLAGS CLUSTER like
   // bash (`-ra name`, `-rn3`, `-rd';'`). `r` is a boolean; `a`/`d`/`n`/`N`/`u`/`t`
   // take an argument from the rest of the token (`-n3`) or the next argv (`-n 3`).
-  // Unknown letters (`-s`/`-p`) are no-ops. Non-`-` args are variable names.
+  // `-s` (silent) is a no-op (no TTY); `-p PROMPT` consumes its operand and drops
+  // it. Other unknown letters are no-ops. Non-`-` args are variable names.
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--' ) { names.push(...args.slice(i + 1)); break; }
@@ -921,7 +1020,13 @@ async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
       if (ch === 'd') { delim = operand(); continue; }
       if (ch === 'n') { maxChars = parseInt(operand(), 10); continue; }
       if (ch === 'N') { maxChars = parseInt(operand(), 10); ignoreDelim = true; continue; }
-      j++; // unknown short flag (e.g. -s/-p): no-op
+      // `-p PROMPT` takes the prompt as its operand (printed to a TTY by bash).
+      // The sandbox has no TTY, so consume and drop it — crucially so PROMPT is
+      // NOT mistaken for a variable name. `-pPROMPT` and clustered `-sp PROMPT`
+      // also work via operand().
+      if (ch === 'p') { operand(); continue; }
+      if (ch === 's') { j++; continue; } // silent: no terminal echo to suppress — no-op
+      j++; // unknown short flag: no-op
     }
   }
   if (timeoutSec !== undefined && Number.isNaN(timeoutSec)) timeoutSec = undefined;

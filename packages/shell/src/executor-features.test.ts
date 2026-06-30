@@ -569,6 +569,56 @@ test('writing through a nameref to a readonly target is rejected', async () => {
   expect(err).toMatch(/target: readonly variable/);
 });
 
+test('${var:=x} default-assign on a readonly var warns, skips write, yields the word, and continues', async () => {
+  // bash 3.2/5.x: prints `v: readonly variable`, leaves v UNSET, the expansion
+  // still yields `hi`, and the script continues (exit 0) — non-fatal even in posix.
+  const { out, err, code } = await run('readonly v; printf "[%s]" "${v:=hi}"; echo " v=[$v]"');
+  expect(out.trim()).toBe('[hi] v=[]');
+  expect(err).toMatch(/v: readonly variable/);
+  expect(code).toBe(0);
+});
+
+test('${var=x} (no-colon) default-assign on a readonly var also warns + skips + continues', async () => {
+  const { out, err, code } = await run('readonly v; printf "[%s]" "${v=hi}"; echo " v=[$v]"');
+  expect(out.trim()).toBe('[hi] v=[]');
+  expect(err).toMatch(/v: readonly variable/);
+  expect(code).toBe(0);
+});
+
+// ── arithmetic (( )) / for (( )) / let must not overwrite a readonly var ──────
+
+test('(( x = 5 )) on a readonly var warns, does NOT write, and continues', async () => {
+  // bash: prints the readonly warning, does not write x, but the expression's
+  // value (5, nonzero) still makes (( )) succeed; the script continues.
+  const { out, err, code } = await run('readonly x; (( x = 5 )); echo "x=[$x] $?"');
+  expect(out.trim()).toBe('x=[] 0');
+  expect(err).toMatch(/x: readonly variable/);
+  expect(code).toBe(0);
+});
+
+test('let x=5 on a readonly var warns and does not write', async () => {
+  const { out, err } = await run('readonly x; let x=5; echo "x=[$x]"');
+  expect(out.trim()).toBe('x=[]');
+  expect(err).toMatch(/x: readonly variable/);
+});
+
+test('for ((x=0;x<2;x++)) on a readonly counter TERMINATES (does not hang) and warns', async () => {
+  // Deliberate divergence from bash, which infinite-loops here (the readonly
+  // counter never advances). mithic is SAFER: it warns, skips the write, and
+  // breaks the loop so it terminates promptly.
+  const start = Date.now();
+  const { err, code } = await run('readonly x; for ((x=0;x<2;x++)); do echo iter; done; echo after');
+  expect(Date.now() - start).toBeLessThan(2000); // must not spin to the 1M guard
+  expect(err).toMatch(/x: readonly variable/);
+  expect(code).toBe(0);
+});
+
+test('for (( )) over a non-readonly counter still iterates normally', async () => {
+  const { out, code } = await run('for ((i=0;i<3;i++)); do echo $i; done');
+  expect(out.trim().split('\n')).toEqual(['0', '1', '2']);
+  expect(code).toBe(0);
+});
+
 // ── let (arithmetic-evaluation builtin) ──────────────────────────────────────
 
 test('let evaluates arithmetic and assigns', async () => {
@@ -612,6 +662,27 @@ test('assigning through a nameref writes the target', async () => {
   expect(out.trim()).toBe('2');
 });
 
+test('${ref:=x} default-assign through a nameref writes the target, not the ref name', async () => {
+  // target unset; `${ref:=hi}` must assign `target`, so `$target` and `$ref`
+  // both read `hi` afterwards.
+  const { out } = await run('declare -n ref=target; : "${ref:=hi}"; echo "$target"; echo "$ref"');
+  expect(out.trim().split('\n')).toEqual(['hi', 'hi']);
+});
+
+// ── A8: ${var@a} attribute-flags transform ───────────────────────────────────
+
+test('${var@a} reports readonly (r), nameref (n), indexed (a) and associative (A) flags', async () => {
+  const { out } = await run([
+    'ro=1; readonly ro;',
+    'declare -n ref=ro;',
+    'idx=(x y);',
+    'declare -A m;',
+    'plain=hi;',
+    'echo "[${ro@a}][${ref@a}][${idx@a}][${m@a}][${plain@a}]"',
+  ].join(' '));
+  expect(out.trim()).toBe('[r][n][a][A][]');
+});
+
 // ── dirs / pushd / popd directory stack ──────────────────────────────────────
 
 test('pushd/dirs/popd manage the directory stack', async () => {
@@ -634,4 +705,38 @@ test('dirs -c clears the stack', async () => {
 test('dirs abbreviates $HOME with ~ unless -l', async () => {
   const { out } = await run('cd /home/u; dirs; dirs -l', { cwd: '/', env: { HOME: '/home/u' } });
   expect(out.trim().split('\n')).toEqual(['~', '/home/u']);
+});
+
+// ── A4: pushd/popd +N/-N directory-stack rotation ────────────────────────────
+// Build dirs = "/a /b /c" by pushing in reverse: cwd ends at /a, stack = [/b, /c].
+
+test('pushd +1 rotates the directory stack left by 1', async () => {
+  const { out } = await run('cd /c; pushd /b; pushd /a; pushd +1; pwd', { cwd: '/' });
+  // pushd /b → "/b /c"; pushd /a → "/a /b /c"; pushd +1 → "/b /c /a"; pwd → /b
+  expect(out.trim().split('\n')).toEqual(['/b /c', '/a /b /c', '/b /c /a', '/b']);
+});
+
+test('pushd -0 rotates so the last entry becomes the top', async () => {
+  const { out } = await run('cd /c; pushd /b; pushd /a; pushd -0; pwd', { cwd: '/' });
+  // dirs "/a /b /c"; -0 = last (/c) → top → "/c /a /b"; pwd → /c
+  expect(out.trim().split('\n')).toEqual(['/b /c', '/a /b /c', '/c /a /b', '/c']);
+});
+
+test('popd +1 removes the entry at index 1 (cwd unchanged)', async () => {
+  const { out } = await run('cd /c; pushd /b; pushd /a; popd +1; pwd', { cwd: '/' });
+  // dirs "/a /b /c"; popd +1 removes /b → "/a /c"; pwd → /a (unchanged)
+  expect(out.trim().split('\n')).toEqual(['/b /c', '/a /b /c', '/a /c', '/a']);
+});
+
+test('popd +0 removes the current dir (top) and cds to the next', async () => {
+  const { out } = await run('cd /c; pushd /b; pushd /a; popd +0; pwd', { cwd: '/' });
+  // dirs "/a /b /c"; popd +0 removes /a → cwd=/b → "/b /c"; pwd → /b
+  expect(out.trim().split('\n')).toEqual(['/b /c', '/a /b /c', '/b /c', '/b']);
+});
+
+test('pushd +9 out of range reports an error and leaves the stack unchanged', async () => {
+  const { out, err } = await run('cd /c; pushd /b; pushd /a; pushd +9; pwd', { cwd: '/' });
+  expect(err).toMatch(/directory stack index out of range/);
+  // No rotation: pwd stays /a.
+  expect(out.trim().split('\n')).toEqual(['/b /c', '/a /b /c', '/a']);
 });

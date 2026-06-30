@@ -159,3 +159,130 @@ test('printf %q honors width (right-justified)', async () => {
 test('printf %q empty string', async () => {
   expect(await printf('%q', '')).toBe('\'\'');
 });
+
+// ── A2: readonly enforcement on a getopts variable ──────────────────────────
+
+test('getopts into a readonly variable is rejected (status 1, no write)', async () => {
+  let err = '';
+  const ctx: any = {
+    cwd: '/', env: { OPTIND: '1' }, write: () => {}, writeErr: (s: string) => (err += s),
+    state: { positional: ['-a'], isReadonly: (n: string) => n === 'opt' },
+  };
+  const code = await runBuiltin('getopts', ['ab', 'opt'], ctx);
+  expect(code).toBe(1);
+  expect(err).toMatch(/readonly variable/);
+  expect(ctx.env.opt).toBeUndefined();
+});
+
+test('getopts into a writable variable still parses normally', async () => {
+  const ctx: any = {
+    cwd: '/', env: { OPTIND: '1' }, write: () => {},
+    state: { positional: ['-a'], isReadonly: () => false },
+  };
+  const code = await runBuiltin('getopts', ['ab', 'opt'], ctx);
+  expect(code).toBe(0);
+  expect(ctx.env.opt).toBe('a');
+});
+
+// ── A5: hash builtin (sandbox-inert) ─────────────────────────────────────────
+
+test('hash with no args succeeds (empty table)', async () => {
+  let out = ''; let err = '';
+  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s), writeErr: (s: string) => (err += s) };
+  expect(await runBuiltin('hash', [], ctx)).toBe(0);
+  expect(out).toBe('');
+  expect(err).toBe('');
+});
+
+test('hash -r succeeds (clear is a no-op in the sandbox)', async () => {
+  const ctx: any = { cwd: '/', env: {}, write: () => {} };
+  expect(await runBuiltin('hash', ['-r'], ctx)).toBe(0);
+});
+
+test('hash NAME succeeds', async () => {
+  const ctx: any = { cwd: '/', env: {}, write: () => {} };
+  expect(await runBuiltin('hash', ['ls'], ctx)).toBe(0);
+});
+
+test('hash with an unknown flag fails with status 2 + usage', async () => {
+  let err = '';
+  const ctx: any = { cwd: '/', env: {}, write: () => {}, writeErr: (s: string) => (err += s) };
+  expect(await runBuiltin('hash', ['-z'], ctx)).toBe(2);
+  expect(err).toMatch(/invalid option/);
+});
+
+test('hash accepts clustered valid flags (-lr, -dt)', async () => {
+  const ctx: any = { cwd: '/', env: {}, write: () => {}, writeErr: () => {} };
+  expect(await runBuiltin('hash', ['-lr'], ctx)).toBe(0);
+  expect(await runBuiltin('hash', ['-dt'], ctx)).toBe(0);
+});
+
+test('hash rejects a cluster containing an invalid flag (-lx → 2)', async () => {
+  let err = '';
+  const ctx: any = { cwd: '/', env: {}, write: () => {}, writeErr: (s: string) => (err += s) };
+  expect(await runBuiltin('hash', ['-lx'], ctx)).toBe(2);
+  expect(err).toMatch(/invalid option/);
+});
+
+test('hash is listed in BUILTINS', () => {
+  expect(BUILTINS).toContain('hash');
+});
+
+// ── A6: compgen / complete / compopt ─────────────────────────────────────────
+
+test('compgen -W filters a wordlist by prefix', async () => {
+  let out = '';
+  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s) };
+  expect(await runBuiltin('compgen', ['-W', 'foo foobar baz', 'fo'], ctx)).toBe(0);
+  expect(out).toBe('foo\nfoobar\n');
+});
+
+test('compgen -W with no matches exits 1', async () => {
+  let out = '';
+  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s) };
+  expect(await runBuiltin('compgen', ['-W', 'foo bar', 'zzz'], ctx)).toBe(1);
+  expect(out).toBe('');
+});
+
+test('compgen -W with an empty prefix prints all words', async () => {
+  let out = '';
+  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s) };
+  expect(await runBuiltin('compgen', ['-W', 'a b c'], ctx)).toBe(0);
+  expect(out).toBe('a\nb\nc\n');
+});
+
+test('compgen -W honors a -- separator for the prefix operand', async () => {
+  let out = '';
+  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s) };
+  expect(await runBuiltin('compgen', ['-W', 'a ab', '--', 'a'], ctx)).toBe(0);
+  expect(out).toBe('a\nab\n');
+});
+
+test('compgen -W with -- and a dash-prefixed prefix filters by that prefix', async () => {
+  let out = '';
+  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s) };
+  // After `--`, a leading-dash token is the literal prefix, not an option.
+  expect(await runBuiltin('compgen', ['-W', '-a -b xx', '--', '-a'], ctx)).toBe(0);
+  expect(out).toBe('-a\n');
+});
+
+test('compgen -A function (no sandbox source) exits 1', async () => {
+  let out = '';
+  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s) };
+  expect(await runBuiltin('compgen', ['-A', 'function'], ctx)).toBe(1);
+  expect(out).toBe('');
+});
+
+test('complete and compopt are accepted (exit 0, no output)', async () => {
+  let out = '';
+  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s) };
+  expect(await runBuiltin('complete', ['-W', 'a b', 'mycmd'], ctx)).toBe(0);
+  expect(await runBuiltin('compopt', ['-o', 'nospace'], ctx)).toBe(0);
+  expect(out).toBe('');
+});
+
+test('compgen/complete/compopt are listed in BUILTINS', () => {
+  expect(BUILTINS).toContain('compgen');
+  expect(BUILTINS).toContain('complete');
+  expect(BUILTINS).toContain('compopt');
+});

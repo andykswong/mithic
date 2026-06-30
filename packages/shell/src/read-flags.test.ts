@@ -150,3 +150,25 @@ test('mapfile defaults to the MAPFILE array when no name is given', async () => 
   await h.ex.exec('printf \'%s\\n\' p q | { mapfile -t; echo "${MAPFILE[0]}-${MAPFILE[1]} n=${#MAPFILE[@]}"; }');
   expect(h.out.trim()).toBe('p-q n=2');
 });
+
+// ── A7: read -p PROMPT / read -s consume their operands ──────────────────────
+
+test('read -p PROMPT reads into the named var (prompt operand consumed, not a var name)', async () => {
+  const h = mk();
+  // Before the fix, `-p` was a no-op so 'Enter: ' became the FIRST var name and
+  // `x` got the empty leftover → `[]`. After: the prompt is consumed, x='hello'.
+  await h.ex.exec('printf \'%s\\n\' hello | { read -p \'Enter: \' x; echo "[$x]"; }');
+  expect(h.out.trim()).toBe('[hello]');
+});
+
+test('read -s reads normally (silent is a no-op without a TTY)', async () => {
+  const h = mk();
+  await h.ex.exec('printf \'%s\\n\' pw | { read -s secret; echo "[$secret]"; }');
+  expect(h.out.trim()).toBe('[pw]');
+});
+
+test('read -sp PROMPT clustered: prompt consumed, silent no-op, reads into the var', async () => {
+  const h = mk();
+  await h.ex.exec('printf \'%s\\n\' v | { read -sp \'P: \' x; echo "[$x]"; }');
+  expect(h.out.trim()).toBe('[v]');
+});

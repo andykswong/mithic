@@ -76,6 +76,63 @@ test('${VAR:=default} assigns when unset', async () => {
   expect(env._env.V).toBe('set');
 });
 
+test('${ref:=x} default-assign through a nameref writes the target, not the ref name', async () => {
+  // A faithful nameref env: get/has/set all dereference `ref` → `target`,
+  // mirroring the real Environment (which derefs centrally in set()).
+  const vars: Record<string, string> = {};
+  const deref = (n: string) => (n === 'ref' ? 'target' : n);
+  const env = {
+    get: (n: string) => vars[deref(n)],
+    set: (n: string, v: string) => { vars[deref(n)] = v; },
+    has: (n: string) => deref(n) in vars,
+    getSpecial: () => undefined,
+    runCommandSub: async () => '',
+    listDir: async () => undefined,
+    statPath: async () => undefined,
+    resolveNameref: (n: string) => (n === 'ref' ? 'target' : undefined),
+  } as unknown as ShellEnv;
+  const e = new Expander(env);
+  expect(await e.expandWord('${ref:=hi}')).toEqual(['hi']);
+  expect(vars.target).toBe('hi');
+  expect(vars.ref).toBeUndefined();
+});
+
+test('${var:=x} on a readonly var warns, does NOT write, but still yields the word', async () => {
+  const warnings: string[] = [];
+  const env = mkEnv({}, {
+    isReadonly: (n) => n === 'V',
+    warn: (m) => { warnings.push(m); },
+  }) as ShellEnv & { _env: Record<string, string> };
+  const e = new Expander(env);
+  expect(await e.expandWord('${V:=hi}')).toEqual(['hi']);
+  expect(env._env.V).toBeUndefined(); // not written
+  expect(warnings.join('\n')).toMatch(/V: readonly variable/);
+});
+
+test('${var=x} (no-colon) on a readonly var warns, skips write, yields the word', async () => {
+  const warnings: string[] = [];
+  const env = mkEnv({}, {
+    isReadonly: (n) => n === 'V',
+    warn: (m) => { warnings.push(m); },
+  }) as ShellEnv & { _env: Record<string, string> };
+  const e = new Expander(env);
+  expect(await e.expandWord('${V=hi}')).toEqual(['hi']);
+  expect(env._env.V).toBeUndefined();
+  expect(warnings.join('\n')).toMatch(/V: readonly variable/);
+});
+
+test('${var:=x} default-assign still writes a non-readonly var', async () => {
+  const warnings: string[] = [];
+  const env = mkEnv({}, {
+    isReadonly: () => false,
+    warn: (m) => { warnings.push(m); },
+  }) as ShellEnv & { _env: Record<string, string> };
+  const e = new Expander(env);
+  expect(await e.expandWord('${V:=hi}')).toEqual(['hi']);
+  expect(env._env.V).toBe('hi');
+  expect(warnings).toEqual([]);
+});
+
 test('${#VAR} length', async () => {
   expect(await E({ V: 'hello' }).expandWord('${#V}')).toEqual(['5']);
   expect(await E({ V: '' }).expandWord('${#V}')).toEqual(['0']);
@@ -288,6 +345,21 @@ test('${var@E} expands ANSI-C backslash escapes', async () => {
 test('unsupported @-transform (@A) returns the value unchanged', async () => {
   const e = E({ x: 'Hello' });
   expect(await e.expandWord('${x@A}')).toEqual(['Hello']);
+});
+
+test('${var@a} returns attribute flags (readonly → r)', async () => {
+  const e = E({ x: 'v' }, { attrFlags: (n) => (n === 'x' ? 'r' : '') });
+  expect(await e.expandWord('${x@a}')).toEqual(['r']);
+});
+
+test('${var@a} of a plain scalar is empty', async () => {
+  const e = E({ y: 'v' }, { attrFlags: () => '' });
+  expect(await e.expandWord('${y@a}')).toEqual(['']);
+});
+
+test('${var@a} without an attrFlags hook is empty', async () => {
+  const e = E({ z: 'v' });
+  expect(await e.expandWord('${z@a}')).toEqual(['']);
 });
 
 // ── glob ──────────────────────────────────────────────────────────────────

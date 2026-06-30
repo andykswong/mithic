@@ -65,6 +65,19 @@ export interface ShellEnv {
   /** All currently-set variable names, for `${!prefix*}` / `${!prefix@}`. Optional. */
   names?(): string[];
   /**
+   * Attribute flags of a variable for `${var@a}`: `r` readonly, `n` nameref,
+   * `a` indexed array, `A` associative array; a plain scalar → `''`. Optional.
+   */
+  attrFlags?(name: string): string;
+  /**
+   * True when the variable (after nameref deref) is `readonly`. Used by the
+   * `${var:=x}`/`${var=x}` default-assign to refuse the write — bash warns and
+   * skips it but the expansion still yields the word (non-fatal). Optional.
+   */
+  isReadonly?(name: string): boolean;
+  /** Emit a non-fatal diagnostic to stderr (e.g. the readonly-assign warning). Optional. */
+  warn?(msg: string): void;
+  /**
    * Process substitution `<(cmd)` / `>(cmd)`: run `cmd` and return a VFS path the
    * surrounding command reads (`dir: 'in'`) or writes (`dir: 'out'`). Optional —
    * undefined ⇒ the construct is left literal.
@@ -414,14 +427,39 @@ export class Expander {
     return out;
   }
 
-  /** A live env proxy so arithmetic assignments persist to the shell env. */
+  /**
+   * A live env proxy so arithmetic assignments persist to the shell env.
+   * A write to a `readonly` variable (e.g. `$(( x = 5 ))` / the `(( ))` command)
+   * is refused: warn to stderr and SKIP the write, but still return true so the
+   * assignment expression yields its RHS value (bash: `(( x=5 ))` returns 5 even
+   * when x is readonly). Non-fatal.
+   */
   private arithEnvProxy(): Record<string, string> {
     const env = this.env;
     return new Proxy({}, {
       get: (_t, p: string) => env.get(p) ?? '',
-      set: (_t, p: string, v) => { env.set(p, String(v)); return true; },
+      set: (_t, p: string, v) => {
+        if (env.isReadonly?.(p)) { env.warn?.(`${p}: readonly variable`); return true; }
+        env.set(p, String(v)); return true;
+      },
       has: (_t, p: string) => env.has(p),
     }) as Record<string, string>;
+  }
+
+  /**
+   * `${var:=word}` / `${var=word}` default-assign. bash refuses to write a
+   * `readonly` variable: it prints `<name>: readonly variable` to stderr, leaves
+   * the variable unchanged, but the expansion STILL yields `word` and the script
+   * continues (non-fatal — true even under `--posix` in bash 3.2). The warning
+   * keeps the REF name (`isReadonly` derefs a nameref-to-readonly-target itself).
+   */
+  private defaultAssign(name: string, arg: string): string {
+    if (this.env.isReadonly?.(name)) {
+      this.env.warn?.(`${name}: readonly variable`);
+      return arg;
+    }
+    this.env.set(name, arg);
+    return arg;
   }
 
   /** Resolve a plain variable, falling back to special-param lookup. */
@@ -561,7 +599,9 @@ export class Expander {
       if (op === 'u') return value.length > 0 ? value[0].toUpperCase() + value.slice(1) : value;
       if (op === 'L') return value.toLowerCase();
       if (op === 'E') return interpretEscapes(value, /*octalBackslashZero*/ false);
-      // Other transforms (@P @A @a @K @k) are not yet supported — return the value
+      // `@a` reports the variable's attribute FLAGS (keyed by NAME, not value).
+      if (op === 'a') return this.env.attrFlags?.(name) ?? '';
+      // Other transforms (@P @A @K @k) are not yet supported — return the value
       // unchanged rather than erroring (forward-compatible; documented).
       return value;
     }
@@ -574,7 +614,7 @@ export class Expander {
       switch (op) {
         case '-': return unsetOrEmpty ? arg : value;
         case '+': return unsetOrEmpty ? '' : arg;
-        case '=': if (unsetOrEmpty) { this.env.set(name, arg); return arg; } return value;
+        case '=': if (unsetOrEmpty) { return this.defaultAssign(name, arg); } return value;
         case '?': if (unsetOrEmpty) throw new ExpansionError(arg || `${name}: parameter null or not set`); return value;
       }
     }
@@ -585,7 +625,7 @@ export class Expander {
       switch (op) {
         case '-': return set ? value : arg;
         case '+': return set ? arg : '';
-        case '=': if (!set) { this.env.set(name, arg); return arg; } return value;
+        case '=': if (!set) { return this.defaultAssign(name, arg); } return value;
         case '?': if (!set) throw new ExpansionError(arg || `${name}: parameter not set`); return value;
       }
     }

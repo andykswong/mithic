@@ -66,6 +66,15 @@ export interface EnvHost {
    * `name` is not a nameref. Variable reads dereference through this. Optional.
    */
   resolveNameref?(name: string): string | undefined;
+  /**
+   * Attribute flags of a variable for `${var@a}` (`r`/`n`/`a`/`A`; scalar → '').
+   * Derived from the executor's readonly/nameref/array/assoc state. Optional.
+   */
+  attrFlags?(name: string): string;
+  /** True when `name` is `readonly` (checked on the resolved target). Optional. */
+  isReadonly?(name: string): boolean;
+  /** Write a non-fatal diagnostic to the current stderr frame. Optional. */
+  warn?(msg: string): void;
 }
 
 export class Environment implements ShellEnv {
@@ -142,6 +151,10 @@ export class Environment implements ShellEnv {
   }
 
   set(name: string, value: string): void {
+    // A `declare -n ref=target` write lands on the TARGET — deref first, mirroring
+    // get()/has(). This makes `${ref:=x}` default-assign write `target`, not `ref`.
+    // It is idempotent for applyAssignment (which pre-derefs before calling set).
+    name = this.deref(name);
     // Assigning `RANDOM=n` seeds the generator rather than storing a scalar.
     if (name === 'RANDOM') {
       const seed = parseInt(value, 10);
@@ -206,6 +219,19 @@ export class Environment implements ShellEnv {
   names(): string[] {
     return [...new Set([...Object.keys(this.vars), ...this.arrays.keys()])];
   }
+
+  /** `${var@a}` attribute flags — delegated to the executor host (scalar → ''). */
+  attrFlags(name: string): string { return this.host.attrFlags?.(name) ?? ''; }
+
+  /**
+   * True when the variable is `readonly`. Derefs first so a nameref pointing at a
+   * readonly target is also reported readonly (matching {@link set}'s deref). Used
+   * by the expander's `${var:=x}`/`${var=x}` default-assign.
+   */
+  isReadonly(name: string): boolean { return this.host.isReadonly?.(this.deref(name)) ?? false; }
+
+  /** Emit a non-fatal diagnostic to the executor's current stderr frame. */
+  warn(msg: string): void { this.host.warn?.(msg); }
 
   // ── ShellEnv: cross-cutting (delegated to the executor host) ────────────────
 

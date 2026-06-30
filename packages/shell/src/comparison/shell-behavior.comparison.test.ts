@@ -62,6 +62,10 @@ const BASH4_CASES: Array<[string, string, { posix?: boolean }?]> = [
   // single-quoted (`'a b'`). mithic matches via the shared `shellQuote`.
   ['at-Q-simple', 's=plain; echo "${s@Q}"'],
   ['at-Q-space', 's="a b"; echo "${s@Q}"'],
+  // `${var@a}` (parameter-transform attribute flags) — bash 4.4+. A readonly
+  // scalar reports the single flag `r`. Hand-recorded bash-5 golden (`r`);
+  // mithic derives the flag from its readonly state via attrFlags.
+  ['at-a-readonly', 'readonly v=1; echo "${v@a}"'],
   // `$LINENO` on a single `-c` line: bash 3.2 prints 0, bash 4.4+/5.x print 1
   // (the documented modern behavior mithic targets). Hand-recorded bash-5 golden.
   ['lineno-single', 'echo $LINENO'],
