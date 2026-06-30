@@ -15,6 +15,7 @@ function mkHost(over: Partial<EnvHost> = {}): EnvHost {
     lastStatus: () => 0,
     lastBgPid: () => 0,
     pipeStatus: () => [],
+    currentLine: () => 0,
     currentFlags: () => '',
     arrays: () => arrays,
     assocArrays: () => assoc,
@@ -81,6 +82,13 @@ test('getSpecial reads positional + status from the host', () => {
   expect(env.getSpecial('!')).toBe('99');
   expect(env.getSpecial('-')).toBe('eu');
   expect(env.getSpecial('2')).toBe('b');
+});
+
+test('getSpecial(LINENO) reads the current line from the host', () => {
+  const host = mkHost({ currentLine: () => 42 });
+  const ctx: ShellContext = { cwd: '/', env: {}, positional: [] };
+  const env = new Environment(ctx, host);
+  expect(env.getSpecial('LINENO')).toBe('42');
 });
 
 test('child(overlay) reads overlay first then parent, and writes through to parent', () => {

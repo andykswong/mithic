@@ -85,6 +85,8 @@ export interface CaseClause {
 
 export interface Statement {
   type: StatementType;
+  /** 1-based source line of the statement's first token (for $LINENO / trap ERR). */
+  line?: number;
   /** Pipeline: pipe stages, left to right (all-simple fast path). */
   stages?: SimpleCommand[];
   /**

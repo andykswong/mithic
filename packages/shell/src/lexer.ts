@@ -53,6 +53,8 @@ export interface Token {
   raw: string;
   /** For redirect ops: explicit leading fd (e.g. `2>` → 2). */
   fd?: number;
+  /** 1-based source line the token starts on (for $LINENO / trap ERR). */
+  line: number;
 }
 
 function isBlank(ch: string): boolean {
@@ -140,6 +142,19 @@ export function tokenize(input: string): Token[] {
   let i = 0;
   const n = input.length;
 
+  // 1-based line of the next token. `scannedUpTo` is how far we have counted
+  // newlines; `lineAt(start)` advances the count to `start` (which only moves
+  // forward across the scan, so this is O(n) total even though words may span
+  // many lines internally).
+  let line = 1;
+  let scannedUpTo = 0;
+  const lineAt = (start: number): number => {
+    for (; scannedUpTo < start; scannedUpTo++) {
+      if (input[scannedUpTo] === '\n') line++;
+    }
+    return line;
+  };
+
   while (i < n) {
     const ch = input[i];
 
@@ -158,7 +173,7 @@ export function tokenize(input: string): Token[] {
       const opStart = i + fdMatch[1].length;
       const op = matchOperator(input, opStart)!;
       // re-evaluate operator including the > or >> etc.
-      tokens.push({ type: op.type, value: input.slice(i, opStart + op.len), raw: input.slice(i, opStart + op.len), fd });
+      tokens.push({ type: op.type, value: input.slice(i, opStart + op.len), raw: input.slice(i, opStart + op.len), fd, line: lineAt(i) });
       i = opStart + op.len;
       continue;
     }
@@ -174,12 +189,13 @@ export function tokenize(input: string): Token[] {
 
     const op = matchOperator(input, i);
     if (op && !((ch === '<' || ch === '>') && input[i + 1] === '(')) {
-      tokens.push({ type: op.type, value: input.slice(i, i + op.len), raw: input.slice(i, i + op.len) });
+      tokens.push({ type: op.type, value: input.slice(i, i + op.len), raw: input.slice(i, i + op.len), line: lineAt(i) });
       i += op.len;
       continue;
     }
 
     // Otherwise accumulate a WORD.
+    const wordStart = i;
     let value = '';
     let raw = '';
     while (i < n) {
@@ -309,7 +325,7 @@ export function tokenize(input: string): Token[] {
       i++;
     }
 
-    tokens.push({ type: 'WORD', value, raw });
+    tokens.push({ type: 'WORD', value, raw, line: lineAt(wordStart) });
   }
 
   return tokens;

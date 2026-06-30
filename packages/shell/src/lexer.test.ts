@@ -44,3 +44,19 @@ test('keeps backtick substitution as one word', () => {
   const toks = tokenize('echo `echo hi`');
   expect(toks.map(t => t.value)).toEqual(['echo', '`echo hi`']);
 });
+
+test('tokens carry the 1-based line they start on', () => {
+  const toks = tokenize('echo a\necho b');
+  const echoes = toks.filter((t) => t.value === 'echo');
+  expect(echoes[0].line).toBe(1);
+  expect(echoes[1].line).toBe(2);
+});
+
+test('line tracking survives a word that spans multiple lines', () => {
+  const toks = tokenize('echo "line one\nline two"\necho after');
+  const echoes = toks.filter((t) => t.value === 'echo');
+  // The first `echo` is on line 1; the double-quoted word spans lines 1-2, so the
+  // second `echo` (after the NEWLINE that follows the closing quote) is on line 3.
+  expect(echoes[0].line).toBe(1);
+  expect(echoes[1].line).toBe(3);
+});

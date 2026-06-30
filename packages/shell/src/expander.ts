@@ -19,6 +19,7 @@
 import { evalArith } from './arith.ts';
 import { globToReSource, globToRegExp, isGlobPattern } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
+import { shellQuote } from './quote.ts';
 
 /**
  * The shell-state surface the expander reads/writes. Implemented by the
@@ -548,6 +549,17 @@ export class Expander {
 
     const set = this.env.has(name) || this.env.getSpecial(name) !== undefined;
     const value = this.resolveVar(name);
+
+    // ${var@OP} parameter transforms. @Q = quote for re-input (the one we support).
+    // `${arr[@]}` is handled earlier (matchSubscript), so rest[0] === '@' here only
+    // means the ${var@OP} transform form.
+    if (rest[0] === '@') {
+      const op = rest[1];
+      if (op === 'Q') return shellQuote(value);
+      // Other transforms (@E @P @A @a @U @u @L @K @k) are not yet supported — return
+      // the value unchanged rather than erroring (forward-compatible; documented).
+      return value;
+    }
 
     // ${var:-word} ${var:=word} ${var:?word} ${var:+word}
     if (rest[0] === ':' && '-=?+'.includes(rest[1] ?? '')) {
