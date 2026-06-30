@@ -862,6 +862,17 @@ export class Executor {
       words = [];
       for (const w of stmt.words) words.push(...await exp.expandWord(w));
     }
+    // A `for X in …` over a readonly `X` is a variable-assignment error: bash
+    // reports `X: readonly variable` and runs no iteration. In POSIX
+    // non-interactive mode it is fatal (the statement-loop aborts); otherwise
+    // report to stderr and end the for-statement with status 1.
+    if (this.readonlyNames.has(stmt.varName!)) {
+      const msg = `${stmt.varName!}: readonly variable`;
+      if (this.options.posix) throw new PosixSpecialBuiltinError(stmt.varName!, 1, msg);
+      io.stderr(`shell: ${msg}\n`);
+      this.lastStatus = 1;
+      return 1;
+    }
     for (const word of words) {
       this.context.env[stmt.varName!] = word;
       try {

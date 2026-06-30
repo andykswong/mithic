@@ -322,3 +322,22 @@ test('set -- a b c; echo ${#*} reports positional count (SH-2)', async () => {
   expect(out.trim()).toBe('3');
 });
 
+// ── A1: readonly enforcement on a for-loop variable ─────────────────────────
+
+test('readonly for-loop variable is rejected (non-posix: reports, does not iterate over it)', async () => {
+  const k = mockKernel();
+  let out = ''; let err = '';
+  const ex = new Executor(k as any, { cwd: '/', env: {} }, {
+    onStdout: (s) => { out += s; },
+    onStderr: (s) => { err += s; },
+  });
+  await ex.run(parse('readonly i; for i in 1 2 3; do echo $i; done; echo done'));
+  // The loop never iterates over the readonly var.
+  expect(out).not.toMatch(/\b1\b/);
+  expect(out).not.toMatch(/\b2\b/);
+  expect(out).not.toMatch(/\b3\b/);
+  expect(err).toMatch(/i: readonly variable/);
+  // Non-POSIX: execution continues past the for-statement.
+  expect(out).toMatch(/done/);
+});
+
