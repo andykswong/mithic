@@ -286,6 +286,33 @@ test('B1: a top-level kernel.spawn honors an fds[0] bytes stdin source (transfer
   expect(out).toBe('count:' + data.length);
 }, 12000);
 
+test('SE-3: a bytes fd-0 source does not detach the caller-provided buffer', async () => {
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = makeKernel(vfs);
+
+  // The pump TRANSFERS the buffer it posts; #feedBytesToPort must defensively
+  // copy so the caller's `data` survives (not detached to a 0-length view).
+  const data = new TextEncoder().encode('reuse-me');
+
+  const { pid, stdout } = await kernel.spawn(READ_STDIN_COUNT, {
+    args: ['readstdin'],
+    capabilities: [],
+    captureStdout: true,
+    fds: { 0: { action: 'bytes', data } },
+  });
+
+  const out = new TextDecoder().decode(
+    await withTimeout(stdout!, 6000, 'bytes-fed spawn stdout never resolved (SE-3)'),
+  );
+  const w = await withTimeout(kernel.wait(pid), 6000, 'bytes-fed spawn never settled (SE-3)');
+  expect(w.code).toBe(0);
+  expect(out).toBe('count:8');
+  // The caller's buffer is intact (NOT detached to byteLength 0).
+  expect(data.byteLength).toBe(8);
+  expect(new TextDecoder().decode(data)).toBe('reuse-me');
+}, 12000);
+
 test('B1: a top-level kernel.spawn honors an fds[0] open stdin source, capability-checked', async () => {
   const vfs = new FileSystemRouter();
   await vfs.mount('/', new MemoryFsProvider());
