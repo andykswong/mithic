@@ -10,11 +10,18 @@
  * The `-t` table mode is faithful to GNU `column -t` (2-space inter-column gap,
  * trailing column not padded, ragged rows align by column index).
  *
- * The default (non-`-t`) "fill" mode is a SIMPLIFIED model: entries (one per
- * input line) are packed left-to-right into rows wrapping at 80 columns, sized
- * to the widest entry + a 2-space gutter. GNU's fill mode is column-major and
- * honours `$COLUMNS`; this row-major 80-col fill is documented as a deliberate
- * simplification (the table mode is the high-value path).
+ * The default (non-`-t`) "fill" mode is column-major fill with a UNIFORM column
+ * width (the util-linux `columnate_fillcols` model): one width `colw = maxlen +
+ * gutter` is derived from the WIDEST entry, the column count is the direct
+ * division `cols = max(1, floor(width / colw))`, and entries are laid DOWN each
+ * column then across (`entries[c*rows + r]`). Every cell is padded to the uniform
+ * `colw` except the last populated cell in a row (no trailing whitespace).
+ *
+ * Residual simplifications (NOT full util-linux parity for fill mode):
+ *   - entries are whole input lines, not whitespace-split words — util-linux
+ *     splits on whitespace so `printf 'a b\nc d\n' | column` yields 4 entries,
+ *     whereas this yields 2 (one per line);
+ *   - the line width is a fixed 80 columns rather than honouring `$COLUMNS`.
  */
 import { defineCommand, parseArgs, readAllText, writeString } from '../harness.ts';
 import { readFile } from '../fs.ts';
@@ -48,17 +55,36 @@ export function table(rows: string[][]): string {
   return out;
 }
 
-/** Render the simplified 80-column fill for a list of `entries`. */
+/**
+ * Column-major fill with a uniform column width (util-linux `column` default
+ * mode, `columnate_fillcols`): one width `colw = maxlen + {@link GUTTER}` is
+ * derived from the WIDEST entry; the column count is the direct division
+ * `cols = max(1, floor({@link TERM_WIDTH} / colw))`; entries are laid DOWN each
+ * column then across (`entries[c*rows + r]`). Every cell is padded to the
+ * uniform `colw` except the last populated cell in a row (no trailing ws).
+ */
 export function fill(entries: string[]): string {
-  if (entries.length === 0) return '';
-  const width = Math.max(...entries.map((e) => e.length)) + GUTTER;
-  const perLine = Math.max(1, Math.floor(TERM_WIDTH / width));
+  const n = entries.length;
+  if (n === 0) return '';
+
+  let maxlen = 0;
+  for (const e of entries) maxlen = Math.max(maxlen, e.length);
+
+  const colw = maxlen + GUTTER;
+  const cols = Math.max(1, Math.floor(TERM_WIDTH / colw));
+  const rows = Math.ceil(n / cols);
+
   let out = '';
-  for (let i = 0; i < entries.length; i++) {
-    const last = i === entries.length - 1 || (i + 1) % perLine === 0;
-    out += last ? entries[i] + '\n' : entries[i].padEnd(width);
+  for (let r = 0; r < rows; r++) {
+    let line = '';
+    for (let c = 0; c < cols; c++) {
+      const e = entries[c * rows + r];
+      if (e === undefined) continue;       // missing trailing entry
+      const isLastInRow = c === cols - 1 || entries[(c + 1) * rows + r] === undefined;
+      line += isLastInRow ? e : e.padEnd(colw);
+    }
+    out += line + '\n';
   }
-  if (!out.endsWith('\n')) out += '\n';
   return out;
 }
 

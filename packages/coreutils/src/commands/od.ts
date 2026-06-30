@@ -18,14 +18,19 @@
  * on a little-endian host (low byte first). An odd trailing byte is padded with a
  * zero high byte to form a final partial word, matching GNU.
  *
+ * Multiple type specs combine GNU-style: each `-t TYPE` and `-c` is collected in
+ * command-line order, and every 16-byte block prints one line PER type (first
+ * type carries the address, continuation lines blank the address column to its
+ * width). `*` duplicate-block elision compares the full multi-type block. The
+ * type scan stops at a `--` terminator (later tokens are filenames, matching GNU
+ * and the positional parse); a dangling `-t` with no following spec errors
+ * (`od: option requires an argument -- 't'`, exit 1) rather than defaulting.
+ *
  * 16 bytes per line. Identical consecutive 16-byte lines are elided GNU-style:
  * the first is printed, a bare `*` marks the run of duplicates, and output
  * resumes at the first differing line. A final address-only line marks
  * end-of-input (GNU prints the total byte count in the chosen radix). FILE may be
  * `-`/omitted for stdin.
- *
- * NOT yet faithful (documented follow-up): combining multiple `-t` specs on one
- * dump. The forms above match GNU exactly for the tested cases.
  */
 import { defineCommand, parseArgs, readAll, writeString, exitWith } from '../harness.ts';
 import { readFile } from '../fs.ts';
@@ -74,6 +79,10 @@ function formatWord(w: number, type: DumpType): string {
 
 const WORD_TYPES = new Set<DumpType>(['x2', 'o2', 'd2']);
 
+function isDumpType(t: string): t is DumpType {
+  return t === 'x1' || t === 'o1' || t === 'd1' || t === 'x2' || t === 'o2' || t === 'd2' || t === 'c';
+}
+
 /** Format the byte-region (everything after the address) of ONE 16-byte line. */
 function formatRegion(bytes: Uint8Array, start: number, end: number, type: DumpType): string {
   let region = '';
@@ -102,15 +111,24 @@ const odCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     if (!['x', 'd', 'o', 'n'].includes(radix)) {
       return await exitWith(err, 1, `${name}: invalid output address radix '${flags.A}'`);
     }
-    let type: DumpType = 'o1';
-    if (flags.c) type = 'c';
-    else if (flags.t !== undefined) {
-      const t = String(flags.t);
-      if (t !== 'x1' && t !== 'o1' && t !== 'd1' && t !== 'x2' && t !== 'o2' && t !== 'd2') {
-        return await exitWith(err, 1, `${name}: type '${t}' not supported (only x1/o1/d1/x2/o2/d2/-c)`);
+    // Collect type specs in COMMAND-LINE ORDER: each `-t TYPE` / `-tTYPE` and each
+    // `-c`. GNU prints one line per type per block, in this order. (parseArgs keeps
+    // only the LAST -t, so the ordered list is gathered directly from argv here.)
+    const types: DumpType[] = [];
+    const argv = io.args.slice(1);
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (a === '--') break; // tokens after `--` are filenames (matches parseArgs)
+      if (a === '-c') { types.push('c'); continue; }
+      if (a === '-t') {
+        const t = argv[++i];
+        if (t === undefined) return await exitWith(err, 1, `${name}: option requires an argument -- 't'`);
+        if (!isDumpType(t)) return await exitWith(err, 1, `${name}: type '${t}' not supported (only x1/o1/d1/x2/o2/d2/-c)`);
+        types.push(t); continue;
       }
-      type = t;
+      if (a.startsWith('-t') && a.length > 2) { const t = a.slice(2); if (!isDumpType(t)) return await exitWith(err, 1, `${name}: type '${t}' not supported (only x1/o1/d1/x2/o2/d2/-c)`); types.push(t); continue; }
     }
+    if (types.length === 0) types.push('o1'); // default
 
     const src = positionals[0];
     let bytes: Uint8Array;
@@ -120,21 +138,28 @@ const odCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       catch { return await exitWith(err, 1, `${name}: ${src}: No such file or directory`); }
     }
 
-    // Emit 16-byte lines with GNU `*` duplicate-line elision: print the first
-    // line, a bare `*` for a run of identical lines, then resume at the first
-    // differing line. The byte-region (post-address) is compared for equality.
-    let prevRegion: string | undefined;
+    // Emit 16-byte blocks. For multiple types GNU prints one line per type per
+    // block (types in command-line order); only the FIRST line carries the
+    // address, continuations blank it to the address width. `*` duplicate-block
+    // elision compares the FULL multi-type block (all type regions concatenated).
+    const addrWidth = formatAddress(0, radix).length;
+    const blankAddr = ' '.repeat(addrWidth);
+    let prevBlock: string | undefined;
     let eliding = false;
     for (let i = 0; i < bytes.byteLength; i += 16) {
       const end = Math.min(i + 16, bytes.byteLength);
-      const region = formatRegion(bytes, i, end, type);
-      if (prevRegion !== undefined && region === prevRegion) {
+      const regions = types.map((t) => formatRegion(bytes, i, end, t));
+      const block = regions.join(' '); // elision key over ALL type regions
+      if (prevBlock !== undefined && block === prevBlock) {
         if (!eliding) { await writeString(out, '*\n'); eliding = true; }
         continue;
       }
       eliding = false;
-      prevRegion = region;
-      await writeString(out, formatAddress(i, radix) + region + '\n');
+      prevBlock = block;
+      for (let k = 0; k < regions.length; k++) {
+        const addr = k === 0 ? formatAddress(i, radix) : blankAddr;
+        await writeString(out, addr + regions[k] + '\n');
+      }
     }
 
     // Final address-only line (GNU prints the byte total in the radix). With

@@ -130,4 +130,60 @@ describe('od', () => {
       '000030\n',
     );
   });
+
+  // --- C1: combining MULTIPLE -t specs (one line per type per block, GNU) ---
+
+  test('od combines multiple -t specs (one line per type, blanked continuation address)', async () => {
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x1', '-t', 'c', '/in'], files: { '/in': 'ABCD' } });
+    expect(await odCommand(h.io)).toBe(0);
+    expect(h.out()).toBe(
+      '000000 41 42 43 44\n' +
+      '         A   B   C   D\n' +
+      '000004\n',
+    );
+  });
+
+  test('od -t x1 with -c combines (the -c flag is a c type at its position)', async () => {
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x1', '-c', '/in'], files: { '/in': 'AB' } });
+    expect(await odCommand(h.io)).toBe(0);
+    expect(h.out()).toBe(
+      '000000 41 42\n' +
+      '         A   B\n' +
+      '000002\n',
+    );
+  });
+
+  test('od multi-type * elision compares the full block', async () => {
+    // 48 identical bytes (0x41) → block repeats; first block prints both type lines,
+    // then a bare `*`, then the final offset.
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x1', '-t', 'c', '/in'], files: { '/in': 'A'.repeat(48) } });
+    expect(await odCommand(h.io)).toBe(0);
+    const out = h.out();
+    expect(out).toContain('*\n');
+    expect(out.endsWith('000030\n')).toBe(true); // 48 = 0x30
+  });
+
+  // --- FIX 3: type-scan stops at `--`, errors on a dangling `-t` ---
+
+  test('a dangling -t (no following spec) errors like GNU and exits 1', async () => {
+    // GNU: `od: option requires an argument -- 't'` (exit 1). We must NOT silently
+    // default to o1 when -t is the final argument.
+    const h = makeIO({ args: ['od', '-t'] });
+    expect(await odCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('od: option requires an argument -- \'t\'\n');
+  });
+
+  test('-t x1 followed by other args is unaffected', async () => {
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x1', '/in'], files: { '/in': 'AB' } });
+    expect(await odCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('000000 41 42\n000002\n');
+  });
+
+  test('type-scan stops at `--`; a later -tTYPE-looking token is a filename', async () => {
+    // After `--`, tokens are filenames, not type specs. `-t x1` here is a real
+    // type spec; `--` ends option scanning so the operand `/in` is the file.
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x1', '--', '/in'], files: { '/in': 'AB' } });
+    expect(await odCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('000000 41 42\n000002\n');
+  });
 });
