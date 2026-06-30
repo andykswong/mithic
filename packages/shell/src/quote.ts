@@ -26,3 +26,16 @@ export function shellQuote(s: string): string {
   }
   return '\'' + s.replace(/'/g, '\'\\\'\'') + '\'';
 }
+
+/**
+ * Quote `s` for safe shell re-input using bash `printf %q` BACKSLASH style
+ * (distinct from {@link shellQuote}'s single-quote style — both re-input
+ * identically). Empty → `''`. A char outside the safe set is backslash-escaped;
+ * control chars use the ANSI-C `$'…'` form (reusing {@link shellQuote}'s path).
+ */
+export function shellQuoteBackslash(s: string): string {
+  if (s === '') return '\'\'';
+  if (CTRL.test(s)) return shellQuote(s); // control chars → reuse $'…' path
+  if (SAFE.test(s)) return s; // safe charset stays bare
+  return s.replace(/[^A-Za-z0-9_./:=@%+,-]/g, (c) => '\\' + c);
+}

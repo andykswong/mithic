@@ -528,3 +528,110 @@ test('${!var} indirect expansion (value of the variable named by var)', async ()
 test('${!var} with an unset indirection is empty', async () => {
   expect((await run('ref=nope; echo "[${!ref}]"')).out.trim()).toBe('[]');
 });
+
+// ── readonly enforcement (non-POSIX: reports + continues, keeps old value) ────
+
+test('readonly var rejects reassignment (non-posix: reports, keeps old value, continues)', async () => {
+  const { out, err } = await run('readonly RO=1; RO=2; echo "$RO"');
+  expect(out.trim()).toBe('1');
+  expect(err).toMatch(/RO: readonly variable/);
+});
+
+test('readonly without = marks an existing var readonly', async () => {
+  const { out, err } = await run('X=1; readonly X; X=2; echo "$X"');
+  expect(out.trim()).toBe('1');
+  expect(err).toMatch(/X: readonly variable/);
+});
+
+test('readonly NAME=val sets the value (first assignment succeeds)', async () => {
+  const { out } = await run('readonly RO=hello; echo "$RO"');
+  expect(out.trim()).toBe('hello');
+});
+
+test('unset of a readonly var is rejected (keeps the value, status 1)', async () => {
+  const { out, err } = await run('readonly RO=1; unset RO; echo "$RO $?"');
+  expect(out.trim()).toBe('1 1');
+  expect(err).toMatch(/cannot unset: readonly variable/);
+});
+
+test('export/declare reassignment of a readonly var is rejected', async () => {
+  const exp = await run('readonly RO=1; export RO=2; echo "$RO"');
+  expect(exp.out.trim()).toBe('1');
+  expect(exp.err).toMatch(/RO: readonly variable/);
+  const dec = await run('readonly RO=1; declare RO=2; echo "$RO"');
+  expect(dec.out.trim()).toBe('1');
+  expect(dec.err).toMatch(/RO: readonly variable/);
+});
+
+test('writing through a nameref to a readonly target is rejected', async () => {
+  const { out, err } = await run('target=1; readonly target; declare -n ref=target; ref=2; echo "$target"');
+  expect(out.trim()).toBe('1');
+  expect(err).toMatch(/target: readonly variable/);
+});
+
+// ── let (arithmetic-evaluation builtin) ──────────────────────────────────────
+
+test('let evaluates arithmetic and assigns', async () => {
+  const { out } = await run('let "x = 2 + 3"; echo $x');
+  expect(out.trim()).toBe('5');
+});
+
+test('let exit status is 1 when the last expr is 0, 0 otherwise', async () => {
+  expect((await run('let "0"; echo $?')).out.trim()).toBe('1');
+  expect((await run('let "1"; echo $?')).out.trim()).toBe('0');
+});
+
+test('let multiple expressions take status from the last', async () => {
+  // last expr (b=0) evaluates to 0 → status 1, but both assignments take.
+  const { out } = await run('let "a=1" "b=0"; echo "$a $b $?"');
+  expect(out.trim()).toBe('1 0 1');
+});
+
+test('let with a malformed expression fails the command (status 2), not the script', async () => {
+  // A bad arith expr is a per-command error: status 2 + diagnostic, and the NEXT
+  // statement still runs (vs aborting the whole script).
+  const { out, err } = await run('let "1 +"; echo AFTER=$?');
+  expect(out.trim()).toBe('AFTER=2');
+  expect(err).toMatch(/let:/);
+});
+
+test('let division by zero fails the command, not the script', async () => {
+  const { out } = await run('let "1 / 0"; echo STILL_RUNS');
+  expect(out).toContain('STILL_RUNS');
+});
+
+// ── declare -n namerefs (single-level) ───────────────────────────────────────
+
+test('declare -n nameref reads through to the target', async () => {
+  const { out } = await run('target=hi; declare -n ref=target; echo $ref');
+  expect(out.trim()).toBe('hi');
+});
+
+test('assigning through a nameref writes the target', async () => {
+  const { out } = await run('target=1; declare -n ref=target; ref=2; echo $target');
+  expect(out.trim()).toBe('2');
+});
+
+// ── dirs / pushd / popd directory stack ──────────────────────────────────────
+
+test('pushd/dirs/popd manage the directory stack', async () => {
+  const { out } = await run('cd /a; pushd /b; dirs; popd; dirs; pwd', { cwd: '/' });
+  // pushd prints "/b /a"; dirs prints "/b /a"; popd prints "/a"; dirs prints "/a"; pwd "/a"
+  expect(out.trim().split('\n')).toEqual(['/b /a', '/b /a', '/a', '/a', '/a']);
+});
+
+test('pushd with no arg swaps the top two', async () => {
+  const { out } = await run('cd /a; pushd /b; pushd; pwd', { cwd: '/' });
+  // after pushd /b: stack "/b /a" (cwd /b); bare pushd swaps → "/a /b" (cwd /a)
+  expect(out.trim().split('\n')).toEqual(['/b /a', '/a /b', '/a']);
+});
+
+test('dirs -c clears the stack', async () => {
+  const { out } = await run('cd /a; pushd /b; dirs -c; dirs', { cwd: '/' });
+  expect(out.trim().split('\n')).toEqual(['/b /a', '/b']);
+});
+
+test('dirs abbreviates $HOME with ~ unless -l', async () => {
+  const { out } = await run('cd /home/u; dirs; dirs -l', { cwd: '/', env: { HOME: '/home/u' } });
+  expect(out.trim().split('\n')).toEqual(['~', '/home/u']);
+});

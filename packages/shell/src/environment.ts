@@ -61,6 +61,11 @@ export interface EnvHost {
   listDir(path: string): Promise<string[] | undefined>;
   statPath(path: string): Promise<{ dir: boolean } | undefined>;
   procSub(src: string, dir: 'in' | 'out'): Promise<string>;
+  /**
+   * Resolve a `declare -n` nameref to its target (single-level), or undefined if
+   * `name` is not a nameref. Variable reads dereference through this. Optional.
+   */
+  resolveNameref?(name: string): string | undefined;
 }
 
 export class Environment implements ShellEnv {
@@ -123,7 +128,13 @@ export class Environment implements ShellEnv {
 
   // ── ShellEnv: variable storage ─────────────────────────────────────────────
 
+  /** Single-level `declare -n` nameref deref: `ref` → its target (else `name`). */
+  private deref(name: string): string {
+    return this.host.resolveNameref?.(name) ?? name;
+  }
+
   get(name: string): string | undefined {
+    name = this.deref(name);
     // `RANDOM` is dynamic — never let a stored value shadow the generator
     // (assignment seeds it via `set`). `getSpecial` produces the value.
     if (name === 'RANDOM') return undefined;
@@ -149,16 +160,18 @@ export class Environment implements ShellEnv {
   }
 
   has(name: string): boolean {
+    name = this.deref(name);
     if (name === 'RANDOM' || name === 'BASH_VERSION' || name === 'BASH_VERSINFO') return true;
     return name in this.vars;
   }
 
   getArray(name: string): string[] | undefined {
+    name = this.deref(name);
     if (name === 'BASH_VERSINFO') return [...BASH_VERSINFO_ELEMENTS];
     return this.arrays.get(name);
   }
 
-  getAssoc(name: string): Map<string, string> | undefined { return this.assocArrays.get(name); }
+  getAssoc(name: string): Map<string, string> | undefined { return this.assocArrays.get(this.deref(name)); }
 
   get cwd(): string { return this.context.cwd; }
 

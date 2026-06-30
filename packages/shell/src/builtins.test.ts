@@ -139,14 +139,23 @@ test('printf %i is an alias for %d', async () => {
   expect(await printf('%i', '7')).toBe('7');
 });
 
-test('printf %q quotes a value for safe re-input', async () => {
-  expect(await printf('%q\n', 'a b')).toBe('\'a b\'\n');
+test('printf %q backslash-escapes shell-special chars', async () => {
+  expect(await printf('%q\n', 'a b')).toBe('a\\ b\n');
 });
 
 test('printf %q leaves a safe word bare', async () => {
-  expect(await printf('%q', 'abc')).toBe('abc');
+  expect(await printf('%q', 'hello')).toBe('hello');
 });
 
 test('printf %q uses ANSI-C $\'…\' for control chars', async () => {
   expect(await printf('%q', 'a\nb')).toBe('$\'a\\nb\'');
+});
+
+test('printf %q honors width (right-justified)', async () => {
+  // `a b` → `a\ b` (4 chars) → %6q right-pads to 6.
+  expect(await printf('[%6q]', 'a b')).toBe('[  a\\ b]');
+});
+
+test('printf %q empty string', async () => {
+  expect(await printf('%q', '')).toBe('\'\'');
 });

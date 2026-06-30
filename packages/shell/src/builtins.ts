@@ -3,7 +3,8 @@
  * state (cwd, env, functions, jobs) and/or writing to the current stdout/stderr.
  */
 
-import { shellQuote } from './quote.ts';
+import { shellQuoteBackslash } from './quote.ts';
+import { interpretEscapes } from './escape.ts';
 
 /** Richer shell state surface a few builtins need (functions, jobs, positionals). */
 export interface ShellState {
@@ -53,6 +54,20 @@ export interface ShellState {
   removeJob?(spec: number): boolean;
   /** Send a signal to a job/pid. Returns false if no such job. */
   killJob?(spec: number, signal: string): boolean;
+  /** Mark a name as `readonly` (reassignment is then rejected). */
+  markReadonly?(name: string): void;
+  /** True when the name was marked `readonly`. */
+  isReadonly?(name: string): boolean;
+  /** Record a `declare -n ref=target` nameref (single-level). */
+  setNameref?(ref: string, target: string): void;
+  /** Resolve a nameref to its target (single-level), or undefined if not a nameref. */
+  resolveNameref?(name: string): string | undefined;
+  /**
+   * The directory stack BELOW the current directory (`pushd`/`popd`/`dirs`),
+   * most-recent-first. The live array — `dirs`/`pushd`/`popd` mutate it in place.
+   * The current directory (`ctx.cwd`) is the conceptual top and is NOT stored here.
+   */
+  dirStack?(): string[];
 }
 
 /** Long names of the shell options toggled via `set` / `set -o`. */
@@ -118,6 +133,12 @@ export interface BuiltinContext {
   doBreak?(n: number): never;
   doContinue?(n: number): never;
   doReturn?(n: number): never;
+  /**
+   * Evaluate a single arithmetic expression over the live shell env (assignments
+   * mutate the env), returning its integer value — backs the `let` builtin.
+   * Implemented by the executor over the same env proxy `(( ))` uses.
+   */
+  evalArith?(expr: string): number;
   /** Richer state for local/declare/shift/getopts/jobs/wait. */
   state?: ShellState;
 }
@@ -125,10 +146,11 @@ export interface BuiltinContext {
 export const BUILTINS = [
   'cd', 'pwd', 'export', 'unset', 'echo', 'printf',
   'test', '[', 'true', 'false', 'exit', 'eval', 'set', 'cat', ':',
-  'local', 'declare', 'readonly', 'shift', 'return', 'getopts', 'read',
+  'local', 'declare', 'readonly', 'let', 'shift', 'return', 'getopts', 'read',
   'mapfile', 'readarray',
   'jobs', 'fg', 'bg', 'wait', 'kill', 'break', 'continue', 'source', '.', 'type',
   'shopt', 'trap', 'disown', 'history', 'fc', 'exec', 'coproc',
+  'dirs', 'pushd', 'popd',
 ] as const;
 
 const BUILTIN_SET = new Set<string>(BUILTINS);
@@ -172,6 +194,21 @@ function resolvePath(cwd: string, target: string): string {
   return '/' + stack.join('/');
 }
 
+/**
+ * Format the directory stack for `dirs`/`pushd`/`popd`: cwd first, then the
+ * `below` entries (most-recent-first), space-separated. Unless `long`, abbreviate
+ * a leading `$HOME` to `~` (bash default).
+ */
+function formatDirStack(cwd: string, below: string[], long: boolean, home: string | undefined): string {
+  const abbrev = (p: string): string => {
+    if (long || home === undefined || home === '') return p;
+    if (p === home) return '~';
+    if (p.startsWith(home + '/')) return '~' + p.slice(home.length);
+    return p;
+  };
+  return [cwd, ...below].map(abbrev).join(' ');
+}
+
 export async function runBuiltin(name: string, args: string[], ctx: BuiltinContext): Promise<number> {
   switch (name) {
     case ':':
@@ -191,6 +228,46 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
     case 'pwd':
       ctx.write(ctx.cwd + '\n');
       return 0;
+
+    case 'dirs': {
+      const stack = ctx.state?.dirStack?.();
+      if (stack === undefined) { errOut(ctx, 'shell: dirs: directory stack not available\n'); return 1; }
+      if (args.includes('-c')) { stack.length = 0; return 0; }
+      const long = args.includes('-l');
+      ctx.write(formatDirStack(ctx.cwd, stack, long, ctx.env.HOME) + '\n');
+      return 0;
+    }
+
+    case 'pushd': {
+      const stack = ctx.state?.dirStack?.();
+      if (stack === undefined) { errOut(ctx, 'shell: pushd: directory stack not available\n'); return 1; }
+      const dir = args.find((a) => !a.startsWith('-'));
+      if (dir === undefined) {
+        // No argument: swap the top two entries (cwd ↔ stack top).
+        if (stack.length === 0) { errOut(ctx, 'shell: pushd: no other directory\n'); return 1; }
+        const prevCwd = ctx.cwd;
+        ctx.cwd = stack[0];
+        ctx.env.PWD = ctx.cwd;
+        stack[0] = prevCwd;
+      } else {
+        // Push cwd below, then cd to DIR (DIR becomes the new top = cwd).
+        stack.unshift(ctx.cwd);
+        ctx.cwd = resolvePath(ctx.cwd, dir);
+        ctx.env.PWD = ctx.cwd;
+      }
+      ctx.write(formatDirStack(ctx.cwd, stack, false, ctx.env.HOME) + '\n');
+      return 0;
+    }
+
+    case 'popd': {
+      const stack = ctx.state?.dirStack?.();
+      if (stack === undefined) { errOut(ctx, 'shell: popd: directory stack not available\n'); return 1; }
+      if (stack.length === 0) { errOut(ctx, 'shell: popd: directory stack empty\n'); return 1; }
+      ctx.cwd = stack.shift()!;
+      ctx.env.PWD = ctx.cwd;
+      ctx.write(formatDirStack(ctx.cwd, stack, false, ctx.env.HOME) + '\n');
+      return 0;
+    }
 
     case 'echo': {
       let newline = true;
@@ -219,19 +296,36 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       return 0;
 
     case 'export': {
+      let status = 0;
       for (const arg of args) {
         const eq = arg.indexOf('=');
-        if (eq > 0) ctx.env[arg.slice(0, eq)] = arg.slice(eq + 1);
+        if (eq > 0) {
+          const n = arg.slice(0, eq);
+          if (ctx.state?.isReadonly?.(n)) {
+            errOut(ctx, `shell: export: ${n}: readonly variable\n`);
+            status = 1;
+            continue;
+          }
+          ctx.env[n] = arg.slice(eq + 1);
+        }
       }
-      return 0;
+      return status;
     }
 
     case 'unset': {
+      let status = 0;
       for (const arg of args) {
+        // A readonly variable cannot be unset (bash: `unset: <name>: cannot unset:
+        // readonly variable`, status 1). Functions are unaffected by readonly.
+        if (ctx.state?.isReadonly?.(arg)) {
+          errOut(ctx, `shell: unset: ${arg}: cannot unset: readonly variable\n`);
+          status = 1;
+          continue;
+        }
         delete ctx.env[arg];
         ctx.state?.functions.delete(arg);
       }
-      return 0;
+      return status;
     }
 
     case 'local':
@@ -239,7 +333,12 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
     case 'readonly': {
       // Assign NAME=value into the (function-local for `local`) env.
       const isLocal = name === 'local';
+      const isReadonly = name === 'readonly';
       const isAssoc = name === 'declare' && args.includes('-A');
+      // `declare -n ref=target` declares a nameref (single-level): reads of `ref`
+      // and writes to `ref` are redirected to `target` (the latter in the
+      // executor's applyAssignment). Recorded instead of storing a literal value.
+      const isNameref = name === 'declare' && args.includes('-n');
       if (isAssoc && (ctx.state?.getOption('posix') ?? false)) {
         errOut(ctx, 'shell: declare: -A: not supported in POSIX mode\n');
         return 2;
@@ -248,17 +347,49 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         if (arg.startsWith('-')) continue; // ignore option flags (-i, -a, etc.)
         const eq = arg.indexOf('=');
         const n = eq > 0 ? arg.slice(0, eq) : arg;
+        if (isNameref) {
+          // `declare -n ref=target`: record the mapping (no literal value stored).
+          if (eq > 0) ctx.state?.setNameref?.(n, arg.slice(eq + 1));
+          continue;
+        }
         // `declare -A name` registers an associative array (G6).
         if (isAssoc) ctx.state?.declareAssoc?.(n);
         if (eq > 0) {
+          // Reassigning an already-readonly var via declare/local fails (bash). The
+          // `readonly NAME=val` form is exempt — it sets THEN marks below, so a
+          // first `readonly RO=1` succeeds; only a later write to RO is rejected.
+          if (!isReadonly && ctx.state?.isReadonly?.(n)) {
+            errOut(ctx, `shell: ${name}: ${n}: readonly variable\n`);
+            return 1;
+          }
           if (isLocal) ctx.state?.declareLocal(n);
           if (!isAssoc) ctx.env[n] = arg.slice(eq + 1);
         } else if (isLocal) {
           ctx.state?.declareLocal(arg);
           if (!(arg in ctx.env)) ctx.env[arg] = '';
         }
+        // `readonly NAME[=val]` marks the name AFTER its value is set, so the
+        // builtin's own assignment succeeds; later reassignments are rejected by
+        // the executor's applyAssignment (POSIX-fatal in posix mode).
+        if (isReadonly) ctx.state?.markReadonly?.(n);
       }
       return 0;
+    }
+
+    case 'let': {
+      // Evaluate each arithmetic expression over the live env (assignments take).
+      // Exit status mirrors bash: 1 when the LAST expression evaluates to 0, else
+      // 0. No expressions → status 1. A malformed expression / division by zero is
+      // a per-command error (status 2 + diagnostic), NOT a script abort.
+      if (args.length === 0) return 1;
+      let last = 0;
+      try {
+        for (const expr of args) last = ctx.evalArith?.(expr) ?? 0;
+      } catch (e) {
+        errOut(ctx, `shell: let: ${e instanceof Error ? e.message : String(e)}\n`);
+        return 2;
+      }
+      return last === 0 ? 1 : 0;
     }
 
     case 'shift': {
@@ -1068,8 +1199,9 @@ function formatOne(conv: string, flags: string, width: number | undefined, prec:
       return pad(body, width, left, false);
     }
     case 'q':
-      // Shell-quote for safe re-input (width/precision/flags do not apply).
-      return shellQuote(arg);
+      // Shell-quote for safe re-input, bash `printf %q` backslash style; honors
+      // width/left-justify like the other string conversions.
+      return pad(shellQuoteBackslash(arg), width, left, false);
     case 'd': case 'i': case 'u': {
       let v = parseIntArg(arg);
       if (conv === 'u' && v < 0) v = v >>> 0;
@@ -1164,51 +1296,3 @@ function parseFloatArg(arg: string): number {
   return Number.isNaN(v) ? 0 : v;
 }
 
-/**
- * Interpret backslash escapes. When `octalBackslashZero` is true (printf format
- * strings), octal is written `\0nnn`; for `%b` arguments it is `\nnn`.
- */
-function interpretEscapes(s: string, octalBackslashZero: boolean): string {
-  let out = '';
-  let i = 0;
-  while (i < s.length) {
-    if (s[i] !== '\\') { out += s[i]; i++; continue; }
-    const next = s[i + 1];
-    switch (next) {
-      case 'n': out += '\n'; i += 2; continue;
-      case 't': out += '\t'; i += 2; continue;
-      case 'r': out += '\r'; i += 2; continue;
-      case 'a': out += '\x07'; i += 2; continue;
-      case 'e': out += '\x1b'; i += 2; continue;
-      case 'b': out += '\b'; i += 2; continue;
-      case 'f': out += '\f'; i += 2; continue;
-      case 'v': out += '\v'; i += 2; continue;
-      case '\\': out += '\\'; i += 2; continue;
-      case '"': out += '"'; i += 2; continue;
-      case 'x': {
-        const m = /^[0-9a-fA-F]{1,2}/.exec(s.slice(i + 2));
-        if (m) { out += String.fromCharCode(parseInt(m[0], 16)); i += 2 + m[0].length; continue; }
-        out += '\\x'; i += 2; continue;
-      }
-      default: break;
-    }
-    // Octal in a printf FORMAT: `\0nnn` (1–3 octal digits after the 0) or, as a
-    // GNU extension, a bare `\nnn`.
-    if (octalBackslashZero && next === '0') {
-      const m = /^[0-7]{1,3}/.exec(s.slice(i + 2));
-      const oct = m ? m[0] : '';
-      out += String.fromCharCode(parseInt(oct || '0', 8));
-      i += 2 + oct.length; continue;
-    }
-    // Octal in a `%b` argument: `\nnn` (and `\0nnn`). Also bare `\nnn` in formats.
-    if (/[0-7]/.test(next ?? '')) {
-      const m = /^[0-7]{1,3}/.exec(s.slice(i + 1));
-      const oct = m ? m[0] : '0';
-      out += String.fromCharCode(parseInt(oct, 8));
-      i += 1 + oct.length; continue;
-    }
-    // Unknown escape: keep the backslash literally.
-    out += '\\'; i += 1;
-  }
-  return out;
-}
