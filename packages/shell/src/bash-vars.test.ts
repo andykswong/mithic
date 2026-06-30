@@ -90,6 +90,28 @@ test('$BASH_VERSINFO[4] is the release status', async () => {
   expect(h.out.trim()).toBe('release');
 });
 
+// ── $LINENO ──────────────────────────────────────────────────────────────────
+
+test('$LINENO reflects the current statement line', async () => {
+  const h = mk();
+  // Matches bash `-c` numbering: statements on source lines 1 and 2.
+  await h.ex.exec('echo $LINENO\necho $LINENO');
+  expect(h.out.trim().split(/\s+/)).toEqual(['1', '2']);
+});
+
+test('$LINENO advances across a multi-line script', async () => {
+  const h = mk();
+  await h.ex.exec('true\necho $LINENO\ntrue\necho $LINENO');
+  expect(h.out.trim().split(/\s+/)).toEqual(['2', '4']);
+});
+
+test('$LINENO inside a loop body tracks the body statement line', async () => {
+  const h = mk();
+  await h.ex.exec('for i in a b\ndo\n  echo $LINENO\ndone');
+  // The `echo $LINENO` body statement is on source line 3, run once per iteration.
+  expect(h.out.trim().split(/\s+/)).toEqual(['3', '3']);
+});
+
 // ── A3: TMOUT idle-exit is Tier 2 (inert); `read -t` on string stdin is Tier 1 ──
 //
 // `read -u N -t T` over a LIVE duplex fd now honors the timeout (see

@@ -46,6 +46,8 @@ export interface EnvHost {
   lastStatus(): number;
   lastBgPid(): number;
   pipeStatus(): number[];
+  /** 1-based source line of the statement currently executing, for `$LINENO`. */
+  currentLine(): number;
   /** The short-flag letters of currently-enabled options, for `$-`. */
   currentFlags(): string;
   /** The LIVE indexed-array map (read fresh: a subshell may reassign it). */
@@ -172,6 +174,8 @@ export class Environment implements ShellEnv {
       case '@':
       case '*': return (this.context.positional ?? []).join(' ');
       case 'PIPESTATUS': return this.host.pipeStatus().join(' ');
+      // `$LINENO`: the source line of the statement currently executing.
+      case 'LINENO': return String(this.host.currentLine());
       // Bash identity/state vars (G7).
       case 'RANDOM': return String(this.nextRandom());
       case 'BASH_VERSION': return BASH_VERSION_STRING;

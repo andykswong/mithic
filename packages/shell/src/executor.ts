@@ -221,6 +221,8 @@ export class Executor {
   private stdinPendingLine: Promise<string | undefined> | undefined;
   private lastStatus = 0;
   private pipeStatus: number[] = [];
+  /** 1-based source line of the statement currently executing, for `$LINENO`. */
+  private currentLine = 0;
   /** C4: the job table + wait/jobs/kill/disown owner. */
   private jobControl: JobController;
   /** Status of the most recent command substitution (`$(...)`), for M10. */
@@ -302,6 +304,7 @@ export class Executor {
       lastStatus: () => this.lastStatus,
       lastBgPid: () => this.jobControl.lastBgPid(),
       pipeStatus: () => this.pipeStatus,
+      currentLine: () => this.currentLine,
       currentFlags: () => this.currentFlags(),
       arrays: () => this.arrays,
       assocArrays: () => this.assocArrays,
@@ -767,6 +770,7 @@ export class Executor {
 
   private async execStatement(stmt: Statement, io: CommandIO): Promise<number> {
     this.io = io;
+    if (stmt.line !== undefined) this.currentLine = stmt.line;
     switch (stmt.type) {
       case 'Pipeline': return this.withRedirects(stmt, io, (cio) => this.execPipeline(stmt, cio));
       case 'And': {
