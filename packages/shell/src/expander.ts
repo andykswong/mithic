@@ -20,6 +20,7 @@ import { evalArith } from './arith.ts';
 import { globToReSource, globToRegExp, isGlobPattern } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
 import { shellQuote } from './quote.ts';
+import { interpretEscapes } from './escape.ts';
 
 /**
  * The shell-state surface the expander reads/writes. Implemented by the
@@ -556,8 +557,12 @@ export class Expander {
     if (rest[0] === '@') {
       const op = rest[1];
       if (op === 'Q') return shellQuote(value);
-      // Other transforms (@E @P @A @a @U @u @L @K @k) are not yet supported — return
-      // the value unchanged rather than erroring (forward-compatible; documented).
+      if (op === 'U') return value.toUpperCase();
+      if (op === 'u') return value.length > 0 ? value[0].toUpperCase() + value.slice(1) : value;
+      if (op === 'L') return value.toLowerCase();
+      if (op === 'E') return interpretEscapes(value, /*octalBackslashZero*/ false);
+      // Other transforms (@P @A @a @K @k) are not yet supported — return the value
+      // unchanged rather than erroring (forward-compatible; documented).
       return value;
     }
 

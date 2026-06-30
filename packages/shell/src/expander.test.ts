@@ -265,9 +265,29 @@ test('${var@Q} does not break ${arr[@]} expansion', async () => {
   expect(await e.expandWord('"${a[@]}"')).toEqual(['1', '2 3', '4']);
 });
 
-test('unsupported @-transform returns the value unchanged', async () => {
+test('${var@U} uppercases all characters', async () => {
+  const e = E({ x: 'abc' });
+  expect(await e.expandWord('${x@U}')).toEqual(['ABC']);
+});
+
+test('${var@u} uppercases the first character only', async () => {
+  const e = E({ x: 'abc' });
+  expect(await e.expandWord('${x@u}')).toEqual(['Abc']);
+});
+
+test('${var@L} lowercases all characters', async () => {
+  const e = E({ x: 'ABC' });
+  expect(await e.expandWord('${x@L}')).toEqual(['abc']);
+});
+
+test('${var@E} expands ANSI-C backslash escapes', async () => {
+  const e = E({ x: 'a\\tb' });
+  expect(await e.expandWord('"${x@E}"')).toEqual(['a\tb']);
+});
+
+test('unsupported @-transform (@A) returns the value unchanged', async () => {
   const e = E({ x: 'Hello' });
-  expect(await e.expandWord('${x@U}')).toEqual(['Hello']);
+  expect(await e.expandWord('${x@A}')).toEqual(['Hello']);
 });
 
 // ── glob ──────────────────────────────────────────────────────────────────
