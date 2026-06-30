@@ -130,4 +130,36 @@ describe('od', () => {
       '000030\n',
     );
   });
+
+  // --- C1: combining MULTIPLE -t specs (one line per type per block, GNU) ---
+
+  test('od combines multiple -t specs (one line per type, blanked continuation address)', async () => {
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x1', '-t', 'c', '/in'], files: { '/in': 'ABCD' } });
+    expect(await odCommand(h.io)).toBe(0);
+    expect(h.out()).toBe(
+      '000000 41 42 43 44\n' +
+      '         A   B   C   D\n' +
+      '000004\n',
+    );
+  });
+
+  test('od -t x1 with -c combines (the -c flag is a c type at its position)', async () => {
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x1', '-c', '/in'], files: { '/in': 'AB' } });
+    expect(await odCommand(h.io)).toBe(0);
+    expect(h.out()).toBe(
+      '000000 41 42\n' +
+      '         A   B\n' +
+      '000002\n',
+    );
+  });
+
+  test('od multi-type * elision compares the full block', async () => {
+    // 48 identical bytes (0x41) → block repeats; first block prints both type lines,
+    // then a bare `*`, then the final offset.
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x1', '-t', 'c', '/in'], files: { '/in': 'A'.repeat(48) } });
+    expect(await odCommand(h.io)).toBe(0);
+    const out = h.out();
+    expect(out).toContain('*\n');
+    expect(out.endsWith('000030\n')).toBe(true); // 48 = 0x30
+  });
 });
