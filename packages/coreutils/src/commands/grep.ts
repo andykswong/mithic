@@ -8,7 +8,10 @@
  *   -w word-match, -x whole-line match, -E ERE, -F fixed-strings,
  *   -r/-R recursive over VFS directories, -e PAT (repeatable), -f FILE (patterns
  *   from file), -A N / -B N / -C N context, --color (default off — accepted but
- *   we only honor `--color=always` to emit SGR around matches).
+ *   we only honor `--color=always` to emit SGR around matches),
+ *   -q/--quiet/--silent (no output; exit on first match), -m N/--max-count N
+ *   (stop after N matches per file), --include=GLOB / --exclude=GLOB (filter
+ *   files by basename during -r recursion).
  *
  * Exit status: 0 if any line matched, 1 if none, 2 on error (bad pattern,
  * unreadable -f file, missing pattern).
@@ -37,9 +40,40 @@ interface GrepOptions {
   after: number;
   before: number;
   color: boolean;
+  quiet: boolean; // -q: suppress output, exit 0 on first match
+  maxCount: number; // -m N: stop after N matches per file (0 = unlimited)
+  include: RegExp[]; // --include=GLOB filters (-r): keep only matching basenames
+  exclude: RegExp[]; // --exclude=GLOB filters (-r): drop matching basenames
   patterns: string[];
   patternFiles: string[];
   files: string[];
+}
+
+/** Compile a filename glob (`*`/`?`/`[..]`) into an anchored, per-component RegExp. */
+function globToRegExp(glob: string): RegExp {
+  let re = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === '*') re += '[^/]*';
+    else if (c === '?') re += '[^/]';
+    else if (c === '[') {
+      let j = i + 1;
+      let cls = '[';
+      if (glob[j] === '!') { cls += '^'; j++; }
+      while (j < glob.length && glob[j] !== ']') { cls += glob[j]; j++; }
+      cls += ']';
+      re += cls;
+      i = j;
+    } else if ('.+^${}()|\\'.includes(c)) re += '\\' + c;
+    else re += c;
+  }
+  return new RegExp('^' + re + '$');
+}
+
+/** The basename of a path (after the last `/`). */
+function baseName(path: string): string {
+  const i = path.lastIndexOf('/');
+  return i < 0 ? path : path.slice(i + 1);
 }
 
 const RED = '\x1b[01;31m';
@@ -65,8 +99,15 @@ async function readFileText(io: CommandIO, path: string): Promise<string> {
   }
 }
 
-/** Recursively collect regular-file paths under `path`, sorted, mirroring grep -r. */
-async function collectFilesRecursive(io: CommandIO, path: string, out: string[]): Promise<void> {
+/**
+ * Recursively collect regular-file paths under `path`, sorted, mirroring grep
+ * -r. When `include`/`exclude` globs are set they filter regular files by
+ * basename (a file is kept only if it matches some `include`, when any are
+ * given, and matches no `exclude`). Directories are always descended.
+ */
+async function collectFilesRecursive(
+  io: CommandIO, path: string, out: string[], include: RegExp[], exclude: RegExp[],
+): Promise<void> {
   let stat: { type?: string };
   try {
     stat = (await io.syscall('fs/stat', { dirfd: -100, path })) as { type?: string };
@@ -83,9 +124,12 @@ async function collectFilesRecursive(io: CommandIO, path: string, out: string[])
     const names = entries.map((e) => e.name).sort();
     const base = path.endsWith('/') ? path.slice(0, -1) : path;
     for (const name of names) {
-      await collectFilesRecursive(io, `${base}/${name}`, out);
+      await collectFilesRecursive(io, `${base}/${name}`, out, include, exclude);
     }
   } else if (stat.type === 'file' || stat.type === undefined) {
+    const bn = baseName(path);
+    if (include.length > 0 && !include.some((re) => re.test(bn))) return;
+    if (exclude.some((re) => re.test(bn))) return;
     out.push(path);
   }
 }
@@ -97,6 +141,7 @@ function parseGrepArgs(argv: string[]): GrepOptions {
     listMatches: false, listNoMatches: false, onlyMatching: false,
     word: false, line: false, recursive: false, syntax: 'bre',
     after: 0, before: 0, color: false,
+    quiet: false, maxCount: 0, include: [], exclude: [],
     patterns: [], patternFiles: [], files: [],
   };
   let patternSeen = false;
@@ -135,6 +180,10 @@ function parseGrepArgs(argv: string[]): GrepOptions {
         case 'before-context': o.before = num(val ?? argv[++i]); break;
         case 'context': { const n = num(val ?? argv[++i]); o.after = n; o.before = n; break; }
         case 'color': case 'colour': o.color = val === 'always' || val === 'auto'; break;
+        case 'quiet': case 'silent': o.quiet = true; break;
+        case 'max-count': o.maxCount = num(val ?? argv[++i]); break;
+        case 'include': o.include.push(globToRegExp(val ?? argv[++i] ?? '')); break;
+        case 'exclude': o.exclude.push(globToRegExp(val ?? argv[++i] ?? '')); break;
         default: break;
       }
       i++;
@@ -156,8 +205,15 @@ function parseGrepArgs(argv: string[]): GrepOptions {
           case 'w': o.word = true; break;
           case 'x': o.line = true; break;
           case 'r': case 'R': o.recursive = true; break;
+          case 'q': o.quiet = true; break;
           case 'E': o.syntax = 'ere'; break;
           case 'F': o.syntax = 'fixed'; break;
+          case 'm': {
+            const rest = cluster.slice(j + 1);
+            o.maxCount = rest.length > 0 ? num(rest) : (consumedNext = true, num(argv[++i]));
+            j = cluster.length;
+            break;
+          }
           case 'e': {
             const rest = cluster.slice(j + 1);
             if (rest.length > 0) { o.patterns.push(rest); } else { o.patterns.push(argv[++i] ?? ''); consumedNext = true; }
@@ -275,6 +331,7 @@ function grepLines(
   for (let i = 0; i < lines.length; i++) {
     const m = matcher.rawMatch(lines[i]);
     if (o.invert ? !m : m) matchedIdx.push(i);
+    if (o.maxCount > 0 && matchedIdx.length >= o.maxCount) break; // -m N: stop after N
   }
   const matched = matchedIdx.length > 0;
 
@@ -411,7 +468,7 @@ const grepCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     let files = o.files;
     if (o.recursive) {
       const expanded: string[] = [];
-      for (const f of o.files) await collectFilesRecursive(io, f, expanded);
+      for (const f of o.files) await collectFilesRecursive(io, f, expanded, o.include, o.exclude);
       files = expanded;
     }
 
@@ -442,6 +499,29 @@ const grepCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       return anyMatch ? 0 : 1;
     }
 
+    // -q / --quiet / --silent: no output; exit 0 on the FIRST match (and stop
+    // reading), exit 1 if nothing matches. Overrides all output modes.
+    if (o.quiet) {
+      const test = (l: string): boolean => (o.invert ? !matcher.rawMatch(l) : matcher.rawMatch(l));
+      if (files.length === 0) {
+        try {
+          for await (const { line } of streamLines(io.stdin)) {
+            if (test(line)) { await io.stdin.cancel().catch(() => {}); return 0; }
+          }
+        } catch (e) {
+          if (!isBrokenPipe(e)) throw e;
+        }
+        return 1;
+      }
+      for (const f of files) {
+        let text: string;
+        try { text = await readFileText(io, f); }
+        catch { hadError = true; continue; }
+        if (toLines(text).some(test)) return 0;
+      }
+      return 1;
+    }
+
     // Normal / count / context modes.
     if (files.length === 0) {
       // Stream stdin line-by-line for the simple mode (no count, no context) so
@@ -453,11 +533,17 @@ const grepCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         const sink = new CoalescingWriter(out);
         let lineno = 0;
         let matched = false;
+        let matchCount = 0;
         try {
           for await (const { line } of streamLines(io.stdin)) {
             lineno++;
             const piece = formatLine(line, lineno, matcher, o, undefined);
-            if (piece !== '') { matched = true; await sink.push(piece); }
+            if (piece !== '') {
+              matched = true; matchCount++;
+              await sink.push(piece);
+              // -m N: stop reading once N lines have matched.
+              if (o.maxCount > 0 && matchCount >= o.maxCount) { await io.stdin.cancel().catch(() => {}); break; }
+            }
           }
           await sink.flush();
         } catch (e) {
@@ -481,7 +567,10 @@ const grepCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         hadError = true;
         continue;
       }
-      const res = grepLines(toLines(text), matcher, o, multiFile ? f : undefined);
+      // -r always labels by filename (recursion is filename-oriented in GNU),
+      // even when the include/exclude filter leaves a single file.
+      const prefix = (multiFile || o.recursive) ? f : undefined;
+      const res = grepLines(toLines(text), matcher, o, prefix);
       for (const line of res.output) await writeBytes(out, enc.encode(line + '\n'));
       if (res.matched) anyMatch = true;
     }
