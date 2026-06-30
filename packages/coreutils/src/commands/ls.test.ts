@@ -94,4 +94,29 @@ describe('ls', () => {
     expect(await lsCommand(h.io)).toBe(1);
     expect(h.err()).toContain('cannot access');
   });
+
+  // ── B2.3: -F classify indicators ───────────────────────────────────────────
+
+  test('-F appends / to dirs, * to executables, nothing to regular files', async () => {
+    const h = makeIO({
+      args: ['ls', '-1', '-F', '/d'],
+      files: {
+        '/d/sub/keep': 'x',                       // makes /d/sub a directory
+        '/d/prog': { content: '#!', mode: 0o755 }, // executable
+        '/d/file': { content: 'x', mode: 0o644 },  // regular
+      },
+    });
+    expect(await lsCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('file\nprog*\nsub/\n');
+  });
+
+  test('-F classifies symlinks with @', async () => {
+    const h = makeIO({
+      args: ['ls', '-1', '-F', '/d'],
+      files: { '/d/target': 'x' },
+    });
+    await h.fs.symlink('/d/target', '/d/link');
+    await lsCommand(h.io);
+    expect(h.out()).toContain('link@');
+  });
 });
