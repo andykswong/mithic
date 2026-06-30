@@ -39,6 +39,8 @@ export const COMMAND_NAMES = [
   'awk',
   // xargs
   'xargs',
+  // coreutils expansion batch (B1)
+  'printenv',
 ] as const;
 
 export type CoreutilsCommandName = typeof COMMAND_NAMES[number];
