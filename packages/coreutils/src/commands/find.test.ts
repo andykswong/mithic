@@ -173,6 +173,20 @@ describe('find -size / -empty / -newer / -printf', () => {
     expect(h.out().trim().split('\n')).toEqual(['/s/empty']);
   });
 
+  test('-size 1k rounds the file size UP to the unit (GNU): a 100-byte file is 1k', async () => {
+    // GNU find rounds a file's size UP to the next whole unit for every suffix
+    // except `c` (bytes). So `-size 1k` matches any file in (0, 1024] bytes.
+    const h = makeIO({ args: ['find', '/s', '-type', 'f', '-size', '1k'], files: sized });
+    await findCommand(h.io);
+    expect(h.out().trim().split('\n').sort()).toEqual(['/s/small']);
+  });
+
+  test('-size 100c uses EXACT bytes (no rounding)', async () => {
+    const h = makeIO({ args: ['find', '/s', '-type', 'f', '-size', '100c'], files: sized });
+    await findCommand(h.io);
+    expect(h.out().trim().split('\n')).toEqual(['/s/small']);
+  });
+
   test('-empty matches zero-size files and empty directories', async () => {
     const h = makeIO({
       args: ['find', '/s', '-empty'],

@@ -64,4 +64,25 @@ describe('which', () => {
     expect(await whichCommand(h.io)).toBe(1);
     expect(h.out()).toBe('/usr/bin/foo\n');
   });
+
+  test('a NAME containing a slash is checked directly, bypassing PATH', async () => {
+    const h = makeIO({
+      args: ['which', '/opt/bin/tool'],
+      env: { PATH: '/usr/bin' }, // PATH does not contain /opt/bin
+      files: { '/opt/bin/tool': { content: 'x', mode: 0o755 } },
+    });
+    expect(await whichCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('/opt/bin/tool\n');
+  });
+
+  test('a slash NAME that is not executable is not a match (exit 1)', async () => {
+    const h = makeIO({
+      args: ['which', './rel/tool'],
+      cwd: '/work',
+      env: { PATH: '/usr/bin' },
+      files: { '/work/rel/tool': { content: 'x', mode: 0o644 } }, // not executable
+    });
+    expect(await whichCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('');
+  });
 });

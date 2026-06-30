@@ -54,8 +54,10 @@ function parseSize(arg: string): SizeTest | undefined {
   const n = Number(m[2]);
   const suffix = m[3];
   const unit = suffix === 'c' ? 1 : suffix === 'k' ? 1024 : suffix === 'M' ? 1024 * 1024 : suffix === 'G' ? 1024 * 1024 * 1024 : 512;
-  // Default unit (512-byte blocks) and `b` round file size UP to whole units.
-  const rounded = suffix === '' || suffix === 'b';
+  // GNU find rounds a file's size UP to the next whole unit for EVERY suffix
+  // except `c` (exact bytes). So `-size 1k` matches any file in (0, 1024] bytes,
+  // while `-size 100c` is an exact byte comparison.
+  const rounded = suffix !== 'c';
   return { cmp, n, unit, rounded };
 }
 
