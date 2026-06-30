@@ -189,6 +189,19 @@ describe('OPFSProvider', () => {
       expect(countA).toBe(1024);
       expect(countB).toBe(1024);
     });
+
+    it('#writeLocks does not retain entries after writes settle', async () => {
+      for (let i = 0; i < 5; i++) {
+        const h = await provider.open(`/f${i}.txt`, { write: true, create: true });
+        await provider.write(h, new TextEncoder().encode('x'), 0);
+        await provider.close(h);
+      }
+      // All writes settled → no leaked lock entries. The cleanup runs ~2 microtask
+      // hops after a write's `run` settles (run → sentinel → delete), so drain a
+      // macrotask to make the flush robust regardless of hop count.
+      await new Promise((r) => setTimeout(r, 0));
+      expect(provider.writeLockCount).toBe(0);
+    });
   });
 
   describe('stat', () => {

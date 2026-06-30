@@ -65,7 +65,7 @@ tests; they are the parity items this wave closed.
 | `read -a` / `read -d` / `read -n` / `read -N` (incl. clustered `-ra`/`-rn3`) | Parse a line into an array; NUL/custom delimiters (`find -print0`); `-n` (≤N, stop at delim) and `-N` (exactly N, ignore delim); short flags cluster like bash (`read -ra arr`, `read -rn3 x`) | **done** |
 | `mapfile` / `readarray` | Slurp multi-line output into an array (`mapfile -t lines`) | **done** |
 | `${var@Q}` / `printf %q` | Inject-safe quoting when an agent builds shell commands programmatically. As shipped: a shared `shellQuote` (`src/quote.ts`) backs both — safe charset stays bare, control chars use the ANSI-C `$'…'` form, else single-quote with embedded `'` → `'\''`. Other `@`-transforms (`@E @P @A @a @U @u @L`) are accepted but return the value unchanged (see Pending). | **done** |
-| `$LINENO` | Error reporting / `trap ... ERR` diagnostics reference the failing line number. As shipped: the lexer stamps each token with its 1-based start line, the parser records it on each `Statement`, and the executor exposes the current statement's line as the dynamic special var `$LINENO` (1-based per source line, matching bash `-c`). | **done** |
+| `$LINENO` | Error reporting / `trap ... ERR` diagnostics reference the failing line number. As shipped: the lexer stamps each token with its 1-based start line, the parser records it on each `Statement`, and the executor exposes the current statement's line as the dynamic special var `$LINENO` (1-based per source line, matching bash `-c`). Here-doc body lines and `&&`/`||` continuation lines are counted correctly (the parser keeps blank placeholders for consumed here-doc bodies and stamps each pipeline with its own line). | **done** |
 
 ---
 

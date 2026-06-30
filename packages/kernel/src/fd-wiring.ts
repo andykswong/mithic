@@ -172,12 +172,17 @@ export class FdWiring {
    * (reader cancel/EPIPE) ends the pump promptly.
    */
   async #feedBytesToPort(data: Uint8Array, writePort: MessagePort): Promise<void> {
+    // Defensive copy: pumpToPort TRANSFERS the buffer it posts (detaching it). The
+    // caller owns `data` (e.g. a reused here-string buffer), so copy once up front
+    // and let the pump own + transfer the copy. (Today every `bytes` source is a
+    // fresh single-use encode, but this decouples the pump from caller ownership.)
+    const owned = data.slice();
     let sent = false;
     // Hand the whole buffer to the pump once; it sub-chunks to the window itself.
     const next = (): Promise<Uint8Array | null> => {
       if (sent) return Promise.resolve(null);
       sent = true;
-      return Promise.resolve(data);
+      return Promise.resolve(owned);
     };
     await pumpToPort(writePort, next, INITIAL_CREDIT_BYTES);
   }

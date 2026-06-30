@@ -116,6 +116,10 @@ class Parser {
   }
 
   private parsePipeline(): Statement {
+    // The pipeline's source line = the line its first token starts on. Stamping
+    // each pipeline (not just the outer And/Or node) lets a continuation's
+    // right-hand side report its real line for $LINENO, e.g. `true &&\necho …`.
+    const pipelineLine = this.peek()?.line;
     let negate = false;
     if (this.atReserved('!')) { this.next(); negate = true; }
 
@@ -123,6 +127,7 @@ class Parser {
     if (!this.atType('PIPE') && !this.atType('PIPEAMP')) {
       if (negate) first.negate = true;
       this.maybeBackground(first);
+      if (pipelineLine !== undefined) first.line ??= pipelineLine;
       return first;
     }
 
@@ -152,6 +157,7 @@ class Parser {
       pipeline.pipeStderr = pipeStderr;
     }
     this.maybeBackground(pipeline);
+    if (pipelineLine !== undefined) pipeline.line ??= pipelineLine;
     return pipeline;
   }
 
@@ -630,14 +636,21 @@ function extractHereDocs(input: string): { src: string; heredocs: Map<number, He
     // Collect bodies for each pending here-doc, in order.
     for (const p of pending) {
       const bodyLines: string[] = [];
+      let consumed = 0; // body lines + the terminator line, removed from `out`
       while (li + 1 < lines.length) {
         li++;
+        consumed++;
         const bl = lines[li];
         const cmp = p.strip ? bl.replace(/^\t+/, '') : bl;
         if (cmp === p.delim) break;
         bodyLines.push(bl);
       }
       heredocs.set(p.hid, { id: p.hid, body: bodyLines.length ? bodyLines.join('\n') + '\n' : '', quoted: p.quoted });
+      // Preserve source line numbers for $LINENO: the body+terminator lines were
+      // pulled out of the token stream, so emit blank placeholders to keep every
+      // later line's number aligned with the original source. Blank lines tokenize
+      // to NEWLINE only, so parsing is unaffected.
+      for (let k = 0; k < consumed; k++) out.push('');
     }
   }
   return { src: out.join('\n'), heredocs };

@@ -144,9 +144,18 @@ export class OPFSProvider implements FileSystemProvider {
     const run = prev.then(fn, fn);
     // Swallow rejections in the CHAIN sentinel only — the returned `run` still
     // rejects to the caller — so one failed write doesn't poison the next.
-    this.#writeLocks.set(path, run.catch(() => {}));
+    // When THIS sentinel is still the map's tail after it settles, delete the
+    // entry so the map doesn't grow one chain per distinct path forever.
+    const sentinel = run.then(() => {}, () => {});
+    this.#writeLocks.set(path, sentinel);
+    void sentinel.then(() => {
+      if (this.#writeLocks.get(path) === sentinel) this.#writeLocks.delete(path);
+    });
     return run;
   }
+
+  /** @internal test-only — number of live per-path write-lock chains. */
+  get writeLockCount(): number { return this.#writeLocks.size; }
 
   async truncate(handle: FileHandle, size: number): Promise<void> {
     const openHandle = this.#handles.get(handle.fd);

@@ -112,6 +112,21 @@ test('$LINENO inside a loop body tracks the body statement line', async () => {
   expect(h.out.trim().split(/\s+/)).toEqual(['3', '3']);
 });
 
+test('$LINENO after a here-doc counts the body lines', async () => {
+  const h = mk();
+  // header on line 1; body lines 2-3; EOF line 4; echo on line 5 → bash prints 5.
+  await h.ex.exec('cat <<EOF\nbody1\nbody2\nEOF\necho $LINENO');
+  // The `cat` body (body1/body2) precedes; assert the LINENO line is last.
+  expect(h.out.trim().split('\n').pop()).toBe('5');
+});
+
+test('$LINENO on a && continuation reflects the continuation line', async () => {
+  const h = mk();
+  // `true &&` on line 1, `echo $LINENO` on line 2 → bash prints 2.
+  await h.ex.exec('true &&\necho $LINENO');
+  expect(h.out.trim()).toBe('2');
+});
+
 // ── A3: TMOUT idle-exit is Tier 2 (inert); `read -t` on string stdin is Tier 1 ──
 //
 // `read -u N -t T` over a LIVE duplex fd now honors the timeout (see
