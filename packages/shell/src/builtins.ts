@@ -588,10 +588,17 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       // spawn via resolveCommand / exec-from-VFS), so `hash` is inert — but scripts
       // call it and expect success. Accept the documented option surface and return
       // 0; reject an unknown flag like bash (status 2).
+      // Flags may be CLUSTERED (e.g. `-lr`, `-dt`), so validate each letter of a
+      // `-…` token against the allowed set rather than matching the whole token.
+      const allowed = 'lrpdt';
       for (const a of args) {
-        if (a.startsWith('-') && !['-r', '-p', '-d', '-t', '-l'].includes(a)) {
-          errOut(ctx, `shell: hash: ${a}: invalid option\nhash: usage: hash [-lr] [-p pathname] [-dt] [name ...]\n`);
-          return 2;
+        if (a.startsWith('-') && a !== '-') {
+          for (const ch of a.slice(1)) {
+            if (!allowed.includes(ch)) {
+              errOut(ctx, `shell: hash: ${a}: invalid option\nhash: usage: hash [-lr] [-p pathname] [-dt] [name ...]\n`);
+              return 2;
+            }
+          }
         }
       }
       return 0;

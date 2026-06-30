@@ -211,6 +211,19 @@ test('hash with an unknown flag fails with status 2 + usage', async () => {
   expect(err).toMatch(/invalid option/);
 });
 
+test('hash accepts clustered valid flags (-lr, -dt)', async () => {
+  const ctx: any = { cwd: '/', env: {}, write: () => {}, writeErr: () => {} };
+  expect(await runBuiltin('hash', ['-lr'], ctx)).toBe(0);
+  expect(await runBuiltin('hash', ['-dt'], ctx)).toBe(0);
+});
+
+test('hash rejects a cluster containing an invalid flag (-lx → 2)', async () => {
+  let err = '';
+  const ctx: any = { cwd: '/', env: {}, write: () => {}, writeErr: (s: string) => (err += s) };
+  expect(await runBuiltin('hash', ['-lx'], ctx)).toBe(2);
+  expect(err).toMatch(/invalid option/);
+});
+
 test('hash is listed in BUILTINS', () => {
   expect(BUILTINS).toContain('hash');
 });
