@@ -244,6 +244,8 @@ export class Executor {
   private arrays = new Map<string, string[]>();
   private localScopes: Array<Set<string>> = [];
   private localSaved: Array<Map<string, string | undefined>> = [];
+  /** Names marked `readonly` — reassigning one is rejected (fatal in POSIX mode). */
+  private readonlyNames = new Set<string>();
   /** `set` options. errexit aborts on nonzero; the rest per their POSIX meaning. */
   private options: Record<ShellOptionName, boolean> = {
     errexit: false,
@@ -596,6 +598,8 @@ export class Executor {
       },
       removeJob: (spec) => this.jobControl.remove(spec),
       killJob: (spec, signal) => this.jobControl.killJob(spec, signal),
+      markReadonly: (name) => { this.readonlyNames.add(name); },
+      isReadonly: (name) => this.readonlyNames.has(name),
     };
   }
 
@@ -1600,7 +1604,11 @@ export class Executor {
       // A bare `x=$(cmd)` takes its status from the LAST command substitution in
       // the RHS (M10): `x=$(false); echo $?` → 1. With no command sub, status 0.
       this.lastCmdSubStatus = undefined;
-      for (const a of cmd.assignments) await this.applyAssignment(a, expander);
+      let rejected = false;
+      for (const a of cmd.assignments) {
+        if (await this.applyAssignment(a, expander)) rejected = true;
+      }
+      if (rejected) return 1; // a readonly reassignment (non-posix: status 1)
       const sub = this.lastCmdSubStatus;
       this.lastCmdSubStatus = undefined;
       return sub ?? 0;
@@ -1670,7 +1678,20 @@ export class Executor {
    * Array element words are field-expanded (so `arr=($x)` splits), scalar values
    * are expanded to a single string.
    */
-  private async applyAssignment(a: { name: string; value: string; array?: string[]; index?: string; append?: boolean }, expander: Expander): Promise<void> {
+  private async applyAssignment(a: { name: string; value: string; array?: string[]; index?: string; append?: boolean }, expander: Expander): Promise<boolean> {
+    // A reassignment of a `readonly` name is rejected (the old value is kept). In
+    // a non-interactive POSIX-mode shell this is a fatal assignment error (POSIX
+    // 2.8.1): throw PosixSpecialBuiltinError so the statement-loop aborts. The
+    // message must NOT carry its own `shell: ` prefix — that catch prepends one.
+    // Otherwise report to stderr and return `true` (rejected) so the caller can
+    // surface a nonzero status without writing the new value.
+    if (this.readonlyNames.has(a.name)) {
+      const msg = `${a.name}: readonly variable`;
+      if (this.options.posix) throw new PosixSpecialBuiltinError(a.name, 1, msg);
+      this.io.stderr(`shell: ${msg}\n`);
+      this.lastStatus = 1;
+      return true;
+    }
     this.declareLocal(a.name);
     if (a.array !== undefined) {
       const elems: string[] = [];
@@ -1678,7 +1699,7 @@ export class Executor {
       const prev = a.append ? (this.arrays.get(a.name) ?? []) : [];
       this.arrays.set(a.name, [...prev, ...elems]);
       delete this.context.env[a.name];
-      return;
+      return false;
     }
     if (a.index !== undefined) {
       // Associative array element (`name[key]=v`, name declared via `declare -A`):
@@ -1688,7 +1709,7 @@ export class Executor {
         const key = await expander.substituteOnly(a.index);
         const val = await expander.expandToString(a.value);
         assoc.set(key, a.append ? (assoc.get(key) ?? '') + val : val);
-        return;
+        return false;
       }
       const idx = parseInt(await expander.substituteOnly(a.index), 10) || 0;
       const arr = this.arrays.get(a.name) ?? (this.context.env[a.name] !== undefined ? [this.context.env[a.name]] : []);
@@ -1696,7 +1717,7 @@ export class Executor {
       arr[idx] = a.append ? (arr[idx] ?? '') + val : val;
       this.arrays.set(a.name, arr);
       delete this.context.env[a.name];
-      return;
+      return false;
     }
     // Scalar (possibly append). If the name currently holds an array, `name+=v`
     // appends to element 0 in bash; we keep it simple and treat scalars only.
@@ -1710,9 +1731,10 @@ export class Executor {
       // recompute / read-only) — route through Environment.set so `RANDOM=42`
       // seeds the generator (G7).
       this.environment.set(a.name, a.append ? (this.context.env[a.name] ?? '') + val : val);
-      return;
+      return false;
     }
     this.context.env[a.name] = a.append ? (this.context.env[a.name] ?? '') + val : val;
+    return false;
   }
 
   private async spawnExternal(name: string, argv: string[], localEnv: Record<string, string>, io: CommandIO, fd0?: StdinFdSpec): Promise<number> {

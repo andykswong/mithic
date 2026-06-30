@@ -528,3 +528,22 @@ test('${!var} indirect expansion (value of the variable named by var)', async ()
 test('${!var} with an unset indirection is empty', async () => {
   expect((await run('ref=nope; echo "[${!ref}]"')).out.trim()).toBe('[]');
 });
+
+// ── readonly enforcement (non-POSIX: reports + continues, keeps old value) ────
+
+test('readonly var rejects reassignment (non-posix: reports, keeps old value, continues)', async () => {
+  const { out, err } = await run('readonly RO=1; RO=2; echo "$RO"');
+  expect(out.trim()).toBe('1');
+  expect(err).toMatch(/RO: readonly variable/);
+});
+
+test('readonly without = marks an existing var readonly', async () => {
+  const { out, err } = await run('X=1; readonly X; X=2; echo "$X"');
+  expect(out.trim()).toBe('1');
+  expect(err).toMatch(/X: readonly variable/);
+});
+
+test('readonly NAME=val sets the value (first assignment succeeds)', async () => {
+  const { out } = await run('readonly RO=hello; echo "$RO"');
+  expect(out.trim()).toBe('hello');
+});

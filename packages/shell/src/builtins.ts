@@ -54,6 +54,10 @@ export interface ShellState {
   removeJob?(spec: number): boolean;
   /** Send a signal to a job/pid. Returns false if no such job. */
   killJob?(spec: number, signal: string): boolean;
+  /** Mark a name as `readonly` (reassignment is then rejected). */
+  markReadonly?(name: string): void;
+  /** True when the name was marked `readonly`. */
+  isReadonly?(name: string): boolean;
 }
 
 /** Long names of the shell options toggled via `set` / `set -o`. */
@@ -240,6 +244,7 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
     case 'readonly': {
       // Assign NAME=value into the (function-local for `local`) env.
       const isLocal = name === 'local';
+      const isReadonly = name === 'readonly';
       const isAssoc = name === 'declare' && args.includes('-A');
       if (isAssoc && (ctx.state?.getOption('posix') ?? false)) {
         errOut(ctx, 'shell: declare: -A: not supported in POSIX mode\n');
@@ -258,6 +263,10 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
           ctx.state?.declareLocal(arg);
           if (!(arg in ctx.env)) ctx.env[arg] = '';
         }
+        // `readonly NAME[=val]` marks the name AFTER its value is set, so the
+        // builtin's own assignment succeeds; later reassignments are rejected by
+        // the executor's applyAssignment (POSIX-fatal in posix mode).
+        if (isReadonly) ctx.state?.markReadonly?.(n);
       }
       return 0;
     }

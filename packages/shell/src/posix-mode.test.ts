@@ -178,6 +178,18 @@ test('non-POSIX: the same redirection error on a special builtin is NOT fatal', 
   expect(h.out).toContain('STILL_RUNS');
 });
 
+// POSIX 2.8.1: a variable-ASSIGNMENT error in a non-interactive shell is fatal.
+// Reassigning a readonly variable must abort the script (the following echo must
+// NOT run) with a SINGLE `shell:` prefix on the diagnostic.
+test('POSIX: assigning a readonly variable is fatal — script aborts', async () => {
+  const { promise, h } = runPosix('readonly RO=1; RO=2; echo SHOULD_NOT_PRINT');
+  const code = await promise;
+  expect(h.out).not.toContain('SHOULD_NOT_PRINT');
+  expect(code).not.toBe(0);
+  expect(h.err).toMatch(/RO: readonly variable/);
+  expect(h.err).not.toMatch(/shell: shell:/);
+});
+
 // ── POSIX: activation methods ────────────────────────────────────────────────
 
 test('set -o posix activates brace-expansion suppression at runtime', async () => {
