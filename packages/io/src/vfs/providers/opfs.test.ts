@@ -156,6 +156,39 @@ describe('OPFSProvider', () => {
     it('throws for non-existent file without create', async () => {
       await expect(provider.open('/nonexistent.txt', { read: true })).rejects.toThrow();
     });
+
+    it('concurrent appends to the same file do not interleave/clobber', async () => {
+      await provider.close(await provider.open('/append.bin', { create: true, write: true }));
+
+      const a = await provider.open('/append.bin', { write: true, append: true });
+      const b = await provider.open('/append.bin', { write: true, append: true });
+      const payloadA = new Uint8Array(1024).fill(0xaa);
+      const payloadB = new Uint8Array(1024).fill(0xbb);
+
+      // Fire both appends without awaiting between them: the size-read → write
+      // window must be serialized per-path or one append clobbers the other.
+      await Promise.all([
+        provider.write(a, payloadA, 0),
+        provider.write(b, payloadB, 0),
+      ]);
+      await provider.close(a);
+      await provider.close(b);
+
+      const stat = await provider.stat('/append.bin');
+      expect(stat.size).toBe(BigInt(payloadA.byteLength + payloadB.byteLength));
+
+      const reader = await provider.open('/append.bin', { read: true });
+      const bytes = await provider.read(reader, 0, 4096);
+      await provider.close(reader);
+      // Both payloads landed (order-independent): each byte value is present.
+      expect(bytes.byteLength).toBe(2048);
+      expect(bytes.includes(0xaa)).toBe(true);
+      expect(bytes.includes(0xbb)).toBe(true);
+      const countA = bytes.reduce((n, v) => n + (v === 0xaa ? 1 : 0), 0);
+      const countB = bytes.reduce((n, v) => n + (v === 0xbb ? 1 : 0), 0);
+      expect(countA).toBe(1024);
+      expect(countB).toBe(1024);
+    });
   });
 
   describe('stat', () => {

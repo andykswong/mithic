@@ -14,6 +14,7 @@ export class OPFSProvider implements FileSystemProvider {
   #nextFd = 3;
   #handles = new Map<number, { nativeHandle: FileSystemFileHandle; path: string; flags: OpenFlags }>();
   #meta: MetadataStore;
+  #writeLocks = new Map<string, Promise<unknown>>();
 
   constructor(storage?: OPFSStorageManager) {
     this.#storage = storage ?? navigator.storage;
@@ -122,14 +123,29 @@ export class OPFSProvider implements FileSystemProvider {
     if (!openHandle) {
       throw new FileSystemError('invalid', `Invalid file descriptor: ${handle.fd}`);
     }
-    const writeOffset = openHandle.flags.append
-      ? (await openHandle.nativeHandle.getFile()).size
-      : offset;
-    const writable = await openHandle.nativeHandle.createWritable({ keepExistingData: true });
-    await writable.seek(writeOffset);
-    await writable.write(data as unknown as FileSystemWriteChunkType);
-    await writable.close();
-    return data.length;
+    // Per-path write lock: an append reads the file size then writes across
+    // awaits, so two concurrent appends to one path must not interleave (the
+    // second would read a stale size and clobber the first). Serialize writes to
+    // a path on a promise chain keyed by the resolved path (not the fd/handle).
+    return this.#withWriteLock(openHandle.path, async () => {
+      const writeOffset = openHandle.flags.append
+        ? (await openHandle.nativeHandle.getFile()).size
+        : offset;
+      const writable = await openHandle.nativeHandle.createWritable({ keepExistingData: true });
+      await writable.seek(writeOffset);
+      await writable.write(data as unknown as FileSystemWriteChunkType);
+      await writable.close();
+      return data.length;
+    });
+  }
+
+  #withWriteLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.#writeLocks.get(path) ?? Promise.resolve();
+    const run = prev.then(fn, fn);
+    // Swallow rejections in the CHAIN sentinel only — the returned `run` still
+    // rejects to the caller — so one failed write doesn't poison the next.
+    this.#writeLocks.set(path, run.catch(() => {}));
+    return run;
   }
 
   async truncate(handle: FileHandle, size: number): Promise<void> {
