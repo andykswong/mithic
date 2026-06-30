@@ -7,24 +7,32 @@
  *   -t x1        hex bytes        (` %02x` per byte)
  *   -t o1        octal bytes      (` %03o` per byte)
  *   -t d1        signed-dec bytes (` %4d` per byte)
+ *   -t x2        hex 2-byte words        (` %04x` per LE word)
+ *   -t o2        octal 2-byte words      (` %06o` per LE word)
+ *   -t d2        signed-dec 2-byte words (` %6d` per LE word)
  *   -c           named ASCII characters (` %3s` per byte: \0 \a \b \t \n \v \f
  *                \r, printable chars, else 3-digit octal)
  * The default type is `-t o1` and the default address radix is octal.
  *
- * 16 bytes per line. A final address-only line marks end-of-input (GNU prints
- * the total byte count in the chosen radix). FILE may be `-`/omitted for stdin.
+ * Multi-byte (`2`-width) types read host little-endian words — GNU does the same
+ * on a little-endian host (low byte first). An odd trailing byte is padded with a
+ * zero high byte to form a final partial word, matching GNU.
  *
- * NOT yet faithful (documented follow-ups): multi-byte type widths (`x2`,`o2`,
- * `d2`,…), the `-A o -t o2` GNU default 2-byte-word grouping, duplicate-line
- * `*` elision, and combining multiple `-t` specs on one dump. The single-byte
- * forms above match GNU exactly for the tested cases.
+ * 16 bytes per line. Identical consecutive 16-byte lines are elided GNU-style:
+ * the first is printed, a bare `*` marks the run of duplicates, and output
+ * resumes at the first differing line. A final address-only line marks
+ * end-of-input (GNU prints the total byte count in the chosen radix). FILE may be
+ * `-`/omitted for stdin.
+ *
+ * NOT yet faithful (documented follow-up): combining multiple `-t` specs on one
+ * dump. The forms above match GNU exactly for the tested cases.
  */
 import { defineCommand, parseArgs, readAll, writeString, exitWith } from '../harness.ts';
 import { readFile } from '../fs.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 type AddrRadix = 'x' | 'd' | 'o' | 'n';
-type DumpType = 'x1' | 'o1' | 'd1' | 'c';
+type DumpType = 'x1' | 'o1' | 'd1' | 'x2' | 'o2' | 'd2' | 'c';
 
 const NAMED: Record<number, string> = {
   0x00: '\\0', 0x07: '\\a', 0x08: '\\b', 0x09: '\\t',
@@ -39,7 +47,7 @@ function formatAddress(offset: number, radix: AddrRadix): string {
   return offset.toString(8).padStart(7, '0'); // octal
 }
 
-/** Render one byte as its ` <field>` cell for the chosen dump type. */
+/** Render one byte as its ` <field>` cell for a single-byte dump type. */
 function formatByte(b: number, type: DumpType): string {
   if (type === 'x1') return ' ' + b.toString(16).padStart(2, '0');
   if (type === 'o1') return ' ' + b.toString(8).padStart(3, '0');
@@ -53,6 +61,32 @@ function formatByte(b: number, type: DumpType): string {
   else if (b >= 0x20 && b <= 0x7e) rep = String.fromCharCode(b);
   else rep = b.toString(8).padStart(3, '0');
   return ' ' + rep.padStart(3, ' ');
+}
+
+/** Render one little-endian 2-byte word as its ` <field>` cell. */
+function formatWord(w: number, type: DumpType): string {
+  if (type === 'x2') return ' ' + w.toString(16).padStart(4, '0');
+  if (type === 'o2') return ' ' + w.toString(8).padStart(6, '0');
+  // d2: signed 16-bit, field width 6.
+  const signed = w > 0x7fff ? w - 0x10000 : w;
+  return ' ' + String(signed).padStart(6, ' ');
+}
+
+const WORD_TYPES = new Set<DumpType>(['x2', 'o2', 'd2']);
+
+/** Format the byte-region (everything after the address) of ONE 16-byte line. */
+function formatRegion(bytes: Uint8Array, start: number, end: number, type: DumpType): string {
+  let region = '';
+  if (WORD_TYPES.has(type)) {
+    for (let i = start; i < end; i += 2) {
+      const lo = bytes[i];
+      const hi = i + 1 < end ? bytes[i + 1] : 0; // odd trailing byte → high-zero word
+      region += formatWord((hi << 8) | lo, type);
+    }
+  } else {
+    for (let i = start; i < end; i++) region += formatByte(bytes[i], type);
+  }
+  return region;
 }
 
 const odCommand: CommandFn = async (io: CommandIO): Promise<number> => {
@@ -72,8 +106,8 @@ const odCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     if (flags.c) type = 'c';
     else if (flags.t !== undefined) {
       const t = String(flags.t);
-      if (t !== 'x1' && t !== 'o1' && t !== 'd1') {
-        return await exitWith(err, 1, `${name}: type '${t}' not supported (only x1/o1/d1/-c)`);
+      if (t !== 'x1' && t !== 'o1' && t !== 'd1' && t !== 'x2' && t !== 'o2' && t !== 'd2') {
+        return await exitWith(err, 1, `${name}: type '${t}' not supported (only x1/o1/d1/x2/o2/d2/-c)`);
       }
       type = t;
     }
@@ -86,15 +120,22 @@ const odCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       catch { return await exitWith(err, 1, `${name}: ${src}: No such file or directory`); }
     }
 
-    let line = '';
-    for (let i = 0; i < bytes.byteLength; i++) {
-      if (i % 16 === 0) {
-        if (i > 0) { await writeString(out, line + '\n'); }
-        line = formatAddress(i, radix);
+    // Emit 16-byte lines with GNU `*` duplicate-line elision: print the first
+    // line, a bare `*` for a run of identical lines, then resume at the first
+    // differing line. The byte-region (post-address) is compared for equality.
+    let prevRegion: string | undefined;
+    let eliding = false;
+    for (let i = 0; i < bytes.byteLength; i += 16) {
+      const end = Math.min(i + 16, bytes.byteLength);
+      const region = formatRegion(bytes, i, end, type);
+      if (prevRegion !== undefined && region === prevRegion) {
+        if (!eliding) { await writeString(out, '*\n'); eliding = true; }
+        continue;
       }
-      line += formatByte(bytes[i], type);
+      eliding = false;
+      prevRegion = region;
+      await writeString(out, formatAddress(i, radix) + region + '\n');
     }
-    if (bytes.byteLength > 0) await writeString(out, line + '\n');
 
     // Final address-only line (GNU prints the byte total in the radix). With
     // `-A n` GNU emits nothing for it.
@@ -107,4 +148,4 @@ const odCommand: CommandFn = async (io: CommandIO): Promise<number> => {
 };
 
 export default defineCommand(odCommand);
-export { odCommand, formatAddress, formatByte };
+export { odCommand, formatAddress, formatByte, formatWord };

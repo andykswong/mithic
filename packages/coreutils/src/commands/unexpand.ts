@@ -9,7 +9,10 @@
  *
  * A run of blanks that reaches a tab stop is replaced by a tab when doing so
  * shortens the output (i.e. at least two spaces collapse into the tab). A single
- * space landing on a stop is left as-is. Reads stdin when FILE is `-`/omitted.
+ * space landing on a stop is left as-is. The leading run (without -a) ends at the
+ * first NON-blank: a literal tab is still leading whitespace (GNU), so it
+ * advances the column to the next tab stop without ending conversion. Reads stdin
+ * when FILE is `-`/omitted.
  */
 import { defineCommand, parseArgs, readAllText, writeString, exitWith } from '../harness.ts';
 import { readFile } from '../fs.ts';
@@ -39,8 +42,10 @@ function unexpandLine(line: string, tabstop: number, all: boolean): string {
       flushPending();
       out += ch;
       col = ch === '\t' ? col + (tabstop - (col % tabstop)) : col + 1;
-      // Without -a, stop converting once a non-blank is seen (leading-only).
-      if (!all && ch !== ' ') convertible = false;
+      // Without -a, the leading run ends at the first NON-blank. A literal tab
+      // is still leading whitespace (GNU), so it advances the column above but
+      // does not stop further leading conversion.
+      if (!all && ch !== ' ' && ch !== '\t') convertible = false;
     }
   }
   flushPending();

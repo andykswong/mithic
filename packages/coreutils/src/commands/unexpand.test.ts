@@ -27,4 +27,20 @@ describe('unexpand', () => {
     await unexpandCommand(h.io);
     expect(h.out()).toBe('\tx\n');
   });
+
+  // C4a: GNU keeps converting leading whitespace through a leading tab — the
+  // tab does not end the leading run.
+  test('converts leading whitespace through a leading tab', async () => {
+    // tab (col 0→8) + 8 spaces (col 8→16, a tabstop) + x → "\t\tx"
+    const h = makeIO({ args: ['unexpand', '/in'], files: { '/in': '\t        x\n' } });
+    expect(await unexpandCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('\t\tx\n');
+  });
+
+  test('a leading tab still stops conversion at the first non-blank', async () => {
+    // tab + 8 spaces collapse, but the spaces AFTER the non-blank `y` stay.
+    const h = makeIO({ args: ['unexpand', '/in'], files: { '/in': '\t        y        z\n' } });
+    await unexpandCommand(h.io);
+    expect(h.out()).toBe('\t\ty        z\n');
+  });
 });

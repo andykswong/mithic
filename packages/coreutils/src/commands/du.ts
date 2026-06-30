@@ -15,6 +15,12 @@
  * is deterministic over the virtual FS and is what these tests assert against —
  * it will NOT match GNU's exact block accounting on a real filesystem.
  *
+ * Because rounding is applied per entry, `-a` per-file blocks (`ceil(file/1024)`
+ * each) need not sum to the parent directory's `ceil(sum/1024)` total — the
+ * per-file ceilings round up independently. This non-additivity is inherent to
+ * any block-rounding model (real GNU `du` shows the same with `st_blocks`); the
+ * lines are NOT meant to add up arithmetically.
+ *
  * Output order matches GNU's post-order walk: descendants are printed before
  * their parent, and each PATH argument's own total is printed last. Entries are
  * sorted for deterministic output.

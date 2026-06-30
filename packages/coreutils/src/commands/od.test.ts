@@ -56,4 +56,78 @@ describe('od', () => {
     await odCommand(h.io);
     expect(h.out()).toBe('000000\n');
   });
+
+  // --- C2: multi-byte type widths (2-byte little-endian words on a LE host) ---
+
+  test('-t x2 dumps 2-byte little-endian words', async () => {
+    // bytes 0x41 0x42 0x43 0x44 → LE words 0x4241 0x4443 → " 4241 4443"
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x2', '/in'], files: { '/in': 'ABCD' } });
+    expect(await odCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('000000 4241 4443\n000004\n');
+  });
+
+  test('-t x2 pads an odd trailing byte into a high-zero word', async () => {
+    // 3 bytes 0x41 0x42 0x43 → words 0x4241, 0x0043 → " 4241 0043"
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x2', '/in'], files: { '/in': 'ABC' } });
+    await odCommand(h.io);
+    expect(h.out()).toBe('000000 4241 0043\n000003\n');
+  });
+
+  test('-t o2 dumps 2-byte octal words (6 octal digits)', async () => {
+    // words 0x4241=041101, 0x4443=042103
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'o2', '/in'], files: { '/in': 'ABCD' } });
+    await odCommand(h.io);
+    expect(h.out()).toBe('000000 041101 042103\n000004\n');
+  });
+
+  test('-t d2 dumps signed 16-bit decimal words (width 6)', async () => {
+    // words 0x4241=16961, 0x4443=17475 → "  16961  17475"
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'd2', '/in'], files: { '/in': 'ABCD' } });
+    await odCommand(h.io);
+    expect(h.out()).toBe('000000  16961  17475\n000004\n');
+  });
+
+  test('-t d2 renders negative words', async () => {
+    // bytes 0xFF 0xFF → -1; 0x00 0x80 → -32768
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'd2', '/in'], files: { '/in': new Uint8Array([0xff, 0xff, 0x00, 0x80]) } });
+    await odCommand(h.io);
+    expect(h.out()).toBe('000000     -1 -32768\n000004\n');
+  });
+
+  test('-t x2 wraps at 16 bytes (8 words) per line', async () => {
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x2', '/in'], files: { '/in': new Uint8Array(18).fill(0) } });
+    await odCommand(h.io);
+    expect(h.out()).toBe(
+      '000000 0000 0000 0000 0000 0000 0000 0000 0000\n' +
+      '000010 0000\n' +
+      '000012\n',
+    );
+  });
+
+  // --- C2: `*` duplicate-line elision (GNU) ---
+
+  test('-t x1 elides duplicate lines with *', async () => {
+    // 48 identical bytes (3 full 16-byte lines) → first line, then `*`, then the final offset.
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x1', '/in'], files: { '/in': new Uint8Array(48).fill(0) } });
+    await odCommand(h.io);
+    expect(h.out()).toBe(
+      '000000 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00\n' +
+      '*\n' +
+      '000030\n',
+    );
+  });
+
+  test('-t x1 resumes printing at the first differing line after elision', async () => {
+    // 32 zero bytes (offsets 0x00, 0x10 — the second elided) then 16 0xFF bytes at 0x20.
+    const data = new Uint8Array(48);
+    data.fill(0xff, 32);
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x1', '/in'], files: { '/in': data } });
+    await odCommand(h.io);
+    expect(h.out()).toBe(
+      '000000 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00\n' +
+      '*\n' +
+      '000020 ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff\n' +
+      '000030\n',
+    );
+  });
 });
