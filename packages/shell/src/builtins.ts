@@ -151,6 +151,7 @@ export const BUILTINS = [
   'jobs', 'fg', 'bg', 'wait', 'kill', 'break', 'continue', 'source', '.', 'type',
   'shopt', 'trap', 'disown', 'history', 'fc', 'exec', 'coproc',
   'dirs', 'pushd', 'popd', 'hash',
+  'compgen', 'complete', 'compopt',
 ] as const;
 
 const BUILTIN_SET = new Set<string>(BUILTINS);
@@ -594,6 +595,28 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         }
       }
       return 0;
+    }
+
+    case 'complete':
+    case 'compopt':
+      // Interactive completion specs — there is no line editor in the sandbox, so
+      // these register/modify nothing. Accept and ignore (exit 0, no output).
+      return 0;
+
+    case 'compgen': {
+      // `compgen -W WORDLIST [PREFIX]` filters a wordlist by prefix — the one form
+      // with non-interactive value (usable in scripts). Other actions (-A/-c/-f …)
+      // have no source in the sandbox → exit 1 (honest "no matches").
+      const wIdx = args.indexOf('-W');
+      if (wIdx >= 0 && args[wIdx + 1] !== undefined) {
+        const words = args[wIdx + 1].split(/\s+/).filter((w) => w !== '');
+        // The prefix is the first non-option trailing operand after the wordlist.
+        const prefix = args.slice(wIdx + 2).find((a) => !a.startsWith('-')) ?? '';
+        const matches = words.filter((w) => w.startsWith(prefix));
+        for (const m of matches) ctx.write(m + '\n');
+        return matches.length > 0 ? 0 : 1;
+      }
+      return 1;
     }
 
     case 'shopt':
