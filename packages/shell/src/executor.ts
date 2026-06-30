@@ -1687,12 +1687,17 @@ export class Executor {
    * are expanded to a single string.
    */
   private async applyAssignment(a: { name: string; value: string; array?: string[]; index?: string; append?: boolean }, expander: Expander): Promise<boolean> {
-    // A reassignment of a `readonly` name is rejected (the old value is kept). In
-    // a non-interactive POSIX-mode shell this is a fatal assignment error (POSIX
-    // 2.8.1): throw PosixSpecialBuiltinError so the statement-loop aborts. The
-    // message must NOT carry its own `shell: ` prefix — that catch prepends one.
-    // Otherwise report to stderr and return `true` (rejected) so the caller can
-    // surface a nonzero status without writing the new value.
+    // `declare -n ref=target`: a write to `ref` is redirected to `target`
+    // (single-level). Rewrite the assignment name BEFORE the readonly check so a
+    // write THROUGH a nameref to a readonly target is also rejected.
+    const nameref = this.namerefs.get(a.name);
+    if (nameref !== undefined) a = { ...a, name: nameref };
+    // A reassignment of a `readonly` name (checked on the resolved target) is
+    // rejected (the old value is kept). In a non-interactive POSIX-mode shell this
+    // is a fatal assignment error (POSIX 2.8.1): throw PosixSpecialBuiltinError so
+    // the statement-loop aborts. The message must NOT carry its own `shell: `
+    // prefix — that catch prepends one. Otherwise report to stderr and return
+    // `true` (rejected) so the caller surfaces a nonzero status without writing.
     if (this.readonlyNames.has(a.name)) {
       const msg = `${a.name}: readonly variable`;
       if (this.options.posix) throw new PosixSpecialBuiltinError(a.name, 1, msg);
@@ -1700,10 +1705,6 @@ export class Executor {
       this.lastStatus = 1;
       return true;
     }
-    // `declare -n ref=target`: a write to `ref` is redirected to `target`
-    // (single-level). Rewrite the assignment name before applying it.
-    const nameref = this.namerefs.get(a.name);
-    if (nameref !== undefined) a = { ...a, name: nameref };
     this.declareLocal(a.name);
     if (a.array !== undefined) {
       const elems: string[] = [];

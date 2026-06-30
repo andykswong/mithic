@@ -296,19 +296,36 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       return 0;
 
     case 'export': {
+      let status = 0;
       for (const arg of args) {
         const eq = arg.indexOf('=');
-        if (eq > 0) ctx.env[arg.slice(0, eq)] = arg.slice(eq + 1);
+        if (eq > 0) {
+          const n = arg.slice(0, eq);
+          if (ctx.state?.isReadonly?.(n)) {
+            errOut(ctx, `shell: export: ${n}: readonly variable\n`);
+            status = 1;
+            continue;
+          }
+          ctx.env[n] = arg.slice(eq + 1);
+        }
       }
-      return 0;
+      return status;
     }
 
     case 'unset': {
+      let status = 0;
       for (const arg of args) {
+        // A readonly variable cannot be unset (bash: `unset: <name>: cannot unset:
+        // readonly variable`, status 1). Functions are unaffected by readonly.
+        if (ctx.state?.isReadonly?.(arg)) {
+          errOut(ctx, `shell: unset: ${arg}: cannot unset: readonly variable\n`);
+          status = 1;
+          continue;
+        }
         delete ctx.env[arg];
         ctx.state?.functions.delete(arg);
       }
-      return 0;
+      return status;
     }
 
     case 'local':
@@ -338,6 +355,13 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         // `declare -A name` registers an associative array (G6).
         if (isAssoc) ctx.state?.declareAssoc?.(n);
         if (eq > 0) {
+          // Reassigning an already-readonly var via declare/local fails (bash). The
+          // `readonly NAME=val` form is exempt — it sets THEN marks below, so a
+          // first `readonly RO=1` succeeds; only a later write to RO is rejected.
+          if (!isReadonly && ctx.state?.isReadonly?.(n)) {
+            errOut(ctx, `shell: ${name}: ${n}: readonly variable\n`);
+            return 1;
+          }
           if (isLocal) ctx.state?.declareLocal(n);
           if (!isAssoc) ctx.env[n] = arg.slice(eq + 1);
         } else if (isLocal) {
@@ -355,10 +379,16 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
     case 'let': {
       // Evaluate each arithmetic expression over the live env (assignments take).
       // Exit status mirrors bash: 1 when the LAST expression evaluates to 0, else
-      // 0. No expressions → status 1.
+      // 0. No expressions → status 1. A malformed expression / division by zero is
+      // a per-command error (status 2 + diagnostic), NOT a script abort.
       if (args.length === 0) return 1;
       let last = 0;
-      for (const expr of args) last = ctx.evalArith?.(expr) ?? 0;
+      try {
+        for (const expr of args) last = ctx.evalArith?.(expr) ?? 0;
+      } catch (e) {
+        errOut(ctx, `shell: let: ${e instanceof Error ? e.message : String(e)}\n`);
+        return 2;
+      }
       return last === 0 ? 1 : 0;
     }
 

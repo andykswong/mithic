@@ -548,6 +548,27 @@ test('readonly NAME=val sets the value (first assignment succeeds)', async () =>
   expect(out.trim()).toBe('hello');
 });
 
+test('unset of a readonly var is rejected (keeps the value, status 1)', async () => {
+  const { out, err } = await run('readonly RO=1; unset RO; echo "$RO $?"');
+  expect(out.trim()).toBe('1 1');
+  expect(err).toMatch(/cannot unset: readonly variable/);
+});
+
+test('export/declare reassignment of a readonly var is rejected', async () => {
+  const exp = await run('readonly RO=1; export RO=2; echo "$RO"');
+  expect(exp.out.trim()).toBe('1');
+  expect(exp.err).toMatch(/RO: readonly variable/);
+  const dec = await run('readonly RO=1; declare RO=2; echo "$RO"');
+  expect(dec.out.trim()).toBe('1');
+  expect(dec.err).toMatch(/RO: readonly variable/);
+});
+
+test('writing through a nameref to a readonly target is rejected', async () => {
+  const { out, err } = await run('target=1; readonly target; declare -n ref=target; ref=2; echo "$target"');
+  expect(out.trim()).toBe('1');
+  expect(err).toMatch(/target: readonly variable/);
+});
+
 // ── let (arithmetic-evaluation builtin) ──────────────────────────────────────
 
 test('let evaluates arithmetic and assigns', async () => {
@@ -564,6 +585,19 @@ test('let multiple expressions take status from the last', async () => {
   // last expr (b=0) evaluates to 0 → status 1, but both assignments take.
   const { out } = await run('let "a=1" "b=0"; echo "$a $b $?"');
   expect(out.trim()).toBe('1 0 1');
+});
+
+test('let with a malformed expression fails the command (status 2), not the script', async () => {
+  // A bad arith expr is a per-command error: status 2 + diagnostic, and the NEXT
+  // statement still runs (vs aborting the whole script).
+  const { out, err } = await run('let "1 +"; echo AFTER=$?');
+  expect(out.trim()).toBe('AFTER=2');
+  expect(err).toMatch(/let:/);
+});
+
+test('let division by zero fails the command, not the script', async () => {
+  const { out } = await run('let "1 / 0"; echo STILL_RUNS');
+  expect(out).toContain('STILL_RUNS');
 });
 
 // ── declare -n namerefs (single-level) ───────────────────────────────────────
