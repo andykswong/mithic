@@ -569,6 +569,22 @@ test('writing through a nameref to a readonly target is rejected', async () => {
   expect(err).toMatch(/target: readonly variable/);
 });
 
+test('${var:=x} default-assign on a readonly var warns, skips write, yields the word, and continues', async () => {
+  // bash 3.2/5.x: prints `v: readonly variable`, leaves v UNSET, the expansion
+  // still yields `hi`, and the script continues (exit 0) — non-fatal even in posix.
+  const { out, err, code } = await run('readonly v; printf "[%s]" "${v:=hi}"; echo " v=[$v]"');
+  expect(out.trim()).toBe('[hi] v=[]');
+  expect(err).toMatch(/v: readonly variable/);
+  expect(code).toBe(0);
+});
+
+test('${var=x} (no-colon) default-assign on a readonly var also warns + skips + continues', async () => {
+  const { out, err, code } = await run('readonly v; printf "[%s]" "${v=hi}"; echo " v=[$v]"');
+  expect(out.trim()).toBe('[hi] v=[]');
+  expect(err).toMatch(/v: readonly variable/);
+  expect(code).toBe(0);
+});
+
 // ── let (arithmetic-evaluation builtin) ──────────────────────────────────────
 
 test('let evaluates arithmetic and assigns', async () => {

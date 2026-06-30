@@ -332,6 +332,10 @@ export class Executor {
         if (this.readonlyNames.has(name)) f += 'r';
         return f;
       },
+      isReadonly: (name) => this.readonlyNames.has(name),
+      // The expander's `${var:=x}` readonly warning routes here; mirror the other
+      // readonly diagnostics' `shell: ` prefix and the current stderr frame.
+      warn: (msg) => this.io.stderr(`shell: ${msg}\n`),
     };
     this.environment = new Environment(this.context, host);
     // $SHLVL: derive from the inherited value and store it back (G7).

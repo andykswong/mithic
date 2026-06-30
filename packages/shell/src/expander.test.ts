@@ -97,6 +97,42 @@ test('${ref:=x} default-assign through a nameref writes the target, not the ref 
   expect(vars.ref).toBeUndefined();
 });
 
+test('${var:=x} on a readonly var warns, does NOT write, but still yields the word', async () => {
+  const warnings: string[] = [];
+  const env = mkEnv({}, {
+    isReadonly: (n) => n === 'V',
+    warn: (m) => { warnings.push(m); },
+  }) as ShellEnv & { _env: Record<string, string> };
+  const e = new Expander(env);
+  expect(await e.expandWord('${V:=hi}')).toEqual(['hi']);
+  expect(env._env.V).toBeUndefined(); // not written
+  expect(warnings.join('\n')).toMatch(/V: readonly variable/);
+});
+
+test('${var=x} (no-colon) on a readonly var warns, skips write, yields the word', async () => {
+  const warnings: string[] = [];
+  const env = mkEnv({}, {
+    isReadonly: (n) => n === 'V',
+    warn: (m) => { warnings.push(m); },
+  }) as ShellEnv & { _env: Record<string, string> };
+  const e = new Expander(env);
+  expect(await e.expandWord('${V=hi}')).toEqual(['hi']);
+  expect(env._env.V).toBeUndefined();
+  expect(warnings.join('\n')).toMatch(/V: readonly variable/);
+});
+
+test('${var:=x} default-assign still writes a non-readonly var', async () => {
+  const warnings: string[] = [];
+  const env = mkEnv({}, {
+    isReadonly: () => false,
+    warn: (m) => { warnings.push(m); },
+  }) as ShellEnv & { _env: Record<string, string> };
+  const e = new Expander(env);
+  expect(await e.expandWord('${V:=hi}')).toEqual(['hi']);
+  expect(env._env.V).toBe('hi');
+  expect(warnings).toEqual([]);
+});
+
 test('${#VAR} length', async () => {
   expect(await E({ V: 'hello' }).expandWord('${#V}')).toEqual(['5']);
   expect(await E({ V: '' }).expandWord('${#V}')).toEqual(['0']);

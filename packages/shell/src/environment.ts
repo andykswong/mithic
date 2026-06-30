@@ -71,6 +71,10 @@ export interface EnvHost {
    * Derived from the executor's readonly/nameref/array/assoc state. Optional.
    */
   attrFlags?(name: string): string;
+  /** True when `name` is `readonly` (checked on the resolved target). Optional. */
+  isReadonly?(name: string): boolean;
+  /** Write a non-fatal diagnostic to the current stderr frame. Optional. */
+  warn?(msg: string): void;
 }
 
 export class Environment implements ShellEnv {
@@ -218,6 +222,16 @@ export class Environment implements ShellEnv {
 
   /** `${var@a}` attribute flags — delegated to the executor host (scalar → ''). */
   attrFlags(name: string): string { return this.host.attrFlags?.(name) ?? ''; }
+
+  /**
+   * True when the variable is `readonly`. Derefs first so a nameref pointing at a
+   * readonly target is also reported readonly (matching {@link set}'s deref). Used
+   * by the expander's `${var:=x}`/`${var=x}` default-assign.
+   */
+  isReadonly(name: string): boolean { return this.host.isReadonly?.(this.deref(name)) ?? false; }
+
+  /** Emit a non-fatal diagnostic to the executor's current stderr frame. */
+  warn(msg: string): void { this.host.warn?.(msg); }
 
   // ── ShellEnv: cross-cutting (delegated to the executor host) ────────────────
 

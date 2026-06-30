@@ -70,6 +70,14 @@ export interface ShellEnv {
    */
   attrFlags?(name: string): string;
   /**
+   * True when the variable (after nameref deref) is `readonly`. Used by the
+   * `${var:=x}`/`${var=x}` default-assign to refuse the write — bash warns and
+   * skips it but the expansion still yields the word (non-fatal). Optional.
+   */
+  isReadonly?(name: string): boolean;
+  /** Emit a non-fatal diagnostic to stderr (e.g. the readonly-assign warning). Optional. */
+  warn?(msg: string): void;
+  /**
    * Process substitution `<(cmd)` / `>(cmd)`: run `cmd` and return a VFS path the
    * surrounding command reads (`dir: 'in'`) or writes (`dir: 'out'`). Optional —
    * undefined ⇒ the construct is left literal.
@@ -429,6 +437,22 @@ export class Expander {
     }) as Record<string, string>;
   }
 
+  /**
+   * `${var:=word}` / `${var=word}` default-assign. bash refuses to write a
+   * `readonly` variable: it prints `<name>: readonly variable` to stderr, leaves
+   * the variable unchanged, but the expansion STILL yields `word` and the script
+   * continues (non-fatal — true even under `--posix` in bash 3.2). The warning
+   * keeps the REF name (`isReadonly` derefs a nameref-to-readonly-target itself).
+   */
+  private defaultAssign(name: string, arg: string): string {
+    if (this.env.isReadonly?.(name)) {
+      this.env.warn?.(`${name}: readonly variable`);
+      return arg;
+    }
+    this.env.set(name, arg);
+    return arg;
+  }
+
   /** Resolve a plain variable, falling back to special-param lookup. */
   private resolveVar(name: string): string {
     const v = this.env.get(name);
@@ -581,7 +605,7 @@ export class Expander {
       switch (op) {
         case '-': return unsetOrEmpty ? arg : value;
         case '+': return unsetOrEmpty ? '' : arg;
-        case '=': if (unsetOrEmpty) { this.env.set(name, arg); return arg; } return value;
+        case '=': if (unsetOrEmpty) { return this.defaultAssign(name, arg); } return value;
         case '?': if (unsetOrEmpty) throw new ExpansionError(arg || `${name}: parameter null or not set`); return value;
       }
     }
@@ -592,7 +616,7 @@ export class Expander {
       switch (op) {
         case '-': return set ? value : arg;
         case '+': return set ? arg : '';
-        case '=': if (!set) { this.env.set(name, arg); return arg; } return value;
+        case '=': if (!set) { return this.defaultAssign(name, arg); } return value;
         case '?': if (!set) throw new ExpansionError(arg || `${name}: parameter not set`); return value;
       }
     }
