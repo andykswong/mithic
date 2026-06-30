@@ -21,7 +21,10 @@
  * Multiple type specs combine GNU-style: each `-t TYPE` and `-c` is collected in
  * command-line order, and every 16-byte block prints one line PER type (first
  * type carries the address, continuation lines blank the address column to its
- * width). `*` duplicate-block elision compares the full multi-type block.
+ * width). `*` duplicate-block elision compares the full multi-type block. The
+ * type scan stops at a `--` terminator (later tokens are filenames, matching GNU
+ * and the positional parse); a dangling `-t` with no following spec errors
+ * (`od: option requires an argument -- 't'`, exit 1) rather than defaulting.
  *
  * 16 bytes per line. Identical consecutive 16-byte lines are elided GNU-style:
  * the first is printed, a bare `*` marks the run of duplicates, and output
@@ -115,8 +118,14 @@ const odCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     const argv = io.args.slice(1);
     for (let i = 0; i < argv.length; i++) {
       const a = argv[i];
+      if (a === '--') break; // tokens after `--` are filenames (matches parseArgs)
       if (a === '-c') { types.push('c'); continue; }
-      if (a === '-t') { const t = argv[++i]; if (t !== undefined) { if (!isDumpType(t)) return await exitWith(err, 1, `${name}: type '${t}' not supported (only x1/o1/d1/x2/o2/d2/-c)`); types.push(t); } continue; }
+      if (a === '-t') {
+        const t = argv[++i];
+        if (t === undefined) return await exitWith(err, 1, `${name}: option requires an argument -- 't'`);
+        if (!isDumpType(t)) return await exitWith(err, 1, `${name}: type '${t}' not supported (only x1/o1/d1/x2/o2/d2/-c)`);
+        types.push(t); continue;
+      }
       if (a.startsWith('-t') && a.length > 2) { const t = a.slice(2); if (!isDumpType(t)) return await exitWith(err, 1, `${name}: type '${t}' not supported (only x1/o1/d1/x2/o2/d2/-c)`); types.push(t); continue; }
     }
     if (types.length === 0) types.push('o1'); // default
