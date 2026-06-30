@@ -151,3 +151,87 @@ describe('find -exec', () => {
     expect(await findCommand(h.io)).toBe(1);
   });
 });
+
+// ── B2.2: -size / -empty / -newer / -printf ─────────────────────────────────
+
+describe('find -size / -empty / -newer / -printf', () => {
+  const sized = {
+    '/s/small': 'x'.repeat(100),       // 100 bytes
+    '/s/big': 'y'.repeat(3000),        // ~3 KiB → >1k, >1 512-byte block? size in bytes
+    '/s/empty': '',                    // 0 bytes
+  };
+
+  test('-size +1k matches files larger than 1024 bytes', async () => {
+    const h = makeIO({ args: ['find', '/s', '-type', 'f', '-size', '+1k'], files: sized });
+    expect(await findCommand(h.io)).toBe(0);
+    expect(h.out().trim().split('\n')).toEqual(['/s/big']);
+  });
+
+  test('-size 0 matches empty files', async () => {
+    const h = makeIO({ args: ['find', '/s', '-type', 'f', '-size', '0'], files: sized });
+    await findCommand(h.io);
+    expect(h.out().trim().split('\n')).toEqual(['/s/empty']);
+  });
+
+  test('-size 1k rounds the file size UP to the unit (GNU): a 100-byte file is 1k', async () => {
+    // GNU find rounds a file's size UP to the next whole unit for every suffix
+    // except `c` (bytes). So `-size 1k` matches any file in (0, 1024] bytes.
+    const h = makeIO({ args: ['find', '/s', '-type', 'f', '-size', '1k'], files: sized });
+    await findCommand(h.io);
+    expect(h.out().trim().split('\n').sort()).toEqual(['/s/small']);
+  });
+
+  test('-size 100c uses EXACT bytes (no rounding)', async () => {
+    const h = makeIO({ args: ['find', '/s', '-type', 'f', '-size', '100c'], files: sized });
+    await findCommand(h.io);
+    expect(h.out().trim().split('\n')).toEqual(['/s/small']);
+  });
+
+  test('-empty matches zero-size files and empty directories', async () => {
+    const h = makeIO({
+      args: ['find', '/s', '-empty'],
+      files: { '/s/empty': '', '/s/full': 'data', '/s/emptydir/.keep': '' },
+    });
+    // /s/emptydir has a child so it is not empty; /s/empty is a zero-byte file.
+    await findCommand(h.io);
+    const lines = h.out().trim().split('\n');
+    expect(lines).toContain('/s/empty');
+    expect(lines).not.toContain('/s/full');
+  });
+
+  test('-newer ref matches files with mtime strictly newer than ref', async () => {
+    const old = new Date('2020-01-01T00:00:00Z');
+    const ref = new Date('2021-01-01T00:00:00Z');
+    const recent = new Date('2022-01-01T00:00:00Z');
+    const h = makeIO({
+      args: ['find', '/n', '-type', 'f', '-newer', '/n/ref'],
+      files: {
+        '/n/old': { content: 'a', mtime: old },
+        '/n/ref': { content: 'b', mtime: ref },
+        '/n/new': { content: 'c', mtime: recent },
+      },
+    });
+    expect(await findCommand(h.io)).toBe(0);
+    expect(h.out().trim().split('\n')).toEqual(['/n/new']);
+  });
+
+  test('-printf renders %p %f %s %y with \\n', async () => {
+    const h = makeIO({
+      args: ['find', '/p', '-type', 'f', '-printf', '%p %f %s %y\\n'],
+      files: { '/p/file': 'hello' }, // 5 bytes
+    });
+    await findCommand(h.io);
+    expect(h.out()).toBe('/p/file file 5 f\n');
+  });
+
+  test('-printf %y is d for directories', async () => {
+    const h = makeIO({
+      args: ['find', '/p', '-type', 'd', '-printf', '%y %f\\n'],
+      files: { '/p/sub/x': '1' },
+    });
+    await findCommand(h.io);
+    const lines = h.out().trim().split('\n');
+    expect(lines).toContain('d p');
+    expect(lines).toContain('d sub');
+  });
+});

@@ -10,6 +10,8 @@
  *   -S : sort by size (largest first)
  *   -r : reverse the sort order
  *   -h : human-readable sizes (with -l)
+ *   -F : append a classify indicator to each name — `/` dir, `*` executable
+ *        (mode & 0o111), `@` symlink, nothing for a regular file
  *
  * Plain (non-`-l`, non-`-1`) output is laid out in columns to ~80 chars.
  */
@@ -24,6 +26,7 @@ interface Row { name: string; type: FileType; st?: StatResult; }
 interface LsOptions {
   long: boolean; all: boolean; almost: boolean; one: boolean; recurse: boolean;
   dirSelf: boolean; timeSort: boolean; reverse: boolean; sizeSort: boolean; human: boolean;
+  classify: boolean;
 }
 
 // The VFS has no ownership model; ls -l prints static placeholders so the
@@ -56,10 +59,21 @@ function humanSize(n: number): string {
   return (v < 10 ? v.toFixed(1) : Math.round(v).toString()) + units[i];
 }
 
+/**
+ * The `-F` classify indicator for a row: `/` directory, `@` symlink,
+ * `*` executable regular file (mode & 0o111), else nothing.
+ */
+function classifySuffix(r: Row): string {
+  if (r.type === 'directory') return '/';
+  if (r.type === 'symlink') return '@';
+  if (r.type === 'file' && r.st && (r.st.mode & 0o111) !== 0) return '*';
+  return '';
+}
+
 const ls: CommandFn = async (io: CommandIO): Promise<number> => {
   const { positionals, flags } = parseArgs(io.args.slice(1), {
-    boolean: ['l', 'a', 'A', '1', 'R', 'd', 't', 'r', 'S', 'h'],
-    alias: { all: 'a', almost: 'A', reverse: 'r', recursive: 'R', human: 'h' },
+    boolean: ['l', 'a', 'A', '1', 'R', 'd', 't', 'r', 'S', 'h', 'F'],
+    alias: { all: 'a', almost: 'A', reverse: 'r', recursive: 'R', human: 'h', classify: 'F' },
   });
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
@@ -69,7 +83,7 @@ const ls: CommandFn = async (io: CommandIO): Promise<number> => {
     long: Boolean(flags.l), all: Boolean(flags.a), almost: Boolean(flags.A),
     one: Boolean(flags['1']), recurse: Boolean(flags.R), dirSelf: Boolean(flags.d),
     timeSort: Boolean(flags.t), reverse: Boolean(flags.r), sizeSort: Boolean(flags.S),
-    human: Boolean(flags.h),
+    human: Boolean(flags.h), classify: Boolean(flags.F),
   };
 
   try {
@@ -128,8 +142,8 @@ async function listDir(
     if (!opt.all && !opt.almost && e.name.startsWith('.')) continue;
     rows.push({ name: e.name, type: e.type });
   }
-  // Resolve stats when needed for sort / long output.
-  if (opt.long || opt.timeSort || opt.sizeSort) {
+  // Resolve stats when needed for sort / long output / -F executable detection.
+  if (opt.long || opt.timeSort || opt.sizeSort || opt.classify) {
     for (const r of rows) {
       if (r.name === '.' || r.name === '..') continue;
       try { r.st = await stat(io, joinPath(dir, r.name), false); } catch { /* leave undefined */ }
@@ -164,6 +178,8 @@ async function emitRows(
   }
   if (opt.reverse) sorted.reverse();
 
+  const display = (r: Row): string => r.name + (opt.classify ? classifySuffix(r) : '');
+
   if (opt.long) {
     // Long format mirrors the reference's 7-field layout:
     //   mode links owner group size mtime name
@@ -177,17 +193,17 @@ async function emitRows(
       const mtime = st ? epochToStr(st.mtime) : '';
       await writeLine(
         out,
-        `${perms} ${String(links).padStart(3)} ${OWNER.padEnd(8)} ${GROUP.padEnd(8)} ${size.padStart(8)} ${mtime} ${r.name}`,
+        `${perms} ${String(links).padStart(3)} ${OWNER.padEnd(8)} ${GROUP.padEnd(8)} ${size.padStart(8)} ${mtime} ${display(r)}`,
       );
     }
     return;
   }
   if (opt.one) {
-    for (const r of sorted) await writeLine(out, r.name);
+    for (const r of sorted) await writeLine(out, display(r));
     return;
   }
   // Column layout for plain output (width ~80).
-  await writeString(out, columns(sorted.map(r => r.name)));
+  await writeString(out, columns(sorted.map(display)));
 }
 
 const mtimeOf = (r: Row): number => (r.st ? new Date(r.st.mtime).getTime() : 0);

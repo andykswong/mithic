@@ -269,4 +269,57 @@ describe('grep', () => {
     expect(await grepCommand(h.io)).toBe(0);
     expect(h.out()).toBe('a\x1b[01;31mb\x1b[0mc\n');
   });
+
+  // ── B2.1: -q / -m / --include / --exclude ─────────────────────────────────
+
+  test('-q suppresses output, exit 0 on a match', async () => {
+    const h = makeIO({ args: ['grep', '-q', 'foo'], stdinText: 'foo\nbar\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('');
+  });
+
+  test('-q exit 1 with no output when nothing matches', async () => {
+    const h = makeIO({ args: ['grep', '-q', 'zzz'], stdinText: 'foo\nbar\n' });
+    expect(await grepCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('');
+  });
+
+  test('--quiet long form behaves like -q', async () => {
+    const h = makeIO({ args: ['grep', '--quiet', 'foo'], stdinText: 'foo\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('');
+  });
+
+  test('-m 2 stops after 2 matches', async () => {
+    const h = makeIO({ args: ['grep', '-m', '2', 'a'], stdinText: 'a\na\na\na\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\na\n');
+  });
+
+  test('-m is per-file', async () => {
+    const h = makeIO({
+      args: ['grep', '-m', '1', 'x', '/a.txt', '/b.txt'],
+      files: { '/a.txt': 'x\nx\n', '/b.txt': 'x\nx\n' },
+    });
+    await grepCommand(h.io);
+    expect(h.out()).toBe('/a.txt:x\n/b.txt:x\n');
+  });
+
+  test('-r --include filters to matching filenames', async () => {
+    const h = makeIO({
+      args: ['grep', '-r', '--include=*.txt', 'hit', '/d'],
+      files: { '/d/a.txt': 'hit\n', '/d/b.log': 'hit\n', '/d/sub/c.txt': 'hit\n' },
+    });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('/d/a.txt:hit\n/d/sub/c.txt:hit\n');
+  });
+
+  test('-r --exclude skips matching filenames', async () => {
+    const h = makeIO({
+      args: ['grep', '-r', '--exclude=*.log', 'hit', '/d'],
+      files: { '/d/a.txt': 'hit\n', '/d/b.log': 'hit\n' },
+    });
+    await grepCommand(h.io);
+    expect(h.out()).toBe('/d/a.txt:hit\n');
+  });
 });

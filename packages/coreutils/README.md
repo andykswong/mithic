@@ -13,15 +13,28 @@ Node.
 
 ## Commands
 
-56 commands, one module per command under `src/commands/`:
+70 commands, one module per command under `src/commands/`:
 
 ```
-awk, base32, base64, basename, cat, chmod, cksum, comm, cp, cut, date,
-diff, dirname, echo, egrep, env, expr, false, fgrep, find, fold, getcap,
-grep, head, ln, ls, mkdir, mktemp, mv, nl, paste, printf, pwd, readlink,
-realpath, rev, rm, rmdir, sed, seq, setcap, shuf, sleep, sort, stat, sum,
-tac, tail, tee, touch, tr, true, uniq, wc, xargs, yes
+awk, base32, base64, basename, cat, chmod, cksum, column, comm, cp, cut,
+date, diff, dirname, du, echo, egrep, env, expand, expr, false, fgrep,
+find, fold, getcap, grep, head, join, ln, ls, mkdir, mktemp, mv, nl, od,
+paste, printenv, printf, pwd, readlink, realpath, rev, rm, rmdir, sed, seq,
+setcap, sha1sum, sha256sum, sha512sum, shuf, sleep, sort, split, stat,
+strings, sum, tac, tail, tee, touch, tr, tree, true, unexpand, uniq, wc,
+which, xargs, yes
 ```
+
+The latest batch added `printenv`, `which`, `split`, `od`, `strings`, `du`,
+`join`, `expand`/`unexpand`, `column`, `tree`, and the SHA-family checksums
+`sha1sum`/`sha256sum`/`sha512sum` (Web Crypto `crypto.subtle.digest` — no
+WebAssembly, no deps). A few of these intentionally diverge from GNU where exact
+parity is not reproducible over a virtual filesystem or is low-value, documented
+in each command's header: `du` uses a `ceil(byte-sum / 1024)` block model (not
+`st_blocks`); `od` ships the faithful single-byte `-t x1`/`-t o1`/`-t d1` and
+`-c` forms (multi-byte word grouping is a follow-up); `column`'s `-t` table mode
+is faithful while the non-`-t` fill mode is a simplified 80-column pack; and
+`md5sum` is deliberately omitted (Web Crypto has no MD5).
 
 The authoritative list is the `COMMAND_NAMES` array in `src/resolver.ts`; each
 name has a matching `src/commands/<name>.ts`. (`grep` family: `grep`, `egrep`,
