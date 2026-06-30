@@ -1,5 +1,5 @@
 import { defineConfig } from 'vitest/config';
-import { bundleGuestPlugin } from './packages/examples/lab/src/bundle-plugin.ts';
+import { bundleGuestPlugin } from './packages/examples/lab/build/bundle-plugin.ts';
 
 // Vitest is the test runner for the Mithic (Mithic 2.0) packages.
 //
