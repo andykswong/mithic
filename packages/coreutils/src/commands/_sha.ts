@@ -14,10 +14,10 @@
  * both Node (>= 26) and the guest Web Worker — NO WebAssembly and no
  * dependencies.
  *
- * FOLLOW-UP (deliberately out of scope): `md5sum`. Web Crypto exposes no MD5
- * (it is cryptographically broken), so md5sum would need a hand-rolled pure-TS
- * MD5 — error-prone and low marginal value next to the SHA family. Add it later
- * only if a concrete consumer needs it.
+ * `md5sum` is a sibling command but does NOT live here: Web Crypto exposes no
+ * MD5, so it uses a hand-rolled pure-TS RFC 1321 MD5 (`_md5.ts`) instead of
+ * `crypto.subtle.digest`. See `md5sum.ts` (it mirrors this file's
+ * `[-c]`/format/stdin scaffolding).
  */
 import { defineCommand, parseArgs, readAll, writeString, writeLine } from '../harness.ts';
 import { readFile } from '../fs.ts';
