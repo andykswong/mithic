@@ -62,6 +62,12 @@ export interface ShellState {
   setNameref?(ref: string, target: string): void;
   /** Resolve a nameref to its target (single-level), or undefined if not a nameref. */
   resolveNameref?(name: string): string | undefined;
+  /**
+   * The directory stack BELOW the current directory (`pushd`/`popd`/`dirs`),
+   * most-recent-first. The live array — `dirs`/`pushd`/`popd` mutate it in place.
+   * The current directory (`ctx.cwd`) is the conceptual top and is NOT stored here.
+   */
+  dirStack?(): string[];
 }
 
 /** Long names of the shell options toggled via `set` / `set -o`. */
@@ -144,6 +150,7 @@ export const BUILTINS = [
   'mapfile', 'readarray',
   'jobs', 'fg', 'bg', 'wait', 'kill', 'break', 'continue', 'source', '.', 'type',
   'shopt', 'trap', 'disown', 'history', 'fc', 'exec', 'coproc',
+  'dirs', 'pushd', 'popd',
 ] as const;
 
 const BUILTIN_SET = new Set<string>(BUILTINS);
@@ -187,6 +194,21 @@ function resolvePath(cwd: string, target: string): string {
   return '/' + stack.join('/');
 }
 
+/**
+ * Format the directory stack for `dirs`/`pushd`/`popd`: cwd first, then the
+ * `below` entries (most-recent-first), space-separated. Unless `long`, abbreviate
+ * a leading `$HOME` to `~` (bash default).
+ */
+function formatDirStack(cwd: string, below: string[], long: boolean, home: string | undefined): string {
+  const abbrev = (p: string): string => {
+    if (long || home === undefined || home === '') return p;
+    if (p === home) return '~';
+    if (p.startsWith(home + '/')) return '~' + p.slice(home.length);
+    return p;
+  };
+  return [cwd, ...below].map(abbrev).join(' ');
+}
+
 export async function runBuiltin(name: string, args: string[], ctx: BuiltinContext): Promise<number> {
   switch (name) {
     case ':':
@@ -206,6 +228,46 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
     case 'pwd':
       ctx.write(ctx.cwd + '\n');
       return 0;
+
+    case 'dirs': {
+      const stack = ctx.state?.dirStack?.();
+      if (stack === undefined) { errOut(ctx, 'shell: dirs: directory stack not available\n'); return 1; }
+      if (args.includes('-c')) { stack.length = 0; return 0; }
+      const long = args.includes('-l');
+      ctx.write(formatDirStack(ctx.cwd, stack, long, ctx.env.HOME) + '\n');
+      return 0;
+    }
+
+    case 'pushd': {
+      const stack = ctx.state?.dirStack?.();
+      if (stack === undefined) { errOut(ctx, 'shell: pushd: directory stack not available\n'); return 1; }
+      const dir = args.find((a) => !a.startsWith('-'));
+      if (dir === undefined) {
+        // No argument: swap the top two entries (cwd ↔ stack top).
+        if (stack.length === 0) { errOut(ctx, 'shell: pushd: no other directory\n'); return 1; }
+        const prevCwd = ctx.cwd;
+        ctx.cwd = stack[0];
+        ctx.env.PWD = ctx.cwd;
+        stack[0] = prevCwd;
+      } else {
+        // Push cwd below, then cd to DIR (DIR becomes the new top = cwd).
+        stack.unshift(ctx.cwd);
+        ctx.cwd = resolvePath(ctx.cwd, dir);
+        ctx.env.PWD = ctx.cwd;
+      }
+      ctx.write(formatDirStack(ctx.cwd, stack, false, ctx.env.HOME) + '\n');
+      return 0;
+    }
+
+    case 'popd': {
+      const stack = ctx.state?.dirStack?.();
+      if (stack === undefined) { errOut(ctx, 'shell: popd: directory stack not available\n'); return 1; }
+      if (stack.length === 0) { errOut(ctx, 'shell: popd: directory stack empty\n'); return 1; }
+      ctx.cwd = stack.shift()!;
+      ctx.env.PWD = ctx.cwd;
+      ctx.write(formatDirStack(ctx.cwd, stack, false, ctx.env.HOME) + '\n');
+      return 0;
+    }
 
     case 'echo': {
       let newline = true;

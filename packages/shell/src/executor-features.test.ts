@@ -577,3 +577,27 @@ test('assigning through a nameref writes the target', async () => {
   const { out } = await run('target=1; declare -n ref=target; ref=2; echo $target');
   expect(out.trim()).toBe('2');
 });
+
+// ── dirs / pushd / popd directory stack ──────────────────────────────────────
+
+test('pushd/dirs/popd manage the directory stack', async () => {
+  const { out } = await run('cd /a; pushd /b; dirs; popd; dirs; pwd', { cwd: '/' });
+  // pushd prints "/b /a"; dirs prints "/b /a"; popd prints "/a"; dirs prints "/a"; pwd "/a"
+  expect(out.trim().split('\n')).toEqual(['/b /a', '/b /a', '/a', '/a', '/a']);
+});
+
+test('pushd with no arg swaps the top two', async () => {
+  const { out } = await run('cd /a; pushd /b; pushd; pwd', { cwd: '/' });
+  // after pushd /b: stack "/b /a" (cwd /b); bare pushd swaps → "/a /b" (cwd /a)
+  expect(out.trim().split('\n')).toEqual(['/b /a', '/a /b', '/a']);
+});
+
+test('dirs -c clears the stack', async () => {
+  const { out } = await run('cd /a; pushd /b; dirs -c; dirs', { cwd: '/' });
+  expect(out.trim().split('\n')).toEqual(['/b /a', '/b']);
+});
+
+test('dirs abbreviates $HOME with ~ unless -l', async () => {
+  const { out } = await run('cd /home/u; dirs; dirs -l', { cwd: '/', env: { HOME: '/home/u' } });
+  expect(out.trim().split('\n')).toEqual(['~', '/home/u']);
+});

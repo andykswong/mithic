@@ -248,6 +248,8 @@ export class Executor {
   private readonlyNames = new Set<string>();
   /** `declare -n ref=target` namerefs (ref → target). Single-level only. */
   private namerefs = new Map<string, string>();
+  /** Directory stack BELOW cwd (most-recent-first) for `pushd`/`popd`/`dirs`. */
+  private dirStackBelow: string[] = [];
   /** `set` options. errexit aborts on nonzero; the rest per their POSIX meaning. */
   private options: Record<ShellOptionName, boolean> = {
     errexit: false,
@@ -605,6 +607,7 @@ export class Executor {
       isReadonly: (name) => this.readonlyNames.has(name),
       setNameref: (ref, target) => { this.namerefs.set(ref, target); },
       resolveNameref: (name) => this.namerefs.get(name),
+      dirStack: () => this.dirStackBelow,
     };
   }
 
