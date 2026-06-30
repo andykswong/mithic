@@ -196,8 +196,10 @@ describe('OPFSProvider', () => {
         await provider.write(h, new TextEncoder().encode('x'), 0);
         await provider.close(h);
       }
-      // All writes settled → no leaked lock entries.
-      await Promise.resolve(); // flush the settle microtask
+      // All writes settled → no leaked lock entries. The cleanup runs ~2 microtask
+      // hops after a write's `run` settles (run → sentinel → delete), so drain a
+      // macrotask to make the flush robust regardless of hop count.
+      await new Promise((r) => setTimeout(r, 0));
       expect(provider.writeLockCount).toBe(0);
     });
   });
