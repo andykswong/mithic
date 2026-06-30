@@ -983,7 +983,8 @@ async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
   // getopts-style: walk each `-` token char by char so SHORT FLAGS CLUSTER like
   // bash (`-ra name`, `-rn3`, `-rd';'`). `r` is a boolean; `a`/`d`/`n`/`N`/`u`/`t`
   // take an argument from the rest of the token (`-n3`) or the next argv (`-n 3`).
-  // Unknown letters (`-s`/`-p`) are no-ops. Non-`-` args are variable names.
+  // `-s` (silent) is a no-op (no TTY); `-p PROMPT` consumes its operand and drops
+  // it. Other unknown letters are no-ops. Non-`-` args are variable names.
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--' ) { names.push(...args.slice(i + 1)); break; }
@@ -1005,7 +1006,13 @@ async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
       if (ch === 'd') { delim = operand(); continue; }
       if (ch === 'n') { maxChars = parseInt(operand(), 10); continue; }
       if (ch === 'N') { maxChars = parseInt(operand(), 10); ignoreDelim = true; continue; }
-      j++; // unknown short flag (e.g. -s/-p): no-op
+      // `-p PROMPT` takes the prompt as its operand (printed to a TTY by bash).
+      // The sandbox has no TTY, so consume and drop it — crucially so PROMPT is
+      // NOT mistaken for a variable name. `-pPROMPT` and clustered `-sp PROMPT`
+      // also work via operand().
+      if (ch === 'p') { operand(); continue; }
+      if (ch === 's') { j++; continue; } // silent: no terminal echo to suppress — no-op
+      j++; // unknown short flag: no-op
     }
   }
   if (timeoutSec !== undefined && Number.isNaN(timeoutSec)) timeoutSec = undefined;
