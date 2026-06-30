@@ -10,11 +10,12 @@
  * The `-t` table mode is faithful to GNU `column -t` (2-space inter-column gap,
  * trailing column not padded, ragged rows align by column index).
  *
- * The default (non-`-t`) "fill" mode is a SIMPLIFIED model: entries (one per
- * input line) are packed left-to-right into rows wrapping at 80 columns, sized
- * to the widest entry + a 2-space gutter. GNU's fill mode is column-major and
- * honours `$COLUMNS`; this row-major 80-col fill is documented as a deliberate
- * simplification (the table mode is the high-value path).
+ * The default (non-`-t`) "fill" mode is column-major (GNU): entries (one per
+ * input line) are laid DOWN each column then across. The column count is the
+ * largest whose laid-out width (sum of per-column max-widths + 2-space gutters)
+ * fits the line; each column is padded to its own max entry width + gutter, the
+ * last column unpadded. Residual simplification: the line width is a fixed 80
+ * columns rather than honouring `$COLUMNS`.
  */
 import { defineCommand, parseArgs, readAllText, writeString } from '../harness.ts';
 import { readFile } from '../fs.ts';
@@ -48,17 +49,51 @@ export function table(rows: string[][]): string {
   return out;
 }
 
-/** Render the simplified 80-column fill for a list of `entries`. */
+/**
+ * Column-major fill (GNU `column` default mode): entries are laid DOWN each
+ * column then across. The column count is the largest whose laid-out width
+ * (sum of per-column max-widths + gutters) fits {@link TERM_WIDTH}; each column
+ * is padded to its own max entry width + {@link GUTTER}, last column unpadded.
+ */
 export function fill(entries: string[]): string {
-  if (entries.length === 0) return '';
-  const width = Math.max(...entries.map((e) => e.length)) + GUTTER;
-  const perLine = Math.max(1, Math.floor(TERM_WIDTH / width));
-  let out = '';
-  for (let i = 0; i < entries.length; i++) {
-    const last = i === entries.length - 1 || (i + 1) % perLine === 0;
-    out += last ? entries[i] + '\n' : entries[i].padEnd(width);
+  const n = entries.length;
+  if (n === 0) return '';
+
+  // Per-column widths for a given column count, laid out column-major.
+  const layout = (cols: number): { rows: number; widths: number[] } => {
+    const rows = Math.ceil(n / cols);
+    const widths: number[] = [];
+    for (let c = 0; c < cols; c++) {
+      let w = 0;
+      for (let r = 0; r < rows; r++) {
+        const e = entries[c * rows + r];
+        if (e !== undefined) w = Math.max(w, e.length);
+      }
+      widths[c] = w;
+    }
+    return { rows, widths };
+  };
+  const lineWidth = (widths: number[]): number =>
+    widths.reduce((s, w) => s + w, 0) + GUTTER * (widths.length - 1);
+
+  // Largest column count that fits; always at least 1.
+  let cols = 1;
+  for (let c = n; c >= 1; c--) {
+    if (lineWidth(layout(c).widths) <= TERM_WIDTH) { cols = c; break; }
   }
-  if (!out.endsWith('\n')) out += '\n';
+
+  const { rows, widths } = layout(cols);
+  let out = '';
+  for (let r = 0; r < rows; r++) {
+    let line = '';
+    for (let c = 0; c < cols; c++) {
+      const e = entries[c * rows + r];
+      if (e === undefined) continue;       // missing trailing entry
+      const isLastInRow = c === cols - 1 || entries[(c + 1) * rows + r] === undefined;
+      line += isLastInRow ? e : e.padEnd(widths[c] + GUTTER);
+    }
+    out += line + '\n';
+  }
   return out;
 }
 
