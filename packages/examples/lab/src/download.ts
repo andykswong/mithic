@@ -43,13 +43,12 @@ export async function readVfsToBlob(
  */
 export function triggerDownload(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
-  try {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.rel = 'noopener';
-    a.click();
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener';
+  a.click();
+  // Revoke on the next tick rather than synchronously after click(): a synchronous
+  // revoke can cancel a large download still being read from the blob URL.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
