@@ -189,6 +189,17 @@ describe('OPFSProvider', () => {
       expect(countA).toBe(1024);
       expect(countB).toBe(1024);
     });
+
+    it('#writeLocks does not retain entries after writes settle', async () => {
+      for (let i = 0; i < 5; i++) {
+        const h = await provider.open(`/f${i}.txt`, { write: true, create: true });
+        await provider.write(h, new TextEncoder().encode('x'), 0);
+        await provider.close(h);
+      }
+      // All writes settled → no leaked lock entries.
+      await Promise.resolve(); // flush the settle microtask
+      expect(provider.writeLockCount).toBe(0);
+    });
   });
 
   describe('stat', () => {
