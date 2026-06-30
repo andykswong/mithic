@@ -1,0 +1,6 @@
+{
+  "src": "read first rest <<< \"alpha beta gamma\"; echo \"$first|$rest\"",
+  "stdout": "alpha|beta gamma\n",
+  "stderr": "",
+  "code": 0
+}

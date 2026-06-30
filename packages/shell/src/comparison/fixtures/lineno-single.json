@@ -1,0 +1,6 @@
+{
+  "src": "echo $LINENO",
+  "stdout": "1\n",
+  "stderr": "",
+  "code": 0
+}

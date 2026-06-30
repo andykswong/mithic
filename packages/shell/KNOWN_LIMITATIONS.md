@@ -33,12 +33,26 @@ dev machine). bash 3.2 LACKS bash-4+ features (case modification `${s^^}`/`${s,,
 
 - Fixtures **SHOULD be (re)recorded on the CI bash version** (newer, typically
   bash 5.x on Linux) via `RECORD_FIXTURES=1` to avoid platform drift. Every case in
-  the first committed suite was chosen to produce **identical** output on bash 3.2
-  AND bash 5.x.
-- **bash-4+ cases** (e.g. `case-upper` / `${s^^}`) are hand-recorded from known
-  bash-5 output, because recording them on bash 3.2 would capture a `bad
-  substitution` error as golden. `compareWithBash4(...)` refuses to record on the
-  default host unless `RECORD_BASH4=1` is also set (signalling a bash-4+ host).
+  the `CASES` list is chosen to produce **identical** output on bash 3.2 AND bash
+  5.x (verified locally), so re-recording on 3.2 is a no-op — the local dev host
+  (bash 3.2) does NOT churn these fixtures, and **CI (Linux bash 5.x) owns
+  re-recording the full suite**.
+- **bash-4+ cases** (`case-upper` / `${s^^}`, `${var@Q}` quoting, single-line
+  `$LINENO`) are hand-recorded from known bash-5 output, because recording them on
+  bash 3.2 would capture a `bad substitution` error (or, for `$LINENO`, the 3.2
+  value `0` rather than the modern `1`) as golden. `compareWithBash4(...)` refuses
+  to record on the default host unless `RECORD_BASH4=1` is also set (signalling a
+  bash-4+ host). mithic matches the bash-5 golden for all of these.
+
+#### `printf %q` quoting-style divergence (not in the suite)
+
+`printf %q` produces a re-inputtable quoting, but the *style* differs from bash for
+words containing shell-special characters: mithic emits the single-quote form
+(`'a b'`, via the shared `shellQuote` in `quote.ts`), whereas bash emits the
+backslash-escaped form (`a\ b`). Both round-trip to the same shell word, but the
+bytes differ, so only the already-safe case (`printf %q hello` → `hello`, identical
+everywhere) is in the comparison suite. The special-char `printf %q` case is a
+deliberate, documented style divergence, not a regression.
 
 ---
 
@@ -59,7 +73,7 @@ tests; they are the parity items this wave closed.
 |------|-------------------|--------|
 | `#!/usr/bin/env <interp>` shebang arg honored | Exec-from-VFS scripts with the portable `env` shebang dispatch correctly (was dropped → misdispatch as interpreter `/usr/bin/env`) | **done** |
 | CRLF shebang lines tolerated | Scripts authored on Windows (CRLF) parse the interpreter without a trailing `\r` leak | **done** |
-| POSIX special-builtin fatality (POSIX 2.8.1) — **partial** | A bad `set` option now aborts a non-interactive shell in posix mode (no silent continue), via `PosixSpecialBuiltinError`. **Scope today: only `set`'s bad-option path throws.** The canonical redirect/assignment-error-on-a-special-builtin case (`export x=1 >/bad`) still returns 1 and continues — wiring `withRedirects`/assignment errors to the same fatal path is a follow-up (see "Pending"). | **partial** |
+| POSIX special-builtin fatality (POSIX 2.8.1) | A fatal error in a special builtin aborts a non-interactive shell in posix mode (no silent continue), via `PosixSpecialBuiltinError`. Covers BOTH (a) a bad `set` option (`set -o bogus`) and (b) the canonical **redirection error** on a special builtin (`: > existing` under `set -C`, `export X=1 > /bad`) — the `execSimple`/`withRedirects` redirect-error path now throws `PosixSpecialBuiltinError` when the failing command is in `POSIX_SPECIAL_BUILTINS` and posix mode is on, instead of returning 1. A redirect error on a NON-special builtin (`echo`) stays non-fatal. (The assignment-error path of POSIX 2.8.1 is NOT yet wired — no assignment-error site throws `PosixSpecialBuiltinError` today, since `readonly` enforcement is unmodeled — see Pending.) | **done** |
 | Process substitution `<(…)`/`>(…)` rejected in POSIX mode | Agents in strict posix mode get a clear rejection instead of a bash-only extension | **done** |
 | `read -r` (raw — no backslash mangling) | `read -r line` preserves backslashes; the prior silent `-r` ignore was a correctness trap | **done** |
 | `read -a` / `read -d` / `read -n` / `read -N` (incl. clustered `-ra`/`-rn3`) | Parse a line into an array; NUL/custom delimiters (`find -print0`); `-n` (≤N, stop at delim) and `-N` (exactly N, ignore delim); short flags cluster like bash (`read -ra arr`, `read -rn3 x`) | **done** |
@@ -83,7 +97,7 @@ Prioritized for agents. Each row: the gap + a one-line agent use case.
 | **`read -s` (silent)** | No TTY in the sandbox; secret prompting not meaningful here | **pending** |
 | **full coproc** | Bidirectional co-process pipes; only partial support today | **pending** |
 | **pipeline final-stage streaming** | The last pipeline stage streaming output incrementally (vs buffering) for long-running agent pipelines | **pending** |
-| **special-builtin fatality: redirect/assignment path** | POSIX 2.8.1's canonical case — a redirection or assignment error on a special builtin (`export`/`readonly`/`.`) aborts the shell in posix mode. Only `set`'s bad-option path is fatal today; thread `withRedirects`/assignment errors through `PosixSpecialBuiltinError` too | **pending** |
+| **`readonly` re-assignment rejection** | `readonly RO=1; RO=2` should fail (a variable-assignment error). The `readonly` builtin does not yet track read-only-ness, so the assignment succeeds. Once enforced, the assignment error already routes through the special-builtin fatal path in posix mode (the redirect path is done — see "Closed"). | **pending** |
 
 ---
 

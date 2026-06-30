@@ -8,8 +8,12 @@ import { compareWithBash, compareWithBash4 } from './fixture-runner.ts';
 // Record: `RECORD_FIXTURES=1 npx vitest run packages/shell/src/comparison/shell-behavior.comparison.test.ts`
 // Replay (default / CI): `npx vitest run packages/shell/src/comparison/shell-behavior.comparison.test.ts`
 //
-// The committed fixtures were recorded against macOS /bin/bash 3.2.57. Every case
-// below produces IDENTICAL output on bash 3.2 and bash 5.x. See KNOWN_LIMITATIONS.md.
+// The committed CASES fixtures were recorded against macOS /bin/bash 3.2.57. Every
+// case in CASES produces IDENTICAL output on bash 3.2 and bash 5.x (verified). The
+// BASH4_CASES below exercise bash-4.4+ features and are hand-recorded from bash-5
+// output (3.2 errors on them); re-record on a bash-4+ host with
+// RECORD_FIXTURES=1 RECORD_BASH4=1. CI (Linux bash 5.x) owns re-recording the whole
+// suite. See KNOWN_LIMITATIONS.md.
 
 const CASES: Array<[string, string, { posix?: boolean }?]> = [
   ['echo-basic', 'echo hello world'],
@@ -22,6 +26,11 @@ const CASES: Array<[string, string, { posix?: boolean }?]> = [
   ['for-loop', 'for i in 1 2 3; do echo "n$i"; done'],
   ['brace-expand', 'echo {a,b,c}'],
   ['printf-d', 'printf "%03d\\n" 7'],
+  // Version-stable on bash 3.2 AND 5.x (verified locally). `<<<` here-string into
+  // `read` and `printf %q` of an already-safe word produce identical bytes on both.
+  ['read-herestring', 'read a b <<< "x y"; echo "$a-$b"'],
+  ['read-herestring-rest', 'read first rest <<< "alpha beta gamma"; echo "$first|$rest"'],
+  ['printf-q-plain', 'printf "%q\\n" hello'],
 ];
 
 for (const [name, src, opts] of CASES) {
@@ -47,6 +56,15 @@ test.skip('bash-parity: brace-suppressed-posix (mithic is stricter than bash)', 
 // bash-5 golden. Re-record on a bash-4+ host with RECORD_FIXTURES=1 RECORD_BASH4=1.
 const BASH4_CASES: Array<[string, string, { posix?: boolean }?]> = [
   ['case-upper', 's=hello; echo "${s^^}"'],
+  // `${var@Q}` (parameter-transform quoting) — bash 4.4+. On bash 3.2 this is a
+  // "bad substitution"; the golden fixtures are hand-recorded from bash-5 output:
+  // a word needing no quoting stays bare (`plain`), one with a space is
+  // single-quoted (`'a b'`). mithic matches via the shared `shellQuote`.
+  ['at-Q-simple', 's=plain; echo "${s@Q}"'],
+  ['at-Q-space', 's="a b"; echo "${s@Q}"'],
+  // `$LINENO` on a single `-c` line: bash 3.2 prints 0, bash 4.4+/5.x print 1
+  // (the documented modern behavior mithic targets). Hand-recorded bash-5 golden.
+  ['lineno-single', 'echo $LINENO'],
 ];
 
 for (const [name, src, opts] of BASH4_CASES) {

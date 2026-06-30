@@ -1,0 +1,6 @@
+{
+  "src": "read a b <<< \"x y\"; echo \"$a-$b\"",
+  "stdout": "x-y\n",
+  "stderr": "",
+  "code": 0
+}
