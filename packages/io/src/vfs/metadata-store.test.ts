@@ -91,6 +91,72 @@ describe('MetadataStore', () => {
     });
   });
 
+  describe('getMeta / setTimes branch coverage', () => {
+    it('getMeta returns undefined for an unknown path', async () => {
+      expect(await store.getMeta('/never-touched')).toBeUndefined();
+    });
+
+    it('getMeta returns the stored entry for a known path', async () => {
+      await store.setMode('/f', 0o755);
+      expect(await store.getMeta('/f')).toEqual({ mode: 0o755 });
+    });
+
+    it('setTimes creates a metadata entry for a path with none', async () => {
+      const before = backing.flushes;
+      await store.setTimes('/fresh', 11, 22);
+      expect(backing.flushes).toBeGreaterThan(before);
+      expect(await store.getMeta('/fresh')).toEqual({ atime: 11, mtime: 22 });
+    });
+
+    it('setTimes updates atime/mtime without clobbering xattr or mode', async () => {
+      await store.setMode('/f', 0o644);
+      await store.setxattr('/f', 'security.capability', new Uint8Array([7]));
+
+      await store.setTimes('/f', 100, 200);
+
+      const meta = (await store.getMeta('/f'))!;
+      expect(meta.mode).toBe(0o644);
+      expect(meta.atime).toBe(100);
+      expect(meta.mtime).toBe(200);
+      expect(Array.from((await store.getxattr('/f', 'security.capability'))!)).toEqual([7]);
+    });
+
+    it('setTimes overwrites prior times on an existing entry', async () => {
+      await store.setTimes('/f', 1, 2);
+      await store.setTimes('/f', 3, 4);
+      expect(await store.getMeta('/f')).toEqual({ atime: 3, mtime: 4 });
+    });
+  });
+
+  describe('load (malformed / non-object backing)', () => {
+    it('falls back to empty data on invalid JSON', async () => {
+      const bad = new RecordingBacking('not json {');
+      const s = new MetadataStore(bad);
+      await s.load();
+      expect(await s.getMeta('/anything')).toBeUndefined();
+    });
+
+    it('ignores a non-object JSON payload', async () => {
+      const arr = new RecordingBacking('[1,2,3]');
+      const s = new MetadataStore(arr);
+      await s.load();
+      expect(await s.getMeta('/anything')).toBeUndefined();
+    });
+
+    it('ignores a JSON null payload', async () => {
+      const nul = new RecordingBacking('null');
+      const s = new MetadataStore(nul);
+      await s.load();
+      expect(await s.getMeta('/anything')).toBeUndefined();
+    });
+
+    it('lazily loads on first access when load() was never called explicitly', async () => {
+      const seeded = new RecordingBacking(JSON.stringify({ '/x': { mode: 0o600 } }));
+      const s = new MetadataStore(seeded);
+      expect(await s.getMeta('/x')).toEqual({ mode: 0o600 });
+    });
+  });
+
   describe('dropSubtree', () => {
     it('removes the exact key and all descendants', async () => {
       await store.setxattr('/d', 'user.k', new Uint8Array([1]));

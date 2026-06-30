@@ -1,5 +1,5 @@
 import { defineConfig } from 'vite';
-import { bundleGuestPlugin } from './src/bundle-plugin.ts';
+import { bundleGuestPlugin } from './build/bundle-plugin.ts';
 
 export default defineConfig({
   plugins: [bundleGuestPlugin()],

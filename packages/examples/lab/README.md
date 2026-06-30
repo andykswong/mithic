@@ -79,7 +79,7 @@ source via `(0,eval)(source)` and reads `globalThis.__mithic_default`. So the by
 a **self-contained classic-script IIFE**: a top-level `export default` is a `SyntaxError`
 under `eval`, and a bare `import '@mithic/guest-runtime'` can't resolve in an opaque-origin
 worker. A normal hand-authored ESM guest therefore won't run from VFS bytes in-browser
-today — so a build-time `?bundle` esbuild plugin (`src/bundle-plugin.ts`) emits the IIFE
+today — so a build-time `?bundle` esbuild plugin (`build/bundle-plugin.ts`) emits the IIFE
 form for each utility, which `installUtility` writes to `/usr/bin/<name>`. Letting an
 *unbundled* ESM guest run from VFS in-sandbox needs a per-backend resolver (a worker
 import-map / `blob:` module bootstrap) — deferred Phase-1.2 work (RFC 0001 §4.2

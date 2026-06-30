@@ -68,14 +68,13 @@ describe('readVfsToBlob', () => {
 });
 
 describe('triggerDownload', () => {
-  it('clicks a transient anchor wired to an object URL named after the download', () => {
+  it('clicks a transient anchor wired to an object URL named after the download', async () => {
     const blob = new Blob([new Uint8Array([1, 2, 3])]);
     const created: string[] = [];
-    const revoked: string[] = [];
     const origCreate = URL.createObjectURL;
     const origRevoke = URL.revokeObjectURL;
     URL.createObjectURL = ((b: Blob) => { const u = `blob:test-${created.length}`; created.push(u); void b; return u; }) as typeof URL.createObjectURL;
-    URL.revokeObjectURL = ((u: string) => { revoked.push(u); }) as typeof URL.revokeObjectURL;
+    URL.revokeObjectURL = (() => {}) as typeof URL.revokeObjectURL;
 
     let clicked: { href: string; download: string } | undefined;
     const realCreateElement = document.createElement.bind(document);
@@ -90,6 +89,7 @@ describe('triggerDownload', () => {
 
     try {
       triggerDownload(blob, 'result.bin');
+      await new Promise((r) => setTimeout(r, 0)); // flush the deferred revoke before restoring stubs
     } finally {
       document.createElement = realCreateElement as typeof document.createElement;
       URL.createObjectURL = origCreate;
@@ -100,6 +100,37 @@ describe('triggerDownload', () => {
     expect(clicked!.download).toBe('result.bin');
     expect(created).toHaveLength(1);
     expect(clicked!.href).toContain(created[0]);
-    expect(revoked).toEqual(created);
+  });
+
+  it('does not revoke the object URL synchronously (avoids cancelling a large download)', async () => {
+    const blob = new Blob([new Uint8Array([1, 2, 3])]);
+    const created: string[] = [];
+    const revoked: string[] = [];
+    const origCreate = URL.createObjectURL;
+    const origRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = ((b: Blob) => { const u = `blob:test-${created.length}`; created.push(u); void b; return u; }) as typeof URL.createObjectURL;
+    URL.revokeObjectURL = ((u: string) => { revoked.push(u); }) as typeof URL.revokeObjectURL;
+
+    const realCreateElement = document.createElement.bind(document);
+    const spy = (tag: string) => {
+      const el = realCreateElement(tag) as HTMLAnchorElement;
+      if (tag === 'a') {
+        el.click = () => {};
+      }
+      return el;
+    };
+    document.createElement = spy as typeof document.createElement;
+
+    try {
+      triggerDownload(blob, 'f.bin');
+      expect(created).toHaveLength(1);
+      expect(revoked).toHaveLength(0); // NOT revoked synchronously
+      await new Promise((r) => setTimeout(r, 0)); // let the deferred revoke run
+      expect(revoked).toEqual(created);
+    } finally {
+      document.createElement = realCreateElement as typeof document.createElement;
+      URL.createObjectURL = origCreate;
+      URL.revokeObjectURL = origRevoke;
+    }
   });
 });

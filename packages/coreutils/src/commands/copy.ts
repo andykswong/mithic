@@ -9,10 +9,10 @@
  * executable in the Lab sense: input/output are argv paths, resolved against the
  * process cwd.
  */
-import { createStorageManager, readPath, writePath } from '@mithic/guest-runtime';
-import type { PathContext } from '@mithic/guest-runtime';
+import { readPath, writePath } from '@mithic/guest-runtime';
 import { defineCommand, writeLine } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
+import { pathContext } from '../path-context.ts';
 
 const copyCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const [, src, dst] = io.args;
@@ -34,11 +34,6 @@ const copyCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     await err.close().catch(() => {});
   }
 };
-
-/** A {@link PathContext} (the surface `readPath`/`writePath` read) over the command IO. */
-function pathContext(io: CommandIO): PathContext {
-  return { cwd: io.cwd, fs: createStorageManager(io.syscall, io.cwd) };
-}
 
 export default defineCommand(copyCommand);
 export { copyCommand };
