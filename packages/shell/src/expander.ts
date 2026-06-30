@@ -427,12 +427,21 @@ export class Expander {
     return out;
   }
 
-  /** A live env proxy so arithmetic assignments persist to the shell env. */
+  /**
+   * A live env proxy so arithmetic assignments persist to the shell env.
+   * A write to a `readonly` variable (e.g. `$(( x = 5 ))` / the `(( ))` command)
+   * is refused: warn to stderr and SKIP the write, but still return true so the
+   * assignment expression yields its RHS value (bash: `(( x=5 ))` returns 5 even
+   * when x is readonly). Non-fatal.
+   */
   private arithEnvProxy(): Record<string, string> {
     const env = this.env;
     return new Proxy({}, {
       get: (_t, p: string) => env.get(p) ?? '',
-      set: (_t, p: string, v) => { env.set(p, String(v)); return true; },
+      set: (_t, p: string, v) => {
+        if (env.isReadonly?.(p)) { env.warn?.(`${p}: readonly variable`); return true; }
+        env.set(p, String(v)); return true;
+      },
       has: (_t, p: string) => env.has(p),
     }) as Record<string, string>;
   }

@@ -585,6 +585,40 @@ test('${var=x} (no-colon) default-assign on a readonly var also warns + skips + 
   expect(code).toBe(0);
 });
 
+// ── arithmetic (( )) / for (( )) / let must not overwrite a readonly var ──────
+
+test('(( x = 5 )) on a readonly var warns, does NOT write, and continues', async () => {
+  // bash: prints the readonly warning, does not write x, but the expression's
+  // value (5, nonzero) still makes (( )) succeed; the script continues.
+  const { out, err, code } = await run('readonly x; (( x = 5 )); echo "x=[$x] $?"');
+  expect(out.trim()).toBe('x=[] 0');
+  expect(err).toMatch(/x: readonly variable/);
+  expect(code).toBe(0);
+});
+
+test('let x=5 on a readonly var warns and does not write', async () => {
+  const { out, err } = await run('readonly x; let x=5; echo "x=[$x]"');
+  expect(out.trim()).toBe('x=[]');
+  expect(err).toMatch(/x: readonly variable/);
+});
+
+test('for ((x=0;x<2;x++)) on a readonly counter TERMINATES (does not hang) and warns', async () => {
+  // Deliberate divergence from bash, which infinite-loops here (the readonly
+  // counter never advances). mithic is SAFER: it warns, skips the write, and
+  // breaks the loop so it terminates promptly.
+  const start = Date.now();
+  const { err, code } = await run('readonly x; for ((x=0;x<2;x++)); do echo iter; done; echo after');
+  expect(Date.now() - start).toBeLessThan(2000); // must not spin to the 1M guard
+  expect(err).toMatch(/x: readonly variable/);
+  expect(code).toBe(0);
+});
+
+test('for (( )) over a non-readonly counter still iterates normally', async () => {
+  const { out, code } = await run('for ((i=0;i<3;i++)); do echo $i; done');
+  expect(out.trim().split('\n')).toEqual(['0', '1', '2']);
+  expect(code).toBe(0);
+});
+
 // ── let (arithmetic-evaluation builtin) ──────────────────────────────────────
 
 test('let evaluates arithmetic and assigns', async () => {
