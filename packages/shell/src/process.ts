@@ -272,20 +272,18 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
           transfer.length ? { transfer } : undefined,
         );
         const pid = (result as { pid: number }).pid;
-        // AFTER the child is live (its fd-0 read end grants credit), pump the
-        // shell-realm stdin stream into the write end via `pumpStreamToPort`
-        // (credit-windowed, NO flush-timer throttle — see its doc for why
-        // `pipeTo(portToWritable)` throttles a high-rate small-chunk producer to a
-        // de facto hang). A downstream that closes early (EPIPE) or an errored
-        // source ends the pump and cancels the source upstream.
-        if (stdinWritePort && params.stdinStream) {
-          void pumpStreamToPort(params.stdinStream, stdinWritePort);
-        }
         // The kernel transfers the stdout read end as ports[0] and the stderr read
         // end as ports[1]. On a relay backend ports is empty → fall back to buffered.
         const readPort = ports[0];
         const errPort = ports[1];
         if (!readPort) {
+          // No stdout port came back (a backend that accepted the injected stdin
+          // port but returned no fd-1 pipe — no current backend does this). We
+          // must NOT start the stdin pump here: it would lock the stream and the
+          // buffered fallback's `drainReadable` would then throw on a locked
+          // stream. `bufferedParams()` re-drains the (still-unlocked) stream into
+          // an fds[0] bytes spec, so close the unused write port first.
+          stdinWritePort?.close();
           const buffered = await this.spawn(await bufferedParams());
           let bytes: Uint8Array | undefined;
           if (buffered.stdout) bytes = await buffered.stdout;
@@ -297,6 +295,17 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
             return { pid, stdout: new ReadableStream<Uint8Array>({ start(c) { c.enqueue(b); c.close(); } }), stderr: buffered.stderr };
           }
           return { pid, stderr: buffered.stderr };
+        }
+        // Committed to the streaming path (stdout port present). NOW that the
+        // child is live (its fd-0 read end grants credit), pump the shell-realm
+        // stdin stream into the write end via `pumpStreamToPort` (credit-windowed,
+        // NO flush-timer throttle — see its doc for why `pipeTo(portToWritable)`
+        // throttles a high-rate small-chunk producer to a de facto hang). A
+        // downstream that closes early (EPIPE) or an errored source ends the pump
+        // and cancels the source upstream. Started here (not before the !readPort
+        // check) so the buffered-fallback path never sees a locked stream.
+        if (stdinWritePort && params.stdinStream) {
+          void pumpStreamToPort(params.stdinStream, stdinWritePort);
         }
         const stderr = errPort ? drainReadable(portToReadable(errPort)) : undefined;
         return { pid, stdout: portToReadable(readPort), stderr };
