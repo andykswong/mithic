@@ -15,6 +15,7 @@
 import { createGuest, portToReadable, portToWritable } from '@mithic/guest-runtime';
 import type { Guest } from '@mithic/guest-runtime';
 import { Executor } from './executor.ts';
+import type { OutputSink } from './output-sink.ts';
 import type {
   CoprocHandle,
   DuplexFd,
@@ -438,9 +439,17 @@ export default async function main(boot: unknown): Promise<void> {
   const encoder = new TextEncoder();
 
   // Buffer output and flush in order (writers are async); collect into queues.
+  // The `writeBytes` path forwards raw bytes straight to the guest writer — a
+  // guest's stdout reaches the sandbox stream byte-exact (no UTF-8 round-trip).
   const writes: Promise<void>[] = [];
-  const onStdout = (s: string): void => { writes.push(writer.write(encoder.encode(s))); };
-  const onStderr = (s: string): void => { writes.push(errWriter.write(encoder.encode(s))); };
+  const onStdout: OutputSink = Object.assign(
+    (s: string): void => { writes.push(writer.write(encoder.encode(s))); },
+    { writeBytes: (b: Uint8Array): void => { writes.push(writer.write(b)); } },
+  );
+  const onStderr: OutputSink = Object.assign(
+    (s: string): void => { writes.push(errWriter.write(encoder.encode(s))); },
+    { writeBytes: (b: Uint8Array): void => { writes.push(errWriter.write(b)); } },
+  );
 
   let code = 0;
   try {

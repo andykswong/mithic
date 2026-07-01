@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- executor tests use a minimal mock kernel typed as any */
 import { expect, test } from 'vitest';
 import { Executor } from './executor.ts';
+import type { CommandIO } from './executor.ts';
 import { parse } from './parser.ts';
 
 function mockKernel() {
@@ -341,3 +342,16 @@ test('readonly for-loop variable is rejected (non-posix: reports, does not itera
   expect(out).toMatch(/done/);
 });
 
+// ── Task 2: CommandIO sinks are OutputSink (text unchanged, writeBytes available) ──
+
+test('root io.stdout is an OutputSink with writeBytes (bare callback wrapped)', async () => {
+  const k = mockKernel();
+  let out = '';
+  const ex = new Executor(k as any, { cwd: '/', env: {} }, {
+    onStdout: (s) => { out += s; },
+  });
+  const io = (ex as unknown as { io: CommandIO }).io;
+  expect(typeof (io.stdout as unknown as { writeBytes?: unknown }).writeBytes).toBe('function');
+  io.stdout.writeBytes(new TextEncoder().encode('xy'));
+  expect(out).toBe('xy');
+});
