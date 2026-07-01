@@ -574,7 +574,12 @@ export class Executor {
   /** Drop the cached reader when a frame's stdin stream is replaced (used when a
    *  compound statement installs a `< file` redirect on its frame). */
   private resetStdinReader(io: CommandIO): void {
-    delete (io as CommandIO & { [STDIN_READER]?: StdinReader })[STDIN_READER];
+    const holder = io as CommandIO & { [STDIN_READER]?: StdinReader; [STDIN_PENDING_LINE]?: Promise<string | undefined> };
+    // Clear BOTH the cached reader AND any in-flight pending-line promise bound to
+    // it — else a `read -t` timeout that parked a pending line on this frame could
+    // reuse the stale promise against a freshly-installed stdin stream.
+    delete holder[STDIN_READER];
+    delete holder[STDIN_PENDING_LINE];
   }
 
   // ── ShellState (for builtins that need richer state) ────────────────────────
