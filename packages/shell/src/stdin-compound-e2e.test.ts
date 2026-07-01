@@ -156,3 +156,20 @@ test('read x <<< "$(side-effect)" runs the command substitution once', async () 
   );
   expect(out).toBe('x=hi\ntick\n'); // exactly ONE "tick" line
 }, 15000);
+
+// FIX 1 (item G): an EXTERNAL command's `<<< "$(cmd)"` must resolve the redirect
+// ONCE. Regression: execSimple resolved the redirect via resolveStdinStream AND
+// then (for an external) again via resolveStdinFd, running the substitution twice.
+test('EXTERNAL <<< "$(side-effect)" runs the command substitution once', async () => {
+  // `cat` is an EXTERNAL (has an operand? no — but here it reads its here-string
+  // stdin). The command substitution appends one `tick` to /cnt; a double
+  // resolution would append it twice. Use `grep` (always external) to be safe.
+  const out = await run(
+    'grep -c . <<< "$(echo hi; echo tick >> /cnt)"; cat /cnt',
+    undefined,
+    { '/cnt': '' },
+  );
+  // grep -c counts matching lines of the here-string ("hi\n" → 1). /cnt must hold
+  // exactly ONE "tick" (two ⇒ the substitution ran twice).
+  expect(out).toBe('1\ntick\n');
+}, 15000);

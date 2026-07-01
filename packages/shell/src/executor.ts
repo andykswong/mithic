@@ -1512,6 +1512,73 @@ export class Executor {
     return undefined;
   }
 
+  /**
+   * FIX 1 (item G): resolve a SIMPLE command's stdin input redirect EXACTLY ONCE
+   * into BOTH forms — a `ReadableStream<Uint8Array>` (for a builtin) and a kernel
+   * `StdinFdSpec` (for an external). A previous split — `resolveStdinStream` for
+   * the builtin path plus `resolveStdinFd` for the external path — expanded the
+   * redirect target twice, so `<<< "$(cmd)"` ran its command substitution twice.
+   *
+   * The LAST input redirect wins (bash). `<<<`/`<<` expand once to bytes; the
+   * SAME bytes back both a `bytesStream` and an `{action:'bytes'}` fdSpec. `< file`
+   * expands the path once; the builtin reads the file NOW (byte-safe when the
+   * FsClient offers `fsReadBytes` — FIX 2), the external gets `{action:'open'}`
+   * so the kernel streams it. `/dev/null` → an empty stream / empty-bytes spec.
+   *
+   * Returns `undefined` when there is NO input redirect — the caller falls back to
+   * its inherited-stdin handling (builtin: `io.stdin`; external: live-stream /
+   * `resolveStdinFd` drain of the frame's shared reader).
+   */
+  private async resolveStdinInput(
+    redirects: Redirect[],
+  ): Promise<{ stream: ReadableStream<Uint8Array>; fdSpec: StdinFdSpec } | undefined> {
+    const exp = this.expander();
+    const enc = new TextEncoder();
+    let resolved: { stream: ReadableStream<Uint8Array>; fdSpec: StdinFdSpec } | undefined;
+    for (const r of redirects) {
+      if (r.op === '<<<') {
+        const bytes = enc.encode(await exp.expandToString(r.target) + '\n');
+        resolved = { stream: bytesStream(bytes), fdSpec: { action: 'bytes', data: bytes } };
+      } else if (r.op === '<<') {
+        const body = r.hereDocQuoted ? (r.hereDoc ?? '') : await this.expandHereDoc(r.hereDoc ?? '');
+        const bytes = enc.encode(body);
+        resolved = { stream: bytesStream(bytes), fdSpec: { action: 'bytes', data: bytes } };
+      } else if (r.op === '<' || r.op === '<>') {
+        const path = await exp.expandToString(r.target);
+        if (path === '/dev/null') {
+          resolved = { stream: bytesStream(new Uint8Array()), fdSpec: { action: 'bytes', data: new Uint8Array() } };
+          continue;
+        }
+        // The external's fdSpec never reads here (the kernel streams the open path);
+        // the builtin's stream reads the file NOW, byte-safe (FIX 2). A missing file
+        // is a RedirectError for `<` (bash: the command never runs) — surfaced when
+        // the stream is materialized below; a `<>` creates it (empty).
+        const stream = await this.fileStdinStream(path, r.op === '<>');
+        resolved = { stream, fdSpec: { action: 'open', path: this.absPath(path), flags: { read: true } } };
+      }
+    }
+    return resolved;
+  }
+
+  /**
+   * Read a `< file` / `<>` redirect source into a one-shot byte stream. `<>` on a
+   * missing file yields an empty stream (it creates the file); `<` on a missing
+   * file throws {@link RedirectError}. (FIX 2 makes this branch byte-safe via
+   * `FsClient.fsReadBytes`.)
+   */
+  private async fileStdinStream(path: string, isReadWrite: boolean): Promise<ReadableStream<Uint8Array>> {
+    const fs = this.fs;
+    if (!fs) throw new Error(`shell: input redirect from '${path}' requires an FsClient`);
+    try {
+      const data = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true })));
+      return bytesStream(new TextEncoder().encode(data));
+    } catch (e) {
+      if (e instanceof RedirectError) throw e;
+      if (isReadWrite) return bytesStream(new Uint8Array()); // <> creates if absent
+      throw new RedirectError(`${path}: No such file or directory`);
+    }
+  }
+
   private async expandHereDoc(body: string): Promise<string> {
     // Expand $vars/$() line by line but keep newlines verbatim.
     const exp = this.expander();
@@ -1829,7 +1896,12 @@ export class Executor {
     // a kernel fd-0 spec instead (D8): a `<` redirect opens the VFS path in-kernel
     // (streamed), a `<<`/`<<<` body or an inherited piped-stdin stream is fed as
     // fd-0 bytes — no inline copy for the file case.
-    const stdin = (await this.resolveStdinStream(cmd.redirects)) ?? io.stdin;
+    //
+    // FIX 1 (item G): resolve the redirect ONCE into BOTH forms (stream + fdSpec)
+    // so `<<< "$(cmd)"` runs its command substitution exactly once regardless of
+    // whether the command is a builtin (uses `.stream`) or an external (`.fdSpec`).
+    const resolvedInput = await this.resolveStdinInput(cmd.redirects);
+    const stdin = resolvedInput?.stream ?? io.stdin;
 
     // Apply output redirects to this command's frame. A refused redirect
     // (noclobber) aborts the command with status 1 — it never runs.
@@ -1858,20 +1930,19 @@ export class Executor {
         return status;
       }
       // Resolve the external's fd-0. An explicit `<`/`<<`/`<<<` redirect wins →
-      // fd-0 spec (open/bytes). Otherwise, when this command INHERITS a live
-      // stdin stream (a compound-pipeline stage's inter-stage pipe — NOT the
-      // never-EOF root stream) AND the backend can live-stream (spawnStream) AND
-      // no sibling builtin has already locked that stream (shared-cursor case),
-      // hand the STREAM straight to the child's fd 0 so it flows chunk-by-chunk
-      // instead of being `readAll`-buffered (which hangs at ~10k+ lines). Only
-      // one of the two is set: a redirect never coexists with the stream path.
-      const hasStdinRedirect = cmd.redirects.some(
-        (r) => r.op === '<' || r.op === '<<' || r.op === '<<<' || r.op === '<>',
-      );
+      // the fd-0 spec already resolved ONCE above (FIX 1: no second expansion).
+      // Otherwise, when this command INHERITS a live stdin stream (a compound-
+      // pipeline stage's inter-stage pipe — NOT the never-EOF root stream) AND the
+      // backend can live-stream (spawnStream) AND no sibling builtin has already
+      // locked that stream (shared-cursor case), hand the STREAM straight to the
+      // child's fd 0 so it flows chunk-by-chunk instead of being `readAll`-buffered
+      // (which hangs at ~10k+ lines). Only one of the two is set: a redirect never
+      // coexists with the inherited-stream path.
+      if (resolvedInput) {
+        return await this.spawnExternal(name, argv, localEnv, io, resolvedInput.fdSpec);
+      }
       const inheritedLiveStdin =
-        !hasStdinRedirect && io.stdin !== undefined && io.stdin !== this.rootStdinStream
-          ? io.stdin
-          : undefined;
+        io.stdin !== undefined && io.stdin !== this.rootStdinStream ? io.stdin : undefined;
       if (inheritedLiveStdin && this.kernel.spawnStream && !this.stdinReaderExists(io)) {
         // The child consumes the stream via its fd 0 (spawnStream locks it with
         // `pumpStreamToPort`). Detach it from the frame so a LATER sibling command
