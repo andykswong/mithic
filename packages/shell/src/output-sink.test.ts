@@ -30,3 +30,15 @@ describe('toSink', () => {
     expect(text).toBe('');
   });
 });
+
+test('process.ts-style sink writeBytes writes raw bytes to the guest writer', async () => {
+  const written: Uint8Array[] = [];
+  const fakeWriter = { write: (b: Uint8Array) => { written.push(b.slice()); return Promise.resolve(); } };
+  const encoder = new TextEncoder();
+  const onStdout = Object.assign(
+    (s: string) => { void fakeWriter.write(encoder.encode(s)); },
+    { writeBytes: (b: Uint8Array) => { void fakeWriter.write(b); } },
+  );
+  onStdout.writeBytes(new Uint8Array([0, 255, 254]));
+  expect(Array.from(written[0])).toEqual([0, 255, 254]);
+});
