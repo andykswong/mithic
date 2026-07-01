@@ -12,6 +12,17 @@ export type RelaySyscallResult =
   | { ok: false; error: { code: string; message: string } };
 
 /**
+ * A2 (relay coproc): the kernel-facing view of a coproc child's stdout end (a
+ * {@link RelayEnd} wrapping the c2s child-side port). The kernel's `#spawnRelay`
+ * stdout sink `write`s each of the child's fd-1 chunks into it (credit-windowed,
+ * so the shell reader applies back-pressure) and `close`s it (EOF) on child exit.
+ */
+export interface CoprocChildEnd {
+  write(chunk: Uint8Array): Promise<void>;
+  close(): void;
+}
+
+/**
  * Routes a guest's raw syscall through the kernel's dispatcher with the correct,
  * kernel-owned pid. Returns the wire {@link SyscallResponse} plus any transferred
  * ports the dispatcher minted (e.g. the two ends of an `fs/pipe`).
@@ -139,6 +150,37 @@ export class RelayBridge {
    */
   registerStdin(pid: number, port: MessagePort): void {
     this.#relayTableFor(pid).set(0, new RelayEnd(port));
+  }
+
+  /**
+   * A2 (relay coproc): register the PARENT (shell) ends of a coproc's two pipes as
+   * kernel-held relay ends the shell drives by fd. `readfd` reads the child's
+   * stdout (the c2s READ end); `writefd` writes the child's stdin (the s2c WRITE
+   * end). Symmetric to how `fs/pipe` registers a guest's own pipe ends, but here
+   * the OTHER ends are wired to the CHILD (see {@link coprocChildStdout} +
+   * {@link registerStdin}) rather than handed back to the guest. Torn down per-pid
+   * by {@link closeFds} on process exit.
+   */
+  registerCoprocParentEnds(
+    pid: number,
+    readfd: number,
+    readPort: MessagePort,
+    writefd: number,
+    writePort: MessagePort,
+  ): void {
+    const table = this.#relayTableFor(pid);
+    table.set(readfd, new RelayEnd(readPort));
+    table.set(writefd, new RelayEnd(writePort));
+  }
+
+  /**
+   * A2 (relay coproc): wrap a coproc child's stdout WRITE port (the c2s child-side
+   * end) in a RelayEnd so the kernel can forward the child's fd-1 writes into it
+   * (respecting the shell reader's credit) and send EOF on child exit. The child
+   * never holds this port — the kernel drives it from `#spawnRelay`'s stdout sink.
+   */
+  coprocChildStdout(port: MessagePort): CoprocChildEnd {
+    return new RelayEnd(port);
   }
 
   /** K5: relay-fd table for a pid (created on demand). */

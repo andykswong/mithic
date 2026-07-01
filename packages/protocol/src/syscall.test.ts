@@ -11,7 +11,7 @@ test('SYSCALL_NAMES covers all dispatcher call families', () => {
     'fs/getxattr', 'fs/setxattr', 'fs/listxattr', 'fs/removexattr', 'fs/pipe',
     'ipc/listen', 'ipc/accept', 'ipc/connect',
     'dom/mutate', 'net/fetch',
-    'process/spawn', 'process/pipeline', 'process/wait', 'process/kill', 'process/exit',
+    'process/spawn', 'process/coproc', 'process/pipeline', 'process/wait', 'process/kill', 'process/exit',
     'process/getpid', 'process/getppid', 'process/getcwd', 'process/chdir',
     'pipe/read', 'pipe/write', 'pipe/close',
   ];

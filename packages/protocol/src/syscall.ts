@@ -77,6 +77,14 @@ export type Syscall =
   | { call: 'net/fetch'; args: NetFetchArgs }
   // --- process/* ---
   | { call: 'process/spawn'; args: SpawnArgs & { portFds?: number[] } }
+  // coproc on the RELAY (non-transferable) path (§4.8 / A2). A relay guest cannot
+  // hold MessagePorts, so it cannot mint `fs/pipe` ends and inject them as a
+  // child's stdio (the transferable coproc path). `process/coproc` instead has the
+  // KERNEL mint the bidirectional pipe pair, wire the child's stdin/stdout to the
+  // kernel-held ends, and return two relay fd NUMBERS the parent drives by fd:
+  // `readfd` (read the child's stdout) and `writefd` (write the child's stdin),
+  // via `pipe/read`/`pipe/write`/`pipe/close`. Same `SpawnArgs` shape as spawn.
+  | { call: 'process/coproc'; args: SpawnArgs }
   | { call: 'process/pipeline'; args: { stages: PipelineStageArgs[] } }
   | { call: 'process/wait'; args: { pid: number } }
   | { call: 'process/kill'; args: { pid: number; signal?: string } }
@@ -129,6 +137,7 @@ export const SYSCALL_NAMES = [
   'dom/mutate',
   'net/fetch',
   'process/spawn',
+  'process/coproc',
   'process/pipeline',
   'process/wait',
   'process/kill',

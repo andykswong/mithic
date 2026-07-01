@@ -172,7 +172,7 @@ function metaOf(buffers: Map<number, string>): Map<number, { path: string; flags
  * name as `path` and the kernel's resolver maps it (the shell does NOT itself
  * know what external commands exist).
  */
-function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelClient {
+export function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelClient {
   // pid -> exit code, recorded as each spawn/pipeline completes so a following
   // wait(pid) can report it without a second syscall.
   const exitCodes = new Map<number, number>();
@@ -346,16 +346,29 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
     //   c2s: child writes (its stdout) → shell reads.  Shell keeps c2s READ end.
     //   s2c: shell writes → child reads (its stdin).    Shell keeps s2c WRITE end.
     // Spawn the child with the OTHER ends injected at fd 1 (c2s write) and fd 0
-    // (s2c read) via port-injecting `process/spawn` (fds dup2 + portFds). On a
-    // relay backend `fs/pipe` transfers no ports → reject ENOSYS (gated upstream).
+    // (s2c read) via port-injecting `process/spawn` (fds dup2 + portFds).
+    //
+    // On a RELAY backend `fs/pipe` transfers no ports (the kernel keeps the ends
+    // and hands back fd numbers). A relay guest therefore cannot inject the child's
+    // stdio itself; it takes the `process/coproc` path instead — the kernel mints
+    // and wires both pipes and returns two relay fds the shell drives by fd
+    // (`pipe/read`/`pipe/write`/`pipe/close`), adapted to the same CoprocHandle.
     async spawnCoproc(params: SpawnParams): Promise<CoprocHandle> {
       const c2s = await guest.syscallPorts('fs/pipe', {});
-      const s2c = await guest.syscallPorts('fs/pipe', {});
       const c2sRead = c2s.ports[0];
       const c2sWrite = c2s.ports[1];
+      // Relay backend: the probe pipe came back port-less. Close its kernel-held
+      // ends (by fd) and take the kernel-orchestrated `process/coproc` path.
+      if (!c2sRead || !c2sWrite) {
+        const probe = c2s.result as { readfd?: number; writefd?: number };
+        if (probe?.readfd !== undefined) void guest.syscall('pipe/close', { fd: probe.readfd }).catch(() => {});
+        if (probe?.writefd !== undefined) void guest.syscall('pipe/close', { fd: probe.writefd }).catch(() => {});
+        return spawnCoprocRelay(guest, params);
+      }
+      const s2c = await guest.syscallPorts('fs/pipe', {});
       const s2cRead = s2c.ports[0];
       const s2cWrite = s2c.ports[1];
-      if (!c2sRead || !c2sWrite || !s2cRead || !s2cWrite) {
+      if (!s2cRead || !s2cWrite) {
         for (const p of [c2sRead, c2sWrite, s2cRead, s2cWrite]) p?.close();
         throw Object.assign(new Error('coproc: requires a transferable backend'), { code: 'ENOSYS' });
       }
@@ -464,6 +477,59 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
           stderr: stages.map(() => undefined),
         };
       }
+    },
+  };
+}
+
+/**
+ * A2 (relay coproc): start a coproc on a RELAY backend. The shell cannot hold
+ * MessagePorts, so instead of minting `fs/pipe` ends + injecting them into the
+ * child, it asks the kernel to do the whole duplex via `process/coproc`: the
+ * kernel mints the bidirectional pipe pair, wires the child's stdin/stdout to its
+ * own held ends, and returns two relay fd NUMBERS — `readfd` (read child stdout)
+ * and `writefd` (write child stdin). The shell drives those by fd via
+ * `pipe/read`/`pipe/write`/`pipe/close`, adapted to the same {@link CoprocHandle}
+ * (`readLine`/`write`/`close`) the executor consumes on every backend.
+ */
+async function spawnCoprocRelay(guest: Guest, params: SpawnParams): Promise<CoprocHandle> {
+  const [name, ...rest] = params.args ?? [];
+  const result = (await guest.syscall('process/coproc', {
+    path: params.code instanceof URL ? params.code.href : String(params.code),
+    argv: [name, ...rest],
+    env: params.env,
+    cwd: params.cwd,
+  })) as { pid: number; readfd: number; writefd: number };
+  const { pid, readfd, writefd } = result;
+  const enc = new TextEncoder();
+  const dec = new TextDecoder();
+  let pending = '';
+  let eof = false;
+  let closed = false;
+  return {
+    pid,
+    async readLine(): Promise<string | undefined> {
+      for (;;) {
+        const nl = pending.indexOf('\n');
+        if (nl >= 0) { const line = pending.slice(0, nl); pending = pending.slice(nl + 1); return line; }
+        if (eof) { if (pending.length > 0) { const l = pending; pending = ''; return l; } return undefined; }
+        // Relay `pipe/read` resolves to `{ data: number[] }` (a plain array so it
+        // JSON-clones across the QuickJS bridge). Empty array = EOF (peer closed).
+        const r = (await guest.syscall('pipe/read', { fd: readfd, len: 65536 })) as { data?: number[] | Uint8Array };
+        const raw = r?.data;
+        const bytes = raw instanceof Uint8Array ? raw : Array.isArray(raw) ? new Uint8Array(raw) : undefined;
+        if (!bytes || bytes.byteLength === 0) { eof = true; continue; }
+        pending += dec.decode(bytes, { stream: true });
+      }
+    },
+    async write(s: string): Promise<void> {
+      // The kernel encodes a string, but send bytes to match the byte-relay shape.
+      await guest.syscall('pipe/write', { fd: writefd, data: enc.encode(s) });
+    },
+    close(): void {
+      if (closed) return;
+      closed = true;
+      void guest.syscall('pipe/close', { fd: writefd }).catch(() => { /* closed */ });
+      void guest.syscall('pipe/close', { fd: readfd }).catch(() => { /* closed */ });
     },
   };
 }
