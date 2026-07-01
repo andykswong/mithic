@@ -35,7 +35,7 @@ import type {
   PipelineChildResult,
 } from './syscall-dispatch.ts';
 import { RelayBridge } from './relay-bridge.ts';
-import type { RelaySyscallResult } from './relay-bridge.ts';
+import type { RelaySyscallResult, CoprocChildEnd } from './relay-bridge.ts';
 import { Supervisor } from './supervisor.ts';
 import type { HeartbeatOptions, SupervisorHost } from './supervisor.ts';
 import { FdWiring } from './fd-wiring.ts';
@@ -358,6 +358,21 @@ interface ProcessContext {
   granted: Capability[];
 }
 
+/**
+ * A2 (relay coproc): the kernel-side wiring `#coprocChild` hands `#spawnRelay` so
+ * the child's stdio flows to/from the shell's coproc ends instead of the default
+ * capture buffer / registered fd-0 source:
+ *   - `stdinReadPort` — the s2c READ port; registered as the child's relay stdin
+ *     end (fd 0). The shell writes the s2c WRITE end via `pipe/write`.
+ *   - `stdout` — a RelayEnd over the c2s WRITE port; `#spawnRelay`'s stdout sink
+ *     forwards the child's fd-1 writes into it (credit-windowed) and closes it
+ *     (EOF) on exit. The shell reads the c2s READ end via `pipe/read`.
+ */
+interface RelayCoprocWiring {
+  stdinReadPort: MessagePort;
+  stdout: CoprocChildEnd;
+}
+
 export class Kernel {
   readonly processes = new ProcessManager();
   readonly capabilities = new CapabilityManager();
@@ -429,6 +444,11 @@ export class Kernel {
       // narrows the child's caps from the parent in #spawnChild.
       spawnChild: (parentPid, code, args, injectedPorts) =>
         this.#spawnChild(parentPid, code, args, injectedPorts),
+      // A2 (relay coproc): only wired when the backend cannot transfer ports (the
+      // transfer path uses the port-injecting process/spawn coproc path instead).
+      coprocChild: options.runtime.capabilities.directPipes
+        ? undefined
+        : (parentPid, code, args, readfd, writefd) => this.#coprocChild(parentPid, code, args, readfd, writefd),
       pipelineChild: (parentPid, stages) => this.#pipelineChild(parentPid, stages),
       waitChild: (pid) => this.wait(pid),
       ppidOf: (pid) => this.processes.get(pid)?.ppid ?? 0,
@@ -895,7 +915,7 @@ export class Kernel {
    * The relay captures stdout/stderr by accumulating chunks in a buffer and
    * resolving the capture promise when `closeStdout()`/`closeStderr()` is called.
    */
-  async #spawnRelay(code: string | URL, init: SpawnInit): Promise<SpawnResult> {
+  async #spawnRelay(code: string | URL, init: SpawnInit, coproc?: RelayCoprocWiring): Promise<SpawnResult> {
     if (!this.#relayLauncher) {
       throw new Error(
         'Non-transferable runtime requires a relayLauncher (e.g. QuickJSGuestLauncher)'
@@ -947,6 +967,9 @@ export class Kernel {
       init: processInit,
       onSyscall: (call, args) => this.#relay.relaySyscall(pid, call, args),
       writeStdout(chunk) {
+        // A2 (relay coproc): the child's stdout flows to the shell's coproc read
+        // end (credit-windowed via the RelayEnd), NOT the capture buffer.
+        if (coproc) { void coproc.stdout.write(chunk); return; }
         if (outputOverflow) return;
         if (stdoutBytes + chunk.byteLength > maxOutputBytes) {
           const room = maxOutputBytes - stdoutBytes;
@@ -968,7 +991,11 @@ export class Kernel {
         stderrChunks.push(chunk);
         stderrBytes += chunk.byteLength;
       },
-      closeStdout() { stdoutResolve?.(concat(stdoutChunks)); },
+      closeStdout() {
+        // A2 (relay coproc): send EOF to the shell's coproc read end on child exit.
+        if (coproc) { coproc.stdout.close(); return; }
+        stdoutResolve?.(concat(stdoutChunks));
+      },
       closeStderr() { stderrResolve?.(concat(stderrChunks)); },
       notifyExit: (code) => { this.#exit(pid, code); },
       // C1/K3: the launcher registers a sink so the kernel can deliver signal /
@@ -982,12 +1009,26 @@ export class Kernel {
     // end. Symmetric to the transferable path's FdWiring, but the read end stays
     // kernel-side because a relay guest cannot hold a port. No fds[0] → fd 0 stays
     // unregistered and `pipe/read {fd:0}` yields EBADF (no-stdin / /dev/null).
-    const fd0 = init.fds?.[0];
+    // A2 (relay coproc): the child's stdin (fd 0) is the shell-driven s2c READ end.
+    // Register it directly as the kernel-held relay stdin end; the shell writes it
+    // via `pipe/write` (kernel-side RelayEnd at the parent's writefd). This wins
+    // over any fds[0] source (a coproc has no redirect stdin).
+    if (coproc) {
+      // Coproc: the child's fd 0 IS the shell-driven s2c read end.
+      this.#relay.registerStdin(pid, coproc.stdinReadPort);
+    }
+    // D8 (relay): if the caller wired an fd-0 stdin source (`bytes`/`open`), mint a
+    // pipe, register its READ end as a kernel-held relay stdin end at fd 0 (the guest
+    // drains it via `pipe/read {fd:0}`), and start the source pump feeding the WRITE
+    // end. Symmetric to the transferable path's FdWiring, but the read end stays
+    // kernel-side because a relay guest cannot hold a port. No fds[0] → fd 0 stays
+    // unregistered and `pipe/read {fd:0}` yields EBADF (no-stdin / /dev/null).
     // Only an input source the kernel can feed makes sense as relay stdin. A `pipe`
     // action would mint a read end whose write peer nothing drives → the guest's
     // `pipe/read {fd:0}` would hang; relay guests have no port to dup2 either. So
     // restrict to `bytes`/`open` and ignore the rest (fd 0 stays unregistered → EBADF).
-    if (fd0 && (fd0.action === 'bytes' || fd0.action === 'open')) {
+    const fd0 = init.fds?.[0];
+    if (!coproc && fd0 && (fd0.action === 'bytes' || fd0.action === 'open')) {
       const stdinInit: SpawnInit = { cwd: init.cwd };
       const filePumps: Array<() => void> = [];
       try {
@@ -1094,6 +1135,65 @@ export class Kernel {
     if (Object.keys(pipes).length > 0) result.pipes = pipes;
     if (transfer.length > 0) result.transfer = transfer;
     return result;
+  }
+
+  /**
+   * A2 (relay coproc): start a coproc child on the RELAY path for the
+   * `process/coproc` syscall. A relay guest cannot hold MessagePorts, so it cannot
+   * take the transferable coproc path (mint `fs/pipe` ends + inject them as the
+   * child's stdio). Instead the KERNEL mints the bidirectional pipe pair and keeps
+   * every end:
+   *
+   *   - c2s (child → shell): the child's stdout. The launcher routes the child's
+   *     fd-1 writes to `RelayContext.writeStdout`, which `#spawnRelay` (in coproc
+   *     mode) forwards into `coproc.stdout` (a RelayEnd over the c2s child-side
+   *     port). The shell reads the c2s READ end via `pipe/read {fd: readfd}`.
+   *   - s2c (shell → child): the child's stdin. The child reads fd 0 via
+   *     `pipe/read {fd:0}`, serviced by a kernel-held relay stdin end
+   *     (`registerStdin`) over the s2c READ port. The shell writes the s2c WRITE
+   *     end via `pipe/write {fd: writefd}`.
+   *
+   * Both PARENT-facing ends (c2s read, s2c write) are registered as kernel-held
+   * relay ends under the SHELL's pid at the dispatcher-allocated `readfd`/`writefd`.
+   * The child's caps are narrowed from the parent (via `#spawnRelay` → `#beginProcess`).
+   */
+  async #coprocChild(
+    parentPid: number,
+    code: string | URL,
+    args: SpawnArgs,
+    readfd: number,
+    writefd: number,
+  ): Promise<{ pid: number }> {
+    // c2s: child writes stdout → shell reads. s2c: shell writes → child reads stdin.
+    const c2s = this.ipc.createPipe();
+    const s2c = this.ipc.createPipe();
+    // Parent-facing ends the shell drives by fd: read c2s, write s2c.
+    this.#relay.registerCoprocParentEnds(parentPid, readfd, c2s.readPort, writefd, s2c.writePort);
+    // Child-facing ends the kernel drives: stdin = s2c read; stdout = c2s write.
+    const childStdout: CoprocChildEnd = this.#relay.coprocChildStdout(c2s.writePort);
+
+    const init: SpawnInit = {
+      args: args.argv,
+      env: args.env,
+      cwd: args.cwd ?? this.#cwds.get(parentPid) ?? '/',
+      ppid: parentPid,
+      capabilities: this.capabilities.capabilities(parentPid),
+    };
+    try {
+      const { pid } = await this.#spawnRelay(code, init, {
+        stdinReadPort: s2c.readPort,
+        stdout: childStdout,
+      });
+      return { pid };
+    } catch (err) {
+      // Spawn failed after minting the pipes: tear down the parent ends so the
+      // shell's readfd/writefd don't dangle (a stray pipe/read would then hang).
+      this.#relay.pipeClose(parentPid, readfd);
+      this.#relay.pipeClose(parentPid, writefd);
+      childStdout.close();
+      try { s2c.readPort.close(); } catch { /* closed */ }
+      throw err;
+    }
   }
 
   /**

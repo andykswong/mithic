@@ -110,6 +110,26 @@ export type SpawnChild = (
 export type WaitChild = (pid: number) => Promise<WaitResult>;
 
 /**
+ * A2 (relay coproc): narrow callback the kernel hands the dispatcher so
+ * `process/coproc` can start a coproc child WITHOUT touching the raw Kernel. The
+ * dispatcher has already run the in-kernel `process` capability check, resolved
+ * the command name to `code`, and ALLOCATED the two PARENT-facing relay fds
+ * (`readfd` reads the child's stdout, `writefd` writes the child's stdin) so fd
+ * allocation stays centralized in the dispatcher's per-pid namespace. The kernel
+ * mints the bidirectional pipe pair, wires the child's stdin/stdout to the
+ * kernel-held ends, and registers the parent ends under those fds. Returns the
+ * real child pid. Like {@link SpawnChild} it cannot forge a parent pid and the
+ * child's caps are narrowed from the parent.
+ */
+export type CoprocChild = (
+  parentPid: number,
+  code: string | URL,
+  args: SpawnArgs,
+  readfd: number,
+  writefd: number,
+) => Promise<{ pid: number }>;
+
+/**
  * C2: relay byte-channel operations for non-transferable (relay) backends. On
  * such backends the guest cannot hold a MessagePort, so `fs/pipe`/`ipc/*` ports
  * are retained kernel-side and the guest drives them by fd via the first-class
@@ -211,6 +231,11 @@ export interface SyscallDispatcherOptions {
   spawnChild?: SpawnChild;
   /** Kernel-provided wait callback for `process/wait`. Unset = ENOSYS. */
   waitChild?: WaitChild;
+  /**
+   * A2 (relay coproc): kernel-provided callback for `process/coproc` (relay path).
+   * Unset = ENOSYS. See {@link CoprocChild} — the dispatcher only ever calls this.
+   */
+  coprocChild?: CoprocChild;
   /** Kernel-provided multi-stage pipeline runner for `process/pipeline`. Unset = ENOSYS. */
   pipelineChild?: PipelineChild;
   /** Resolve a process's parent pid (for `process/getppid` and wait ownership). */
@@ -310,6 +335,7 @@ export class SyscallDispatcher {
   #onDomMutate: DomMutateHandler | undefined;
   #resolveCommand: SyscallDispatcherOptions['resolveCommand'];
   #spawnChild: SpawnChild | undefined;
+  #coprocChild: CoprocChild | undefined;
   #waitChild: WaitChild | undefined;
   #pipelineChild: PipelineChild | undefined;
   #ppidOf: ((pid: number) => number) | undefined;
@@ -340,6 +366,7 @@ export class SyscallDispatcher {
     this.#onDomMutate = options.onDomMutate;
     this.#resolveCommand = options.resolveCommand;
     this.#spawnChild = options.spawnChild;
+    this.#coprocChild = options.coprocChild;
     this.#waitChild = options.waitChild;
     this.#pipelineChild = options.pipelineChild;
     this.#ppidOf = options.ppidOf;
@@ -436,6 +463,7 @@ export class SyscallDispatcher {
     'dom/mutate': (pid, a) => res(ok(a.id, this.#domMutate(pid, parseDomMutate(a.args)))),
     'net/fetch': (pid, a) => this.#netFetch(pid, a.id, parseNetFetch(a.args)),
     'process/spawn': (pid, a, ports) => this.#spawn(pid, a.id, parseSpawn(a.args), ports),
+    'process/coproc': async (pid, a) => res(await this.#coproc(pid, a.id, parseCoproc(a.args))),
     'process/pipeline': async (pid, a) => res(await this.#pipeline(pid, a.id, a.args)),
     'process/wait': async (pid, a) => res(ok(a.id, await this.#wait(pid, parseWait(a.args)))),
     'process/kill': (pid, a) => res(this.#kill(pid, a.id, parseKill(a.args))),
@@ -565,6 +593,43 @@ export class SyscallDispatcher {
     return child.transfer && child.transfer.length > 0
       ? { response, transfer: child.transfer }
       : { response };
+  }
+
+  /**
+   * A2 (relay coproc): `process/coproc {path, argv, env?, cwd?}` — start a coproc
+   * child on the RELAY path. Capability-gated identically to `process/spawn` (the
+   * caller needs a `process` capability within its child limit) and the command
+   * NAME is resolved to guest code the same way. The kernel mints a bidirectional
+   * pipe pair, wires the child's stdin/stdout to the kernel-held ends, and
+   * registers two PARENT-facing relay fds; the parent drives them by fd via
+   * `pipe/read`/`pipe/write`/`pipe/close`. No ports cross into either guest.
+   *
+   * ENOSYS when no coproc handler is configured (a transfer-path backend: the
+   * shell uses the port-injecting `process/spawn` path there, not this syscall).
+   */
+  async #coproc(pid: number, id: number, spawnArgs: SpawnArgs): Promise<SyscallResponse> {
+    if (!this.#coprocChild) {
+      return fail(id, 'ENOSYS', 'process/coproc: not supported on this backend');
+    }
+    const childCount = this.#liveChildPids.get(pid)?.size ?? 0;
+    if (!this.#caps.checkProcess(pid, childCount) || !this.#withinChildLimit(pid, childCount + 1)) {
+      return fail(id, 'EPERM', 'process/coproc: missing process capability or child limit reached');
+    }
+    const cwd = spawnArgs.cwd ?? this.#cwdOf(pid);
+    const env = spawnArgs.env ?? {};
+    const code = await this.#resolveCode(spawnArgs.path, spawnArgs.argv, cwd, env);
+    if (code === undefined) {
+      return fail(id, 'ENOENT', `command not found: ${spawnArgs.path}`);
+    }
+    // Allocate the parent-facing relay fds in the caller's per-pid fd namespace
+    // (shared with fs/pipe / ipc), so the relay bridge's fd keys never collide.
+    const readfd = this.#allocFd(pid);
+    const writefd = this.#allocFd(pid);
+    const child = await this.#coprocChild(pid, code, spawnArgs, readfd, writefd);
+    const liveSet = this.#liveChildPids.get(pid);
+    if (liveSet) liveSet.add(child.pid);
+    else this.#liveChildPids.set(pid, new Set([child.pid]));
+    return ok(id, { pid: child.pid, readfd, writefd });
   }
 
   /**
@@ -1726,6 +1791,29 @@ function parseSpawn(args: Record<string, unknown>): SpawnArgs & { portFds?: numb
       throw new MalformedArgsError('process/spawn: portFds must be an array of numbers');
     }
     out.portFds = args.portFds as number[];
+  }
+  return out;
+}
+
+/**
+ * A2 (relay coproc): boundary parse for `process/coproc` — validate the untrusted
+ * guest args into a {@link SpawnArgs}. Reuses the spawn field validation for
+ * path/argv/env/cwd; unlike spawn there are no `fds`/`portFds` (the kernel mints
+ * and wires both pipes itself, so the guest supplies only the command).
+ */
+function parseCoproc(args: Record<string, unknown>): SpawnArgs {
+  if (typeof args.path !== 'string') throw new MalformedArgsError('process/coproc: path must be a string');
+  if (!Array.isArray(args.argv)) throw new MalformedArgsError('process/coproc: argv must be an array of strings');
+  const argv: string[] = [];
+  for (const a of args.argv) {
+    if (typeof a !== 'string') throw new MalformedArgsError('process/coproc: argv elements must be strings');
+    argv.push(a);
+  }
+  const out: SpawnArgs = { path: args.path, argv };
+  if (args.env !== undefined) out.env = parseEnv(args.env, 'process/coproc');
+  if (args.cwd !== undefined) {
+    if (typeof args.cwd !== 'string') throw new MalformedArgsError('process/coproc: cwd must be a string');
+    out.cwd = args.cwd;
   }
   return out;
 }
