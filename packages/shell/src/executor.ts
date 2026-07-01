@@ -1740,10 +1740,24 @@ export class Executor {
 
     if (expanded.every((e) => (isBuiltin(e.name) && builtinShadowsExternal(e.name, e.argv)) || this.functions.has(e.name))) {
       const enc = new TextEncoder();
-      // FIX 3 (item C): the FIRST stage's `<`/`<<`/`<<<` redirect is its fd-0
-      // source (later stages read the previous stage's captured output). Before
-      // the fix stage 0 was hardcoded empty, so `cat < f | cat` produced nothing.
-      const stage0Stdin = await this.resolveStdinStream(stages[0].redirects);
+      // Stage 0's fd-0 source, resolved once (later stages read the previous
+      // stage's captured output):
+      //   FIX 3 (item C): the FIRST stage's OWN `<`/`<<`/`<<<` redirect wins.
+      //   FIX 4 (item H): with NO such redirect, INHERIT the enclosing frame's
+      //     stdin (a nested pipeline inside a group whose stdin is an outer pipe
+      //     or the group's own `< file`) — drained through the frame's shared
+      //     reader into bytes. Guarded to a REAL inherited stream (not the shell's
+      //     never-EOF root, not undefined) AND only when NO frame reader exists yet
+      //     (a `while read …; do echo | cat; done < file` body must NOT eat the
+      //     loop's SHARED cursor a sibling `read` owns — there stage 0 stays empty,
+      //     bash: `echo` ignores stdin). Before both fixes stage 0 was hardcoded
+      //     empty, so `cat < f | cat` produced nothing and a nested pipeline hung.
+      let stage0Stdin = await this.resolveStdinStream(stages[0].redirects);
+      if (stage0Stdin === undefined && io.stdin !== undefined && io.stdin !== this.rootStdinStream
+        && !this.stdinReaderExists(io)) {
+        const reader = this.stdinReaderFor(io);
+        if (reader) stage0Stdin = bytesStream(await reader.readAll());
+      }
       let stdin = '';
       let status = 0;
       const codes: number[] = [];
@@ -1753,7 +1767,7 @@ export class Executor {
         let captured = '';
         // Each builtin stage gets a derived frame: non-final stages capture into
         // the buffer feeding the next stage (byte-encoded into a one-shot stream);
-        // the final stage writes to `io`. Stage 0 reads its own `<` redirect (FIX 3).
+        // the final stage writes to `io`. Stage 0 uses its resolved fd-0 (FIX 3/4).
         const stageStdin = i === 0 ? (stage0Stdin ?? bytesStream(enc.encode(stdin))) : bytesStream(enc.encode(stdin));
         const stageIo = this.deriveIo(io, { stdout: isLast ? io.stdout : (s) => { captured += s; }, stdin: stageStdin });
         status = await this.dispatch(name, argv, stageIo, { stdin: stageStdin });
@@ -1773,9 +1787,24 @@ export class Executor {
     // fd-0 source (later stages read the previous stage's pipe). Without this a
     // stdin-reading head (`grep foo < file | sort`) would block. The kernel
     // pipe-feeds it — an `open` is streamed in-kernel, a `<<`/`<<<` body is
-    // fed as bytes. Only the stage's OWN redirects apply here (no inherited
-    // frame stdin), so pass a stdin-less frame view.
-    const headFd0 = await this.resolveStdinFd(stages[0].redirects, { ...io, stdin: undefined });
+    // fed as bytes.
+    //
+    // FIX 4 (item H): the FIRST stage's OWN `<`/`<<`/`<<<` redirect wins; with NO
+    // such redirect the first stage INHERITS the enclosing frame's stdin (a nested
+    // pipeline inside a group whose stdin is an outer pipe or the group's own
+    // `< file`) — drained into fd-0 bytes via resolveStdinFd's inherited-stdin
+    // fallback. Guarded so the inherited-stdin drain fires ONLY when NO frame
+    // reader exists yet: a `while read …; do echo | cat; done < file` body must NOT
+    // eat the loop's SHARED cursor (a sibling `read` owns it) — there stage 0 stays
+    // empty (bash: `echo` ignores stdin, the loop keeps its file cursor). The root
+    // stream is never drained (checked inside resolveStdinFd). When a stage-0
+    // redirect IS present, resolveStdinFd returns it before the fallback, so the
+    // guard does not affect the redirect case.
+    const stage0HasInputRedirect = stages[0].redirects.some(
+      (r) => r.op === '<' || r.op === '<<' || r.op === '<<<' || r.op === '<>',
+    );
+    const inheritStage0Stdin = stage0HasInputRedirect || !this.stdinReaderExists(io);
+    const headFd0 = await this.resolveStdinFd(stages[0].redirects, inheritStage0Stdin ? io : { ...io, stdin: undefined });
 
     const stageParams: PipelineStageParams[] = [];
     for (let i = 0; i < expanded.length; i++) {

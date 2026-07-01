@@ -166,6 +166,31 @@ test('read x <<< "$(side-effect)" runs the command substitution once', async () 
   expect(out).toBe('x=hi\ntick\n'); // exactly ONE "tick" line
 }, 15000);
 
+// FIX 4 (item H): a nested pipeline's FIRST stage inherits the enclosing compound
+// stage's stdin. Regression: execMultiStagePipeline zeroed stage-0 stdin, so a
+// pipeline inside a group whose stdin is the group frame (an outer pipe or the
+// group's own `< file`) hung — the inner first stage never got the stdin.
+test('echo hi | { cat | tr a-z A-Z; } — nested pipeline inherits the outer pipe', async () => {
+  expect(await run('echo hi | { cat | tr a-z A-Z; }')).toBe('HI\n');
+}, 15000);
+
+test('{ cat | tr a-z A-Z; } < /dev/null — nested pipeline over group < redirect (no hang)', async () => {
+  // No outer pipe: the group's own `< /dev/null` is the inner pipeline's stdin.
+  // Before the fix the inner `cat` got empty-hardcoded/zeroed stdin and could hang
+  // (or never see the group redirect). Must produce empty output, exit 0, no hang.
+  expect(await run('{ cat | tr a-z A-Z; } < /dev/null')).toBe('');
+}, 15000);
+
+test('echo hi | { cat; } — single-command group inherits the outer pipe', async () => {
+  expect(await run('echo hi | { cat; }')).toBe('hi\n');
+}, 15000);
+
+// A TOP-LEVEL pipeline whose stage 0 legitimately has no stdin must not block:
+// `echo x | cat` — echo ignores stdin; must not start reading the never-EOF root.
+test('echo x | cat — top-level pipeline stage 0 does not block on the root stream', async () => {
+  expect(await run('echo x | cat')).toBe('x\n');
+}, 15000);
+
 // FIX 3 (item C): a `< file` on a BUILTIN first pipeline stage in an all-builtin
 // pipeline must be honored. Regression: the all-builtin branch hardcoded stage-0
 // stdin to empty, so `cat < f | cat` produced nothing.
