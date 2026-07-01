@@ -12,7 +12,7 @@
  * spawn. The kernel OWNS what commands exist — the shell spawns by NAME and the
  * kernel's command resolver maps it to guest code (or returns ENOENT).
  */
-import { createGuest, portToReadable, portToWritable } from '@mithic/guest-runtime';
+import { createGuest, portToReadable, portToWritable, pumpStreamToPort } from '@mithic/guest-runtime';
 import type { Guest } from '@mithic/guest-runtime';
 import { Executor } from './executor.ts';
 import type { OutputSink } from './output-sink.ts';
@@ -227,6 +227,29 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
     // we degrade to a buffered `spawn` and return `stdout: undefined`.
     async spawnStream(params: SpawnParams): Promise<SpawnStreamHandle> {
       const [name, ...rest] = params.args ?? [];
+      // Streamed fd-0 (a compound-pipeline stage's inherited live stdin): mint a
+      // kernel pipe, inject its READ end as the child's fd 0 (dup2 + portFds +
+      // transfer), and pump the shell-realm stdin stream into the WRITE end in
+      // realm. Mirrors spawnCoproc's child-stdin wiring. Only on a transferable
+      // backend (fs/pipe returns ports); else fall through to the fds[0] path.
+      // The transferred read port is ports[0] in `transfer` ↔ portFds[0]=0; the
+      // fd-1/fd-2 `{action:'pipe'}` read ends are a SEPARATE direction (kernel
+      // mints them and returns them to the shell in `ports`) — no slot collision.
+      const transfer: MessagePort[] = [];
+      let stdinWritePort: MessagePort | undefined;
+      const baseFds: Record<number, unknown> = { ...(params.fds ?? {}) };
+      if (params.stdinStream) {
+        const sp = await guest.syscallPorts('fs/pipe', {});
+        const rd = sp.ports[0];
+        const wr = sp.ports[1];
+        if (rd && wr) {
+          baseFds[0] = { action: 'dup2' };
+          stdinWritePort = wr;
+          transfer.push(rd); // ports[0] in transfer ↔ portFds[0]=0
+        } else {
+          for (const p of [rd, wr]) p?.close();
+        }
+      }
       const stage: Record<string, unknown> = {
         path: params.code instanceof URL ? params.code.href : String(params.code),
         argv: [name, ...rest],
@@ -237,18 +260,31 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
         // fd2 read. The stderr port is drained to bytes so the executor can write
         // a failing command's diagnostics to the shell's stderr after it exits.
         // D8: fds[0] (a redirect-fed stdin source) is merged in before fd 1/2 so
-        // it does NOT take a transferred-port slot (open/bytes are kernel-driven).
-        fds: { ...(params.fds ?? {}), 1: { action: 'pipe' }, 2: { action: 'pipe' } },
+        // it does NOT take a transferred-port slot (open/bytes are kernel-driven);
+        // a streamed fd-0 sets baseFds[0] = {action:'dup2'} (a transferred port).
+        fds: { ...baseFds, 1: { action: 'pipe' }, 2: { action: 'pipe' } },
       };
+      if (stdinWritePort) stage.portFds = [0];
       try {
-        const { result, ports } = await guest.syscallPorts('process/spawn', stage);
+        const { result, ports } = await guest.syscallPorts(
+          'process/spawn',
+          stage,
+          transfer.length ? { transfer } : undefined,
+        );
         const pid = (result as { pid: number }).pid;
         // The kernel transfers the stdout read end as ports[0] and the stderr read
         // end as ports[1]. On a relay backend ports is empty → fall back to buffered.
         const readPort = ports[0];
         const errPort = ports[1];
         if (!readPort) {
-          const buffered = await this.spawn(params);
+          // No stdout port came back (a backend that accepted the injected stdin
+          // port but returned no fd-1 pipe — no current backend does this). We
+          // must NOT start the stdin pump here: it would lock the stream and the
+          // buffered fallback's `drainReadable` would then throw on a locked
+          // stream. `bufferedParams()` re-drains the (still-unlocked) stream into
+          // an fds[0] bytes spec, so close the unused write port first.
+          stdinWritePort?.close();
+          const buffered = await this.spawn(await bufferedParams());
           let bytes: Uint8Array | undefined;
           if (buffered.stdout) bytes = await buffered.stdout;
           exitCodes.set(pid, exitCodes.get(buffered.pid) ?? 0);
@@ -260,14 +296,50 @@ function makeKernelClient(guest: Guest, onStderr: (s: string) => void): KernelCl
           }
           return { pid, stderr: buffered.stderr };
         }
+        // Committed to the streaming path (stdout port present). NOW that the
+        // child is live (its fd-0 read end grants credit), pump the shell-realm
+        // stdin stream into the write end via `pumpStreamToPort` (credit-windowed,
+        // NO flush-timer throttle — see its doc for why `pipeTo(portToWritable)`
+        // throttles a high-rate small-chunk producer to a de facto hang). A
+        // downstream that closes early (EPIPE) or an errored source ends the pump
+        // and cancels the source upstream. Started here (not before the !readPort
+        // check) so the buffered-fallback path never sees a locked stream.
+        if (stdinWritePort && params.stdinStream) {
+          void pumpStreamToPort(params.stdinStream, stdinWritePort);
+        }
         const stderr = errPort ? drainReadable(portToReadable(errPort)) : undefined;
         return { pid, stdout: portToReadable(readPort), stderr };
       } catch (e) {
-        if (!isNotFound(e)) throw e;
-        const pid = synthPid--;
-        onStderr(`shell: ${name}: command not found\n`);
-        exitCodes.set(pid, 127);
-        return { pid };
+        if (isNotFound(e)) {
+          const pid = synthPid--;
+          onStderr(`shell: ${name}: command not found\n`);
+          exitCodes.set(pid, 127);
+          return { pid };
+        }
+        // A relay backend rejects pipe-fd spawns (ENOSYS). Degrade to a buffered
+        // `spawn`, first materializing any streamed stdin into an fds[0] bytes
+        // spec so the child still receives it. Any minted stdin write port is
+        // closed by the buffered path never using it (GC-safe).
+        stdinWritePort?.close();
+        const bp = await bufferedParams();
+        const buffered = await this.spawn(bp);
+        let bytes: Uint8Array | undefined;
+        if (buffered.stdout) bytes = await buffered.stdout;
+        exitCodes.set(buffered.pid, exitCodes.get(buffered.pid) ?? 0);
+        if (bytes && bytes.byteLength > 0) {
+          const b = bytes;
+          return { pid: buffered.pid, stdout: new ReadableStream<Uint8Array>({ start(c) { c.enqueue(b); c.close(); } }), stderr: buffered.stderr };
+        }
+        return { pid: buffered.pid, stderr: buffered.stderr };
+      }
+
+      // Build SpawnParams for the buffered `spawn` fallback: drain a streamed
+      // stdin into an fds[0] bytes spec (a ReadableStream is not a SpawnParams
+      // stdin source), else pass params unchanged. Called at most once per spawn.
+      async function bufferedParams(): Promise<SpawnParams> {
+        if (!params.stdinStream) return params;
+        const data = await drainReadable(params.stdinStream);
+        return { ...params, stdinStream: undefined, fds: { ...(params.fds ?? {}), 0: { action: 'bytes', data } } };
       }
     },
     // A2: start a coproc. Mint two kernel pipes via `fs/pipe`:

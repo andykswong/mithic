@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { INITIAL_CREDIT_BYTES } from '@mithic/protocol';
-import { portToReadable, portToWritable } from './streams.ts';
+import { portToReadable, portToWritable, pumpStreamToPort } from './streams.ts';
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -266,4 +266,89 @@ test('Seam 2: a write AFTER the peer end rejects immediately (sticky broken)', a
 
   port1.close();
   port2.close();
+});
+
+// ── pumpStreamToPort (the throughput-preserving stream→port bridge) ───────────
+
+test('pumpStreamToPort: a high-rate small-chunk source flows FAST (no per-chunk flush-timer throttle)', async () => {
+  // 100k tiny chunks: a `source.pipeTo(portToWritable(port))` would throttle to
+  // ~one chunk per PIPE_FLUSH_MS tick (~400 s). pumpStreamToPort posts each
+  // credit-permitting chunk immediately, so this completes in well under 1 s.
+  const { port1: wr, port2: rd } = new MessageChannel();
+  const N = 100_000;
+  let produced = 0;
+  const source = new ReadableStream<Uint8Array>({
+    pull(ctrl) {
+      if (produced >= N) { ctrl.close(); return; }
+      produced++;
+      ctrl.enqueue(new Uint8Array([65])); // one byte per chunk
+    },
+  });
+  const reader = portToReadable(rd).getReader();
+  let bytes = 0;
+  const consume = (async () => { for (;;) { const { value, done } = await reader.read(); if (done) break; bytes += value!.byteLength; } })();
+  const started = Date.now();
+  await Promise.all([pumpStreamToPort(source, wr), consume]);
+  const elapsed = Date.now() - started;
+  expect(bytes).toBe(N);
+  expect(elapsed).toBeLessThan(5000); // would be hundreds of seconds under pipeTo(portToWritable)
+});
+
+test('pumpStreamToPort: forwards multi-chunk data byte-exact then EOFs the reader', async () => {
+  const { port1: wr, port2: rd } = new MessageChannel();
+  const parts = [new Uint8Array([0, 255, 254]), new Uint8Array([65, 66]), new Uint8Array([0])];
+  let i = 0;
+  const source = new ReadableStream<Uint8Array>({ pull(ctrl) { if (i >= parts.length) { ctrl.close(); return; } ctrl.enqueue(parts[i++]); } });
+  const reader = portToReadable(rd).getReader();
+  const acc: number[] = [];
+  const consume = (async () => { for (;;) { const { value, done } = await reader.read(); if (done) break; acc.push(...value!); } })();
+  await Promise.all([pumpStreamToPort(source, wr), consume]);
+  expect(acc).toEqual([0, 255, 254, 65, 66, 0]);
+});
+
+test('pumpStreamToPort: a reader that cancels early (EPIPE) ends the pump and cancels the source', async () => {
+  const { port1: wr, port2: rd } = new MessageChannel();
+  let produced = 0;
+  let cancelled = false;
+  const source = new ReadableStream<Uint8Array>({
+    pull(ctrl) { produced++; ctrl.enqueue(new Uint8Array(1024)); },
+    cancel() { cancelled = true; },
+  });
+  const readable = portToReadable(rd);
+  const reader = readable.getReader();
+  // Start the pump CONCURRENTLY with the reader — read a chunk (grants credit +
+  // opens flow), then cancel to post EPIPE up the port. The parked/next reserve
+  // in the pump must reject, ending it and cancelling the (unbounded) source.
+  const pump = pumpStreamToPort(source, wr);
+  await reader.read();
+  await reader.cancel();
+  await pump; // resolves (does not hang / throw)
+  expect(cancelled).toBe(true);
+  // The pump stopped rather than draining the unbounded source forever.
+  expect(produced).toBeLessThan(1_000_000);
+}, 10000);
+
+test('pumpStreamToPort: an empty source just EOFs the reader (0 bytes)', async () => {
+  const { port1: wr, port2: rd } = new MessageChannel();
+  const source = new ReadableStream<Uint8Array>({ start(ctrl) { ctrl.close(); } });
+  const reader = portToReadable(rd).getReader();
+  let bytes = 0;
+  let ended = false;
+  const consume = (async () => { for (;;) { const { value, done } = await reader.read(); if (done) { ended = true; break; } bytes += value!.byteLength; } })();
+  await Promise.all([pumpStreamToPort(source, wr), consume]);
+  expect(bytes).toBe(0);
+  expect(ended).toBe(true);
+});
+
+test('pumpStreamToPort: a chunk larger than the credit window still flows (sub-window split)', async () => {
+  const { port1: wr, port2: rd } = new MessageChannel();
+  const big = new Uint8Array(INITIAL_CREDIT_BYTES * 2 + 123); // > one window
+  big.fill(7);
+  let sent = false;
+  const source = new ReadableStream<Uint8Array>({ pull(ctrl) { if (sent) { ctrl.close(); return; } sent = true; ctrl.enqueue(big); } });
+  const reader = portToReadable(rd).getReader();
+  let bytes = 0;
+  const consume = (async () => { for (;;) { const { value, done } = await reader.read(); if (done) break; bytes += value!.byteLength; } })();
+  await Promise.all([pumpStreamToPort(source, wr), consume]);
+  expect(bytes).toBe(big.byteLength);
 });

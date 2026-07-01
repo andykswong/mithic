@@ -21,7 +21,7 @@
 import type { Program, Redirect, SimpleCommand, Statement } from './ast.ts';
 import { parse } from './parser.ts';
 import { StdinReader } from './stdin-reader.ts';
-import { toSink, type OutputSink } from './output-sink.ts';
+import { toSink, sinkToStream, type OutputSink } from './output-sink.ts';
 import { evalArith } from './arith.ts';
 import { globMatch } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
@@ -569,6 +569,18 @@ export class Executor {
     if (!io.stdin) return undefined;
     const holder = io as CommandIO & { [STDIN_READER]?: StdinReader };
     return holder[STDIN_READER] ??= new StdinReader(io.stdin);
+  }
+
+  /**
+   * Whether a frame-scoped {@link StdinReader} has ALREADY been created for `io`
+   * (i.e. a sibling builtin has locked `io.stdin` and advanced the shared cursor).
+   * Used by the external-command stdin routing: it may hand the RAW inherited
+   * stream to `spawnStream` only when NO reader exists yet — else the stream is
+   * locked and must be drained through the shared reader instead (bytes path),
+   * preserving the one-cursor contract (`{ read h; head; } < file`).
+   */
+  private stdinReaderExists(io: CommandIO): boolean {
+    return (io as CommandIO & { [STDIN_READER]?: StdinReader })[STDIN_READER] !== undefined;
   }
 
   /** Drop the cached reader when a frame's stdin stream is replaced (used when a
@@ -1580,34 +1592,75 @@ export class Executor {
   }
 
   /**
-   * Run a pipeline whose stages are full command nodes (M1) in-process: each
-   * stage's stdout (and, for a `|&` join, its stderr) is captured and fed to the
-   * next stage as stdin. The pipeline's status is the last stage's (or, under
-   * pipefail, the last nonzero). Compound stages (subshells/groups/if/…) run via
-   * {@link execStatement}; the captured stdin is exposed via {@link pipeStdin}.
+   * Run a pipeline whose stages are full command nodes (M1) in-process,
+   * CONCURRENTLY, streaming byte-safe between stages. Adjacent stages are joined
+   * by identity {@link TransformStream}s: stage i's stdout (and, for a `|&` join,
+   * its stderr) writes into `transform[i].writable`; stage i+1 reads from
+   * `transform[i].readable` as its stdin. All stages run under one `Promise.all`
+   * so a downstream reader PULLS while the upstream pushes (an identity transform
+   * has readable HWM 0 — a write only settles once someone reads), avoiding a
+   * buffer-to-completion serialization AND a backpressure deadlock. A stage that
+   * finishes producing closes its output writer (EOF downstream); a stage that
+   * finishes consuming (possibly early, e.g. `head`) cancels its stdin so the
+   * upstream's next write rejects — stopping an EXTERNAL producer (the kernel
+   * tears its pipe down). An in-process BUILTIN infinite producer has no EPIPE
+   * backstop and is not stopped by this (a pre-existing in-process limitation).
+   *
+   * The pipeline's status is the last stage's (or, under pipefail, the last
+   * nonzero); a stage's own `exit N` is that stage's code only (subshell-like),
+   * never the parent's. Compound stages (subshells/groups/if/…) run via
+   * {@link execStatement}.
    */
   private async execNodePipeline(nodes: Statement[], pipeStderr: boolean[], io: CommandIO): Promise<number> {
-    const enc = new TextEncoder();
-    let stdin: string | undefined;
-    const codes: number[] = [];
-    for (let i = 0; i < nodes.length; i++) {
-      const isLast = i === nodes.length - 1;
-      let captured = '';
-      // Each stage runs against its OWN derived frame: a non-final stage captures
-      // its stdout (and, for `prev |& next`, its stderr) into the buffer that
-      // feeds the next stage's stdin (byte-encoded into a one-shot stream); the
-      // final stage writes to `io`. No shared instance fields are mutated, so a
-      // backgrounded stage cannot misroute.
+    const n = nodes.length;
+    // Inter-stage pipes: transform[i] connects stage i (stdout) → stage i+1 (stdin).
+    const transforms = Array.from({ length: n - 1 }, () => new TransformStream<Uint8Array, Uint8Array>());
+    const codes = new Array<number>(n).fill(0);
+
+    const runStage = async (i: number): Promise<void> => {
+      const isLast = i === n - 1;
+      let stageStdout: OutputSink;
+      let closeOut: (() => Promise<void>) | undefined;
+      if (isLast) {
+        stageStdout = io.stdout;
+      } else {
+        const s = sinkToStream(transforms[i].writable);
+        stageStdout = s.sink;
+        closeOut = s.close;
+      }
+      const stderrToNext = !isLast && pipeStderr[i];
       const stageIo = this.deriveIo(io, {
-        stdout: isLast ? io.stdout : (s) => { captured += s; },
-        stderr: (!isLast && pipeStderr[i]) ? (s) => { captured += s; } : io.stderr,
-        stdin: i === 0 ? undefined : bytesStream(enc.encode(stdin ?? '')),
+        stdout: stageStdout,
+        stderr: stderrToNext ? stageStdout : io.stderr,
+        // Stage 0 does not inherit the pipeline's live stdin here (a top-level
+        // pipeline's stdin is the never-EOF root stream; a first-stage `read`
+        // would block). A first stage's own `< file` is resolved per-command.
+        stdin: i === 0 ? undefined : transforms[i - 1].readable,
       });
-      const code = await this.execStatement(nodes[i], stageIo);
-      codes.push(code);
-      if (this.exiting !== undefined) { this.pipeStatus = codes; return code; }
-      stdin = captured;
-    }
+      try {
+        const code = await this.execStatement(nodes[i], stageIo);
+        // A stage's `exit N` is subshell-local: it is THAT stage's code (bash runs
+        // each pipeline stage in a subshell — `{ exit 3; } | cat` is 0, decided by
+        // the LAST stage). Capture it into this stage's code and CLEAR the shared
+        // `this.exiting` immediately so it neither aborts the parent shell nor
+        // contaminates a concurrent sibling stage (whose `execList` would otherwise
+        // early-return on a non-undefined `this.exiting`).
+        if (this.exiting !== undefined) { codes[i] = this.exiting; this.exiting = undefined; }
+        else codes[i] = code;
+      } finally {
+        // EOF to the downstream once this stage is done producing.
+        if (closeOut) await closeOut();
+        // If this stage finished (possibly early), cancel its stdin so the UPSTREAM
+        // stage's next write rejects (EPIPE). NOTE: this stops an EXTERNAL producer
+        // (kernel tears its pipe down); an in-process BUILTIN infinite producer
+        // (`while :; do echo x; done`) has no EPIPE backstop and still runs on — a
+        // pre-existing limitation of the in-process builtin write path, unchanged
+        // by this concurrency rework.
+        if (i > 0) await transforms[i - 1].readable.cancel().catch(() => {});
+      }
+    };
+
+    await Promise.all(nodes.map((_, i) => runStage(i)));
     this.pipeStatus = codes;
     return this.pipelineStatus(codes, codes[codes.length - 1] ?? 0);
   }
@@ -1636,8 +1689,12 @@ export class Executor {
         const stageStdin = bytesStream(enc.encode(stdin));
         const stageIo = this.deriveIo(io, { stdout: isLast ? io.stdout : (s) => { captured += s; }, stdin: stageStdin });
         status = await this.dispatch(name, argv, stageIo, { stdin: stageStdin });
+        // A stage's `exit N` is subshell-local (bash runs each pipeline stage in a
+        // subshell): it is THAT stage's code — the pipeline's status is the LAST
+        // stage's (`{ exit 3; } | cat` → 0), and it does NOT abort the parent shell.
+        // Capture + clear the shared `this.exiting` rather than returning early.
+        if (this.exiting !== undefined) { status = this.exiting; this.exiting = undefined; }
         codes.push(status);
-        if (this.exiting !== undefined) { this.pipeStatus = codes; return status; }
         stdin = captured;
       }
       this.pipeStatus = codes;
@@ -1800,9 +1857,30 @@ export class Executor {
         }
         return status;
       }
-      // Resolve the external's fd-0. A redirect wins; otherwise a finite inherited
-      // stdin stream is drained through the frame's shared reader (the root live
-      // stream is left for the kernel's default fd-0 wiring — see resolveStdinFd).
+      // Resolve the external's fd-0. An explicit `<`/`<<`/`<<<` redirect wins →
+      // fd-0 spec (open/bytes). Otherwise, when this command INHERITS a live
+      // stdin stream (a compound-pipeline stage's inter-stage pipe — NOT the
+      // never-EOF root stream) AND the backend can live-stream (spawnStream) AND
+      // no sibling builtin has already locked that stream (shared-cursor case),
+      // hand the STREAM straight to the child's fd 0 so it flows chunk-by-chunk
+      // instead of being `readAll`-buffered (which hangs at ~10k+ lines). Only
+      // one of the two is set: a redirect never coexists with the stream path.
+      const hasStdinRedirect = cmd.redirects.some(
+        (r) => r.op === '<' || r.op === '<<' || r.op === '<<<' || r.op === '<>',
+      );
+      const inheritedLiveStdin =
+        !hasStdinRedirect && io.stdin !== undefined && io.stdin !== this.rootStdinStream
+          ? io.stdin
+          : undefined;
+      if (inheritedLiveStdin && this.kernel.spawnStream && !this.stdinReaderExists(io)) {
+        // The child consumes the stream via its fd 0 (spawnStream locks it with
+        // `pumpStreamToPort`). Detach it from the frame so a LATER sibling command
+        // does not try to read a now-locked/consumed stream — it correctly sees no
+        // stdin (EOF), matching "the external already drained it".
+        io.stdin = undefined;
+        this.resetStdinReader(io);
+        return await this.spawnExternal(name, argv, localEnv, io, undefined, inheritedLiveStdin);
+      }
       const fd0 = await this.resolveStdinFd(cmd.redirects, io);
       return await this.spawnExternal(name, argv, localEnv, io, fd0);
     } finally {
@@ -1885,7 +1963,7 @@ export class Executor {
     return false;
   }
 
-  private async spawnExternal(name: string, argv: string[], localEnv: Record<string, string>, io: CommandIO, fd0?: StdinFdSpec): Promise<number> {
+  private async spawnExternal(name: string, argv: string[], localEnv: Record<string, string>, io: CommandIO, fd0?: StdinFdSpec, stdinStream?: ReadableStream<Uint8Array>): Promise<number> {
     const code = this.resolve(name);
     if (code === undefined) {
       io.stderr(`shell: ${name}: command not found\n`);
@@ -1904,6 +1982,10 @@ export class Executor {
       // (a `<<`/`<<<` body or inherited piped-stdin string). Absent ⇒ the kernel
       // delivers an immediate EOF so a stdin-reading child does not block.
       fds: fd0 ? { 0: fd0 } : undefined,
+      // Streamed fd-0: a compound-pipeline stage's INHERITED live stdin, handed to
+      // `spawnStream` so it flows chunk-by-chunk into the child (no readAll hang).
+      // Mutually exclusive with `fd0` (the call site sets at most one).
+      stdinStream,
     };
     // A1: prefer the live-stream spawn path — the child's stdout arrives as a
     // ReadableStream we pump chunk-by-chunk into our stdout sink, so a large or

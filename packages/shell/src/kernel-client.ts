@@ -40,6 +40,14 @@ export interface SpawnParams {
   stdin?: MessagePort;
   stdout?: MessagePort;
   stderr?: MessagePort;
+  /**
+   * A shell-realm live stdin stream for the child's fd 0 (used ONLY by
+   * `spawnStream` on a transferable backend): the client mints a kernel pipe,
+   * injects the read end as the child's fd 0, and pumps THIS stream into the
+   * write end in-realm. NOT serialized (a ReadableStream is not transferable);
+   * mutually exclusive with a `fds[0]` redirect source.
+   */
+  stdinStream?: ReadableStream<Uint8Array>;
 }
 
 export interface SpawnHandle {

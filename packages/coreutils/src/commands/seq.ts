@@ -11,7 +11,7 @@
  *   -w / --equal-width         pad all numbers to the same width
  *   -f FMT / --format=FMT      printf-style format string (%g, %f, %e, etc.)
  */
-import { defineCommand, parseArgs, writeString, exitWith } from '../harness.ts';
+import { defineCommand, parseArgs, CoalescingWriter, isBrokenPipe, exitWith } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 /** Apply a simple printf-style format string to a numeric value. */
@@ -147,26 +147,39 @@ const seqCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       padWidth = Math.max(s1.length, sLast.length);
     }
 
+    // Coalesce output: `seq 1 100000` emits one short token per line, and a
+    // per-token `await writer.write()` parks on the pipe's flush timer (~one
+    // token/tick → tens of seconds for large counts — a de facto hang). The
+    // CoalescingWriter buffers and flushes in 32 KiB blocks while preserving
+    // incremental streaming (downstream EPIPE still surfaces on the next flush).
+    const cw = new CoalescingWriter(out);
     let any = false;
     let cur = first;
-    while ((step > 0 ? cur <= last : cur >= last)) {
-      if (any) await writeString(out, sep);
-      let s: string;
-      if (fmt) {
-        s = applySeqFormat(fmt, cur);
-      } else if (isFloat) {
-        s = String(cur);
-      } else {
-        s = String(Math.round(cur));
+    try {
+      while ((step > 0 ? cur <= last : cur >= last)) {
+        if (any) await cw.push(sep);
+        let s: string;
+        if (fmt) {
+          s = applySeqFormat(fmt, cur);
+        } else if (isFloat) {
+          s = String(cur);
+        } else {
+          s = String(Math.round(cur));
+        }
+        if (equalWidth && !fmt && s.length < padWidth) {
+          s = s.padStart(padWidth, '0');
+        }
+        await cw.push(s);
+        cur += step;
+        any = true;
       }
-      if (equalWidth && !fmt && s.length < padWidth) {
-        s = s.padStart(padWidth, '0');
-      }
-      await writeString(out, s);
-      cur += step;
-      any = true;
+      if (any) await cw.push('\n');
+      await cw.flush();
+    } catch (e) {
+      // A downstream that closed early (`seq … | head`) breaks the pipe; that is
+      // a clean stop for a producer (bash: SIGPIPE), not a seq error.
+      if (!isBrokenPipe(e)) throw e;
     }
-    if (any) await writeString(out, '\n');
     return any ? 0 : 1;
   } finally {
     await out.close().catch(() => { /* already closed */ });
