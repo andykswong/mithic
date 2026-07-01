@@ -79,6 +79,33 @@ describe('seq', () => {
     const h = makeIO(['seq', '5', '1']);
     expect(await seqCommand(h.io)).toBe(1);
   });
+
+  test('large count is complete + correct (CoalescingWriter buffers, not per-line)', async () => {
+    // Guards the CoalescingWriter conversion: a per-line `await writer.write()`
+    // parks on the pipe flush timer (~one line/tick) — hundreds of seconds for
+    // 20k lines. This must produce all 20000 lines quickly and correctly.
+    const h = makeIO(['seq', '1', '20000']);
+    expect(await seqCommand(h.io)).toBe(0);
+    const lines = h.out().split('\n');
+    expect(lines[0]).toBe('1');
+    expect(lines[19999]).toBe('20000');
+    expect(lines[20000]).toBe(''); // trailing newline
+    expect(lines.length).toBe(20001);
+  });
+
+  test('a downstream that closes early (EPIPE) stops seq with exit 0 (SIGPIPE-like)', async () => {
+    // stdout errors after the first write (broken pipe / `seq … | head`). seq must
+    // stop cleanly (exit 0), not surface a spurious error or hang.
+    let writes = 0;
+    const stdin = new ReadableStream<Uint8Array>({ start(c) { c.close(); } });
+    const stdout = new WritableStream<Uint8Array>({
+      write() { writes++; throw Object.assign(new Error('EPIPE'), { code: 'EPIPE' }); },
+    });
+    const stderr = new WritableStream<Uint8Array>({ write() { /* ignore */ } });
+    const io = { args: ['seq', '1', '100000'], env: {}, cwd: '/', stdin, stdout, stderr, syscall: async () => ({}) } as CommandIO;
+    expect(await seqCommand(io)).toBe(0);
+    expect(writes).toBeGreaterThan(0);
+  });
 });
 
 describe('applySeqFormat', () => {
