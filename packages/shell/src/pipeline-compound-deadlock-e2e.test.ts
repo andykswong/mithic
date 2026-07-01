@@ -133,6 +133,25 @@ describe('D5: compound-stage pipeline streaming (regression — terminates, no d
     expect(out.stdout.trim()).toBe('20000');
     expect(out.code).toBe(0);
   }, T);
+
+  test('streamed fd-0 through a MIDDLE compound stage (streaming-fd-0 ∩ concurrent-pipeline)', async () => {
+    // The middle compound stage's external `cat` gets its stdin as a streamed
+    // fd-0 (kernel pipe port) from the concurrent inter-stage TransformStream,
+    // and its stdout feeds the last stage's `head` — all streaming, no buffer.
+    const run = await bootShell();
+    const out = await run('seq 1 50000 | { cat; } | { head -n2; echo TAIL; }');
+    expect(out.stdout).toBe('1\n2\nTAIL\n');
+    expect(out.code).toBe(0);
+  }, T);
+
+  test('builtin read then EXTERNAL in one compound < file frame shares one cursor', async () => {
+    // `read h` (builtin) locks the frame stream and consumes line 1; the external
+    // `head -n1` must stream its fd-0 from the SAME cursor (line 2), not double-lock.
+    // Seed the file in-script (bootShell's MemoryFs starts empty).
+    const run = await bootShell();
+    const out = await run('printf "alpha\\nbeta\\ngamma\\n" > /data.txt; { read h; head -n1; echo "h=$h"; } < /data.txt');
+    expect(out.stdout).toBe('beta\nh=alpha\n');
+  }, T);
 });
 
 // A stage's `exit N` is subshell-local (bash runs each pipeline stage in a
