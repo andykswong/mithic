@@ -21,6 +21,7 @@ import { globToReSource, globToRegExp, isGlobPattern } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
 import { shellQuote } from './quote.ts';
 import { interpretEscapes } from './escape.ts';
+import { expandPrompt } from './prompt.ts';
 
 /**
  * The shell-state surface the expander reads/writes. Implemented by the
@@ -75,6 +76,11 @@ export interface ShellEnv {
    * skips it but the expansion still yields the word (non-fatal). Optional.
    */
   isReadonly?(name: string): boolean;
+  /**
+   * Resolve a nameref to its target variable name (undefined ⇒ not a nameref).
+   * Used by `${ref@A}` to reconstruct `declare -n ref=target`. Optional.
+   */
+  resolveNameref?(name: string): string | undefined;
   /** Emit a non-fatal diagnostic to stderr (e.g. the readonly-assign warning). Optional. */
   warn?(msg: string): void;
   /**
@@ -470,6 +476,86 @@ export class Expander {
   }
 
   /**
+   * `${var@A}`: reconstruct a `declare` statement that recreates the variable
+   * and its attributes, matching bash-5's format:
+   *   scalar          → `declare -- name='value'`   (value via {@link shellQuote})
+   *   readonly scalar → `declare -r name='value'`
+   *   indexed array   → `declare -a name=([0]="v0" [1]="v1")`
+   *   assoc array     → `declare -A name=([k]="v" …)`
+   *   nameref         → `declare -n name=target`
+   *   readonly+array  → flags combine in order `a`/`A` then `r` (`declare -ar …`)
+   * Array/assoc element VALUES use bash's `"…"` form (escape `\ " $` + backtick).
+   * An unset variable yields the empty string (bash emits nothing).
+   */
+  private declareStatement(name: string, set: boolean, value: string): string {
+    const arr = this.env.getArray?.(name);
+    const map = this.env.getAssoc?.(name);
+    if (!set && arr === undefined && map === undefined) return '';
+    const flags = this.env.attrFlags?.(name) ?? '';
+    // Nameref: `declare -n ref=target` (the value is the target NAME).
+    if (flags.includes('n')) {
+      const target = this.env.resolveNameref?.(name) ?? value;
+      return `declare -n ${name}=${target}`;
+    }
+    // Flag group: type letter (a/A) then `r` (readonly), matching bash order.
+    let group = '';
+    if (map !== undefined || flags.includes('A')) group += 'A';
+    else if (arr !== undefined || flags.includes('a')) group += 'a';
+    if (flags.includes('r')) group += 'r';
+    const flagStr = group === '' ? '--' : `-${group}`;
+    if (map !== undefined) {
+      const body = [...map.entries()].map(([k, v]) => `[${k}]="${dqEscape(v)}"`).join(' ');
+      return `declare ${flagStr} ${name}=(${body})`;
+    }
+    if (arr !== undefined) {
+      const body = arr.map((v, i) => `[${i}]="${dqEscape(v)}"`).join(' ');
+      return `declare ${flagStr} ${name}=(${body})`;
+    }
+    return `declare ${flagStr} ${name}=${shellQuote(value)}`;
+  }
+
+  /**
+   * `${var@K}` / `${var@k}`: key-value pairs of an associative (key→value) or
+   * indexed (index→value) array. `@K` quotes each key and value with `"…"` and
+   * yields a SINGLE re-inputtable field; `@k` leaves them bare as SEPARATE words.
+   * A bare scalar yields no pairs (returns the value unchanged), matching the
+   * absence of subscripts.
+   */
+  private keyValuePairs(
+    name: string,
+    value: string,
+    quoted: boolean,
+  ): string | { fields: string[]; join: string | undefined } {
+    const map = this.env.getAssoc?.(name);
+    const arr = this.env.getArray?.(name);
+    let pairs: [string, string][];
+    // Indexed-array indices are numeric, so bash `@K` prints them bare and quotes
+    // only the value; associative keys are quoted like the value.
+    let quoteKey = quoted;
+    if (map !== undefined) pairs = [...map.entries()];
+    else if (arr !== undefined) { pairs = arr.map((v, i) => [String(i), v]); quoteKey = false; }
+    else return value;
+    if (quoted) {
+      return pairs
+        .map(([k, v]) => `${quoteKey ? `"${dqEscape(k)}"` : k} "${dqEscape(v)}"`)
+        .join(' ');
+    }
+    const fields: string[] = [];
+    for (const [k, v] of pairs) { fields.push(k, v); }
+    return { fields, join: undefined };
+  }
+
+  /** Build a plain-record env snapshot for {@link expandPrompt} (`${var@P}`). */
+  private promptEnv(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const n of ['USER', 'HOSTNAME', 'HOME', 'PWD']) {
+      const v = this.env.get(n);
+      if (v !== undefined) out[n] = v;
+    }
+    return out;
+  }
+
+  /**
    * Resolve a BARE `$name` / `${name}` reference, honoring `set -u` (nounset):
    * an unset variable throws (the shell aborts). Default/alternate forms
    * (`${name:-…}`, `${name+…}`, …) use {@link resolveVar} instead, since they
@@ -601,8 +687,15 @@ export class Expander {
       if (op === 'E') return interpretEscapes(value, /*octalBackslashZero*/ false);
       // `@a` reports the variable's attribute FLAGS (keyed by NAME, not value).
       if (op === 'a') return this.env.attrFlags?.(name) ?? '';
-      // Other transforms (@P @A @K @k) are not yet supported — return the value
-      // unchanged rather than erroring (forward-compatible; documented).
+      // `@A` — a `declare` statement that recreates the variable + attributes.
+      if (op === 'A') return this.declareStatement(name, set, value);
+      // `@P` — expand the value as a PS1 prompt string (`\w`, `\u`, `\h`, …).
+      if (op === 'P') {
+        return expandPrompt(value, { cwd: this.env.cwd ?? '', env: this.promptEnv() });
+      }
+      // `@K` / `@k` — associative/indexed key-value pairs. `@K` quotes both
+      // (re-inputtable, single field); `@k` leaves them bare as separate words.
+      if (op === 'K' || op === 'k') return this.keyValuePairs(name, value, op === 'K');
       return value;
     }
 
@@ -970,6 +1063,16 @@ function findUnescaped(s: string, ch: string): number {
 
 function stripTrailingNewlines(s: string): string {
   return s.replace(/\n+$/, '');
+}
+
+/**
+ * Escape a string for a bash double-quoted context — used by `${var@A}` array
+ * elements and `${var@K}` pairs, which bash renders inside `"…"`. Only the four
+ * characters special inside double quotes are backslash-escaped: `\ " $` and a
+ * backtick.
+ */
+function dqEscape(s: string): string {
+  return s.replace(/[\\"$`]/g, (c) => '\\' + c);
 }
 
 // ── pattern matching (glob-style for ${} strip/subst and pathname) ───────────
