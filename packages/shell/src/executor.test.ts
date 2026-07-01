@@ -342,7 +342,6 @@ test('readonly for-loop variable is rejected (non-posix: reports, does not itera
   expect(out).toMatch(/done/);
 });
 
-
 // ── Task 2: CommandIO sinks are OutputSink (text unchanged, writeBytes available) ──
 
 test('root io.stdout is an OutputSink with writeBytes (bare callback wrapped)', async () => {

@@ -1873,28 +1873,26 @@ export class Executor {
     if (!bytes) return;
     let out: Uint8Array;
     try { out = await bytes; } catch { return; }
-    if (out.byteLength > 0) io.stderr(new TextDecoder().decode(out));
+    if (out.byteLength > 0) io.stderr.writeBytes(out);
   }
 
   /**
    * A1: drain a live child-stdout ReadableStream into the command's stdout sink
    * (the EXPLICIT frame `io`, captured here so a post-await chunk lands in this
    * command's sink — not whatever the foreground swapped the ambient frame to,
-   * D3), decoding incrementally (UTF-8 stream mode) so multi-byte chars spanning
-   * a chunk boundary aren't mangled. Cancels the stream if the sink throws (a
-   * broken downstream), propagating EPIPE up to the child via portToReadable.
+   * D3), forwarding each chunk's raw bytes via `writeBytes` (no UTF-8 decode), so
+   * binary output is byte-exact and multi-byte chars spanning a chunk boundary are
+   * never mangled. Cancels the stream if the sink throws (a broken downstream),
+   * propagating EPIPE up to the child via portToReadable.
    */
   private async pumpToStdout(stream: ReadableStream<Uint8Array>, io: CommandIO): Promise<void> {
     const reader = stream.getReader();
-    const dec = new TextDecoder();
     try {
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
-        if (value && value.byteLength > 0) io.stdout(dec.decode(value, { stream: true }));
+        if (value && value.byteLength > 0) io.stdout.writeBytes(value);
       }
-      const tail = dec.decode();
-      if (tail) io.stdout(tail);
     } catch {
       // Downstream broke or stream errored — stop reading; the cancel below (via
       // releaseLock + GC) and the kernel EOF wiring tear the child's pipe down.
@@ -2017,15 +2015,12 @@ export class Executor {
 
   /** D4: pump a live child-stdout reader into a captured sink (background jobs). */
   private async pumpReaderToSink(reader: ReadableStreamDefaultReader<Uint8Array>, sink: OutputSink): Promise<void> {
-    const dec = new TextDecoder();
     try {
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
-        if (value && value.byteLength > 0) sink(dec.decode(value, { stream: true }));
+        if (value && value.byteLength > 0) sink.writeBytes(value);
       }
-      const tail = dec.decode();
-      if (tail) sink(tail);
     } catch {
       // Cancelled (job ended / stream errored) — stop pumping.
     }
@@ -2186,8 +2181,9 @@ export class Executor {
   private async writeCaptured(bytes: Promise<Uint8Array>, io: CommandIO): Promise<void> {
     const out = await bytes;
     // Post-await: write through the EXPLICIT (captured) frame, not the ambient
-    // `this.io` which the foreground may have swapped while we awaited (D3).
-    if (out.byteLength > 0) io.stdout(new TextDecoder().decode(out));
+    // `this.io` which the foreground may have swapped while we awaited (D3). Raw
+    // bytes go through `writeBytes` — no UTF-8 round-trip, so binary is byte-exact.
+    if (out.byteLength > 0) io.stdout.writeBytes(out);
   }
 
   /**
