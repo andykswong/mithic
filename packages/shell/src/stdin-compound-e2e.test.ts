@@ -118,6 +118,15 @@ test('a lone continuation byte survives an in-process pipe byte-exact', async ()
   expect(Array.from(body)).toEqual([0x00, 0xff, 0xfe, 0x01, 0x80]);
 }, 15000);
 
+// FIX 2 (item A): a `< file` redirect into a builtin reads the file byte-safe.
+// The builtin `cat` (no operands) consumes its stdin STREAM, which is now sourced
+// from FsClient.fsReadBytes (no TextDecoder round-trip). Regression: fsRead
+// decoded the kernel's Uint8Array to a string (0xff/0xfe → U+FFFD) then re-encoded.
+test('< file into a builtin cat is byte-safe (no UTF-8 corruption)', async () => {
+  const body = await runBytes([0x00, 0xff, 0xfe, 0x41], 'cat < /data.bin');
+  expect(Array.from(body)).toEqual([0x00, 0xff, 0xfe, 0x41]);
+}, 15000);
+
 test('a large piped input streams through while-read without OOM', async () => {
   // 5000 lines piped into a while-read loop that just counts — proves it completes
   // (a full-buffer-forever bug would hang/OOM). The lines are pre-seeded into a
@@ -155,4 +164,89 @@ test('read x <<< "$(side-effect)" runs the command substitution once', async () 
     { '/cnt': '' },
   );
   expect(out).toBe('x=hi\ntick\n'); // exactly ONE "tick" line
+}, 15000);
+
+// FIX 4 (item H): a nested pipeline's FIRST stage inherits the enclosing compound
+// stage's stdin. Regression: execMultiStagePipeline zeroed stage-0 stdin, so a
+// pipeline inside a group whose stdin is the group frame (an outer pipe or the
+// group's own `< file`) hung — the inner first stage never got the stdin.
+test('echo hi | { cat | tr a-z A-Z; } — nested pipeline inherits the outer pipe', async () => {
+  expect(await run('echo hi | { cat | tr a-z A-Z; }')).toBe('HI\n');
+}, 15000);
+
+test('{ cat | tr a-z A-Z; } < /dev/null — nested pipeline over group < redirect (no hang)', async () => {
+  // No outer pipe: the group's own `< /dev/null` is the inner pipeline's stdin.
+  // Before the fix the inner `cat` got empty-hardcoded/zeroed stdin and could hang
+  // (or never see the group redirect). Must produce empty output, exit 0, no hang.
+  expect(await run('{ cat | tr a-z A-Z; } < /dev/null')).toBe('');
+}, 15000);
+
+test('echo hi | { cat; } — single-command group inherits the outer pipe', async () => {
+  expect(await run('echo hi | { cat; }')).toBe('hi\n');
+}, 15000);
+
+// A TOP-LEVEL pipeline whose stage 0 legitimately has no stdin must not block:
+// `echo x | cat` — echo ignores stdin; must not start reading the never-EOF root.
+test('echo x | cat — top-level pipeline stage 0 does not block on the root stream', async () => {
+  expect(await run('echo x | cat')).toBe('x\n');
+}, 15000);
+
+// FIX 3 (item C): a `< file` on a BUILTIN first pipeline stage in an all-builtin
+// pipeline must be honored. Regression: the all-builtin branch hardcoded stage-0
+// stdin to empty, so `cat < f | cat` produced nothing.
+test('< file on a builtin first stage in an all-builtin pipeline is honored', async () => {
+  // `cat < /f | cat` — both `cat`s are builtins (no operands). Stage 0 must read
+  // /f from its `<` redirect; today it starts empty ⇒ empty output.
+  expect(await run('cat < /f | cat', undefined, { '/f': 'hello\nworld\n' }))
+    .toBe('hello\nworld\n');
+}, 15000);
+
+test('<<< here-string on a builtin first stage in an all-builtin pipeline is honored', async () => {
+  expect(await run('cat <<< hi | cat')).toBe('hi\n');
+}, 15000);
+
+// FIX 1 (item G): an EXTERNAL command's `<<< "$(cmd)"` must resolve the redirect
+// ONCE. Regression: execSimple resolved the redirect via resolveStdinStream AND
+// then (for an external) again via resolveStdinFd, running the substitution twice.
+test('EXTERNAL <<< "$(side-effect)" runs the command substitution once', async () => {
+  // `cat` is an EXTERNAL (has an operand? no — but here it reads its here-string
+  // stdin). The command substitution appends one `tick` to /cnt; a double
+  // resolution would append it twice. Use `grep` (always external) to be safe.
+  const out = await run(
+    'grep -c . <<< "$(echo hi; echo tick >> /cnt)"; cat /cnt',
+    undefined,
+    { '/cnt': '' },
+  );
+  // grep -c counts matching lines of the here-string ("hi\n" → 1). /cnt must hold
+  // exactly ONE "tick" (two ⇒ the substitution ran twice).
+  expect(out).toBe('1\ntick\n');
+}, 15000);
+
+// FIX 6 (item I): a `$(…)` inside a COMPOUND stage inherits the enclosing
+// command's stdin. Regression: runCommandSub / runCommandSubRaw derived the
+// capture frame with `stdin: undefined`, so the inner `$(cat)` command got NO
+// stdin and read empty — `echo x | { echo "got=$(cat)"; }` printed `got=`.
+test('echo x | { echo "got=$(cat)"; } — $(cat) inherits the piped stdin', async () => {
+  expect((await run('echo x | { echo "got=$(cat)"; }')).trim()).toBe('got=x');
+}, 15000);
+
+test('echo x | echo "got=$(cat)" — $(cat) in a simple piped stage inherits stdin', async () => {
+  expect((await run('echo x | echo "got=$(cat)"')).trim()).toBe('got=x');
+}, 15000);
+
+test('printf a | { v=$(cat); echo "v=$v"; } — assignment $(cat) inherits stdin', async () => {
+  expect((await run('printf \'a\\n\' | { v=$(cat); echo "v=$v"; }')).trim()).toBe('v=a');
+}, 15000);
+
+// Guard: a plain `$(echo hi)` (no stdin consumer) still works — inheriting the
+// ambient stdin must not break the common case (echo ignores stdin).
+test('plain $(echo hi) still expands correctly (no stdin double-consume)', async () => {
+  expect((await run('echo "v=$(echo hi)"')).trim()).toBe('v=hi');
+}, 15000);
+
+// Guard: `echo hi | grep $(echo h)` — the `$(echo h)` sub inherits the pipe
+// stdin but `echo` never reads it, so `grep h` still receives `hi` from the
+// pipe and matches. A sub that wrongly drained the pipe would starve grep.
+test('echo hi | grep $(echo h) — a non-reading sub does not steal the pipe', async () => {
+  expect((await run('echo hi | grep $(echo h)')).trim()).toBe('hi');
 }, 15000);

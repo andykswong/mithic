@@ -226,6 +226,30 @@ test('input redirect from file', async () => {
   expect(out).toBe('file content\n');
 });
 
+test('a missing < file reports an error and CONTINUES the statement list (does not abort the script)', async () => {
+  // Regression: resolving the redirect stream must not throw out of execSimple —
+  // bash reports "No such file or directory", the command fails (status 1), and
+  // the rest of the script still runs. Use an fs whose fsOpen throws on a missing
+  // read (like the real FsClient / kernel fs/open ENOENT); mockFs above returns ''.
+  const throwingFs = {
+    fsOpen(path: string, flags: any): number {
+      if (flags.read && path === '/nope.txt') throw new Error('ENOENT');
+      return 10;
+    },
+    fsReadBytes() { return new Uint8Array(); },
+    fsRead() { return ''; },
+    fsWrite() { /* noop */ },
+    fsClose() { /* noop */ },
+    fsReaddir() { return []; },
+    fsStat() { return undefined; },
+  };
+  const { out, err } = await run('echo BEFORE; cat < /nope.txt; echo "after=$?"; echo AFTER', {}, throwingFs);
+  expect(err).toMatch(/nope\.txt.*No such file|No such file.*nope\.txt/);
+  expect(out).toContain('BEFORE');
+  expect(out).toContain('after=1'); // the failed redirect command returns 1
+  expect(out).toContain('AFTER');   // the script CONTINUED past the failure
+});
+
 // ── byte-stream stdin: streaming builtins over a shared cursor ────────────────
 
 test('cat streams a here-string through unchanged', async () => {

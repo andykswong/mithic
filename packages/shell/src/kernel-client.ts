@@ -204,6 +204,16 @@ export interface FsClient {
   /** Read the entire contents of an open fd as a string. */
   fsRead(fd: number): string | Promise<string>;
 
+  /**
+   * FIX 2 (item A): read the entire contents of an open fd as RAW bytes — no
+   * UTF-8 decode. A `< file` stdin redirect uses this so a binary file reaches
+   * the command byte-exact (the string {@link fsRead} decodes the kernel's
+   * `Uint8Array` and turns invalid bytes into U+FFFD, corrupting binary). OPTIONAL
+   * so minimal mock FsClients (which only implement the string path) still
+   * satisfy the interface — the executor falls back to `fsRead` + re-encode.
+   */
+  fsReadBytes?(fd: number): Uint8Array | Promise<Uint8Array>;
+
   /** Flush and close an open fd. */
   fsClose(fd: number): void;
 

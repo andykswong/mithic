@@ -21,7 +21,7 @@
 import type { Program, Redirect, SimpleCommand, Statement } from './ast.ts';
 import { parse } from './parser.ts';
 import { StdinReader } from './stdin-reader.ts';
-import { toSink, sinkToStream, type OutputSink } from './output-sink.ts';
+import { toSink, sinkToStream, BrokenPipeError, type OutputSink } from './output-sink.ts';
 import { evalArith } from './arith.ts';
 import { globMatch } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
@@ -164,6 +164,20 @@ class FuncReturn extends Error {
 }
 /** A redirect that cannot be performed (e.g. noclobber refusing to overwrite). */
 class RedirectError extends Error {}
+
+/**
+ * Yield to the MACROTASK queue (not just microtasks). An in-process producer loop
+ * (`while :; do echo x; done | head`) writes to a {@link sinkToStream} sink whose
+ * broken-pipe signal only arrives as a MessagePort message — a macrotask. A loop
+ * that awaits only already-resolved promises (microtasks) starves that macrotask
+ * forever, so the downstream's early close (EPIPE) is never delivered and the
+ * producer never learns to stop (RSS grows unbounded). Turning the event loop once
+ * per batch of iterations lets the pump process the close and latch the sink broken,
+ * so the next `ctx.write` throws {@link BrokenPipeError} — the SIGPIPE-equivalent
+ * unwind. Isomorphic (`setTimeout(0)` works in the browser and on Node).
+ */
+const YIELD_EVERY = 128;
+const yieldToIo = (): Promise<void> => new Promise<void>((resolve) => { setTimeout(resolve, 0); });
 
 /**
  * A frame-scoped {@link StdinReader}, cached on a {@link CommandIO} under this
@@ -357,11 +371,27 @@ export class Executor {
     return path;
   }
 
+  /**
+   * The stdin stream a `$(…)` / `<(…)` capture frame inherits from the ambient
+   * frame: the ambient stdin so an inner `$(cat)` reads the enclosing command's
+   * input (bash), EXCEPT the shell's never-EOF ROOT stdin — reading that whole
+   * would hang, so it is treated as no input (EOF). Mirrors `execSelect`'s guard.
+   */
+  private inheritedSubStdin(): ReadableStream<Uint8Array> | undefined {
+    return this.io.stdin === this.rootStdinStream ? undefined : this.io.stdin;
+  }
+
   /** Run a command-sub body WITHOUT trailing-newline stripping (for procsub files). */
   private async runCommandSubRaw(src: string): Promise<string> {
     let out = '';
-    // Capture into a derived child frame; stderr/fd-table inherit the ambient frame.
-    const capIo = this.deriveIo(this.io, { stdout: (s) => { out += s; }, stdin: undefined });
+    // Capture into a derived child frame; stderr/fd-table AND stdin inherit the
+    // ambient frame, so a `$(cat)` inside the enclosing command reads THAT
+    // command's stdin (bash) — e.g. `echo x | { echo "got=$(cat)"; }` → `got=x`.
+    // Never inherit the never-EOF ROOT stdin, though: a `$(cat)` expanded at the
+    // shell's root frame (e.g. `echo "$(cat)" < /dev/null`, the top-level
+    // all-builtin pipeline fast-path frame) would read forever — treat root as
+    // no input (EOF), the same guard `execSelect` uses.
+    const capIo = this.deriveIo(this.io, { stdout: (s) => { out += s; }, stdin: this.inheritedSubStdin() });
     await this.run(this.parseSrc(src), true, capIo);
     return out;
   }
@@ -513,11 +543,13 @@ export class Executor {
 
   async runCommandSub(src: string): Promise<string> {
     let out = '';
-    // Capture into a derived child frame (stderr/fd-table inherit the ambient
-    // frame). `run` saves+restores `this.io`, so the ambient frame is intact
-    // afterward — and the capture buffer cannot be re-routed by an interleaving
-    // foreground statement (D3).
-    const capIo = this.deriveIo(this.io, { stdout: (s) => { out += s; }, stdin: undefined });
+    // Capture into a derived child frame (stderr/fd-table AND stdin inherit the
+    // ambient frame, so a `$(cat)` reads the enclosing command's stdin, matching
+    // bash — but never the never-EOF ROOT stdin, which would hang; see
+    // `inheritedSubStdin`). `run` saves+restores `this.io`, so the ambient frame
+    // is intact afterward — and the capture buffer cannot be re-routed by an
+    // interleaving foreground statement (D3).
+    const capIo = this.deriveIo(this.io, { stdout: (s) => { out += s; }, stdin: this.inheritedSubStdin() });
     // `$(< file)` fast-read form (M5): an empty command body whose only content
     // is a single `< file` input redirect reads the file directly.
     const fast = src.match(/^\s*<\s*(\S+)\s*$/);
@@ -878,6 +910,7 @@ export class Executor {
   private async execWhile(stmt: Statement, io: CommandIO): Promise<number> {
     let status = 0;
     const until = stmt.until === true;
+    let iter = 0;
     for (;;) {
       const cond = await this.execList(stmt.condition ?? [], io);
       if (this.exiting !== undefined) return cond;
@@ -891,6 +924,9 @@ export class Executor {
         throw e;
       }
       if (this.exiting !== undefined) return status;
+      // Preempt so a downstream pipe's early-close (EPIPE) can be delivered and a
+      // broken producer sink latched — else a tight body starves that macrotask.
+      if (++iter % YIELD_EVERY === 0) await yieldToIo();
     }
     return status;
   }
@@ -917,6 +953,7 @@ export class Executor {
       this.lastStatus = 1;
       return 1;
     }
+    let iter = 0;
     for (const word of words) {
       this.context.env[stmt.varName!] = word;
       try {
@@ -927,6 +964,9 @@ export class Executor {
         throw e;
       }
       if (this.exiting !== undefined) return status;
+      // Preempt so a downstream pipe's early-close (EPIPE) can be delivered and a
+      // broken producer sink latched (see yieldToIo).
+      if (++iter % YIELD_EVERY === 0) await yieldToIo();
     }
     return status;
   }
@@ -963,6 +1003,9 @@ export class Executor {
       // A readonly increment target can never advance — break (divergence from
       // bash, which hangs). The warning was already emitted (warn-once per name).
       if (rejected.size > 0) break;
+      // Preempt so a downstream pipe's early-close (EPIPE) can be delivered and a
+      // broken producer sink latched (see yieldToIo).
+      if (guard % YIELD_EVERY === 0) await yieldToIo();
     }
     return status;
   }
@@ -1033,7 +1076,24 @@ export class Executor {
     // own fd-table snapshot) must not leak back to the parent's live table.
     const subIo = this.deriveIo(io, {}, /*fork*/ true);
     try {
-      let status = await this.execList(stmt.body ?? [], subIo);
+      // A subshell applies its OWN redirects, like Group/While/For/Select. It
+      // is a COMPOUND statement, so installStdin=true installs a `< file` on the
+      // forked frame (its inner commands share one cursor). A bad-file redirect
+      // is non-fatal to the parent: convert the RedirectError to status 1 with no
+      // command name (so onRedirectError never throws a PosixSpecialBuiltinError).
+      let restore: () => void;
+      try {
+        restore = await this.applyRedirects(stmt.redirects ?? [], subIo, /*installStdin*/ true);
+      } catch (e) {
+        if (e instanceof RedirectError) return this.onRedirectError(undefined, e, subIo);
+        throw e;
+      }
+      let status: number;
+      try {
+        status = await this.execList(stmt.body ?? [], subIo);
+      } finally {
+        restore();
+      }
       // An `exit` inside the subshell sets `this.exiting`; that is the subshell's
       // own exit code and must NOT propagate to the parent.
       if (this.exiting !== undefined) status = this.exiting;
@@ -1449,15 +1509,8 @@ export class Executor {
       } else if (r.op === '<' || r.op === '<>') {
         const path = await exp.expandToString(r.target);
         if (path === '/dev/null') { stream = bytesStream(new Uint8Array()); continue; }
-        const fs = this.fs;
-        if (!fs) throw new Error(`shell: input redirect from '${path}' requires an FsClient`);
-        let data: string;
-        try { data = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true }))); }
-        catch {
-          if (r.op === '<>') { data = ''; /* <> creates if absent */ }
-          else throw new RedirectError(`${path}: No such file or directory`);
-        }
-        stream = bytesStream(enc.encode(data));
+        // FIX 2: byte-safe read (fileStdinStream prefers FsClient.fsReadBytes).
+        stream = await this.fileStdinStream(path, r.op === '<>');
       }
     }
     return stream;
@@ -1510,6 +1563,77 @@ export class Executor {
       if (reader) { const data = await reader.readAll(); return { action: 'bytes', data }; }
     }
     return undefined;
+  }
+
+  /**
+   * FIX 1 (item G): resolve a SIMPLE command's stdin input redirect EXACTLY ONCE
+   * into BOTH forms — a `ReadableStream<Uint8Array>` (for a builtin) and a kernel
+   * `StdinFdSpec` (for an external). A previous split — `resolveStdinStream` for
+   * the builtin path plus `resolveStdinFd` for the external path — expanded the
+   * redirect target twice, so `<<< "$(cmd)"` ran its command substitution twice.
+   *
+   * The LAST input redirect wins (bash). `<<<`/`<<` expand once to bytes; the
+   * SAME bytes back both a `bytesStream` and an `{action:'bytes'}` fdSpec. `< file`
+   * expands the path once; the builtin reads the file NOW (byte-safe when the
+   * FsClient offers `fsReadBytes` — FIX 2), the external gets `{action:'open'}`
+   * so the kernel streams it. `/dev/null` → an empty stream / empty-bytes spec.
+   *
+   * Returns `undefined` when there is NO input redirect — the caller falls back to
+   * its inherited-stdin handling (builtin: `io.stdin`; external: live-stream /
+   * `resolveStdinFd` drain of the frame's shared reader).
+   */
+  private async resolveStdinInput(
+    redirects: Redirect[],
+  ): Promise<{ stream: ReadableStream<Uint8Array>; fdSpec: StdinFdSpec } | undefined> {
+    const exp = this.expander();
+    const enc = new TextEncoder();
+    let resolved: { stream: ReadableStream<Uint8Array>; fdSpec: StdinFdSpec } | undefined;
+    for (const r of redirects) {
+      if (r.op === '<<<') {
+        const bytes = enc.encode(await exp.expandToString(r.target) + '\n');
+        resolved = { stream: bytesStream(bytes), fdSpec: { action: 'bytes', data: bytes } };
+      } else if (r.op === '<<') {
+        const body = r.hereDocQuoted ? (r.hereDoc ?? '') : await this.expandHereDoc(r.hereDoc ?? '');
+        const bytes = enc.encode(body);
+        resolved = { stream: bytesStream(bytes), fdSpec: { action: 'bytes', data: bytes } };
+      } else if (r.op === '<' || r.op === '<>') {
+        const path = await exp.expandToString(r.target);
+        if (path === '/dev/null') {
+          resolved = { stream: bytesStream(new Uint8Array()), fdSpec: { action: 'bytes', data: new Uint8Array() } };
+          continue;
+        }
+        // The external's fdSpec never reads here (the kernel streams the open path);
+        // the builtin's stream reads the file NOW, byte-safe (FIX 2). A missing file
+        // is a RedirectError for `<` (bash: the command never runs) — surfaced when
+        // the stream is materialized below; a `<>` creates it (empty).
+        const stream = await this.fileStdinStream(path, r.op === '<>');
+        resolved = { stream, fdSpec: { action: 'open', path: this.absPath(path), flags: { read: true } } };
+      }
+    }
+    return resolved;
+  }
+
+  /**
+   * Read a `< file` / `<>` redirect source into a one-shot byte stream, byte-safe.
+   * FIX 2 (item A): prefer the FsClient's binary-safe `fsReadBytes` (no UTF-8
+   * round-trip); fall back to the string `fsRead` + re-encode when a minimal mock
+   * FsClient does not implement it. `<>` on a missing file yields an empty stream
+   * (it creates the file); `<` on a missing file throws {@link RedirectError}.
+   */
+  private async fileStdinStream(path: string, isReadWrite: boolean): Promise<ReadableStream<Uint8Array>> {
+    const fs = this.fs;
+    if (!fs) throw new Error(`shell: input redirect from '${path}' requires an FsClient`);
+    try {
+      if (fs.fsReadBytes) {
+        return bytesStream(await Promise.resolve(fs.fsReadBytes(fs.fsOpen(path, { read: true }))));
+      }
+      const data = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true })));
+      return bytesStream(new TextEncoder().encode(data));
+    } catch (e) {
+      if (e instanceof RedirectError) throw e;
+      if (isReadWrite) return bytesStream(new Uint8Array()); // <> creates if absent
+      throw new RedirectError(`${path}: No such file or directory`);
+    }
   }
 
   private async expandHereDoc(body: string): Promise<string> {
@@ -1616,18 +1740,15 @@ export class Executor {
     // Inter-stage pipes: transform[i] connects stage i (stdout) → stage i+1 (stdin).
     const transforms = Array.from({ length: n - 1 }, () => new TransformStream<Uint8Array, Uint8Array>());
     const codes = new Array<number>(n).fill(0);
+    // One sink per inter-stage pipe, created UP FRONT so a consumer stage can abort
+    // its UPSTREAM producer's sink (transform[i-1]) when it finishes early — see the
+    // finally block.
+    const sinks = transforms.map((t) => sinkToStream(t.writable));
 
     const runStage = async (i: number): Promise<void> => {
       const isLast = i === n - 1;
-      let stageStdout: OutputSink;
-      let closeOut: (() => Promise<void>) | undefined;
-      if (isLast) {
-        stageStdout = io.stdout;
-      } else {
-        const s = sinkToStream(transforms[i].writable);
-        stageStdout = s.sink;
-        closeOut = s.close;
-      }
+      const outSink = isLast ? undefined : sinks[i];
+      const stageStdout: OutputSink = isLast ? io.stdout : outSink!.sink;
       const stderrToNext = !isLast && pipeStderr[i];
       const stageIo = this.deriveIo(io, {
         stdout: stageStdout,
@@ -1647,16 +1768,31 @@ export class Executor {
         // early-return on a non-undefined `this.exiting`).
         if (this.exiting !== undefined) { codes[i] = this.exiting; this.exiting = undefined; }
         else codes[i] = code;
+      } catch (e) {
+        // SIGPIPE-equivalent: the downstream stage closed early, so this stage's
+        // next in-process write threw. Record 128+SIGPIPE(13)=141 as THIS stage's
+        // code and stop cleanly — the downstream already ended, and the pipeline's
+        // status is the LAST stage's (an in-process producer's 141 is internal,
+        // mirroring bash's PIPESTATUS). Do NOT rethrow: the sibling downstream is
+        // done and the parent shell must survive. Any OTHER error propagates.
+        if (e instanceof BrokenPipeError) codes[i] = e.code;
+        else throw e;
       } finally {
-        // EOF to the downstream once this stage is done producing.
-        if (closeOut) await closeOut();
-        // If this stage finished (possibly early), cancel its stdin so the UPSTREAM
-        // stage's next write rejects (EPIPE). NOTE: this stops an EXTERNAL producer
-        // (kernel tears its pipe down); an in-process BUILTIN infinite producer
-        // (`while :; do echo x; done`) has no EPIPE backstop and still runs on — a
-        // pre-existing limitation of the in-process builtin write path, unchanged
-        // by this concurrency rework.
-        if (i > 0) await transforms[i - 1].readable.cancel().catch(() => {});
+        // This stage finished (possibly early). Break its UPSTREAM producer first,
+        // THEN EOF its own downstream:
+        //  - Abort the upstream sink (transform[i-1]): a consumer that exits early
+        //    (e.g. `head`, or a middle `cat` whose own downstream closed) leaves its
+        //    stdin reader locked-but-abandoned, so the producer's next backpressured
+        //    `writer.write()` would hang forever and strand its `close()`. Aborting
+        //    rejects those writes → the producer's sink latches broken → its next
+        //    write throws BrokenPipeError (in-process builtin) or its stdout pump
+        //    stops (external). Also cancel the readable to release the reader lock.
+        //  - close() this stage's own output sink (EOF to the next stage).
+        if (i > 0) {
+          sinks[i - 1].abort();
+          await transforms[i - 1].readable.cancel().catch(() => {});
+        }
+        if (outSink) await outSink.close();
       }
     };
 
@@ -1667,47 +1803,120 @@ export class Executor {
 
   private async execMultiStagePipeline(stages: SimpleCommand[], io: CommandIO): Promise<number> {
     const expander = this.expander();
-    const expanded: Array<{ name: string; argv: string[]; env: Record<string, string> }> = [];
-    for (const s of stages) expanded.push(await this.expandCommand(s, expander));
+    // Expand only the NAME of each stage up front (the branch decision needs the
+    // names). Each stage's `cmd.args` are expanded LATER — the all-builtin branch
+    // expands them per-stage against that stage's own stdin so a `$(cat)` in
+    // stage i reads stage i's piped input (bash); the external branch expands
+    // them here (hoisted, ambient frame — unchanged). A command sub in a name or
+    // arg still expands exactly once.
+    const names: Array<{ name: string; extraArgv: string[]; env: Record<string, string> }> = [];
+    for (const s of stages) names.push(await this.expandCommandName(s, expander));
 
-    if (this.options.xtrace) {
-      for (const e of expanded) io.stderr('+ ' + [e.name, ...e.argv].join(' ') + '\n');
-    }
+    // Whether stage `i` runs as an in-process builtin/function. `cat` only
+    // shadows the external when it has NO operands; decide that SYNTACTICALLY
+    // (unexpanded arg words + extra name fields) so we needn't expand args before
+    // the branch choice. Conservative: `cat $x` is treated as external even if
+    // `$x` expands to nothing — the external `cat` reads fd-0 the same way, so
+    // the result is unchanged.
+    const stageIsBuiltin = (i: number): boolean => {
+      const { name, extraArgv } = names[i];
+      if (this.functions.has(name)) return true;
+      if (!isBuiltin(name)) return false;
+      if (name === 'cat') return stages[i].args.length === 0 && extraArgv.length === 0;
+      return true;
+    };
 
-    if (expanded.every((e) => (isBuiltin(e.name) && builtinShadowsExternal(e.name, e.argv)) || this.functions.has(e.name))) {
+    if (names.every((_, i) => stageIsBuiltin(i))) {
       const enc = new TextEncoder();
+      // Stage 0's fd-0 source, resolved once (later stages read the previous
+      // stage's captured output):
+      //   FIX 3 (item C): the FIRST stage's OWN `<`/`<<`/`<<<` redirect wins.
+      //   FIX 4 (item H): with NO such redirect, INHERIT the enclosing frame's
+      //     stdin (a nested pipeline inside a group whose stdin is an outer pipe
+      //     or the group's own `< file`) — drained through the frame's shared
+      //     reader into bytes. Guarded to a REAL inherited stream (not the shell's
+      //     never-EOF root, not undefined) AND only when NO frame reader exists yet
+      //     (a `while read …; do echo | cat; done < file` body must NOT eat the
+      //     loop's SHARED cursor a sibling `read` owns — there stage 0 stays empty,
+      //     bash: `echo` ignores stdin). Before both fixes stage 0 was hardcoded
+      //     empty, so `cat < f | cat` produced nothing and a nested pipeline hung.
+      let stage0Stdin = await this.resolveStdinStream(stages[0].redirects);
+      if (stage0Stdin === undefined && io.stdin !== undefined && io.stdin !== this.rootStdinStream
+        && !this.stdinReaderExists(io)) {
+        const reader = this.stdinReaderFor(io);
+        if (reader) stage0Stdin = bytesStream(await reader.readAll());
+      }
       let stdin = '';
       let status = 0;
       const codes: number[] = [];
-      for (let i = 0; i < expanded.length; i++) {
-        const isLast = i === expanded.length - 1;
-        const { name, argv } = expanded[i];
-        let captured = '';
-        // Each builtin stage gets a derived frame: non-final stages capture into
-        // the buffer feeding the next stage (byte-encoded into a one-shot stream);
-        // the final stage writes to `io`.
-        const stageStdin = bytesStream(enc.encode(stdin));
-        const stageIo = this.deriveIo(io, { stdout: isLast ? io.stdout : (s) => { captured += s; }, stdin: stageStdin });
-        status = await this.dispatch(name, argv, stageIo, { stdin: stageStdin });
-        // A stage's `exit N` is subshell-local (bash runs each pipeline stage in a
-        // subshell): it is THAT stage's code — the pipeline's status is the LAST
-        // stage's (`{ exit 3; } | cat` → 0), and it does NOT abort the parent shell.
-        // Capture + clear the shared `this.exiting` rather than returning early.
-        if (this.exiting !== undefined) { status = this.exiting; this.exiting = undefined; }
-        codes.push(status);
-        stdin = captured;
+      const savedIo = this.io;
+      try {
+        for (let i = 0; i < stages.length; i++) {
+          const isLast = i === stages.length - 1;
+          const { name, extraArgv, env } = names[i];
+          let captured = '';
+          // Each builtin stage gets a derived frame: non-final stages capture into
+          // the buffer feeding the next stage (byte-encoded into a one-shot stream);
+          // the final stage writes to `io`. Stage 0 uses its resolved fd-0 (FIX 3/4).
+          const stageStdin = i === 0 ? (stage0Stdin ?? bytesStream(enc.encode(stdin))) : bytesStream(enc.encode(stdin));
+          const stageIo = this.deriveIo(io, { stdout: isLast ? io.stdout : (s) => { captured += s; }, stdin: stageStdin });
+          // FIX 6 (item I): expand THIS stage's args against THIS stage's stdin so
+          // a `$(cat)` in the args reads the stage's piped input (bash), not the
+          // enclosing/root stdin. Set `this.io` to the stage frame across the arg
+          // expansion (command subs read `this.io.stdin`), then restore.
+          this.io = stageIo;
+          const argv = [...extraArgv, ...await this.expandCommandArgs(stages[i], expander)];
+          if (this.options.xtrace) savedIo.stderr('+ ' + [name, ...argv].join(' ') + '\n');
+          status = await this.dispatch(name, argv, stageIo, { stdin: stageStdin });
+          // A stage's `exit N` is subshell-local (bash runs each pipeline stage in a
+          // subshell): it is THAT stage's code — the pipeline's status is the LAST
+          // stage's (`{ exit 3; } | cat` → 0), and it does NOT abort the parent shell.
+          // Capture + clear the shared `this.exiting` rather than returning early.
+          if (this.exiting !== undefined) { status = this.exiting; this.exiting = undefined; }
+          codes.push(status);
+          stdin = captured;
+        }
+      } finally {
+        this.io = savedIo;
       }
       this.pipeStatus = codes;
       return this.pipelineStatus(codes, status);
+    }
+
+    // Mixed/external pipeline: expand every stage's full command up front (as the
+    // original hoisted pass did — kernel stages spawn concurrently, so there is no
+    // sequential per-stage stdin to expand against). Preserves the prior ordering
+    // (args expand BEFORE headFd0 drains stage 0's stdin).
+    const expanded: Array<{ name: string; argv: string[]; env: Record<string, string> }> = [];
+    for (let i = 0; i < stages.length; i++) {
+      const { name, extraArgv, env } = names[i];
+      const argv = [...extraArgv, ...await this.expandCommandArgs(stages[i], expander)];
+      if (this.options.xtrace) io.stderr('+ ' + [name, ...argv].join(' ') + '\n');
+      expanded.push({ name, argv, env });
     }
 
     // D8: a `<` / `<<` / `<<<` redirect on the FIRST stage becomes that stage's
     // fd-0 source (later stages read the previous stage's pipe). Without this a
     // stdin-reading head (`grep foo < file | sort`) would block. The kernel
     // pipe-feeds it — an `open` is streamed in-kernel, a `<<`/`<<<` body is
-    // fed as bytes. Only the stage's OWN redirects apply here (no inherited
-    // frame stdin), so pass a stdin-less frame view.
-    const headFd0 = await this.resolveStdinFd(stages[0].redirects, { ...io, stdin: undefined });
+    // fed as bytes.
+    //
+    // FIX 4 (item H): the FIRST stage's OWN `<`/`<<`/`<<<` redirect wins; with NO
+    // such redirect the first stage INHERITS the enclosing frame's stdin (a nested
+    // pipeline inside a group whose stdin is an outer pipe or the group's own
+    // `< file`) — drained into fd-0 bytes via resolveStdinFd's inherited-stdin
+    // fallback. Guarded so the inherited-stdin drain fires ONLY when NO frame
+    // reader exists yet: a `while read …; do echo | cat; done < file` body must NOT
+    // eat the loop's SHARED cursor (a sibling `read` owns it) — there stage 0 stays
+    // empty (bash: `echo` ignores stdin, the loop keeps its file cursor). The root
+    // stream is never drained (checked inside resolveStdinFd). When a stage-0
+    // redirect IS present, resolveStdinFd returns it before the fallback, so the
+    // guard does not affect the redirect case.
+    const stage0HasInputRedirect = stages[0].redirects.some(
+      (r) => r.op === '<' || r.op === '<<' || r.op === '<<<' || r.op === '<>',
+    );
+    const inheritStage0Stdin = stage0HasInputRedirect || !this.stdinReaderExists(io);
+    const headFd0 = await this.resolveStdinFd(stages[0].redirects, inheritStage0Stdin ? io : { ...io, stdin: undefined });
 
     const stageParams: PipelineStageParams[] = [];
     for (let i = 0; i < expanded.length; i++) {
@@ -1829,7 +2038,21 @@ export class Executor {
     // a kernel fd-0 spec instead (D8): a `<` redirect opens the VFS path in-kernel
     // (streamed), a `<<`/`<<<` body or an inherited piped-stdin stream is fed as
     // fd-0 bytes — no inline copy for the file case.
-    const stdin = (await this.resolveStdinStream(cmd.redirects)) ?? io.stdin;
+    //
+    // FIX 1 (item G): resolve the redirect ONCE into BOTH forms (stream + fdSpec)
+    // so `<<< "$(cmd)"` runs its command substitution exactly once regardless of
+    // whether the command is a builtin (uses `.stream`) or an external (`.fdSpec`).
+    // A `< file` opening a missing file throws RedirectError here — catch it (like
+    // the applyRedirects block below) so it reports + returns 1 and the statement
+    // list CONTINUES, matching bash (an uncaught throw would abort the whole script).
+    let resolvedInput: Awaited<ReturnType<Executor['resolveStdinInput']>>;
+    try {
+      resolvedInput = await this.resolveStdinInput(cmd.redirects);
+    } catch (e) {
+      if (e instanceof RedirectError) return this.onRedirectError(name, e, io);
+      throw e;
+    }
+    const stdin = resolvedInput?.stream ?? io.stdin;
 
     // Apply output redirects to this command's frame. A refused redirect
     // (noclobber) aborts the command with status 1 — it never runs.
@@ -1858,20 +2081,19 @@ export class Executor {
         return status;
       }
       // Resolve the external's fd-0. An explicit `<`/`<<`/`<<<` redirect wins →
-      // fd-0 spec (open/bytes). Otherwise, when this command INHERITS a live
-      // stdin stream (a compound-pipeline stage's inter-stage pipe — NOT the
-      // never-EOF root stream) AND the backend can live-stream (spawnStream) AND
-      // no sibling builtin has already locked that stream (shared-cursor case),
-      // hand the STREAM straight to the child's fd 0 so it flows chunk-by-chunk
-      // instead of being `readAll`-buffered (which hangs at ~10k+ lines). Only
-      // one of the two is set: a redirect never coexists with the stream path.
-      const hasStdinRedirect = cmd.redirects.some(
-        (r) => r.op === '<' || r.op === '<<' || r.op === '<<<' || r.op === '<>',
-      );
+      // the fd-0 spec already resolved ONCE above (FIX 1: no second expansion).
+      // Otherwise, when this command INHERITS a live stdin stream (a compound-
+      // pipeline stage's inter-stage pipe — NOT the never-EOF root stream) AND the
+      // backend can live-stream (spawnStream) AND no sibling builtin has already
+      // locked that stream (shared-cursor case), hand the STREAM straight to the
+      // child's fd 0 so it flows chunk-by-chunk instead of being `readAll`-buffered
+      // (which hangs at ~10k+ lines). Only one of the two is set: a redirect never
+      // coexists with the inherited-stream path.
+      if (resolvedInput) {
+        return await this.spawnExternal(name, argv, localEnv, io, resolvedInput.fdSpec);
+      }
       const inheritedLiveStdin =
-        !hasStdinRedirect && io.stdin !== undefined && io.stdin !== this.rootStdinStream
-          ? io.stdin
-          : undefined;
+        io.stdin !== undefined && io.stdin !== this.rootStdinStream ? io.stdin : undefined;
       if (inheritedLiveStdin && this.kernel.spawnStream && !this.stdinReaderExists(io)) {
         // The child consumes the stream via its fd 0 (spawnStream locks it with
         // `pumpStreamToPort`). Detach it from the frame so a LATER sibling command
@@ -2287,6 +2509,32 @@ export class Executor {
     const argv: string[] = [...nameFields.slice(1)];
     for (const arg of cmd.args) argv.push(...await expander.expandWord(arg));
     return { name, argv, env };
+  }
+
+  /**
+   * Expand ONLY the command NAME word (not `cmd.args`), returning the resolved
+   * name plus any EXTRA fields the name word split into (e.g. `$cmd` → `foo bar`
+   * contributes `bar` to argv). Used by `execMultiStagePipeline` so the branch
+   * decision has the names while each stage's `cmd.args` are expanded LATER —
+   * per-stage, against that stage's own stdin — so a `$(cat)` in stage i reads
+   * stage i's piped input (bash). Each command substitution still expands once.
+   */
+  private async expandCommandName(cmd: SimpleCommand, expander: Expander): Promise<{ name: string; extraArgv: string[]; env: Record<string, string> }> {
+    const env: Record<string, string> = {};
+    for (const a of cmd.assignments) {
+      if (a.array === undefined && a.index === undefined && !a.append) {
+        env[a.name] = await expander.expandToString(a.value);
+      }
+    }
+    const nameFields = cmd.name === '' ? [] : await expander.expandWord(cmd.name);
+    return { name: nameFields[0] ?? '', extraArgv: nameFields.slice(1), env };
+  }
+
+  /** Expand a command's ARGS (only `cmd.args`), against the current ambient frame. */
+  private async expandCommandArgs(cmd: SimpleCommand, expander: Expander): Promise<string[]> {
+    const argv: string[] = [];
+    for (const arg of cmd.args) argv.push(...await expander.expandWord(arg));
+    return argv;
   }
 
   /**
