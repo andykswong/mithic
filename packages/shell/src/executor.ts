@@ -1033,7 +1033,24 @@ export class Executor {
     // own fd-table snapshot) must not leak back to the parent's live table.
     const subIo = this.deriveIo(io, {}, /*fork*/ true);
     try {
-      let status = await this.execList(stmt.body ?? [], subIo);
+      // A subshell applies its OWN redirects, like Group/While/For/Select. It
+      // is a COMPOUND statement, so installStdin=true installs a `< file` on the
+      // forked frame (its inner commands share one cursor). A bad-file redirect
+      // is non-fatal to the parent: convert the RedirectError to status 1 with no
+      // command name (so onRedirectError never throws a PosixSpecialBuiltinError).
+      let restore: () => void;
+      try {
+        restore = await this.applyRedirects(stmt.redirects ?? [], subIo, /*installStdin*/ true);
+      } catch (e) {
+        if (e instanceof RedirectError) return this.onRedirectError(undefined, e, subIo);
+        throw e;
+      }
+      let status: number;
+      try {
+        status = await this.execList(stmt.body ?? [], subIo);
+      } finally {
+        restore();
+      }
       // An `exit` inside the subshell sets `this.exiting`; that is the subshell's
       // own exit code and must NOT propagate to the parent.
       if (this.exiting !== undefined) status = this.exiting;
