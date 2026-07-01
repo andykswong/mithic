@@ -126,3 +126,33 @@ test('a large piped input streams through while-read without OOM', async () => {
   const out = await run('cat /big.txt | while read l; do :; done; echo done', undefined, { '/big.txt': big });
   expect(out.trim()).toBe('done');
 }, 20000);
+
+// ── shared-cursor across builtin + EXTERNAL in one compound `< file` frame ──────
+// The stdin stream must be drained through ONE shared reader; a second getReader()
+// on a locked stream throws `TypeError: ReadableStream is locked`.
+
+test('while read with an EXTERNAL command in the body does not double-lock stdin', async () => {
+  // The loop `read` locks the frame stream; the body pipes into an external `cat`.
+  // Regression: a fresh reader for the external threw "ReadableStream is locked".
+  expect(await run('while read l; do echo "$l" | cat; done < /data.txt'))
+    .toBe('alpha\nbeta\ngamma\n');
+}, 15000);
+
+test('{ read h; EXTERNAL; } < file shares one cursor (external reads where read left off)', async () => {
+  // `read h` consumes line 1 (alpha); the external `head -n1` must read line 2
+  // (beta) from the SAME cursor, not restart or crash on a locked stream.
+  expect((await run('{ read h; head -n1; } < /data.txt; echo "h=$h"')).trim())
+    .toBe('beta\nh=alpha');
+}, 15000);
+
+// ── a side-effecting redirect on a SIMPLE command is resolved exactly ONCE ───────
+test('read x <<< "$(side-effect)" runs the command substitution once', async () => {
+  // Regression: the input redirect was resolved in BOTH execSimpleCommand and
+  // applyRedirects, running the here-string command substitution twice.
+  const out = await run(
+    'read x <<< "$(echo hi; echo tick >> /cnt)"; echo "x=$x"; cat /cnt',
+    undefined,
+    { '/cnt': '' },
+  );
+  expect(out).toBe('x=hi\ntick\n'); // exactly ONE "tick" line
+}, 15000);

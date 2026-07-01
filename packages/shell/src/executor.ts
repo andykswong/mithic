@@ -1114,7 +1114,9 @@ export class Executor {
     if (!redirects || redirects.length === 0) return fn(io);
     let restore: () => void;
     try {
-      restore = await this.applyRedirects(redirects, io);
+      // installStdin=true: a compound statement has no per-command stdin
+      // resolution, so its `< file` must be installed on the frame here.
+      restore = await this.applyRedirects(redirects, io, /*installStdin*/ true);
     } catch (e) {
       // A compound statement (pipeline/group/loop) is never a special builtin, so
       // pass no name — a redirect error here is reported non-fatally (returns 1).
@@ -1167,7 +1169,7 @@ export class Executor {
    * `N>&-` (close), numbered fds via the per-shell {@link fdTable}, and the
    * `/dev/null`/`/dev/stdout`/`/dev/stderr` device paths.
    */
-  private async applyRedirects(redirects: Redirect[], io: CommandIO): Promise<() => void> {
+  private async applyRedirects(redirects: Redirect[], io: CommandIO, installStdin = false): Promise<() => void> {
     const exp = this.expander();
     const savedStdout = io.stdout;
     const savedStderr = io.stderr;
@@ -1182,13 +1184,18 @@ export class Executor {
 
     for (const r of redirects) {
       if (r.op === '<' || r.op === '<<' || r.op === '<<<' || r.op === '<>') {
-        // A COMPOUND statement (`{ …; }`, `while`, `for`, subshell) has no
-        // per-command stdin resolution, so install the redirect on the frame's
-        // stdin here and reset the cached reader so a stale reader over the old
-        // stdin isn't reused. The inner commands share this SAME frame, so the
-        // installed stream + shared reader advance ONE cursor across them.
-        const s = await this.resolveStdinStream([r]);
-        if (s !== undefined) { io.stdin = s; this.resetStdinReader(io); }
+        // Only a COMPOUND statement (`{ …; }`, `while`, `for`) needs stdin
+        // installed here — it has no per-command stdin resolution, so the redirect
+        // is applied to the frame and the inner commands share it (ONE cursor via
+        // the frame reader). A SIMPLE command already resolves its own stdin in
+        // `execSimpleCommand` (and passes it to the builtin / external fd-0), so
+        // installing again here would resolve the redirect a SECOND time (double
+        // side-effect for `<<< "$(cmd)"`, double file read for `< f`). Gate on the
+        // caller: `withRedirects` passes installStdin=true, execSimpleCommand false.
+        if (installStdin) {
+          const s = await this.resolveStdinStream([r]);
+          if (s !== undefined) { io.stdin = s; this.resetStdinReader(io); }
+        }
         continue;
       }
 
@@ -1448,14 +1455,18 @@ export class Executor {
    * D8: resolve an EXTERNAL command's fd-0 (stdin) source into a kernel fd spec.
    * A `<` redirect becomes an `open` of the (cwd-resolved) path — the kernel
    * streams the file into fd 0; a `<<`/`<<<` body becomes `bytes` fed into fd 0.
-   * With no input redirect, an inherited piped-stdin STREAM (`pipedStdin`, from a
-   * compound-pipeline stage) is drained to `bytes` so it still reaches the child.
-   * Returns undefined when there is no stdin source (the child gets an EOF).
+   * With no input redirect, an inherited piped-stdin STREAM (from a compound-
+   * pipeline stage or a `while read; do EXTERNAL; done < file` body) is drained to
+   * `bytes` so it still reaches the child. It is drained through the FRAME's
+   * SHARED {@link StdinReader} (not a fresh reader) so it (a) does not double-lock
+   * a stream a sibling builtin/external already holds — `getReader()` throws on a
+   * locked stream — and (b) advances the ONE shared cursor, so a following read
+   * correctly sees EOF/remaining data. Returns undefined when there is no stdin.
    *
    * `/dev/null` resolves to an empty `bytes` spec (immediate EOF) — the kernel's
    * VFS has no `/dev/null` handle to `open`.
    */
-  private async resolveStdinFd(redirects: Redirect[], pipedStdin: ReadableStream<Uint8Array> | undefined): Promise<StdinFdSpec | undefined> {
+  private async resolveStdinFd(redirects: Redirect[], io: CommandIO): Promise<StdinFdSpec | undefined> {
     const exp = this.expander();
     let spec: StdinFdSpec | undefined;
     let sawRedirect = false;
@@ -1476,9 +1487,15 @@ export class Executor {
       }
     }
     if (sawRedirect) return spec;
-    if (pipedStdin !== undefined) {
-      const data = await new StdinReader(pipedStdin).readAll();
-      return { action: 'bytes', data };
+    // No redirect: drain any inherited stdin stream through the frame's SHARED
+    // reader (never a fresh reader — that would double-lock a stream a sibling
+    // command in the same compound frame already holds, and `getReader()` throws
+    // on a locked stream). The shell's OWN live stdin (the root stream) is NOT
+    // drained — it is inherited by the child via the kernel's default fd-0 wiring,
+    // and draining a never-EOF terminal would block.
+    if (io.stdin !== undefined && io.stdin !== this.rootStdinStream) {
+      const reader = this.stdinReaderFor(io);
+      if (reader) { const data = await reader.readAll(); return { action: 'bytes', data }; }
     }
     return undefined;
   }
@@ -1631,8 +1648,9 @@ export class Executor {
     // fd-0 source (later stages read the previous stage's pipe). Without this a
     // stdin-reading head (`grep foo < file | sort`) would block. The kernel
     // pipe-feeds it — an `open` is streamed in-kernel, a `<<`/`<<<` body is
-    // fed as bytes.
-    const headFd0 = await this.resolveStdinFd(stages[0].redirects, undefined);
+    // fed as bytes. Only the stage's OWN redirects apply here (no inherited
+    // frame stdin), so pass a stdin-less frame view.
+    const headFd0 = await this.resolveStdinFd(stages[0].redirects, { ...io, stdin: undefined });
 
     const stageParams: PipelineStageParams[] = [];
     for (let i = 0; i < expanded.length; i++) {
@@ -1782,12 +1800,10 @@ export class Executor {
         }
         return status;
       }
-      // The shell's own live stdin (the root frame's stream) is inherited by the
-      // child through the kernel's default fd-0 wiring, NOT drained here — draining
-      // a never-EOF terminal stdin would block. Only a finite pipeline-captured
-      // stream (a different object) is passed to be read into fd-0 bytes.
-      const inheritedStdin = io.stdin === this.rootStdinStream ? undefined : io.stdin;
-      const fd0 = await this.resolveStdinFd(cmd.redirects, inheritedStdin);
+      // Resolve the external's fd-0. A redirect wins; otherwise a finite inherited
+      // stdin stream is drained through the frame's shared reader (the root live
+      // stream is left for the kernel's default fd-0 wiring — see resolveStdinFd).
+      const fd0 = await this.resolveStdinFd(cmd.redirects, io);
       return await this.spawnExternal(name, argv, localEnv, io, fd0);
     } finally {
       if (restore) restore();
