@@ -2042,7 +2042,16 @@ export class Executor {
     // FIX 1 (item G): resolve the redirect ONCE into BOTH forms (stream + fdSpec)
     // so `<<< "$(cmd)"` runs its command substitution exactly once regardless of
     // whether the command is a builtin (uses `.stream`) or an external (`.fdSpec`).
-    const resolvedInput = await this.resolveStdinInput(cmd.redirects);
+    // A `< file` opening a missing file throws RedirectError here — catch it (like
+    // the applyRedirects block below) so it reports + returns 1 and the statement
+    // list CONTINUES, matching bash (an uncaught throw would abort the whole script).
+    let resolvedInput: Awaited<ReturnType<Executor['resolveStdinInput']>>;
+    try {
+      resolvedInput = await this.resolveStdinInput(cmd.redirects);
+    } catch (e) {
+      if (e instanceof RedirectError) return this.onRedirectError(name, e, io);
+      throw e;
+    }
     const stdin = resolvedInput?.stream ?? io.stdin;
 
     // Apply output redirects to this command's frame. A refused redirect
