@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'vitest';
-import { sinkToStream, toSink, type OutputSink } from './output-sink.ts';
+import { sinkToStream, toSink, BrokenPipeError, type OutputSink } from './output-sink.ts';
 
 describe('toSink', () => {
   test('wraps a bare (s) => void so it is still callable as text', () => {
@@ -79,4 +79,50 @@ test('sinkToStream close() signals EOF (readable ends)', async () => {
   const reader = ts.readable.getReader();
   const { done } = await reader.read();
   expect(done).toBe(true);
+});
+
+describe('sinkToStream broken-pipe backstop (SIGPIPE-equivalent)', () => {
+  test('after the reader cancels, isBroken() latches and the NEXT write throws BrokenPipeError', async () => {
+    const ts = new TransformStream<Uint8Array, Uint8Array>();
+    const { sink, isBroken } = sinkToStream(ts.writable);
+    expect(isBroken()).toBe(false);
+
+    // Fill and then cancel the reader so a queued write rejects → broken latches.
+    sink('first');
+    const reader = ts.readable.getReader();
+    await reader.read();          // pull the first write so the chain advances
+    await reader.cancel();        // downstream closes early (broken pipe)
+    sink('trigger');              // this write's promise rejects → broken = true
+
+    // The rejection settles across the writer's internal (macrotask) machinery —
+    // poll a bounded number of event-loop turns rather than assuming a fixed count.
+    for (let i = 0; i < 50 && !isBroken(); i++) await new Promise((r) => setTimeout(r, 0));
+    expect(isBroken()).toBe(true);
+
+    // Now a broken sink THROWS synchronously (unwind the producer), for BOTH the
+    // text path and the raw-bytes path.
+    expect(() => sink('again')).toThrow(BrokenPipeError);
+    expect(() => sink.writeBytes(new Uint8Array([1, 2]))).toThrow(BrokenPipeError);
+  });
+
+  test('BrokenPipeError carries exit code 141 (128 + SIGPIPE 13)', () => {
+    expect(new BrokenPipeError().code).toBe(141);
+  });
+
+  test('abort() latches broken (next write throws) and does not hang close()', async () => {
+    // Models a producer whose DOWNSTREAM went away without cancelling the reader:
+    // a queued backpressured write would otherwise strand close()'s `await chain`.
+    const ts = new TransformStream<Uint8Array, Uint8Array>();
+    const { sink, isBroken, close, abort } = sinkToStream(ts.writable);
+    sink('a');                       // consumes the 1 writable credit
+    sink('backpressured');           // pends: no reader is pulling
+    expect(isBroken()).toBe(false);
+
+    abort();                         // downstream vanished — forcibly break
+
+    expect(isBroken()).toBe(true);
+    expect(() => sink('after')).toThrow(BrokenPipeError);
+    // close() must resolve promptly (not hang on the stranded chain).
+    await close();
+  });
 });

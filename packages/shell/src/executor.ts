@@ -21,7 +21,7 @@
 import type { Program, Redirect, SimpleCommand, Statement } from './ast.ts';
 import { parse } from './parser.ts';
 import { StdinReader } from './stdin-reader.ts';
-import { toSink, sinkToStream, type OutputSink } from './output-sink.ts';
+import { toSink, sinkToStream, BrokenPipeError, type OutputSink } from './output-sink.ts';
 import { evalArith } from './arith.ts';
 import { globMatch } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
@@ -164,6 +164,20 @@ class FuncReturn extends Error {
 }
 /** A redirect that cannot be performed (e.g. noclobber refusing to overwrite). */
 class RedirectError extends Error {}
+
+/**
+ * Yield to the MACROTASK queue (not just microtasks). An in-process producer loop
+ * (`while :; do echo x; done | head`) writes to a {@link sinkToStream} sink whose
+ * broken-pipe signal only arrives as a MessagePort message — a macrotask. A loop
+ * that awaits only already-resolved promises (microtasks) starves that macrotask
+ * forever, so the downstream's early close (EPIPE) is never delivered and the
+ * producer never learns to stop (RSS grows unbounded). Turning the event loop once
+ * per batch of iterations lets the pump process the close and latch the sink broken,
+ * so the next `ctx.write` throws {@link BrokenPipeError} — the SIGPIPE-equivalent
+ * unwind. Isomorphic (`setTimeout(0)` works in the browser and on Node).
+ */
+const YIELD_EVERY = 128;
+const yieldToIo = (): Promise<void> => new Promise<void>((resolve) => { setTimeout(resolve, 0); });
 
 /**
  * A frame-scoped {@link StdinReader}, cached on a {@link CommandIO} under this
@@ -896,6 +910,7 @@ export class Executor {
   private async execWhile(stmt: Statement, io: CommandIO): Promise<number> {
     let status = 0;
     const until = stmt.until === true;
+    let iter = 0;
     for (;;) {
       const cond = await this.execList(stmt.condition ?? [], io);
       if (this.exiting !== undefined) return cond;
@@ -909,6 +924,9 @@ export class Executor {
         throw e;
       }
       if (this.exiting !== undefined) return status;
+      // Preempt so a downstream pipe's early-close (EPIPE) can be delivered and a
+      // broken producer sink latched — else a tight body starves that macrotask.
+      if (++iter % YIELD_EVERY === 0) await yieldToIo();
     }
     return status;
   }
@@ -935,6 +953,7 @@ export class Executor {
       this.lastStatus = 1;
       return 1;
     }
+    let iter = 0;
     for (const word of words) {
       this.context.env[stmt.varName!] = word;
       try {
@@ -945,6 +964,9 @@ export class Executor {
         throw e;
       }
       if (this.exiting !== undefined) return status;
+      // Preempt so a downstream pipe's early-close (EPIPE) can be delivered and a
+      // broken producer sink latched (see yieldToIo).
+      if (++iter % YIELD_EVERY === 0) await yieldToIo();
     }
     return status;
   }
@@ -981,6 +1003,9 @@ export class Executor {
       // A readonly increment target can never advance — break (divergence from
       // bash, which hangs). The warning was already emitted (warn-once per name).
       if (rejected.size > 0) break;
+      // Preempt so a downstream pipe's early-close (EPIPE) can be delivered and a
+      // broken producer sink latched (see yieldToIo).
+      if (guard % YIELD_EVERY === 0) await yieldToIo();
     }
     return status;
   }
@@ -1715,18 +1740,15 @@ export class Executor {
     // Inter-stage pipes: transform[i] connects stage i (stdout) → stage i+1 (stdin).
     const transforms = Array.from({ length: n - 1 }, () => new TransformStream<Uint8Array, Uint8Array>());
     const codes = new Array<number>(n).fill(0);
+    // One sink per inter-stage pipe, created UP FRONT so a consumer stage can abort
+    // its UPSTREAM producer's sink (transform[i-1]) when it finishes early — see the
+    // finally block.
+    const sinks = transforms.map((t) => sinkToStream(t.writable));
 
     const runStage = async (i: number): Promise<void> => {
       const isLast = i === n - 1;
-      let stageStdout: OutputSink;
-      let closeOut: (() => Promise<void>) | undefined;
-      if (isLast) {
-        stageStdout = io.stdout;
-      } else {
-        const s = sinkToStream(transforms[i].writable);
-        stageStdout = s.sink;
-        closeOut = s.close;
-      }
+      const outSink = isLast ? undefined : sinks[i];
+      const stageStdout: OutputSink = isLast ? io.stdout : outSink!.sink;
       const stderrToNext = !isLast && pipeStderr[i];
       const stageIo = this.deriveIo(io, {
         stdout: stageStdout,
@@ -1746,16 +1768,31 @@ export class Executor {
         // early-return on a non-undefined `this.exiting`).
         if (this.exiting !== undefined) { codes[i] = this.exiting; this.exiting = undefined; }
         else codes[i] = code;
+      } catch (e) {
+        // SIGPIPE-equivalent: the downstream stage closed early, so this stage's
+        // next in-process write threw. Record 128+SIGPIPE(13)=141 as THIS stage's
+        // code and stop cleanly — the downstream already ended, and the pipeline's
+        // status is the LAST stage's (an in-process producer's 141 is internal,
+        // mirroring bash's PIPESTATUS). Do NOT rethrow: the sibling downstream is
+        // done and the parent shell must survive. Any OTHER error propagates.
+        if (e instanceof BrokenPipeError) codes[i] = e.code;
+        else throw e;
       } finally {
-        // EOF to the downstream once this stage is done producing.
-        if (closeOut) await closeOut();
-        // If this stage finished (possibly early), cancel its stdin so the UPSTREAM
-        // stage's next write rejects (EPIPE). NOTE: this stops an EXTERNAL producer
-        // (kernel tears its pipe down); an in-process BUILTIN infinite producer
-        // (`while :; do echo x; done`) has no EPIPE backstop and still runs on — a
-        // pre-existing limitation of the in-process builtin write path, unchanged
-        // by this concurrency rework.
-        if (i > 0) await transforms[i - 1].readable.cancel().catch(() => {});
+        // This stage finished (possibly early). Break its UPSTREAM producer first,
+        // THEN EOF its own downstream:
+        //  - Abort the upstream sink (transform[i-1]): a consumer that exits early
+        //    (e.g. `head`, or a middle `cat` whose own downstream closed) leaves its
+        //    stdin reader locked-but-abandoned, so the producer's next backpressured
+        //    `writer.write()` would hang forever and strand its `close()`. Aborting
+        //    rejects those writes → the producer's sink latches broken → its next
+        //    write throws BrokenPipeError (in-process builtin) or its stdout pump
+        //    stops (external). Also cancel the readable to release the reader lock.
+        //  - close() this stage's own output sink (EOF to the next stage).
+        if (i > 0) {
+          sinks[i - 1].abort();
+          await transforms[i - 1].readable.cancel().catch(() => {});
+        }
+        if (outSink) await outSink.close();
       }
     };
 
