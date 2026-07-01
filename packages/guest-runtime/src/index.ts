@@ -20,6 +20,6 @@ export { SyscallClient } from './syscall-client.ts';
 export type { SyscallResult, SyscallCallOptions } from './syscall-client.ts';
 export { MessagePortTransport } from './transport.ts';
 export type { Transport } from './transport.ts';
-export { portToReadable, portToWritable, portToDuplex } from './streams.ts';
+export { portToReadable, portToWritable, portToDuplex, pumpStreamToPort } from './streams.ts';
 export { MutationSerializer, VNode } from './remote-dom.ts';
 export type { DomMutation } from './remote-dom.ts';

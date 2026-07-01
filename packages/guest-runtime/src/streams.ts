@@ -1,5 +1,6 @@
 import {
   isPipeMessage,
+  INITIAL_CREDIT_BYTES,
   PipeReader,
   PipeWriter,
   PIPE_FLUSH_BYTES,
@@ -264,6 +265,71 @@ export function portToReadable(port: MessagePort, signal?: AbortSignal): Readabl
       teardown();
     },
   });
+}
+
+/**
+ * Drive a guest-realm `ReadableStream<Uint8Array>` INTO a pipe WRITE port,
+ * honoring the credit protocol, then send EOF + close. This is the guest-side
+ * twin of the kernel's `pumpToPort`: use it to feed a shell-realm stream (e.g. a
+ * compound-pipeline stage's inter-stage `TransformStream.readable`) into a
+ * kernel pipe whose READ end was injected as a child's fd (dup2).
+ *
+ * WHY NOT `source.pipeTo(portToWritable(port))`: `portToWritable` COALESCES
+ * sub-{@link PIPE_FLUSH_BYTES} writes behind a {@link PIPE_FLUSH_MS} timer, and
+ * `pipeTo` (HWM 1) awaits each write's readiness — so a high-rate small-chunk
+ * producer (e.g. `seq` emitting one short line per chunk) is throttled to ~one
+ * chunk per flush tick (~4 ms), i.e. hundreds of seconds for 100k lines — a de
+ * facto hang. This pump posts each (sub-window) chunk the instant credit allows,
+ * with NO flush timer, so throughput is bounded only by the reader's credit
+ * window — genuine back-pressure without the per-chunk latency tax.
+ *
+ * Back-pressure + EPIPE: `reserve()` parks until the reader (the child draining
+ * its fd) grants credit and rejects promptly once the pipe breaks (child closed
+ * its fd early / EPIPE), which ends the pump and cancels `source` so an upstream
+ * producer stops. A source chunk larger than `windowBytes` is split so a
+ * >window chunk never parks forever on a window that can't grant it (R2).
+ * Fire-and-forget friendly: it never throws (source/transfer errors just end the
+ * pump); the port is always closed.
+ */
+export async function pumpStreamToPort(
+  source: ReadableStream<Uint8Array>,
+  port: MessagePort,
+  windowBytes: number = INITIAL_CREDIT_BYTES,
+): Promise<void> {
+  port.start?.();
+  const flow = new PipeWriter();
+  port.onmessage = (e: MessageEvent): void => {
+    const msg = e.data as unknown;
+    if (!isPipeMessage(msg)) return;
+    if (msg.type === 'credit') flow.addCredit(msg.bytes);
+    else if (msg.type === 'end' || msg.type === 'error') flow.markBroken(msg.type === 'error' ? msg.code : 'EPIPE');
+  };
+  const reader = source.getReader();
+  let broke = false;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      for (let off = 0; off < value.byteLength; off += windowBytes) {
+        const slice = value.subarray(off, off + windowBytes);
+        const chunk = slice.byteOffset === 0 && slice.byteLength === slice.buffer.byteLength ? slice : new Uint8Array(slice);
+        await flow.reserve(chunk.byteLength); // rejects promptly if the pipe broke (EPIPE)
+        const msg: PipeMessage = { type: 'data', chunk };
+        const transfer = chunk.byteLength >= TRANSFER_THRESHOLD_BYTES ? [chunk.buffer as ArrayBuffer] : [];
+        port.postMessage(msg, transfer);
+      }
+    }
+  } catch {
+    broke = true; // broken pipe (EPIPE) or a source read error — stop pumping.
+  } finally {
+    // Release the source: on a broken pipe cancel it (propagate EPIPE upstream);
+    // on clean EOF just release the lock.
+    if (broke) { try { await reader.cancel(); } catch { /* already closed */ } }
+    else reader.releaseLock();
+  }
+  try { port.postMessage({ type: 'end' } satisfies PipeMessage); } catch { /* closed */ }
+  try { port.close(); } catch { /* closed */ }
 }
 
 /** The abort reason to error a stream with (an Error, preferring the signal's own). */
