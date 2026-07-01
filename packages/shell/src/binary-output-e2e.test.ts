@@ -25,9 +25,9 @@ test('cat of a binary VFS file round-trips byte-exact through the shell', async 
 
   // Write raw bytes into the VFS via the provider's real open/write/close API:
   // open(path, flags) → FileHandle, write(handle, data, offset) → byteCount, close(handle).
-  const h = await fs.open('/bin.dat', { write: true, create: true });
-  await fs.write(h, new Uint8Array([0x00, 0xff, 0xfe]), 0);
-  await fs.close(h);
+  const h = fs.open('/bin.dat', { write: true, create: true });
+  fs.write(h, new Uint8Array([0x00, 0xff, 0xfe]), 0);
+  fs.close(h);
 
   const kernel = new Kernel({ runtime: new WorkerRuntime(), vfs, resolveCommand: createCoreutilsResolver() });
   const guestUrl = new URL('../dist/process.js', import.meta.url);
