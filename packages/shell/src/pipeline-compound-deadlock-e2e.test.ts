@@ -55,6 +55,39 @@ async function bootShell(): Promise<(script: string) => Promise<{ stdout: string
   };
 }
 
+/**
+ * Like {@link bootShell} but returns captured stdout as RAW bytes (no UTF-8
+ * decode), and seeds each `files` entry (Uint8Array) into the MemoryFs via the
+ * provider's synchronous open/write/close API — mirrors `binary-output-e2e`.
+ */
+async function runBytes(script: string, files: Record<string, Uint8Array>): Promise<Uint8Array> {
+  const [{ Kernel }, { WorkerRuntime }, { FileSystemRouter, MemoryFsProvider }] = await Promise.all([
+    import('@mithic/kernel'),
+    import('@mithic/runtime/backends/worker'),
+    import('@mithic/io/vfs'),
+  ]);
+
+  const fs = new MemoryFsProvider({ files: {} });
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', fs);
+
+  for (const [path, bytes] of Object.entries(files)) {
+    const h = fs.open(path, { write: true, create: true });
+    fs.write(h, bytes, 0);
+    fs.close(h);
+  }
+
+  const kernel = new Kernel({ runtime: new WorkerRuntime(), vfs, resolveCommand: createCoreutilsResolver() });
+  const guestUrl = new URL('../dist/process.js', import.meta.url);
+  const { pid, stdout } = await kernel.spawn(guestUrl, {
+    args: ['bash', '-c', script],
+    capabilities: [{ type: 'process' }, ...FS_RW],
+    captureStdout: true,
+  });
+  await kernel.wait(pid);
+  return stdout ? await stdout : new Uint8Array();
+}
+
 // Tight timeout: a regression of the deadlock must FAIL fast, not stall CI.
 const T = 8000;
 
@@ -70,6 +103,20 @@ describe('D5: compound-stage pipeline streaming (regression — terminates, no d
     const run = await bootShell();
     const out = await run('seq 1 100000 | cat | { head -n3; }');
     expect(out.stdout).toBe('1\n2\n3\n');
+    expect(out.code).toBe(0);
+  }, T);
+
+  test('binary through a multi-statement compound stage is byte-exact', async () => {
+    // /b.bin = 00 ff fe 41. `{ cat; printf Z; }` is a NON-flattenable compound stage
+    // → execNodePipeline. The string-capture path corrupts 0xff/0xfe today.
+    const outBytes = await runBytes('cat /b.bin | { cat; printf "Z"; }', { '/b.bin': new Uint8Array([0x00, 0xff, 0xfe, 0x41]) });
+    expect(Array.from(outBytes)).toEqual([0x00, 0xff, 0xfe, 0x41, 0x5a]);
+  }, T);
+
+  test('unbounded producer into a multi-statement compound stage that exits early terminates', async () => {
+    const run = await bootShell();
+    const out = await run('yes | { head -n3; echo END; }');
+    expect(out.stdout).toBe('y\ny\ny\nEND\n');
     expect(out.code).toBe(0);
   }, T);
 });

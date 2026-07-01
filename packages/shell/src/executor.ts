@@ -21,7 +21,7 @@
 import type { Program, Redirect, SimpleCommand, Statement } from './ast.ts';
 import { parse } from './parser.ts';
 import { StdinReader } from './stdin-reader.ts';
-import { toSink, type OutputSink } from './output-sink.ts';
+import { toSink, sinkToStream, type OutputSink } from './output-sink.ts';
 import { evalArith } from './arith.ts';
 import { globMatch } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
@@ -1580,35 +1580,58 @@ export class Executor {
   }
 
   /**
-   * Run a pipeline whose stages are full command nodes (M1) in-process: each
-   * stage's stdout (and, for a `|&` join, its stderr) is captured and fed to the
-   * next stage as stdin. The pipeline's status is the last stage's (or, under
-   * pipefail, the last nonzero). Compound stages (subshells/groups/if/…) run via
-   * {@link execStatement}; the captured stdin is exposed via {@link pipeStdin}.
+   * Run a pipeline whose stages are full command nodes (M1) in-process,
+   * CONCURRENTLY, streaming byte-safe between stages. Adjacent stages are joined
+   * by identity {@link TransformStream}s: stage i's stdout (and, for a `|&` join,
+   * its stderr) writes into `transform[i].writable`; stage i+1 reads from
+   * `transform[i].readable` as its stdin. All stages run under one `Promise.all`
+   * so a downstream reader PULLS while the upstream pushes (an identity transform
+   * has readable HWM 0 — a write only settles once someone reads), avoiding a
+   * buffer-to-completion serialization AND a backpressure deadlock. A stage that
+   * finishes producing closes its output writer (EOF downstream); a stage that
+   * finishes consuming (possibly early, e.g. `head`) cancels its stdin so the
+   * upstream's next write rejects (EPIPE) and an unbounded producer stops.
+   *
+   * The pipeline's status is the last stage's (or, under pipefail, the last
+   * nonzero). Compound stages (subshells/groups/if/…) run via {@link execStatement}.
    */
   private async execNodePipeline(nodes: Statement[], pipeStderr: boolean[], io: CommandIO): Promise<number> {
-    const enc = new TextEncoder();
-    let stdin: string | undefined;
-    const codes: number[] = [];
-    for (let i = 0; i < nodes.length; i++) {
-      const isLast = i === nodes.length - 1;
-      let captured = '';
-      // Each stage runs against its OWN derived frame: a non-final stage captures
-      // its stdout (and, for `prev |& next`, its stderr) into the buffer that
-      // feeds the next stage's stdin (byte-encoded into a one-shot stream); the
-      // final stage writes to `io`. No shared instance fields are mutated, so a
-      // backgrounded stage cannot misroute.
+    const n = nodes.length;
+    // Inter-stage pipes: transform[i] connects stage i (stdout) → stage i+1 (stdin).
+    const transforms = Array.from({ length: n - 1 }, () => new TransformStream<Uint8Array, Uint8Array>());
+    const codes = new Array<number>(n).fill(0);
+
+    const runStage = async (i: number): Promise<void> => {
+      const isLast = i === n - 1;
+      let stageStdout: OutputSink;
+      let closeOut: (() => Promise<void>) | undefined;
+      if (isLast) {
+        stageStdout = io.stdout;
+      } else {
+        const s = sinkToStream(transforms[i].writable);
+        stageStdout = s.sink;
+        closeOut = s.close;
+      }
+      const stderrToNext = !isLast && pipeStderr[i];
       const stageIo = this.deriveIo(io, {
-        stdout: isLast ? io.stdout : (s) => { captured += s; },
-        stderr: (!isLast && pipeStderr[i]) ? (s) => { captured += s; } : io.stderr,
-        stdin: i === 0 ? undefined : bytesStream(enc.encode(stdin ?? '')),
+        stdout: stageStdout,
+        stderr: stderrToNext ? stageStdout : io.stderr,
+        stdin: i === 0 ? io.stdin : transforms[i - 1].readable,
       });
-      const code = await this.execStatement(nodes[i], stageIo);
-      codes.push(code);
-      if (this.exiting !== undefined) { this.pipeStatus = codes; return code; }
-      stdin = captured;
-    }
+      try {
+        codes[i] = await this.execStatement(nodes[i], stageIo);
+      } finally {
+        // EOF to the downstream once this stage is done producing.
+        if (closeOut) await closeOut();
+        // If this stage finished (possibly early), cancel its stdin so the UPSTREAM
+        // stage's next write rejects (EPIPE) and an unbounded producer stops.
+        if (i > 0) await transforms[i - 1].readable.cancel().catch(() => {});
+      }
+    };
+
+    await Promise.all(nodes.map((_, i) => runStage(i)));
     this.pipeStatus = codes;
+    if (this.exiting !== undefined) return this.exiting;
     return this.pipelineStatus(codes, codes[codes.length - 1] ?? 0);
   }
 
