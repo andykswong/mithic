@@ -20,6 +20,7 @@
 
 import type { Program, Redirect, SimpleCommand, Statement } from './ast.ts';
 import { parse } from './parser.ts';
+import { toSink, type OutputSink } from './output-sink.ts';
 import { evalArith } from './arith.ts';
 import { globMatch } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
@@ -52,7 +53,7 @@ export interface ShellFunction {
 interface FdEntry {
   mode: 'read' | 'write' | 'rw';
   /** Write sink for output fds. */
-  sink?: (s: string) => void;
+  sink?: OutputSink;
   /** Close the underlying file (flush). */
   close?: () => void;
   /** Buffered input contents (read fds). */
@@ -109,8 +110,8 @@ export interface Job {
  * do not leak back into the parent's live table.
  */
 export interface CommandIO {
-  stdout: (s: string) => void;
-  stderr: (s: string) => void;
+  stdout: OutputSink;
+  stderr: OutputSink;
   stdin: string | undefined;
   fdTable: Map<number, FdEntry>;
 }
@@ -131,8 +132,8 @@ export type CommandResolver = (name: string) => string | URL | undefined;
 
 export interface ExecutorOptions {
   resolve?: CommandResolver;
-  onStdout?: (s: string) => void;
-  onStderr?: (s: string) => void;
+  onStdout?: OutputSink | ((s: string) => void);
+  onStderr?: OutputSink | ((s: string) => void);
   fs?: FsClient;
   /**
    * A3 Tier 2: the shell's OWN stdin as a LIVE byte stream. When present, plain
@@ -293,12 +294,12 @@ export class Executor {
     this.resolve = options.resolve ?? ((name) => name);
     this.fs = options.fs;
     this.stdinStream = options.stdinStream;
-    const stdout = options.onStdout ?? ((s: string) => {
+    const stdout = toSink(options.onStdout ?? ((s: string) => {
       if (typeof process !== 'undefined' && process.stdout) process.stdout.write(s);
-    });
-    const stderr = options.onStderr ?? ((s: string) => {
+    }));
+    const stderr = toSink(options.onStderr ?? ((s: string) => {
       if (typeof process !== 'undefined' && process.stderr) process.stderr.write(s);
-    });
+    }));
     // The root ambient frame: terminal sinks, no piped stdin, the persistent fd table.
     this.io = { stdout, stderr, stdin: undefined, fdTable: this.fdTable };
     // C4: the job table + wait/jobs/kill/disown owner (signal delivery via kernel.kill).
@@ -1127,19 +1128,20 @@ export class Executor {
    * dup like `exec 3>&1` captures stdout's current target without forming a
    * self-referential loop when stdout is later redirected to fd 3.
    */
-  private sinkForFd(fd: number, io: CommandIO): (s: string) => void {
+  private sinkForFd(fd: number, io: CommandIO): OutputSink {
     if (fd === 1) return io.stdout;
     if (fd === 2) return io.stderr;
     const entry = io.fdTable.get(fd);
     if (entry?.sink) return entry.sink;
-    return () => { /* fd not open for writing — discard */ };
+    return toSink(() => { /* fd not open for writing — discard */ });
   }
 
   /** Point a numbered fd at a sink in `io` (temporary, for the duration of a command). */
-  private setFdSink(fd: number, sink: (s: string) => void, io: CommandIO): void {
-    if (fd === 1) io.stdout = sink;
-    else if (fd === 2) io.stderr = sink;
-    else { const e = io.fdTable.get(fd) ?? { mode: 'write' as const }; e.sink = sink; io.fdTable.set(fd, e); }
+  private setFdSink(fd: number, sink: OutputSink | ((s: string) => void), io: CommandIO): void {
+    const s = toSink(sink);
+    if (fd === 1) io.stdout = s;
+    else if (fd === 2) io.stderr = s;
+    else { const e = io.fdTable.get(fd) ?? { mode: 'write' as const }; e.sink = s; io.fdTable.set(fd, e); }
   }
 
   /**
@@ -1188,7 +1190,7 @@ export class Executor {
         }
       }
       const sink = this.makeFileSink(path, append, closers, base);
-      if (r.op === '&>' || r.op === '&>>') { io.stdout = sink; io.stderr = sink; }
+      if (r.op === '&>' || r.op === '&>>') { io.stdout = toSink(sink); io.stderr = toSink(sink); }
       else { snapshotFd(fd); this.setFdSink(fd, sink, io); }
     }
 
@@ -1237,7 +1239,7 @@ export class Executor {
             io.stderr(`shell: ${path}: ${(e as Error)?.message ?? 'cannot open'}\n`);
             return 1;
           }
-          const entry: FdEntry = { mode: 'rw', duplex, sink: (s) => { void Promise.resolve(duplex.write(s)); }, close: () => { void Promise.resolve(duplex.close()); } };
+          const entry: FdEntry = { mode: 'rw', duplex, sink: toSink((s) => { void Promise.resolve(duplex.write(s)); }), close: () => { void Promise.resolve(duplex.close()); } };
           io.fdTable.set(fd, entry);
           continue;
         }
@@ -1278,19 +1280,19 @@ export class Executor {
    * reflects current contents without holding an fd open across commands.
    * `seed` is the pre-read existing contents for append mode.
    */
-  private makeExecFileSink(path: string, seed: string, io: CommandIO): (s: string) => void {
-    if (path === '/dev/null') return () => { /* discard */ };
-    if (path === '/dev/stdout') return (s) => io.stdout(s);
-    if (path === '/dev/stderr') return (s) => io.stderr(s);
+  private makeExecFileSink(path: string, seed: string, io: CommandIO): OutputSink {
+    if (path === '/dev/null') return toSink(() => { /* discard */ });
+    if (path === '/dev/stdout') return toSink((s) => io.stdout(s));
+    if (path === '/dev/stderr') return toSink((s) => io.stderr(s));
     const fs = this.fs;
     if (!fs) throw new Error(`shell: exec redirect to '${path}' requires an FsClient`);
     let buffer = seed;
-    return (s) => {
+    return toSink((s) => {
       buffer += s;
       const fd = fs.fsOpen(path, { write: true, create: true, truncate: true });
       fs.fsWrite(fd, buffer);
       fs.fsClose(fd);
-    };
+    });
   }
 
   /** Close a numbered fd's underlying resource (e.g. a live `/dev/tcp` socket), if any. */
@@ -1376,15 +1378,15 @@ export class Executor {
     return { line: r, timedOut: false };
   }
 
-  private makeFileSink(path: string, append: boolean, closers: Array<() => void>, io: CommandIO): (s: string) => void {
-    if (path === '/dev/null') return () => { /* discard */ };
-    if (path === '/dev/stdout') return (s) => io.stdout(s);
-    if (path === '/dev/stderr') return (s) => io.stderr(s);
+  private makeFileSink(path: string, append: boolean, closers: Array<() => void>, io: CommandIO): OutputSink {
+    if (path === '/dev/null') return toSink(() => { /* discard */ });
+    if (path === '/dev/stdout') return toSink((s) => io.stdout(s));
+    if (path === '/dev/stderr') return toSink((s) => io.stderr(s));
     const fs = this.fs;
     if (!fs) throw new Error(`shell: redirect to '${path}' requires an FsClient (pass 'fs' in ExecutorOptions)`);
     const fd = fs.fsOpen(path, { write: !append, append, create: true, truncate: !append });
     closers.push(() => fs.fsClose(fd));
-    return (s) => fs.fsWrite(fd, s);
+    return toSink((s) => fs.fsWrite(fd, s));
   }
 
   /** Resolve a command's stdin source from its input redirects (<, <<, <<<). */
@@ -2014,7 +2016,7 @@ export class Executor {
   }
 
   /** D4: pump a live child-stdout reader into a captured sink (background jobs). */
-  private async pumpReaderToSink(reader: ReadableStreamDefaultReader<Uint8Array>, sink: (s: string) => void): Promise<void> {
+  private async pumpReaderToSink(reader: ReadableStreamDefaultReader<Uint8Array>, sink: OutputSink): Promise<void> {
     const dec = new TextDecoder();
     try {
       for (;;) {
@@ -2082,7 +2084,7 @@ export class Executor {
     });
     io.fdTable.set(writeFd, {
       mode: 'write',
-      sink: (s: string) => { void Promise.resolve(handle.write(s)); },
+      sink: toSink((s: string) => { void Promise.resolve(handle.write(s)); }),
       close: () => handle.close(),
     });
 
@@ -2194,10 +2196,14 @@ export class Executor {
    * capture sink or piped stdin. `fork:true` (background jobs, subshells)
    * SNAPSHOTS the fd table so the child's `exec`-style fd mutations stay private.
    */
-  private deriveIo(parent: CommandIO, overrides: Partial<CommandIO> = {}, fork = false): CommandIO {
+  private deriveIo(
+    parent: CommandIO,
+    overrides: { stdout?: OutputSink | ((s: string) => void); stderr?: OutputSink | ((s: string) => void); stdin?: string | undefined; fdTable?: Map<number, FdEntry> } = {},
+    fork = false,
+  ): CommandIO {
     return {
-      stdout: overrides.stdout ?? parent.stdout,
-      stderr: overrides.stderr ?? parent.stderr,
+      stdout: overrides.stdout ? toSink(overrides.stdout) : parent.stdout,
+      stderr: overrides.stderr ? toSink(overrides.stderr) : parent.stderr,
       stdin: 'stdin' in overrides ? overrides.stdin : parent.stdin,
       fdTable: overrides.fdTable ?? (fork ? new Map(parent.fdTable) : parent.fdTable),
     };
