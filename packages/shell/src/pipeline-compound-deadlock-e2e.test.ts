@@ -119,6 +119,20 @@ describe('D5: compound-stage pipeline streaming (regression — terminates, no d
     expect(out.stdout).toBe('y\ny\ny\nEND\n');
     expect(out.code).toBe(0);
   }, T);
+
+  test('a large producer into a multi-statement compound stage streams (no full-buffer hang)', async () => {
+    const run = await bootShell();
+    const out = await run('seq 1 100000 | { head -n3; echo END; }');
+    expect(out.stdout).toBe('1\n2\n3\nEND\n');
+    expect(out.code).toBe(0);
+  }, T);
+
+  test('a large producer fully consumed by a compound stage streams', async () => {
+    const run = await bootShell();
+    const out = await run('seq 1 20000 | { cat; } | { wc -l; }');
+    expect(out.stdout.trim()).toBe('20000');
+    expect(out.code).toBe(0);
+  }, T);
 });
 
 // A stage's `exit N` is subshell-local (bash runs each pipeline stage in a
