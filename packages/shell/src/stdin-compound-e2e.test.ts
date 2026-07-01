@@ -221,3 +221,32 @@ test('EXTERNAL <<< "$(side-effect)" runs the command substitution once', async (
   // exactly ONE "tick" (two ⇒ the substitution ran twice).
   expect(out).toBe('1\ntick\n');
 }, 15000);
+
+// FIX 6 (item I): a `$(…)` inside a COMPOUND stage inherits the enclosing
+// command's stdin. Regression: runCommandSub / runCommandSubRaw derived the
+// capture frame with `stdin: undefined`, so the inner `$(cat)` command got NO
+// stdin and read empty — `echo x | { echo "got=$(cat)"; }` printed `got=`.
+test('echo x | { echo "got=$(cat)"; } — $(cat) inherits the piped stdin', async () => {
+  expect((await run('echo x | { echo "got=$(cat)"; }')).trim()).toBe('got=x');
+}, 15000);
+
+test('echo x | echo "got=$(cat)" — $(cat) in a simple piped stage inherits stdin', async () => {
+  expect((await run('echo x | echo "got=$(cat)"')).trim()).toBe('got=x');
+}, 15000);
+
+test('printf a | { v=$(cat); echo "v=$v"; } — assignment $(cat) inherits stdin', async () => {
+  expect((await run('printf \'a\\n\' | { v=$(cat); echo "v=$v"; }')).trim()).toBe('v=a');
+}, 15000);
+
+// Guard: a plain `$(echo hi)` (no stdin consumer) still works — inheriting the
+// ambient stdin must not break the common case (echo ignores stdin).
+test('plain $(echo hi) still expands correctly (no stdin double-consume)', async () => {
+  expect((await run('echo "v=$(echo hi)"')).trim()).toBe('v=hi');
+}, 15000);
+
+// Guard: `echo hi | grep $(echo h)` — the `$(echo h)` sub inherits the pipe
+// stdin but `echo` never reads it, so `grep h` still receives `hi` from the
+// pipe and matches. A sub that wrongly drained the pipe would starve grep.
+test('echo hi | grep $(echo h) — a non-reading sub does not steal the pipe', async () => {
+  expect((await run('echo hi | grep $(echo h)')).trim()).toBe('hi');
+}, 15000);

@@ -357,11 +357,27 @@ export class Executor {
     return path;
   }
 
+  /**
+   * The stdin stream a `$(…)` / `<(…)` capture frame inherits from the ambient
+   * frame: the ambient stdin so an inner `$(cat)` reads the enclosing command's
+   * input (bash), EXCEPT the shell's never-EOF ROOT stdin — reading that whole
+   * would hang, so it is treated as no input (EOF). Mirrors `execSelect`'s guard.
+   */
+  private inheritedSubStdin(): ReadableStream<Uint8Array> | undefined {
+    return this.io.stdin === this.rootStdinStream ? undefined : this.io.stdin;
+  }
+
   /** Run a command-sub body WITHOUT trailing-newline stripping (for procsub files). */
   private async runCommandSubRaw(src: string): Promise<string> {
     let out = '';
-    // Capture into a derived child frame; stderr/fd-table inherit the ambient frame.
-    const capIo = this.deriveIo(this.io, { stdout: (s) => { out += s; }, stdin: undefined });
+    // Capture into a derived child frame; stderr/fd-table AND stdin inherit the
+    // ambient frame, so a `$(cat)` inside the enclosing command reads THAT
+    // command's stdin (bash) — e.g. `echo x | { echo "got=$(cat)"; }` → `got=x`.
+    // Never inherit the never-EOF ROOT stdin, though: a `$(cat)` expanded at the
+    // shell's root frame (e.g. `echo "$(cat)" < /dev/null`, the top-level
+    // all-builtin pipeline fast-path frame) would read forever — treat root as
+    // no input (EOF), the same guard `execSelect` uses.
+    const capIo = this.deriveIo(this.io, { stdout: (s) => { out += s; }, stdin: this.inheritedSubStdin() });
     await this.run(this.parseSrc(src), true, capIo);
     return out;
   }
@@ -513,11 +529,13 @@ export class Executor {
 
   async runCommandSub(src: string): Promise<string> {
     let out = '';
-    // Capture into a derived child frame (stderr/fd-table inherit the ambient
-    // frame). `run` saves+restores `this.io`, so the ambient frame is intact
-    // afterward — and the capture buffer cannot be re-routed by an interleaving
-    // foreground statement (D3).
-    const capIo = this.deriveIo(this.io, { stdout: (s) => { out += s; }, stdin: undefined });
+    // Capture into a derived child frame (stderr/fd-table AND stdin inherit the
+    // ambient frame, so a `$(cat)` reads the enclosing command's stdin, matching
+    // bash — but never the never-EOF ROOT stdin, which would hang; see
+    // `inheritedSubStdin`). `run` saves+restores `this.io`, so the ambient frame
+    // is intact afterward — and the capture buffer cannot be re-routed by an
+    // interleaving foreground statement (D3).
+    const capIo = this.deriveIo(this.io, { stdout: (s) => { out += s; }, stdin: this.inheritedSubStdin() });
     // `$(< file)` fast-read form (M5): an empty command body whose only content
     // is a single `< file` input redirect reads the file directly.
     const fast = src.match(/^\s*<\s*(\S+)\s*$/);
@@ -1748,14 +1766,30 @@ export class Executor {
 
   private async execMultiStagePipeline(stages: SimpleCommand[], io: CommandIO): Promise<number> {
     const expander = this.expander();
-    const expanded: Array<{ name: string; argv: string[]; env: Record<string, string> }> = [];
-    for (const s of stages) expanded.push(await this.expandCommand(s, expander));
+    // Expand only the NAME of each stage up front (the branch decision needs the
+    // names). Each stage's `cmd.args` are expanded LATER — the all-builtin branch
+    // expands them per-stage against that stage's own stdin so a `$(cat)` in
+    // stage i reads stage i's piped input (bash); the external branch expands
+    // them here (hoisted, ambient frame — unchanged). A command sub in a name or
+    // arg still expands exactly once.
+    const names: Array<{ name: string; extraArgv: string[]; env: Record<string, string> }> = [];
+    for (const s of stages) names.push(await this.expandCommandName(s, expander));
 
-    if (this.options.xtrace) {
-      for (const e of expanded) io.stderr('+ ' + [e.name, ...e.argv].join(' ') + '\n');
-    }
+    // Whether stage `i` runs as an in-process builtin/function. `cat` only
+    // shadows the external when it has NO operands; decide that SYNTACTICALLY
+    // (unexpanded arg words + extra name fields) so we needn't expand args before
+    // the branch choice. Conservative: `cat $x` is treated as external even if
+    // `$x` expands to nothing — the external `cat` reads fd-0 the same way, so
+    // the result is unchanged.
+    const stageIsBuiltin = (i: number): boolean => {
+      const { name, extraArgv } = names[i];
+      if (this.functions.has(name)) return true;
+      if (!isBuiltin(name)) return false;
+      if (name === 'cat') return stages[i].args.length === 0 && extraArgv.length === 0;
+      return true;
+    };
 
-    if (expanded.every((e) => (isBuiltin(e.name) && builtinShadowsExternal(e.name, e.argv)) || this.functions.has(e.name))) {
+    if (names.every((_, i) => stageIsBuiltin(i))) {
       const enc = new TextEncoder();
       // Stage 0's fd-0 source, resolved once (later stages read the previous
       // stage's captured output):
@@ -1778,26 +1812,50 @@ export class Executor {
       let stdin = '';
       let status = 0;
       const codes: number[] = [];
-      for (let i = 0; i < expanded.length; i++) {
-        const isLast = i === expanded.length - 1;
-        const { name, argv } = expanded[i];
-        let captured = '';
-        // Each builtin stage gets a derived frame: non-final stages capture into
-        // the buffer feeding the next stage (byte-encoded into a one-shot stream);
-        // the final stage writes to `io`. Stage 0 uses its resolved fd-0 (FIX 3/4).
-        const stageStdin = i === 0 ? (stage0Stdin ?? bytesStream(enc.encode(stdin))) : bytesStream(enc.encode(stdin));
-        const stageIo = this.deriveIo(io, { stdout: isLast ? io.stdout : (s) => { captured += s; }, stdin: stageStdin });
-        status = await this.dispatch(name, argv, stageIo, { stdin: stageStdin });
-        // A stage's `exit N` is subshell-local (bash runs each pipeline stage in a
-        // subshell): it is THAT stage's code — the pipeline's status is the LAST
-        // stage's (`{ exit 3; } | cat` → 0), and it does NOT abort the parent shell.
-        // Capture + clear the shared `this.exiting` rather than returning early.
-        if (this.exiting !== undefined) { status = this.exiting; this.exiting = undefined; }
-        codes.push(status);
-        stdin = captured;
+      const savedIo = this.io;
+      try {
+        for (let i = 0; i < stages.length; i++) {
+          const isLast = i === stages.length - 1;
+          const { name, extraArgv, env } = names[i];
+          let captured = '';
+          // Each builtin stage gets a derived frame: non-final stages capture into
+          // the buffer feeding the next stage (byte-encoded into a one-shot stream);
+          // the final stage writes to `io`. Stage 0 uses its resolved fd-0 (FIX 3/4).
+          const stageStdin = i === 0 ? (stage0Stdin ?? bytesStream(enc.encode(stdin))) : bytesStream(enc.encode(stdin));
+          const stageIo = this.deriveIo(io, { stdout: isLast ? io.stdout : (s) => { captured += s; }, stdin: stageStdin });
+          // FIX 6 (item I): expand THIS stage's args against THIS stage's stdin so
+          // a `$(cat)` in the args reads the stage's piped input (bash), not the
+          // enclosing/root stdin. Set `this.io` to the stage frame across the arg
+          // expansion (command subs read `this.io.stdin`), then restore.
+          this.io = stageIo;
+          const argv = [...extraArgv, ...await this.expandCommandArgs(stages[i], expander)];
+          if (this.options.xtrace) savedIo.stderr('+ ' + [name, ...argv].join(' ') + '\n');
+          status = await this.dispatch(name, argv, stageIo, { stdin: stageStdin });
+          // A stage's `exit N` is subshell-local (bash runs each pipeline stage in a
+          // subshell): it is THAT stage's code — the pipeline's status is the LAST
+          // stage's (`{ exit 3; } | cat` → 0), and it does NOT abort the parent shell.
+          // Capture + clear the shared `this.exiting` rather than returning early.
+          if (this.exiting !== undefined) { status = this.exiting; this.exiting = undefined; }
+          codes.push(status);
+          stdin = captured;
+        }
+      } finally {
+        this.io = savedIo;
       }
       this.pipeStatus = codes;
       return this.pipelineStatus(codes, status);
+    }
+
+    // Mixed/external pipeline: expand every stage's full command up front (as the
+    // original hoisted pass did — kernel stages spawn concurrently, so there is no
+    // sequential per-stage stdin to expand against). Preserves the prior ordering
+    // (args expand BEFORE headFd0 drains stage 0's stdin).
+    const expanded: Array<{ name: string; argv: string[]; env: Record<string, string> }> = [];
+    for (let i = 0; i < stages.length; i++) {
+      const { name, extraArgv, env } = names[i];
+      const argv = [...extraArgv, ...await this.expandCommandArgs(stages[i], expander)];
+      if (this.options.xtrace) io.stderr('+ ' + [name, ...argv].join(' ') + '\n');
+      expanded.push({ name, argv, env });
     }
 
     // D8: a `<` / `<<` / `<<<` redirect on the FIRST stage becomes that stage's
@@ -2405,6 +2463,32 @@ export class Executor {
     const argv: string[] = [...nameFields.slice(1)];
     for (const arg of cmd.args) argv.push(...await expander.expandWord(arg));
     return { name, argv, env };
+  }
+
+  /**
+   * Expand ONLY the command NAME word (not `cmd.args`), returning the resolved
+   * name plus any EXTRA fields the name word split into (e.g. `$cmd` → `foo bar`
+   * contributes `bar` to argv). Used by `execMultiStagePipeline` so the branch
+   * decision has the names while each stage's `cmd.args` are expanded LATER —
+   * per-stage, against that stage's own stdin — so a `$(cat)` in stage i reads
+   * stage i's piped input (bash). Each command substitution still expands once.
+   */
+  private async expandCommandName(cmd: SimpleCommand, expander: Expander): Promise<{ name: string; extraArgv: string[]; env: Record<string, string> }> {
+    const env: Record<string, string> = {};
+    for (const a of cmd.assignments) {
+      if (a.array === undefined && a.index === undefined && !a.append) {
+        env[a.name] = await expander.expandToString(a.value);
+      }
+    }
+    const nameFields = cmd.name === '' ? [] : await expander.expandWord(cmd.name);
+    return { name: nameFields[0] ?? '', extraArgv: nameFields.slice(1), env };
+  }
+
+  /** Expand a command's ARGS (only `cmd.args`), against the current ambient frame. */
+  private async expandCommandArgs(cmd: SimpleCommand, expander: Expander): Promise<string[]> {
+    const argv: string[] = [];
+    for (const arg of cmd.args) argv.push(...await expander.expandWord(arg));
+    return argv;
   }
 
   /**
