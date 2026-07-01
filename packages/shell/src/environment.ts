@@ -142,6 +142,16 @@ export class Environment implements ShellEnv {
     return this.host.resolveNameref?.(name) ?? name;
   }
 
+  /**
+   * Public nameref resolution for the expander (`${ref@A}` must reconstruct
+   * `declare -n ref=target` — the TARGET NAME, not its value). Returns the target
+   * name if `name` is a nameref, else `undefined` (distinct from {@link deref},
+   * which falls back to `name`). Delegates to the executor's host hook.
+   */
+  resolveNameref(name: string): string | undefined {
+    return this.host.resolveNameref?.(name);
+  }
+
   get(name: string): string | undefined {
     name = this.deref(name);
     // `RANDOM` is dynamic — never let a stored value shadow the generator

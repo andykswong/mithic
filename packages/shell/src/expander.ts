@@ -478,13 +478,14 @@ export class Expander {
   /**
    * `${var@A}`: reconstruct a `declare` statement that recreates the variable
    * and its attributes, matching bash-5's format:
-   *   scalar          → `declare -- name='value'`   (value via {@link shellQuote})
-   *   readonly scalar → `declare -r name='value'`
+   *   scalar          → `declare -- name="value"`   (value in bash's `"…"` form)
+   *   readonly scalar → `declare -r name="value"`
    *   indexed array   → `declare -a name=([0]="v0" [1]="v1")`
    *   assoc array     → `declare -A name=([k]="v" …)`
    *   nameref         → `declare -n name=target`
    *   readonly+array  → flags combine in order `a`/`A` then `r` (`declare -ar …`)
-   * Array/assoc element VALUES use bash's `"…"` form (escape `\ " $` + backtick).
+   * Scalar and array/assoc element VALUES all use bash's double-quoted `"…"` form
+   * (escape `\ " $` + backtick), matching bash-5's `declare -p`/@A output exactly.
    * An unset variable yields the empty string (bash emits nothing).
    */
   private declareStatement(name: string, set: boolean, value: string): string {
@@ -511,7 +512,7 @@ export class Expander {
       const body = arr.map((v, i) => `[${i}]="${dqEscape(v)}"`).join(' ');
       return `declare ${flagStr} ${name}=(${body})`;
     }
-    return `declare ${flagStr} ${name}=${shellQuote(value)}`;
+    return `declare ${flagStr} ${name}="${dqEscape(value)}"`;
   }
 
   /**

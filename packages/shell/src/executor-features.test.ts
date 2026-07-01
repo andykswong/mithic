@@ -686,6 +686,18 @@ test('${ref:=x} default-assign through a nameref writes the target, not the ref 
   expect(out.trim().split('\n')).toEqual(['hi', 'hi']);
 });
 
+test('${ref@A} on a nameref reconstructs declare -n ref=target (target NAME, not value) — real Environment', async () => {
+  // Regression: this must run through the REAL Environment.resolveNameref, not a
+  // test mock. Before the fix, @A emitted the target's VALUE (declare -n ref=hi).
+  const { out } = await run('target=hi; declare -n ref=target; echo "${ref@A}"');
+  expect(out.trim()).toBe('declare -n ref=target');
+});
+
+test('${x@A} on a plain scalar reconstructs a double-quoted declare — real Environment', async () => {
+  const { out } = await run('x="a b"; echo "${x@A}"');
+  expect(out.trim()).toBe('declare -- x="a b"');
+});
+
 // ── A8: ${var@a} attribute-flags transform ───────────────────────────────────
 
 test('${var@a} reports readonly (r), nameref (n), indexed (a) and associative (A) flags', async () => {

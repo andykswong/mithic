@@ -344,19 +344,19 @@ test('${var@E} expands ANSI-C backslash escapes', async () => {
 
 // ── ${var@A} declare-statement reconstruction (bash-5 format) ────────────────
 
-test('${var@A} reconstructs a scalar declare', async () => {
+test('${var@A} reconstructs a scalar declare (bash-5 double-quoted value)', async () => {
   const e = E({ x: 'hello world' });
-  expect(await e.expandWord('"${x@A}"')).toEqual(["declare -- x='hello world'"]);
+  expect(await e.expandWord('"${x@A}"')).toEqual(['declare -- x="hello world"']);
 });
 
-test('${var@A} of a safe scalar leaves the value bare', async () => {
+test('${var@A} double-quotes even a safe scalar value (matches bash-5)', async () => {
   const e = E({ x: 'plain' });
-  expect(await e.expandWord('${x@A}')).toEqual(['declare', '--', 'x=plain']);
+  expect(await e.expandWord('"${x@A}"')).toEqual(['declare -- x="plain"']);
 });
 
 test('${var@A} on a readonly scalar adds -r', async () => {
   const e = E({ x: 'v' }, { attrFlags: (n) => (n === 'x' ? 'r' : '') });
-  expect(await e.expandWord('${x@A}')).toEqual(['declare', '-r', 'x=v']);
+  expect(await e.expandWord('"${x@A}"')).toEqual(['declare -r x="v"']);
 });
 
 test('${arr@A} reconstructs an indexed-array declare', async () => {
