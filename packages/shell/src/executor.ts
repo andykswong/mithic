@@ -571,6 +571,18 @@ export class Executor {
     return holder[STDIN_READER] ??= new StdinReader(io.stdin);
   }
 
+  /**
+   * Whether a frame-scoped {@link StdinReader} has ALREADY been created for `io`
+   * (i.e. a sibling builtin has locked `io.stdin` and advanced the shared cursor).
+   * Used by the external-command stdin routing: it may hand the RAW inherited
+   * stream to `spawnStream` only when NO reader exists yet — else the stream is
+   * locked and must be drained through the shared reader instead (bytes path),
+   * preserving the one-cursor contract (`{ read h; head; } < file`).
+   */
+  private stdinReaderExists(io: CommandIO): boolean {
+    return (io as CommandIO & { [STDIN_READER]?: StdinReader })[STDIN_READER] !== undefined;
+  }
+
   /** Drop the cached reader when a frame's stdin stream is replaced (used when a
    *  compound statement installs a `< file` redirect on its frame). */
   private resetStdinReader(io: CommandIO): void {
@@ -1845,9 +1857,30 @@ export class Executor {
         }
         return status;
       }
-      // Resolve the external's fd-0. A redirect wins; otherwise a finite inherited
-      // stdin stream is drained through the frame's shared reader (the root live
-      // stream is left for the kernel's default fd-0 wiring — see resolveStdinFd).
+      // Resolve the external's fd-0. An explicit `<`/`<<`/`<<<` redirect wins →
+      // fd-0 spec (open/bytes). Otherwise, when this command INHERITS a live
+      // stdin stream (a compound-pipeline stage's inter-stage pipe — NOT the
+      // never-EOF root stream) AND the backend can live-stream (spawnStream) AND
+      // no sibling builtin has already locked that stream (shared-cursor case),
+      // hand the STREAM straight to the child's fd 0 so it flows chunk-by-chunk
+      // instead of being `readAll`-buffered (which hangs at ~10k+ lines). Only
+      // one of the two is set: a redirect never coexists with the stream path.
+      const hasStdinRedirect = cmd.redirects.some(
+        (r) => r.op === '<' || r.op === '<<' || r.op === '<<<' || r.op === '<>',
+      );
+      const inheritedLiveStdin =
+        !hasStdinRedirect && io.stdin !== undefined && io.stdin !== this.rootStdinStream
+          ? io.stdin
+          : undefined;
+      if (inheritedLiveStdin && this.kernel.spawnStream && !this.stdinReaderExists(io)) {
+        // The child consumes the stream via its fd 0 (spawnStream locks it with
+        // `pumpStreamToPort`). Detach it from the frame so a LATER sibling command
+        // does not try to read a now-locked/consumed stream — it correctly sees no
+        // stdin (EOF), matching "the external already drained it".
+        io.stdin = undefined;
+        this.resetStdinReader(io);
+        return await this.spawnExternal(name, argv, localEnv, io, undefined, inheritedLiveStdin);
+      }
       const fd0 = await this.resolveStdinFd(cmd.redirects, io);
       return await this.spawnExternal(name, argv, localEnv, io, fd0);
     } finally {
@@ -1930,7 +1963,7 @@ export class Executor {
     return false;
   }
 
-  private async spawnExternal(name: string, argv: string[], localEnv: Record<string, string>, io: CommandIO, fd0?: StdinFdSpec): Promise<number> {
+  private async spawnExternal(name: string, argv: string[], localEnv: Record<string, string>, io: CommandIO, fd0?: StdinFdSpec, stdinStream?: ReadableStream<Uint8Array>): Promise<number> {
     const code = this.resolve(name);
     if (code === undefined) {
       io.stderr(`shell: ${name}: command not found\n`);
@@ -1949,6 +1982,10 @@ export class Executor {
       // (a `<<`/`<<<` body or inherited piped-stdin string). Absent ⇒ the kernel
       // delivers an immediate EOF so a stdin-reading child does not block.
       fds: fd0 ? { 0: fd0 } : undefined,
+      // Streamed fd-0: a compound-pipeline stage's INHERITED live stdin, handed to
+      // `spawnStream` so it flows chunk-by-chunk into the child (no readAll hang).
+      // Mutually exclusive with `fd0` (the call site sets at most one).
+      stdinStream,
     };
     // A1: prefer the live-stream spawn path — the child's stdout arrives as a
     // ReadableStream we pump chunk-by-chunk into our stdout sink, so a large or
