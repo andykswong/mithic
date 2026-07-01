@@ -20,6 +20,7 @@
 
 import type { Program, Redirect, SimpleCommand, Statement } from './ast.ts';
 import { parse } from './parser.ts';
+import { StdinReader } from './stdin-reader.ts';
 import { toSink, type OutputSink } from './output-sink.ts';
 import { evalArith } from './arith.ts';
 import { globMatch } from './glob.ts';
@@ -112,7 +113,7 @@ export interface Job {
 export interface CommandIO {
   stdout: OutputSink;
   stderr: OutputSink;
-  stdin: string | undefined;
+  stdin: ReadableStream<Uint8Array> | undefined;
   fdTable: Map<number, FdEntry>;
 }
 
@@ -145,45 +146,6 @@ export interface ExecutorOptions {
   stdinStream?: ReadableStream<Uint8Array>;
 }
 
-/**
- * A3 Tier 2: an incremental line reader over a live `ReadableStream<Uint8Array>`.
- * `readLine()` resolves the next `\n`-terminated line (newline stripped), or the
- * trailing partial line at EOF, or `undefined` once exhausted. A pull that has
- * no buffered line awaits the next chunk — so a `read -t` can race it against a
- * timer; a lost race does NOT drop data (consumed bytes stay in `#pending` and
- * any in-flight chunk read is cached).
- */
-class StreamLineReader {
-  #reader: ReadableStreamDefaultReader<Uint8Array>;
-  #dec = new TextDecoder();
-  #pending = '';
-  #eof = false;
-  /** A chunk read started by a prior (possibly timed-out) call, not yet used. */
-  #inflight: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
-
-  constructor(stream: ReadableStream<Uint8Array>) {
-    this.#reader = stream.getReader();
-  }
-
-  async readLine(): Promise<string | undefined> {
-    for (;;) {
-      const nl = this.#pending.indexOf('\n');
-      if (nl >= 0) { const line = this.#pending.slice(0, nl); this.#pending = this.#pending.slice(nl + 1); return line; }
-      if (this.#eof) { if (this.#pending.length > 0) { const l = this.#pending; this.#pending = ''; return l; } return undefined; }
-      // Reuse an in-flight chunk read (a prior read -t may have abandoned it on a
-      // timeout) so no chunk is lost; start a fresh one otherwise.
-      const p = this.#inflight ?? this.#reader.read();
-      this.#inflight = p;
-      const { value, done } = await p;
-      this.#inflight = undefined;
-      if (done) { this.#eof = true; continue; }
-      if (value && value.byteLength > 0) this.#pending += this.#dec.decode(value, { stream: true });
-    }
-  }
-
-  cancel(): void { void this.#reader.cancel().catch(() => { /* closed */ }); }
-}
-
 class ShellExit extends Error {
   code: number;
   constructor(code: number) { super('exit'); this.code = code; }
@@ -203,6 +165,30 @@ class FuncReturn extends Error {
 /** A redirect that cannot be performed (e.g. noclobber refusing to overwrite). */
 class RedirectError extends Error {}
 
+/**
+ * A frame-scoped {@link StdinReader}, cached on a {@link CommandIO} under this
+ * symbol so every builtin dispatched against the same frame shares ONE cursor
+ * (sequential `read`/`cat`/`mapfile` advance the same stream position).
+ */
+const STDIN_READER = Symbol('stdinReader');
+
+/**
+ * A frame-scoped cache for an in-flight `readLine()` a prior `read -t` started
+ * but abandoned when its timer won. The NEXT plain `read` reuses this SAME
+ * promise (and the line it eventually yields) instead of starting a fresh read
+ * that would race the orphan — which would drop the orphan's line (the reader's
+ * chunk cursor has already advanced past it). Cleared on consumption. Mirrors the
+ * duplex-fd `pendingRead` cache.
+ */
+const STDIN_PENDING_LINE = Symbol('stdinPendingLine');
+
+/** A one-shot ReadableStream over a fixed byte buffer. */
+function bytesStream(data: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) { if (data.byteLength > 0) controller.enqueue(data); controller.close(); },
+  });
+}
+
 export class Executor {
   readonly context: ShellContext;
   /** C4: the variable environment (vars/arrays/assoc/RANDOM/SHLVL) — the ShellEnv. */
@@ -210,16 +196,16 @@ export class Executor {
   private kernel: KernelClient;
   private resolve: CommandResolver;
   private fs: FsClient | undefined;
-  /** A3-T2: the shell's live stdin stream + its lazily-built line reader. */
-  private stdinStream: ReadableStream<Uint8Array> | undefined;
-  private stdinLineReader: StreamLineReader | undefined;
   /**
-   * A3-T2: an in-flight `readLine()` a prior `read -t` started but abandoned when
-   * its timer won. Cached so the NEXT plain read reuses the SAME promise (and the
-   * line it eventually yields) instead of starting a fresh read that races the
-   * orphan — mirrors the duplex-fd `pendingRead` cache. Cleared on consumption.
+   * The shell's OWN live stdin byte stream (the root frame's stdin). A BUILTIN
+   * reads it incrementally via the frame's StdinReader, but the shell must NOT
+   * drain it to feed an EXTERNAL command's fd-0 (that would block on a never-EOF
+   * terminal stdin and steal bytes a later `read` wants). External commands
+   * inherit stdin through the kernel's default wiring instead — so this exact
+   * stream is skipped in {@link resolveStdinFd}'s inherited-stdin case. A finite
+   * pipeline-captured stream (a different object) is still drained normally.
    */
-  private stdinPendingLine: Promise<string | undefined> | undefined;
+  private rootStdinStream: ReadableStream<Uint8Array> | undefined;
   private lastStatus = 0;
   private pipeStatus: number[] = [];
   /** 1-based source line of the statement currently executing, for `$LINENO`. */
@@ -293,15 +279,16 @@ export class Executor {
     this.context = context;
     this.resolve = options.resolve ?? ((name) => name);
     this.fs = options.fs;
-    this.stdinStream = options.stdinStream;
+    this.rootStdinStream = options.stdinStream;
     const stdout = toSink(options.onStdout ?? ((s: string) => {
       if (typeof process !== 'undefined' && process.stdout) process.stdout.write(s);
     }));
     const stderr = toSink(options.onStderr ?? ((s: string) => {
       if (typeof process !== 'undefined' && process.stderr) process.stderr.write(s);
     }));
-    // The root ambient frame: terminal sinks, no piped stdin, the persistent fd table.
-    this.io = { stdout, stderr, stdin: undefined, fdTable: this.fdTable };
+    // The root ambient frame: terminal sinks, the shell's live stdin byte stream
+    // (its frame-scoped StdinReader is created lazily), the persistent fd table.
+    this.io = { stdout, stderr, stdin: options.stdinStream, fdTable: this.fdTable };
     // C4: the job table + wait/jobs/kill/disown owner (signal delivery via kernel.kill).
     this.jobControl = new JobController(kernel.kill ? (pid, sig) => kernel.kill!(pid, sig) : undefined);
     // C4: the variable environment. The Executor is the EnvHost — it supplies the
@@ -384,10 +371,11 @@ export class Executor {
     if (this.pendingProcSubs.length === 0 || !this.fs) return;
     const pending = this.pendingProcSubs;
     this.pendingProcSubs = [];
+    const enc = new TextEncoder();
     for (const { path, src } of pending) {
       let data = '';
       try { data = await Promise.resolve(this.fs.fsRead(this.fs.fsOpen(path, { read: true }))); } catch { data = ''; }
-      const subIo = this.deriveIo(this.io, { stdin: data });
+      const subIo = this.deriveIo(this.io, { stdin: bytesStream(enc.encode(data)) });
       await this.run(this.parseSrc(src), true, subIo);
     }
   }
@@ -483,7 +471,8 @@ export class Executor {
     else { words = []; for (const w of stmt.words) words.push(...await exp.expandWord(w)); }
 
     const ps3 = this.context.env.PS3 ?? '#? ';
-    const input = (await this.resolveStdin(stmt.redirects ?? [])) ?? io.stdin ?? '';
+    const stream = (await this.resolveStdinStream(stmt.redirects ?? [])) ?? io.stdin;
+    const input = stream ? new TextDecoder().decode(await new StdinReader(stream).readAll()) : '';
     const lines = input.length > 0 ? input.split('\n') : [];
     // A trailing newline yields a final empty element; drop it so it isn't read
     // as a (blank) selection.
@@ -564,6 +553,23 @@ export class Executor {
   }
 
   private expander(): Expander { return new Expander(this.environment); }
+
+  /**
+   * The frame-scoped {@link StdinReader} for `io`'s stdin stream, created (and
+   * cached on the frame) on first use so every builtin dispatched against this
+   * frame shares ONE cursor — `{ read a; read b; } < file` reads successive data
+   * and `cat`/`mapfile` drain from where an earlier `read` left off. `undefined`
+   * when the frame has no stdin stream.
+   */
+  private stdinReaderFor(io: CommandIO): StdinReader | undefined {
+    if (!io.stdin) return undefined;
+    const holder = io as CommandIO & { [STDIN_READER]?: StdinReader };
+    return holder[STDIN_READER] ??= new StdinReader(io.stdin);
+  }
+
+  private resetStdinReader(io: CommandIO): void {
+    delete (io as CommandIO & { [STDIN_READER]?: StdinReader })[STDIN_READER];
+  }
 
   // ── ShellState (for builtins that need richer state) ────────────────────────
 
@@ -1341,31 +1347,23 @@ export class Executor {
   }
 
   /**
-   * A3 Tier 2: read one line of PLAIN stdin (no `-u`) for the `read` builtin.
-   *
-   * Precedence:
-   *   1. An active STRING stdin (`stringStdin` — a here-doc / `pipeStdin` / `<`
-   *      redirect): serve the first line. A `-t` over a materialized string is
-   *      immediate (data is already here or it is EOF) — never a timeout.
-   *   2. Otherwise the shell's LIVE stdin stream: read the next line, racing a
-   *      `-t` timer when set. On timeout, `timedOut` is true and the in-flight
-   *      chunk read is retained (no data dropped). No stream ⇒ EOF.
+   * Read one line of PLAIN stdin (no `-u`) for the `read` builtin, from `io`'s
+   * frame-scoped {@link StdinReader}. A `-t` timeout races the pending read
+   * against a timer. A timed-out read's `readLine()` promise is CACHED on the
+   * frame (`STDIN_PENDING_LINE`) so the NEXT read reuses it rather than starting
+   * a fresh read that would race the orphan and drop its line — the reader's
+   * chunk cursor has already advanced past those bytes. The cache is cleared only
+   * on CONSUMPTION. No stdin stream ⇒ EOF.
    */
-  async readStdinLine(stringStdin: string | undefined, timeoutSec: number | undefined): Promise<{ line: string | undefined; timedOut: boolean }> {
-    if (stringStdin !== undefined) {
-      const nl = stringStdin.indexOf('\n');
-      if (stringStdin === '') return { line: undefined, timedOut: false };
-      return { line: nl >= 0 ? stringStdin.slice(0, nl) : stringStdin, timedOut: false };
-    }
-    if (!this.stdinStream) return { line: undefined, timedOut: false };
-    if (!this.stdinLineReader) this.stdinLineReader = new StreamLineReader(this.stdinStream);
-    // Reuse any in-flight line read a prior timed-out read abandoned (no data
-    // dropped); start a fresh one otherwise.
-    const readP = this.stdinPendingLine ?? this.stdinLineReader.readLine();
-    this.stdinPendingLine = readP;
+  async readStdinLine(io: CommandIO, timeoutSec: number | undefined): Promise<{ line: string | undefined; timedOut: boolean }> {
+    const reader = this.stdinReaderFor(io);
+    if (!reader) return { line: undefined, timedOut: false };
+    const holder = io as CommandIO & { [STDIN_PENDING_LINE]?: Promise<string | undefined> };
+    const readP = holder[STDIN_PENDING_LINE] ?? reader.readLine();
+    holder[STDIN_PENDING_LINE] = readP;
     if (timeoutSec === undefined) {
       const line = await readP;
-      this.stdinPendingLine = undefined; // consumed
+      holder[STDIN_PENDING_LINE] = undefined; // consumed
       return { line, timedOut: false };
     }
     const timedOut = Symbol('t');
@@ -1374,8 +1372,8 @@ export class Executor {
     const r = await Promise.race([readP, timerP]);
     if (timer !== undefined) clearTimeout(timer);
     if (r === timedOut) return { line: undefined, timedOut: true }; // leave pending cached
-    this.stdinPendingLine = undefined; // consumed
-    return { line: r, timedOut: false };
+    holder[STDIN_PENDING_LINE] = undefined; // consumed
+    return { line: r as string | undefined, timedOut: false };
   }
 
   private makeFileSink(path: string, append: boolean, closers: Array<() => void>, io: CommandIO): OutputSink {
@@ -1389,39 +1387,52 @@ export class Executor {
     return toSink((s) => fs.fsWrite(fd, s));
   }
 
-  /** Resolve a command's stdin source from its input redirects (<, <<, <<<). */
-  private async resolveStdin(redirects: Redirect[]): Promise<string | undefined> {
+  /**
+   * Resolve a command's stdin source from its input redirects (`<`, `<<`, `<<<`,
+   * `<>`) into a one-shot `ReadableStream<Uint8Array>`. The LAST input redirect
+   * wins (bash semantics). `undefined` when there is no input redirect. A here-doc
+   * body / here-string word / file contents are byte-encoded into a fixed buffer
+   * (`bytesStream`); `/dev/null` yields an empty stream (immediate EOF).
+   */
+  private async resolveStdinStream(redirects: Redirect[]): Promise<ReadableStream<Uint8Array> | undefined> {
     const exp = this.expander();
-    let stdin: string | undefined;
+    const enc = new TextEncoder();
+    let stream: ReadableStream<Uint8Array> | undefined;
     for (const r of redirects) {
       if (r.op === '<<<') {
-        stdin = await exp.expandToString(r.target) + '\n';
+        stream = bytesStream(enc.encode(await exp.expandToString(r.target) + '\n'));
       } else if (r.op === '<<') {
-        stdin = r.hereDocQuoted ? (r.hereDoc ?? '') : await this.expandHereDoc(r.hereDoc ?? '');
+        const body = r.hereDocQuoted ? (r.hereDoc ?? '') : await this.expandHereDoc(r.hereDoc ?? '');
+        stream = bytesStream(enc.encode(body));
       } else if (r.op === '<' || r.op === '<>') {
         const path = await exp.expandToString(r.target);
-        if (path === '/dev/null') { stdin = ''; continue; }
+        if (path === '/dev/null') { stream = bytesStream(new Uint8Array()); continue; }
         const fs = this.fs;
         if (!fs) throw new Error(`shell: input redirect from '${path}' requires an FsClient`);
-        try { stdin = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true }))); }
-        catch { if (r.op === '<>') stdin = ''; else throw new RedirectError(`${path}: No such file or directory`); }
+        let data: string;
+        try { data = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true }))); }
+        catch {
+          if (r.op === '<>') { data = ''; /* <> creates if absent */ }
+          else throw new RedirectError(`${path}: No such file or directory`);
+        }
+        stream = bytesStream(enc.encode(data));
       }
     }
-    return stdin;
+    return stream;
   }
 
   /**
    * D8: resolve an EXTERNAL command's fd-0 (stdin) source into a kernel fd spec.
    * A `<` redirect becomes an `open` of the (cwd-resolved) path — the kernel
    * streams the file into fd 0; a `<<`/`<<<` body becomes `bytes` fed into fd 0.
-   * With no input redirect, an inherited piped-stdin STRING (`pipedStdin`, from a
-   * compound-pipeline stage) is encoded to `bytes` so it still reaches the child.
+   * With no input redirect, an inherited piped-stdin STREAM (`pipedStdin`, from a
+   * compound-pipeline stage) is drained to `bytes` so it still reaches the child.
    * Returns undefined when there is no stdin source (the child gets an EOF).
    *
    * `/dev/null` resolves to an empty `bytes` spec (immediate EOF) — the kernel's
    * VFS has no `/dev/null` handle to `open`.
    */
-  private async resolveStdinFd(redirects: Redirect[], pipedStdin: string | undefined): Promise<StdinFdSpec | undefined> {
+  private async resolveStdinFd(redirects: Redirect[], pipedStdin: ReadableStream<Uint8Array> | undefined): Promise<StdinFdSpec | undefined> {
     const exp = this.expander();
     let spec: StdinFdSpec | undefined;
     let sawRedirect = false;
@@ -1442,7 +1453,10 @@ export class Executor {
       }
     }
     if (sawRedirect) return spec;
-    if (pipedStdin !== undefined) return { action: 'bytes', data: new TextEncoder().encode(pipedStdin) };
+    if (pipedStdin !== undefined) {
+      const data = await new StdinReader(pipedStdin).readAll();
+      return { action: 'bytes', data };
+    }
     return undefined;
   }
 
@@ -1533,6 +1547,7 @@ export class Executor {
    * {@link execStatement}; the captured stdin is exposed via {@link pipeStdin}.
    */
   private async execNodePipeline(nodes: Statement[], pipeStderr: boolean[], io: CommandIO): Promise<number> {
+    const enc = new TextEncoder();
     let stdin: string | undefined;
     const codes: number[] = [];
     for (let i = 0; i < nodes.length; i++) {
@@ -1540,12 +1555,13 @@ export class Executor {
       let captured = '';
       // Each stage runs against its OWN derived frame: a non-final stage captures
       // its stdout (and, for `prev |& next`, its stderr) into the buffer that
-      // feeds the next stage's stdin; the final stage writes to `io`. No shared
-      // instance fields are mutated, so a backgrounded stage cannot misroute.
+      // feeds the next stage's stdin (byte-encoded into a one-shot stream); the
+      // final stage writes to `io`. No shared instance fields are mutated, so a
+      // backgrounded stage cannot misroute.
       const stageIo = this.deriveIo(io, {
         stdout: isLast ? io.stdout : (s) => { captured += s; },
         stderr: (!isLast && pipeStderr[i]) ? (s) => { captured += s; } : io.stderr,
-        stdin: i === 0 ? undefined : stdin,
+        stdin: i === 0 ? undefined : bytesStream(enc.encode(stdin ?? '')),
       });
       const code = await this.execStatement(nodes[i], stageIo);
       codes.push(code);
@@ -1566,6 +1582,7 @@ export class Executor {
     }
 
     if (expanded.every((e) => (isBuiltin(e.name) && builtinShadowsExternal(e.name, e.argv)) || this.functions.has(e.name))) {
+      const enc = new TextEncoder();
       let stdin = '';
       let status = 0;
       const codes: number[] = [];
@@ -1574,9 +1591,11 @@ export class Executor {
         const { name, argv } = expanded[i];
         let captured = '';
         // Each builtin stage gets a derived frame: non-final stages capture into
-        // the buffer feeding the next stage; the final stage writes to `io`.
-        const stageIo = this.deriveIo(io, { stdout: isLast ? io.stdout : (s) => { captured += s; }, stdin });
-        status = await this.dispatch(name, argv, stageIo, { stdin });
+        // the buffer feeding the next stage (byte-encoded into a one-shot stream);
+        // the final stage writes to `io`.
+        const stageStdin = bytesStream(enc.encode(stdin));
+        const stageIo = this.deriveIo(io, { stdout: isLast ? io.stdout : (s) => { captured += s; }, stdin: stageStdin });
+        status = await this.dispatch(name, argv, stageIo, { stdin: stageStdin });
         codes.push(status);
         if (this.exiting !== undefined) { this.pipeStatus = codes; return status; }
         stdin = captured;
@@ -1707,12 +1726,12 @@ export class Executor {
     }
 
     // stdin: an explicit `<`/`<<`/`<<<` redirect wins; otherwise inherit a
-    // compound-pipeline stage's piped stdin (M1). BUILTINS consume the string
-    // (`read`/`cat`-builtin); EXTERNALS get a kernel fd-0 spec instead (D8): a
-    // `<` redirect opens the VFS path in-kernel (streamed), a `<<`/`<<<` body or
-    // an inherited piped-stdin string is fed as fd-0 bytes — no inline copy.
-    const redirStdin = await this.resolveStdin(cmd.redirects);
-    const stdin = redirStdin ?? io.stdin;
+    // compound-pipeline stage's piped stdin (M1). BUILTINS consume the stream via
+    // the frame-scoped StdinReader (`read`/`cat`-builtin/`mapfile`); EXTERNALS get
+    // a kernel fd-0 spec instead (D8): a `<` redirect opens the VFS path in-kernel
+    // (streamed), a `<<`/`<<<` body or an inherited piped-stdin stream is fed as
+    // fd-0 bytes — no inline copy for the file case.
+    const stdin = (await this.resolveStdinStream(cmd.redirects)) ?? io.stdin;
 
     // Apply output redirects to this command's frame. A refused redirect
     // (noclobber) aborts the command with status 1 — it never runs.
@@ -1740,7 +1759,12 @@ export class Executor {
         }
         return status;
       }
-      const fd0 = await this.resolveStdinFd(cmd.redirects, io.stdin);
+      // The shell's own live stdin (the root frame's stream) is inherited by the
+      // child through the kernel's default fd-0 wiring, NOT drained here — draining
+      // a never-EOF terminal stdin would block. Only a finite pipeline-captured
+      // stream (a different object) is passed to be read into fd-0 bytes.
+      const inheritedStdin = io.stdin === this.rootStdinStream ? undefined : io.stdin;
+      const fd0 = await this.resolveStdinFd(cmd.redirects, inheritedStdin);
       return await this.spawnExternal(name, argv, localEnv, io, fd0);
     } finally {
       if (restore) restore();
@@ -2149,24 +2173,38 @@ export class Executor {
    * the command's I/O `frame`. The builtin's `write`/`writeErr`/`readFdLine`
    * route through `frame` so a redirect / pipeline-stage capture / background
    * job's sinks are honored without touching shared instance fields. `opts.write`
-   * (a pipeline capture sink) overrides the frame's stdout. The ambient `this.io`
-   * is set to `frame` so a builtin's `eval` / `source` runs against it too.
+   * (a pipeline capture sink) overrides the frame's stdout. `opts.stdin` (a
+   * per-command `<`/`<<`/`<<<` redirect or an inherited pipeline stage's piped
+   * stdin) installs a stdin override on a DERIVED frame. Stdin reads bind to that
+   * frame's shared {@link StdinReader} (one cursor), so `read`/`cat`/`mapfile`
+   * consume incrementally. The ambient `this.io` is set to `frame` so a builtin's
+   * `eval` / `source` runs against it too.
    */
-  private async dispatch(name: string, argv: string[], frame: CommandIO, opts: { stdin?: string; write?: (s: string) => void } = {}): Promise<number> {
+  private async dispatch(name: string, argv: string[], frame: CommandIO, opts: { stdin?: ReadableStream<Uint8Array>; write?: (s: string) => void } = {}): Promise<number> {
     this.io = frame;
+    if (opts.stdin !== undefined && opts.stdin !== frame.stdin) frame = this.deriveIo(frame, { stdin: opts.stdin });
+    const readerFor = (): StdinReader | undefined => this.stdinReaderFor(frame);
     const ctx: BuiltinContext = {
       cwd: this.context.cwd,
       env: this.context.env,
       write: opts.write ?? ((s) => frame.stdout(s)),
       writeErr: (s) => frame.stderr(s),
-      stdin: opts.stdin,
+      writeBytes: (b) => frame.stdout.writeBytes(b),
+      stdin: frame.stdin,
       lastStatus: this.lastStatus,
       exit: (code) => { this.exiting = code; },
       eval: (src) => this.run(this.parseSrc(src), true),
       sourceFile: (args) => this.sourceFile(args),
       readFdLine: (fd) => this.readFdLine(fd, frame),
       consumeFdLine: (fd) => this.consumeFdLine(fd, frame),
-      readStdinLine: (s, t) => this.readStdinLine(s, t),
+      readStdinLine: (timeoutSec) => this.readStdinLine(frame, timeoutSec),
+      readStdinAll: () => { const r = readerFor(); return r ? r.readAll() : Promise.resolve(new Uint8Array()); },
+      readStdinChunk: (delim, max, ignoreDelim) => {
+        const r = readerFor();
+        if (!r) return Promise.resolve(undefined);
+        if (ignoreDelim) return r.readBytes(max ?? Number.MAX_SAFE_INTEGER).then((s) => (s === '' ? undefined : s));
+        return r.readUntil(delim ?? '\n', max);
+      },
       doBreak: (n) => { throw new LoopBreak(n); },
       doContinue: (n) => { throw new LoopContinue(n); },
       doReturn: (n) => { throw new FuncReturn(n); },
@@ -2194,7 +2232,7 @@ export class Executor {
    */
   private deriveIo(
     parent: CommandIO,
-    overrides: { stdout?: OutputSink | ((s: string) => void); stderr?: OutputSink | ((s: string) => void); stdin?: string | undefined; fdTable?: Map<number, FdEntry> } = {},
+    overrides: { stdout?: OutputSink | ((s: string) => void); stderr?: OutputSink | ((s: string) => void); stdin?: ReadableStream<Uint8Array> | undefined; fdTable?: Map<number, FdEntry> } = {},
     fork = false,
   ): CommandIO {
     return {

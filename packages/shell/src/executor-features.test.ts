@@ -226,6 +226,23 @@ test('input redirect from file', async () => {
   expect(out).toBe('file content\n');
 });
 
+// ── byte-stream stdin: streaming builtins over a shared cursor ────────────────
+
+test('cat streams a here-string through unchanged', async () => {
+  const { out } = await run('cat <<< "hello world"');
+  expect(out).toBe('hello world\n');
+});
+
+test('read -n3 reads exactly 3 chars from a here-string', async () => {
+  const { out } = await run('read -n3 x <<< "abcdef"; echo "$x"');
+  expect(out.trim()).toBe('abc');
+});
+
+test('mapfile reads all lines from a here-doc into an array', async () => {
+  const { out } = await run('mapfile -t arr <<EOF\na\nb\nc\nEOF\necho "${arr[1]}"');
+  expect(out.trim()).toBe('b');
+});
+
 // ── job control ───────────────────────────────────────────────────────────────
 
 test('& backgrounds and wait collects', async () => {

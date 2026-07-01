@@ -103,6 +103,8 @@ export interface BuiltinContext {
   cwd: string;
   env: Record<string, string>;
   write(s: string): void;
+  /** Write raw bytes to stdout without a UTF-8 round-trip (binary-safe `cat`). */
+  writeBytes?(b: Uint8Array): void;
   writeErr?(s: string): void;
   exit?(code: number): void;
   eval?(src: string): Promise<number>;
@@ -121,14 +123,22 @@ export interface BuiltinContext {
    */
   consumeFdLine?(fd: number): void;
   /**
-   * A3 Tier 2: read one line of PLAIN stdin (no `-u`). When `stringStdin` is set
-   * (a here-doc / `pipeStdin` / `<` redirect), serve from it; otherwise from the
-   * shell's LIVE stdin stream, racing `timeoutSec` (for `read -t`). `timedOut`
-   * true ⇒ the timer won (the var is left empty and `read` returns >128).
+   * Read one line of PLAIN stdin (no `-u`) from the frame's shared stdin reader,
+   * racing `timeoutSec` (for `read -t`). `timedOut` true ⇒ the timer won (the var
+   * is left empty and `read` returns >128); the reader retains any pulled bytes
+   * for the next read (no data dropped).
    */
-  readStdinLine?(stringStdin: string | undefined, timeoutSec?: number): Promise<{ line: string | undefined; timedOut: boolean }>;
+  readStdinLine?(timeoutSec?: number): Promise<{ line: string | undefined; timedOut: boolean }>;
+  /** Slurp ALL remaining stdin bytes (binary-safe) — for `cat` / `mapfile`. */
+  readStdinAll?(): Promise<Uint8Array>;
+  /**
+   * Read a delimited/counted chunk of stdin for `read -d`/`-n`/`-N`. `ignoreDelim`
+   * (`-N`) reads exactly `max` chars ignoring the delimiter; otherwise reads up to
+   * `delim` (default `\n`) or `max` chars, whichever comes first. `undefined` ⇒ EOF.
+   */
+  readStdinChunk?(delim: string | undefined, max: number | undefined, ignoreDelim: boolean): Promise<string | undefined>;
   lastStatus?: number;
-  stdin?: string;
+  stdin?: ReadableStream<Uint8Array>;
   /** Loop/function control — implemented by the executor as thrown unwinds. */
   doBreak?(n: number): never;
   doContinue?(n: number): never;
@@ -474,9 +484,14 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
     case 'set':
       return runSet(args, ctx);
 
-    case 'cat':
-      ctx.write(ctx.stdin ?? '');
+    case 'cat': {
+      const all = await (ctx.readStdinAll?.() ?? Promise.resolve(new Uint8Array()));
+      if (all.byteLength > 0) {
+        if (ctx.writeBytes) ctx.writeBytes(all);
+        else ctx.write(new TextDecoder().decode(all));
+      }
       return 0;
+    }
 
     case 'jobs': {
       const jobs = ctx.state?.jobs ?? [];
@@ -1044,23 +1059,14 @@ async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
     return 0;
   };
 
-  // `-d`/`-n` operate on the raw stdin STRING directly (the live-stream line
-  // reader is newline-/line-oriented and does not model these). The harness
-  // feeds `read` via a materialized `ctx.stdin`, which covers these cases.
+  // `-d`/`-n`/`-N` read a delimited/counted chunk from the frame's shared stdin
+  // reader (advancing its one cursor). `-d ''` selects a NUL terminator; a
+  // literal delimiter uses its first char. `-N` ignores the delimiter entirely.
   if ((delim !== undefined || maxChars !== undefined) && fdArg === undefined) {
-    const stdin = ctx.stdin ?? '';
-    if (stdin === '') return 1; // EOF
-    let end: number;
-    if (ignoreDelim) {
-      // `-N N`: read exactly N chars (or to EOF), ignoring any delimiter.
-      end = maxChars !== undefined && maxChars >= 0 ? Math.min(maxChars, stdin.length) : stdin.length;
-    } else {
-      const term = delim === undefined ? '\n' : (delim === '' ? '\0' : delim[0]);
-      end = stdin.indexOf(term);
-      if (end < 0) end = stdin.length; // no terminator ⇒ read to EOF (success in bash if non-empty)
-      if (maxChars !== undefined && maxChars >= 0 && maxChars < end) end = maxChars; // `-n N`: stop at delim OR N
-    }
-    return finish(stdin.slice(0, end));
+    const term = delim === undefined ? undefined : (delim === '' ? '\0' : delim[0]);
+    const chunk = await (ctx.readStdinChunk?.(term, maxChars, ignoreDelim) ?? Promise.resolve(undefined));
+    if (chunk === undefined) return 1; // EOF
+    return finish(chunk);
   }
 
   // `read -u N` reads from the numbered fd's buffered input (or, for a live
@@ -1087,11 +1093,11 @@ async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
     return finish(line);
   }
 
-  // A3 Tier 2: plain `read` — prefer the live-stdin line reader (supports `-t`
-  // and sequential reads over a stream); fall back to the legacy first-line-of-
-  // `ctx.stdin` string behavior when the executor provides no `readStdinLine`.
+  // Plain `read` — read the next line from the frame's shared stdin reader
+  // (supports `-t` and sequential reads over the byte stream). No reader (no
+  // stdin stream) ⇒ EOF.
   if (ctx.readStdinLine) {
-    const { line, timedOut } = await ctx.readStdinLine(ctx.stdin, timeoutSec);
+    const { line, timedOut } = await ctx.readStdinLine(timeoutSec);
     if (timedOut) {
       if (arrayName !== undefined) ctx.state?.setArray?.(arrayName, []);
       else assignReadVars(names, [], '', ctx);
@@ -1101,11 +1107,7 @@ async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
     return finish(line);
   }
 
-  const stdin = ctx.stdin ?? '';
-  const nl = stdin.indexOf('\n');
-  const line = nl >= 0 ? stdin.slice(0, nl) : stdin;
-  if (stdin === '') return 1; // EOF
-  return finish(line);
+  return 1; // no stdin source
 }
 
 /**
@@ -1160,7 +1162,7 @@ async function runMapfile(args: string[], ctx: BuiltinContext): Promise<number> 
   }
 
   // Read ALL available input. From a numbered fd, drain successive lines; from
-  // plain stdin, the materialized `ctx.stdin` string holds the whole input.
+  // plain stdin, slurp the frame's shared stdin reader to EOF.
   let data: string;
   if (fdArg !== undefined) {
     const parts: string[] = [];
@@ -1172,7 +1174,8 @@ async function runMapfile(args: string[], ctx: BuiltinContext): Promise<number> 
     }
     data = parts.join('');
   } else {
-    data = ctx.stdin ?? '';
+    const all = await (ctx.readStdinAll?.() ?? Promise.resolve(new Uint8Array()));
+    data = new TextDecoder().decode(all);
   }
 
   const elements = splitKeepingDelimiter(data, delim);
