@@ -1590,10 +1590,14 @@ export class Executor {
    * buffer-to-completion serialization AND a backpressure deadlock. A stage that
    * finishes producing closes its output writer (EOF downstream); a stage that
    * finishes consuming (possibly early, e.g. `head`) cancels its stdin so the
-   * upstream's next write rejects (EPIPE) and an unbounded producer stops.
+   * upstream's next write rejects — stopping an EXTERNAL producer (the kernel
+   * tears its pipe down). An in-process BUILTIN infinite producer has no EPIPE
+   * backstop and is not stopped by this (a pre-existing in-process limitation).
    *
    * The pipeline's status is the last stage's (or, under pipefail, the last
-   * nonzero). Compound stages (subshells/groups/if/…) run via {@link execStatement}.
+   * nonzero); a stage's own `exit N` is that stage's code only (subshell-like),
+   * never the parent's. Compound stages (subshells/groups/if/…) run via
+   * {@link execStatement}.
    */
   private async execNodePipeline(nodes: Statement[], pipeStderr: boolean[], io: CommandIO): Promise<number> {
     const n = nodes.length;
@@ -1616,22 +1620,36 @@ export class Executor {
       const stageIo = this.deriveIo(io, {
         stdout: stageStdout,
         stderr: stderrToNext ? stageStdout : io.stderr,
-        stdin: i === 0 ? io.stdin : transforms[i - 1].readable,
+        // Stage 0 does not inherit the pipeline's live stdin here (a top-level
+        // pipeline's stdin is the never-EOF root stream; a first-stage `read`
+        // would block). A first stage's own `< file` is resolved per-command.
+        stdin: i === 0 ? undefined : transforms[i - 1].readable,
       });
       try {
-        codes[i] = await this.execStatement(nodes[i], stageIo);
+        const code = await this.execStatement(nodes[i], stageIo);
+        // A stage's `exit N` is subshell-local: it is THAT stage's code (bash runs
+        // each pipeline stage in a subshell — `{ exit 3; } | cat` is 0, decided by
+        // the LAST stage). Capture it into this stage's code and CLEAR the shared
+        // `this.exiting` immediately so it neither aborts the parent shell nor
+        // contaminates a concurrent sibling stage (whose `execList` would otherwise
+        // early-return on a non-undefined `this.exiting`).
+        if (this.exiting !== undefined) { codes[i] = this.exiting; this.exiting = undefined; }
+        else codes[i] = code;
       } finally {
         // EOF to the downstream once this stage is done producing.
         if (closeOut) await closeOut();
         // If this stage finished (possibly early), cancel its stdin so the UPSTREAM
-        // stage's next write rejects (EPIPE) and an unbounded producer stops.
+        // stage's next write rejects (EPIPE). NOTE: this stops an EXTERNAL producer
+        // (kernel tears its pipe down); an in-process BUILTIN infinite producer
+        // (`while :; do echo x; done`) has no EPIPE backstop and still runs on — a
+        // pre-existing limitation of the in-process builtin write path, unchanged
+        // by this concurrency rework.
         if (i > 0) await transforms[i - 1].readable.cancel().catch(() => {});
       }
     };
 
     await Promise.all(nodes.map((_, i) => runStage(i)));
     this.pipeStatus = codes;
-    if (this.exiting !== undefined) return this.exiting;
     return this.pipelineStatus(codes, codes[codes.length - 1] ?? 0);
   }
 
@@ -1659,8 +1677,12 @@ export class Executor {
         const stageStdin = bytesStream(enc.encode(stdin));
         const stageIo = this.deriveIo(io, { stdout: isLast ? io.stdout : (s) => { captured += s; }, stdin: stageStdin });
         status = await this.dispatch(name, argv, stageIo, { stdin: stageStdin });
+        // A stage's `exit N` is subshell-local (bash runs each pipeline stage in a
+        // subshell): it is THAT stage's code — the pipeline's status is the LAST
+        // stage's (`{ exit 3; } | cat` → 0), and it does NOT abort the parent shell.
+        // Capture + clear the shared `this.exiting` rather than returning early.
+        if (this.exiting !== undefined) { status = this.exiting; this.exiting = undefined; }
         codes.push(status);
-        if (this.exiting !== undefined) { this.pipeStatus = codes; return status; }
         stdin = captured;
       }
       this.pipeStatus = codes;

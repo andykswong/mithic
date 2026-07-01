@@ -120,3 +120,39 @@ describe('D5: compound-stage pipeline streaming (regression — terminates, no d
     expect(out.code).toBe(0);
   }, T);
 });
+
+// A stage's `exit N` is subshell-local (bash runs each pipeline stage in a
+// subshell): the pipeline status is the LAST stage's, and a stage's exit does not
+// abort the parent shell. Covers BOTH the flattened all-builtin path and the
+// concurrent execNodePipeline path.
+describe('compound pipeline: a stage exit is subshell-local (matches bash)', () => {
+  test('{ exit 3; } | cat → pipeline status 0 (last stage), parent survives', async () => {
+    const run = await bootShell();
+    const out = await run('{ exit 3; } | cat; echo "code=$?"');
+    expect(out.stdout).toBe('code=0\n');
+  }, T);
+
+  test('{ exit 5; } | { exit 7; } → 7 (last stage wins)', async () => {
+    const run = await bootShell();
+    const out = await run('{ exit 5; } | { exit 7; }; echo "code=$?"');
+    expect(out.stdout).toBe('code=7\n');
+  }, T);
+
+  test('a stage exit does NOT abort the parent shell', async () => {
+    const run = await bootShell();
+    const out = await run('{ exit 9; } | cat; echo AFTER');
+    expect(out.stdout).toBe('AFTER\n');
+  }, T);
+
+  test('set -o pipefail; { exit 5; } | { exit 7; } → 7 (last nonzero)', async () => {
+    const run = await bootShell();
+    const out = await run('set -o pipefail; { exit 5; } | { exit 7; }; echo "code=$?"');
+    expect(out.stdout).toBe('code=7\n');
+  }, T);
+
+  test('non-flattenable: { echo hi; exit 3; } | { cat; echo done; } streams + status 0', async () => {
+    const run = await bootShell();
+    const out = await run('{ echo hi; exit 3; } | { cat; echo done; }; echo "code=$?"');
+    expect(out.stdout).toBe('hi\ndone\ncode=0\n');
+  }, T);
+});
