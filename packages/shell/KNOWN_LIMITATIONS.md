@@ -59,14 +59,14 @@ dev machine). bash 3.2 LACKS bash-4+ features (case modification `${s^^}`/`${s,,
 
 Prioritized for agents. Each row: the gap + a one-line agent use case.
 
-| Feature | AI-agent use case | Status |
-|---------|-------------------|--------|
-| **remaining `${var@OP}` transforms** (`@A @P @K @k`) | `@Q @U @u @L @E @a` are done (`@a` returns attribute flags `r`/`n`/`a`/`A`); the rest (declare-statement reconstruction `@A`, prompt-expand `@P`, assoc key/value quote `@K`/`@k`) are format/context-dependent and low agent value — accepted but return the value unchanged | **pending** |
-| **`coproc` on relay backends** | `coproc` is fully implemented (grammar, `execCoproc`, `COPROC`/`COPROC_PID`, e2e tests) on the TRANSFERABLE backends (Worker/iframe); on the relay backends (quickjs/ivm) it emits `shell: coproc: requires a transferable backend` (status 1) — the same relay-port limitation as relay stdin. Closing it needs a relay duplex-pipe channel. | **pending** (runtime done) |
-| **builtin infinite producer into an early-exiting downstream** | An EXTERNAL producer into a compound stage that closes early (`seq … \| { head -n3; }`, `yes \| { head; }`) now terminates: the external command's stdin STREAMS (compound-stage fd-0 streaming) and its stdout pipe gets EPIPE when the downstream closes, so the producer stops. But an in-process BUILTIN infinite producer (`while :; do echo x; done \| { head -n3; }`) has NO EPIPE backstop — the in-process builtin write path silently swallows the broken-pipe on its output sink, so the loop runs on forever. Use an external producer, or bound the loop. | **pending** |
-| **builtin-first pipeline stage `< file`** | A `< file` redirect on a pipeline's FIRST stage is dropped when that stage is a BUILTIN: `cat < f \| cat` yields empty output (the redirect never installs). The external-first-stage form works — `grep x < f \| cat` reads the file. | **pending** |
-| **subshell `( … )` redirects** | A subshell group does not apply its own redirects: `( … ) < file` and `( … ) > out` are dropped. An inner `read` in `( read x ) < file` therefore falls through to the (unfed) root stdin and blocks. Use a brace group `{ …; } < file` (which does install the stream) instead. | **pending** |
-| **binary through a `< file` redirect** | Builtin stdin is now a `ReadableStream<Uint8Array>`: `cat`/`read`/`mapfile` consume it incrementally, `cat` streams it (binary-exact, no full buffering), sequential reads share one cursor, and a compound statement's `< file` installs the stream — so `while read … < file` and `{ read; read; } < file` no longer hang. A here-string, a pipe, and direct guest stdin are all byte-exact. Still NOT byte-exact: a `< file` redirect reads the file through the FsClient's string `fsRead`, so a binary FILE via `<` round-trips through UTF-8 (invalid bytes become U+FFFD). Reading the file byte-exact requires passing it as a command argument (`cat file`) or through a pipe. | **pending** |
+_No open shell-language or shell/runtime gaps are currently tracked._ The
+previously-listed items — the remaining `${var@OP}` transforms (`@A`/`@P`/`@K`/`@k`),
+`coproc` on relay backends, the in-process builtin broken-pipe backstop, a builtin
+first-stage `< file` in an all-builtin pipeline, subshell `( … )` redirects, and
+binary-exact `< file` input — have all shipped (implemented + tested) and their rows
+were removed per this registry's open-only convention. Networking-layer limitations
+(UDP over `read -u`, per-process `/dev/tcp` host narrowing) remain, tracked separately
+in the platform docs, not here.
 
 ---
 
