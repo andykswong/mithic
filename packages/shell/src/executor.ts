@@ -1449,15 +1449,8 @@ export class Executor {
       } else if (r.op === '<' || r.op === '<>') {
         const path = await exp.expandToString(r.target);
         if (path === '/dev/null') { stream = bytesStream(new Uint8Array()); continue; }
-        const fs = this.fs;
-        if (!fs) throw new Error(`shell: input redirect from '${path}' requires an FsClient`);
-        let data: string;
-        try { data = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true }))); }
-        catch {
-          if (r.op === '<>') { data = ''; /* <> creates if absent */ }
-          else throw new RedirectError(`${path}: No such file or directory`);
-        }
-        stream = bytesStream(enc.encode(data));
+        // FIX 2: byte-safe read (fileStdinStream prefers FsClient.fsReadBytes).
+        stream = await this.fileStdinStream(path, r.op === '<>');
       }
     }
     return stream;
@@ -1747,6 +1740,10 @@ export class Executor {
 
     if (expanded.every((e) => (isBuiltin(e.name) && builtinShadowsExternal(e.name, e.argv)) || this.functions.has(e.name))) {
       const enc = new TextEncoder();
+      // FIX 3 (item C): the FIRST stage's `<`/`<<`/`<<<` redirect is its fd-0
+      // source (later stages read the previous stage's captured output). Before
+      // the fix stage 0 was hardcoded empty, so `cat < f | cat` produced nothing.
+      const stage0Stdin = await this.resolveStdinStream(stages[0].redirects);
       let stdin = '';
       let status = 0;
       const codes: number[] = [];
@@ -1756,8 +1753,8 @@ export class Executor {
         let captured = '';
         // Each builtin stage gets a derived frame: non-final stages capture into
         // the buffer feeding the next stage (byte-encoded into a one-shot stream);
-        // the final stage writes to `io`.
-        const stageStdin = bytesStream(enc.encode(stdin));
+        // the final stage writes to `io`. Stage 0 reads its own `<` redirect (FIX 3).
+        const stageStdin = i === 0 ? (stage0Stdin ?? bytesStream(enc.encode(stdin))) : bytesStream(enc.encode(stdin));
         const stageIo = this.deriveIo(io, { stdout: isLast ? io.stdout : (s) => { captured += s; }, stdin: stageStdin });
         status = await this.dispatch(name, argv, stageIo, { stdin: stageStdin });
         // A stage's `exit N` is subshell-local (bash runs each pipeline stage in a

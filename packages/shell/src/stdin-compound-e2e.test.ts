@@ -166,6 +166,20 @@ test('read x <<< "$(side-effect)" runs the command substitution once', async () 
   expect(out).toBe('x=hi\ntick\n'); // exactly ONE "tick" line
 }, 15000);
 
+// FIX 3 (item C): a `< file` on a BUILTIN first pipeline stage in an all-builtin
+// pipeline must be honored. Regression: the all-builtin branch hardcoded stage-0
+// stdin to empty, so `cat < f | cat` produced nothing.
+test('< file on a builtin first stage in an all-builtin pipeline is honored', async () => {
+  // `cat < /f | cat` — both `cat`s are builtins (no operands). Stage 0 must read
+  // /f from its `<` redirect; today it starts empty ⇒ empty output.
+  expect(await run('cat < /f | cat', undefined, { '/f': 'hello\nworld\n' }))
+    .toBe('hello\nworld\n');
+}, 15000);
+
+test('<<< here-string on a builtin first stage in an all-builtin pipeline is honored', async () => {
+  expect(await run('cat <<< hi | cat')).toBe('hi\n');
+}, 15000);
+
 // FIX 1 (item G): an EXTERNAL command's `<<< "$(cmd)"` must resolve the redirect
 // ONCE. Regression: execSimple resolved the redirect via resolveStdinStream AND
 // then (for an external) again via resolveStdinFd, running the substitution twice.
