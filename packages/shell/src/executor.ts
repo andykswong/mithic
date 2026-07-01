@@ -1166,6 +1166,7 @@ export class Executor {
     const exp = this.expander();
     const savedStdout = io.stdout;
     const savedStderr = io.stderr;
+    const savedStdin = io.stdin;
     const savedFds = new Map<number, FdEntry | undefined>();
     const closers: Array<() => void> = [];
     const snapshotFd = (fd: number): void => { if (fd !== 1 && fd !== 2 && !savedFds.has(fd)) savedFds.set(fd, io.fdTable.get(fd)); };
@@ -1175,7 +1176,16 @@ export class Executor {
     const base: CommandIO = { stdout: savedStdout, stderr: savedStderr, stdin: io.stdin, fdTable: io.fdTable };
 
     for (const r of redirects) {
-      if (r.op === '<' || r.op === '<<' || r.op === '<<<' || r.op === '<>') continue; // stdin handled per-command
+      if (r.op === '<' || r.op === '<<' || r.op === '<<<' || r.op === '<>') {
+        // A COMPOUND statement (`{ …; }`, `while`, `for`, subshell) has no
+        // per-command stdin resolution, so install the redirect on the frame's
+        // stdin here and reset the cached reader so a stale reader over the old
+        // stdin isn't reused. The inner commands share this SAME frame, so the
+        // installed stream + shared reader advance ONE cursor across them.
+        const s = await this.resolveStdinStream([r]);
+        if (s !== undefined) { io.stdin = s; this.resetStdinReader(io); }
+        continue;
+      }
 
       if (r.op === '>&') {
         // fd-dup: `N>&M` makes fd N write where M writes; `N>&-` closes N. The
@@ -1210,6 +1220,8 @@ export class Executor {
       for (const c of closers) c();
       io.stdout = savedStdout;
       io.stderr = savedStderr;
+      io.stdin = savedStdin;
+      this.resetStdinReader(io);
       for (const [fd, prev] of savedFds) { if (prev === undefined) io.fdTable.delete(fd); else io.fdTable.set(fd, prev); }
     };
   }
