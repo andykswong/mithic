@@ -342,9 +342,94 @@ test('${var@E} expands ANSI-C backslash escapes', async () => {
   expect(await e.expandWord('"${x@E}"')).toEqual(['a\tb']);
 });
 
-test('unsupported @-transform (@A) returns the value unchanged', async () => {
-  const e = E({ x: 'Hello' });
-  expect(await e.expandWord('${x@A}')).toEqual(['Hello']);
+// ── ${var@A} declare-statement reconstruction (bash-5 format) ────────────────
+
+test('${var@A} reconstructs a scalar declare (bash-5 double-quoted value)', async () => {
+  const e = E({ x: 'hello world' });
+  expect(await e.expandWord('"${x@A}"')).toEqual(['declare -- x="hello world"']);
+});
+
+test('${var@A} double-quotes even a safe scalar value (matches bash-5)', async () => {
+  const e = E({ x: 'plain' });
+  expect(await e.expandWord('"${x@A}"')).toEqual(['declare -- x="plain"']);
+});
+
+test('${var@A} on a readonly scalar adds -r', async () => {
+  const e = E({ x: 'v' }, { attrFlags: (n) => (n === 'x' ? 'r' : '') });
+  expect(await e.expandWord('"${x@A}"')).toEqual(['declare -r x="v"']);
+});
+
+test('${arr@A} reconstructs an indexed-array declare', async () => {
+  const e = E({}, { getArray: (n) => (n === 'arr' ? ['a', 'b c'] : undefined) });
+  expect(await e.expandWord('"${arr@A}"')).toEqual(['declare -a arr=([0]="a" [1]="b c")']);
+});
+
+test('${arr@A} on a readonly indexed array combines flags as -ar', async () => {
+  const e = E({}, {
+    getArray: (n) => (n === 'arr' ? ['a'] : undefined),
+    attrFlags: (n) => (n === 'arr' ? 'ar' : ''),
+  });
+  expect(await e.expandWord('"${arr@A}"')).toEqual(['declare -ar arr=([0]="a")']);
+});
+
+test('${map@A} reconstructs an assoc-array declare', async () => {
+  const e = E({}, {
+    getAssoc: (n) => (n === 'map' ? new Map([['k', 'v'], ['x', 'y z']]) : undefined),
+  });
+  expect(await e.expandWord('"${map@A}"')).toEqual(['declare -A map=([k]="v" [x]="y z")']);
+});
+
+test('${ref@A} reconstructs a nameref declare', async () => {
+  const e = E({ ref: 'ignored' }, {
+    attrFlags: (n) => (n === 'ref' ? 'n' : ''),
+    resolveNameref: (n) => (n === 'ref' ? 'target' : undefined),
+  } as Partial<ShellEnv>);
+  expect(await e.expandWord('${ref@A}')).toEqual(['declare', '-n', 'ref=target']);
+});
+
+test('${var@A} of an unset variable is empty', async () => {
+  const e = E({});
+  expect(await e.expandWord('${nope@A}')).toEqual(['']);
+});
+
+test('${var@A} double-quote-escapes special chars in array elements', async () => {
+  const e = E({}, { getArray: (n) => (n === 'arr' ? ['a"b', 'c\\d', 'e$f'] : undefined) });
+  expect(await e.expandWord('"${arr@A}"')).toEqual([
+    'declare -a arr=([0]="a\\"b" [1]="c\\\\d" [2]="e\\$f")',
+  ]);
+});
+
+// ── ${var@P} prompt-string expansion ─────────────────────────────────────────
+
+test('${var@P} expands prompt escapes (\\u@\\h)', async () => {
+  const e = E({ ps: '\\u@\\h', USER: 'ada', HOSTNAME: 'box.example.com' });
+  expect(await e.expandWord('${ps@P}')).toEqual(['ada@box']);
+});
+
+test('${var@P} expands \\w with HOME collapsed to ~', async () => {
+  const e = E({ ps: '\\w', HOME: '/home/ada' }, { cwd: '/home/ada/work' });
+  expect(await e.expandWord('${ps@P}')).toEqual(['~/work']);
+});
+
+// ── ${var@K} / ${var@k} associative key-value formatting ─────────────────────
+
+test('${map@K} produces quoted key-value pairs', async () => {
+  const e = E({}, {
+    getAssoc: (n) => (n === 'map' ? new Map([['k1', 'v1'], ['k2', 'v 2']]) : undefined),
+  });
+  expect(await e.expandWord('"${map@K}"')).toEqual(['"k1" "v1" "k2" "v 2"']);
+});
+
+test('${map@k} produces unquoted key-value words', async () => {
+  const e = E({}, {
+    getAssoc: (n) => (n === 'map' ? new Map([['k1', 'v1'], ['k2', 'v2']]) : undefined),
+  });
+  expect(await e.expandWord('${map@k}')).toEqual(['k1', 'v1', 'k2', 'v2']);
+});
+
+test('${arr@K} on an indexed array pairs indices with values', async () => {
+  const e = E({}, { getArray: (n) => (n === 'arr' ? ['a', 'b c'] : undefined) });
+  expect(await e.expandWord('"${arr@K}"')).toEqual(['0 "a" 1 "b c"']);
 });
 
 test('${var@a} returns attribute flags (readonly → r)', async () => {
