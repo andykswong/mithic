@@ -118,6 +118,15 @@ test('a lone continuation byte survives an in-process pipe byte-exact', async ()
   expect(Array.from(body)).toEqual([0x00, 0xff, 0xfe, 0x01, 0x80]);
 }, 15000);
 
+// FIX 2 (item A): a `< file` redirect into a builtin reads the file byte-safe.
+// The builtin `cat` (no operands) consumes its stdin STREAM, which is now sourced
+// from FsClient.fsReadBytes (no TextDecoder round-trip). Regression: fsRead
+// decoded the kernel's Uint8Array to a string (0xff/0xfe → U+FFFD) then re-encoded.
+test('< file into a builtin cat is byte-safe (no UTF-8 corruption)', async () => {
+  const body = await runBytes([0x00, 0xff, 0xfe, 0x41], 'cat < /data.bin');
+  expect(Array.from(body)).toEqual([0x00, 0xff, 0xfe, 0x41]);
+}, 15000);
+
 test('a large piped input streams through while-read without OOM', async () => {
   // 5000 lines piped into a while-read loop that just counts — proves it completes
   // (a full-buffer-forever bug would hang/OOM). The lines are pre-seeded into a

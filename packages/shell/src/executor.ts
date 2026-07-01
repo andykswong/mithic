@@ -1561,15 +1561,19 @@ export class Executor {
   }
 
   /**
-   * Read a `< file` / `<>` redirect source into a one-shot byte stream. `<>` on a
-   * missing file yields an empty stream (it creates the file); `<` on a missing
-   * file throws {@link RedirectError}. (FIX 2 makes this branch byte-safe via
-   * `FsClient.fsReadBytes`.)
+   * Read a `< file` / `<>` redirect source into a one-shot byte stream, byte-safe.
+   * FIX 2 (item A): prefer the FsClient's binary-safe `fsReadBytes` (no UTF-8
+   * round-trip); fall back to the string `fsRead` + re-encode when a minimal mock
+   * FsClient does not implement it. `<>` on a missing file yields an empty stream
+   * (it creates the file); `<` on a missing file throws {@link RedirectError}.
    */
   private async fileStdinStream(path: string, isReadWrite: boolean): Promise<ReadableStream<Uint8Array>> {
     const fs = this.fs;
     if (!fs) throw new Error(`shell: input redirect from '${path}' requires an FsClient`);
     try {
+      if (fs.fsReadBytes) {
+        return bytesStream(await Promise.resolve(fs.fsReadBytes(fs.fsOpen(path, { read: true }))));
+      }
       const data = await Promise.resolve(fs.fsRead(fs.fsOpen(path, { read: true })));
       return bytesStream(new TextEncoder().encode(data));
     } catch (e) {

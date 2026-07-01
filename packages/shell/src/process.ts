@@ -57,14 +57,20 @@ function makeFsClient(guest: Guest): FsClient & { flush(): Promise<void> } {
       buffers.set(fd, (buffers.get(fd) ?? '') + data);
     },
     async fsRead(fd): Promise<string> {
+      return new TextDecoder().decode(await this.fsReadBytes!(fd));
+    },
+    // FIX 2 (item A): read the whole fd as RAW bytes (no UTF-8 round-trip). `fsRead`
+    // decodes this to a string; a `< file` stdin redirect uses `fsReadBytes`
+    // directly so a binary file reaches the command byte-exact.
+    async fsReadBytes(fd): Promise<Uint8Array> {
       const meta = metaOf(buffers).get(fd);
-      if (!meta) return '';
+      if (!meta) return new Uint8Array();
       const open = (await guest.syscall('fs/open', { path: meta.path, oflags: { read: true } })) as { fd: number };
       const chunks: Uint8Array[] = [];
       for (;;) {
         // `fs/read` resolves to a `Uint8Array` of bytes DIRECTLY (not a `{ data }`
         // wrapper). Tolerate both shapes so reading a `<` redirect source returns
-        // the file contents instead of an empty string.
+        // the file contents instead of empty.
         const r = await guest.syscall('fs/read', { fd: open.fd, len: 65536 });
         const data = (r instanceof Uint8Array ? r : (r as { data?: Uint8Array } | undefined)?.data) ?? undefined;
         if (!data || data.byteLength === 0) break;
@@ -74,7 +80,7 @@ function makeFsClient(guest: Guest): FsClient & { flush(): Promise<void> } {
       let total = 0; for (const c of chunks) total += c.byteLength;
       const buf = new Uint8Array(total); let off = 0;
       for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
-      return new TextDecoder().decode(buf);
+      return buf;
     },
     fsClose(fd): void {
       const meta = metaOf(buffers).get(fd);
