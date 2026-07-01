@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'vitest';
-import { toSink, type OutputSink } from './output-sink.ts';
+import { sinkToStream, toSink, type OutputSink } from './output-sink.ts';
 
 describe('toSink', () => {
   test('wraps a bare (s) => void so it is still callable as text', () => {
@@ -52,4 +52,31 @@ test('process.ts-style sink writeBytes writes raw bytes to the guest writer', as
   );
   onStdout.writeBytes(new Uint8Array([0, 255, 254]));
   expect(Array.from(written[0])).toEqual([0, 255, 254]);
+});
+
+test('sinkToStream writes text (UTF-8) and raw bytes into the stream, in order', async () => {
+  const ts = new TransformStream<Uint8Array, Uint8Array>();
+  const { sink, close } = sinkToStream(ts.writable);
+  // Drain concurrently: a TransformStream applies backpressure (readable HWM 0),
+  // so a queued write only settles once the reader pulls — reading after close()
+  // would deadlock. This mirrors real pipeline usage (downstream reads live).
+  const chunks: number[] = [];
+  const reader = ts.readable.getReader();
+  const drained = (async () => {
+    for (;;) { const { value, done } = await reader.read(); if (done) break; if (value) chunks.push(...value); }
+  })();
+  sink('ab');
+  sink.writeBytes(new Uint8Array([0, 255]));
+  await close();
+  await drained;
+  expect(chunks).toEqual([0x61, 0x62, 0x00, 0xff]);
+});
+
+test('sinkToStream close() signals EOF (readable ends)', async () => {
+  const ts = new TransformStream<Uint8Array, Uint8Array>();
+  const { close } = sinkToStream(ts.writable);
+  await close();
+  const reader = ts.readable.getReader();
+  const { done } = await reader.read();
+  expect(done).toBe(true);
 });
