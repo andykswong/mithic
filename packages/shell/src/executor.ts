@@ -137,11 +137,11 @@ export interface ExecutorOptions {
   onStderr?: OutputSink | ((s: string) => void);
   fs?: FsClient;
   /**
-   * A3 Tier 2: the shell's OWN stdin as a LIVE byte stream. When present, plain
-   * `read` / `read -t` consume successive lines from it (a `read -t` over a
-   * stream with no data yet times out), instead of the pre-materialized string
-   * model. Here-docs / `pipeStdin` / `<` redirects still feed `read` via the
-   * string path. Absent ⇒ plain `read` falls back to the string `ctx.stdin`.
+   * The shell's OWN stdin as a LIVE byte stream, installed as the root frame's
+   * `stdin`. `read`/`cat`/`mapfile` consume it through the frame's shared
+   * {@link StdinReader} (a `read -t` over a stream with no data yet times out);
+   * here-docs / `<<<` / `< file` install their own byte stream on the frame.
+   * Absent ⇒ the root frame has no stdin (plain `read` returns EOF).
    */
   stdinStream?: ReadableStream<Uint8Array>;
 }
@@ -471,7 +471,11 @@ export class Executor {
     else { words = []; for (const w of stmt.words) words.push(...await exp.expandWord(w)); }
 
     const ps3 = this.context.env.PS3 ?? '#? ';
-    const stream = (await this.resolveStdinStream(stmt.redirects ?? [])) ?? io.stdin;
+    // Drain the menu input. Never `readAll` the ROOT live stdin (a never-EOF
+    // terminal) — that would hang; an interactive `select` cannot be served by a
+    // whole-input read here, so treat the bare-root case as no input (EOF).
+    const redirStream = await this.resolveStdinStream(stmt.redirects ?? []);
+    const stream = redirStream ?? (io.stdin === this.rootStdinStream ? undefined : io.stdin);
     const input = stream ? new TextDecoder().decode(await new StdinReader(stream).readAll()) : '';
     const lines = input.length > 0 ? input.split('\n') : [];
     // A trailing newline yields a final empty element; drop it so it isn't read
@@ -567,6 +571,8 @@ export class Executor {
     return holder[STDIN_READER] ??= new StdinReader(io.stdin);
   }
 
+  /** Drop the cached reader when a frame's stdin stream is replaced (used when a
+   *  compound statement installs a `< file` redirect on its frame). */
   private resetStdinReader(io: CommandIO): void {
     delete (io as CommandIO & { [STDIN_READER]?: StdinReader })[STDIN_READER];
   }
@@ -2199,6 +2205,7 @@ export class Executor {
       consumeFdLine: (fd) => this.consumeFdLine(fd, frame),
       readStdinLine: (timeoutSec) => this.readStdinLine(frame, timeoutSec),
       readStdinAll: () => { const r = readerFor(); return r ? r.readAll() : Promise.resolve(new Uint8Array()); },
+      readStdinPump: (sink) => { const r = readerFor(); return r ? r.pumpTo(sink) : Promise.resolve(); },
       readStdinChunk: (delim, max, ignoreDelim) => {
         const r = readerFor();
         if (!r) return Promise.resolve(undefined);

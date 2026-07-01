@@ -129,8 +129,14 @@ export interface BuiltinContext {
    * for the next read (no data dropped).
    */
   readStdinLine?(timeoutSec?: number): Promise<{ line: string | undefined; timedOut: boolean }>;
-  /** Slurp ALL remaining stdin bytes (binary-safe) — for `cat` / `mapfile`. */
+  /** Slurp ALL remaining stdin bytes (binary-safe) — for `mapfile`. */
   readStdinAll?(): Promise<Uint8Array>;
+  /**
+   * Stream remaining stdin bytes to `sink` chunk-by-chunk (binary-exact, no full
+   * buffering) — for a streaming `cat`. Does not slurp; a bare `cat` over a large
+   * or never-EOF stream emits as it reads instead of buffering to EOF.
+   */
+  readStdinPump?(sink: (chunk: Uint8Array) => void | Promise<void>): Promise<void>;
   /**
    * Read a delimited/counted chunk of stdin for `read -d`/`-n`/`-N`. `ignoreDelim`
    * (`-N`) reads exactly `max` chars ignoring the delimiter; otherwise reads up to
@@ -485,6 +491,17 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       return runSet(args, ctx);
 
     case 'cat': {
+      // Stream stdin chunk-by-chunk (binary-exact, no full buffering) so a bare
+      // `cat` over a large/never-EOF stream emits as it reads. Fall back to a
+      // one-shot slurp for a ctx without the pump hook (older test harnesses).
+      if (ctx.readStdinPump) {
+        await ctx.readStdinPump((chunk) => {
+          if (chunk.byteLength === 0) return;
+          if (ctx.writeBytes) ctx.writeBytes(chunk);
+          else ctx.write(new TextDecoder().decode(chunk));
+        });
+        return 0;
+      }
       const all = await (ctx.readStdinAll?.() ?? Promise.resolve(new Uint8Array()));
       if (all.byteLength > 0) {
         if (ctx.writeBytes) ctx.writeBytes(all);
