@@ -1282,8 +1282,8 @@ export class Executor {
    */
   private makeExecFileSink(path: string, seed: string, io: CommandIO): OutputSink {
     if (path === '/dev/null') return toSink(() => { /* discard */ });
-    if (path === '/dev/stdout') return toSink((s) => io.stdout(s));
-    if (path === '/dev/stderr') return toSink((s) => io.stderr(s));
+    if (path === '/dev/stdout') return io.stdout;
+    if (path === '/dev/stderr') return io.stderr;
     const fs = this.fs;
     if (!fs) throw new Error(`shell: exec redirect to '${path}' requires an FsClient`);
     let buffer = seed;
@@ -1380,8 +1380,8 @@ export class Executor {
 
   private makeFileSink(path: string, append: boolean, closers: Array<() => void>, io: CommandIO): OutputSink {
     if (path === '/dev/null') return toSink(() => { /* discard */ });
-    if (path === '/dev/stdout') return toSink((s) => io.stdout(s));
-    if (path === '/dev/stderr') return toSink((s) => io.stderr(s));
+    if (path === '/dev/stdout') return io.stdout;
+    if (path === '/dev/stderr') return io.stderr;
     const fs = this.fs;
     if (!fs) throw new Error(`shell: redirect to '${path}' requires an FsClient (pass 'fs' in ExecutorOptions)`);
     const fd = fs.fsOpen(path, { write: !append, append, create: true, truncate: !append });

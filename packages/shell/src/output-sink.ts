@@ -8,17 +8,21 @@ export interface OutputSink {
   writeBytes(b: Uint8Array): void;
 }
 
-const TEXT_DECODER = new TextDecoder();
-
 /**
  * Normalize a sink argument into a full {@link OutputSink}. An existing sink
  * (already has `writeBytes`) is returned unchanged. A bare `(s: string) => void`
  * (tests, a text-only terminal) is wrapped: its `writeBytes` UTF-8-decodes to
  * text — lossy for true binary, but such sinks never carried binary anyway.
+ *
+ * The wrapper owns a per-instance STREAMING decoder so a multi-byte char split
+ * across two `writeBytes` chunks (e.g. on a pipe credit-window boundary)
+ * reassembles correctly rather than emitting a replacement char per fragment.
  */
 export function toSink(fn: OutputSink | ((s: string) => void)): OutputSink {
   if ('writeBytes' in fn && typeof (fn as OutputSink).writeBytes === 'function') return fn as OutputSink;
-  return Object.assign((s: string) => (fn as (s: string) => void)(s), {
-    writeBytes: (b: Uint8Array) => (fn as (s: string) => void)(TEXT_DECODER.decode(b)),
+  const text = fn as (s: string) => void;
+  const dec = new TextDecoder();
+  return Object.assign((s: string) => text(s), {
+    writeBytes: (b: Uint8Array) => text(dec.decode(b, { stream: true })),
   });
 }

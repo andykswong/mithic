@@ -29,6 +29,17 @@ describe('toSink', () => {
     expect(Array.from(chunks[0])).toEqual([0, 255]);
     expect(text).toBe('');
   });
+
+  test('bare-callback writeBytes reassembles a multi-byte char split across chunks', () => {
+    let acc = '';
+    const sink = toSink((s) => { acc += s; });
+    // '€' is UTF-8 0xE2 0x82 0xAC — split it across two writeBytes calls. A
+    // non-streaming per-chunk decode would emit replacement chars; the streaming
+    // decoder must buffer the partial char and reassemble it.
+    sink.writeBytes(new Uint8Array([0xe2, 0x82]));
+    sink.writeBytes(new Uint8Array([0xac]));
+    expect(acc).toBe('€');
+  });
 });
 
 test('process.ts-style sink writeBytes writes raw bytes to the guest writer', async () => {
