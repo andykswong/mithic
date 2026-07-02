@@ -473,6 +473,7 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         errOut(ctx, 'shell: declare: -A: not supported in POSIX mode\n');
         return 2;
       }
+      let declStatus = 0;
       for (const arg of args) {
         if (arg.startsWith('-')) continue; // option flags handled above
         const eq = arg.indexOf('=');
@@ -494,10 +495,13 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         if (eq > 0) {
           // A write to an ALREADY-readonly var fails — even via `readonly NAME=val`
           // (bash: `readonly r=a; readonly r=b` errors). The first `readonly RO=1`
-          // succeeds because RO isn't readonly YET (it is marked below).
+          // succeeds because RO isn't readonly YET (it is marked below). A failure
+          // sets the exit status but CONTINUES to the remaining names (bash: a
+          // multi-name `readonly a b c` still assigns the non-readonly ones).
           if (ctx.state?.isReadonly?.(n)) {
             errOut(ctx, `shell: ${name}: ${n}: readonly variable\n`);
-            return 1;
+            declStatus = 1;
+            continue;
           }
           if (isLocal) ctx.state?.declareLocal(n);
           if (!isAssoc) {
@@ -519,7 +523,7 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         // executor's applyAssignment (POSIX-fatal in posix mode).
         if (flagReadonly) ctx.state?.markReadonly?.(n);
       }
-      return 0;
+      return declStatus;
     }
 
     case 'let': {

@@ -223,3 +223,18 @@ test('a stray unmatched ]] / )) does not hang the parser (progress guard)', () =
     expect(p.type).toBe('Program');
   }
 });
+
+test('stray ]] / )) inside a compound body does not hang (progress guard in all body loops)', () => {
+  // Regression: the top-level guard alone left for/if/while/{}/case/subshell/select
+  // bodies able to OOM on an unconsumable token. All body loops now guard.
+  const cmds = [
+    'for x in 1; do echo $x ]]; done',
+    'if true; then echo a )); fi',
+    'while true; do echo x )); break; done',
+    '{ echo a )); }',
+    'case x in a) echo A ]];; esac',
+    '(echo ]] )',
+    'select x in a; do echo )); done',
+  ];
+  for (const c of cmds) expect(parse(c).type).toBe('Program'); // must return, not hang
+});

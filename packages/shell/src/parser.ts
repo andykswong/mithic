@@ -416,9 +416,11 @@ class Parser {
     const body: Statement[] = [];
     this.skipSeparators();
     while (this.peek() && !this.atType('RPAREN')) {
+      const before = this.pos;
       body.push(this.parseAndOr());
       if (this.atType('SEMI') || this.atType('NEWLINE') || this.atType('AMP')) this.next();
       this.skipSeparators();
+      if (this.pos === before) this.next(); // progress guard (see parseProgram)
     }
     if (this.atType('RPAREN')) this.next();
     const stmt: Statement = { type: 'Subshell', body };
@@ -470,10 +472,14 @@ class Parser {
     const list: Statement[] = [];
     this.skipSeparators();
     while (this.peek() && !this.atAnyReserved(stops) && !this.atStopToken(stopTokens)) {
+      const before = this.pos;
       list.push(this.parseAndOr());
       if (this.atType('SEMI') || this.atType('NEWLINE') || this.atType('AMP')) this.next();
       this.skipSeparators();
       if (this.atStopToken(stopTokens)) break;
+      // Progress guard (see parseProgram): a stray token no production consumes
+      // inside a compound body (`for …; do echo x ]]; done`) would otherwise spin.
+      if (this.pos === before) this.next();
     }
     return list;
   }

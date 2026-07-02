@@ -1127,3 +1127,10 @@ test('declare/local/readonly with += appends (integer adds, string concats)', as
   // but the FIRST readonly declaration succeeds
   expect((await run('readonly RO=7; echo "$RO"')).out).toBe('7\n');
 });
+
+test('multi-name readonly assigns non-readonly names even when one is already readonly', async () => {
+  const r = await run('readonly B=x; readonly A=aa B=bb C=cc; echo "$A|$C"');
+  expect(r.out).toBe('aa|cc\n');       // A and C still assigned (B rejected)
+  expect(r.err).toMatch(/readonly/);   // B reported
+  expect((await run('readonly A=1 B=2 C=3; echo "$A$B$C"')).out).toBe('123\n');
+});
