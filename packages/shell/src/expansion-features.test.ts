@@ -172,3 +172,12 @@ test('parseIfs + splitOnIfs helpers', () => {
   expect(splitOnIfs('a::b', parseIfs(':'))).toEqual(['a', '', 'b']);
   expect(splitOnIfs('  a  b  ', parseIfs(undefined))).toEqual(['a', 'b']);
 });
+
+test('array/positional slice offset can be a parenthesized ternary (paren-aware colon)', async () => {
+  const arr = ['a', 'b', 'c', 'd', 'e'];
+  const h = { getArray: (n: string) => (n === 'a' ? arr : undefined) } as Partial<ShellEnv>;
+  expect(await E({}, h).expandWord('${a[@]:(1>0?1:0):2}')).toEqual(['b', 'c']);
+  // `${@:off}` indexes [$0, $1..$N], so offset 2 with positional [a..e] = $2 = 'b'.
+  const p = { getPositional: () => arr, getSpecial: (n: string) => (n === '0' ? 'sh' : undefined) } as Partial<ShellEnv>;
+  expect(await E({}, p).expandWord('${@:(1>0?2:0):2}')).toEqual(['b', 'c']);
+});

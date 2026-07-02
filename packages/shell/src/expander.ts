@@ -647,7 +647,7 @@ export class Expander {
    * out-of-range offset yields no elements.
    */
   private async sliceArray(arr: string[], spec: string): Promise<string[]> {
-    const colon = spec.indexOf(':');
+    const colon = findSliceColon(spec); // paren-aware: skip a `:` inside a ternary offset
     const offStr = colon >= 0 ? spec.slice(0, colon) : spec;
     let off = await this.evalArithSpec(offStr);
     if (off < 0) off = arr.length + off;
