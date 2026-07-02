@@ -62,11 +62,35 @@ Prioritized for agents. Each row: the gap + a one-line agent use case.
 _No open shell-language or shell/runtime gaps are currently tracked._ The
 previously-listed items — the remaining `${var@OP}` transforms (`@A`/`@P`/`@K`/`@k`),
 `coproc` on relay backends, the in-process builtin broken-pipe backstop, a builtin
-first-stage `< file` in an all-builtin pipeline, subshell `( … )` redirects, and
-binary-exact `< file` input — have all shipped (implemented + tested) and their rows
-were removed per this registry's open-only convention. Networking-layer limitations
-(UDP over `read -u`, per-process `/dev/tcp` host narrowing) remain, tracked separately
-in the platform docs, not here.
+first-stage `< file` in an all-builtin pipeline, subshell `( … )` redirects,
+binary-exact `< file` input, and **UDP datagrams over the shell** (`exec 3<>/dev/udp/host/port;
+echo -ne … >&3; read -t 2 -r resp <&3` — `<&` input fd-dup + datagram-aware raw read,
+binary-safe for a DNS-style round-trip) — have all shipped (implemented + tested) and
+their rows were removed per this registry's open-only convention. Per-process
+`/dev/tcp`/`/dev/udp` host narrowing already works via the kernel's fs-capability
+path-prefix check (a process granted `fs:['/dev/tcp/api.example.com']` cannot open
+`/dev/tcp/evil.com`).
+
+## Deliberate boundaries (documented, not gaps)
+
+These are intentional design limits, not missing features:
+
+- **`TMOUT` interactive idle-exit.** bash auto-exits an *interactive* shell after
+  `$TMOUT` idle seconds at the prompt. There is no interactive prompt loop in the
+  non-interactive sandbox, so this belongs to an example-app REPL, not shell core.
+  (`read -t N` block-then-timeout over a live stream DOES work — that half shipped
+  with byte-stream stdin.)
+- **A relay guest cannot spawn a relay child from a suspended syscall.** On the
+  relay backends (quickjs/ivm), a guest suspended mid-syscall cannot spawn a child
+  guest (QuickJS Asyncify re-entrancy → `gc_obj_list` abort; ivm hangs). This
+  affects ALL relay child-spawn (`coproc`/pipelines/`process/spawn` from a relay
+  *shell*), not just coproc — the coproc pipe wiring itself is complete + tested.
+  Shipped shells run on the transferable (Worker/iframe) backends, where this does
+  not apply; relay backends are the deterministic single-purpose tier.
+- **`read -n N` / `-d DELIM` combined with `<&N` (or `-u N`) over a duplex/input fd**
+  reads a whole line/datagram, ignoring the count/delimiter — an inherited limit of
+  the numbered-fd read path. Chunked reads over pipe/here-string stdin honor `-n`/`-d`
+  normally; the UDP round-trip uses whole-datagram `read -r`.
 
 ---
 
