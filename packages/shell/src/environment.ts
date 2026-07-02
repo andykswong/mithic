@@ -75,6 +75,14 @@ export interface EnvHost {
   isReadonly?(name: string): boolean;
   /** Write a non-fatal diagnostic to the current stderr frame. Optional. */
   warn?(msg: string): void;
+  /** Function-call name stack (most-recent first) for `$FUNCNAME`/`${FUNCNAME[N]}`. */
+  funcNameStack?(): readonly string[];
+  /** `$BASH_REMATCH` groups after `[[ =~ ]]` (element 0 = whole match). */
+  bashRematch?(): readonly string[];
+  /** `$_` — the last argument of the previous simple command. */
+  lastArg?(): string;
+  /** `$SECONDS` — whole seconds since the shell started. */
+  secondsElapsed?(): number;
 }
 
 export class Environment implements ShellEnv {
@@ -191,6 +199,9 @@ export class Environment implements ShellEnv {
   getArray(name: string): string[] | undefined {
     name = this.deref(name);
     if (name === 'BASH_VERSINFO') return [...BASH_VERSINFO_ELEMENTS];
+    // `${FUNCNAME[@]}` / `${BASH_REMATCH[@]}` are dynamic host-backed arrays.
+    if (name === 'FUNCNAME') { const s = this.host.funcNameStack?.(); return s && s.length > 0 ? [...s] : undefined; }
+    if (name === 'BASH_REMATCH') { const r = this.host.bashRematch?.(); return r && r.length > 0 ? [...r] : undefined; }
     return this.arrays.get(name);
   }
 
@@ -227,6 +238,11 @@ export class Environment implements ShellEnv {
       case 'RANDOM': return String(this.nextRandom());
       case 'BASH_VERSION': return BASH_VERSION_STRING;
       case 'BASH_VERSINFO': return BASH_VERSINFO_ELEMENTS[0]; // bare ref → element 0
+      // `$FUNCNAME` (bare → current function) / `$BASH_REMATCH` (bare → whole match).
+      case 'FUNCNAME': return this.host.funcNameStack?.()[0];
+      case 'BASH_REMATCH': return this.host.bashRematch?.()[0] ?? undefined;
+      case '_': return this.host.lastArg?.();
+      case 'SECONDS': { const s = this.host.secondsElapsed?.(); return s === undefined ? undefined : String(s); }
     }
     if (/^[1-9][0-9]*$/.test(name)) {
       return (this.context.positional ?? [])[parseInt(name, 10) - 1];

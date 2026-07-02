@@ -64,6 +64,11 @@ export interface ShellState {
   markInteger?(name: string): void;
   /** True when the name was marked integer (`declare -i`). */
   isInteger?(name: string): boolean;
+  /**
+   * `declare -p [names]` reconstruction. With no names, every set variable/array.
+   * Returns the `declare …` lines and any requested names that were not found.
+   */
+  declareP?(names: string[]): { lines: string[]; missing: string[] };
   /** Record a `declare -n ref=target` nameref (single-level). */
   setNameref?(ref: string, target: string): void;
   /** Resolve a nameref to its target (single-level), or undefined if not a nameref. */
@@ -75,6 +80,12 @@ export interface ShellState {
    */
   dirStack?(): string[];
 }
+
+/** Shell reserved words, for `type`/`type -t` classification (`keyword`). */
+const SHELL_KEYWORDS = new Set([
+  'if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done',
+  'for', 'select', 'in', 'case', 'esac', 'function', 'time', '{', '}', '!', '[[', ']]', 'coproc',
+]);
 
 /** Long names of the shell options toggled via `set` / `set -o`. */
 export type ShellOptionName =
@@ -181,7 +192,7 @@ export const BUILTINS = [
   'mapfile', 'readarray',
   'jobs', 'fg', 'bg', 'wait', 'kill', 'break', 'continue', 'source', '.', 'type',
   'shopt', 'trap', 'disown', 'history', 'fc', 'exec', 'coproc',
-  'dirs', 'pushd', 'popd', 'hash',
+  'dirs', 'pushd', 'popd', 'hash', 'command', 'builtin',
   'compgen', 'complete', 'compopt',
 ] as const;
 
@@ -412,6 +423,15 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       // and writes to `ref` are redirected to `target` (the latter in the
       // executor's applyAssignment). Recorded instead of storing a literal value.
       const isNameref = name === 'declare' && args.includes('-n');
+      // `declare -p [name...]` prints the declare reconstruction (no assignment).
+      if (name === 'declare' && args.includes('-p')) {
+        const names = args.filter((x) => !x.startsWith('-'));
+        const out = ctx.state?.declareP?.(names);
+        if (out === undefined) return 0;
+        if (out.missing.length > 0) { for (const mn of out.missing) errOut(ctx, `shell: declare: ${mn}: not found\n`); }
+        for (const line of out.lines) ctx.write(line + '\n');
+        return out.missing.length > 0 ? 1 : 0;
+      }
       // `declare -i` / `-r` attributes (also honored on `local`). `readonly` is
       // always the readonly attribute; a `-i` on any of them marks integer.
       const flagInteger = args.includes('-i');
@@ -601,13 +621,57 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
     }
 
     case 'type': {
-      let status = 0;
+      // Flags: -t (type word only), -a (all locations), -p/-P/-f accepted.
+      let flagT = false, flagA = false;
+      const names: string[] = [];
       for (const a of args) {
-        if (ctx.state?.functions.has(a)) ctx.write(`${a} is a function\n`);
-        else if (isBuiltin(a)) ctx.write(`${a} is a shell builtin\n`);
-        else { errOut(ctx, `type: ${a}: not found\n`); status = 1; }
+        if (a === '-t') flagT = true;
+        else if (a === '-a') flagA = true;
+        else if (a === '-p' || a === '-P' || a === '-f') { /* accepted, no PATH cache here */ }
+        else if (a.startsWith('-') && a.length > 1) { errOut(ctx, `shell: type: ${a}: invalid option\n`); return 2; }
+        else names.push(a);
+      }
+      // Classify a name: reserved word / function / builtin / (file resolved via PATH).
+      const classify = (nm: string): 'keyword' | 'function' | 'builtin' | 'file' | undefined => {
+        if (SHELL_KEYWORDS.has(nm)) return 'keyword';
+        if (ctx.state?.functions.has(nm)) return 'function';
+        if (isBuiltin(nm)) return 'builtin';
+        return undefined; // no PATH hash / file resolution in this builtin surface
+      };
+      let status = 0;
+      for (const nm of names) {
+        const kind = classify(nm);
+        if (kind === undefined) {
+          if (flagT) { status = 1; continue; } // -t prints nothing for an unknown name
+          errOut(ctx, `type: ${nm}: not found\n`); status = 1; continue;
+        }
+        if (flagT) { ctx.write(`${kind}\n`); continue; }
+        if (kind === 'keyword') ctx.write(`${nm} is a shell keyword\n`);
+        else if (kind === 'function') ctx.write(`${nm} is a function\n`);
+        else if (kind === 'builtin') ctx.write(`${nm} is a shell builtin\n`);
+        // `-a` would additionally list PATH hits; none are resolvable here.
+        void flagA;
       }
       return status;
+    }
+
+    case 'command':
+    case 'builtin': {
+      // The executor intercepts `command`/`builtin CMD …` before dispatch (to
+      // bypass functions); reaching here means a pipeline stage or a no-arg call.
+      // Best-effort: run the target through eval (functions not bypassed here).
+      let rest = args;
+      if (name === 'command') {
+        if (rest[0] === '-v' || rest[0] === '-V') {
+          const t = rest[1];
+          if (t !== undefined && (ctx.state?.functions.has(t) || isBuiltin(t))) { ctx.write(t + '\n'); return 0; }
+          return 1;
+        }
+        while (rest[0] === '-p') rest = rest.slice(1);
+      }
+      if (rest.length === 0) return 0;
+      if (name === 'builtin' && !isBuiltin(rest[0])) { errOut(ctx, `shell: builtin: ${rest[0]}: not a shell builtin\n`); return 1; }
+      return ctx.eval ? await ctx.eval(rest.join(' ')) : 0;
     }
 
     case 'source':
@@ -1303,35 +1367,102 @@ function splitKeepingDelimiter(data: string, delim: string): string[] {
   return out;
 }
 
+/** Unary string-test operators the pure `test`/`[` supports (no VFS file tests). */
+const TEST_UNARY = new Set(['-z', '-n']);
+
+function unaryTest(op: string, s: string): boolean {
+  switch (op) {
+    case '-z': return s === '';
+    case '-n': return s !== '';
+    default: return s !== ''; // an unsupported unary treated as a 1-arg string test
+  }
+}
+
+function binaryTest(a: string, op: string, b: string): boolean {
+  switch (op) {
+    case '=':
+    case '==': return a === b;
+    case '!=': return a !== b;
+    case '<': return a < b;   // lexical (byte) ordering, as in bash test/[
+    case '>': return a > b;
+    case '-eq': return Number(a) === Number(b);
+    case '-ne': return Number(a) !== Number(b);
+    case '-lt': return Number(a) < Number(b);
+    case '-le': return Number(a) <= Number(b);
+    case '-gt': return Number(a) > Number(b);
+    case '-ge': return Number(a) >= Number(b);
+    default: return false;
+  }
+}
+
+/**
+ * POSIX `test`/`[` evaluation. Handles the 0/1/2/3-arg special forms exactly as
+ * POSIX specifies, then a general recursive grammar for 4+ args with `!`
+ * negation, `-a` (AND, binds tighter) / `-o` (OR), and `( )` grouping.
+ */
 function evalTest(args: string[]): boolean {
-  if (args.length === 0) return false;
-  if (args.length === 1) return args[0] !== '';
-  if (args.length === 2) {
-    const [op, s] = args;
-    switch (op) {
-      case '-z': return s === '';
-      case '-n': return s !== '';
-      case '!': return !evalTest([s]);
-      default: return true;
-    }
+  // POSIX-defined short forms (evaluated positionally, not by the grammar).
+  switch (args.length) {
+    case 0: return false;
+    case 1: return args[0] !== '';
+    case 2:
+      if (args[0] === '!') return !(args[1] !== '');
+      if (TEST_UNARY.has(args[0])) return unaryTest(args[0], args[1]);
+      return args[1] !== ''; // unknown unary → treat operand as a string test
+    case 3:
+      // `! UNARY s` negates the unary; `a OP b` binary; `( expr1 )` degenerate.
+      if (args[0] === '!') return !evalTest(args.slice(1));
+      if (args[0] === '(' && args[2] === ')') return evalTest([args[1]]);
+      return binaryTest(args[0], args[1], args[2]);
+    case 4:
+      if (args[0] === '!') return !evalTest(args.slice(1));
+      break;
   }
-  if (args.length === 3) {
-    const [a, op, b] = args;
-    switch (op) {
-      case '=':
-      case '==': return a === b;
-      case '!=': return a !== b;
-      case '-eq': return Number(a) === Number(b);
-      case '-ne': return Number(a) !== Number(b);
-      case '-lt': return Number(a) < Number(b);
-      case '-le': return Number(a) <= Number(b);
-      case '-gt': return Number(a) > Number(b);
-      case '-ge': return Number(a) >= Number(b);
-      default: return false;
-    }
+  return new TestParser(args).parseExpr();
+}
+
+/** Recursive-descent evaluator for 4+-token test expressions (-a/-o/!/( )). */
+class TestParser {
+  private pos = 0;
+  private readonly toks: string[];
+  constructor(toks: string[]) { this.toks = toks; }
+  private peek(): string | undefined { return this.toks[this.pos]; }
+
+  parseExpr(): boolean { return this.parseOr(); }
+
+  private parseOr(): boolean {
+    let v = this.parseAnd();
+    while (this.peek() === '-o') { this.pos++; const r = this.parseAnd(); v = v || r; }
+    return v;
   }
-  if (args[0] === '!') return !evalTest(args.slice(1));
-  return false;
+  private parseAnd(): boolean {
+    let v = this.parseUnary();
+    while (this.peek() === '-a') { this.pos++; const r = this.parseUnary(); v = v && r; }
+    return v;
+  }
+  private parseUnary(): boolean {
+    if (this.peek() === '!') { this.pos++; return !this.parseUnary(); }
+    return this.parsePrimary();
+  }
+  private parsePrimary(): boolean {
+    if (this.peek() === '(') {
+      this.pos++;
+      const v = this.parseOr();
+      if (this.peek() === ')') this.pos++;
+      return v;
+    }
+    // A binary primary `a OP b` when the next-next token is a known binary op;
+    // otherwise a single-token string test.
+    const a = this.toks[this.pos];
+    const op = this.toks[this.pos + 1];
+    const isBinaryOp = op !== undefined && ['=', '==', '!=', '<', '>', '-eq', '-ne', '-lt', '-le', '-gt', '-ge'].includes(op);
+    if (isBinaryOp) { this.pos += 3; return binaryTest(a, op, this.toks[this.pos - 1]); }
+    if (a !== undefined && TEST_UNARY.has(a) && this.toks[this.pos + 1] !== undefined) {
+      this.pos += 2; return unaryTest(a, this.toks[this.pos - 1]);
+    }
+    this.pos++;
+    return a !== undefined && a !== '';
+  }
 }
 
 /**

@@ -942,3 +942,58 @@ test('base#num arithmetic literals through the shell', async () => {
   expect((await run('echo $((2#1010))')).out).toBe('10\n');
   expect((await run('echo $((0xFFFFFFFF))')).out).toBe('4294967295\n');
 });
+
+// ── WP-D: test operators, command/builtin, type -t/-a, declare -p, special vars ─
+
+test('test/[ ] -a/-o operators and 3-arg negation', async () => {
+  expect((await run('[ -n a -a -n b ] && echo yes || echo no')).out).toBe('yes\n');
+  expect((await run('[ -z "" -o -n b ] && echo yes')).out).toBe('yes\n');
+  expect((await run('[ 1 -eq 1 -a 2 -eq 2 ] && echo y')).out).toBe('y\n');
+  expect((await run('[ -n a -a -z b ] && echo yes || echo no')).out).toBe('no\n');
+  expect((await run('[ ! -z "hello" ] && echo nonempty')).out).toBe('nonempty\n');
+  expect((await run('[ ! -n "" ] && echo isempty')).out).toBe('isempty\n');
+});
+
+test('test/[ ] lexical </> and [[ ]] lexical </>', async () => {
+  expect((await run('[ apple \\< banana ] && echo ordered')).out).toBe('ordered\n');
+  expect((await run('[ banana \\> apple ] && echo ok')).out).toBe('ok\n');
+  expect((await run('[[ apple < banana ]] && echo ordered')).out).toBe('ordered\n');
+  expect((await run('[[ banana > apple ]] && echo yes')).out).toBe('yes\n');
+});
+
+test('command [-v] and builtin bypass functions', async () => {
+  expect((await run('command -v echo')).out).toBe('echo\n');
+  expect((await run('command echo hi')).out).toBe('hi\n');
+  expect((await run('builtin echo hi')).out).toBe('hi\n');
+  // `nonexistent*` is unresolvable in this harness's resolve() stub.
+  expect((await run('command -v nonexistentcmd; echo "rc=$?"')).out).toBe('rc=1\n');
+  expect((await run('echo(){ printf FUNC; }; command echo hi')).out).toBe('hi\n');
+});
+
+test('type -t classifies keyword/function/builtin', async () => {
+  expect((await run('type -t echo')).out).toBe('builtin\n');
+  expect((await run('type -t if')).out).toBe('keyword\n');
+  expect((await run('f(){ :;}; type -t f')).out).toBe('function\n');
+  expect((await run('type -t nosuch; echo "rc=$?"')).out).toBe('rc=1\n');
+});
+
+test('declare -p reconstructs scalars and arrays', async () => {
+  expect((await run('declare -r y=5; declare -p y')).out).toBe('declare -r y="5"\n');
+  expect((await run('a=(1 2 3); declare -p a')).out).toBe('declare -a a=([0]="1" [1]="2" [2]="3")\n');
+});
+
+test('$FUNCNAME reflects the call stack', async () => {
+  expect((await run('f(){ echo "$FUNCNAME"; }; f')).out).toBe('f\n');
+  expect((await run('g(){ echo "${FUNCNAME[0]} ${FUNCNAME[1]}"; }; h(){ g; }; h')).out).toBe('g h\n');
+  expect((await run('echo "[$FUNCNAME]"')).out).toBe('[]\n'); // empty outside a function
+});
+
+test('BASH_REMATCH is populated after [[ =~ ]] with groups', async () => {
+  expect((await run('[[ abc123 =~ ([a-z]+)([0-9]+) ]] && echo "${BASH_REMATCH[0]}/${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"')).out)
+    .toBe('abc123/abc/123\n');
+});
+
+test('$_ is the last argument of the previous command; $SECONDS is numeric', async () => {
+  expect((await run('echo abc def; echo "$_"')).out).toBe('abc def\ndef\n');
+  expect((await run('echo "${SECONDS}"')).out).toBe('0\n');
+});

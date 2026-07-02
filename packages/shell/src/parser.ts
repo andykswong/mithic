@@ -431,7 +431,22 @@ class Parser {
   private parseCond(): Statement {
     this.next(); // [[
     const words: string[] = [];
-    while (this.peek() && !this.atType('DRBRACKET')) words.push(this.next()!.raw);
+    while (this.peek() && !this.atType('DRBRACKET')) {
+      const raw = this.next()!.raw;
+      words.push(raw);
+      // After `=~`, the right-hand side is a regex whose unquoted `(`/`)`/etc. are
+      // lexed as separate tokens (`([a-z]+)` → `(` `[a-z]+` `)`). Coalesce the
+      // whole RHS — up to `]]` or a `&&`/`||` connective — into ONE regex word so
+      // grouped patterns like `([a-z]+)([0-9]+)` survive. (A literal-space regex
+      // must be quoted, as in bash.)
+      if (raw === '=~') {
+        let re = '';
+        while (this.peek() && !this.atType('DRBRACKET') && !this.atType('AND_IF') && !this.atType('OR_IF')) {
+          re += this.next()!.raw;
+        }
+        words.push(re);
+      }
+    }
     if (this.atType('DRBRACKET')) this.next();
     return { type: 'Cond', condWords: words };
   }

@@ -266,6 +266,12 @@ export class Executor {
   private readonlyNames = new Set<string>();
   /** Names declared `declare -i` (integer): assignments are arithmetic-evaluated. */
   private integerNames = new Set<string>();
+  /** `$BASH_REMATCH` capture groups from the last successful `[[ =~ ]]` match. */
+  private bashRematch: string[] = [];
+  /** `$_` — the last argument (post-expansion) of the previous simple command. */
+  private lastArgValue = '';
+  /** Shell start time (ms) for `$SECONDS`; `Date.now()` is only used at read time. */
+  private startTimeMs = Date.now();
   /** `declare -n ref=target` namerefs (ref → target). Single-level only. */
   private namerefs = new Map<string, string>();
   /** Directory stack BELOW cwd (most-recent-first) for `pushd`/`popd`/`dirs`. */
@@ -367,6 +373,10 @@ export class Executor {
       // The expander's `${var:=x}` readonly warning routes here; mirror the other
       // readonly diagnostics' `shell: ` prefix and the current stderr frame.
       warn: (msg) => this.io.stderr(`shell: ${msg}\n`),
+      funcNameStack: () => this.funcStack,
+      bashRematch: () => this.bashRematch,
+      lastArg: () => this.lastArgValue,
+      secondsElapsed: () => Math.floor((Date.now() - this.startTimeMs) / 1000),
     };
     this.environment = new Environment(this.context, host);
     // $SHLVL: derive from the inherited value and store it back (G7).
@@ -712,6 +722,7 @@ export class Executor {
       isReadonly: (name) => this.readonlyNames.has(name),
       markInteger: (name) => { this.integerNames.add(name); },
       isInteger: (name) => this.integerNames.has(name),
+      declareP: (names) => this.declareP(names),
       setNameref: (ref, target) => { this.namerefs.set(ref, target); },
       resolveNameref: (name) => this.namerefs.get(name),
       dirStack: () => this.dirStackBelow,
@@ -1196,7 +1207,14 @@ export class Executor {
     }
     if (words[0] === '!') return !(await this.evalConditional(words.slice(1)));
     if (words.length === 3 && words[1] === '=~') {
-      try { return new RegExp(words[2]).test(words[0]); } catch { return false; }
+      try {
+        const m = new RegExp(words[2]).exec(words[0]);
+        // On a match, populate $BASH_REMATCH (0 = whole match, N = group N); a
+        // non-match clears it (bash leaves the previous value, but clearing is the
+        // safer, predictable choice and matches the common test-then-read idiom).
+        this.bashRematch = m ? m.map((g) => g ?? '') : [];
+        return m !== null;
+      } catch { return false; }
     }
     if (words.length === 3 && (words[1] === '==' || words[1] === '=')) {
       return globMatch(words[0], words[2], this.globMatchOpts());
@@ -1204,6 +1222,10 @@ export class Executor {
     if (words.length === 3 && words[1] === '!=') {
       return !globMatch(words[0], words[2], this.globMatchOpts());
     }
+    // Inside `[[ ]]`, `<` / `>` are lexical (byte) string comparisons — NOT
+    // redirections and needing no escaping (bash).
+    if (words.length === 3 && words[1] === '<') return words[0] < words[2];
+    if (words.length === 3 && words[1] === '>') return words[0] > words[2];
     if (words.length === 2 && words[0].startsWith('-')) {
       return this.condFileTest(words[0], words[1]);
     }
@@ -2081,6 +2103,11 @@ export class Executor {
     // here would double-run any command substitution in an assignment RHS.
     const { name, argv } = await this.expandCommand(cmd, argExpander, /*includeAssignmentEnv*/ false);
 
+    // `$_` — bash sets it to the LAST argument of the command just parsed (or the
+    // command name when there are no args). Update it before dispatch so a later
+    // command in the same list sees the previous command's last word.
+    if (name !== '') this.lastArgValue = argv.length > 0 ? argv[argv.length - 1] : name;
+
     if (name === '') {
       if (this.options.xtrace && cmd.assignments.length > 0) {
         io.stderr('+ ' + cmd.assignments.map((a) => `${a.name}=${a.value}`).join(' ') + '\n');
@@ -2153,6 +2180,37 @@ export class Executor {
         if (e instanceof RedirectError) return this.onRedirectError(name, e, io);
         throw e;
       }
+    }
+    // `command [-v|-p] CMD …` / `builtin CMD …` — run CMD bypassing any shell
+    // FUNCTION of the same name (`command`) or forcing a builtin (`builtin`).
+    // `command -v NAME` prints how NAME resolves (name/path) or exits 1 silently.
+    if ((name === 'command' || name === 'builtin') && argv.length > 0) {
+      let rest = argv;
+      let dashV = false;
+      if (name === 'command') {
+        while (rest.length > 0 && (rest[0] === '-v' || rest[0] === '-V' || rest[0] === '-p')) {
+          if (rest[0] === '-v' || rest[0] === '-V') dashV = true;
+          rest = rest.slice(1);
+        }
+      }
+      if (rest.length === 0) return 0;
+      const target = rest[0];
+      if (dashV) {
+        // `command -v`: print the resolution and exit 0, else exit 1 silently.
+        if (this.functions.has(target)) { io.stdout(target + '\n'); return 0; }
+        if (isBuiltin(target)) { io.stdout(target + '\n'); return 0; }
+        if (this.resolve(target) !== undefined) { io.stdout(target + '\n'); return 0; }
+        return 1;
+      }
+      if (name === 'builtin') {
+        if (!isBuiltin(target)) { io.stderr(`shell: builtin: ${target}: not a shell builtin\n`); return 1; }
+        return await this.dispatch(target, rest.slice(1), io, { stdin });
+      }
+      // `command CMD`: builtin-or-external, skipping functions.
+      if (isBuiltin(target) && builtinShadowsExternal(target, rest.slice(1))) {
+        return await this.dispatch(target, rest.slice(1), io, { stdin });
+      }
+      return await this.spawnExternal(target, rest.slice(1), localEnv, io, resolvedInput?.fdSpec);
     }
     try {
       if (this.functions.has(name)) {
@@ -2426,6 +2484,50 @@ export class Executor {
 
   /** Function-call name stack, most-recent first — backs `$FUNCNAME`. */
   funcNameStack(): readonly string[] { return this.funcStack; }
+
+  /**
+   * `declare -p [names]` reconstruction. Builds a `declare …` line per variable
+   * with its attribute flags (`-r`/`-i`/`-a`/`-A`) and a re-inputtable value. With
+   * no names, lists every set scalar + array + assoc (sorted).
+   */
+  private declareP(names: string[]): { lines: string[]; missing: string[] } {
+    const dq = (s: string): string => '"' + s.replace(/[\\"$`]/g, (c) => '\\' + c) + '"';
+    const flagFor = (n: string): string => {
+      let f = '';
+      if (this.assocArrays.has(n)) f += 'A';
+      else if (this.arrays.has(n)) f += 'a';
+      if (this.integerNames.has(n)) f += 'i';
+      if (this.readonlyNames.has(n)) f += 'r';
+      return f;
+    };
+    const line = (n: string): string | undefined => {
+      const flags = flagFor(n);
+      const opt = flags === '' ? '--' : '-' + flags;
+      if (this.assocArrays.has(n)) {
+        const m = this.assocArrays.get(n)!;
+        const body = [...m.entries()].map(([k, v]) => `[${dq(k)}]=${dq(v)}`).join(' ');
+        return `declare ${opt} ${n}=(${body})`;
+      }
+      if (this.arrays.has(n)) {
+        const arr = this.arrays.get(n)!;
+        const body = arr.map((v, i) => `[${i}]=${dq(v)}`).join(' ');
+        return `declare ${opt} ${n}=(${body})`;
+      }
+      if (n in this.context.env) return `declare ${opt} ${n}=${dq(this.context.env[n])}`;
+      if (this.readonlyNames.has(n) || this.integerNames.has(n)) return `declare ${opt} ${n}`;
+      return undefined;
+    };
+    if (names.length === 0) {
+      const all = new Set<string>([...Object.keys(this.context.env), ...this.arrays.keys(), ...this.assocArrays.keys()]);
+      const lines: string[] = [];
+      for (const n of [...all].sort()) { const l = line(n); if (l !== undefined) lines.push(l); }
+      return { lines, missing: [] };
+    }
+    const lines: string[] = [];
+    const missing: string[] = [];
+    for (const n of names) { const l = line(n); if (l !== undefined) lines.push(l); else missing.push(n); }
+    return { lines, missing };
+  }
 
   // ── background / jobs ─────────────────────────────────────────────────────────
 
