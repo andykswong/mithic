@@ -1034,3 +1034,9 @@ test('$\'...\' with an escaped single-quote (\\\') yields a literal quote', asyn
   // printf %b keeps \' literal (NOT an escape there) — the ansiC flag is $'…'-only
   expect((await run('printf \'%b\' \'x\\\'y\'')).out).toBe('x\\y');
 });
+
+test('array-element references work in let / declare -i / C-style for arithmetic', async () => {
+  expect((await run('a=(5 9); let "x = a[1] + 1"; echo $x')).out).toBe('10\n');
+  expect((await run('a=(5 9); declare -i x=a[1]+1; echo $x')).out).toBe('10\n');
+  expect((await run('a=(3); for ((i=a[0]; i<5; i++)); do printf "%s " "$i"; done')).out).toBe('3 4 ');
+});

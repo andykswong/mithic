@@ -23,6 +23,7 @@ import { parse } from './parser.ts';
 import { StdinReader } from './stdin-reader.ts';
 import { toSink, sinkToStream, BrokenPipeError, type OutputSink } from './output-sink.ts';
 import { evalArith } from './arith.ts';
+import type { ArithArrayAccess } from './arith.ts';
 import { globMatch } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
 import { Expander, ExpansionError } from './expander.ts';
@@ -1026,12 +1027,13 @@ export class Executor {
     // (the readonly assignment fails every iteration); mithic is SAFER and stops.
     const rejected = new Set<string>();
     const env = this.arithEnvForExpr(rejected);
-    if (stmt.arithInit) evalArith(stmt.arithInit, env);
+    const arr = this.arithArrayAccessExec();
+    if (stmt.arithInit) evalArith(stmt.arithInit, env, arr);
     if (rejected.size > 0) return 1; // init targeted a readonly var → cannot start
     const cond = stmt.arithCond ?? '';
     let guard = 0;
     for (;;) {
-      if (cond !== '' && evalArith(cond, env) === 0) break;
+      if (cond !== '' && evalArith(cond, env, arr) === 0) break;
       if (++guard > 1_000_000) break;
       try {
         status = await this.execList(stmt.body ?? [], io);
@@ -1041,7 +1043,7 @@ export class Executor {
         else throw e;
       }
       if (this.exiting !== undefined) return status;
-      if (stmt.arithIncr) evalArith(stmt.arithIncr, env);
+      if (stmt.arithIncr) evalArith(stmt.arithIncr, env, arr);
       // A readonly increment target can never advance — break (divergence from
       // bash, which hangs). The warning was already emitted (warn-once per name).
       if (rejected.size > 0) break;
@@ -1077,6 +1079,29 @@ export class Executor {
       },
       has: (_t, p: string) => p in this.context.env,
     }) as Record<string, string>;
+  }
+
+  /**
+   * Array-element accessor for `a[i]` arithmetic lvalues in `(( ))`/`let`/`declare -i`/
+   * C-style `for (( ))`. A negative index counts from the end; a write creates the array.
+   */
+  private arithArrayAccessExec(): ArithArrayAccess {
+    return {
+      getElement: (name, index) => {
+        const arr = this.arrays.get(name);
+        if (!arr) return undefined;
+        const i = index < 0 ? arr.length + index : index;
+        return arr[i];
+      },
+      setElement: (name, index, value) => {
+        if (this.readonlyNames.has(name)) { this.io.stderr(`shell: ${name}: readonly variable\n`); return; }
+        const arr = this.arrays.get(name) ?? [];
+        let i = index < 0 ? arr.length + index : index;
+        if (i < 0) i = 0;
+        arr[i] = value;
+        this.arrays.set(name, arr);
+      },
+    };
   }
 
   private async execCase(stmt: Statement, io: CommandIO): Promise<number> {
@@ -2357,7 +2382,7 @@ export class Executor {
 
   /** Arithmetic-evaluate a string for an integer-attributed assignment (0 on error). */
   private evalArithValue(expr: string): number {
-    try { return evalArith(expr, this.arithEnvForExpr()); }
+    try { return evalArith(expr, this.arithEnvForExpr(), this.arithArrayAccessExec()); }
     catch { return 0; }
   }
 
@@ -2832,7 +2857,7 @@ export class Executor {
       doBreak: (n) => { throw new LoopBreak(n); },
       doContinue: (n) => { throw new LoopContinue(n); },
       doReturn: (n) => { throw new FuncReturn(n); },
-      evalArith: (expr) => evalArith(expr, this.arithEnvForExpr()),
+      evalArith: (expr) => evalArith(expr, this.arithEnvForExpr(), this.arithArrayAccessExec()),
       state: this.shellState(),
     };
     const status = await runBuiltin(name, argv, ctx);
