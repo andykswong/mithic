@@ -20,7 +20,7 @@ packages/
 ├── kernel/         @mithic/kernel         — the Kernel: process lifecycle, IPC broker, capability manager, syscall dispatch, pipelines, Remote-DOM host
 ├── io/             @mithic/io             — VFS router + providers (memory/device/node-fs/opfs/caching), HTTP/socket abstractions, sync-bridge utils
 ├── shell/          @mithic/shell          — POSIX-style shell interpreter (lexer/parser/expander/executor/builtins) running as a regular Mithic process
-├── coreutils/      @mithic/coreutils      — pure-TS Unix coreutils (56 commands, incl. getcap/setcap over fs/*xattr), one guest module per command, + 4 web-API utility executables (copy/csvcols/imgresize/imgconvert via OffscreenCanvas) + createCoreutilsResolver
+├── coreutils/      @mithic/coreutils      — pure-TS Unix coreutils (71 commands, incl. getcap/setcap over fs/*xattr), one guest module per command, + 4 web-API utility executables (copy/csvcols/imgresize/imgconvert via OffscreenCanvas) + createCoreutilsResolver
 ├── commands/
 │   ├── jq/         @mithic/jq             — pure-TS jq JSON processor as a sandboxed process (+ standalone ./engine)
 │   └── curl/       @mithic/curl           — pure-TS curl-like HTTP client; all network via the capability-gated net/fetch syscall
@@ -38,7 +38,7 @@ packages/
 
 > **Browser OS:** `@mithic/desktop` is a *host-side* windowing layer (it runs on the trusted host page, never in a sandbox) — the guest never calls into it. The one enabling kernel/runtime change is the per-spawn `display.container?: HTMLElement` on `SpawnOptions`/`DisplayOptions`, so each GUI guest's iframe is created inside its own window frame and **never reparented** (reparenting reloads the iframe and kills the guest). Design + ChromeOS-parity roadmap: `docs/isola/005-browser-os-design.md`.
 
-**Command suite: 58 commands** — 56 coreutils (`COMMAND_NAMES` in `packages/coreutils/src/resolver.ts`, incl. `getcap`/`setcap`) + `jq` (`@mithic/jq`) + `curl` (`@mithic/curl`); plus 4 web-API utility executables (`copy`/`csvcols`/`imgresize`/`imgconvert`) shipped as guest modules but not in `COMMAND_NAMES`. The kernel owns the command namespace: a bare command name is mapped to spawnable guest code via `KernelOptions.resolveCommand(name, cwd, env)` — or, since RFC 0001, resolved from a `$PATH` VFS file first (exec-from-VFS).
+**Command suite: 73 commands** — 71 coreutils (`COMMAND_NAMES` in `packages/coreutils/src/resolver.ts`, incl. `getcap`/`setcap`) + `jq` (`@mithic/jq`) + `curl` (`@mithic/curl`); plus 4 web-API utility executables (`copy`/`csvcols`/`imgresize`/`imgconvert`) shipped as guest modules but not in `COMMAND_NAMES`. The kernel owns the command namespace: a bare command name is mapped to spawnable guest code via `KernelOptions.resolveCommand(name, cwd, env)` — or, since RFC 0001, resolved from a `$PATH` VFS file first (exec-from-VFS).
 
 ## Build & Test
 
@@ -79,7 +79,7 @@ The include globs are an **explicit allowlist**, not a `packages/*` sweep — `@
   - **isolated-vm** (`IvmRuntime`) — hard V8 memory cap; wall-clock (not CPU-time) timeout, so `cpuLimit` is honestly advertised as false.
 
   `selectBackend(policy, context)` picks one against each backend's `RuntimeCapabilities` (`gui, transferable, directPipes, deterministic, memoryLimit, cpuLimit, parallelism, interruptible`), default fallback order `['worker','iframe','quickjs','ivm']`.
-- **Everything is a file / POSIX shell** — `@mithic/shell` mirrors Bash (builtin-first dispatch; non-builtins spawned via `process/spawn` and `process/pipeline`), with POSIX `set` options (`errexit`, `nounset`, `xtrace`, `pipefail`, `noclobber`). Storage, devices, and IPC are all VFS mounts.
+- **Everything is a file / POSIX shell** — `@mithic/shell` mirrors Bash (builtin-first dispatch; non-builtins spawned via `process/spawn` and `process/pipeline`), with POSIX `set` options (`errexit`, `nounset`, `xtrace`, `pipefail`, `noclobber`). Storage, devices, and IPC are all VFS mounts. Shell I/O is **byte-stream based**: `CommandIO.stdin`/`BuiltinContext.stdin` are `ReadableStream<Uint8Array>` and output goes through an `OutputSink` (callable text sink + `writeBytes`), so `cat`/`read`/`mapfile` stream and a guest's binary stdout reaches the terminal byte-exact. In-process compound pipelines run stages concurrently over identity `TransformStream`s (EPIPE on early exit; a builtin infinite producer has a broken-pipe backstop). Supports the full `${var@OP}` transform set (`@Q @U @u @L @E @a @A @P @K @k`), `coproc` (relay backends via the `process/coproc` syscall), `<&`/`<>`/`<<<` redirects, and UDP/TCP over `/dev/udp`·`/dev/tcp` (`exec 3<>/dev/udp/host/port` + datagram-aware `read`).
 - **Disposable ownership convention** — When a component receives a `Disposable` resource, ownership must be explicit:
   - **Owned**: The receiver calls `[Symbol.dispose]()` when done. The resource's lifetime is tied to the receiver.
   - **Borrowed**: The receiver uses the resource but does NOT dispose it. The caller retains ownership. For streams, use `borrow()` to make this explicit — the borrow is a non-ref-counted view whose dispose is a no-op.

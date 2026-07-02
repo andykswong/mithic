@@ -89,15 +89,28 @@ comparisons). `break`, `continue`, `return`, and `exit` unwind via exceptions;
 multi-level `break N` / `continue N` are honored.
 
 **Redirects** — `>`, `>>`, `>|` (force past noclobber), `<`, `<<` (here-doc,
-with quoted-delimiter expansion suppression), `<<<` (here-string), `>&` fd
-dup/merge (e.g. `2>&1`, `>&2`), and `&>` (both stdout+stderr). Leading fd digits
-(`2>`, `1>>`) are parsed. `/dev/null`, `/dev/stdout`, and `/dev/stderr` are
-handled specially; file targets go through the injected `FsClient` (so redirects
-require a `vfs` capability). Redirects can attach to compound commands
-(`while …; done > f`). For an external command, `<` / `<<` / `<<<` (and an
-inherited piped stdin) are **pipe-fed into fd 0 by the kernel** — a `<` becomes a
-kernel-side `open` of the path streamed into fd 0, a `<<`/`<<<` body becomes a
-`bytes` feed — rather than being read into an inline blob by the shell.
+with quoted-delimiter expansion suppression), `<<<` (here-string), `<>` (open a
+fd for read+write, e.g. `exec 3<>/dev/tcp/host/port`), `>&` fd dup/merge (e.g.
+`2>&1`, `>&2`), `<&` **input** fd-dup (e.g. `read <&3`, `<&-` to close), `&>`
+(both stdout+stderr), and `&>>` (append both). Leading fd digits (`2>`, `1>>`)
+are parsed. `/dev/null`, `/dev/stdout`, and `/dev/stderr` are handled specially;
+file targets go through the injected `FsClient` (so redirects require a `vfs`
+capability). `/dev/tcp/host/port` and `/dev/udp/host/port` open live sockets via
+`<>` (TCP is line/stream-oriented; a `/dev/udp` fd reads one datagram per read).
+Redirects can attach to compound commands (`while …; done > f`). For an external
+command, `<` / `<<` / `<<<` (and an inherited piped stdin) are **pipe-fed into fd
+0 by the kernel** — a `<` becomes a kernel-side `open` of the path streamed into
+fd 0 (binary-safe via `FsClient.fsReadBytes` on the in-shell path), a `<<`/`<<<`
+body becomes a `bytes` feed — rather than being read into an inline blob.
+
+**I/O model** — the per-command frame's `stdin` is a `ReadableStream<Uint8Array>`
+and its stdout/stderr are an `OutputSink` (callable string sink + `writeBytes`
+for raw bytes). `cat`/`read`/`mapfile` consume the stream incrementally (one
+shared cursor per frame), and a guest's binary stdout reaches the terminal
+byte-exact (no UTF-8 round-trip). In-process **compound** pipelines run their
+stages concurrently over identity `TransformStream`s (byte-exact, EPIPE on early
+exit); an in-process builtin infinite producer (`while :; do echo x; done | head`)
+is stopped by a broken-pipe backstop (exit 141).
 
 **Assignments** — scalar `name=v`, append `name+=v`, indexed-array literals
 `name=(a b c)` (and `name+=(…)`), and element `name[i]=v` (and `name[i]+=v`).
@@ -125,13 +138,19 @@ the last non-zero stage's code.
 
 ### Builtins
 
-`BUILTINS` (35 entries), all run in-process:
+`BUILTINS` (49 entries), all run in-process:
 
 ```
 cd, pwd, export, unset, echo, printf, test, [, true, false, exit, eval,
-set, cat, :, local, declare, readonly, shift, return, getopts, read,
-jobs, fg, bg, wait, kill, break, continue, source, ., type
+set, cat, :, local, declare, readonly, let, shift, return, getopts, read,
+mapfile, readarray, jobs, fg, bg, wait, kill, break, continue, source, .,
+type, shopt, trap, disown, history, fc, exec, coproc, dirs, pushd, popd,
+hash, compgen, complete, compopt
 ```
+
+`coproc` runs a background co-process with a duplex stdio pair (`COPROC`/
+`COPROC_PID`); on relay backends (quickjs/ivm) it is wired via the kernel's
+`process/coproc` syscall.
 
 `printf` is a near-complete GNU/bash implementation (`%s %b %c %d %i %u %o %x %X
 %f %e %E %g %G %%`, flags, width/precision including `*`, format recycling, and
