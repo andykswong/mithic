@@ -1061,3 +1061,12 @@ test('combined declare/local flags (-ri, -ir, -rx) apply BOTH attributes', async
   expect((await run('declare -i n=3+4; echo "$n"')).out).toBe('7\n');
   expect((await run('declare -r y=1; y=2; echo "$y"')).out).toBe('1\n');
 });
+
+test('sparse indexed arrays skip holes in ${arr[@]}/${#arr[@]}/${!arr[@]}', async () => {
+  expect((await run('arr[5]=x; echo "${arr[@]}"')).out).toBe('x\n');           // no `undefined` holes
+  expect((await run('arr[5]=x; echo "${#arr[@]}"')).out).toBe('1\n');          // count present only
+  expect((await run('arr[2]=a; arr[7]=b; echo "${!arr[@]}"')).out).toBe('2 7\n'); // present indices
+  expect((await run('arr[1]=a; arr[4]=b; arr[9]=c; echo "${arr[@]}"')).out).toBe('a b c\n');
+  // dense arrays unaffected
+  expect((await run('a=(x y z); echo "${a[@]} ${#a[@]} ${!a[@]}"')).out).toBe('x y z 3 0 1 2\n');
+});

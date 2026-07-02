@@ -688,7 +688,7 @@ export class Expander {
           return String((map.get(key) ?? '').length);
         }
         const arr = this.env.getArray?.(sub.name) ?? [];
-        if (sub.subscript === '@' || sub.subscript === '*') return String(arr.length);
+        if (sub.subscript === '@' || sub.subscript === '*') return String(denseIndices(arr).length);
         const idx = await this.resolveIndex(sub.subscript);
         return String((arr[idx] ?? '').length);
       }
@@ -707,7 +707,7 @@ export class Expander {
           return { fields: [...map.keys()], join: sub.subscript === '*' ? this.ifsFirst() : undefined };
         }
         const arr = this.env.getArray?.(sub.name) ?? [];
-        return arr.map((_, i) => i).join(' ');
+        return denseIndices(arr).join(' ');
       }
       // ${!prefix*} / ${!prefix@}: every set variable name starting with prefix.
       if ((inner.endsWith('*') || inner.endsWith('@')) && /^[A-Za-z_][A-Za-z0-9_]*[*@]$/.test(inner)) {
@@ -766,7 +766,8 @@ export class Expander {
     if (subAccess && this.env.getArray?.(subAccess.name) !== undefined) {
       const arr = this.env.getArray(subAccess.name)!;
       if (subAccess.subscript === '@' || subAccess.subscript === '*') {
-        const fields = subAccess.op !== undefined ? await this.sliceArray(arr, sliceSpec(subAccess.op)) : arr;
+        const values = denseValues(arr); // skip sparse holes (bash sparse-map semantics)
+        const fields = subAccess.op !== undefined ? await this.sliceArray(values, sliceSpec(subAccess.op)) : values;
         return { fields, join: subAccess.subscript === '*' ? this.ifsFirst() : undefined };
       }
       let idx = await this.resolveIndex(subAccess.subscript);
@@ -1045,6 +1046,22 @@ function matchSubscript(s: string): { name: string; subscript: string } | undefi
 /** Strip a leading `:` from a `[@]`/`[*]` slice operator (`:off:len` → `off:len`). */
 function sliceSpec(op: string): string {
   return op[0] === ':' ? op.slice(1) : op;
+}
+
+/**
+ * Present (non-hole) values of an indexed array. A sparse array (`arr[5]=x` with
+ * 0–4 unset) is stored as a JS array with holes; bash treats it as a sparse map,
+ * so `${arr[@]}`/`${arr[*]}`/`${#arr[@]}` see only the assigned elements.
+ */
+function denseValues(arr: string[]): string[] {
+  return arr.filter((_v, i) => i in arr);
+}
+
+/** Present (non-hole) INDICES of a sparse indexed array — for `${!arr[@]}`. */
+function denseIndices(arr: string[]): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < arr.length; i++) if (i in arr) out.push(i);
+  return out;
 }
 
 function matchSubscriptSlice(s: string): { name: string; subscript: string; op?: string } | undefined {
