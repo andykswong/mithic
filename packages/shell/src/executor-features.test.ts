@@ -1040,3 +1040,11 @@ test('array-element references work in let / declare -i / C-style for arithmetic
   expect((await run('a=(5 9); declare -i x=a[1]+1; echo $x')).out).toBe('10\n');
   expect((await run('a=(3); for ((i=a[0]; i<5; i++)); do printf "%s " "$i"; done')).out).toBe('3 4 ');
 });
+
+test('array subscripts are arithmetic (${a[i]}, ${a[b[0]]}, a[i]=v)', async () => {
+  expect((await run('a=(x y z); i=1; echo "${a[i]}"')).out).toBe('y\n');
+  expect((await run('a=(x y z); i=1; echo "${a[i+1]}"')).out).toBe('z\n');
+  expect((await run('a=(x y z); b=(2 0); echo "${a[b[0]]}"')).out).toBe('z\n'); // nested: a[b[0]]=a[2]
+  expect((await run('a=(x y z); i=1; a[i]=Q; echo "${a[1]}"')).out).toBe('Q\n');
+  expect((await run('a=(x y z); i=1; a[i+1]=W; echo "${a[2]}"')).out).toBe('W\n');
+});

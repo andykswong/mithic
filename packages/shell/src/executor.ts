@@ -2346,8 +2346,12 @@ export class Executor {
         assoc.set(key, a.append ? (assoc.get(key) ?? '') + val : val);
         return false;
       }
-      const idx = parseInt(await expander.substituteOnly(a.index), 10) || 0;
+      // The subscript is arithmetic (bash): `a[i]=`, `a[i+1]=`, `a[b[0]]=` all work.
+      const sub = await expander.substituteOnly(a.index);
+      let idx = /^-?\d+$/.test(sub.trim()) ? parseInt(sub.trim(), 10)
+        : (() => { try { return evalArith(sub, this.arithEnvForExpr(), this.arithArrayAccessExec()); } catch { return 0; } })();
       const arr = this.arrays.get(a.name) ?? (this.context.env[a.name] !== undefined ? [this.context.env[a.name]] : []);
+      if (idx < 0) idx = arr.length + idx; // negative index counts from the end
       const val = await expander.expandToString(a.value);
       arr[idx] = a.append ? (arr[idx] ?? '') + val : val;
       this.arrays.set(a.name, arr);

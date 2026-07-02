@@ -619,10 +619,16 @@ export class Expander {
     return '';
   }
 
-  /** Expand an array subscript expression (may contain `$i`) to an integer. */
+  /**
+   * Evaluate an array subscript to an integer. bash treats a subscript as an
+   * arithmetic expression, so `${a[i]}`, `${a[i+1]}`, `${a[b[0]]}` all work — hence
+   * this goes through the arithmetic evaluator (with the array hook), not a bare
+   * `parseInt`. A plain numeric literal is the common fast case.
+   */
   private async resolveIndex(subscript: string): Promise<number> {
-    const expanded = await this.substituteOnly(subscript);
-    return parseInt(expanded.trim(), 10) || 0;
+    const s = subscript.trim();
+    if (/^-?\d+$/.test(s)) return parseInt(s, 10);
+    return this.evalArithSpec(s);
   }
 
   /**
@@ -761,8 +767,26 @@ export class Expander {
       let idx = await this.resolveIndex(subAccess.subscript);
       if (idx < 0) idx = arr.length + idx; // ${arr[-1]} → last element
       const elem = arr[idx] ?? '';
-      // ${arr[i]:off:len} — apply the slice as a scalar substring on the element.
       if (subAccess.slice !== undefined) {
+        // A `:` operator on an element: if it begins with `-`/`=`/`+`/`?`, it is a
+        // DEFAULT-VALUE operator (`${arr[i]:-word}` etc.) — NOT a substring (which
+        // needs a numeric/space/paren offset). Otherwise it is `:off[:len]`.
+        const op = subAccess.slice[0];
+        if (op === '-' || op === '=' || op === '+' || op === '?') {
+          const word = await this.expandToString(subAccess.slice.slice(1));
+          const setNonEmpty = idx >= 0 && idx < arr.length && elem !== '';
+          switch (op) {
+            case '-': return setNonEmpty ? elem : word;
+            case '+': return setNonEmpty ? word : '';
+            case '?': if (!setNonEmpty) throw new ExpansionError(word || `${subAccess.name}[${idx}]: parameter null or not set`); return elem;
+            case '=': {
+              // `:=` assigns the element when unset/empty (bash), then yields it.
+              if (!setNonEmpty) { this.env.setArrayElement?.(subAccess.name, idx, word); return word; }
+              return elem;
+            }
+          }
+        }
+        // ${arr[i]:off:len} — apply the slice as a scalar substring on the element.
         const colon = findSliceColon(subAccess.slice);
         const offStr = colon >= 0 ? subAccess.slice.slice(0, colon) : subAccess.slice;
         const lenStr = colon >= 0 ? subAccess.slice.slice(colon + 1) : undefined;

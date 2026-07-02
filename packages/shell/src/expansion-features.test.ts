@@ -193,3 +193,19 @@ test('slice offset/length can reference an array element (${a[@]:i[0]:n})', asyn
   const hv: Partial<ShellEnv> = { get: (n) => (n === 'v' ? 'abcdefgh' : undefined), getArray: (n) => (n === 'i' ? idx : undefined), setArrayElement: noop };
   expect(await E({}, hv).expandWord('${v:i[1]}')).toEqual(['bcdefgh']);
 });
+
+test('default-value operators on array elements (${arr[i]:-} :+ := :?)', async () => {
+  const arr = ['hello'];
+  const store: Record<string, string[]> = { arr };
+  const h: Partial<ShellEnv> = {
+    getArray: (n) => store[n],
+    setArrayElement: (n, i, v) => { (store[n] ??= [])[i] = v; },
+  };
+  expect(await E({}, h).expandWord('${arr[5]:-DEFAULT}')).toEqual(['DEFAULT']); // unset elem → default
+  expect(await E({}, h).expandWord('${arr[0]:-DEFAULT}')).toEqual(['hello']);   // set elem → value
+  expect(await E({}, h).expandWord('${arr[0]:+ALT}')).toEqual(['ALT']);         // set → alt
+  expect(await E({}, h).expandWord('${arr[5]:+ALT}')).toEqual(['']);            // unset → empty
+  // substring still distinguished (`:off` numeric / `: -n` space)
+  expect(await E({}, h).expandWord('${arr[0]:1:3}')).toEqual(['ell']);
+  expect(await E({}, h).expandWord('${arr[0]: -3}')).toEqual(['llo']);
+});
