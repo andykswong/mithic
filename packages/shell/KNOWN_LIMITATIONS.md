@@ -108,10 +108,6 @@ These are intentional design limits, not missing features:
   `declare -a arr=(a b c)` leaves `arr` empty — the parenthesised element list is
   a separate token the declaration builtins do not collect (the array literal only
   works as a bare assignment `arr=(a b c)`, no `declare` prefix). Pre-existing.
-- **`declare -i` on an ARRAY does not arithmetic-evaluate element assignments.**
-  `declare -i a; a[0]=3+4` stores `3+4` (bash: `7`). The integer attribute is
-  applied on scalar assignments only. Pre-existing; use `(( a[0]=3+4 ))` which
-  evaluates correctly.
 - **`${arr[i]@Q}` / `@U` / `@L` transforms are not applied to array/assoc
   elements** (they return the raw element). Element access supports the full
   string-operator set (`:-`, `#`, `%`, `/`, `^`, `,`, `:off:len`) but not the

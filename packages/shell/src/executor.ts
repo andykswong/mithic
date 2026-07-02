@@ -2338,13 +2338,21 @@ export class Executor {
       return false;
     }
     if (a.index !== undefined) {
+      // An integer-attributed array (`declare -i a`) arithmetic-evaluates element
+      // RHS values; `+=` adds numerically. Otherwise the value is a plain string.
+      const intAttr = this.integerNames.has(a.name);
+      const evalIfInt = (raw: string, prev: string): string => {
+        if (!intAttr) return a.append ? prev + raw : raw;
+        const rhs = this.evalArithValue(raw);
+        return String(a.append ? this.evalArithValue(prev || '0') + rhs : rhs);
+      };
       // Associative array element (`name[key]=v`, name declared via `declare -A`):
       // the subscript is a STRING key, not a numeric index (G6).
       const assoc = this.assocArrays.get(a.name);
       if (assoc !== undefined) {
         const key = await expander.substituteOnly(a.index);
         const val = await expander.expandToString(a.value);
-        assoc.set(key, a.append ? (assoc.get(key) ?? '') + val : val);
+        assoc.set(key, evalIfInt(val, assoc.get(key) ?? ''));
         return false;
       }
       // The subscript is arithmetic (bash): `a[i]=`, `a[i+1]=`, `a[b[0]]=` all work.
@@ -2354,7 +2362,7 @@ export class Executor {
       const arr = this.arrays.get(a.name) ?? (this.context.env[a.name] !== undefined ? [this.context.env[a.name]] : []);
       if (idx < 0) idx = arr.length + idx; // negative index counts from the end
       const val = await expander.expandToString(a.value);
-      arr[idx] = a.append ? (arr[idx] ?? '') + val : val;
+      arr[idx] = evalIfInt(val, arr[idx] ?? '');
       this.arrays.set(a.name, arr);
       delete this.context.env[a.name];
       return false;

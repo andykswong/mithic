@@ -1087,3 +1087,11 @@ test('nested-bracket subscript in an array-element assignment (a[b[0]]=v)', asyn
   // simple/arithmetic subscripts still parse
   expect((await run('a=(0 0 0); i=1; a[i+1]=W; echo "${a[2]}"')).out).toBe('W\n');
 });
+
+test('declare -i arithmetic-evaluates array-element assignments', async () => {
+  expect((await run('declare -i a; a[0]=3+4; echo "${a[0]}"')).out).toBe('7\n');
+  expect((await run('declare -i a; a[0]=10; a[0]+=5; echo "${a[0]}"')).out).toBe('15\n');
+  expect((await run('declare -Ai m; m[k]=2*3; echo "${m[k]}"')).out).toBe('6\n');
+  // non-integer array stores the literal
+  expect((await run('a[0]=3+4; echo "${a[0]}"')).out).toBe('3+4\n');
+});
