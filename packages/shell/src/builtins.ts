@@ -5,6 +5,8 @@
 
 import { shellQuoteBackslash } from './quote.ts';
 import { interpretEscapes } from './escape.ts';
+import { parseIfs } from './expander.ts';
+import type { IfsSpec } from './expander.ts';
 
 /** Richer shell state surface a few builtins need (functions, jobs, positionals). */
 export interface ShellState {
@@ -1090,15 +1092,15 @@ async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
   // explicit `-u`, source from it via the fd path so `read <&3` reads fd 3.
   if (fdArg === undefined && ctx.stdinFd !== undefined) fdArg = ctx.stdinFd;
 
+  const ifsSpec = parseIfs(ctx.env.IFS);
   const finish = (line: string): number => {
     const cooked = raw ? line : unescapeReadLine(line);
     if (arrayName !== undefined) {
-      const fields = cooked.split(/\s+/).filter((f) => f !== '');
-      ctx.state?.setArray?.(arrayName, fields);
+      // `read -a` splits the whole line on IFS into the array (no remainder rule).
+      ctx.state?.setArray?.(arrayName, splitReadFields(cooked, ifsSpec));
       return 0;
     }
-    const fields = cooked.split(/\s+/).filter((f) => f !== '');
-    assignReadVars(names, fields, cooked, ctx);
+    assignReadVars(names, cooked, ifsSpec, ctx);
     return 0;
   };
 
@@ -1128,7 +1130,7 @@ async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
       // Timed out: do NOT consume — the in-flight read stays cached so its line
       // reaches the next reader. Clear the named vars and signal >128.
       if (arrayName !== undefined) ctx.state?.setArray?.(arrayName, []);
-      else assignReadVars(names, [], '', ctx);
+      else assignReadVars(names, '', ifsSpec, ctx);
       return READ_TIMEOUT_STATUS;
     }
     ctx.consumeFdLine?.(fdArg); // we used this line; the next read fetches a fresh one
@@ -1143,7 +1145,7 @@ async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
     const { line, timedOut } = await ctx.readStdinLine(timeoutSec);
     if (timedOut) {
       if (arrayName !== undefined) ctx.state?.setArray?.(arrayName, []);
-      else assignReadVars(names, [], '', ctx);
+      else assignReadVars(names, '', ifsSpec, ctx);
       return READ_TIMEOUT_STATUS;
     }
     if (line === undefined) return 1; // EOF
@@ -1173,13 +1175,68 @@ function unescapeReadLine(line: string): string {
   return out;
 }
 
-/** Assign a read line's fields to NAMEs (last name absorbs the rest); no names → $REPLY. */
-function assignReadVars(names: string[], fields: string[], line: string, ctx: BuiltinContext): void {
+/**
+ * Assign a read line's IFS-split fields to NAMEs; the LAST name absorbs the
+ * remainder VERBATIM (bash keeps the original text minus leading IFS whitespace,
+ * with trailing IFS whitespace stripped — so `IFS=: read a b <<< "x:y:z:w"` gives
+ * `b="y:z:w"`). No names → the whole line into `$REPLY`.
+ */
+function assignReadVars(names: string[], line: string, spec: IfsSpec, ctx: BuiltinContext): void {
   if (names.length === 0) { ctx.env.REPLY = line; return; }
+  const { fields, rests } = splitReadWithRests(line, spec, names.length);
   for (let i = 0; i < names.length; i++) {
-    if (i === names.length - 1) ctx.env[names[i]] = fields.slice(i).join(' ');
+    if (i === names.length - 1) ctx.env[names[i]] = rests[i] ?? '';
     else ctx.env[names[i]] = fields[i] ?? '';
   }
+}
+
+/** Split a `read` line fully on IFS (used by `read -a`). */
+function splitReadFields(line: string, spec: IfsSpec): string[] {
+  const { fields } = splitReadWithRests(line, spec, Infinity);
+  return fields;
+}
+
+/**
+ * Split a `read` line on IFS, returning both the individual `fields` and, for
+ * each field index, the `rest` = the verbatim remaining text starting at that
+ * field (leading whitespace already consumed, trailing IFS-whitespace trimmed).
+ * `limit` bounds how many leading delimiters are split (the read remainder rule);
+ * `Infinity` splits every delimiter.
+ */
+function splitReadWithRests(line: string, spec: IfsSpec, limit: number): { fields: string[]; rests: string[] } {
+  const isWs = (c: string): boolean => spec.ws.includes(c);
+  const isNon = (c: string): boolean => spec.nonWs.includes(c);
+  const isDelim = (c: string): boolean => isWs(c) || isNon(c);
+  const fields: string[] = [];
+  const rests: string[] = [];
+  let i = 0;
+  const n = line.length;
+  while (i < n && isWs(line[i])) i++;         // skip leading IFS whitespace
+  while (i < n) {
+    // The verbatim remainder for THIS field: from here to the end, with trailing
+    // IFS whitespace trimmed.
+    let end = n;
+    while (end > i && isWs(line[end - 1])) end--;
+    rests.push(line.slice(i, end));
+    // Once we've produced `limit` fields, the last one absorbs everything — stop.
+    if (fields.length >= limit - 1) { fields.push(line.slice(i, end)); break; }
+    // Read one field up to the next delimiter.
+    let j = i;
+    while (j < n && !isDelim(line[j])) j++;
+    fields.push(line.slice(i, j));
+    if (j >= n) break;
+    // Consume the delimiter run (whitespace + at most one non-whitespace char).
+    let sawNonWs = isNon(line[j]);
+    j++;
+    while (j < n && (isWs(line[j]) || (!sawNonWs && isNon(line[j])))) {
+      if (isNon(line[j])) sawNonWs = true;
+      j++;
+    }
+    i = j;
+    // A trailing delimiter with nothing after → an empty final field (bash).
+    if (i >= n) { fields.push(''); rests.push(''); }
+  }
+  return { fields, rests };
 }
 
 /**

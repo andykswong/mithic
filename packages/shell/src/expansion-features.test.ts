@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { Expander } from './expander.ts';
+import { Expander, parseIfs, splitOnIfs } from './expander.ts';
 import type { ShellEnv } from './expander.ts';
 
 function mkEnv(vars: Record<string, string> = {}, hooks: Partial<ShellEnv> = {}): ShellEnv {
@@ -142,4 +142,33 @@ test('${v:off:len} evaluates offset/length arithmetically', async () => {
   expect(await E({ v: 'hello' }).expandWord('${v:(-3)}')).toEqual(['llo']);
   // out-of-range negative offset yields empty (not the whole string)
   expect(await E({ v: 'hi' }).expandWord('"${v: -10}"')).toEqual(['']);
+});
+
+// ── WP-B: IFS word splitting ─────────────────────────────────────────────────
+
+test('custom non-whitespace IFS splits unquoted expansions', async () => {
+  expect(await E({ a: 'x,y,z', IFS: ',' }).expandWord('$a')).toEqual(['x', 'y', 'z']);
+});
+
+test('IFS non-whitespace produces empty fields; whitespace collapses', async () => {
+  // leading empty, a, empty, b — trailing empty dropped
+  expect(await E({ s: ':a::b:', IFS: ':' }).expandWord('$s')).toEqual(['', 'a', '', 'b']);
+  expect(await E({ s: 'x  y   z' }).expandWord('$s')).toEqual(['x', 'y', 'z']); // default IFS
+});
+
+test('empty IFS disables splitting (one field)', async () => {
+  expect(await E({ s: 'x y z', IFS: '' }).expandWord('$s')).toEqual(['x y z']);
+});
+
+test('mixed whitespace+non-whitespace IFS merges adjacent delimiters', async () => {
+  // the space before `:` merges into the `:` delimiter → 2 fields
+  expect(await E({ s: 'a :b', IFS: ' :' }).expandWord('$s')).toEqual(['a', 'b']);
+});
+
+test('parseIfs + splitOnIfs helpers', () => {
+  expect(parseIfs(undefined)).toEqual({ ws: ' \t\n', nonWs: '' });
+  expect(parseIfs(':')).toEqual({ ws: '', nonWs: ':' });
+  expect(splitOnIfs('x:y:z', parseIfs(':'))).toEqual(['x', 'y', 'z']);
+  expect(splitOnIfs('a::b', parseIfs(':'))).toEqual(['a', '', 'b']);
+  expect(splitOnIfs('  a  b  ', parseIfs(undefined))).toEqual(['a', 'b']);
 });

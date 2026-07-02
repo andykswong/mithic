@@ -172,3 +172,42 @@ test('read -sp PROMPT clustered: prompt consumed, silent no-op, reads into the v
   await h.ex.exec('printf \'%s\\n\' v | { read -sp \'P: \' x; echo "[$x]"; }');
   expect(h.out.trim()).toBe('[v]');
 });
+
+// ── WP-B: read honors IFS ────────────────────────────────────────────────────
+
+test('IFS=: read splits fields on the custom separator', async () => {
+  const h = mk();
+  await h.ex.exec('IFS=: read a b c <<< "x:y:z"; echo "$a|$b|$c"');
+  expect(h.out.trim()).toBe('x|y|z');
+});
+
+test('while IFS=, read -r parses CSV lines', async () => {
+  const h = mk();
+  await h.ex.exec("while IFS=, read -r f1 f2; do echo \"$f1/$f2\"; done <<< $'a,b\\nc,d'");
+  expect(h.out.trim().split('\n')).toEqual(['a/b', 'c/d']);
+});
+
+test('IFS=, read -a splits into the array', async () => {
+  const h = mk();
+  await h.ex.exec('IFS=, read -a arr <<< "p,q,r"; echo "${arr[0]}-${arr[1]}-${arr[2]}"');
+  expect(h.out.trim()).toBe('p-q-r');
+});
+
+test('read last var absorbs the remainder verbatim (with the separators)', async () => {
+  const h = mk();
+  await h.ex.exec('IFS=: read a b <<< "x:y:z:w"; echo "$a|$b"');
+  expect(h.out.trim()).toBe('x|y:z:w');
+});
+
+test('read with a leading IFS delimiter leaves the first field empty', async () => {
+  const h = mk();
+  await h.ex.exec('IFS=: read x y <<< ":a:b"; echo "[$x][$y]"');
+  expect(h.out.trim()).toBe('[][a:b]');
+});
+
+test('a command-prefix assignment does not clobber the vars read sets', async () => {
+  const h = mk();
+  // IFS is a per-command overlay (restored after), but a/b/c persist.
+  await h.ex.exec('IFS=: read a b c <<< "x:y:z"; echo "[$IFS]"; echo "$a$b$c"');
+  expect(h.out.trim().split('\n')).toEqual(['[]', 'xyz']);
+});

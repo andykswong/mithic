@@ -2159,13 +2159,25 @@ export class Executor {
         return await this.callFunction(name, argv, localEnv, io);
       }
       if (isBuiltin(name) && builtinShadowsExternal(name, argv)) {
-        const saved = { ...this.context.env };
+        // A command-prefix assignment (`IFS=: read …`) is a TEMPORARY overlay for
+        // the builtin's duration, then restored — but ONLY those prefix keys, not
+        // every var the builtin itself set (`read`/`getopts`/`mapfile` write vars
+        // that must persist). The env-mutating builtins (`export`/`declare`/…) keep
+        // their prefix too. Snapshot just the prefix keys and restore them after.
+        const overlayKeys = Object.keys(localEnv);
+        const isEnvBuiltin = name === 'export' || name === 'unset' || name === 'local'
+          || name === 'declare' || name === 'readonly';
+        const savedPrefix: Record<string, string | undefined> = {};
+        if (cmd.assignments.length > 0 && !isEnvBuiltin) {
+          for (const k of overlayKeys) savedPrefix[k] = this.context.env[k];
+        }
         Object.assign(this.context.env, localEnv);
         const status = await this.dispatch(name, argv, io, { stdin });
-        if (cmd.assignments.length > 0 && name !== 'export' && name !== 'unset' && name !== 'local'
-          && name !== 'declare' && name !== 'readonly') {
-          for (const k of Object.keys(this.context.env)) if (!(k in saved)) delete this.context.env[k];
-          for (const k of Object.keys(saved)) this.context.env[k] = saved[k];
+        if (cmd.assignments.length > 0 && !isEnvBuiltin) {
+          for (const k of overlayKeys) {
+            if (savedPrefix[k] === undefined) delete this.context.env[k];
+            else this.context.env[k] = savedPrefix[k]!;
+          }
         }
         return status;
       }

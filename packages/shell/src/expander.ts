@@ -139,8 +139,10 @@ export class Expander {
       const b = this.tildeExpand(braw);
       const { parts, emptiedByAt } = await this.substitute(b);
       if (emptiedByAt && parts.length === 0) { anyEmptyByAt = true; continue; }
-      // 3. word splitting (unquoted regions only)
-      const fields = splitParts(parts);
+      // 3. word splitting (unquoted regions only), honoring IFS. An empty IFS
+      // (`{ws:'',nonWs:''}`) never splits on chars but still honors `$@`/`${arr[@]}`
+      // element boundaries (fieldBreak markers).
+      const fields = splitParts(parts, parseIfs(this.env.get('IFS')));
       // 4. pathname expansion per field (unquoted only)
       for (const f of fields) {
         const globbed = await this.maybeGlob(f);
@@ -1255,26 +1257,86 @@ function partsText(parts: Part[]): string {
   return s;
 }
 
-function splitParts(parts: Part[]): string[] {
+/**
+ * IFS descriptor: the whitespace chars and the non-whitespace chars that are in
+ * IFS. `ifs === undefined` ⇒ default (` \t\n`, all whitespace); an empty IFS
+ * disables splitting entirely (handled by the caller). Split-on-whitespace runs
+ * collapse and are trimmed at ends; each non-whitespace IFS char delimits exactly
+ * one field.
+ */
+export interface IfsSpec {
+  /** IFS whitespace chars actually present (subset of ` \t\n`). */
+  ws: string;
+  /** IFS non-whitespace chars. */
+  nonWs: string;
+}
+
+/** Build an {@link IfsSpec} from a raw IFS value (undefined ⇒ default whitespace). */
+export function parseIfs(raw: string | undefined): IfsSpec {
+  if (raw === undefined) return { ws: ' \t\n', nonWs: '' };
+  let ws = '', nonWs = '';
+  for (const c of raw) {
+    if (c === ' ' || c === '\t' || c === '\n') { if (!ws.includes(c)) ws += c; }
+    else if (!nonWs.includes(c)) nonWs += c;
+  }
+  return { ws, nonWs };
+}
+
+/**
+ * Split a raw string on IFS (bash rules). Used by `read` (builtins). For the
+ * expander's part-stream splitting see {@link splitParts}. An empty IFS or a
+ * string with no IFS chars yields a single field.
+ */
+export function splitOnIfs(s: string, spec: IfsSpec): string[] {
+  return splitParts([{ text: s, quoted: false }], spec);
+}
+
+/**
+ * Split a substituted part stream into fields on IFS (bash rules). Quoted parts
+ * and `fieldBreak` markers are hard boundaries: their content is never split and
+ * never treated as a delimiter. Algorithm (POSIX field splitting):
+ *   - leading/trailing IFS-whitespace is ignored;
+ *   - a delimiter is a run of IFS-whitespace, OR one non-whitespace IFS char with
+ *     any adjacent IFS-whitespace absorbed into it;
+ *   - so `a  b` (IFS ws) → `a`,`b`; `a::b` (IFS `:`) → `a`,``,`b`; `a :b`
+ *     (IFS ` :`) → `a`,`b` (the space merges into the `:` delimiter).
+ */
+function splitParts(parts: Part[], spec: IfsSpec = { ws: ' \t\n', nonWs: '' }): string[] {
+  // Flatten to a char stream carrying a quoted flag; quoted chars and fieldBreak
+  // markers are never delimiters.
+  type Ch = { c: string; quoted: boolean } | { fieldBreak: true };
+  const stream: Ch[] = [];
+  for (const part of parts) {
+    if (part.fieldBreak) { stream.push({ fieldBreak: true }); continue; }
+    for (const c of part.text) stream.push({ c, quoted: part.quoted });
+  }
+  const isWs = (x: Ch): boolean => 'c' in x && !x.quoted && spec.ws.includes(x.c);
+  const isNon = (x: Ch): boolean => 'c' in x && !x.quoted && spec.nonWs.includes(x.c);
+  const isDelim = (x: Ch): boolean => isWs(x) || isNon(x);
+
   const fields: string[] = [];
   let current = '';
-  let started = false;
-  for (const part of parts) {
-    if (part.fieldBreak) {
-      // Hard boundary between `$@`/`${arr[@]}` elements: close the field even
-      // when adjacent quoted text would otherwise join across it.
-      fields.push(current); current = ''; started = false;
-      continue;
+  let started = false;   // an open (possibly empty) field exists
+  let i = 0;
+  const n = stream.length;
+  // Skip leading IFS whitespace (only whitespace is trimmed at the very start).
+  while (i < n && isWs(stream[i])) i++;
+  while (i < n) {
+    const x = stream[i];
+    if ('fieldBreak' in x) { fields.push(current); current = ''; started = false; i++; continue; }
+    if (!isDelim(x)) { current += x.c; started = true; i++; continue; }
+    // At a delimiter. Close the current field.
+    fields.push(current); current = ''; started = false;
+    // Consume the delimiter run: absorb surrounding IFS-whitespace and AT MOST one
+    // non-whitespace IFS char (a second non-ws char starts a new, empty field).
+    let sawNonWs = isNon(x);
+    i++;
+    while (i < n && (isWs(stream[i]) || (!sawNonWs && isNon(stream[i])))) {
+      if (isNon(stream[i])) sawNonWs = true;
+      i++;
     }
-    if (part.quoted) { current += part.text; started = true; continue; }
-    const t = part.text;
-    let k = 0;
-    while (k < t.length) {
-      if (/\s/.test(t[k])) {
-        if (started) { fields.push(current); current = ''; started = false; }
-        while (k < t.length && /\s/.test(t[k])) k++;
-      } else { current += t[k]; started = true; k++; }
-    }
+    // If more input follows, a field (possibly empty) is now open.
+    if (i < n) started = true;
   }
   if (started) fields.push(current);
   return fields.length > 0 ? fields : [''];
