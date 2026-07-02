@@ -131,7 +131,9 @@ function makeFsClient(guest: Guest): FsClient & { flush(): Promise<void> } {
       // A `/dev/udp/...` target is DATAGRAM-oriented (no `\n`, no EOF), so the
       // line-oriented `readLine` below is wrong for it: the executor reads via
       // `readDatagram` (one `fs/read` = one datagram, latin1-preserving) instead.
-      const datagram = path.includes('/dev/udp/');
+      // Anchor to the `/dev/udp` mount PREFIX (not a bare substring) so a regular
+      // file whose path merely contains `/dev/udp/` is not misclassified.
+      const datagram = path === '/dev/udp' || path.startsWith('/dev/udp/');
       let pending = ''; // bytes read past the last delivered line (TCP `readLine` only)
       // A datagram fd is a BINARY byte channel: `echo -ne "\xNN…" >&3` produces a
       // string of byte-valued code units (U+0000–U+00FF), so latin1-encode (each
