@@ -263,6 +263,35 @@ test('a pipe / redirect overrides an ambient exec 0<file for a plain read (not t
   expect(herestr.out.trim()).toBe('x=HERESTR');       // the here-string wins
 });
 
+test('nested <& on fd 0 does not clobber an outer group alias (depth-counted stdinDupFds)', async () => {
+  // Regression (re-review): `{ read a <&4; read b; } <&3` — the outer group aliases
+  // fd 0→fd 3; the inner `read a <&4` aliases fd 0→fd 4 for THAT command only. When
+  // the inner command restores, it must NOT tear down the outer group's fd-0 alias:
+  // `read b` must still read from fd 3. A flat Set clobbered it (b came back empty);
+  // a depth-counted Map keeps the outer alias live. bash: a=FOUR b=THREE_A.
+  const fs = mockFs({ '/f3.txt': 'THREE_A\nTHREE_B\n', '/f4.txt': 'FOUR\n' });
+  const { out } = await run('exec 3< /f3.txt; exec 4< /f4.txt; { read a <&4; read b; echo "a=$a b=$b"; } <&3', {}, fs);
+  expect(out.trim()).toBe('a=FOUR b=THREE_A');
+});
+
+test('read -n over a <&N/-u N fd reads the whole line (documented limitation lock — KNOWN_LIMITATIONS)', async () => {
+  // Locks the documented limit: -n/-d is ignored over a numbered/dup fd (whole
+  // line/datagram returned), while over a here-string it IS honored. If this ever
+  // changes it should be a conscious, test-visible decision.
+  const fs = mockFs({ '/data.txt': 'ABCDEF\n' });
+  const overFd = await run('exec 3< /data.txt; read -n2 a <&3; echo "a=$a"', {}, fs);
+  expect(overFd.out.trim()).toBe('a=ABCDEF');          // -n2 IGNORED over an fd (whole line)
+  const overHereStr = await run('read -n2 a <<< "ABCDEF"; echo "a=$a"');
+  expect(overHereStr.out.trim()).toBe('a=AB');         // -n2 HONORED over a here-string
+});
+
+test('read <&3 on an unopened fd reads nothing (rc 1), does not crash', async () => {
+  // Bad-fd branch: no `exec 3<…` first, so fd 3 has no entry — the <& alias finds
+  // no source, the guard does not fire, and the plain read hits EOF (rc 1).
+  const { out } = await run('read a <&3; echo "rc=$? a=[$a]"');
+  expect(out.trim()).toBe('rc=1 a=[]');
+});
+
 // ── byte-stream stdin: streaming builtins over a shared cursor ────────────────
 
 test('cat streams a here-string through unchanged', async () => {

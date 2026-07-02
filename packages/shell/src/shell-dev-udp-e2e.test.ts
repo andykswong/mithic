@@ -164,6 +164,10 @@ test('exec 3<>/dev/udp writes high bytes to the wire byte-exact', async () => {
     'echo -ne "\\x00\\xff\\xfe\\x41" >&3',
     'read -t 2 -r response <&3',
     'echo "len=${#response}"',
+    // Read-back ordinal of the high byte (0xff at index 1): latin1 → 255, a UTF-8
+    // decode regression → 65533 (replacement char). This gives readDatagram's
+    // latin1 DECODE path real teeth (the wire assertion below only guards WRITE).
+    'printf \'ord1=%d\\n\' "\'${response:1:1}"',
     'exec 3>&-',
   ].join('\n');
   const out = await run(script, [
@@ -174,8 +178,10 @@ test('exec 3<>/dev/udp writes high bytes to the wire byte-exact', async () => {
 
   // The 4 bytes reached the wire EXACTLY (latin1 write — no UTF-8 expansion).
   expect(echo.lastReceived()).toEqual([0x00, 0xff, 0xfe, 0x41]);
-  // `read <&3` read the whole 4-byte datagram back (latin1 → 4 code units).
+  // `read <&3` read the whole 4-byte datagram back (latin1 → 4 code units)...
   expect(out.stdout).toContain('len=4');
+  // ...and the high byte round-tripped byte-exact (255, NOT the UTF-8 U+FFFD=65533).
+  expect(out.stdout).toContain('ord1=255');
   expect(out.code).toBe(0);
 }, 15000);
 
