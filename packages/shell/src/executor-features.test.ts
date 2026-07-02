@@ -1152,6 +1152,34 @@ test('value @-transforms (@Q @U @u @L @E) apply to array/assoc elements', async 
   expect((await run('v=hi; echo "${v@U}"')).out).toBe('HI\n');
 });
 
+test('name-keyed @a on an array/assoc element reports the container attributes', async () => {
+  expect((await run('a=(one two three); echo "[${a[0]@a}]"')).out).toBe('[a]\n');
+  expect((await run('declare -A m=([x]=1 [y]=2); echo "[${m[x]@a}]"')).out).toBe('[A]\n');
+  expect((await run('declare -ai b=(5 6); echo "[${b[0]@a}]"')).out).toBe('[ai]\n');
+  expect((await run('declare -ar c=(5 6); echo "[${c[0]@a}]"')).out).toBe('[ar]\n');
+  // an UNSET assoc key still reports the container attribute (bash).
+  expect((await run('declare -A m=([k]=v); echo "[${m[nope]@a}]"')).out).toBe('[A]\n');
+});
+
+test('name-keyed @A on an element reconstructs a declare with the element value', async () => {
+  // bash-5: `declare -FLAGS name='<@Q-quoted element value>'` (single element form).
+  expect((await run('a2=(x "b c"); echo "${a2[1]@A}"')).out).toBe('declare -a a2=\'b c\'\n');
+  expect((await run('declare -A m=([x]=1); echo "${m[x]@A}"')).out).toBe('declare -A m=\'1\'\n');
+  expect((await run('declare -ai b=(7 8); echo "${b[0]@A}"')).out).toBe('declare -ai b=\'7\'\n');
+});
+
+test('name-keyed @K/@k on a single element quote the value (== @Q, no key)', async () => {
+  expect((await run('declare -A m=([x]="1 2"); echo "${m[x]@K}"')).out).toBe('\'1 2\'\n');
+  expect((await run('declare -A m=([x]="1 2"); echo "${m[x]@k}"')).out).toBe('\'1 2\'\n');
+  expect((await run('a=(zero one); echo "${a[1]@K}"')).out).toBe('\'one\'\n');
+  expect((await run('a=(zero one); echo "${a[1]@k}"')).out).toBe('\'one\'\n');
+});
+
+test('name-keyed @P on an element prompt-expands the element value', async () => {
+  const r = await run('a=("\\\\u@\\\\h"); echo "${a[0]@P}"', { env: { USER: 'ada', HOSTNAME: 'box' } });
+  expect(r.out).toBe('ada@box\n');
+});
+
 test('unset clears arrays/assoc/elements (not just scalars)', async () => {
   expect((await run('a=(x y z); unset a; echo "[${a[@]}] ${#a[@]}"')).out).toBe('[] 0\n');
   expect((await run('declare -A m; m[k]=v; unset m; echo "[${m[k]}]"')).out).toBe('[]\n');

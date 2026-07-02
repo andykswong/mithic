@@ -20,7 +20,7 @@ import { evalArith } from './arith.ts';
 import type { ArithArrayAccess } from './arith.ts';
 import { globToReSource, globToRegExp, isGlobPattern } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
-import { shellQuote } from './quote.ts';
+import { shellQuoteQ } from './quote.ts';
 import { interpretEscapes } from './escape.ts';
 import { expandPrompt } from './prompt.ts';
 
@@ -593,6 +593,40 @@ export class Expander {
     return { fields, join: undefined };
   }
 
+  /**
+   * NAME-keyed `@`-transforms on an array/assoc ELEMENT (`${arr[i]@a}` etc.), which
+   * need whole-VARIABLE metadata (keyed by name, not the element value):
+   *   `@a` → the container's attribute flags (`a`/`A` + `i`/`r`), same as the whole
+   *          variable — bash reports these for any subscripted operand.
+   *   `@A` → `declare -FLAGS name='<value>'` — a declare reconstruction using the
+   *          ELEMENT value (bash-5 single-element form; the value is `@Q`-quoted,
+   *          NOT the `[i]="…"` whole-array form).
+   *   `@P` → prompt-expand the element value (like the scalar `@P`).
+   *   `@K` / `@k` → for a SINGLE element these are just `@Q` on the value (bash emits
+   *          keys only for the whole-array `${a[@]@K}` form, handled elsewhere).
+   * Returns undefined for a value-transform / string op (handled by applyValueOp).
+   */
+  private elementTransform(name: string, elem: string, op: string): string | undefined {
+    if (op.length !== 2 || op[0] !== '@') return undefined;
+    switch (op[1]) {
+      case 'a': return this.env.attrFlags?.(name) ?? '';
+      case 'A': {
+        const flags = this.env.attrFlags?.(name) ?? '';
+        // Type letter (a/A) + i + r, matching bash's element @A order.
+        let group = '';
+        if (flags.includes('A')) group += 'A'; else if (flags.includes('a')) group += 'a';
+        if (flags.includes('i')) group += 'i';
+        if (flags.includes('r')) group += 'r';
+        const flagStr = group === '' ? '--' : `-${group}`;
+        return `declare ${flagStr} ${name}=${shellQuoteQ(elem)}`;
+      }
+      case 'P': return expandPrompt(elem, { cwd: this.env.cwd ?? '', env: this.promptEnv() });
+      case 'K':
+      case 'k': return shellQuoteQ(elem);
+      default: return undefined;
+    }
+  }
+
   /** Build a plain-record env snapshot for {@link expandPrompt} (`${var@P}`). */
   private promptEnv(): Record<string, string> {
     const out: Record<string, string> = {};
@@ -759,6 +793,8 @@ export class Expander {
       const key = await this.substituteOnly(subAccess.subscript);
       const elem = map.get(key) ?? '';
       if (subAccess.op !== undefined) {
+        const nameKeyed = this.elementTransform(subAccess.name, elem, subAccess.op);
+        if (nameKeyed !== undefined) return nameKeyed;
         return this.applyValueOp(elem, map.has(key), subAccess.op, `${subAccess.name}[${key}]`,
           (word) => { map.set(key, word); return word; });
       }
@@ -775,8 +811,11 @@ export class Expander {
       if (idx < 0) idx = arr.length + idx; // ${arr[-1]} → last element
       const elem = arr[idx] ?? '';
       if (subAccess.op !== undefined) {
-        // Any operator (`:-`/`#`/`%`/`/`/`^`/`,`/`:off:len`) applies to the element
-        // value, shared with the scalar path via applyValueOp.
+        // Name-keyed transforms (`@a`/`@A`/`@P`/`@K`/`@k`) need whole-variable
+        // metadata; the value transforms (`@Q/@U/@u/@L/@E`) + string ops go through
+        // applyValueOp (which applies to the element value).
+        const nameKeyed = this.elementTransform(subAccess.name, elem, subAccess.op);
+        if (nameKeyed !== undefined) return nameKeyed;
         const setElem = idx >= 0 && idx < arr.length && arr[idx] !== undefined;
         return this.applyValueOp(elem, setElem, subAccess.op, `${subAccess.name}[${idx}]`,
           (word) => { this.env.setArrayElement?.(subAccess.name, idx, word); return word; });
@@ -804,7 +843,7 @@ export class Expander {
     // means the ${var@OP} transform form.
     if (rest[0] === '@') {
       const op = rest[1];
-      if (op === 'Q') return shellQuote(value);
+      if (op === 'Q') return shellQuoteQ(value);
       if (op === 'U') return value.toUpperCase();
       if (op === 'u') return value.length > 0 ? value[0].toUpperCase() + value.slice(1) : value;
       if (op === 'L') return value.toLowerCase();
@@ -845,7 +884,7 @@ export class Expander {
     // by the scalar caller, not here.
     if (rest[0] === '@') {
       const op = rest[1];
-      if (op === 'Q') return shellQuote(value);
+      if (op === 'Q') return shellQuoteQ(value);
       if (op === 'U') return value.toUpperCase();
       if (op === 'u') return value.length > 0 ? value[0].toUpperCase() + value.slice(1) : value;
       if (op === 'L') return value.toLowerCase();

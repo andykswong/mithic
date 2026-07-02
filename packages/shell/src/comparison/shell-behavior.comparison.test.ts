@@ -58,8 +58,8 @@ const BASH4_CASES: Array<[string, string, { posix?: boolean }?]> = [
   ['case-upper', 's=hello; echo "${s^^}"'],
   // `${var@Q}` (parameter-transform quoting) — bash 4.4+. On bash 3.2 this is a
   // "bad substitution"; the golden fixtures are hand-recorded from bash-5 output:
-  // a word needing no quoting stays bare (`plain`), one with a space is
-  // single-quoted (`'a b'`). mithic matches via the shared `shellQuote`.
+  // `@Q` ALWAYS single-quotes, even a safe word (`plain` → `'plain'`) — unlike
+  // `printf %q`, which leaves a safe word bare. mithic matches via `shellQuoteQ`.
   ['at-Q-simple', 's=plain; echo "${s@Q}"'],
   ['at-Q-space', 's="a b"; echo "${s@Q}"'],
   // `${var@a}` (parameter-transform attribute flags) — bash 4.4+. A readonly

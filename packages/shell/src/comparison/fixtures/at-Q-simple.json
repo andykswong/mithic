@@ -1,6 +1,6 @@
 {
   "src": "s=plain; echo \"${s@Q}\"",
-  "stdout": "plain\n",
+  "stdout": "'plain'\n",
   "stderr": "",
   "code": 0
 }

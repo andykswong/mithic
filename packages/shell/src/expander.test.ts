@@ -312,9 +312,9 @@ test('${var@Q} quotes the value for safe re-input', async () => {
   expect(await e.expandWord('"${x@Q}"')).toEqual(["'a b'"]);
 });
 
-test('${var@Q} leaves a safe word bare', async () => {
+test('${var@Q} single-quotes even a safe word (bash 5: printf %q leaves bare, @Q quotes)', async () => {
   const e = E({ x: 'abc.txt' });
-  expect(await e.expandWord('${x@Q}')).toEqual(['abc.txt']);
+  expect(await e.expandWord('${x@Q}')).toEqual(["'abc.txt'"]);
 });
 
 test('${var@Q} does not break ${arr[@]} expansion', async () => {
