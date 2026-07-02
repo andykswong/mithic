@@ -635,7 +635,9 @@ export class Expander {
     if (s === '') return 0;
     try {
       const expanded = await this.expandSubExpr(s);
-      const v = evalArith(expanded, this.arithEnvProxy());
+      // Pass the array-access hook (like the `$(( ))` path) so a subscript in the
+      // offset/length — `${a[@]:i[0]:2}` — resolves the element, not 0.
+      const v = evalArith(expanded, this.arithEnvProxy(), this.arithArrayAccess());
       return Number.isFinite(v) ? Math.trunc(v) : 0;
     } catch { return 0; }
   }

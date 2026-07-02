@@ -181,3 +181,15 @@ test('array/positional slice offset can be a parenthesized ternary (paren-aware 
   const p = { getPositional: () => arr, getSpecial: (n: string) => (n === '0' ? 'sh' : undefined) } as Partial<ShellEnv>;
   expect(await E({}, p).expandWord('${@:(1>0?2:0):2}')).toEqual(['b', 'c']);
 });
+
+test('slice offset/length can reference an array element (${a[@]:i[0]:n})', async () => {
+  const a = ['zero', 'one', 'two', 'three', 'four'];
+  const idx = ['2', '1'];
+  // arithArrayAccess needs BOTH getArray + setArrayElement present (as the real Environment has).
+  const noop = () => { /* no writes in these reads */ };
+  const h: Partial<ShellEnv> = { getArray: (n) => (n === 'a' ? a : n === 'i' ? idx : undefined), setArrayElement: noop };
+  expect(await E({}, h).expandWord('${a[@]:i[0]:2}')).toEqual(['two', 'three']);
+  // element substring with a subscript offset
+  const hv: Partial<ShellEnv> = { get: (n) => (n === 'v' ? 'abcdefgh' : undefined), getArray: (n) => (n === 'i' ? idx : undefined), setArrayElement: noop };
+  expect(await E({}, hv).expandWord('${v:i[1]}')).toEqual(['bcdefgh']);
+});
