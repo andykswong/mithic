@@ -221,13 +221,15 @@ export class Executor {
    */
   private rootStdinStream: ReadableStream<Uint8Array> | undefined;
   /**
-   * fds that THE CURRENTLY-DISPATCHING command aliased via `<&N` (input fd-dup),
-   * so a plain `read` sources fd 0 from the alias — distinct from a stale fd-0
-   * entry left by an ambient `exec 0<file`. Populated in `applyRedirects` and
-   * cleared by its restore closure (which runs after the command). `dispatch`
-   * runs synchronously between apply and restore, so no interleaving hazard.
+   * fds aliased via `<&N` (input fd-dup) by a command currently in scope, so a
+   * plain `read` sources fd 0 from the alias — distinct from a stale fd-0 entry
+   * left by an ambient `exec 0<file`. A DEPTH COUNT (not a flat set): a nested
+   * `<&` on the SAME fd (e.g. `{ read a <&4; read b; } <&3` — both default fd 0)
+   * increments on apply and decrements on restore, so the inner command's restore
+   * does not tear down the outer command's still-live alias (mark present while
+   * count > 0). Populated in `applyRedirects`, decremented by its restore closure.
    */
-  private stdinDupFds = new Set<number>();
+  private stdinDupFds = new Map<number, number>();
   private lastStatus = 0;
   private pipeStatus: number[] = [];
   /** 1-based source line of the statement currently executing, for `$LINENO`. */
@@ -1289,16 +1291,17 @@ export class Executor {
         const fd = r.fd ?? 0;
         snapshotFd(fd);
         const tgt = r.target === '-' ? '-' : await exp.expandToString(r.target);
-        if (tgt === '-') { io.fdTable.delete(fd); this.stdinDupFds.delete(fd); dupInFds.push(fd); continue; } // `<&-` closes fd N
+        if (tgt === '-') { io.fdTable.delete(fd); continue; } // `<&-` closes fd N (not an alias — no dup mark)
         const dst = parseInt(tgt, 10);
         if (!Number.isNaN(dst)) {
           const srcEntry = io.fdTable.get(dst);
           if (srcEntry) io.fdTable.set(fd, srcEntry);
         }
         // Record that THIS command aliased `fd` via `<&`, so a plain `read`
-        // sources fd 0 from it (vs a stale ambient `exec 0<` entry). Cleared by
-        // the restore closure below.
-        this.stdinDupFds.add(fd);
+        // sources fd 0 from it (vs a stale ambient `exec 0<` entry). Depth-counted
+        // so a nested same-fd `<&` doesn't clobber an outer alias; the restore
+        // closure below decrements.
+        this.stdinDupFds.set(fd, (this.stdinDupFds.get(fd) ?? 0) + 1);
         dupInFds.push(fd);
         continue;
       }
@@ -1338,7 +1341,10 @@ export class Executor {
       io.stderr = savedStderr;
       io.stdin = savedStdin;
       this.resetStdinReader(io);
-      for (const fd of dupInFds) this.stdinDupFds.delete(fd); // undo this command's `<&` alias marks
+      for (const fd of dupInFds) { // decrement this command's `<&` alias depth (nesting-safe)
+        const n = (this.stdinDupFds.get(fd) ?? 0) - 1;
+        if (n > 0) this.stdinDupFds.set(fd, n); else this.stdinDupFds.delete(fd);
+      }
       for (const [fd, prev] of savedFds) { if (prev === undefined) io.fdTable.delete(fd); else io.fdTable.set(fd, prev); }
     };
   }

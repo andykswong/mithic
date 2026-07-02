@@ -177,9 +177,11 @@ real caller. Unknown calls return `ENOSYS`. The families:
   cap against every 3xx target; the chain is capped (→ `ELOOP`).
 - **`dom/mutate`** (1) — forwards a batch of `DomMutation` records to
   `onDomMutate`; `ENOSYS` if no handler is configured.
-- **`process/*`** (8) — `spawn`, `pipeline`, `wait`, `exit`, `getpid`,
-  `getppid`, `getcwd`, `chdir`. Guests fork children, build multi-stage
-  pipelines, and reap them entirely through syscalls.
+- **`process/*`** (10) — `spawn`, `coproc`, `pipeline`, `wait`, `kill`, `exit`,
+  `getpid`, `getppid`, `getcwd`, `chdir`. Guests fork children, build multi-stage
+  pipelines, launch a co-process with a duplex stdio pair (`coproc` — used by the
+  shell's `coproc` builtin on relay backends), signal them, and reap them entirely
+  through syscalls.
 
 ### Path safety (`fs/*`)
 

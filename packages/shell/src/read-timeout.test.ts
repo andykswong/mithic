@@ -123,3 +123,60 @@ test('read -u N -t T returns the already-buffered line without waiting', async (
   await h.ex.exec('exec 3<>/dev/tcp/x/1\nread -u 3 -t 0.01 x\nread -u 3 -t 0.01 y\necho "$x $y"');
   expect(h.out.trim()).toBe('one two');
 });
+
+// ── `<&N` input fd-dup: `read <&3` sources from fd 3 (in-process coverage of the
+//    applyRedirects `<&` branch + the stdinDupFds precise-alias tracking) ───────
+
+test('read <&3 sources from fd 3 (input fd-dup), advancing fd 3 cursor', async () => {
+  const ctl = controllableDuplex();
+  const h = mk(duplexFs(ctl.fd));
+  ctl.feed('L1');
+  ctl.feed('L2');
+  await h.ex.exec('exec 3<>/dev/tcp/x/1\nread a <&3\nread b <&3\necho "a=$a b=$b"');
+  expect(h.out.trim()).toBe('a=L1 b=L2');
+});
+
+test('read <&3 alias is per-command: a following plain read reverts to normal stdin', async () => {
+  const ctl = controllableDuplex();
+  const h = mk(duplexFs(ctl.fd));
+  ctl.feed('FROM3');
+  // After `read a <&3`, the fd-0 alias must be torn down (stdinDupFds cleared by
+  // the restore closure) so a subsequent plain `read` does NOT still read fd 3.
+  // With no live stdin stream, the plain read hits EOF (rc 1) rather than fd 3.
+  await h.ex.exec('exec 3<>/dev/tcp/x/1\nread a <&3\nread b\necho "a=$a rc=$? b=[$b]"');
+  expect(h.out.trim()).toBe('a=FROM3 rc=1 b=[]');
+});
+
+test('read -t over a <&3 input-dup times out (142) when fd 3 has no data', async () => {
+  const ctl = controllableDuplex();
+  const h = mk(duplexFs(ctl.fd)); // never feed
+  await h.ex.exec('exec 3<>/dev/tcp/x/1\nread -t 0.05 -r r <&3\necho "rc=$? r=[$r]"');
+  expect(h.out.trim()).toBe('rc=142 r=[]');
+});
+
+test('<&- closes the input fd (read then hits EOF)', async () => {
+  const ctl = controllableDuplex();
+  const h = mk(duplexFs(ctl.fd));
+  ctl.feed('X');
+  // `exec 3<&-`-style close via a per-command `<&-` on fd 0: nothing to read.
+  await h.ex.exec('exec 3<>/dev/tcp/x/1\nread a <&-\necho "rc=$? a=[$a]"');
+  expect(h.out.trim()).toBe('rc=1 a=[]');
+});
+
+test('read <&3 over a DATAGRAM duplex fd uses readDatagram (one datagram, not a line)', async () => {
+  // A datagram fd (`datagram:true`) routes readFdLine through readDatagram — one
+  // whole datagram per read, no `\n` splitting. Two datagrams → two reads.
+  const dgrams = ['first-datagram', 'second\ndatagram-with-newline'];
+  let i = 0;
+  const dfd: DuplexFd = {
+    datagram: true,
+    write() { /* unused */ },
+    readLine() { throw new Error('readLine must NOT be used for a datagram fd'); },
+    readDatagram() { return Promise.resolve(i < dgrams.length ? dgrams[i++] : undefined); },
+    close() { /* unused */ },
+  };
+  const h = mk(duplexFs(dfd));
+  await h.ex.exec('exec 3<>/dev/udp/x/1\nread -r a <&3\necho "a=[$a]"');
+  // The whole first datagram (no line-splitting) lands in $a.
+  expect(h.out.trim()).toBe('a=[first-datagram]');
+});
