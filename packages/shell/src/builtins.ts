@@ -1300,8 +1300,8 @@ function splitReadWithRests(line: string, spec: IfsSpec, limit: number): { field
       j++;
     }
     i = j;
-    // A trailing delimiter with nothing after → an empty final field (bash).
-    if (i >= n) { fields.push(''); rests.push(''); }
+    // A trailing delimiter with nothing after does NOT produce an extra empty
+    // field in bash (neither for `read -a` nor for word splitting). So we stop.
   }
   return { fields, rests };
 }
@@ -1412,11 +1412,16 @@ function evalTest(args: string[]): boolean {
       if (args[0] === '!') return !(args[1] !== '');
       if (TEST_UNARY.has(args[0])) return unaryTest(args[0], args[1]);
       return args[1] !== ''; // unknown unary → treat operand as a string test
-    case 3:
-      // `! UNARY s` negates the unary; `a OP b` binary; `( expr1 )` degenerate.
+    case 3: {
+      // POSIX: when args[1] is a known binary operator, this is `a OP b` —
+      // regardless of what args[0] looks like (`[ "!" = "!" ]` is equality, not
+      // negation). Otherwise `! expr2` or `( expr1 )`.
+      const BINARY_OPS = ['=', '==', '!=', '<', '>', '-eq', '-ne', '-lt', '-le', '-gt', '-ge'];
+      if (BINARY_OPS.includes(args[1])) return binaryTest(args[0], args[1], args[2]);
       if (args[0] === '!') return !evalTest(args.slice(1));
       if (args[0] === '(' && args[2] === ')') return evalTest([args[1]]);
       return binaryTest(args[0], args[1], args[2]);
+    }
     case 4:
       if (args[0] === '!') return !evalTest(args.slice(1));
       break;

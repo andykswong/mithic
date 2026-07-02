@@ -59,17 +59,20 @@ dev machine). bash 3.2 LACKS bash-4+ features (case modification `${s^^}`/`${s,,
 
 Prioritized for agents. Each row: the gap + a one-line agent use case.
 
-_No open shell-language or shell/runtime gaps are currently tracked._ The
-previously-listed items — the remaining `${var@OP}` transforms (`@A`/`@P`/`@K`/`@k`),
-`coproc` on relay backends, the in-process builtin broken-pipe backstop, a builtin
-first-stage `< file` in an all-builtin pipeline, subshell `( … )` redirects,
-binary-exact `< file` input, and **UDP datagrams over the shell** (`exec 3<>/dev/udp/host/port;
-echo -ne … >&3; read -t 2 -r resp <&3` — `<&` input fd-dup + datagram-aware raw read,
-binary-safe for a DNS-style round-trip) — have all shipped (implemented + tested) and
-their rows were removed per this registry's open-only convention. Per-process
-`/dev/tcp`/`/dev/udp` host narrowing already works via the kernel's fs-capability
-path-prefix check (a process granted `fs:['/dev/tcp/api.example.com']` cannot open
-`/dev/tcp/evil.com`).
+_No open shell-language or shell/runtime gaps are currently tracked._ The July 2026
+bash-parity gap wave (63 verified gaps found by a fresh differential sweep against
+real `/bin/bash`) shipped: `$'…'` ANSI-C quoting, `\<newline>` continuation, nested
+`"$(… "…")"` lexing, `;&`/`;;&` case-fallthrough, IFS-aware word-splitting
+(`splitParts` + `read`/`read -a`), param-expansion fixes (`${v/%pat/r}` suffix
+anchor, `${!ref}OP` indirection, `${arr[@]:o:l}` element slicing, `${@:o:l}`
+positional slice, arithmetic offsets, negative index), arithmetic `base#num` literals
++ `declare -i` + array-element lvalues + hex-width-fix + history-expansion
+interactive-only, builtins/vars (`test` operators `-a`/`-o`/lexical `<>`/3-arg
+negation, `[[ ]]` lexical `<>`, `command`/`builtin`, `type -t/-a`, `declare -r/-p`,
+`$FUNCNAME`, `$BASH_REMATCH` incl. grouped-regex fix, `$_`, `$SECONDS`), printf
+(invalid-number diagnostic+exit 1, `%*d` negative dynamic width, `%b \c`
+output-stop), and `DEBUG`/`RETURN` traps. Previously-shipped items (through June
+2026) were already removed per the open-only convention.
 
 ## Deliberate boundaries (documented, not gaps)
 
@@ -91,6 +94,16 @@ These are intentional design limits, not missing features:
   reads a whole line/datagram, ignoring the count/delimiter — an inherited limit of
   the numbered-fd read path. Chunked reads over pipe/here-string stdin honor `-n`/`-d`
   normally; the UDP round-trip uses whole-datagram `read -r`.
+- **`type -a NAME` lists builtins/functions/keywords but NOT PATH files.** The pure
+  builtin surface has no real `$PATH` search — external commands are resolved by the
+  kernel's `resolveCommand`, which is not callable from the `type` builtin. `type -t`
+  (which only classifies known names) is correct; `-a`'s PATH-hit listing is partial.
+- **printf `%x`/`%u`/`%o`/`%d` of very large or negative integers uses JS double
+  precision (52-bit mantissa) and 32-bit unsigned reinterpretation**, not bash's
+  64-bit `intmax_t`. `printf '%x' -1` → `ffffffff` (32-bit) vs bash's
+  `ffffffffffffffff` (64-bit); `printf '%d' 9223372036854775807` loses precision
+  beyond 2^53. Full 64-bit parity would require BigInt arithmetic throughout — out
+  of scope. The common ≤ 32-bit range is correct.
 
 ---
 

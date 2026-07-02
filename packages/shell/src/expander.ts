@@ -758,7 +758,20 @@ export class Expander {
       }
       let idx = await this.resolveIndex(subAccess.subscript);
       if (idx < 0) idx = arr.length + idx; // ${arr[-1]} → last element
-      return arr[idx] ?? '';
+      const elem = arr[idx] ?? '';
+      // ${arr[i]:off:len} — apply the slice as a scalar substring on the element.
+      if (subAccess.slice !== undefined) {
+        const colon = findSliceColon(subAccess.slice);
+        const offStr = colon >= 0 ? subAccess.slice.slice(0, colon) : subAccess.slice;
+        const lenStr = colon >= 0 ? subAccess.slice.slice(colon + 1) : undefined;
+        let off = await this.evalArithSpec(offStr);
+        if (off < 0) { off = elem.length + off; if (off < 0) return ''; }
+        if (lenStr === undefined) return elem.slice(off);
+        const len = await this.evalArithSpec(lenStr);
+        if (len < 0) return elem.slice(off, elem.length + len);
+        return elem.slice(off, off + len);
+      }
+      return elem;
     }
 
     // Find the operator. Operators: :- := :? :+ - = ? + # ## % %% / // : (substring)

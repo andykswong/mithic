@@ -997,3 +997,19 @@ test('$_ is the last argument of the previous command; $SECONDS is numeric', asy
   expect((await run('echo abc def; echo "$_"')).out).toBe('abc def\ndef\n');
   expect((await run('echo "${SECONDS}"')).out).toBe('0\n');
 });
+
+// ── Review-found regressions (fixed) ─────────────────────────────────────────
+
+test('[ "!" = "!" ] is a binary equality (not negation) — 3-arg binary wins over !', async () => {
+  expect((await run('[ "!" = "!" ] && echo yes || echo no')).out).toBe('yes\n');
+  expect((await run('[ "(" = "(" ] && echo yes || echo no')).out).toBe('yes\n');
+});
+
+test('${arr[0]:1:3} substrings the element (not the whole element)', async () => {
+  expect((await run('arr=(hello world); echo "${arr[0]:1:3}"')).out).toBe('ell\n');
+  expect((await run('arr=(hello world); echo "${arr[1]:0:2}"')).out).toBe('wo\n');
+});
+
+test('read -a with trailing IFS delimiter does not produce a spurious empty field', async () => {
+  expect((await run('IFS=: read -a arr <<< "a:b:"; echo ${#arr[@]}')).out).toBe('2\n');
+});
