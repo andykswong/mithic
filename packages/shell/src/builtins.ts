@@ -60,6 +60,12 @@ export interface ShellState {
   markReadonly?(name: string): void;
   /** True when the name was marked `readonly`. */
   isReadonly?(name: string): boolean;
+  /**
+   * `unset NAME` — fully remove a variable: scalar value, indexed/associative
+   * array, and its attributes (integer/nameref). `unset NAME[idx]` removes a
+   * single element (numeric index for an indexed array, string key for assoc).
+   */
+  unsetVar?(name: string, index?: string): void;
   /** Mark a name as integer (`declare -i`): assignments are arithmetic-evaluated. */
   markInteger?(name: string): void;
   /** True when the name was marked integer (`declare -i`). */
@@ -406,16 +412,26 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
 
     case 'unset': {
       let status = 0;
-      for (const arg of args) {
+      // `-v` (variable) / `-f` (function) selectors; default is variable-then-function.
+      const onlyFunc = args[0] === '-f';
+      const names = (args[0] === '-v' || args[0] === '-f') ? args.slice(1) : args;
+      for (const arg of names) {
+        // Split an `name[idx]` element form.
+        const mm = /^([A-Za-z_][A-Za-z0-9_]*)\[(.*)\]$/s.exec(arg);
+        const base = mm ? mm[1] : arg;
+        const index = mm ? mm[2] : undefined;
         // A readonly variable cannot be unset (bash: `unset: <name>: cannot unset:
         // readonly variable`, status 1). Functions are unaffected by readonly.
-        if (ctx.state?.isReadonly?.(arg)) {
-          errOut(ctx, `shell: unset: ${arg}: cannot unset: readonly variable\n`);
+        if (!onlyFunc && ctx.state?.isReadonly?.(base)) {
+          errOut(ctx, `shell: unset: ${base}: cannot unset: readonly variable\n`);
           status = 1;
           continue;
         }
-        delete ctx.env[arg];
-        ctx.state?.functions.delete(arg);
+        if (onlyFunc) { ctx.state?.functions.delete(base); continue; }
+        // Remove the scalar + array/assoc storage + attributes (or one element).
+        delete ctx.env[base];
+        ctx.state?.unsetVar?.(base, index);
+        if (index === undefined) ctx.state?.functions.delete(base);
       }
       return status;
     }

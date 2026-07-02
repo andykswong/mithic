@@ -721,6 +721,7 @@ export class Executor {
       killJob: (spec, signal) => this.jobControl.killJob(spec, signal),
       markReadonly: (name) => { this.readonlyNames.add(name); },
       isReadonly: (name) => this.readonlyNames.has(name),
+      unsetVar: (name, index) => this.unsetVar(name, index),
       markInteger: (name) => { this.integerNames.add(name); },
       isInteger: (name) => this.integerNames.has(name),
       declareP: (names) => this.declareP(names),
@@ -1086,6 +1087,32 @@ export class Executor {
    * Array-element accessor for `a[i]` arithmetic lvalues in `(( ))`/`let`/`declare -i`/
    * C-style `for (( ))`. A negative index counts from the end; a write creates the array.
    */
+  /**
+   * `unset NAME` (or `unset NAME[idx]`) — remove a variable's scalar value, its
+   * indexed/associative array, and integer/nameref attributes; or, with `index`,
+   * a single element (numeric for indexed, string key for assoc).
+   */
+  private unsetVar(name: string, index?: string): void {
+    if (index !== undefined) {
+      const assoc = this.assocArrays.get(name);
+      if (assoc !== undefined) { assoc.delete(index); return; }
+      const arr = this.arrays.get(name);
+      if (arr !== undefined) {
+        const i = /^-?\d+$/.test(index.trim())
+          ? parseInt(index.trim(), 10)
+          : (() => { try { return evalArith(index, this.arithEnvForExpr(), this.arithArrayAccessExec()); } catch { return 0; } })();
+        const idx = i < 0 ? arr.length + i : i;
+        delete arr[idx]; // leaves a hole (bash sparse-array semantics)
+      }
+      return;
+    }
+    delete this.context.env[name];
+    this.arrays.delete(name);
+    this.assocArrays.delete(name);
+    this.integerNames.delete(name);
+    this.namerefs.delete(name);
+  }
+
   private arithArrayAccessExec(): ArithArrayAccess {
     return {
       getElement: (name, index) => {

@@ -1104,3 +1104,14 @@ test('value @-transforms (@Q @U @u @L @E) apply to array/assoc elements', async 
   // scalar transforms unaffected
   expect((await run('v=hi; echo "${v@U}"')).out).toBe('HI\n');
 });
+
+test('unset clears arrays/assoc/elements (not just scalars)', async () => {
+  expect((await run('a=(x y z); unset a; echo "[${a[@]}] ${#a[@]}"')).out).toBe('[] 0\n');
+  expect((await run('declare -A m; m[k]=v; unset m; echo "[${m[k]}]"')).out).toBe('[]\n');
+  expect((await run('a=(x y z); unset "a[1]"; echo "${a[@]} ${#a[@]}"')).out).toBe('x z 2\n');
+  expect((await run('declare -A m; m[a]=1; m[b]=2; unset "m[a]"; echo "${m[b]} ${#m[@]}"')).out).toBe('2 1\n');
+  expect((await run('a=(x y z); unset "a[-1]"; echo "${a[@]}"')).out).toBe('x y\n');
+  // scalar unset + readonly-block still work
+  expect((await run('x=5; unset x; echo "[$x]"')).out).toBe('[]\n');
+  expect((await run('readonly r=1; unset r; echo "$r"')).err).toMatch(/readonly/);
+});
