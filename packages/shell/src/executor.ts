@@ -1050,15 +1050,31 @@ export class Executor {
   private async execCase(stmt: Statement, io: CommandIO): Promise<number> {
     const exp = this.expander();
     const word = await exp.expandToString(stmt.caseWord!);
-    for (const clause of stmt.clauses ?? []) {
+    const clauses = stmt.clauses ?? [];
+    let status = 0;
+    let i = 0;
+    while (i < clauses.length) {
+      const clause = clauses[i];
+      let matched = false;
       for (const rawPat of clause.patterns) {
         const pat = await exp.expandToString(rawPat);
-        if (globMatch(word, pat, this.globMatchOpts())) {
-          return this.execList(clause.body, io);
-        }
+        if (globMatch(word, pat, this.globMatchOpts())) { matched = true; break; }
       }
+      if (!matched) { i++; continue; }
+      status = await this.execList(clause.body, io);
+      // `;&` (fallthrough): run each following clause's body unconditionally
+      // until a normal `;;` terminator (or the end) is reached.
+      let cur = clause;
+      while (cur.fallthrough && i + 1 < clauses.length) {
+        i++;
+        cur = clauses[i];
+        status = await this.execList(cur.body, io);
+      }
+      // `;;&` (continue-matching): keep testing subsequent patterns.
+      if (cur.continueMatch) { i++; continue; }
+      break;
     }
-    return 0;
+    return status;
   }
 
   /**

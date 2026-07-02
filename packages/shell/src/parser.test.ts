@@ -128,6 +128,24 @@ test('parses a case statement', () => {
   expect(stmt.clauses![1].patterns).toEqual(['b', 'c']);
 });
 
+test('parses ;& case fallthrough terminator', () => {
+  const ast = parse('case a in a) echo one ;& b) echo two ;; esac');
+  const stmt = ast.body[0];
+  expect(stmt.type).toBe('Case');
+  expect(stmt.clauses).toHaveLength(2);
+  expect(stmt.clauses![0].fallthrough).toBe(true);
+  expect(stmt.clauses![1].fallthrough).toBeUndefined();
+});
+
+test('parses ;;& case continue-match terminator', () => {
+  const ast = parse('case a in a) echo one ;;& b) echo two ;; esac');
+  const stmt = ast.body[0];
+  expect(stmt.type).toBe('Case');
+  expect(stmt.clauses).toHaveLength(2);
+  expect(stmt.clauses![0].continueMatch).toBe(true);
+  expect(stmt.clauses![1].continueMatch).toBeUndefined();
+});
+
 test('parses a function definition (name() form)', () => {
   const ast = parse('greet() { echo hi; }');
   const stmt = ast.body[0];

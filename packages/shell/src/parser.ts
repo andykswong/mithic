@@ -357,9 +357,12 @@ class Parser {
       while (this.atType('PIPE')) { this.next(); patterns.push(this.next()!.raw); }
       if (!this.atType('RPAREN')) throw new SyntaxError('shell: syntax error: expected ) in case');
       this.next(); // )
-      const body = this.parseStatementListUntil([], ['DSEMI', 'esac-word']);
-      clauses.push({ patterns, body });
-      if (this.atType('DSEMI')) this.next();
+      const body = this.parseStatementListUntil([], ['DSEMI', 'SEMIAMP', 'SEMISEMIAMP', 'esac-word']);
+      const clause: CaseClause = { patterns, body };
+      if (this.atType('SEMISEMIAMP')) { clause.continueMatch = true; this.next(); }
+      else if (this.atType('SEMIAMP')) { clause.fallthrough = true; this.next(); }
+      else if (this.atType('DSEMI')) this.next();
+      clauses.push(clause);
       this.skipNewlines();
     }
     this.expectReserved('esac');
@@ -456,6 +459,8 @@ class Parser {
 
   private atStopToken(stopTokens: string[]): boolean {
     if (stopTokens.includes('DSEMI') && this.atType('DSEMI')) return true;
+    if (stopTokens.includes('SEMIAMP') && this.atType('SEMIAMP')) return true;
+    if (stopTokens.includes('SEMISEMIAMP') && this.atType('SEMISEMIAMP')) return true;
     if (stopTokens.includes('esac-word') && this.atReserved('esac')) return true;
     return false;
   }

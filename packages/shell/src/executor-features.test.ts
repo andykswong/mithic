@@ -145,6 +145,26 @@ test('case statement matches glob patterns', async () => {
   expect((await run('case foo in a|b) echo ab ;; f*) echo f ;; esac')).out.trim()).toBe('f');
 });
 
+test('case ;& fallthrough runs the next clause body unconditionally', async () => {
+  const { out } = await run('case a in a) echo one ;& b) echo two ;; c) echo three ;; esac');
+  expect(out).toBe('one\ntwo\n');
+});
+
+test('case ;& fallthrough at the last clause runs nothing extra', async () => {
+  const { out } = await run('case z in a) echo one ;; z) echo last ;& esac');
+  expect(out).toBe('last\n');
+});
+
+test('case ;;& continue-matching keeps testing subsequent patterns', async () => {
+  const { out } = await run('case abc in a*) echo one ;;& *c) echo two ;;& z*) echo three ;; esac');
+  expect(out).toBe('one\ntwo\n');
+});
+
+test('case ;;& stops running non-matching clauses', async () => {
+  const { out } = await run('case abc in a*) echo one ;;& x*) echo x ;; *) echo star ;; esac');
+  expect(out).toBe('one\nstar\n');
+});
+
 test('until loop', async () => {
   const { out } = await run('x=0; until [ $x -ge 3 ]; do echo $x; x=$(( x + 1 )); done');
   expect(out).toBe('0\n1\n2\n');

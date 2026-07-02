@@ -82,6 +82,10 @@ export type StatementType =
 export interface CaseClause {
   patterns: string[];
   body: Statement[];
+  /** `;&` terminator: run the next clause's body unconditionally. */
+  fallthrough?: boolean;
+  /** `;;&` terminator: keep testing subsequent patterns after this clause. */
+  continueMatch?: boolean;
 }
 
 export interface Statement {

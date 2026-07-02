@@ -34,6 +34,8 @@ export type TokenType =
   | 'AMP'
   | 'SEMI'
   | 'DSEMI'        // ;;
+  | 'SEMIAMP'      // ;&  (case fallthrough)
+  | 'SEMISEMIAMP'  // ;;& (case continue-matching)
   | 'AND_IF'
   | 'OR_IF'
   | 'LPAREN'
@@ -110,7 +112,9 @@ function matchOperator(input: string, i: number): OpMatch | undefined {
   if (s.startsWith('<<<', i)) return { type: 'LESSLESSLESS', len: 3 };
   if (s.startsWith('<<-', i)) return { type: 'LESSLESSDASH', len: 3 };
   if (s.startsWith('&>>', i)) return { type: 'AMPGREATGREAT', len: 3 };
+  if (s.startsWith(';;&', i)) return { type: 'SEMISEMIAMP', len: 3 };
   // 2-char
+  if (s.startsWith(';&', i)) return { type: 'SEMIAMP', len: 2 };
   if (s.startsWith('&&', i)) return { type: 'AND_IF', len: 2 };
   if (s.startsWith('||', i)) return { type: 'OR_IF', len: 2 };
   if (s.startsWith('|&', i)) return { type: 'PIPEAMP', len: 2 };
