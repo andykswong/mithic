@@ -28,6 +28,7 @@ export type TokenType =
   | 'LESSLESSDASH' // <<-
   | 'LESSLESSLESS' // <<<
   | 'GREATAMP'     // >& or N>&M (also 2>&1)
+  | 'LESSAMP'      // <& or N<&M (input fd-dup)
   | 'AMPGREAT'     // &>
   | 'AMPGREATGREAT'// &>>
   | 'AMP'
@@ -118,7 +119,7 @@ function matchOperator(input: string, i: number): OpMatch | undefined {
   if (s.startsWith('<<', i)) return { type: 'LESSLESS', len: 2 };
   if (s.startsWith('<>', i)) return { type: 'LESSGREAT', len: 2 };
   if (s.startsWith('>&', i)) return { type: 'GREATAMP', len: 2 };
-  if (s.startsWith('<&', i)) return { type: 'GREATAMP', len: 2 };
+  if (s.startsWith('<&', i)) return { type: 'LESSAMP', len: 2 };
   if (s.startsWith('&>', i)) return { type: 'AMPGREAT', len: 2 };
   if (s.startsWith(';;', i)) return { type: 'DSEMI', len: 2 };
   if (s.startsWith('((', i)) return { type: 'DLPAREN', len: 2 };

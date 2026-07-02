@@ -250,6 +250,19 @@ test('a missing < file reports an error and CONTINUES the statement list (does n
   expect(out).toContain('AFTER');   // the script CONTINUED past the failure
 });
 
+test('a pipe / redirect overrides an ambient exec 0<file for a plain read (not the stale fd-0 entry)', async () => {
+  // Regression: `read <&N` added an fd-0 alias path for `read`. It must NOT hijack
+  // a plain `read` whose real stdin is a pipe / `<` / `<<<` while fd 0 holds a
+  // lingering `exec 0<file` entry. bash: the more-local stdin wins.
+  const fs = mockFs({ '/f.txt': 'FILE1\n', '/r.txt': 'REDIR1\n' });
+  const piped = await run('exec 0< /f.txt; printf "PIPED\\n" | { read x; echo "x=$x"; }', {}, fs);
+  expect(piped.out.trim()).toBe('x=PIPED');           // the pipe wins, not FILE1
+  const redir = await run('exec 0< /f.txt; read x < /r.txt; echo "x=$x"', {}, mockFs({ '/f.txt': 'FILE1\n', '/r.txt': 'REDIR1\n' }));
+  expect(redir.out.trim()).toBe('x=REDIR1');          // the per-command < wins
+  const herestr = await run('exec 0< /f.txt; read x <<< "HERESTR"; echo "x=$x"', {}, mockFs({ '/f.txt': 'FILE1\n' }));
+  expect(herestr.out.trim()).toBe('x=HERESTR');       // the here-string wins
+});
+
 // ── byte-stream stdin: streaming builtins over a shared cursor ────────────────
 
 test('cat streams a here-string through unchanged', async () => {
@@ -273,6 +286,26 @@ test('& backgrounds and wait collects', async () => {
   const { out, code } = await run('sleep 0 & wait');
   expect(code).toBe(0);
   expect(out).toBe('');
+});
+
+test('backgrounded prefix-external RHS expands ONCE on a no-spawnStream backend', async () => {
+  // Regression: `x=$(sub) realcmd &` — on a backend WITHOUT spawnStream the job
+  // runs via the in-process fallback (execStatement→execSimple). Previously the
+  // command was ALSO expanded eagerly by backgroundExternal, so the RHS `$(sub)`
+  // ran TWICE. The fix gates backgroundExternal behind spawnStream. Count how many
+  // times `sub` is spawned (the command substitution runs `sub` as an external).
+  const spawned: any[] = [];
+  const k = { // NO spawnStream → forces the in-process fallback
+    spawned,
+    async spawn(args: any) { spawned.push(args); return { pid: spawned.length }; },
+    async wait(pid: number) { return { pid, code: 0 }; },
+  };
+  const ex = new (await import('./executor.ts')).Executor(k as any, { cwd: '/', env: {} } as any, {
+    onStdout: () => {}, onStderr: () => {}, resolve: (n: string) => n,
+  });
+  await ex.run(parse('x=$(sub) realcmd & wait'));
+  const subSpawns = spawned.filter((s) => (s.args?.[0] ?? s.code) === 'sub').length;
+  expect(subSpawns).toBe(1); // the command substitution ran exactly once
 });
 
 test('jobs lists background jobs', async () => {

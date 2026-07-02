@@ -20,6 +20,7 @@ export type RedirectOp =
   | '<<'     // here-doc
   | '<<<'    // here-string
   | '>&'     // duplicate / merge fd (e.g. 2>&1, >&2)
+  | '<&'     // duplicate an INPUT fd (e.g. read <&3)
   | '&>'     // redirect both stdout+stderr (truncate)
   | '&>>';   // redirect both stdout+stderr (append)
 

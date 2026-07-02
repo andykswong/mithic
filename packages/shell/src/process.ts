@@ -128,10 +128,27 @@ function makeFsClient(guest: Guest): FsClient & { flush(): Promise<void> } {
       const fd = opened.fd;
       const dec = new TextDecoder();
       const enc = new TextEncoder();
-      let pending = ''; // bytes read past the last delivered line
+      // A `/dev/udp/...` target is DATAGRAM-oriented (no `\n`, no EOF), so the
+      // line-oriented `readLine` below is wrong for it: the executor reads via
+      // `readDatagram` (one `fs/read` = one datagram, latin1-preserving) instead.
+      // Anchor to the `/dev/udp` mount PREFIX (not a bare substring) so a regular
+      // file whose path merely contains `/dev/udp/` is not misclassified.
+      const datagram = path === '/dev/udp' || path.startsWith('/dev/udp/');
+      let pending = ''; // bytes read past the last delivered line (TCP `readLine` only)
+      // A datagram fd is a BINARY byte channel: `echo -ne "\xNN…" >&3` produces a
+      // string of byte-valued code units (U+0000–U+00FF), so latin1-encode (each
+      // code unit → one byte) to put those bytes on the wire EXACTLY — symmetric
+      // with the latin1 `readDatagram` below. `enc.encode` (UTF-8) would expand a
+      // byte ≥ 0x80 to two bytes (0xFF → 0xC3 0xBF), corrupting a binary datagram.
+      // TCP `write` keeps UTF-8 (`enc.encode`) — a byte stream is text-oriented in
+      // the existing `readLine` model and its e2e sends only ASCII.
+      const writeBytes = datagram
+        ? (s: string): Uint8Array => { const b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i) & 0xff; return b; }
+        : (s: string): Uint8Array => enc.encode(s);
       return {
+        datagram,
         async write(s: string): Promise<void> {
-          await guest.syscall('fs/write', { fd, data: enc.encode(s) });
+          await guest.syscall('fs/write', { fd, data: writeBytes(s) });
         },
         async readLine(): Promise<string | undefined> {
           for (;;) {
@@ -146,6 +163,18 @@ function makeFsClient(guest: Guest): FsClient & { flush(): Promise<void> } {
             }
             pending += dec.decode(data, { stream: true });
           }
+        },
+        // ONE datagram per read, binary-exact. Each byte becomes one UTF-16 code
+        // unit (latin1), so `$response` holds the raw bytes losslessly and a
+        // `printf '%s'` / `od` renders them back byte-for-byte. NO `\n`/pending
+        // logic — a datagram is a complete message, not a byte stream.
+        async readDatagram(): Promise<string | undefined> {
+          const r = await guest.syscall('fs/read', { fd, len: 65536 });
+          const data = (r instanceof Uint8Array ? r : (r as { data?: Uint8Array } | undefined)?.data) ?? undefined;
+          if (!data || data.byteLength === 0) return undefined;
+          let s = '';
+          for (const b of data) s += String.fromCharCode(b);
+          return s;
         },
         async close(): Promise<void> {
           await guest.syscall('fs/close', { fd }).catch(() => { /* already closed */ });

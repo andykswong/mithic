@@ -50,6 +50,17 @@ test('parses input redirect and fd-dup', () => {
   expect(r3).toMatchObject({ op: '>', fd: 2, target: 'err' });
 });
 
+test('<&N parses as an input fd-dup (op "<&", distinct from ">&")', () => {
+  const r = parse('read x <&3').body[0].stages![0].redirects[0];
+  expect(r).toMatchObject({ op: '<&', target: '3' });
+  expect(r.fd).toBeUndefined();
+});
+
+test('N<&M parses an input dup on fd N', () => {
+  const r = parse('exec 3<&4').body[0].stages![0].redirects[0];
+  expect(r).toMatchObject({ op: '<&', fd: 3, target: '4' });
+});
+
 test('parses >| clobber-force redirect', () => {
   const r = parse('echo x >| out.txt').body[0].stages![0].redirects[0];
   expect(r).toMatchObject({ op: '>|', target: 'out.txt' });

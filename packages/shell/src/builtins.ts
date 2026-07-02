@@ -129,6 +129,15 @@ export interface BuiltinContext {
    * for the next read (no data dropped).
    */
   readStdinLine?(timeoutSec?: number): Promise<{ line: string | undefined; timedOut: boolean }>;
+  /**
+   * A numbered fd that stdin (fd 0) has been ALIASED to by a `<&N` input-dup
+   * redirect (`read <&3`) — set only when fd 0's entry carries a live `duplex`
+   * (e.g. `/dev/udp`) or buffered `input`. When present and no explicit `-u` was
+   * given, `read` sources from THIS fd (via {@link readFdLine}) instead of the
+   * plain-stdin frame reader, so `read … <&3` reads fd 3's datagram/line. The
+   * `-t` timeout applies to that path exactly as it does for `read -u N`.
+   */
+  stdinFd?: number;
   /** Slurp ALL remaining stdin bytes (binary-safe) — for `mapfile`. */
   readStdinAll?(): Promise<Uint8Array>;
   /**
@@ -1063,6 +1072,9 @@ async function runRead(args: string[], ctx: BuiltinContext): Promise<number> {
   }
   if (timeoutSec !== undefined && Number.isNaN(timeoutSec)) timeoutSec = undefined;
   if (maxChars !== undefined && Number.isNaN(maxChars)) maxChars = undefined;
+  // `read <&N` aliased fd 0 to a readable numbered fd (duplex/input) — with no
+  // explicit `-u`, source from it via the fd path so `read <&3` reads fd 3.
+  if (fdArg === undefined && ctx.stdinFd !== undefined) fdArg = ctx.stdinFd;
 
   const finish = (line: string): number => {
     const cooked = raw ? line : unescapeReadLine(line);

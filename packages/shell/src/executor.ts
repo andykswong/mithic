@@ -220,6 +220,14 @@ export class Executor {
    * pipeline-captured stream (a different object) is still drained normally.
    */
   private rootStdinStream: ReadableStream<Uint8Array> | undefined;
+  /**
+   * fds that THE CURRENTLY-DISPATCHING command aliased via `<&N` (input fd-dup),
+   * so a plain `read` sources fd 0 from the alias — distinct from a stale fd-0
+   * entry left by an ambient `exec 0<file`. Populated in `applyRedirects` and
+   * cleared by its restore closure (which runs after the command). `dispatch`
+   * runs synchronously between apply and restore, so no interleaving hazard.
+   */
+  private stdinDupFds = new Set<number>();
   private lastStatus = 0;
   private pipeStatus: number[] = [];
   /** 1-based source line of the statement currently executing, for `$LINENO`. */
@@ -1248,6 +1256,7 @@ export class Executor {
     const savedStdin = io.stdin;
     const savedFds = new Map<number, FdEntry | undefined>();
     const closers: Array<() => void> = [];
+    const dupInFds: number[] = []; // fds aliased via `<&` this command (cleared on restore)
     const snapshotFd = (fd: number): void => { if (fd !== 1 && fd !== 2 && !savedFds.has(fd)) savedFds.set(fd, io.fdTable.get(fd)); };
     // `/dev/stdout` / `/dev/stderr` redirect targets resolve to the frame's
     // ORIGINAL sinks (captured now), so `cmd 1>&2 2>file` and `> /dev/stdout`
@@ -1268,6 +1277,29 @@ export class Executor {
           const s = await this.resolveStdinStream([r]);
           if (s !== undefined) { io.stdin = s; this.resetStdinReader(io); }
         }
+        continue;
+      }
+
+      if (r.op === '<&') {
+        // Input fd-dup: `N<&M` makes fd N read from where fd M reads; `N<&-`
+        // closes N. Default fd is 0 (`read <&3` aliases stdin to fd 3). We copy
+        // the target's FdEntry to fd N so N's `duplex`/`input` becomes M's — then
+        // a plain `read` (routed via readFdLine on fd 0, below) sources from it.
+        // The per-command restore closure re-installs the prior fd N.
+        const fd = r.fd ?? 0;
+        snapshotFd(fd);
+        const tgt = r.target === '-' ? '-' : await exp.expandToString(r.target);
+        if (tgt === '-') { io.fdTable.delete(fd); this.stdinDupFds.delete(fd); dupInFds.push(fd); continue; } // `<&-` closes fd N
+        const dst = parseInt(tgt, 10);
+        if (!Number.isNaN(dst)) {
+          const srcEntry = io.fdTable.get(dst);
+          if (srcEntry) io.fdTable.set(fd, srcEntry);
+        }
+        // Record that THIS command aliased `fd` via `<&`, so a plain `read`
+        // sources fd 0 from it (vs a stale ambient `exec 0<` entry). Cleared by
+        // the restore closure below.
+        this.stdinDupFds.add(fd);
+        dupInFds.push(fd);
         continue;
       }
 
@@ -1306,6 +1338,7 @@ export class Executor {
       io.stderr = savedStderr;
       io.stdin = savedStdin;
       this.resetStdinReader(io);
+      for (const fd of dupInFds) this.stdinDupFds.delete(fd); // undo this command's `<&` alias marks
       for (const [fd, prev] of savedFds) { if (prev === undefined) io.fdTable.delete(fd); else io.fdTable.set(fd, prev); }
     };
   }
@@ -1423,7 +1456,13 @@ export class Executor {
     // to an orphaned `readLine()`. The cache is cleared on CONSUMPTION, not on
     // resolution (see `consumeFdLine`) — so a timed-out read leaves it in place.
     if (entry?.duplex) {
-      const p = entry.pendingRead ?? Promise.resolve(entry.duplex.readLine());
+      // A DATAGRAM fd (`/dev/udp/...`) reads ONE datagram (latin1, binary-exact)
+      // rather than a `\n`-delimited line — a UDP datagram has neither `\n` nor
+      // EOF, so `readLine()` would block until the `-t` timeout and mangle bytes.
+      const read = entry.duplex.datagram && entry.duplex.readDatagram
+        ? entry.duplex.readDatagram()
+        : entry.duplex.readLine();
+      const p = entry.pendingRead ?? Promise.resolve(read);
       entry.pendingRead = p;
       return p;
     }
@@ -2320,7 +2359,13 @@ export class Executor {
     // the bg frame's stdout in the background (not awaited) and resolve the job
     // from kernel.wait(realPid). Builtins / functions / compound bodies have no
     // kernel child, so they keep a synthetic pid and run detached in-process.
-    const external = await this.backgroundExternal(stmt);
+    // Only EXPAND the command for the direct-spawn path when that path is
+    // available: `backgroundExternal` expands the command (incl. a prefix
+    // assignment's `$(…)` RHS), and the in-process fallback below re-expands via
+    // `execStatement`→`execSimple`. Calling it unconditionally would run a
+    // side-effecting RHS (`x=$(cmd) realcmd &`) TWICE on a no-`spawnStream`
+    // backend. Gate on `spawnStream` so the RHS is expanded exactly once.
+    const external = this.kernel.spawnStream ? await this.backgroundExternal(stmt) : undefined;
     if (external && this.kernel.spawnStream) {
       try {
         const handle = await this.kernel.spawnStream(external);
@@ -2551,7 +2596,12 @@ export class Executor {
    */
   private async dispatch(name: string, argv: string[], frame: CommandIO, opts: { stdin?: ReadableStream<Uint8Array>; write?: (s: string) => void } = {}): Promise<number> {
     this.io = frame;
-    if (opts.stdin !== undefined && opts.stdin !== frame.stdin) frame = this.deriveIo(frame, { stdin: opts.stdin });
+    // A GENUINE per-command stdin override is an `opts.stdin` that DIFFERS from
+    // the inherited frame stdin — a `<`/`<<`/`<<<` redirect stream or a pipeline
+    // stage's captured stream. `opts.stdin === frame.stdin` (the common case, incl.
+    // `read <&3` which passes the inherited io.stdin) is NOT an override.
+    const hasStdinOverride = opts.stdin !== undefined && opts.stdin !== frame.stdin;
+    if (hasStdinOverride) frame = this.deriveIo(frame, { stdin: opts.stdin });
     const readerFor = (): StdinReader | undefined => this.stdinReaderFor(frame);
     const ctx: BuiltinContext = {
       cwd: this.context.cwd,
@@ -2566,6 +2616,19 @@ export class Executor {
       sourceFile: (args) => this.sourceFile(args),
       readFdLine: (fd) => this.readFdLine(fd, frame),
       consumeFdLine: (fd) => this.consumeFdLine(fd, frame),
+      // `read <&N` aliased fd 0 to fd N (applyRedirects). If fd 0 now carries a
+      // live duplex or buffered input, `read` (no `-u`) must source from it via
+      // readFdLine(0) rather than the plain-stdin frame reader.
+      // `read <&N` aliased fd 0 to fd N (applyRedirects, which recorded fd 0 in
+      // `#stdinDupFds` for THIS command). `read` (no `-u`) then sources from fd 0
+      // via readFdLine(0). GUARD precisely: fire ONLY when THIS command's own `<&0`
+      // alias installed the fd-0 entry — NOT for a lingering entry from an ambient
+      // `exec 0<file`/`exec 0<>…` (else `exec 0<f; printf x | { read y; }` would
+      // wrongly read the file instead of the pipe). A genuine stdin override
+      // (pipeline stage / `<` / `<<<`) also wins over any fd-0 entry.
+      stdinFd: (!hasStdinOverride && this.stdinDupFds.has(0)
+        && (() => { const e = frame.fdTable.get(0); return !!(e && (e.duplex || e.input !== undefined)); })())
+        ? 0 : undefined,
       readStdinLine: (timeoutSec) => this.readStdinLine(frame, timeoutSec),
       readStdinAll: () => { const r = readerFor(); return r ? r.readAll() : Promise.resolve(new Uint8Array()); },
       readStdinPump: (sink) => { const r = readerFor(); return r ? r.pumpTo(sink) : Promise.resolve(); },

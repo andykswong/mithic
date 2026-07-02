@@ -28,6 +28,22 @@ test('grants fs read on an allowed prefix, denies outside', () => {
   expect(cm.checkFs(1, '/etc/passwd', 'read')).toBe(false);
 });
 
+test('per-process /dev/tcp host narrowing via the fs-capability path prefix', () => {
+  // The fs capability path-prefix check ALREADY provides per-process host
+  // narrowing on the shared /dev/tcp mount: a process granted only a specific
+  // host path can open THAT host but not others, while a process granted the
+  // whole /dev/tcp subtree can open any host. No kernel-side hook is needed.
+  const cm = new CapabilityManager();
+  cm.grant(1, [{ type: 'fs', paths: ['/dev/tcp/api.example.com'], operations: ['read', 'write'] }]);
+  cm.grant(2, [{ type: 'fs', paths: ['/dev/tcp'], operations: ['read', 'write'] }]);
+  // Process 1: narrowed to one host.
+  expect(cm.checkFs(1, '/dev/tcp/api.example.com/443', 'read')).toBe(true);
+  expect(cm.checkFs(1, '/dev/tcp/evil.com/443', 'read')).toBe(false);
+  // Process 2: whole /dev/tcp subtree.
+  expect(cm.checkFs(2, '/dev/tcp/api.example.com/443', 'read')).toBe(true);
+  expect(cm.checkFs(2, '/dev/tcp/evil.com/443', 'read')).toBe(true);
+});
+
 test('write requires write operation grant', () => {
   const cm = new CapabilityManager();
   cm.grant(1, [{ type: 'fs', paths: ['/tmp'], operations: ['read'] }]);

@@ -532,7 +532,7 @@ class Parser {
   private isRedirectToken(type: TokenType): boolean {
     return type === 'GREAT' || type === 'GREATGREAT' || type === 'GREATPIPE' || type === 'LESS'
       || type === 'LESSGREAT' || type === 'LESSLESS' || type === 'LESSLESSDASH' || type === 'LESSLESSLESS'
-      || type === 'GREATAMP' || type === 'AMPGREAT' || type === 'AMPGREATGREAT';
+      || type === 'GREATAMP' || type === 'LESSAMP' || type === 'AMPGREAT' || type === 'AMPGREATGREAT';
   }
 
   private attachTrailingRedirects(stmt: Statement): void {
@@ -556,6 +556,7 @@ class Parser {
       case 'LESSLESS': return this.hereDocRedirect(false);
       case 'LESSLESSDASH': return this.hereDocRedirect(true);
       case 'GREATAMP': return this.dupRedirect('>&', fd);
+      case 'LESSAMP': return this.dupRedirect('<&', fd);
       case 'AMPGREAT': return this.targetRedirect('&>', fd);
       case 'AMPGREATGREAT': return this.targetRedirect('&>>', fd);
       default: throw new SyntaxError('shell: syntax error: bad redirect');
