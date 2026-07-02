@@ -602,6 +602,39 @@ export class Expander {
   }
 
   /**
+   * Evaluate a `${var:OFF:LEN}` offset/length in an arithmetic context (bash
+   * evaluates both as arithmetic, so `${v:i}`, `${v:1+1}`, `${v:(-3)}` work). A
+   * malformed expression yields 0 (bash treats an empty/erroring spec as 0).
+   */
+  private async evalArithSpec(expr: string): Promise<number> {
+    const s = expr.trim();
+    if (s === '') return 0;
+    try {
+      const expanded = await this.expandSubExpr(s);
+      const v = evalArith(expanded, this.arithEnvProxy());
+      return Number.isFinite(v) ? Math.trunc(v) : 0;
+    } catch { return 0; }
+  }
+
+  /**
+   * Slice an element array for `${arr[@]:off:len}` / `${@:off:len}`. `spec` is the
+   * text after `:` (`OFF` or `OFF:LEN`), each evaluated arithmetically. A negative
+   * offset counts from the end; a negative length is an end index (bash). An
+   * out-of-range offset yields no elements.
+   */
+  private async sliceArray(arr: string[], spec: string): Promise<string[]> {
+    const colon = spec.indexOf(':');
+    const offStr = colon >= 0 ? spec.slice(0, colon) : spec;
+    let off = await this.evalArithSpec(offStr);
+    if (off < 0) off = arr.length + off;
+    if (off < 0) off = 0;
+    if (colon < 0) return arr.slice(off);
+    const len = await this.evalArithSpec(spec.slice(colon + 1));
+    if (len < 0) return arr.slice(off, arr.length + len);
+    return arr.slice(off, off + len);
+  }
+
+  /**
    * Parse and apply a `${...}` parameter-expansion body. Returns a plain string,
    * or a multi-field descriptor for the `@`/`*` array/positional forms (consumed
    * by {@link readDollar} → {@link substitute} for field splitting).
@@ -650,26 +683,45 @@ export class Expander {
         const matches = (this.env.names?.() ?? []).filter((n) => n.startsWith(prefix)).sort();
         return { fields: matches, join: inner.endsWith('*') ? this.ifsFirst() : undefined };
       }
-      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(inner)) {
-        // Indirection: the value of the variable NAMED by `inner`.
-        const target = this.resolveVar(inner);
-        return target === '' ? '' : this.resolveVar(target);
+      // Indirection: `${!ref}` uses the value of `ref` as a variable NAME; any
+      // trailing operator (`:-`, `#pat`, `:off:len`, …) then applies to THAT
+      // variable. Extract the leading `ref` name, read its value (the target
+      // name), and re-dispatch the ops against the target.
+      const nameMatch = /^([A-Za-z_][A-Za-z0-9_]*)(.*)$/s.exec(inner);
+      if (nameMatch) {
+        const targetName = this.resolveVar(nameMatch[1]); // value of `ref` = the name to indirect to
+        const ops = nameMatch[2];
+        // An empty/unset `ref` has no target name to indirect to → empty.
+        if (targetName === '') return '';
+        return this.paramExpansion(targetName + ops);
       }
     }
 
-    // ${@} / ${*} bare positional forms (equivalent to $@ / $*).
-    if (body === '@' || body === '*') {
+    // ${@} / ${*} bare positional forms (equivalent to $@ / $*), plus the slice
+    // form `${@:off:len}` / `${*:off}` which slices the POSITIONAL ARRAY (with
+    // `$0` at index 0, per bash) rather than substringing the joined string.
+    if (body === '@' || body === '*' || body.startsWith('@:') || body.startsWith('*:')) {
+      const star = body[0] === '*';
       const pos = this.env.getPositional?.() ?? this.positionalFallback();
-      return { fields: pos, join: body === '*' ? this.ifsFirst() : undefined };
+      if (body.length === 1) {
+        return { fields: pos, join: star ? this.ifsFirst() : undefined };
+      }
+      // `${@:off:len}`: index 0 is `$0`; positionals sit at 1..N.
+      const withZero = [this.env.getSpecial('0') ?? '', ...pos];
+      const sliced = await this.sliceArray(withZero, body.slice(2));
+      return { fields: sliced, join: star ? this.ifsFirst() : undefined };
     }
 
-    // ${name[subscript]} array element / slice access.
-    const subAccess = matchSubscript(body);
+    // ${name[subscript]} array element / slice access. `matchSubscriptSlice`
+    // also captures a trailing `:off:len` on the `[@]`/`[*]` form.
+    const subAccess = matchSubscriptSlice(body);
     // Associative array (`declare -A`): string-keyed access (G6).
     if (subAccess && this.env.getAssoc?.(subAccess.name) !== undefined) {
       const map = this.env.getAssoc(subAccess.name)!;
       if (subAccess.subscript === '@' || subAccess.subscript === '*') {
-        return { fields: [...map.values()], join: subAccess.subscript === '*' ? this.ifsFirst() : undefined };
+        const values = [...map.values()];
+        const fields = subAccess.slice !== undefined ? await this.sliceArray(values, subAccess.slice) : values;
+        return { fields, join: subAccess.subscript === '*' ? this.ifsFirst() : undefined };
       }
       const key = await this.substituteOnly(subAccess.subscript);
       return map.get(key) ?? '';
@@ -677,9 +729,11 @@ export class Expander {
     if (subAccess && this.env.getArray?.(subAccess.name) !== undefined) {
       const arr = this.env.getArray(subAccess.name)!;
       if (subAccess.subscript === '@' || subAccess.subscript === '*') {
-        return { fields: arr, join: subAccess.subscript === '*' ? this.ifsFirst() : undefined };
+        const fields = subAccess.slice !== undefined ? await this.sliceArray(arr, subAccess.slice) : arr;
+        return { fields, join: subAccess.subscript === '*' ? this.ifsFirst() : undefined };
       }
-      const idx = await this.resolveIndex(subAccess.subscript);
+      let idx = await this.resolveIndex(subAccess.subscript);
+      if (idx < 0) idx = arr.length + idx; // ${arr[-1]} → last element
       return arr[idx] ?? '';
     }
 
@@ -758,14 +812,18 @@ export class Expander {
       const pat = await this.expandToString(rest.slice(longest ? 2 : 1));
       return stripSuffix(value, pat, longest, this.globOpts());
     }
-    // ${var/pat/repl} ${var//pat/repl}
+    // ${var/pat/repl} ${var//pat/repl} ${var/#pat/repl} ${var/%pat/repl}
     if (rest[0] === '/') {
       const all = rest[1] === '/';
-      const spec = rest.slice(all ? 2 : 1);
+      let spec = rest.slice(all ? 2 : 1);
+      // A `#`/`%` immediately after the `/` anchors the match to the start/end.
+      let anchor: 'start' | 'end' | 'none' = 'none';
+      if (spec[0] === '#') { anchor = 'start'; spec = spec.slice(1); }
+      else if (spec[0] === '%') { anchor = 'end'; spec = spec.slice(1); }
       const slash = findUnescaped(spec, '/');
       const pat = await this.expandToString(slash >= 0 ? spec.slice(0, slash) : spec);
       const repl = slash >= 0 ? await this.expandToString(spec.slice(slash + 1)) : '';
-      return substitute(value, pat, repl, all, this.globOpts());
+      return substitute(value, pat, repl, all, anchor, this.globOpts());
     }
     // ${var^} ${var^^} ${var,} ${var,,} — case modification (optionally gated by
     // a glob pattern of which chars to convert; default matches every char).
@@ -780,16 +838,20 @@ export class Expander {
       return value.length === 0 ? value : conv(value[0]) + value.slice(1);
     }
 
-    // ${var:offset:len} substring (offset is numeric → not one of the : ops above)
+    // ${var:offset:len} substring. bash evaluates offset/len arithmetically, so
+    // `${v:i}`, `${v:1+1}`, `${v:(-3)}` all work.
     if (rest[0] === ':') {
       const spec = rest.slice(1);
-      const colon = spec.indexOf(':');
+      const colon = findSliceColon(spec);
       const offStr = colon >= 0 ? spec.slice(0, colon) : spec;
       const lenStr = colon >= 0 ? spec.slice(colon + 1) : undefined;
-      let off = parseInt(offStr.trim(), 10) || 0;
-      if (off < 0) off = Math.max(0, value.length + off);
+      let off = await this.evalArithSpec(offStr);
+      if (off < 0) {
+        off = value.length + off;
+        if (off < 0) return ''; // a too-large negative offset yields empty (bash)
+      }
       if (lenStr === undefined) return value.slice(off);
-      const len = parseInt(lenStr.trim(), 10) || 0;
+      const len = await this.evalArithSpec(lenStr);
       if (len < 0) return value.slice(off, value.length + len);
       return value.slice(off, off + len);
     }
@@ -885,10 +947,37 @@ export class Expander {
 }
 
 /** Parse a `name[subscript]` form (the whole string), e.g. `arr[0]`, `arr[@]`. */
+/**
+ * Find the offset/length separator `:` in a `${var:OFF:LEN}` spec, skipping any
+ * `:` inside parentheses (an arithmetic ternary `a?b:c`) so `${v:(x?1:2):3}`
+ * splits at the top-level colon, not the ternary one.
+ */
+function findSliceColon(spec: string): number {
+  let depth = 0;
+  for (let i = 0; i < spec.length; i++) {
+    const c = spec[i];
+    if (c === '(') depth++;
+    else if (c === ')') depth--;
+    else if (c === ':' && depth === 0) return i;
+  }
+  return -1;
+}
+
 function matchSubscript(s: string): { name: string; subscript: string } | undefined {
   const m = /^([A-Za-z_][A-Za-z0-9_]*)\[(.*)\]$/s.exec(s);
   if (!m) return undefined;
   return { name: m[1], subscript: m[2] };
+}
+
+/**
+ * Like {@link matchSubscript} but also accepts a trailing `:off[:len]` slice on
+ * the `name[@]`/`name[*]` form (e.g. `arr[@]:1:2`). `slice` is the text after the
+ * subscript's `]` and its `:` (undefined when there is no slice).
+ */
+function matchSubscriptSlice(s: string): { name: string; subscript: string; slice?: string } | undefined {
+  const m = /^([A-Za-z_][A-Za-z0-9_]*)\[(.*?)\](?::(.*))?$/s.exec(s);
+  if (!m) return undefined;
+  return { name: m[1], subscript: m[2], slice: m[3] };
 }
 
 function joinPath(dir: string, name: string): string {
@@ -1124,16 +1213,12 @@ function stripSuffix(value: string, pat: string, longest: boolean, opts: GlobOpt
   return value;
 }
 
-function substitute(value: string, pat: string, repl: string, all: boolean, opts: GlobOptions): string {
+function substitute(value: string, pat: string, repl: string, all: boolean, anchor: 'start' | 'end' | 'none', opts: GlobOptions): string {
   if (pat === '') return value;
-  // Anchors: leading '#' = match at start, trailing '%' = match at end.
-  let anchorStart = false, anchorEnd = false;
-  let p = pat;
-  if (p[0] === '#') { anchorStart = true; p = p.slice(1); }
-  if (p[p.length - 1] === '%') { anchorEnd = true; p = p.slice(0, -1); }
-  const reSrc = globToReSource(p, opts);
-  if (anchorStart) return value.replace(new RegExp('^' + reSrc), repl);
-  if (anchorEnd) return value.replace(new RegExp(reSrc + '$'), repl);
+  const reSrc = globToReSource(pat, opts);
+  // `${var/#pat/repl}` anchors at the start, `${var/%pat/repl}` at the end.
+  if (anchor === 'start') return value.replace(new RegExp('^(?:' + reSrc + ')'), repl);
+  if (anchor === 'end') return value.replace(new RegExp('(?:' + reSrc + ')$'), repl);
   const flags = all ? 'g' : '';
   // Non-greedy to mimic shell leftmost-shortest for `/` substitution.
   return value.replace(new RegExp(reSrc.replace(/\.\*/g, '.*?'), flags), repl);

@@ -90,3 +90,56 @@ test('tilde expands in expandToString (redirect/assignment targets)', async () =
   const e = E({ HOME: '/home/me' });
   expect(await e.expandToString('~/out.txt')).toBe('/home/me/out.txt');
 });
+
+// ── WP-A: param-expansion gaps (suffix-repl, indirection+op, array/pos slice) ─
+
+test('${v/%pat/repl} anchored-suffix replacement', async () => {
+  expect(await E({ v: 'report.txt' }).expandWord('${v/%.txt/.md}')).toEqual(['report.md']);
+  expect(await E({ v: 'abc' }).expandWord('${v/%c/X}')).toEqual(['abX']);
+  // /# prefix and plain / still work
+  expect(await E({ v: 'abc' }).expandWord('${v/#a/X}')).toEqual(['Xbc']);
+  expect(await E({ v: 'abcabc' }).expandWord('${v/a/-}')).toEqual(['-bcabc']);
+  // a % that is NOT the anchor flag is a literal pattern char
+  expect(await E({ v: 'a%b' }).expandWord('${v/\\%/-}')).toEqual(['a-b']);
+});
+
+test('${!ref} indirection honors trailing operators', async () => {
+  const vars = { x: 'hello', y: 'x' };
+  expect(await E(vars).expandWord('${!y:-def}')).toEqual(['hello']);
+  expect(await E(vars).expandWord('${!y#he}')).toEqual(['llo']);
+  expect(await E(vars).expandWord('${!y%lo}')).toEqual(['hel']);
+  expect(await E(vars).expandWord('"${!y:1:2}"')).toEqual(['el']);
+  expect(await E(vars).expandWord('${!y}')).toEqual(['hello']);
+  // ref points at an unset var: :- default applies
+  expect(await E({ y: 'x' }).expandWord('${!y:-D}')).toEqual(['D']);
+});
+
+test('${arr[@]:off:len} element slicing + negative index', async () => {
+  const arr = ['x', 'y', 'z'];
+  const hooks = { getArray: (n: string) => (n === 'a' ? arr : undefined) } as any;
+  expect(await E({}, hooks).expandWord('${a[@]:1:2}')).toEqual(['y', 'z']);
+  expect(await E({}, hooks).expandWord('${a[@]:1}')).toEqual(['y', 'z']);
+  expect(await E({}, hooks).expandWord('"${a[*]:1:2}"')).toEqual(['y z']);
+  const arr5 = ['a', 'b', 'c', 'd', 'e'];
+  const h5 = { getArray: (n: string) => (n === 'a' ? arr5 : undefined) } as any;
+  expect(await E({}, h5).expandWord('${a[@]: -2}')).toEqual(['d', 'e']);
+  expect(await E({}, h5).expandWord('${a[-1]}')).toEqual(['e']);
+  expect(await E({}, h5).expandWord('${a[-2]}')).toEqual(['d']);
+});
+
+test('${@:off:len} slices the positional array (not the joined string)', async () => {
+  const hooks = { getPositional: () => ['a', 'b', 'c', 'd', 'e'], getSpecial: (n: string) => (n === '0' ? 'sh' : undefined) } as any;
+  expect(await E({}, hooks).expandWord('${@:2:3}')).toEqual(['b', 'c', 'd']);
+  expect(await E({}, hooks).expandWord('${@:1:2}')).toEqual(['a', 'b']);
+  expect(await E({}, hooks).expandWord('"${*:2:3}"')).toEqual(['b c d']);
+  expect(await E({}, hooks).expandWord('${@:2}')).toEqual(['b', 'c', 'd', 'e']);
+});
+
+test('${v:off:len} evaluates offset/length arithmetically', async () => {
+  expect(await E({ v: 'hello', i: '2' }).expandWord('${v:i}')).toEqual(['llo']);
+  expect(await E({ v: 'hello' }).expandWord('${v:1+1}')).toEqual(['llo']);
+  expect(await E({ v: 'hello', n: '3' }).expandWord('${v:0:n}')).toEqual(['hel']);
+  expect(await E({ v: 'hello' }).expandWord('${v:(-3)}')).toEqual(['llo']);
+  // out-of-range negative offset yields empty (not the whole string)
+  expect(await E({ v: 'hi' }).expandWord('"${v: -10}"')).toEqual(['']);
+});
