@@ -116,19 +116,19 @@ test('${!ref} indirection honors trailing operators', async () => {
 
 test('${arr[@]:off:len} element slicing + negative index', async () => {
   const arr = ['x', 'y', 'z'];
-  const hooks = { getArray: (n: string) => (n === 'a' ? arr : undefined) } as any;
+  const hooks: Partial<ShellEnv> = { getArray: (n) => (n === 'a' ? arr : undefined) };
   expect(await E({}, hooks).expandWord('${a[@]:1:2}')).toEqual(['y', 'z']);
   expect(await E({}, hooks).expandWord('${a[@]:1}')).toEqual(['y', 'z']);
   expect(await E({}, hooks).expandWord('"${a[*]:1:2}"')).toEqual(['y z']);
   const arr5 = ['a', 'b', 'c', 'd', 'e'];
-  const h5 = { getArray: (n: string) => (n === 'a' ? arr5 : undefined) } as any;
+  const h5: Partial<ShellEnv> = { getArray: (n) => (n === 'a' ? arr5 : undefined) };
   expect(await E({}, h5).expandWord('${a[@]: -2}')).toEqual(['d', 'e']);
   expect(await E({}, h5).expandWord('${a[-1]}')).toEqual(['e']);
   expect(await E({}, h5).expandWord('${a[-2]}')).toEqual(['d']);
 });
 
 test('${@:off:len} slices the positional array (not the joined string)', async () => {
-  const hooks = { getPositional: () => ['a', 'b', 'c', 'd', 'e'], getSpecial: (n: string) => (n === '0' ? 'sh' : undefined) } as any;
+  const hooks: Partial<ShellEnv> = { getPositional: () => ['a', 'b', 'c', 'd', 'e'], getSpecial: (n) => (n === '0' ? 'sh' : undefined) };
   expect(await E({}, hooks).expandWord('${@:2:3}')).toEqual(['b', 'c', 'd']);
   expect(await E({}, hooks).expandWord('${@:1:2}')).toEqual(['a', 'b']);
   expect(await E({}, hooks).expandWord('"${*:2:3}"')).toEqual(['b c d']);

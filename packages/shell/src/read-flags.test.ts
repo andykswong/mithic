@@ -183,7 +183,7 @@ test('IFS=: read splits fields on the custom separator', async () => {
 
 test('while IFS=, read -r parses CSV lines', async () => {
   const h = mk();
-  await h.ex.exec("while IFS=, read -r f1 f2; do echo \"$f1/$f2\"; done <<< $'a,b\\nc,d'");
+  await h.ex.exec('while IFS=, read -r f1 f2; do echo "$f1/$f2"; done <<< $\'a,b\\nc,d\'');
   expect(h.out.trim().split('\n')).toEqual(['a/b', 'c/d']);
 });
 

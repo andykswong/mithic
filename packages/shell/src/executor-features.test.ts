@@ -878,12 +878,12 @@ test('pushd +9 out of range reports an error and leaves the stack unchanged', as
 
 // ── WP-E: ANSI-C quoting, line continuation, nested quotes, DEBUG/RETURN traps ─
 
-test("$'...' ANSI-C quoting expands \\t \\n \\xHH", async () => {
-  expect((await run("echo $'a\\tb'")).out).toBe('a\tb\n');
-  expect((await run("echo $'x\\ny'")).out).toBe('x\ny\n');
-  expect((await run("echo $'\\x41\\x42'")).out).toBe('AB\n');
+test('$\'...\' ANSI-C quoting expands \\t \\n \\xHH', async () => {
+  expect((await run('echo $\'a\\tb\'')).out).toBe('a\tb\n');
+  expect((await run('echo $\'x\\ny\'')).out).toBe('x\ny\n');
+  expect((await run('echo $\'\\x41\\x42\'')).out).toBe('AB\n');
   // $'...' inside double quotes is NOT special (literal), matching bash.
-  expect((await run("echo \"$'a\\tb'\"")).out).toBe("$'a\\tb'\n");
+  expect((await run('echo "$\'a\\tb\'"')).out).toBe('$\'a\\tb\'\n');
 });
 
 test('$"..." locale quoting drops the $ and expands normally', async () => {
@@ -909,11 +909,11 @@ test(';& case fallthrough runs the next clause body; ;;& continues matching', as
 });
 
 test('DEBUG trap fires before each simple command', async () => {
-  expect((await run("trap 'echo D' DEBUG; :; :")).out).toBe('D\nD\n');
+  expect((await run('trap \'echo D\' DEBUG; :; :')).out).toBe('D\nD\n');
 });
 
 test('RETURN trap fires when a function returns', async () => {
-  expect((await run("f() { trap 'echo TRAP' RETURN; }; f; echo after")).out).toBe('TRAP\nafter\n');
+  expect((await run('f() { trap \'echo TRAP\' RETURN; }; f; echo after')).out).toBe('TRAP\nafter\n');
 });
 
 // ── WP-C: declare -i, array-element arithmetic, ! in arithmetic ─────────────
