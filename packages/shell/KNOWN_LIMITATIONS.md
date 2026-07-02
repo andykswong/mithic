@@ -110,6 +110,19 @@ These are intentional design limits, not missing features:
   reference `$((a[0]))` / `${v:a[0]}` works (element access via the array hook);
   only the implicit-`[0]` bare-name form differs. Pre-existing (affects `$(( ))`
   and slice offsets identically); low value.
+- **A nested-bracket subscript in an ARRAY-ELEMENT ASSIGNMENT is not parsed.**
+  `a[b[0]]=Z` (the LHS subscript contains a nested `[...]`) is not recognized as an
+  assignment (`isAssignment`/`parseAssignmentWord` use a bracket-naive
+  `\[[^\]]*\]`), so it is mis-parsed as a command. A simple/arithmetic subscript
+  (`a[i]=`, `a[i+1]=`) works, and a nested subscript in a READ (`${a[b[0]]}`) works.
+  Pre-existing; rare.
+- **Combined `declare` single-letter flags are not split.** `declare -ar a=(…)`
+  does not register `a` readonly (only the array attribute applies); use
+  `declare -r -a` (separate flags), which works. Pre-existing; low value.
+- **`declare -i` on an ARRAY does not arithmetic-evaluate element assignments.**
+  `declare -i a; a[0]=3+4` stores `3+4` (bash: `7`). The integer attribute is
+  applied on scalar assignments only. Pre-existing; use `(( a[0]=3+4 ))` which
+  evaluates correctly.
 
 ---
 

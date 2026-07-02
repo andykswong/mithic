@@ -209,3 +209,19 @@ test('default-value operators on array elements (${arr[i]:-} :+ := :?)', async (
   expect(await E({}, h).expandWord('${arr[0]:1:3}')).toEqual(['ell']);
   expect(await E({}, h).expandWord('${arr[0]: -3}')).toEqual(['llo']);
 });
+
+test('string operators work on array AND assoc elements (${arr[i]#pat} ${m[k]/a/b} ...)', async () => {
+  const arr = ['hello.txt'];
+  const map = new Map([['k', 'hello']]);
+  const h: Partial<ShellEnv> = {
+    getArray: (n) => (n === 'arr' ? arr : undefined),
+    getAssoc: (n) => (n === 'm' ? map : undefined),
+    setArrayElement: () => {},
+  };
+  expect(await E({}, h).expandWord('${arr[0]%.txt}')).toEqual(['hello']);   // suffix strip
+  expect(await E({}, h).expandWord('${arr[0]#hel}')).toEqual(['lo.txt']);   // prefix strip
+  expect(await E({}, h).expandWord('${m[k]#he}')).toEqual(['llo']);         // assoc prefix strip
+  expect(await E({}, h).expandWord('${m[k]/l/L}')).toEqual(['heLlo']);      // assoc replace
+  expect(await E({}, h).expandWord('${m[k]:1:3}')).toEqual(['ell']);        // assoc substring
+  expect(await E({}, h).expandWord('${m[missing]:-DEF}')).toEqual(['DEF']); // assoc default
+});

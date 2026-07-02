@@ -752,50 +752,32 @@ export class Expander {
       const map = this.env.getAssoc(subAccess.name)!;
       if (subAccess.subscript === '@' || subAccess.subscript === '*') {
         const values = [...map.values()];
-        const fields = subAccess.slice !== undefined ? await this.sliceArray(values, subAccess.slice) : values;
+        const fields = subAccess.op !== undefined ? await this.sliceArray(values, sliceSpec(subAccess.op)) : values;
         return { fields, join: subAccess.subscript === '*' ? this.ifsFirst() : undefined };
       }
       const key = await this.substituteOnly(subAccess.subscript);
-      return map.get(key) ?? '';
+      const elem = map.get(key) ?? '';
+      if (subAccess.op !== undefined) {
+        return this.applyValueOp(elem, map.has(key), subAccess.op, `${subAccess.name}[${key}]`,
+          (word) => { map.set(key, word); return word; });
+      }
+      return elem;
     }
     if (subAccess && this.env.getArray?.(subAccess.name) !== undefined) {
       const arr = this.env.getArray(subAccess.name)!;
       if (subAccess.subscript === '@' || subAccess.subscript === '*') {
-        const fields = subAccess.slice !== undefined ? await this.sliceArray(arr, subAccess.slice) : arr;
+        const fields = subAccess.op !== undefined ? await this.sliceArray(arr, sliceSpec(subAccess.op)) : arr;
         return { fields, join: subAccess.subscript === '*' ? this.ifsFirst() : undefined };
       }
       let idx = await this.resolveIndex(subAccess.subscript);
       if (idx < 0) idx = arr.length + idx; // ${arr[-1]} → last element
       const elem = arr[idx] ?? '';
-      if (subAccess.slice !== undefined) {
-        // A `:` operator on an element: if it begins with `-`/`=`/`+`/`?`, it is a
-        // DEFAULT-VALUE operator (`${arr[i]:-word}` etc.) — NOT a substring (which
-        // needs a numeric/space/paren offset). Otherwise it is `:off[:len]`.
-        const op = subAccess.slice[0];
-        if (op === '-' || op === '=' || op === '+' || op === '?') {
-          const word = await this.expandToString(subAccess.slice.slice(1));
-          const setNonEmpty = idx >= 0 && idx < arr.length && elem !== '';
-          switch (op) {
-            case '-': return setNonEmpty ? elem : word;
-            case '+': return setNonEmpty ? word : '';
-            case '?': if (!setNonEmpty) throw new ExpansionError(word || `${subAccess.name}[${idx}]: parameter null or not set`); return elem;
-            case '=': {
-              // `:=` assigns the element when unset/empty (bash), then yields it.
-              if (!setNonEmpty) { this.env.setArrayElement?.(subAccess.name, idx, word); return word; }
-              return elem;
-            }
-          }
-        }
-        // ${arr[i]:off:len} — apply the slice as a scalar substring on the element.
-        const colon = findSliceColon(subAccess.slice);
-        const offStr = colon >= 0 ? subAccess.slice.slice(0, colon) : subAccess.slice;
-        const lenStr = colon >= 0 ? subAccess.slice.slice(colon + 1) : undefined;
-        let off = await this.evalArithSpec(offStr);
-        if (off < 0) { off = elem.length + off; if (off < 0) return ''; }
-        if (lenStr === undefined) return elem.slice(off);
-        const len = await this.evalArithSpec(lenStr);
-        if (len < 0) return elem.slice(off, elem.length + len);
-        return elem.slice(off, off + len);
+      if (subAccess.op !== undefined) {
+        // Any operator (`:-`/`#`/`%`/`/`/`^`/`,`/`:off:len`) applies to the element
+        // value, shared with the scalar path via applyValueOp.
+        const setElem = idx >= 0 && idx < arr.length && arr[idx] !== undefined;
+        return this.applyValueOp(elem, setElem, subAccess.op, `${subAccess.name}[${idx}]`,
+          (word) => { this.env.setArrayElement?.(subAccess.name, idx, word); return word; });
       }
       return elem;
     }
@@ -839,6 +821,22 @@ export class Expander {
       return value;
     }
 
+    return this.applyValueOp(value, set, rest, name);
+  }
+
+  /**
+   * Apply a `${…OP}` string operator (`:-`/`:=`/`:+`/`:?`, `#`/`##`, `%`/`%%`,
+   * `/`/`//`, `^`/`,` case-mod, `:off:len` substring) to a resolved `value`. `set`
+   * is whether the parameter was set; `nameForError` labels a `:?`/default-assign.
+   * Shared by scalar vars AND array/assoc elements so `${arr[i]#pat}` etc. work.
+   * `onAssign` (optional) is called by `:=`/`=` to persist a default into an
+   * element (scalars use {@link defaultAssign} by name).
+   */
+  private async applyValueOp(
+    value: string, set: boolean, rest: string, nameForError: string,
+    onAssign?: (word: string) => string,
+  ): Promise<string> {
+    const assign = onAssign ?? ((word: string) => this.defaultAssign(nameForError, word));
     // ${var:-word} ${var:=word} ${var:?word} ${var:+word}
     if (rest[0] === ':' && '-=?+'.includes(rest[1] ?? '')) {
       const op = rest[1];
@@ -847,8 +845,8 @@ export class Expander {
       switch (op) {
         case '-': return unsetOrEmpty ? arg : value;
         case '+': return unsetOrEmpty ? '' : arg;
-        case '=': if (unsetOrEmpty) { return this.defaultAssign(name, arg); } return value;
-        case '?': if (unsetOrEmpty) throw new ExpansionError(arg || `${name}: parameter null or not set`); return value;
+        case '=': if (unsetOrEmpty) { return assign(arg); } return value;
+        case '?': if (unsetOrEmpty) throw new ExpansionError(arg || `${nameForError}: parameter null or not set`); return value;
       }
     }
     // ${var-word} ${var=word} ${var?word} ${var+word} (only-unset variants)
@@ -858,8 +856,8 @@ export class Expander {
       switch (op) {
         case '-': return set ? value : arg;
         case '+': return set ? arg : '';
-        case '=': if (!set) { return this.defaultAssign(name, arg); } return value;
-        case '?': if (!set) throw new ExpansionError(arg || `${name}: parameter not set`); return value;
+        case '=': if (!set) { return assign(arg); } return value;
+        case '?': if (!set) throw new ExpansionError(arg || `${nameForError}: parameter not set`); return value;
       }
     }
 
@@ -1037,10 +1035,33 @@ function matchSubscript(s: string): { name: string; subscript: string } | undefi
  * the `name[@]`/`name[*]` form (e.g. `arr[@]:1:2`). `slice` is the text after the
  * subscript's `]` and its `:` (undefined when there is no slice).
  */
-function matchSubscriptSlice(s: string): { name: string; subscript: string; slice?: string } | undefined {
-  const m = /^([A-Za-z_][A-Za-z0-9_]*)\[(.*?)\](?::(.*))?$/s.exec(s);
-  if (!m) return undefined;
-  return { name: m[1], subscript: m[2], slice: m[3] };
+/**
+ * Match `name[subscript]` with an optional trailing OPERATOR — `:slice`,
+ * `:-word`, `#pat`, `%pat`, `/pat/repl`, `^`/`,` case-mod, etc. `op` is the whole
+ * operator suffix (including its leading char) so the caller can dispatch it via
+ * {@link Expander.applyValueOp}. The subscript uses a bracket-aware scan so a
+ * nested `[...]` (e.g. `a[b[0]]`) is captured whole.
+ */
+/** Strip a leading `:` from a `[@]`/`[*]` slice operator (`:off:len` → `off:len`). */
+function sliceSpec(op: string): string {
+  return op[0] === ':' ? op.slice(1) : op;
+}
+
+function matchSubscriptSlice(s: string): { name: string; subscript: string; op?: string } | undefined {
+  const nameMatch = /^([A-Za-z_][A-Za-z0-9_]*)\[/.exec(s);
+  if (!nameMatch) return undefined;
+  const name = nameMatch[1];
+  let i = nameMatch[0].length; // just past the opening `[`
+  let depth = 1;
+  const start = i;
+  for (; i < s.length && depth > 0; i++) {
+    if (s[i] === '[') depth++;
+    else if (s[i] === ']') { depth--; if (depth === 0) break; }
+  }
+  if (depth !== 0) return undefined; // unbalanced
+  const subscript = s.slice(start, i);
+  const op = s.slice(i + 1); // text after the closing `]`
+  return { name, subscript, op: op === '' ? undefined : op };
 }
 
 function joinPath(dir: string, name: string): string {
