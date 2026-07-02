@@ -123,6 +123,14 @@ These are intentional design limits, not missing features:
   `declare -i a; a[0]=3+4` stores `3+4` (bash: `7`). The integer attribute is
   applied on scalar assignments only. Pre-existing; use `(( a[0]=3+4 ))` which
   evaluates correctly.
+- **A sparse indexed array renders holes as `undefined`.** `arr[5]=x` (leaving
+  0–4 unset) makes `${arr[@]}` yield `undefined … undefined x` and `${#arr[@]}`
+  count the holes — an artifact of the dense JS-array element store. Pre-existing;
+  contiguous arrays (the common case) are unaffected.
+- **`${arr[i]@Q}` / `@U` / `@L` transforms are not applied to array/assoc
+  elements** (they return the raw element). Element access supports the full
+  string-operator set (`:-`, `#`, `%`, `/`, `^`, `,`, `:off:len`) but not the
+  `@`-transforms. Pre-existing; scalar `${var@Q}` etc. work.
 
 ---
 
