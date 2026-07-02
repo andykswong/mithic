@@ -1271,6 +1271,24 @@ export class Executor {
         continue;
       }
 
+      if (r.op === '<&') {
+        // Input fd-dup: `N<&M` makes fd N read from where fd M reads; `N<&-`
+        // closes N. Default fd is 0 (`read <&3` aliases stdin to fd 3). We copy
+        // the target's FdEntry to fd N so N's `duplex`/`input` becomes M's — then
+        // a plain `read` (routed via readFdLine on fd 0, below) sources from it.
+        // The per-command restore closure re-installs the prior fd N.
+        const fd = r.fd ?? 0;
+        snapshotFd(fd);
+        const tgt = r.target === '-' ? '-' : await exp.expandToString(r.target);
+        if (tgt === '-') { io.fdTable.delete(fd); continue; } // `<&-` closes fd N
+        const dst = parseInt(tgt, 10);
+        if (!Number.isNaN(dst)) {
+          const srcEntry = io.fdTable.get(dst);
+          if (srcEntry) io.fdTable.set(fd, srcEntry);
+        }
+        continue;
+      }
+
       if (r.op === '>&') {
         // fd-dup: `N>&M` makes fd N write where M writes; `N>&-` closes N. The
         // target may need expansion (A2: `>&"${COPROC[1]}"` → the coproc fd).
@@ -1423,7 +1441,13 @@ export class Executor {
     // to an orphaned `readLine()`. The cache is cleared on CONSUMPTION, not on
     // resolution (see `consumeFdLine`) — so a timed-out read leaves it in place.
     if (entry?.duplex) {
-      const p = entry.pendingRead ?? Promise.resolve(entry.duplex.readLine());
+      // A DATAGRAM fd (`/dev/udp/...`) reads ONE datagram (latin1, binary-exact)
+      // rather than a `\n`-delimited line — a UDP datagram has neither `\n` nor
+      // EOF, so `readLine()` would block until the `-t` timeout and mangle bytes.
+      const read = entry.duplex.datagram && entry.duplex.readDatagram
+        ? entry.duplex.readDatagram()
+        : entry.duplex.readLine();
+      const p = entry.pendingRead ?? Promise.resolve(read);
       entry.pendingRead = p;
       return p;
     }
@@ -2566,6 +2590,11 @@ export class Executor {
       sourceFile: (args) => this.sourceFile(args),
       readFdLine: (fd) => this.readFdLine(fd, frame),
       consumeFdLine: (fd) => this.consumeFdLine(fd, frame),
+      // `read <&N` aliased fd 0 to fd N (applyRedirects). If fd 0 now carries a
+      // live duplex or buffered input, `read` (no `-u`) must source from it via
+      // readFdLine(0) rather than the plain-stdin frame reader. Only surface the
+      // alias when fd 0 is a readable numbered-fd entry.
+      stdinFd: (() => { const e = frame.fdTable.get(0); return e && (e.duplex || e.input !== undefined) ? 0 : undefined; })(),
       readStdinLine: (timeoutSec) => this.readStdinLine(frame, timeoutSec),
       readStdinAll: () => { const r = readerFor(); return r ? r.readAll() : Promise.resolve(new Uint8Array()); },
       readStdinPump: (sink) => { const r = readerFor(); return r ? r.pumpTo(sink) : Promise.resolve(); },
