@@ -1295,7 +1295,7 @@ function formatPrintf(format: string, args: string[]): string {
       consumedConversion = true;
       const [whole, flags] = m;
       let width = m[2];
-      let prec = m[3];
+      let prec: string | undefined = m[3];
       if (width === '*') width = String(parseInt(nextArg(), 10) || 0);
       if (prec === '*') {
         // A negative dynamic precision (`%.*f -1 …`) means "unset" in bash, so

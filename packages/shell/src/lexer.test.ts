@@ -60,3 +60,20 @@ test('line tracking survives a word that spans multiple lines', () => {
   expect(echoes[0].line).toBe(1);
   expect(echoes[1].line).toBe(3);
 });
+
+test('nested double-quotes inside $(...) stay one WORD', () => {
+  const toks = tokenize('echo "[$(echo "a b")]"');
+  expect(toks.map(t => t.type)).toEqual(['WORD', 'WORD']);
+  expect(toks[1].raw).toBe('"[$(echo "a b")]"');
+});
+
+test('backslash-newline splices tokens (line continuation)', () => {
+  const toks = tokenize('x=a\\\ndef');
+  expect(toks.map(t => t.value)).toEqual(['x=adef']);
+});
+
+test(';& and ;;& tokenize as distinct case terminators', () => {
+  expect(tokenize('a ;& b').map(t => t.type)).toEqual(['WORD', 'SEMIAMP', 'WORD']);
+  expect(tokenize('a ;;& b').map(t => t.type)).toEqual(['WORD', 'SEMISEMIAMP', 'WORD']);
+  expect(tokenize('a ;; b').map(t => t.type)).toEqual(['WORD', 'DSEMI', 'WORD']);
+});

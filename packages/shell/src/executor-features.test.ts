@@ -875,3 +875,43 @@ test('pushd +9 out of range reports an error and leaves the stack unchanged', as
   // No rotation: pwd stays /a.
   expect(out.trim().split('\n')).toEqual(['/b /c', '/a /b /c', '/a']);
 });
+
+// ── WP-E: ANSI-C quoting, line continuation, nested quotes, DEBUG/RETURN traps ─
+
+test("$'...' ANSI-C quoting expands \\t \\n \\xHH", async () => {
+  expect((await run("echo $'a\\tb'")).out).toBe('a\tb\n');
+  expect((await run("echo $'x\\ny'")).out).toBe('x\ny\n');
+  expect((await run("echo $'\\x41\\x42'")).out).toBe('AB\n');
+  // $'...' inside double quotes is NOT special (literal), matching bash.
+  expect((await run("echo \"$'a\\tb'\"")).out).toBe("$'a\\tb'\n");
+});
+
+test('$"..." locale quoting drops the $ and expands normally', async () => {
+  expect((await run('x=5; echo $"v=$x"')).out).toBe('v=5\n');
+});
+
+test('backslash-newline is a line continuation (word splice)', async () => {
+  expect((await run('x=a\\\ndef; echo "$x"')).out).toBe('adef\n');
+  // inside double quotes too
+  expect((await run('echo "a\\\nb"')).out).toBe('ab\n');
+});
+
+test('nested double-quotes inside "$(...)" is one word', async () => {
+  expect((await run('echo "[$(echo "a b")]"')).out).toBe('[a b]\n');
+});
+
+test(';& case fallthrough runs the next clause body; ;;& continues matching', async () => {
+  expect((await run('case a in a) echo one ;& b) echo two ;; esac')).out).toBe('one\ntwo\n');
+  // ;; (no fallthrough) stops after the first match
+  expect((await run('case a in a) echo one ;; b) echo two ;; esac')).out).toBe('one\n');
+  // ;;& re-tests subsequent patterns
+  expect((await run('case ab in a*) echo A ;;& *b) echo B ;; esac')).out).toBe('A\nB\n');
+});
+
+test('DEBUG trap fires before each simple command', async () => {
+  expect((await run("trap 'echo D' DEBUG; :; :")).out).toBe('D\nD\n');
+});
+
+test('RETURN trap fires when a function returns', async () => {
+  expect((await run("f() { trap 'echo TRAP' RETURN; }; f; echo after")).out).toBe('TRAP\nafter\n');
+});

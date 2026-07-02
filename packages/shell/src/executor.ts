@@ -280,8 +280,12 @@ export class Executor {
     dotglob: false, extglob: false, globstar: false,
     nocaseglob: false, nocasematch: false, nullglob: false,
   };
-  /** Trap handlers: signal name (EXIT/ERR/INT/...) → handler command string. */
+  /** Trap handlers: signal name (EXIT/ERR/INT/DEBUG/RETURN/...) → handler command string. */
   private traps = new Map<string, string>();
+  /** True while a DEBUG trap action is running, so it does not recurse into itself. */
+  private inDebugTrap = false;
+  /** Function-call name stack for `$FUNCNAME` (most-recent first at index 0). */
+  private funcStack: string[] = [];
   /** Command history (most-recent-last). */
   private historyLines: string[] = [];
   /**
@@ -2026,6 +2030,13 @@ export class Executor {
   }
 
   private async execSimple(cmd: SimpleCommand, io: CommandIO): Promise<number> {
+    // DEBUG trap: bash runs it before EACH simple command. Suppress re-entry so a
+    // trap action containing simple commands does not recurse indefinitely.
+    if (!this.inDebugTrap && this.traps.has('DEBUG')) {
+      this.inDebugTrap = true;
+      try { await this.runTrap('DEBUG'); }
+      finally { this.inDebugTrap = false; }
+    }
     const expander = this.expander();
     const hasCommand = cmd.name !== '';
 
@@ -2336,6 +2347,7 @@ export class Executor {
     this.context.positional = argv;
     this.localScopes.push(new Set());
     this.localSaved.push(new Map());
+    this.funcStack.unshift(name);
     const overlayKeys = Object.keys(localEnv);
     const savedOverlay: Record<string, string | undefined> = {};
     for (const k of overlayKeys) { savedOverlay[k] = this.context.env[k]; this.context.env[k] = localEnv[k]; }
@@ -2346,6 +2358,12 @@ export class Executor {
       if (e instanceof FuncReturn) status = e.code;
       else throw e;
     } finally {
+      // RETURN trap: bash fires it when a function (or sourced script) returns,
+      // BEFORE control returns to the caller and while the function name is still
+      // on the stack. Suppress re-entry via inDebugTrap-style guard is unneeded —
+      // a RETURN inside the handler would need its own function frame.
+      if (this.traps.has('RETURN')) await this.runTrap('RETURN');
+      this.funcStack.shift();
       // restore locals
       const scope = this.localScopes.pop()!;
       const saved = this.localSaved.pop()!;
@@ -2362,6 +2380,9 @@ export class Executor {
     }
     return status;
   }
+
+  /** Function-call name stack, most-recent first — backs `$FUNCNAME`. */
+  funcNameStack(): readonly string[] { return this.funcStack; }
 
   // ── background / jobs ─────────────────────────────────────────────────────────
 

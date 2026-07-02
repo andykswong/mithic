@@ -239,7 +239,11 @@ export class Expander {
     while (i < n) {
       const c = word[i];
 
-      if (c === '\\') { addText(word[i + 1] ?? '', false); i += word[i + 1] !== undefined ? 2 : 1; continue; }
+      if (c === '\\') {
+        // A backslash-newline is a line continuation: both chars vanish.
+        if (word[i + 1] === '\n') { i += 2; continue; }
+        addText(word[i + 1] ?? '', false); i += word[i + 1] !== undefined ? 2 : 1; continue;
+      }
 
       if (c === '\'') {
         i++;
@@ -262,6 +266,8 @@ export class Expander {
         while (i < n && word[i] !== '"') {
           if (word[i] === '\\') {
             const next = word[i + 1] ?? '';
+            // Backslash-newline is a line continuation inside "..." too — vanishes.
+            if (next === '\n') { i += 2; continue; }
             if (next === '"' || next === '\\' || next === '$' || next === '`') { addText(next, true); producedThisRun = true; i += 2; continue; }
             addText('\\', true); producedThisRun = true; i++; continue;
           }
@@ -282,6 +288,22 @@ export class Expander {
         if (!emptyAtThisRun || producedThisRun) { started = true; quoted = true; }
         continue;
       }
+
+      // `$'...'` ANSI-C quoting: the body is backslash-escape-expanded and the
+      // result is a non-expanding, non-word-splitting literal (like a single-quoted
+      // string). `$"..."` locale-translation quoting: the `$` marker is dropped and
+      // the string expands as an ordinary double-quoted run (no translation catalog).
+      if (c === '$' && word[i + 1] === "'") {
+        let j = i + 2;
+        let body = '';
+        while (j < n && word[j] !== "'") {
+          if (word[j] === '\\' && j + 1 < n) { body += word[j] + word[j + 1]; j += 2; continue; }
+          body += word[j]; j++;
+        }
+        addText(interpretEscapes(body, /*octalBackslashZero*/ false), true);
+        i = j + 1; continue;
+      }
+      if (c === '$' && word[i + 1] === '"') { i++; continue; }
 
       if (c === '$') {
         const r = await this.readDollar(word, i);

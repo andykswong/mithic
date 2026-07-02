@@ -87,6 +87,29 @@ function matchBracket(input: string, i: number): number {
 }
 
 /**
+ * Skip a `$( ... )` / `$(( ... ))` command/arithmetic substitution starting at
+ * `input[i] === '$'` (with `input[i+1] === '('`), returning the index just past
+ * the closing paren(s). Tracks nested parens so an inner `)` (or a nested `$(`)
+ * doesn't end the group early. Used both at word top-level and INSIDE a
+ * double-quoted run (so `"$(cmd "arg")"` isn't terminated by the inner quote).
+ */
+function skipDollarParen(input: string, i: number): number {
+  const n = input.length;
+  const arith = input[i + 2] === '(';
+  let j = i + (arith ? 3 : 2);
+  let depth = 1;
+  while (j < n && depth > 0) {
+    if (input[j] === '(') depth++;
+    else if (input[j] === ')') depth--;
+    if (depth === 0) break;
+    j++;
+  }
+  j++; // consume closing )
+  if (arith && input[j] === ')') j++; // consume second ) of ))
+  return j;
+}
+
+/**
  * Match a process-substitution group `<(...)` / `>(...)` at `input[i]`,
  * returning the index past the closing `)` (or `i` if unbalanced).
  */
@@ -241,6 +264,9 @@ export function tokenize(input: string): Token[] {
 
       if (c === '\\') {
         const next = input[i + 1] ?? '';
+        // Backslash-newline is a line continuation: both chars are removed so the
+        // token splices across the physical line break (`a\<nl>b` → one word `ab`).
+        if (next === '\n') { i += 2; continue; }
         value += next;
         raw += c + next;
         i += next ? 2 : 1;
@@ -268,8 +294,19 @@ export function tokenize(input: string): Token[] {
         while (i < n && input[i] !== '"') {
           if (input[i] === '\\') {
             const next = input[i + 1] ?? '';
+            // A backslash-newline inside "..." is a line continuation: both chars
+            // vanish (splices the token across the physical line break).
+            if (next === '\n') { i += 2; continue; }
             if (next === '"' || next === '\\' || next === '$' || next === '`') { inner += next; i += 2; continue; }
             inner += '\\'; i++; continue;
+          }
+          // A `$( ... )` inside the double quotes is a command/arith substitution:
+          // copy it verbatim (tracking nested parens/quotes) so an inner `"` does
+          // not terminate this quoted run — `"$(cmd "arg")"` is one word.
+          if (input[i] === '$' && input[i + 1] === '(') {
+            const end = skipDollarParen(input, i);
+            inner += input.slice(i, end);
+            i = end; continue;
           }
           inner += input[i];
           i++;
@@ -291,19 +328,9 @@ export function tokenize(input: string): Token[] {
       }
 
       if (c === '$' && input[i + 1] === '(') {
-        // $( ... ) or $(( ... )) — copy verbatim with nesting.
+        // $( ... ) or $(( ... )) — copy verbatim with nesting (shared helper).
         const start = i;
-        const arith = input[i + 2] === '(';
-        i += arith ? 3 : 2;
-        let depth = 1;
-        while (i < n && depth > 0) {
-          if (input[i] === '(') depth++;
-          else if (input[i] === ')') depth--;
-          if (depth === 0) break;
-          i++;
-        }
-        i++; // consume closing )
-        if (arith && input[i] === ')') i++; // consume second ) of ))
+        i = skipDollarParen(input, i);
         value += input.slice(start, i);
         raw += input.slice(start, i);
         continue;
