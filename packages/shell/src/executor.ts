@@ -628,6 +628,34 @@ export class Executor {
     catch { return undefined; }
   }
 
+  /**
+   * Resolve a command NAME to its executable path via a `$PATH` VFS walk — backs
+   * `type`/`command -v`. Mirrors the kernel's `resolveName` but over the shell's
+   * injected async {@link FsClient} (no kernel import; layering preserved). An
+   * explicit path (`/`, `./`, `../`) is stat-checked directly; a bare name is
+   * searched across `$PATH` dirs (empty PATH ⇒ no dirs ⇒ no hit, like bash). The
+   * first entry that exists AND is not a directory wins. `undefined` when the FS
+   * has no `fsStat` (minimal/mock client) or nothing matches. Advisory only — this
+   * reports resolution; the kernel still owns spawn-time resolution.
+   */
+  private async resolveExternalPath(name: string): Promise<string | undefined> {
+    if (!this.fs?.fsStat) return undefined;
+    const isFile = async (p: string): Promise<boolean> => {
+      const s = await this.statPath(p);
+      return s !== undefined && !s.dir;
+    };
+    if (name.startsWith('/') || name.startsWith('./') || name.startsWith('../')) {
+      const p = this.absPath(name);
+      return (await isFile(p)) ? p : undefined;
+    }
+    for (const dir of (this.context.env.PATH ?? '').split(':')) {
+      if (dir === '') continue; // empty segment: bash does NOT search cwd for a bare name
+      const p = (dir.endsWith('/') ? dir.slice(0, -1) : dir) + '/' + name;
+      if (await isFile(p)) return p;
+    }
+    return undefined;
+  }
+
   private expander(): Expander { return new Expander(this.environment); }
 
   /**
@@ -2239,23 +2267,26 @@ export class Executor {
     // `command -v NAME` prints how NAME resolves (name/path) or exits 1 silently.
     if ((name === 'command' || name === 'builtin') && argv.length > 0) {
       let rest = argv;
-      let dashV = false;
+      let dashV = false, dashBigV = false;
       if (name === 'command') {
         while (rest.length > 0 && (rest[0] === '-v' || rest[0] === '-V' || rest[0] === '-p')) {
-          if (rest[0] === '-v' || rest[0] === '-V') dashV = true;
+          if (rest[0] === '-v') dashV = true;
+          else if (rest[0] === '-V') dashBigV = true;
           rest = rest.slice(1);
         }
       }
       if (rest.length === 0) return 0;
       const target = rest[0];
-      if (dashV) {
-        // `command -v`: print the resolution and exit 0, else exit 1 silently.
-        // A reserved word and a function/builtin print their name; a PATH command
-        // prints its resolved path (here the name, since resolve returns a handle).
-        if (isShellKeyword(target)) { io.stdout(target + '\n'); return 0; }
-        if (this.functions.has(target)) { io.stdout(target + '\n'); return 0; }
-        if (isBuiltin(target)) { io.stdout(target + '\n'); return 0; }
-        if (this.resolve(target) !== undefined) { io.stdout(target + '\n'); return 0; }
+      if (dashV || dashBigV) {
+        // `command -v` prints how NAME resolves (name for keyword/function/builtin,
+        // resolved $PATH path for an external) and exits 0; `-V` prints the verbose
+        // "NAME is …" form. A genuine miss exits 1 (silently for -v).
+        if (isShellKeyword(target)) { io.stdout(dashBigV ? `${target} is a shell keyword\n` : `${target}\n`); return 0; }
+        if (this.functions.has(target)) { io.stdout(dashBigV ? `${target} is a function\n` : `${target}\n`); return 0; }
+        if (isBuiltin(target)) { io.stdout(dashBigV ? `${target} is a shell builtin\n` : `${target}\n`); return 0; }
+        const p = await this.resolveExternalPath(target);
+        if (p !== undefined) { io.stdout(dashBigV ? `${target} is ${p}\n` : `${p}\n`); return 0; }
+        if (dashBigV) io.stderr(`shell: command: ${target}: not found\n`);
         return 1;
       }
       if (name === 'builtin') {
@@ -2898,6 +2929,7 @@ export class Executor {
       doContinue: (n) => { throw new LoopContinue(n); },
       doReturn: (n) => { throw new FuncReturn(n); },
       evalArith: (expr) => evalArith(expr, this.arithEnvForExpr(), this.arithArrayAccessExec()),
+      resolveExternal: (n) => this.resolveExternalPath(n),
       state: this.shellState(),
     };
     const status = await runBuiltin(name, argv, ctx);

@@ -1035,6 +1035,53 @@ test('$\'...\' with an escaped single-quote (\\\') yields a literal quote', asyn
   expect((await run('printf \'%b\' \'x\\\'y\'')).out).toBe('x\\y');
 });
 
+// ── type / command $PATH resolution (bash-parity for external commands) ───────
+
+/** A PATH-seeded FS: /bin/ls, /bin/echo, /usr/bin/cat as regular files. */
+function pathFs() {
+  return mockFs({ '/bin/ls': '', '/bin/echo': '', '/usr/bin/cat': '' });
+}
+const PATHENV = { env: { PATH: '/bin:/usr/bin' } };
+
+test('type -a / -t / -p report a $PATH executable', async () => {
+  expect((await run('type -a ls', PATHENV, pathFs())).out).toBe('ls is /bin/ls\n');
+  expect((await run('type -t ls', PATHENV, pathFs())).out).toBe('file\n');
+  expect((await run('type -p ls', PATHENV, pathFs())).out).toBe('/bin/ls\n');
+  expect((await run('type ls', PATHENV, pathFs())).out).toBe('ls is /bin/ls\n');
+});
+
+test('type -a lists a builtin AND its $PATH file (builtin first)', async () => {
+  // `echo` is a builtin and also present at /bin/echo.
+  expect((await run('type -a echo', PATHENV, pathFs())).out)
+    .toBe('echo is a shell builtin\necho is /bin/echo\n');
+});
+
+test('type of a $PATH command that is also a keyword/function prefers those first', async () => {
+  expect((await run('type -t if', PATHENV, pathFs())).out).toBe('keyword\n');
+});
+
+test('type NAME not found → stderr + rc 1 (empty/absent PATH)', async () => {
+  expect((await run('type -t nosuch; echo "rc=$?"', PATHENV, pathFs())).out).toBe('rc=1\n');
+  const miss = await run('type nosuch', PATHENV, pathFs());
+  expect(miss.err).toMatch(/nosuch: not found/);
+  expect(miss.code).toBe(1);
+  // Empty PATH ⇒ no search dirs ⇒ a real file name is still not found.
+  expect((await run('type -t ls; echo "rc=$?"', { env: { PATH: '' } }, pathFs())).out).toBe('rc=1\n');
+});
+
+test('command -v / -V report a $PATH executable path (not the bare name)', async () => {
+  expect((await run('command -v ls', PATHENV, pathFs())).out).toBe('/bin/ls\n');
+  expect((await run('command -V ls', PATHENV, pathFs())).out).toBe('ls is /bin/ls\n');
+  // builtin: -v prints the name, -V the description.
+  expect((await run('command -v echo', PATHENV, pathFs())).out).toBe('echo\n');
+  expect((await run('command -V echo', PATHENV, pathFs())).out).toBe('echo is a shell builtin\n');
+  // keyword.
+  expect((await run('command -V if', PATHENV, pathFs())).out).toBe('if is a shell keyword\n');
+  // genuine miss: silent, rc 1.
+  const miss = await run('command -v nosuch; echo "rc=$?"', PATHENV, pathFs());
+  expect(miss.out).toBe('rc=1\n');
+});
+
 test('array-element references work in let / declare -i / C-style for arithmetic', async () => {
   expect((await run('a=(5 9); let "x = a[1] + 1"; echo $x')).out).toBe('10\n');
   expect((await run('a=(5 9); declare -i x=a[1]+1; echo $x')).out).toBe('10\n');

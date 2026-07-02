@@ -192,6 +192,12 @@ export interface BuiltinContext {
    * Implemented by the executor over the same env proxy `(( ))` uses.
    */
   evalArith?(expr: string): number;
+  /**
+   * Resolve a command NAME to its `$PATH` executable path (or an explicit path) —
+   * backs `type`/`command -v`'s file reporting. Returns the resolved absolute path
+   * or undefined (not found / no VFS). May be async (the FsClient stat is async).
+   */
+  resolveExternal?(name: string): string | undefined | Promise<string | undefined>;
   /** Richer state for local/declare/shift/getopts/jobs/wait. */
   state?: ShellState;
 }
@@ -669,36 +675,45 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
     }
 
     case 'type': {
-      // Flags: -t (type word only), -a (all locations), -p/-P/-f accepted.
-      let flagT = false, flagA = false;
+      // Flags: -t (type word only), -a (all locations), -p/-P (path only), -f accepted.
+      let flagT = false, flagA = false, flagP = false;
       const names: string[] = [];
       for (const a of args) {
         if (a === '-t') flagT = true;
         else if (a === '-a') flagA = true;
-        else if (a === '-p' || a === '-P' || a === '-f') { /* accepted, no PATH cache here */ }
+        else if (a === '-p' || a === '-P') flagP = true;
+        else if (a === '-f') { /* accepted: suppress function lookup — no-op here */ }
         else if (a.startsWith('-') && a.length > 1) { errOut(ctx, `shell: type: ${a}: invalid option\n`); return 2; }
         else names.push(a);
       }
-      // Classify a name: reserved word / function / builtin / (file resolved via PATH).
-      const classify = (nm: string): 'keyword' | 'function' | 'builtin' | 'file' | undefined => {
-        if (SHELL_KEYWORDS.has(nm)) return 'keyword';
-        if (ctx.state?.functions.has(nm)) return 'function';
-        if (isBuiltin(nm)) return 'builtin';
-        return undefined; // no PATH hash / file resolution in this builtin surface
-      };
       let status = 0;
       for (const nm of names) {
-        const kind = classify(nm);
-        if (kind === undefined) {
-          if (flagT) { status = 1; continue; } // -t prints nothing for an unknown name
-          errOut(ctx, `type: ${nm}: not found\n`); status = 1; continue;
+        const isKeyword = SHELL_KEYWORDS.has(nm);
+        const isFunc = ctx.state?.functions.has(nm) ?? false;
+        const isBn = isBuiltin(nm);
+        // A $PATH file is resolved only when needed (`-a`, or nothing shadowed it).
+        const wantFile = flagA || (!isKeyword && !isFunc && !isBn);
+        const file = wantFile ? await ctx.resolveExternal?.(nm) : undefined;
+        if (!isKeyword && !isFunc && !isBn && file === undefined) {
+          if (!flagT) errOut(ctx, `type: ${nm}: not found\n`);
+          status = 1; continue; // -t prints nothing for an unknown name
         }
-        if (flagT) { ctx.write(`${kind}\n`); continue; }
-        if (kind === 'keyword') ctx.write(`${nm} is a shell keyword\n`);
-        else if (kind === 'function') ctx.write(`${nm} is a function\n`);
-        else if (kind === 'builtin') ctx.write(`${nm} is a shell builtin\n`);
-        // `-a` would additionally list PATH hits; none are resolvable here.
-        void flagA;
+        if (flagT) {
+          // First (highest-priority) classification wins for -t.
+          ctx.write(`${isKeyword ? 'keyword' : isFunc ? 'function' : isBn ? 'builtin' : 'file'}\n`);
+          continue;
+        }
+        if (flagP) {
+          // -p/-P: print ONLY the file path (nothing for keyword/function/builtin).
+          if (file !== undefined) ctx.write(`${file}\n`);
+          continue;
+        }
+        // Default / -a: emit in bash order — keyword, function, builtin, then file.
+        // Without -a only the first (highest-priority) location is printed.
+        if (isKeyword) { ctx.write(`${nm} is a shell keyword\n`); if (!flagA) continue; }
+        if (isFunc) { ctx.write(`${nm} is a function\n`); if (!flagA) continue; }
+        if (isBn) { ctx.write(`${nm} is a shell builtin\n`); if (!flagA) continue; }
+        if (file !== undefined) ctx.write(`${nm} is ${file}\n`);
       }
       return status;
     }
@@ -711,8 +726,15 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       let rest = args;
       if (name === 'command') {
         if (rest[0] === '-v' || rest[0] === '-V') {
+          const bigV = rest[0] === '-V';
           const t = rest[1];
-          if (t !== undefined && (ctx.state?.functions.has(t) || isBuiltin(t))) { ctx.write(t + '\n'); return 0; }
+          if (t !== undefined) {
+            if (isShellKeyword(t)) { ctx.write(bigV ? `${t} is a shell keyword\n` : `${t}\n`); return 0; }
+            if (ctx.state?.functions.has(t) || isBuiltin(t)) { ctx.write(bigV ? `${t} is a shell builtin\n` : `${t}\n`); return 0; }
+            const p = await ctx.resolveExternal?.(t);
+            if (p !== undefined) { ctx.write(bigV ? `${t} is ${p}\n` : `${p}\n`); return 0; }
+            if (bigV) errOut(ctx, `shell: command: ${t}: not found\n`);
+          }
           return 1;
         }
         while (rest[0] === '-p') rest = rest.slice(1);
