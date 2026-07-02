@@ -32,6 +32,13 @@ const RESERVED = new Set([
   '{', '}', '!', 'coproc',
 ]);
 
+/**
+ * Builtins whose `NAME=value` / `NAME=(…)` operands are parsed as ASSIGNMENT WORDS
+ * (bash's assignment_builtin class), so `declare -a arr=(a b c)` collects the array
+ * literal as a structured Assignment rather than the `(` starting a subshell.
+ */
+const ASSIGNMENT_BUILTINS = new Set(['declare', 'local', 'readonly', 'export', 'typeset']);
+
 interface HereDoc { id: number; body: string; quoted: boolean; }
 
 export interface ParseOptions {
@@ -503,12 +510,34 @@ class Parser {
       assignments.push(this.parseAssignmentWord());
     }
 
+    // When the command is an ASSIGNMENT BUILTIN (`declare`/`local`/`readonly`/
+    // `export`/`typeset`), its `NAME=(…)` / `NAME=val` / `NAME+=…` operands are
+    // parsed as structured assignment words (bash's assignment_builtin handling) so
+    // an array literal `declare -a arr=(a b c)` is collected as an Assignment with
+    // an `array` field rather than the `(` becoming a stray subshell. Only operands
+    // that look like assignments are rerouted; flags and plain names stay args.
+    let assignmentBuiltin = false;
     for (;;) {
       const t = this.peek();
       if (!t) break;
       if (t.type === 'WORD') {
         if (RESERVED.has(t.value) && !nameSet) break;
-        if (!nameSet) { name = t.raw; nameSet = true; } else args.push(t.raw);
+        if (!nameSet) {
+          name = t.raw; nameSet = true;
+          assignmentBuiltin = ASSIGNMENT_BUILTINS.has(t.value);
+          this.next();
+          continue;
+        }
+        // Assignment-builtin operand that is an ARRAY LITERAL (`NAME=`/`NAME+=`
+        // immediately followed by `(`) → parse it as a structured array assignment.
+        // Scalar/element operands (`NAME=v`, `NAME[i]=v`) stay plain args so the
+        // builtin's own string path handles them unchanged.
+        if (assignmentBuiltin && /^[A-Za-z_][A-Za-z0-9_]*\+?=$/.test(t.value)
+          && this.tokens[this.pos + 1]?.type === 'LPAREN') {
+          assignments.push(this.parseAssignmentWord());
+          continue;
+        }
+        args.push(t.raw);
         this.next();
         continue;
       }

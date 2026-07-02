@@ -18,7 +18,7 @@
  * available in this runtime — see notes in the job builtins.
  */
 
-import type { Program, Redirect, SimpleCommand, Statement } from './ast.ts';
+import type { Assignment, Program, Redirect, SimpleCommand, Statement } from './ast.ts';
 import { parse } from './parser.ts';
 import { StdinReader } from './stdin-reader.ts';
 import { toSink, sinkToStream, BrokenPipeError, type OutputSink } from './output-sink.ts';
@@ -263,6 +263,13 @@ export class Executor {
   private arrays = new Map<string, string[]>();
   private localScopes: Array<Set<string>> = [];
   private localSaved: Array<Map<string, string | undefined>> = [];
+  /**
+   * Per-local-scope snapshot of a name's ARRAY / ASSOC storage (and integer/assoc
+   * flags) at the point `local NAME` shadowed it, so a `local arr=(…)` (or `read
+   * -a`, `declare -A` in a function) is restored on function exit and does not leak
+   * to the caller. Keyed by name; `undefined` value ⇒ the name had no array before.
+   */
+  private localSavedArrays: Array<Map<string, { arr?: string[]; assoc?: Map<string, string>; integer: boolean }>> = [];
   /** Names marked `readonly` — reassigning one is rejected (fatal in POSIX mode). */
   private readonlyNames = new Set<string>();
   /** Names declared `declare -i` (integer): assignments are arithmetic-evaluated. */
@@ -808,6 +815,15 @@ export class Executor {
     if (!scope.has(name)) {
       scope.add(name);
       saved.set(name, name in this.context.env ? this.context.env[name] : undefined);
+      // Snapshot array/assoc storage + integer flag too, so a `local arr=(…)` /
+      // `local -A m` / `read -a arr` inside a function is restored on exit and does
+      // not leak to the caller (bash: locals include their array value).
+      const savedArr = this.localSavedArrays[this.localSavedArrays.length - 1];
+      savedArr.set(name, {
+        arr: this.arrays.has(name) ? this.arrays.get(name)!.slice() : undefined,
+        assoc: this.assocArrays.has(name) ? new Map(this.assocArrays.get(name)!) : undefined,
+        integer: this.integerNames.has(name),
+      });
     }
   }
 
@@ -2317,7 +2333,11 @@ export class Executor {
           for (const k of overlayKeys) savedPrefix[k] = this.context.env[k];
         }
         Object.assign(this.context.env, localEnv);
-        const status = await this.dispatch(name, argv, io, { stdin });
+        // Array-literal operands of an assignment builtin (`declare -a arr=(…)`)
+        // are structured assignments the builtin applies via applyBuiltinAssignment.
+        const arrayAssigns = cmd.assignments.filter((a) => a.array !== undefined);
+        const status = await this.dispatch(name, argv, io,
+          arrayAssigns.length > 0 ? { stdin, builtinAssignments: arrayAssigns, assignExpander: expander } : { stdin });
         if (cmd.assignments.length > 0 && !isEnvBuiltin) {
           for (const k of overlayKeys) {
             if (savedPrefix[k] === undefined) delete this.context.env[k];
@@ -2360,6 +2380,55 @@ export class Executor {
   }
 
   /**
+   * Apply an array-literal `name=(w…)` (or `name+=(w…)`) to the array/assoc store.
+   * Each raw element word may carry an explicit `[subscript]=value` prefix (bash):
+   *   - assoc target (declared `-A`): `[key]=value`; a bare word with no `[k]=` is
+   *     an error in bash but we ignore it (matches "no key" — never reached via the
+   *     structured path since `declare -A m=(a b)` still uses `[k]=` form in tests).
+   *   - indexed target: `[idx]=value` sets that index and resets the running index
+   *     to idx+1; a bare word takes the running index. A negative index counts from
+   *     the current length. The value of a `[i]=v` element is NOT word-split; a bare
+   *     word IS field-expanded (so `arr=($x)` splits). Integer arrays arith-evaluate.
+   */
+  private async applyArrayLiteral(name: string, words: string[], append: boolean, expander: Expander): Promise<boolean> {
+    const intAttr = this.integerNames.has(name);
+    const evalIfInt = (v: string): string => intAttr ? String(this.evalArithValue(v)) : v;
+    const assoc = this.assocArrays.get(name);
+    if (assoc !== undefined) {
+      if (!append) assoc.clear();
+      for (const w of words) {
+        const m = /^\[(.*?)\]([+]?)=(.*)$/s.exec(w);
+        if (m === null) continue; // assoc literal needs [key]=value pairs
+        const key = await expander.substituteOnly(m[1]);
+        const val = evalIfInt(await expander.expandToString(m[3]));
+        assoc.set(key, m[2] === '+' ? (assoc.get(key) ?? '') + val : val);
+      }
+      delete this.context.env[name];
+      return false;
+    }
+    const arr = append ? (this.arrays.get(name) ?? []) : [];
+    let next = arr.length; // running index (append continues past existing length)
+    for (const w of words) {
+      const m = /^\[(.*?)\]([+]?)=(.*)$/s.exec(w);
+      if (m !== null) {
+        const sub = (await expander.substituteOnly(m[1])).trim();
+        let idx = /^-?\d+$/.test(sub) ? parseInt(sub, 10)
+          : (() => { try { return evalArith(sub, this.arithEnvForExpr(), this.arithArrayAccessExec()); } catch { return 0; } })();
+        if (idx < 0) idx = arr.length + idx;
+        const val = evalIfInt(await expander.expandToString(m[3]));
+        arr[idx] = m[2] === '+' ? (arr[idx] ?? '') + val : val;
+        next = idx + 1;
+      } else {
+        // Bare word: field-expand (may split into several elements at the running index).
+        for (const f of await expander.expandWord(w)) arr[next++] = evalIfInt(f);
+      }
+    }
+    this.arrays.set(name, arr);
+    delete this.context.env[name];
+    return false;
+  }
+
+  /**
    * Apply a (bare) assignment to persistent shell state, handling all forms:
    *   - `name=v` / `name+=v`            scalar (append concatenates)
    *   - `name=(w…)` / `name+=(w…)`      indexed array literal (append extends)
@@ -2388,12 +2457,7 @@ export class Executor {
     }
     this.declareLocal(a.name);
     if (a.array !== undefined) {
-      const elems: string[] = [];
-      for (const w of a.array) elems.push(...await expander.expandWord(w));
-      const prev = a.append ? (this.arrays.get(a.name) ?? []) : [];
-      this.arrays.set(a.name, [...prev, ...elems]);
-      delete this.context.env[a.name];
-      return false;
+      return await this.applyArrayLiteral(a.name, a.array, a.append ?? false, expander);
     }
     if (a.index !== undefined) {
       // An integer-attributed array (`declare -i a`) arithmetic-evaluates element
@@ -2547,6 +2611,7 @@ export class Executor {
     this.context.positional = argv;
     this.localScopes.push(new Set());
     this.localSaved.push(new Map());
+    this.localSavedArrays.push(new Map());
     this.funcStack.unshift(name);
     const overlayKeys = Object.keys(localEnv);
     const savedOverlay: Record<string, string | undefined> = {};
@@ -2567,10 +2632,19 @@ export class Executor {
       // restore locals
       const scope = this.localScopes.pop()!;
       const saved = this.localSaved.pop()!;
+      const savedArr = this.localSavedArrays.pop()!;
       for (const k of scope) {
         const v = saved.get(k);
         if (v === undefined) delete this.context.env[k];
         else this.context.env[k] = v;
+        // Restore array/assoc storage + integer flag to the pre-local snapshot.
+        const sa = savedArr.get(k);
+        if (sa === undefined || sa.arr === undefined) this.arrays.delete(k);
+        else this.arrays.set(k, sa.arr);
+        if (sa === undefined || sa.assoc === undefined) this.assocArrays.delete(k);
+        else this.assocArrays.set(k, sa.assoc);
+        if (sa === undefined || !sa.integer) this.integerNames.delete(k);
+        else this.integerNames.add(k);
       }
       for (const k of overlayKeys) {
         if (savedOverlay[k] === undefined) delete this.context.env[k];
@@ -2881,7 +2955,7 @@ export class Executor {
    * consume incrementally. The ambient `this.io` is set to `frame` so a builtin's
    * `eval` / `source` runs against it too.
    */
-  private async dispatch(name: string, argv: string[], frame: CommandIO, opts: { stdin?: ReadableStream<Uint8Array>; write?: (s: string) => void } = {}): Promise<number> {
+  private async dispatch(name: string, argv: string[], frame: CommandIO, opts: { stdin?: ReadableStream<Uint8Array>; write?: (s: string) => void; builtinAssignments?: Assignment[]; assignExpander?: Expander } = {}): Promise<number> {
     this.io = frame;
     // A GENUINE per-command stdin override is an `opts.stdin` that DIFFERS from
     // the inherited frame stdin — a `<`/`<<`/`<<<` redirect stream or a pipeline
@@ -2930,6 +3004,10 @@ export class Executor {
       doReturn: (n) => { throw new FuncReturn(n); },
       evalArith: (expr) => evalArith(expr, this.arithEnvForExpr(), this.arithArrayAccessExec()),
       resolveExternal: (n) => this.resolveExternalPath(n),
+      builtinAssignments: opts.builtinAssignments,
+      applyBuiltinAssignment: opts.assignExpander
+        ? (a) => this.applyAssignment(a, opts.assignExpander!)
+        : undefined,
       state: this.shellState(),
     };
     const status = await runBuiltin(name, argv, ctx);

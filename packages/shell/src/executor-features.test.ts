@@ -1181,3 +1181,72 @@ test('multi-name readonly assigns non-readonly names even when one is already re
   expect(r.err).toMatch(/readonly/);   // B reported
   expect((await run('readonly A=1 B=2 C=3; echo "$A$B$C"')).out).toBe('123\n');
 });
+
+// ── declare/local/readonly/export NAME=(…) array-literal (bash parity) ───────
+
+test('declare -a / declare NAME=(…) builds an indexed array', async () => {
+  expect((await run('declare -a arr=(a b c); echo "[${arr[@]}] n=${#arr[@]}"')).out).toBe('[a b c] n=3\n');
+  // WITHOUT -a a `(...)` literal still makes an indexed array (bash).
+  expect((await run('declare arr=(a b c); echo "[${arr[@]}]"')).out).toBe('[a b c]\n');
+  // A quoted element with a space stays ONE element (the old word-split regression).
+  expect((await run('declare -a arr=("a b" c); echo "0=[${arr[0]}] 1=[${arr[1]}] n=${#arr[@]}"')).out)
+    .toBe('0=[a b] 1=[c] n=2\n');
+});
+
+test('readonly NAME=(…) creates AND marks the array readonly', async () => {
+  const r = await run('readonly arr=(p q); arr[0]=X; echo "[${arr[@]}]"');
+  expect(r.out).toBe('[p q]\n');           // element write rejected, value unchanged
+  expect(r.err).toMatch(/readonly/);
+});
+
+test('declare -A NAME=([k]=v …) builds an associative array', async () => {
+  expect((await run('declare -A m=([x]=1 [y]=2); echo "x=${m[x]} y=${m[y]} n=${#m[@]}"')).out)
+    .toBe('x=1 y=2 n=2\n');
+  // assoc value with a space via [k]="…".
+  expect((await run('declare -A m=([x]="a b" [y]=c); echo "x=[${m[x]}] n=${#m[@]}"')).out)
+    .toBe('x=[a b] n=2\n');
+});
+
+test('local NAME=(…) array is function-scoped (does not leak out)', async () => {
+  const r = await run('arr=(GLOBAL); f() { local arr=(x y z); echo "in:[${arr[@]}]"; }; f; echo "out:[${arr[@]}]"');
+  expect(r.out).toBe('in:[x y z]\nout:[GLOBAL]\n');
+  // local -A assoc is scoped too.
+  const a = await run('declare -A m=([g]=1); f(){ local -A m=([x]=9); echo "in:${m[x]}"; }; f; echo "out:${m[g]}:${m[x]-unset}"');
+  expect(a.out).toBe('in:9\nout:1:unset\n');
+});
+
+test('declare -ai NAME=(…) arithmetic-evaluates array-literal elements', async () => {
+  expect((await run('declare -ai b=(1+1 2*3); echo "[${b[@]}]"')).out).toBe('[2 6]\n');
+});
+
+test('declare NAME+=(…) appends to an existing array', async () => {
+  expect((await run('declare -a arr=(a b); declare arr+=(c d); echo "[${arr[@]}] n=${#arr[@]}"')).out)
+    .toBe('[a b c d] n=4\n');
+});
+
+test('export NAME=(…) creates the (non-exported) array', async () => {
+  expect((await run('export arr=(a b c); echo "[${arr[@]}]"')).out).toBe('[a b c]\n');
+});
+
+test('explicit [index]=value elements in an array literal (sparse + running index)', async () => {
+  expect((await run('declare -a arr=([2]=x [5]=y); echo "2=[${arr[2]}] 5=[${arr[5]}] n=${#arr[@]}"')).out)
+    .toBe('2=[x] 5=[y] n=2\n');
+  // A bare word after an explicit index continues from index+1 (bash).
+  expect((await run('arr=(a [5]=z w); echo "0=${arr[0]} 5=${arr[5]} 6=${arr[6]} n=${#arr[@]}"')).out)
+    .toBe('0=a 5=z 6=w n=3\n');
+});
+
+test('scalar declare/export are unchanged by the array-literal routing', async () => {
+  expect((await run('declare x=5; echo "$x"')).out).toBe('5\n');
+  expect((await run('export PATH=/bin; echo "$PATH"')).out).toBe('/bin\n');
+  expect((await run('declare -r x=1 arr=(a b); x=2; echo "x=$x [${arr[@]}]"')).err).toMatch(/readonly/);
+});
+
+test('declare NAME=(…) array literal is rejected in POSIX mode (parse-time)', () => {
+  // The assignment-builtin reroute reuses parseAssignmentWord, which rejects an
+  // array literal under posix — same as a bare `arr=(…)`.
+  expect(() => parse('declare -a arr=(a b c)', { posix: true })).toThrow(/POSIX/i);
+  expect(() => parse('arr=(a b c)', { posix: true })).toThrow(/POSIX/i);
+  // non-posix parse is fine.
+  expect(() => parse('declare -a arr=(a b c)')).not.toThrow();
+});

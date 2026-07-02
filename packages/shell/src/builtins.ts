@@ -198,8 +198,34 @@ export interface BuiltinContext {
    * or undefined (not found / no VFS). May be async (the FsClient stat is async).
    */
   resolveExternal?(name: string): string | undefined | Promise<string | undefined>;
+  /**
+   * Structured assignment operands for an ASSIGNMENT BUILTIN (`declare`/`local`/
+   * `readonly`/`export`/`typeset`), parsed by the parser as assignment words so an
+   * array literal `declare -a arr=(a b c)` arrives as an Assignment with an `array`
+   * field. The builtin marks the flag attributes (`-A`/`-i`/`-r`, `declareLocal`)
+   * for the name, then applies the array/assoc/index/append value via
+   * {@link applyBuiltinAssignment}. Scalar `NAME=v` operands also appear here but
+   * are still applied by the builtin's own string path.
+   */
+  builtinAssignments?: BuiltinAssignment[];
+  /**
+   * Apply an ARRAY / ASSOC / INDEXED / APPEND assignment operand (from
+   * {@link builtinAssignments}) to the live shell state via the executor's shared
+   * assignment path — after the builtin has marked the name's flag attributes.
+   * Returns true if rejected (e.g. readonly). Scalars are applied by the builtin.
+   */
+  applyBuiltinAssignment?(a: BuiltinAssignment): Promise<boolean>;
   /** Richer state for local/declare/shift/getopts/jobs/wait. */
   state?: ShellState;
+}
+
+/** A structured assignment operand handed to an assignment builtin (see BuiltinContext). */
+export interface BuiltinAssignment {
+  name: string;
+  value: string;
+  array?: string[];
+  index?: string;
+  append?: boolean;
 }
 
 export const BUILTINS = [
@@ -402,6 +428,18 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
 
     case 'export': {
       let status = 0;
+      // `export arr=(a b c)` creates the (non-exported) array via the shared
+      // assignment path, matching bash (an array cannot be exported, but the
+      // variable is still created).
+      for (const a of ctx.builtinAssignments ?? []) {
+        if (a.array === undefined) continue;
+        if (ctx.state?.isReadonly?.(a.name)) {
+          errOut(ctx, `shell: export: ${a.name}: readonly variable\n`);
+          status = 1;
+        } else if (await ctx.applyBuiltinAssignment?.(a)) {
+          status = 1;
+        }
+      }
       for (const arg of args) {
         const eq = arg.indexOf('=');
         if (eq > 0) {
@@ -481,6 +519,25 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         return 2;
       }
       let declStatus = 0;
+      // Structured ARRAY-LITERAL operands (`declare -a arr=(a b c)`, parsed as
+      // assignment words by the parser): mark the name's flag attributes in bash
+      // order (assoc BEFORE element writes so they land in the assoc map, integer
+      // before value eval, local before assign), then apply the array via the
+      // executor's shared assignment path. Scalar/element operands stay plain args
+      // handled by the string loop below.
+      for (const a of ctx.builtinAssignments ?? []) {
+        if (a.array === undefined) continue;
+        if (isAssoc) ctx.state?.declareAssoc?.(a.name);
+        if (flagInteger) ctx.state?.markInteger?.(a.name);
+        if (isLocal) ctx.state?.declareLocal(a.name);
+        if (ctx.state?.isReadonly?.(a.name)) {
+          errOut(ctx, `shell: ${name}: ${a.name}: readonly variable\n`);
+          declStatus = 1;
+        } else if (await ctx.applyBuiltinAssignment?.(a)) {
+          declStatus = 1;
+        }
+        if (flagReadonly) ctx.state?.markReadonly?.(a.name);
+      }
       for (const arg of args) {
         if (arg.startsWith('-')) continue; // option flags handled above
         const eq = arg.indexOf('=');
