@@ -1297,7 +1297,12 @@ function formatPrintf(format: string, args: string[]): string {
       let width = m[2];
       let prec = m[3];
       if (width === '*') width = String(parseInt(nextArg(), 10) || 0);
-      if (prec === '*') prec = String(parseInt(nextArg(), 10) || 0);
+      if (prec === '*') {
+        // A negative dynamic precision (`%.*f -1 …`) means "unset" in bash, so
+        // it falls back to the conversion default rather than throwing.
+        const dyn = parseInt(nextArg(), 10) || 0;
+        prec = dyn < 0 ? undefined : String(dyn);
+      }
       const conv = m[4];
       out += formatOne(conv, flags, width ? parseInt(width, 10) : undefined,
         prec !== undefined ? parseInt(prec, 10) : undefined, nextArg());
@@ -1362,6 +1367,7 @@ function formatOne(conv: string, flags: string, width: number | undefined, prec:
     }
     case 'f': case 'e': case 'E': case 'g': case 'G': {
       const num = parseFloatArg(arg);
+      if (prec !== undefined && prec < 0) prec = undefined; // defensive: negative → unset
       const p = prec ?? 6;
       let s: string;
       if (conv === 'f') s = Math.abs(num).toFixed(p);

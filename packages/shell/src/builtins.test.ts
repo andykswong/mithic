@@ -117,6 +117,19 @@ test('printf %f %e %g floats with precision', async () => {
   expect(await printf('%e', '12345')).toBe('1.234500e+04');
 });
 
+test('printf %.*f with a negative dynamic precision is unset (default 6), not a crash', async () => {
+  expect(await printf('%.*f\n', '-1', '3.14159')).toBe('3.141590\n');
+});
+
+test('printf %.*f with a valid dynamic precision applies it', async () => {
+  expect(await printf('%.*f\n', '2', '3.14159')).toBe('3.14\n');
+});
+
+test('printf %.*s/%.*d negative dynamic precision is safe (treated as unset)', async () => {
+  expect(await printf('[%.*s]', '-1', 'abcdef')).toBe('[abcdef]');
+  expect(await printf('[%.*d]', '-1', '42')).toBe('[42]');
+});
+
 test('printf %c prints first char of string arg', async () => {
   expect(await printf('%c', 'hello')).toBe('h');
 });
