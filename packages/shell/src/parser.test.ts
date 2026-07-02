@@ -213,3 +213,13 @@ test('parses unnamed coproc with a simple command (no NAME)', () => {
 test('coproc is rejected in POSIX mode', () => {
   expect(() => parse('coproc { cat; }', { posix: true })).toThrow(/coproc/);
 });
+
+test('a stray unmatched ]] / )) does not hang the parser (progress guard)', () => {
+  // Regression: `echo a[b[c[0]]]` lexes a trailing DRBRACKET (`]]`) that no
+  // production consumes; parseProgram used to spin forever (OOM/SIGABRT).
+  const cmds = ['echo a[b[c[0]]]', 'echo hi ]]', 'echo x ))', 'echo a; ]]; echo b'];
+  for (const c of cmds) {
+    const p = parse(c); // must return, not hang
+    expect(p.type).toBe('Program');
+  }
+});

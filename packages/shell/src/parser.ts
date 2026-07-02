@@ -81,9 +81,15 @@ class Parser {
     const body: Statement[] = [];
     this.skipSeparators();
     while (this.peek() && !this.atTerminator()) {
+      const before = this.pos;
       body.push(this.parseAndOr());
       if (this.atType('SEMI') || this.atType('NEWLINE') || this.atType('AMP')) this.next();
       this.skipSeparators();
+      // Progress guard: a stray token that no production consumes (e.g. a bare
+      // `]]`/`))` with no matching opener) would otherwise spin this loop forever.
+      // Skip it as a diagnostic-free no-op so parsing terminates (bash errors; we
+      // are lenient like the rest of the parser).
+      if (this.pos === before) this.next();
     }
     return { type: 'Program', body };
   }
