@@ -389,6 +389,7 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
     case 'printf': {
       const r = formatPrintf(args[0] ?? '', args.slice(1));
       ctx.write(r.out);
+      for (const w of r.warnings) errOut(ctx, `shell: printf: warning: ${w}\n`);
       for (const e of r.errors) errOut(ctx, `shell: printf: ${e}\n`);
       return r.errors.length > 0 ? 1 : 0;
     }
@@ -1528,13 +1529,14 @@ class TestParser {
  *   - integer args: leading-`'`/`"` char code, 0x hex, 0 octal, or decimal
  */
 /** Result of a `printf` run: the produced output + any invalid-number errors. */
-interface PrintfResult { out: string; errors: string[] }
+interface PrintfResult { out: string; errors: string[]; warnings: string[] }
 
 function formatPrintf(format: string, args: string[]): PrintfResult {
   const fmt = interpretEscapes(format, /*octalBackslashZero*/ true);
   let out = '';
   let argi = 0;
   const errors: string[] = [];
+  const warnings: string[] = [];
   let stop = false;                          // `%b`'s `\c` truncates ALL output
   // Track whether the arg just consumed was actually PRESENT: a MISSING numeric
   // arg is 0 with no diagnostic (bash), but a present-but-invalid one errors.
@@ -1570,8 +1572,12 @@ function formatPrintf(format: string, args: string[]): PrintfResult {
       const argPresent = lastPresent;
       const r = formatOne(conv, flags, width, prec, argVal);
       out += r.text;
-      // A missing numeric arg is 0 with no diagnostic; only a PRESENT invalid arg errors.
-      if (r.error !== undefined && argPresent) errors.push(r.error);
+      // A missing numeric arg is 0 with no diagnostic; only a PRESENT invalid arg
+      // errors (exit 1) or warns ("Result too large" saturation, exit 0).
+      if (argPresent) {
+        if (r.error !== undefined) errors.push(r.error);
+        if (r.warn !== undefined) warnings.push(r.warn);
+      }
       if (r.stop) stop = true;
       i += m[0].length;
     }
@@ -1579,11 +1585,14 @@ function formatPrintf(format: string, args: string[]): PrintfResult {
     if (!consumedConversion) break;           // no conversions ⇒ print once
     if (argi === startArgi) break;            // conversions but consumed no args ⇒ stop
   } while (argi < args.length);
-  return { out, errors };
+  return { out, errors, warnings };
 }
 
-/** One conversion's output plus an optional invalid-number error and `\c` stop flag. */
-interface OneResult { text: string; error?: string; stop?: boolean }
+/**
+ * One conversion's output plus an optional invalid-number `error` (exit 1), a
+ * `warn` ("Result too large" saturation, exit 0), and a `\c` `stop` flag.
+ */
+interface OneResult { text: string; error?: string; warn?: string; stop?: boolean }
 
 /** Format a single conversion. `arg` is the raw string argument. */
 function formatOne(conv: string, flags: string, width: number | undefined, prec: number | undefined, arg: string): OneResult {
@@ -1618,27 +1627,34 @@ function formatOne(conv: string, flags: string, width: number | undefined, prec:
       // width/left-justify like the other string conversions.
       return { text: pad(shellQuoteBackslash(arg), width, left, false) };
     case 'd': case 'i': case 'u': {
-      const parsed = parseIntArg(arg);
-      let v = parsed.value;
-      if (conv === 'u' && v < 0) v = v >>> 0;
-      const neg = v < 0;
-      let digits = Math.abs(v).toString(10);
-      if (prec !== undefined) { digits = digits.padStart(prec, '0'); if (prec === 0 && v === 0) digits = ''; }
-      signPrefix = neg ? '-' : plus ? '+' : space ? ' ' : '';
+      // 64-bit intmax_t/uintmax_t via BigInt. Signed convs saturate out-of-range
+      // (with a warning, exit 0); %u reinterprets the value mod 2^64.
+      const parsed = parseIntArg(arg, /*unsigned*/ conv === 'u');
+      let digits: string;
+      if (conv === 'u') {
+        const uv = ((parsed.value % TWO_POW_64) + TWO_POW_64) % TWO_POW_64;
+        digits = uv.toString(10);
+      } else {
+        const neg = parsed.value < 0n;
+        digits = (neg ? -parsed.value : parsed.value).toString(10);
+        signPrefix = neg ? '-' : plus ? '+' : space ? ' ' : '';
+      }
+      if (prec !== undefined) { digits = digits.padStart(prec, '0'); if (prec === 0 && parsed.value === 0n) digits = ''; }
       body = digits;
-      return { text: padNum(signPrefix, body, width, left, zero && prec === undefined), error: parsed.error };
+      return { text: padNum(signPrefix, body, width, left, zero && prec === undefined), error: parsed.error, warn: parsed.warn };
     }
     case 'o': case 'x': case 'X': {
-      const parsed = parseIntArg(arg);
-      let v = parsed.value;
-      if (v < 0) v = v >>> 0;
-      let digits = v.toString(conv === 'o' ? 8 : 16);
+      // Unsigned base conversions mask to 64 bits (two's-complement for negatives),
+      // matching bash's uintmax_t (`printf %x -1` → ffffffffffffffff).
+      const parsed = parseIntArg(arg, /*unsigned*/ true);
+      const uv = ((parsed.value % TWO_POW_64) + TWO_POW_64) % TWO_POW_64;
+      let digits = uv.toString(conv === 'o' ? 8 : 16);
       if (conv === 'X') digits = digits.toUpperCase();
-      if (prec !== undefined) { digits = digits.padStart(prec, '0'); if (prec === 0 && v === 0) digits = ''; }
+      if (prec !== undefined) { digits = digits.padStart(prec, '0'); if (prec === 0 && uv === 0n) digits = ''; }
       let altPrefix = '';
-      if (alt && v !== 0) altPrefix = conv === 'o' ? '0' : conv === 'x' ? '0x' : '0X';
+      if (alt && uv !== 0n) altPrefix = conv === 'o' ? '0' : conv === 'x' ? '0x' : '0X';
       body = digits;
-      return { text: padNum(altPrefix, body, width, left, zero && prec === undefined), error: parsed.error };
+      return { text: padNum(altPrefix, body, width, left, zero && prec === undefined), error: parsed.error, warn: parsed.warn };
     }
     case 'f': case 'e': case 'E': case 'g': case 'G': {
       const parsed = parseFloatArg(arg);
@@ -1715,25 +1731,65 @@ function formatG(n: number, sig: number, upper: boolean, alt: boolean): string {
   return s;
 }
 
-/** A parsed printf numeric argument + an optional "invalid number" diagnostic. */
+/** A parsed printf FLOAT argument + an optional "invalid number" diagnostic. */
 interface NumArg { value: number; error?: string }
 
 /**
- * Parse a printf integer argument: `'c` char code, 0x hex, 0 octal, decimal.
- * bash emits an "invalid number" diagnostic (exit 1) for a non-numeric token,
- * and prints the leading-parsed value plus a "not completely converted" note for
- * a partially-numeric token (`12abc` → value 12 + error).
+ * A parsed printf INTEGER argument (64-bit `intmax_t`/`uintmax_t` via BigInt) plus
+ * an optional `error` (invalid/partial number → exit 1) or `warn` (out-of-range
+ * saturation → "Result too large", exit 0).
  */
-function parseIntArg(arg: string): NumArg {
+interface IntArg { value: bigint; error?: string; warn?: string }
+
+const TWO_POW_64 = 1n << 64n;
+const INTMAX_MAX = (1n << 63n) - 1n;      // 9223372036854775807
+const INTMAX_MIN = -(1n << 63n);          // -9223372036854775808
+const UINTMAX_MAX = TWO_POW_64 - 1n;      // 18446744073709551615
+
+/** Parse a magnitude string of the given base into a BigInt (avoids Number). */
+function digitsToBig(digits: string, base: bigint): bigint {
+  let v = 0n;
+  for (const d of digits) v = v * base + BigInt(parseInt(d, Number(base)));
+  return v;
+}
+
+/**
+ * Parse a printf integer argument as a 64-bit value: `'c` char code, ±0x hex,
+ * ±0 octal, ±decimal (leading whitespace allowed). bash emits an "invalid number"
+ * diagnostic (exit 1) for a non-numeric token and a "value not completely
+ * converted" note (exit 1, leading digits kept) for a partial token. A value
+ * outside the target range saturates to the boundary with a "Result too large"
+ * WARNING (exit 0): signed convs clamp to [INTMAX_MIN, INTMAX_MAX]; `unsigned`
+ * convs (`%u`/`%x`/`%o`) allow [-2^63, 2^64-1] and clamp only beyond those.
+ */
+function parseIntArg(arg: string, unsigned: boolean): IntArg {
   const s = arg.trim();
-  if (s[0] === '\'' || s[0] === '"') return { value: s.codePointAt(1) ?? 0 };
-  if (/^[+-]?0[xX][0-9a-fA-F]+$/.test(s)) return { value: parseInt(s, 16) };
-  if (/^[+-]?0[0-7]+$/.test(s)) return { value: parseInt(s, 8) };
-  if (/^[+-]?\d+$/.test(s)) return { value: parseInt(s, 10) };
-  // Not a clean integer: parseInt grabs any leading digits (bash prints those).
-  const v = parseInt(s, 10);
-  if (Number.isNaN(v)) return { value: 0, error: `${arg}: invalid number` };
-  return { value: v, error: `${arg}: value not completely converted` };
+  // A leading quote yields the next char's code point (unclamped, always in range).
+  if (s[0] === '\'' || s[0] === '"') return { value: BigInt(s.codePointAt(1) ?? 0) };
+  let raw: bigint | undefined;
+  let m: RegExpMatchArray | null;
+  if ((m = s.match(/^([+-]?)0[xX]([0-9a-fA-F]+)$/))) raw = digitsToBig(m[2], 16n) * (m[1] === '-' ? -1n : 1n);
+  else if ((m = s.match(/^([+-]?)0([0-7]+)$/))) raw = digitsToBig(m[2], 8n) * (m[1] === '-' ? -1n : 1n);
+  else if ((m = s.match(/^([+-]?)(\d+)$/))) raw = digitsToBig(m[2], 10n) * (m[1] === '-' ? -1n : 1n);
+  if (raw === undefined) {
+    // Not a clean integer: keep any leading decimal digits (bash prints those).
+    const lead = s.match(/^[+-]?\d+/);
+    if (lead === null) return { value: 0n, error: `${arg}: invalid number` };
+    const v = clampInt(digitsToBig(lead[0].replace(/^[+-]/, ''), 10n) * (lead[0][0] === '-' ? -1n : 1n), unsigned, arg).value;
+    return { value: v, error: `${arg}: value not completely converted` };
+  }
+  return clampInt(raw, unsigned, arg);
+}
+
+/**
+ * Clamp a BigInt to the printf target range, flagging saturation as a warning
+ * that quotes the ORIGINAL argument token (bash: `warning: 0xff…: Result too large`).
+ */
+function clampInt(v: bigint, unsigned: boolean, arg: string): IntArg {
+  const hi = unsigned ? UINTMAX_MAX : INTMAX_MAX;
+  if (v > hi) return { value: hi, warn: `${arg.trim()}: Result too large` };
+  if (v < INTMAX_MIN) return { value: INTMAX_MIN, warn: `${arg.trim()}: Result too large` };
+  return { value: v };
 }
 
 function parseFloatArg(arg: string): NumArg {
