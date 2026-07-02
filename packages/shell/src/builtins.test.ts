@@ -299,3 +299,50 @@ test('compgen/complete/compopt are listed in BUILTINS', () => {
   expect(BUILTINS).toContain('complete');
   expect(BUILTINS).toContain('compopt');
 });
+
+// ── WP-F: printf invalid-number diagnostics, dynamic width, %b \c, 32-bit note ─
+
+/** Run printf capturing stdout, stderr, and exit status. */
+async function printfR(...args: string[]): Promise<{ out: string; err: string; code: number }> {
+  let out = '', err = '';
+  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s), writeErr: (s: string) => (err += s) };
+  const code = await runBuiltin('printf', args, ctx);
+  return { out, err, code: code ?? 0 };
+}
+
+test('printf invalid number → value 0/leading digits + exit 1', async () => {
+  const bad = await printfR('%d\n', 'abc');
+  expect(bad.out).toBe('0\n');
+  expect(bad.code).toBe(1);
+  expect(bad.err).toMatch(/invalid number/);
+  const partial = await printfR('%d\n', '12abc');
+  expect(partial.out).toBe('12\n');
+  expect(partial.code).toBe(1);
+  // A clean number (leading whitespace allowed) is rc 0, no stderr.
+  const ok = await printfR('%d\n', '  5');
+  expect(ok.out).toBe('5\n');
+  expect(ok.code).toBe(0);
+  expect(ok.err).toBe('');
+});
+
+test('printf %*d negative dynamic width left-justifies', async () => {
+  expect(await printf('[%*d]\n', '-5', '42')).toBe('[42   ]\n');
+  expect(await printf('[%*d]\n', '5', '42')).toBe('[   42]\n');
+});
+
+test('printf %b \\c stops all further output', async () => {
+  expect(await printf('%b', 'a\\cb')).toBe('a');
+  expect(await printf('pre %b post\n', 'x\\cy')).toBe('pre x');
+});
+
+test('printf %.*f negative precision is unset (default 6)', async () => {
+  expect(await printf('%.*f\n', '-1', '3.14159')).toBe('3.141590\n');
+});
+
+// DELIBERATE DIVERGENCE: mithic uses JS doubles, so %x/%o/%u of a negative int
+// reinterpret at 32-bit width, NOT bash's 64-bit intmax_t. Full parity would need
+// BigInt arithmetic throughout — out of scope. This locks the current behavior.
+test('printf %x of -1 is 32-bit (documented divergence from bash 64-bit intmax_t)', async () => {
+  expect(await printf('%x\n', '-1')).toBe('ffffffff\n');   // bash: ffffffffffffffff
+  expect(await printf('%u\n', '-1')).toBe('4294967295\n');  // bash: 18446744073709551615
+});

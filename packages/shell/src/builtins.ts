@@ -375,9 +375,12 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       return 0;
     }
 
-    case 'printf':
-      ctx.write(formatPrintf(args[0] ?? '', args.slice(1)));
-      return 0;
+    case 'printf': {
+      const r = formatPrintf(args[0] ?? '', args.slice(1));
+      ctx.write(r.out);
+      for (const e of r.errors) errOut(ctx, `shell: printf: ${e}\n`);
+      return r.errors.length > 0 ? 1 : 0;
+    }
 
     case 'export': {
       let status = 0;
@@ -1475,11 +1478,19 @@ class TestParser {
  *   - %b interprets escapes in the ARGUMENT
  *   - integer args: leading-`'`/`"` char code, 0x hex, 0 octal, or decimal
  */
-function formatPrintf(format: string, args: string[]): string {
+/** Result of a `printf` run: the produced output + any invalid-number errors. */
+interface PrintfResult { out: string; errors: string[] }
+
+function formatPrintf(format: string, args: string[]): PrintfResult {
   const fmt = interpretEscapes(format, /*octalBackslashZero*/ true);
   let out = '';
   let argi = 0;
-  const nextArg = (): string => args[argi++] ?? '';
+  const errors: string[] = [];
+  let stop = false;                          // `%b`'s `\c` truncates ALL output
+  // Track whether the arg just consumed was actually PRESENT: a MISSING numeric
+  // arg is 0 with no diagnostic (bash), but a present-but-invalid one errors.
+  let lastPresent = true;
+  const nextArg = (): string => { lastPresent = argi < args.length; return args[argi++] ?? ''; };
   // A single pass over the format; repeat while args remain and the format
   // consumed at least one conversion (recycling). `consumedConversion` guards
   // against infinite loops on formats with no conversions.
@@ -1487,7 +1498,7 @@ function formatPrintf(format: string, args: string[]): string {
     const startArgi = argi;
     let consumedConversion = false;
     let i = 0;
-    while (i < fmt.length) {
+    while (i < fmt.length && !stop) {
       const c = fmt[i];
       if (c !== '%') { out += c; i++; continue; }
       if (fmt[i + 1] === '%') { out += '%'; i += 2; continue; }
@@ -1495,29 +1506,38 @@ function formatPrintf(format: string, args: string[]): string {
       const m = /^%([-+ 0#]*)(\*|\d+)?(?:\.(\*|\d+))?([sbcdiuoxXeEfgGq])/.exec(fmt.slice(i));
       if (!m) { out += c; i++; continue; } // lone % with no valid conversion
       consumedConversion = true;
-      const [whole, flags] = m;
-      let width = m[2];
-      let prec: string | undefined = m[3];
-      if (width === '*') width = String(parseInt(nextArg(), 10) || 0);
-      if (prec === '*') {
-        // A negative dynamic precision (`%.*f -1 …`) means "unset" in bash, so
-        // it falls back to the conversion default rather than throwing.
+      let flags = m[1];
+      let width = m[2] === '*' ? parseInt(nextArg(), 10) || 0 : (m[2] ? parseInt(m[2], 10) : undefined);
+      // A negative dynamic width (`%*d -5 …`) means left-justify with abs width.
+      if (width !== undefined && width < 0) { flags += '-'; width = -width; }
+      let prec: number | undefined;
+      if (m[3] === '*') {
+        // A negative dynamic precision (`%.*f -1 …`) means "unset" in bash.
         const dyn = parseInt(nextArg(), 10) || 0;
-        prec = dyn < 0 ? undefined : String(dyn);
-      }
+        prec = dyn < 0 ? undefined : dyn;
+      } else if (m[3] !== undefined) prec = parseInt(m[3], 10);
       const conv = m[4];
-      out += formatOne(conv, flags, width ? parseInt(width, 10) : undefined,
-        prec !== undefined ? parseInt(prec, 10) : undefined, nextArg());
-      i += whole.length;
+      const argVal = nextArg();
+      const argPresent = lastPresent;
+      const r = formatOne(conv, flags, width, prec, argVal);
+      out += r.text;
+      // A missing numeric arg is 0 with no diagnostic; only a PRESENT invalid arg errors.
+      if (r.error !== undefined && argPresent) errors.push(r.error);
+      if (r.stop) stop = true;
+      i += m[0].length;
     }
+    if (stop) break;
     if (!consumedConversion) break;           // no conversions ⇒ print once
     if (argi === startArgi) break;            // conversions but consumed no args ⇒ stop
   } while (argi < args.length);
-  return out;
+  return { out, errors };
 }
 
+/** One conversion's output plus an optional invalid-number error and `\c` stop flag. */
+interface OneResult { text: string; error?: string; stop?: boolean }
+
 /** Format a single conversion. `arg` is the raw string argument. */
-function formatOne(conv: string, flags: string, width: number | undefined, prec: number | undefined, arg: string): string {
+function formatOne(conv: string, flags: string, width: number | undefined, prec: number | undefined, arg: string): OneResult {
   const left = flags.includes('-');
   const zero = flags.includes('0') && !left;
   const plus = flags.includes('+');
@@ -1531,33 +1551,37 @@ function formatOne(conv: string, flags: string, width: number | undefined, prec:
     case 's': {
       body = arg;
       if (prec !== undefined) body = body.slice(0, prec);
-      return pad(body, width, left, false);
+      return { text: pad(body, width, left, false) };
     }
     case 'b': {
-      body = interpretEscapes(arg, /*octalBackslashZero*/ false);
+      // `%b` interprets escapes in the ARGUMENT; a `\c` stops ALL further output.
+      const { text, stop } = interpretBEscapes(arg);
+      body = text;
       if (prec !== undefined) body = body.slice(0, prec);
-      return pad(body, width, left, false);
+      return { text: pad(body, width, left, false), stop };
     }
     case 'c': {
       body = arg.slice(0, 1);
-      return pad(body, width, left, false);
+      return { text: pad(body, width, left, false) };
     }
     case 'q':
       // Shell-quote for safe re-input, bash `printf %q` backslash style; honors
       // width/left-justify like the other string conversions.
-      return pad(shellQuoteBackslash(arg), width, left, false);
+      return { text: pad(shellQuoteBackslash(arg), width, left, false) };
     case 'd': case 'i': case 'u': {
-      let v = parseIntArg(arg);
+      const parsed = parseIntArg(arg);
+      let v = parsed.value;
       if (conv === 'u' && v < 0) v = v >>> 0;
       const neg = v < 0;
       let digits = Math.abs(v).toString(10);
       if (prec !== undefined) { digits = digits.padStart(prec, '0'); if (prec === 0 && v === 0) digits = ''; }
       signPrefix = neg ? '-' : plus ? '+' : space ? ' ' : '';
       body = digits;
-      return padNum(signPrefix, body, width, left, zero && prec === undefined);
+      return { text: padNum(signPrefix, body, width, left, zero && prec === undefined), error: parsed.error };
     }
     case 'o': case 'x': case 'X': {
-      let v = parseIntArg(arg);
+      const parsed = parseIntArg(arg);
+      let v = parsed.value;
       if (v < 0) v = v >>> 0;
       let digits = v.toString(conv === 'o' ? 8 : 16);
       if (conv === 'X') digits = digits.toUpperCase();
@@ -1565,10 +1589,11 @@ function formatOne(conv: string, flags: string, width: number | undefined, prec:
       let altPrefix = '';
       if (alt && v !== 0) altPrefix = conv === 'o' ? '0' : conv === 'x' ? '0x' : '0X';
       body = digits;
-      return padNum(altPrefix, body, width, left, zero && prec === undefined);
+      return { text: padNum(altPrefix, body, width, left, zero && prec === undefined), error: parsed.error };
     }
     case 'f': case 'e': case 'E': case 'g': case 'G': {
-      const num = parseFloatArg(arg);
+      const parsed = parseFloatArg(arg);
+      const num = parsed.value;
       if (prec !== undefined && prec < 0) prec = undefined; // defensive: negative → unset
       const p = prec ?? 6;
       let s: string;
@@ -1578,11 +1603,21 @@ function formatOne(conv: string, flags: string, width: number | undefined, prec:
       const neg = num < 0 || Object.is(num, -0);
       signPrefix = neg ? '-' : plus ? '+' : space ? ' ' : '';
       body = s;
-      return padNum(signPrefix, body, width, left, zero);
+      return { text: padNum(signPrefix, body, width, left, zero), error: parsed.error };
     }
     default:
-      return '';
+      return { text: '' };
   }
+}
+
+/**
+ * Interpret `%b`-argument escapes. Like {@link interpretEscapes} but a `\c`
+ * truncates output immediately (return `stop`), matching bash/GNU `printf %b`.
+ */
+function interpretBEscapes(s: string): { text: string; stop: boolean } {
+  const ci = s.indexOf('\\c');
+  if (ci < 0) return { text: interpretEscapes(s, /*octalBackslashZero*/ false), stop: false };
+  return { text: interpretEscapes(s.slice(0, ci), /*octalBackslashZero*/ false), stop: true };
 }
 
 /** Left/right pad a plain string to `width`. */
@@ -1624,20 +1659,36 @@ function formatG(n: number, sig: number, upper: boolean, alt: boolean): string {
   return s;
 }
 
-/** Parse a printf integer argument: `'c` char code, 0x hex, 0 octal, decimal. */
-function parseIntArg(arg: string): number {
+/** A parsed printf numeric argument + an optional "invalid number" diagnostic. */
+interface NumArg { value: number; error?: string }
+
+/**
+ * Parse a printf integer argument: `'c` char code, 0x hex, 0 octal, decimal.
+ * bash emits an "invalid number" diagnostic (exit 1) for a non-numeric token,
+ * and prints the leading-parsed value plus a "not completely converted" note for
+ * a partially-numeric token (`12abc` → value 12 + error).
+ */
+function parseIntArg(arg: string): NumArg {
   const s = arg.trim();
-  if (s[0] === '\'' || s[0] === '"') return s.codePointAt(1) ?? 0;
-  if (/^[+-]?0[xX][0-9a-fA-F]+$/.test(s)) return parseInt(s, 16);
-  if (/^[+-]?0[0-7]+$/.test(s)) return parseInt(s, 8);
+  if (s[0] === '\'' || s[0] === '"') return { value: s.codePointAt(1) ?? 0 };
+  if (/^[+-]?0[xX][0-9a-fA-F]+$/.test(s)) return { value: parseInt(s, 16) };
+  if (/^[+-]?0[0-7]+$/.test(s)) return { value: parseInt(s, 8) };
+  if (/^[+-]?\d+$/.test(s)) return { value: parseInt(s, 10) };
+  // Not a clean integer: parseInt grabs any leading digits (bash prints those).
   const v = parseInt(s, 10);
-  return Number.isNaN(v) ? 0 : v;
+  if (Number.isNaN(v)) return { value: 0, error: `${arg}: invalid number` };
+  return { value: v, error: `${arg}: value not completely converted` };
 }
 
-function parseFloatArg(arg: string): number {
+function parseFloatArg(arg: string): NumArg {
   const s = arg.trim();
-  if (s[0] === '\'' || s[0] === '"') return s.codePointAt(1) ?? 0;
+  if (s[0] === '\'' || s[0] === '"') return { value: s.codePointAt(1) ?? 0 };
+  if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(s) || /^[+-]?0[xX][0-9a-fA-F.pP+-]+$/.test(s)) {
+    const v = parseFloat(s);
+    return { value: Number.isNaN(v) ? 0 : v };
+  }
   const v = parseFloat(s);
-  return Number.isNaN(v) ? 0 : v;
+  if (Number.isNaN(v)) return { value: 0, error: `${arg}: invalid number` };
+  return { value: v, error: `${arg}: value not completely converted` };
 }
 
