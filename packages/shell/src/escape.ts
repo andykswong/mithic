@@ -2,10 +2,13 @@
  * Interpret backslash escapes. When `octalBackslashZero` is true (printf format
  * strings), octal is written `\0nnn`; for `%b` arguments it is `\nnn`.
  *
- * Shared by `printf` (builtins.ts) and the `${var@E}` parameter transform
- * (expander.ts), which both perform ANSI-C `$'…'`-style backslash expansion.
+ * `ansiC` selects true ANSI-C (`$'…'` / `${var@E}`) semantics — where `\'` → `'`.
+ * printf's format string and `%b` argument keep `\'` literal, so they pass false.
+ *
+ * Shared by `printf` (builtins.ts) and the `$'…'` / `${var@E}` expansions
+ * (expander.ts).
  */
-export function interpretEscapes(s: string, octalBackslashZero: boolean): string {
+export function interpretEscapes(s: string, octalBackslashZero: boolean, ansiC = false): string {
   let out = '';
   let i = 0;
   while (i < s.length) {
@@ -22,6 +25,9 @@ export function interpretEscapes(s: string, octalBackslashZero: boolean): string
       case 'v': out += '\v'; i += 2; continue;
       case '\\': out += '\\'; i += 2; continue;
       case '"': out += '"'; i += 2; continue;
+      // `\'` is an escape ONLY in ANSI-C contexts (`$'…'`, `${var@E}`); printf's
+      // format / `%b` keep it literal (bash).
+      case '\'': if (ansiC) { out += '\''; i += 2; continue; } break;
       case 'x': {
         const m = /^[0-9a-fA-F]{1,2}/.exec(s.slice(i + 2));
         if (m) { out += String.fromCharCode(parseInt(m[0], 16)); i += 2 + m[0].length; continue; }

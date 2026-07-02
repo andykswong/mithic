@@ -305,7 +305,7 @@ export class Expander {
           if (word[j] === '\\' && j + 1 < n) { body += word[j] + word[j + 1]; j += 2; continue; }
           body += word[j]; j++;
         }
-        addText(interpretEscapes(body, /*octalBackslashZero*/ false), true);
+        addText(interpretEscapes(body, /*octalBackslashZero*/ false, /*ansiC*/ true), true);
         i = j + 1; continue;
       }
       if (c === '$' && word[i + 1] === '"') { i++; continue; }
@@ -798,7 +798,7 @@ export class Expander {
       if (op === 'U') return value.toUpperCase();
       if (op === 'u') return value.length > 0 ? value[0].toUpperCase() + value.slice(1) : value;
       if (op === 'L') return value.toLowerCase();
-      if (op === 'E') return interpretEscapes(value, /*octalBackslashZero*/ false);
+      if (op === 'E') return interpretEscapes(value, /*octalBackslashZero*/ false, /*ansiC*/ true);
       // `@a` reports the variable's attribute FLAGS (keyed by NAME, not value).
       if (op === 'a') return this.env.attrFlags?.(name) ?? '';
       // `@A` — a `declare` statement that recreates the variable + attributes.

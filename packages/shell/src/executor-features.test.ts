@@ -1013,3 +1013,24 @@ test('${arr[0]:1:3} substrings the element (not the whole element)', async () =>
 test('read -a with trailing IFS delimiter does not produce a spurious empty field', async () => {
   expect((await run('IFS=: read -a arr <<< "a:b:"; echo ${#arr[@]}')).out).toBe('2\n');
 });
+
+// ── Review round 2 regressions (fixed) ───────────────────────────────────────
+
+test('printf %b escaped-backslash before c does not trigger \\c output-stop', async () => {
+  // 'hello\\cworld' (literal backslash-backslash-c) → %b: \\ = \, then cworld
+  expect((await run('printf \'%b\' \'hello\\\\cworld\'; echo END')).out).toBe('hello\\cworldEND\n');
+  // a real \c DOES stop
+  expect((await run('printf \'%b\' \'hello\\cworld\'; echo END')).out).toBe('helloEND\n');
+});
+
+test('command -v resolves shell keywords', async () => {
+  expect((await run('command -v if')).out).toBe('if\n');
+  expect((await run('command -v while')).out).toBe('while\n');
+  expect((await run('command -v case')).out).toBe('case\n');
+});
+
+test('$\'...\' with an escaped single-quote (\\\') yields a literal quote', async () => {
+  expect((await run('echo $\'can\\\'t\'')).out).toBe('can\'t\n');
+  // printf %b keeps \' literal (NOT an escape there) — the ansiC flag is $'…'-only
+  expect((await run('printf \'%b\' \'x\\\'y\'')).out).toBe('x\\y');
+});

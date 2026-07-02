@@ -327,6 +327,19 @@ export function tokenize(input: string): Token[] {
         continue;
       }
 
+      if (c === '$' && input[i + 1] === '\'') {
+        // `$'...'` ANSI-C quoting: a `\'` does NOT close the string (unlike a plain
+        // single-quote). Scan to the matching UNESCAPED `'`, keeping the body
+        // verbatim in `raw` so the expander decodes the escapes.
+        const start = i;
+        i += 2;
+        while (i < n && input[i] !== '\'') { if (input[i] === '\\' && i + 1 < n) i++; i++; }
+        i++; // consume closing '
+        value += input.slice(start, i);
+        raw += input.slice(start, i);
+        continue;
+      }
+
       if (c === '$' && input[i + 1] === '(') {
         // $( ... ) or $(( ... )) — copy verbatim with nesting (shared helper).
         const start = i;

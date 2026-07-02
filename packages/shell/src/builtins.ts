@@ -81,11 +81,16 @@ export interface ShellState {
   dirStack?(): string[];
 }
 
-/** Shell reserved words, for `type`/`type -t` classification (`keyword`). */
+/** Shell reserved words, for `type`/`type -t`/`command -v` classification (`keyword`). */
 const SHELL_KEYWORDS = new Set([
   'if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done',
   'for', 'select', 'in', 'case', 'esac', 'function', 'time', '{', '}', '!', '[[', ']]', 'coproc',
 ]);
+
+/** True when `name` is a shell reserved word. */
+export function isShellKeyword(name: string): boolean {
+  return SHELL_KEYWORDS.has(name);
+}
 
 /** Long names of the shell options toggled via `set` / `set -o`. */
 export type ShellOptionName =
@@ -1620,7 +1625,14 @@ function formatOne(conv: string, flags: string, width: number | undefined, prec:
  * truncates output immediately (return `stop`), matching bash/GNU `printf %b`.
  */
 function interpretBEscapes(s: string): { text: string; stop: boolean } {
-  const ci = s.indexOf('\\c');
+  // Find a GENUINE `\c` escape — one whose backslash is not itself escaped. Walk
+  // the string so `\\c` (escaped backslash + literal `c`) does NOT trigger the stop.
+  let ci = -1;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] !== '\\') continue;
+    if (s[i + 1] === 'c') { ci = i; break; }
+    i++; // skip the escaped char (incl. `\\`) so its second `\` isn't rescanned
+  }
   if (ci < 0) return { text: interpretEscapes(s, /*octalBackslashZero*/ false), stop: false };
   return { text: interpretEscapes(s.slice(0, ci), /*octalBackslashZero*/ false), stop: true };
 }

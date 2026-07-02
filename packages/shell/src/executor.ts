@@ -27,7 +27,7 @@ import { globMatch } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
 import { Expander, ExpansionError } from './expander.ts';
 import { expandHistory, HistoryEventNotFound } from './history-expand.ts';
-import { isBuiltin, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES, PosixSpecialBuiltinError, POSIX_SPECIAL_BUILTINS } from './builtins.ts';
+import { isBuiltin, isShellKeyword, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES, PosixSpecialBuiltinError, POSIX_SPECIAL_BUILTINS } from './builtins.ts';
 import type { BuiltinContext, ShellState, ShellOptionName } from './builtins.ts';
 import { Environment, computeShlvl } from './environment.ts';
 import type { EnvHost } from './environment.ts';
@@ -2197,6 +2197,9 @@ export class Executor {
       const target = rest[0];
       if (dashV) {
         // `command -v`: print the resolution and exit 0, else exit 1 silently.
+        // A reserved word and a function/builtin print their name; a PATH command
+        // prints its resolved path (here the name, since resolve returns a handle).
+        if (isShellKeyword(target)) { io.stdout(target + '\n'); return 0; }
         if (this.functions.has(target)) { io.stdout(target + '\n'); return 0; }
         if (isBuiltin(target)) { io.stdout(target + '\n'); return 0; }
         if (this.resolve(target) !== undefined) { io.stdout(target + '\n'); return 0; }
