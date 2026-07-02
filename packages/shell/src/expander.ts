@@ -577,20 +577,61 @@ export class Expander {
     const map = this.env.getAssoc?.(name);
     const arr = this.env.getArray?.(name);
     let pairs: [string, string][];
-    // Indexed-array indices are numeric, so bash `@K` prints them bare and quotes
-    // only the value; associative keys are quoted like the value.
-    let quoteKey = quoted;
     if (map !== undefined) pairs = [...map.entries()];
-    else if (arr !== undefined) { pairs = arr.map((v, i) => [String(i), v]); quoteKey = false; }
+    else if (arr !== undefined) pairs = denseValues(arr).map((v, i) => [String(denseIndices(arr)[i]), v]);
     else return value;
     if (quoted) {
+      // `@K`: value is ALWAYS double-quoted; a key is double-quoted only when it is
+      // not a bare-safe word (numeric indices and identifier-like keys stay bare) —
+      // matching bash (`k1 "v1"`, `"k 1" "v x"`).
+      const KEY_SAFE = /^[A-Za-z0-9_./:=@%+,-]+$/;
       return pairs
-        .map(([k, v]) => `${quoteKey ? `"${dqEscape(k)}"` : k} "${dqEscape(v)}"`)
+        .map(([k, v]) => `${KEY_SAFE.test(k) ? k : `"${dqEscape(k)}"`} "${dqEscape(v)}"`)
         .join(' ');
     }
     const fields: string[] = [];
     for (const [k, v] of pairs) { fields.push(k, v); }
     return { fields, join: undefined };
+  }
+
+  /**
+   * `${a[@]OP}` / `${a[*]OP}` transforms over the WHOLE array/assoc. Two shapes:
+   *   - whole-VARIABLE ops (`@A` declare-reconstruction, `@K`/`@k` key-value pairs)
+   *     → a single reconstruction string (via {@link declareStatement} /
+   *     {@link keyValuePairs}).
+   *   - per-ELEMENT ops (`@Q`/`@U`/`@u`/`@L`/`@E` value transforms, `@a` flags,
+   *     `@P` prompt) → each element transformed into its own field.
+   * Returns undefined for a `:off:len` slice (handled by the caller's sliceArray).
+   */
+  private wholeArrayTransform(name: string, op: string, star: boolean): string | { fields: string[]; join: string | undefined } | undefined {
+    if (op.length !== 2 || op[0] !== '@') return undefined; // not an @-op → slice spec
+    const t = op[1];
+    // Whole-variable reconstructions.
+    if (t === 'A') return this.declareStatement(name, true, '');
+    if (t === 'K' || t === 'k') return this.keyValuePairs(name, '', t === 'K');
+    // Per-element transforms: apply OP to each element value, preserving keys' order.
+    const map = this.env.getAssoc?.(name);
+    const arr = this.env.getArray?.(name);
+    const values = map !== undefined ? [...map.values()] : (arr !== undefined ? denseValues(arr) : []);
+    const perElem = (v: string): string | undefined => {
+      switch (t) {
+        case 'Q': return shellQuoteQ(v);
+        case 'U': return v.toUpperCase();
+        case 'u': return v.length > 0 ? v[0].toUpperCase() + v.slice(1) : v;
+        case 'L': return v.toLowerCase();
+        case 'E': return interpretEscapes(v, /*octalBackslashZero*/ false, /*ansiC*/ true);
+        case 'a': return this.env.attrFlags?.(name) ?? '';
+        case 'P': return expandPrompt(v, { cwd: this.env.cwd ?? '', env: this.promptEnv() });
+        default: return undefined;
+      }
+    };
+    const fields: string[] = [];
+    for (const v of values) {
+      const f = perElem(v);
+      if (f === undefined) return undefined; // unknown @-op → let slice path try
+      fields.push(f);
+    }
+    return { fields, join: star ? this.ifsFirst() : undefined };
   }
 
   /**
@@ -606,7 +647,7 @@ export class Expander {
    *          keys only for the whole-array `${a[@]@K}` form, handled elsewhere).
    * Returns undefined for a value-transform / string op (handled by applyValueOp).
    */
-  private elementTransform(name: string, elem: string, op: string): string | undefined {
+  private elementTransform(name: string, elem: string, op: string, setElem: boolean): string | undefined {
     if (op.length !== 2 || op[0] !== '@') return undefined;
     switch (op[1]) {
       case 'a': return this.env.attrFlags?.(name) ?? '';
@@ -618,7 +659,9 @@ export class Expander {
         if (flags.includes('i')) group += 'i';
         if (flags.includes('r')) group += 'r';
         const flagStr = group === '' ? '--' : `-${group}`;
-        return `declare ${flagStr} ${name}=${shellQuoteQ(elem)}`;
+        // An UNSET element yields the bare declaration (no `=value`); a set element
+        // (even empty string) yields `name='<@Q value>'` (bash element @A form).
+        return setElem ? `declare ${flagStr} ${name}=${shellQuoteQ(elem)}` : `declare ${flagStr} ${name}`;
       }
       case 'P': return expandPrompt(elem, { cwd: this.env.cwd ?? '', env: this.promptEnv() });
       case 'K':
@@ -786,6 +829,9 @@ export class Expander {
     if (subAccess && this.env.getAssoc?.(subAccess.name) !== undefined) {
       const map = this.env.getAssoc(subAccess.name)!;
       if (subAccess.subscript === '@' || subAccess.subscript === '*') {
+        // `${m[@]@A/@K/@k}` — WHOLE-variable transforms over the assoc.
+        const whole = subAccess.op !== undefined ? this.wholeArrayTransform(subAccess.name, subAccess.op, subAccess.subscript === '*') : undefined;
+        if (whole !== undefined) return whole;
         const values = [...map.values()];
         const fields = subAccess.op !== undefined ? await this.sliceArray(values, sliceSpec(subAccess.op)) : values;
         return { fields, join: subAccess.subscript === '*' ? this.ifsFirst() : undefined };
@@ -793,7 +839,7 @@ export class Expander {
       const key = await this.substituteOnly(subAccess.subscript);
       const elem = map.get(key) ?? '';
       if (subAccess.op !== undefined) {
-        const nameKeyed = this.elementTransform(subAccess.name, elem, subAccess.op);
+        const nameKeyed = this.elementTransform(subAccess.name, elem, subAccess.op, map.has(key));
         if (nameKeyed !== undefined) return nameKeyed;
         return this.applyValueOp(elem, map.has(key), subAccess.op, `${subAccess.name}[${key}]`,
           (word) => { map.set(key, word); return word; });
@@ -803,6 +849,9 @@ export class Expander {
     if (subAccess && this.env.getArray?.(subAccess.name) !== undefined) {
       const arr = this.env.getArray(subAccess.name)!;
       if (subAccess.subscript === '@' || subAccess.subscript === '*') {
+        // `${a[@]@A/@K/@k}` — WHOLE-variable transforms over the array.
+        const whole = subAccess.op !== undefined ? this.wholeArrayTransform(subAccess.name, subAccess.op, subAccess.subscript === '*') : undefined;
+        if (whole !== undefined) return whole;
         const values = denseValues(arr); // skip sparse holes (bash sparse-map semantics)
         const fields = subAccess.op !== undefined ? await this.sliceArray(values, sliceSpec(subAccess.op)) : values;
         return { fields, join: subAccess.subscript === '*' ? this.ifsFirst() : undefined };
@@ -814,9 +863,9 @@ export class Expander {
         // Name-keyed transforms (`@a`/`@A`/`@P`/`@K`/`@k`) need whole-variable
         // metadata; the value transforms (`@Q/@U/@u/@L/@E`) + string ops go through
         // applyValueOp (which applies to the element value).
-        const nameKeyed = this.elementTransform(subAccess.name, elem, subAccess.op);
-        if (nameKeyed !== undefined) return nameKeyed;
         const setElem = idx >= 0 && idx < arr.length && arr[idx] !== undefined;
+        const nameKeyed = this.elementTransform(subAccess.name, elem, subAccess.op, setElem);
+        if (nameKeyed !== undefined) return nameKeyed;
         return this.applyValueOp(elem, setElem, subAccess.op, `${subAccess.name}[${idx}]`,
           (word) => { this.env.setArrayElement?.(subAccess.name, idx, word); return word; });
       }
@@ -835,14 +884,31 @@ export class Expander {
       return this.resolveVarStrict(name);
     }
 
-    const set = this.env.has(name) || this.env.getSpecial(name) !== undefined;
-    const value = this.resolveVar(name);
+    // A bare array/assoc NAME references element [0] (bash: `$a` == `${a[0]}`), so a
+    // transform / string-op on a bare array name operates on element [0], NOT the
+    // whole variable — `${a@Q}` == `${a[0]@Q}`, `${a:-def}` uses element [0]'s value
+    // and set-ness. Detect the array/assoc case up front.
+    const bareArr = this.env.getArray?.(name);
+    const bareAssoc = this.env.getAssoc?.(name);
+    const isBareArrayName = bareArr !== undefined || bareAssoc !== undefined;
+    const set = isBareArrayName
+      ? (bareAssoc !== undefined ? bareAssoc.has('0') : bareArr![0] !== undefined)
+      : (this.env.has(name) || this.env.getSpecial(name) !== undefined);
+    const value = isBareArrayName
+      ? (bareAssoc !== undefined ? (bareAssoc.get('0') ?? '') : (bareArr![0] ?? ''))
+      : this.resolveVar(name);
 
     // ${var@OP} parameter transforms. @Q = quote for re-input (the one we support).
     // `${arr[@]}` is handled earlier (matchSubscript), so rest[0] === '@' here only
     // means the ${var@OP} transform form.
     if (rest[0] === '@') {
       const op = rest[1];
+      // A bare array/assoc name routes the NAME-keyed transforms through element [0].
+      if (isBareArrayName) {
+        const set0 = bareAssoc !== undefined ? bareAssoc.has('0') : bareArr![0] !== undefined;
+        const et = this.elementTransform(name, value, rest, set0);
+        if (et !== undefined) return et;
+      }
       if (op === 'Q') return shellQuoteQ(value);
       if (op === 'U') return value.toUpperCase();
       if (op === 'u') return value.length > 0 ? value[0].toUpperCase() + value.slice(1) : value;

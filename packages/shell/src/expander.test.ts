@@ -359,24 +359,37 @@ test('${var@A} on a readonly scalar adds -r', async () => {
   expect(await e.expandWord('"${x@A}"')).toEqual(['declare -r x="v"']);
 });
 
-test('${arr@A} reconstructs an indexed-array declare', async () => {
+test('${arr[@]@A} reconstructs an indexed-array declare', async () => {
+  // The WHOLE-array reconstruction needs the explicit [@] subscript; a BARE
+  // ${arr@A} is element [0] (bash: $arr == ${arr[0]}), tested separately below.
   const e = E({}, { getArray: (n) => (n === 'arr' ? ['a', 'b c'] : undefined) });
-  expect(await e.expandWord('"${arr@A}"')).toEqual(['declare -a arr=([0]="a" [1]="b c")']);
+  expect(await e.expandWord('"${arr[@]@A}"')).toEqual(['declare -a arr=([0]="a" [1]="b c")']);
 });
 
-test('${arr@A} on a readonly indexed array combines flags as -ar', async () => {
+test('${arr[@]@A} on a readonly indexed array combines flags as -ar', async () => {
   const e = E({}, {
     getArray: (n) => (n === 'arr' ? ['a'] : undefined),
     attrFlags: (n) => (n === 'arr' ? 'ar' : ''),
   });
-  expect(await e.expandWord('"${arr@A}"')).toEqual(['declare -ar arr=([0]="a")']);
+  expect(await e.expandWord('"${arr[@]@A}"')).toEqual(['declare -ar arr=([0]="a")']);
 });
 
-test('${map@A} reconstructs an assoc-array declare', async () => {
+test('${map[@]@A} reconstructs an assoc-array declare', async () => {
   const e = E({}, {
     getAssoc: (n) => (n === 'map' ? new Map([['k', 'v'], ['x', 'y z']]) : undefined),
   });
-  expect(await e.expandWord('"${map@A}"')).toEqual(['declare -A map=([k]="v" [x]="y z")']);
+  expect(await e.expandWord('"${map[@]@A}"')).toEqual(['declare -A map=([k]="v" [x]="y z")']);
+});
+
+test('a BARE array-name transform operates on element [0] (bash: $a == ${a[0]})', async () => {
+  const arr = ['a', 'b c'];
+  const e = E({}, {
+    getArray: (n) => (n === 'arr' ? arr : undefined),
+    attrFlags: (n) => (n === 'arr' ? 'a' : ''),
+  });
+  expect(await e.expandWord('"${arr@A}"')).toEqual(["declare -a arr='a'"]); // element 0, @Q-quoted
+  expect(await e.expandWord('${arr@Q}')).toEqual(["'a'"]);
+  expect(await e.expandWord('${arr@K}')).toEqual(["'a'"]);
 });
 
 test('${ref@A} reconstructs a nameref declare', async () => {
@@ -392,9 +405,9 @@ test('${var@A} of an unset variable is empty', async () => {
   expect(await e.expandWord('${nope@A}')).toEqual(['']);
 });
 
-test('${var@A} double-quote-escapes special chars in array elements', async () => {
+test('${arr[@]@A} double-quote-escapes special chars in array elements', async () => {
   const e = E({}, { getArray: (n) => (n === 'arr' ? ['a"b', 'c\\d', 'e$f'] : undefined) });
-  expect(await e.expandWord('"${arr@A}"')).toEqual([
+  expect(await e.expandWord('"${arr[@]@A}"')).toEqual([
     'declare -a arr=([0]="a\\"b" [1]="c\\\\d" [2]="e\\$f")',
   ]);
 });
@@ -413,23 +426,24 @@ test('${var@P} expands \\w with HOME collapsed to ~', async () => {
 
 // ── ${var@K} / ${var@k} associative key-value formatting ─────────────────────
 
-test('${map@K} produces quoted key-value pairs', async () => {
+test('${map[@]@K} produces key-value pairs (value always quoted, safe key bare)', async () => {
   const e = E({}, {
-    getAssoc: (n) => (n === 'map' ? new Map([['k1', 'v1'], ['k2', 'v 2']]) : undefined),
+    getAssoc: (n) => (n === 'map' ? new Map([['k1', 'v1'], ['k 2', 'v 2']]) : undefined),
   });
-  expect(await e.expandWord('"${map@K}"')).toEqual(['"k1" "v1" "k2" "v 2"']);
+  // Safe key `k1` stays bare; key `k 2` (has a space) is double-quoted; values always quoted.
+  expect(await e.expandWord('"${map[@]@K}"')).toEqual(['k1 "v1" "k 2" "v 2"']);
 });
 
-test('${map@k} produces unquoted key-value words', async () => {
+test('${map[@]@k} produces unquoted key-value words', async () => {
   const e = E({}, {
     getAssoc: (n) => (n === 'map' ? new Map([['k1', 'v1'], ['k2', 'v2']]) : undefined),
   });
-  expect(await e.expandWord('${map@k}')).toEqual(['k1', 'v1', 'k2', 'v2']);
+  expect(await e.expandWord('${map[@]@k}')).toEqual(['k1', 'v1', 'k2', 'v2']);
 });
 
-test('${arr@K} on an indexed array pairs indices with values', async () => {
+test('${arr[@]@K} on an indexed array pairs indices with values', async () => {
   const e = E({}, { getArray: (n) => (n === 'arr' ? ['a', 'b c'] : undefined) });
-  expect(await e.expandWord('"${arr@K}"')).toEqual(['0 "a" 1 "b c"']);
+  expect(await e.expandWord('"${arr[@]@K}"')).toEqual(['0 "a" 1 "b c"']);
 });
 
 test('${var@a} returns attribute flags (readonly → r)', async () => {

@@ -1180,6 +1180,23 @@ test('name-keyed @P on an element prompt-expands the element value', async () =>
   expect(r.out).toBe('ada@box\n');
 });
 
+test('a BARE array-name transform operates on element [0] (bash: $a == ${a[0]})', async () => {
+  expect((await run('a=(1 2 3); echo "${a@A}"')).out).toBe('declare -a a=\'1\'\n');
+  expect((await run('a=(x y z); echo "${a@Q}"')).out).toBe('\'x\'\n');
+  expect((await run('a=(x y z); echo "${a@K}"')).out).toBe('\'x\'\n');
+  expect((await run('a=(hello world); echo "${a#he}"')).out).toBe('llo\n'); // string op on elem 0
+  expect((await run('a=([5]=z); echo "[${a:-def}]"')).out).toBe('[def]\n'); // elem 0 unset
+  expect((await run('a=([5]=z); echo "${a@A}"')).out).toBe('declare -a a\n'); // unset elem 0 → no value
+});
+
+test('${arr[@]@A}/@K/@k and @Q/@U per-element transforms over the whole array', async () => {
+  expect((await run('a=(1 2 3); echo "${a[@]@A}"')).out).toBe('declare -a a=([0]="1" [1]="2" [2]="3")\n');
+  expect((await run('a=(x "y z"); echo "${a[@]@Q}"')).out).toBe('\'x\' \'y z\'\n');
+  expect((await run('a=(hi bye); echo "${a[@]@U}"')).out).toBe('HI BYE\n');
+  expect((await run('a=(a "b c"); echo "${a[@]@K}"')).out).toBe('0 "a" 1 "b c"\n');
+  expect((await run('declare -A m=([k1]=v1 [k2]=v2); echo "${m[@]@K}"')).out).toBe('k1 "v1" k2 "v2"\n');
+});
+
 test('unset clears arrays/assoc/elements (not just scalars)', async () => {
   expect((await run('a=(x y z); unset a; echo "[${a[@]}] ${#a[@]}"')).out).toBe('[] 0\n');
   expect((await run('declare -A m; m[k]=v; unset m; echo "[${m[k]}]"')).out).toBe('[]\n');
