@@ -220,7 +220,8 @@ export async function bootShell(element: HTMLElement): Promise<ShellApp> {
   if (typeof window !== 'undefined') window.addEventListener('resize', onResize);
 
   // Shell state shared across command lines (cwd, env, vars persist in the REPL).
-  const context = { cwd: '/', env: { HOME: '/', PWD: '/', PATH: '/bin', SHELL: 'mithic-sh' } as Record<string, string> };
+  // `interactive` enables bash history expansion (`!!`, `!n`) for the REPL.
+  const context = { cwd: '/', env: { HOME: '/', PWD: '/', PATH: '/bin', SHELL: 'mithic-sh' } as Record<string, string>, interactive: true };
   const kernelClient = makeKernelClient(kernel);
   const fsClient = makeFsClient(memfs);
 

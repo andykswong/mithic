@@ -915,3 +915,30 @@ test('DEBUG trap fires before each simple command', async () => {
 test('RETURN trap fires when a function returns', async () => {
   expect((await run("f() { trap 'echo TRAP' RETURN; }; f; echo after")).out).toBe('TRAP\nafter\n');
 });
+
+// ── WP-C: declare -i, array-element arithmetic, ! in arithmetic ─────────────
+
+test('declare -i evaluates assignments arithmetically', async () => {
+  expect((await run('declare -i n=5; n=n+3; echo $n')).out).toBe('8\n');
+  expect((await run('declare -i n=5; n+=10; echo $n')).out).toBe('15\n');
+  expect((await run('declare -i x=2#101; echo $x')).out).toBe('5\n');
+  // a non-integer var still string-concatenates on +=
+  expect((await run('s=1; s+=0; echo $s')).out).toBe('10\n');
+});
+
+test('array-element arithmetic inside (( ))', async () => {
+  expect((await run('a=(1 2 3); ((a[1]+=10)); echo ${a[1]}')).out).toBe('12\n');
+  expect((await run('a=(5); ((a[0]++)); echo ${a[0]}')).out).toBe('6\n');
+});
+
+test('logical NOT usable in arithmetic (history expansion off for non-interactive)', async () => {
+  expect((await run('echo $((!0))')).out).toBe('1\n');
+  expect((await run('echo $((!5))')).out).toBe('0\n');
+  expect((await run('x=0; echo $((!x))')).out).toBe('1\n');
+});
+
+test('base#num arithmetic literals through the shell', async () => {
+  expect((await run('echo $((16#ff))')).out).toBe('255\n');
+  expect((await run('echo $((2#1010))')).out).toBe('10\n');
+  expect((await run('echo $((0xFFFFFFFF))')).out).toBe('4294967295\n');
+});

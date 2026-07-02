@@ -58,6 +58,10 @@ export interface ShellState {
   markReadonly?(name: string): void;
   /** True when the name was marked `readonly`. */
   isReadonly?(name: string): boolean;
+  /** Mark a name as integer (`declare -i`): assignments are arithmetic-evaluated. */
+  markInteger?(name: string): void;
+  /** True when the name was marked integer (`declare -i`). */
+  isInteger?(name: string): boolean;
   /** Record a `declare -n ref=target` nameref (single-level). */
   setNameref?(ref: string, target: string): void;
   /** Resolve a nameref to its target (single-level), or undefined if not a nameref. */
@@ -406,12 +410,16 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       // and writes to `ref` are redirected to `target` (the latter in the
       // executor's applyAssignment). Recorded instead of storing a literal value.
       const isNameref = name === 'declare' && args.includes('-n');
+      // `declare -i` / `-r` attributes (also honored on `local`). `readonly` is
+      // always the readonly attribute; a `-i` on any of them marks integer.
+      const flagInteger = args.includes('-i');
+      const flagReadonly = isReadonly || args.includes('-r');
       if (isAssoc && (ctx.state?.getOption('posix') ?? false)) {
         errOut(ctx, 'shell: declare: -A: not supported in POSIX mode\n');
         return 2;
       }
       for (const arg of args) {
-        if (arg.startsWith('-')) continue; // ignore option flags (-i, -a, etc.)
+        if (arg.startsWith('-')) continue; // option flags handled above
         const eq = arg.indexOf('=');
         const n = eq > 0 ? arg.slice(0, eq) : arg;
         if (isNameref) {
@@ -421,24 +429,30 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         }
         // `declare -A name` registers an associative array (G6).
         if (isAssoc) ctx.state?.declareAssoc?.(n);
+        // `declare -i name` marks the name integer BEFORE assigning, so the RHS
+        // is arithmetic-evaluated (bash: `declare -i n=1+2` → n=3).
+        if (flagInteger) ctx.state?.markInteger?.(n);
         if (eq > 0) {
           // Reassigning an already-readonly var via declare/local fails (bash). The
           // `readonly NAME=val` form is exempt — it sets THEN marks below, so a
           // first `readonly RO=1` succeeds; only a later write to RO is rejected.
-          if (!isReadonly && ctx.state?.isReadonly?.(n)) {
+          if (!flagReadonly && ctx.state?.isReadonly?.(n)) {
             errOut(ctx, `shell: ${name}: ${n}: readonly variable\n`);
             return 1;
           }
           if (isLocal) ctx.state?.declareLocal(n);
-          if (!isAssoc) ctx.env[n] = arg.slice(eq + 1);
+          if (!isAssoc) {
+            const rhs = arg.slice(eq + 1);
+            ctx.env[n] = flagInteger ? String(ctx.evalArith?.(rhs) ?? 0) : rhs;
+          }
         } else if (isLocal) {
           ctx.state?.declareLocal(arg);
           if (!(arg in ctx.env)) ctx.env[arg] = '';
         }
-        // `readonly NAME[=val]` marks the name AFTER its value is set, so the
-        // builtin's own assignment succeeds; later reassignments are rejected by
-        // the executor's applyAssignment (POSIX-fatal in posix mode).
-        if (isReadonly) ctx.state?.markReadonly?.(n);
+        // `readonly`/`-r` mark the name AFTER its value is set, so the builtin's
+        // own assignment succeeds; later reassignments are rejected by the
+        // executor's applyAssignment (POSIX-fatal in posix mode).
+        if (flagReadonly) ctx.state?.markReadonly?.(n);
       }
       return 0;
     }

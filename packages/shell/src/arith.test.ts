@@ -85,3 +85,39 @@ test('hex and octal literals', () => {
   expect(ev('0xff').value).toBe(255);
   expect(ev('010').value).toBe(8);
 });
+
+// ── WP-C: base literals, array-element lvalues, hex width ────────────────────
+
+test('base#num literals (2..64)', () => {
+  expect(ev('16#ff').value).toBe(255);
+  expect(ev('2#1010').value).toBe(10);
+  expect(ev('8#17').value).toBe(15);
+  expect(ev('36#z').value).toBe(35);
+  expect(ev('10#08').value).toBe(8);      // force decimal on a leading-zero string
+  expect(ev('16#FF').value).toBe(255);    // case-insensitive for base ≤ 36
+  expect(ev('64#A').value).toBe(36);      // base 64: A → 36
+});
+
+test('base#num rejects a bad base / digit', () => {
+  expect(() => ev('16#g')).toThrow();     // g ≥ 16
+  expect(() => ev('99#1')).toThrow();     // base out of range
+});
+
+test('hex literals ≥ 0x80000000 are not signed-32 truncated', () => {
+  expect(ev('0xFFFFFFFF').value).toBe(4294967295);
+  expect(ev('0x80000000').value).toBe(2147483648);
+  expect(ev('0xFFFFFFFF + 1').value).toBe(4294967296);
+  expect(ev('0x1F').value).toBe(31);
+});
+
+test('array-element lvalues a[i]++ / a[i]+=n via an ArithArrayAccess', () => {
+  const store: Record<string, string[]> = { a: ['1', '2', '3'] };
+  const access = {
+    getElement: (n: string, i: number) => store[n]?.[i],
+    setElement: (n: string, i: number, v: string) => { (store[n] ??= [])[i] = v; },
+  };
+  expect(evalArith('a[1]+=10', {}, access)).toBe(12);
+  expect(store.a[1]).toBe('12');
+  expect(evalArith('a[0]++', {}, access)).toBe(1);
+  expect(store.a[0]).toBe('2');
+});

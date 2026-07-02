@@ -127,6 +127,13 @@ export interface ShellContext {
   name?: string;
   /** Shell PID for `$$`. */
   pid?: number;
+  /**
+   * True for an interactive shell (a REPL front-end feeding one line per
+   * `exec()`). bash enables history expansion (`!!`, `!n`) only when interactive;
+   * a non-interactive shell (`-c`, a script, the default here) leaves it OFF so a
+   * bare `!` in `$((!x))` / `[ ! x ]` / `!cmd` negation is never a history event.
+   */
+  interactive?: boolean;
 }
 
 export type CommandResolver = (name: string) => string | URL | undefined;
@@ -257,6 +264,8 @@ export class Executor {
   private localSaved: Array<Map<string, string | undefined>> = [];
   /** Names marked `readonly` — reassigning one is rejected (fatal in POSIX mode). */
   private readonlyNames = new Set<string>();
+  /** Names declared `declare -i` (integer): assignments are arithmetic-evaluated. */
+  private integerNames = new Set<string>();
   /** `declare -n ref=target` namerefs (ref → target). Single-level only. */
   private namerefs = new Map<string, string>();
   /** Directory stack BELOW cwd (most-recent-first) for `pushd`/`popd`/`dirs`. */
@@ -270,10 +279,12 @@ export class Executor {
     noclobber: false,
     verbose: false,
     posix: false,
-    // History expansion (`!!`, `!n`, ...) — bash enables `histexpand` for
-    // interactive shells. The Executor `exec()` entry IS the interactive REPL
-    // line here, so default it on; `set +H` disables it (M13).
-    histexpand: true,
+    // History expansion (`!!`, `!n`, ...) — bash enables `histexpand` ONLY for
+    // interactive shells; a non-interactive shell (`-c`, a script, and every
+    // sandbox `exec()` here) has it OFF, so a bare `!` in `$((!x))`/`[ ! x ]`/`!cmd`
+    // negation is never mistaken for an event. An interactive REPL front-end can
+    // opt in with `set -H` (M13).
+    histexpand: false,
   };
   /** `shopt` bash options (extglob/globstar/nullglob/dotglob/nocaseglob/nocasematch). */
   private shoptStore: Record<string, boolean> = {
@@ -305,6 +316,9 @@ export class Executor {
   constructor(kernel: KernelClient, context: ShellContext, options: ExecutorOptions = {}) {
     this.kernel = kernel;
     this.context = context;
+    // History expansion follows interactivity (bash): ON for an interactive REPL,
+    // OFF for a non-interactive shell (scripts / `-c` / the default).
+    if (context.interactive) this.options.histexpand = true;
     this.resolve = options.resolve ?? ((name) => name);
     this.fs = options.fs;
     this.rootStdinStream = options.stdinStream;
@@ -344,6 +358,7 @@ export class Executor {
         let f = '';
         if (this.assocArrays.has(name)) f += 'A';
         else if (this.arrays.has(name)) f += 'a';
+        if (this.integerNames.has(name)) f += 'i';
         if (this.namerefs.has(name)) f += 'n';
         if (this.readonlyNames.has(name)) f += 'r';
         return f;
@@ -695,6 +710,8 @@ export class Executor {
       killJob: (spec, signal) => this.jobControl.killJob(spec, signal),
       markReadonly: (name) => { this.readonlyNames.add(name); },
       isReadonly: (name) => this.readonlyNames.has(name),
+      markInteger: (name) => { this.integerNames.add(name); },
+      isInteger: (name) => this.integerNames.has(name),
       setNameref: (ref, target) => { this.namerefs.set(ref, target); },
       resolveNameref: (name) => this.namerefs.get(name),
       dirStack: () => this.dirStackBelow,
@@ -2253,8 +2270,22 @@ export class Executor {
       this.environment.set(a.name, a.append ? (this.context.env[a.name] ?? '') + val : val);
       return false;
     }
+    // An integer-attributed name (`declare -i`) evaluates its RHS arithmetically;
+    // `+=` adds numerically rather than string-concatenating (bash).
+    if (this.integerNames.has(a.name)) {
+      const rhs = this.evalArithValue(val);
+      const next = a.append ? this.evalArithValue(this.context.env[a.name] ?? '0') + rhs : rhs;
+      this.context.env[a.name] = String(next);
+      return false;
+    }
     this.context.env[a.name] = a.append ? (this.context.env[a.name] ?? '') + val : val;
     return false;
+  }
+
+  /** Arithmetic-evaluate a string for an integer-attributed assignment (0 on error). */
+  private evalArithValue(expr: string): number {
+    try { return evalArith(expr, this.arithEnvForExpr()); }
+    catch { return 0; }
   }
 
   private async spawnExternal(name: string, argv: string[], localEnv: Record<string, string>, io: CommandIO, fd0?: StdinFdSpec, stdinStream?: ReadableStream<Uint8Array>): Promise<number> {

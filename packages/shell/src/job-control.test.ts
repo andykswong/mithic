@@ -197,7 +197,7 @@ test('HISTSIZE limits history length', async () => {
 // ── M13: history expansion (!!, !n, !-n, !string) ────────────────────────────
 
 test('!! expands to the last command (REPL-style)', async () => {
-  const h = mk();
+  const h = mk({ interactive: true });
   await h.ex.exec('echo hello');
   await h.ex.exec('!!');
   // First echo prints once; the !! re-runs `echo hello`.
@@ -205,13 +205,13 @@ test('!! expands to the last command (REPL-style)', async () => {
 });
 
 test('!! expands within a single multi-line script', async () => {
-  const h = mk();
+  const h = mk({ interactive: true });
   await h.ex.exec('echo one\n!!');
   expect(h.out.trim().split('\n')).toEqual(['one', 'one']);
 });
 
 test('!n expands to history entry n (1-based)', async () => {
-  const h = mk();
+  const h = mk({ interactive: true });
   await h.ex.exec('echo aaa');
   await h.ex.exec('echo bbb');
   await h.ex.exec('!1');
@@ -219,7 +219,7 @@ test('!n expands to history entry n (1-based)', async () => {
 });
 
 test('!-n expands to the n-th command from the end', async () => {
-  const h = mk();
+  const h = mk({ interactive: true });
   await h.ex.exec('echo x1');
   await h.ex.exec('echo x2');
   await h.ex.exec('!-2'); // two back = echo x1
@@ -227,7 +227,7 @@ test('!-n expands to the n-th command from the end', async () => {
 });
 
 test('!string expands to the most recent command starting with string', async () => {
-  const h = mk();
+  const h = mk({ interactive: true });
   await h.ex.exec('echo apple');
   await h.ex.exec('printf banana\\\\n');
   await h.ex.exec('!echo'); // most recent starting with "echo"
@@ -235,7 +235,7 @@ test('!string expands to the most recent command starting with string', async ()
 });
 
 test('!! mid-line: expansion is embedded into the surrounding command', async () => {
-  const h = mk();
+  const h = mk({ interactive: true });
   await h.ex.exec('echo hi');
   await h.ex.exec('echo before !! after');
   // `!!` expands to `echo hi`, yielding `echo before echo hi after`
@@ -243,14 +243,14 @@ test('!! mid-line: expansion is embedded into the surrounding command', async ()
 });
 
 test('history expansion does not touch quoted ! or != arithmetic', async () => {
-  const h = mk();
+  const h = mk({ interactive: true });
   // Single-quoted ! is literal; `!=` style and `! cmd` negation are left alone.
   await h.ex.exec("echo 'a!b'");
   expect(h.out.trim()).toBe('a!b');
 });
 
 test('set +H disables history expansion (!! stays literal -> event-not-found is suppressed)', async () => {
-  const h = mk();
+  const h = mk({ interactive: true });
   await h.ex.exec('echo first');
   await h.ex.exec('set +H');
   await h.ex.exec("echo 'has bang' >/dev/null; echo done");
@@ -258,7 +258,7 @@ test('set +H disables history expansion (!! stays literal -> event-not-found is 
 });
 
 test('unknown !ref reports event not found and runs nothing', async () => {
-  const h = mk();
+  const h = mk({ interactive: true });
   await h.ex.exec('!nope');
   expect(h.err).toContain('event not found');
 });

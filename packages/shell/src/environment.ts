@@ -194,6 +194,17 @@ export class Environment implements ShellEnv {
     return this.arrays.get(name);
   }
 
+  /** Write one indexed-array element (for `a[i]=…` arithmetic lvalues). Creates
+   * the array if absent; a negative index counts from the end (clamped at 0). */
+  setArrayElement(name: string, index: number, value: string): void {
+    name = this.deref(name);
+    const arr = this.arrays.get(name) ?? [];
+    let i = index < 0 ? arr.length + index : index;
+    if (i < 0) i = 0;
+    arr[i] = value;
+    this.arrays.set(name, arr);
+  }
+
   getAssoc(name: string): Map<string, string> | undefined { return this.assocArrays.get(this.deref(name)); }
 
   get cwd(): string { return this.context.cwd; }

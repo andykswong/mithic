@@ -31,6 +31,15 @@ function tokenize(src: string): Tok[] {
     if (/[0-9]/.test(c)) {
       let j = i;
       while (j < n && /[0-9a-fA-FxX]/.test(src[j])) j++;
+      // `base#digits` literal (e.g. 16#ff, 2#1010, 36#z, 10#08). The base is the
+      // leading run; the digits after `#` use [0-9a-zA-Z@_] valued 0..63.
+      if (src[j] === '#') {
+        let k = j + 1;
+        while (k < n && /[0-9a-zA-Z@_]/.test(src[k])) k++;
+        toks.push({ t: 'num', v: parseBaseLiteral(src.slice(i, j), src.slice(j + 1, k)) });
+        i = k;
+        continue;
+      }
       const raw = src.slice(i, j);
       toks.push({ t: 'num', v: parseIntLiteral(raw) });
       i = j;
@@ -39,6 +48,18 @@ function tokenize(src: string): Tok[] {
     if (/[A-Za-z_]/.test(c)) {
       let j = i;
       while (j < n && /[A-Za-z0-9_]/.test(src[j])) j++;
+      // An array-element lvalue `name[subscript]` is captured as one name token
+      // (subscript kept verbatim, balanced brackets) so `a[i]++`/`a[i]+=n` work.
+      if (src[j] === '[') {
+        let depth = 0, k = j;
+        for (; k < n; k++) {
+          if (src[k] === '[') depth++;
+          else if (src[k] === ']') { depth--; if (depth === 0) { k++; break; } }
+        }
+        toks.push({ t: 'name', v: src.slice(i, k) });
+        i = k;
+        continue;
+      }
       toks.push({ t: 'name', v: src.slice(i, j) });
       i = j;
       continue;
@@ -54,20 +75,65 @@ function tokenize(src: string): Tok[] {
 }
 
 function parseIntLiteral(raw: string): number {
-  if (/^0[xX]/.test(raw)) return parseInt(raw, 16) | 0 || parseInt(raw, 16);
+  if (/^0[xX]/.test(raw)) { const v = parseInt(raw, 16); return Number.isNaN(v) ? 0 : v; }
   if (/^0[0-7]+$/.test(raw)) return parseInt(raw, 8);
   const v = parseInt(raw, 10);
   return Number.isNaN(v) ? 0 : v;
+}
+
+/**
+ * Parse a bash `base#digits` literal. Base is 2..64; digit values are
+ * 0-9 → 0..9, a-z → 10..35, A-Z → 36..61, `@` → 62, `_` → 63. For bases ≤ 36 the
+ * digits are case-insensitive (bash). A digit ≥ base or a bad base throws.
+ */
+function parseBaseLiteral(baseStr: string, digits: string): number {
+  const base = parseInt(baseStr, 10);
+  if (Number.isNaN(base) || base < 2 || base > 64) throw new SyntaxError(`arith: ${baseStr}: invalid arithmetic base`);
+  const digitValue = (ch: string): number => {
+    let v: number;
+    if (ch >= '0' && ch <= '9') v = ch.charCodeAt(0) - 48;
+    else if (base <= 36) {
+      const lower = ch.toLowerCase();
+      if (lower >= 'a' && lower <= 'z') v = lower.charCodeAt(0) - 97 + 10; else v = base;
+    } else if (ch >= 'a' && ch <= 'z') v = ch.charCodeAt(0) - 97 + 10;
+    else if (ch >= 'A' && ch <= 'Z') v = ch.charCodeAt(0) - 65 + 36;
+    else if (ch === '@') v = 62;
+    else if (ch === '_') v = 63;
+    else v = base;
+    if (v >= base) throw new SyntaxError(`arith: ${baseStr}#${digits}: value too great for base`);
+    return v;
+  };
+  let result = 0;
+  for (const ch of digits) result = result * base + digitValue(ch);
+  return result;
+}
+
+/** Optional indexed-array element accessors for `a[i]` lvalues in arithmetic. */
+export interface ArithArrayAccess {
+  getElement(name: string, index: number): string | undefined;
+  setElement(name: string, index: number, value: string): void;
 }
 
 class ArithParser {
   private toks: Tok[];
   private pos = 0;
   private env: Record<string, string>;
+  private arr?: ArithArrayAccess;
 
-  constructor(toks: Tok[], env: Record<string, string>) {
+  constructor(toks: Tok[], env: Record<string, string>, arr?: ArithArrayAccess) {
     this.toks = toks;
     this.env = env;
+    this.arr = arr;
+  }
+
+  /** Split an `a[idx]` name into its parts, evaluating the subscript arithmetically. */
+  private arrayRef(name: string): { arr: string; index: number } | undefined {
+    const b = name.indexOf('[');
+    if (b < 0 || !name.endsWith(']')) return undefined;
+    const arr = name.slice(0, b);
+    const idxSrc = name.slice(b + 1, -1);
+    const index = new ArithParser(tokenize(idxSrc), this.env, this.arr).parse();
+    return { arr, index };
   }
 
   private peek(): Tok | undefined { return this.toks[this.pos]; }
@@ -78,12 +144,15 @@ class ArithParser {
   }
 
   private read(name: string): number {
-    const raw = this.env[name];
+    const ref = this.arrayRef(name);
+    const raw = ref ? this.arr?.getElement(ref.arr, ref.index) : this.env[name];
     if (raw === undefined || raw === '') return 0;
     const v = parseInt(raw.trim(), 10);
     return Number.isNaN(v) ? 0 : v;
   }
   private write(name: string, value: number): number {
+    const ref = this.arrayRef(name);
+    if (ref) { this.arr?.setElement(ref.arr, ref.index, String(value)); return value; }
     this.env[name] = String(value);
     return value;
   }
@@ -273,9 +342,10 @@ function checkNonZero(n: number): number {
   return n;
 }
 
-/** Evaluate an arithmetic expression. Mutates `env` for assignments. */
-export function evalArith(src: string, env: Record<string, string>): number {
+/** Evaluate an arithmetic expression. Mutates `env` for assignments; `arr` (if
+ * given) backs `a[i]` element reads/writes. */
+export function evalArith(src: string, env: Record<string, string>, arr?: ArithArrayAccess): number {
   const toks = tokenize(src);
   if (toks.length === 0) return 0;
-  return new ArithParser(toks, env).parse();
+  return new ArithParser(toks, env, arr).parse();
 }

@@ -17,6 +17,7 @@
  * `{$V,b}` splits on the literal braces and only then expands `$V` in each arm.
  */
 import { evalArith } from './arith.ts';
+import type { ArithArrayAccess } from './arith.ts';
 import { globToReSource, globToRegExp, isGlobPattern } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
 import { shellQuote } from './quote.ts';
@@ -57,6 +58,8 @@ export interface ShellEnv {
   nounset?(): boolean;
   /** Read an indexed array's elements (undefined ⇒ not an array). Optional. */
   getArray?(name: string): string[] | undefined;
+  /** Write one indexed-array element (for `a[i]=…` arithmetic lvalues). Optional. */
+  setArrayElement?(name: string, index: number, value: string): void;
   /** Read an associative array's map (undefined ⇒ not associative). Optional. */
   getAssoc?(name: string): Map<string, string> | undefined;
   /** True when POSIX mode is active (disables brace expansion). Optional. */
@@ -372,7 +375,7 @@ export class Expander {
       const expanded = await this.expandSubExpr(expr);
       const liveEnv = this.arithEnvProxy();
       let v: number;
-      try { v = evalArith(expanded, liveEnv); }
+      try { v = evalArith(expanded, liveEnv, this.arithArrayAccess()); }
       catch (e) { throw new ExpansionError((e as Error).message); }
       return { value: String(v), next: end + 2 };
     }
@@ -472,6 +475,25 @@ export class Expander {
       },
       has: (_t, p: string) => env.has(p),
     }) as Record<string, string>;
+  }
+
+  /** Array-element accessor for `a[i]` arithmetic lvalues (undefined when the env
+   * doesn't support arrays). Reads via `getArray`, writes via `setArrayElement`. */
+  private arithArrayAccess(): ArithArrayAccess | undefined {
+    const env = this.env;
+    if (!env.getArray || !env.setArrayElement) return undefined;
+    return {
+      getElement: (name, index) => {
+        const arr = env.getArray!(name);
+        if (!arr) return undefined;
+        const i = index < 0 ? arr.length + index : index;
+        return arr[i];
+      },
+      setElement: (name, index, value) => {
+        if (env.isReadonly?.(name)) { env.warn?.(`${name}: readonly variable`); return; }
+        env.setArrayElement!(name, index, value);
+      },
+    };
   }
 
   /**
