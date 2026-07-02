@@ -116,9 +116,10 @@ These are intentional design limits, not missing features:
   `\[[^\]]*\]`), so it is mis-parsed as a command. A simple/arithmetic subscript
   (`a[i]=`, `a[i+1]=`) works, and a nested subscript in a READ (`${a[b[0]]}`) works.
   Pre-existing; rare.
-- **Combined `declare` single-letter flags are not split.** `declare -ar a=(…)`
-  does not register `a` readonly (only the array attribute applies); use
-  `declare -r -a` (separate flags), which works. Pre-existing; low value.
+- **`declare`/`local`/`readonly` NAME=(…) array-literal is not applied.**
+  `declare -a arr=(a b c)` leaves `arr` empty — the parenthesised element list is
+  a separate token the declaration builtins do not collect (the array literal only
+  works as a bare assignment `arr=(a b c)`, no `declare` prefix). Pre-existing.
 - **`declare -i` on an ARRAY does not arithmetic-evaluate element assignments.**
   `declare -i a; a[0]=3+4` stores `3+4` (bash: `7`). The integer attribute is
   applied on scalar assignments only. Pre-existing; use `(( a[0]=3+4 ))` which

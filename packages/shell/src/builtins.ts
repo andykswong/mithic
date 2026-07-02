@@ -426,13 +426,22 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       // Assign NAME=value into the (function-local for `local`) env.
       const isLocal = name === 'local';
       const isReadonly = name === 'readonly';
-      const isAssoc = name === 'declare' && args.includes('-A');
+      // Collect flag LETTERS from every leading `-…` token, so combined flags like
+      // `declare -ar` / `local -ri` / `declare -Ax` work the same as `-a -r`.
+      // Only tokens before the first non-flag operand are options (bash); a bare
+      // `-` or `+…` is not a flag token here.
+      const flags = new Set<string>();
+      for (const a of args) {
+        if (a.length > 1 && a[0] === '-') { for (const ch of a.slice(1)) flags.add(ch); }
+        else break; // first operand — stop flag scanning
+      }
+      const isAssoc = name === 'declare' && flags.has('A');
       // `declare -n ref=target` declares a nameref (single-level): reads of `ref`
       // and writes to `ref` are redirected to `target` (the latter in the
       // executor's applyAssignment). Recorded instead of storing a literal value.
-      const isNameref = name === 'declare' && args.includes('-n');
+      const isNameref = name === 'declare' && flags.has('n');
       // `declare -p [name...]` prints the declare reconstruction (no assignment).
-      if (name === 'declare' && args.includes('-p')) {
+      if (name === 'declare' && flags.has('p')) {
         const names = args.filter((x) => !x.startsWith('-'));
         const out = ctx.state?.declareP?.(names);
         if (out === undefined) return 0;
@@ -442,8 +451,8 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       }
       // `declare -i` / `-r` attributes (also honored on `local`). `readonly` is
       // always the readonly attribute; a `-i` on any of them marks integer.
-      const flagInteger = args.includes('-i');
-      const flagReadonly = isReadonly || args.includes('-r');
+      const flagInteger = flags.has('i');
+      const flagReadonly = isReadonly || flags.has('r');
       if (isAssoc && (ctx.state?.getOption('posix') ?? false)) {
         errOut(ctx, 'shell: declare: -A: not supported in POSIX mode\n');
         return 2;
@@ -451,7 +460,10 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       for (const arg of args) {
         if (arg.startsWith('-')) continue; // option flags handled above
         const eq = arg.indexOf('=');
-        const n = eq > 0 ? arg.slice(0, eq) : arg;
+        const rawName = eq > 0 ? arg.slice(0, eq) : arg;
+        // Strip an `+=` append marker and any `[subscript]` for the attribute name
+        // (so `declare -i n+=` / `declare -r a[0]=` mark the base name `n`/`a`).
+        const n = (rawName.endsWith('+') ? rawName.slice(0, -1) : rawName).replace(/\[.*\]$/, '');
         if (isNameref) {
           // `declare -n ref=target`: record the mapping (no literal value stored).
           if (eq > 0) ctx.state?.setNameref?.(n, arg.slice(eq + 1));

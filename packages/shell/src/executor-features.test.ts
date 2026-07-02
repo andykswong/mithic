@@ -1048,3 +1048,16 @@ test('array subscripts are arithmetic (${a[i]}, ${a[b[0]]}, a[i]=v)', async () =
   expect((await run('a=(x y z); i=1; a[i]=Q; echo "${a[1]}"')).out).toBe('Q\n');
   expect((await run('a=(x y z); i=1; a[i+1]=W; echo "${a[2]}"')).out).toBe('W\n');
 });
+
+test('combined declare/local flags (-ri, -ir, -rx) apply BOTH attributes', async () => {
+  // -ri = readonly + integer: RHS is arith-evaluated AND reassignment is rejected.
+  expect((await run('declare -ri n=2+3; echo "$n"; n=9; echo "$n"')).out).toBe('5\n5\n');
+  expect((await run('declare -ir n=10; n=20; echo "$n"')).err).toMatch(/readonly/);
+  // local -ri inside a function.
+  expect((await run('f(){ local -ri x=5; x=6; echo "$x"; }; f')).out).toBe('5\n');
+  // -rx = readonly + export.
+  expect((await run('declare -rx Z=hi; Z=bye; echo "$Z"')).out).toBe('hi\n');
+  // single flags still work.
+  expect((await run('declare -i n=3+4; echo "$n"')).out).toBe('7\n');
+  expect((await run('declare -r y=1; y=2; echo "$y"')).out).toBe('1\n');
+});
