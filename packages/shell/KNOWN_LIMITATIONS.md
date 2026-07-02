@@ -108,10 +108,11 @@ These are intentional design limits, not missing features:
   `declare -a arr=(a b c)` leaves `arr` empty — the parenthesised element list is
   a separate token the declaration builtins do not collect (the array literal only
   works as a bare assignment `arr=(a b c)`, no `declare` prefix). Pre-existing.
-- **`${arr[i]@Q}` / `@U` / `@L` transforms are not applied to array/assoc
-  elements** (they return the raw element). Element access supports the full
-  string-operator set (`:-`, `#`, `%`, `/`, `^`, `,`, `:off:len`) but not the
-  `@`-transforms. Pre-existing; scalar `${var@Q}` etc. work.
+- **The NAME-keyed `@`-transforms `${arr[i]@a}` / `@A` / `@P` / `@K` / `@k` are
+  not applied to array/assoc elements.** The VALUE transforms `@Q`/`@U`/`@u`/`@L`/
+  `@E` DO work on elements; only the attribute/declare-reconstruction/prompt forms
+  (which need whole-variable metadata) fall through to the raw element value.
+  Scalar `${var@a}` etc. work fully.
 
 ---
 

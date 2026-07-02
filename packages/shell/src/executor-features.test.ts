@@ -1095,3 +1095,12 @@ test('declare -i arithmetic-evaluates array-element assignments', async () => {
   // non-integer array stores the literal
   expect((await run('a[0]=3+4; echo "${a[0]}"')).out).toBe('3+4\n');
 });
+
+test('value @-transforms (@Q @U @u @L @E) apply to array/assoc elements', async () => {
+  expect((await run('a=(hello world); echo "${a[0]@U}"')).out).toBe('HELLO\n');
+  expect((await run('a=(HELLO); echo "${a[0]@L}"')).out).toBe('hello\n');
+  expect((await run('a=(hello); echo "${a[0]@u}"')).out).toBe('Hello\n');
+  expect((await run('declare -A m; m[k]=hello; echo "${m[k]@U}"')).out).toBe('HELLO\n');
+  // scalar transforms unaffected
+  expect((await run('v=hi; echo "${v@U}"')).out).toBe('HI\n');
+});

@@ -839,6 +839,19 @@ export class Expander {
     onAssign?: (word: string) => string,
   ): Promise<string> {
     const assign = onAssign ?? ((word: string) => this.defaultAssign(nameForError, word));
+    // `${var@OP}` VALUE transforms that depend only on the value (`@Q`/`@U`/`@u`/
+    // `@L`/`@E`) — shared by scalars and array/assoc elements. The NAME-keyed
+    // transforms (`@a`/`@A`/`@P`/`@K`/`@k`) need variable metadata and are handled
+    // by the scalar caller, not here.
+    if (rest[0] === '@') {
+      const op = rest[1];
+      if (op === 'Q') return shellQuote(value);
+      if (op === 'U') return value.toUpperCase();
+      if (op === 'u') return value.length > 0 ? value[0].toUpperCase() + value.slice(1) : value;
+      if (op === 'L') return value.toLowerCase();
+      if (op === 'E') return interpretEscapes(value, /*octalBackslashZero*/ false, /*ansiC*/ true);
+      return value;
+    }
     // ${var:-word} ${var:=word} ${var:?word} ${var:+word}
     if (rest[0] === ':' && '-=?+'.includes(rest[1] ?? '')) {
       const op = rest[1];
