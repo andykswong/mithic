@@ -1068,7 +1068,8 @@ export class Executor {
   private arithEnvForExpr(rejectedReadonly?: Set<string>): Record<string, string> {
     const warned = new Set<string>();
     return new Proxy({}, {
-      get: (_t, p: string) => this.context.env[p] ?? '',
+      // A bare array name in arithmetic resolves to element 0 (bash): `(( a ))` == `(( a[0] ))`.
+      get: (_t, p: string) => this.context.env[p] ?? this.arrays.get(p)?.[0] ?? '',
       set: (_t, p: string, v) => {
         if (this.readonlyNames.has(p)) {
           rejectedReadonly?.add(p);
@@ -1077,7 +1078,7 @@ export class Executor {
         }
         this.context.env[p] = String(v); return true;
       },
-      has: (_t, p: string) => p in this.context.env,
+      has: (_t, p: string) => p in this.context.env || this.arrays.get(p) !== undefined,
     }) as Record<string, string>;
   }
 

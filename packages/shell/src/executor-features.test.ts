@@ -1070,3 +1070,13 @@ test('sparse indexed arrays skip holes in ${arr[@]}/${#arr[@]}/${!arr[@]}', asyn
   // dense arrays unaffected
   expect((await run('a=(x y z); echo "${a[@]} ${#a[@]} ${!a[@]}"')).out).toBe('x y z 3 0 1 2\n');
 });
+
+test('a bare array name in arithmetic resolves to element 0 ($((a)) == $((a[0])))', async () => {
+  expect((await run('a=(5 9); echo $((a))')).out).toBe('5\n');
+  expect((await run('a=(5 9); echo $((a+1))')).out).toBe('6\n');
+  expect((await run('a=(7 8); let "x = a * 2"; echo $x')).out).toBe('14\n');
+  expect((await run('a=(2); for ((i=a; i<5; i++)); do printf "%s " $i; done')).out).toBe('2 3 4 ');
+  // a real scalar still takes precedence; an empty array is 0
+  expect((await run('a=100; echo $((a))')).out).toBe('100\n');
+  expect((await run('a=(); echo $((a+5))')).out).toBe('5\n');
+});

@@ -470,12 +470,13 @@ export class Expander {
   private arithEnvProxy(): Record<string, string> {
     const env = this.env;
     return new Proxy({}, {
-      get: (_t, p: string) => env.get(p) ?? '',
+      // A bare array name in arithmetic resolves to element 0 (bash): `$((a))` == `$((a[0]))`.
+      get: (_t, p: string) => env.get(p) ?? env.getArray?.(p)?.[0] ?? '',
       set: (_t, p: string, v) => {
         if (env.isReadonly?.(p)) { env.warn?.(`${p}: readonly variable`); return true; }
         env.set(p, String(v)); return true;
       },
-      has: (_t, p: string) => env.has(p),
+      has: (_t, p: string) => env.has(p) || this.env.getArray?.(p) !== undefined,
     }) as Record<string, string>;
   }
 
