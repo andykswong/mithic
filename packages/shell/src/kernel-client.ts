@@ -170,6 +170,21 @@ export interface DuplexFd {
   write(s: string): void | Promise<void>;
   /** Read one line (up to and including `\n`, stripped) from the live fd, or `undefined` at EOF. */
   readLine(): Promise<string | undefined>;
+  /**
+   * Datagram fd (a `/dev/udp/...` target). A UDP datagram has no `\n` and no EOF,
+   * so the line-oriented {@link readLine} would block forever (or until a
+   * `read -t` timeout) and UTF-8-mangle the bytes. When `datagram` is set the
+   * executor reads via {@link readDatagram} instead — ONE `fs/read` = ONE
+   * datagram, latin1-decoded so every byte round-trips through the shell string
+   * model losslessly. TCP fds leave this unset and keep {@link readLine}.
+   */
+  datagram?: boolean;
+  /**
+   * Read ONE datagram from a `datagram` fd as a latin1 string (each byte → one
+   * UTF-16 code unit, 0x00–0xFF), or `undefined` when no data arrived. Present
+   * only when {@link datagram} is true.
+   */
+  readDatagram?(): Promise<string | undefined>;
   /** Close the underlying fd. */
   close(): void | Promise<void>;
 }
