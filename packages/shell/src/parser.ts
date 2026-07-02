@@ -516,7 +516,7 @@ class Parser {
    */
   private parseAssignmentWord(): Assignment {
     const word = this.next()!;
-    const m = /^([A-Za-z_][A-Za-z0-9_]*)(\[([^\]]*)\])?(\+?)=(.*)$/s.exec(word.raw);
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)(\[((?:[^[\]]|\[[^\]]*\])*)\])?(\+?)=(.*)$/s.exec(word.raw);
     if (!m) {
       // Shouldn't happen (isAssignment gated), but degrade gracefully.
       const eq = word.value.indexOf('=');
@@ -622,7 +622,9 @@ class Parser {
 function isAssignment(word: string): boolean {
   // Scalar `x=`, append `x+=`, element `a[i]=` / `a[i]+=` (array literal `a=(…)`
   // also starts with `a=`/`a+=` and is detected via the trailing LPAREN token).
-  return /^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=/.test(word);
+  // The subscript may contain ONE level of nested `[...]` (e.g. `a[b[0]]=`), so
+  // the class allows a bracket group inside.
+  return /^[A-Za-z_][A-Za-z0-9_]*(\[(?:[^[\]]|\[[^\]]*\])*\])?\+?=/.test(word);
 }
 
 function isName(word: string): boolean {

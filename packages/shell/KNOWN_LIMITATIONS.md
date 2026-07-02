@@ -104,12 +104,6 @@ These are intentional design limits, not missing features:
   `ffffffffffffffff` (64-bit); `printf '%d' 9223372036854775807` loses precision
   beyond 2^53. Full 64-bit parity would require BigInt arithmetic throughout — out
   of scope. The common ≤ 32-bit range is correct.
-- **A nested-bracket subscript in an ARRAY-ELEMENT ASSIGNMENT is not parsed.**
-  `a[b[0]]=Z` (the LHS subscript contains a nested `[...]`) is not recognized as an
-  assignment (`isAssignment`/`parseAssignmentWord` use a bracket-naive
-  `\[[^\]]*\]`), so it is mis-parsed as a command. A simple/arithmetic subscript
-  (`a[i]=`, `a[i+1]=`) works, and a nested subscript in a READ (`${a[b[0]]}`) works.
-  Pre-existing; rare.
 - **`declare`/`local`/`readonly` NAME=(…) array-literal is not applied.**
   `declare -a arr=(a b c)` leaves `arr` empty — the parenthesised element list is
   a separate token the declaration builtins do not collect (the array literal only

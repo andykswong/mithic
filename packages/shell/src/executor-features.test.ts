@@ -1080,3 +1080,10 @@ test('a bare array name in arithmetic resolves to element 0 ($((a)) == $((a[0]))
   expect((await run('a=100; echo $((a))')).out).toBe('100\n');
   expect((await run('a=(); echo $((a+5))')).out).toBe('5\n');
 });
+
+test('nested-bracket subscript in an array-element assignment (a[b[0]]=v)', async () => {
+  expect((await run('a=(0 0 0); b=(2); a[b[0]]=Z; echo "${a[2]}"')).out).toBe('Z\n');
+  expect((await run('a=(0 0 0); b=(3); a[b[0]-1]=Q; echo "${a[2]}"')).out).toBe('Q\n');
+  // simple/arithmetic subscripts still parse
+  expect((await run('a=(0 0 0); i=1; a[i+1]=W; echo "${a[2]}"')).out).toBe('W\n');
+});
