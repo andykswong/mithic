@@ -479,7 +479,8 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         const rawName = eq > 0 ? arg.slice(0, eq) : arg;
         // Strip an `+=` append marker and any `[subscript]` for the attribute name
         // (so `declare -i n+=` / `declare -r a[0]=` mark the base name `n`/`a`).
-        const n = (rawName.endsWith('+') ? rawName.slice(0, -1) : rawName).replace(/\[.*\]$/, '');
+        const append = rawName.endsWith('+');
+        const n = (append ? rawName.slice(0, -1) : rawName).replace(/\[.*\]$/, '');
         if (isNameref) {
           // `declare -n ref=target`: record the mapping (no literal value stored).
           if (eq > 0) ctx.state?.setNameref?.(n, arg.slice(eq + 1));
@@ -491,17 +492,23 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         // is arithmetic-evaluated (bash: `declare -i n=1+2` → n=3).
         if (flagInteger) ctx.state?.markInteger?.(n);
         if (eq > 0) {
-          // Reassigning an already-readonly var via declare/local fails (bash). The
-          // `readonly NAME=val` form is exempt — it sets THEN marks below, so a
-          // first `readonly RO=1` succeeds; only a later write to RO is rejected.
-          if (!flagReadonly && ctx.state?.isReadonly?.(n)) {
+          // A write to an ALREADY-readonly var fails — even via `readonly NAME=val`
+          // (bash: `readonly r=a; readonly r=b` errors). The first `readonly RO=1`
+          // succeeds because RO isn't readonly YET (it is marked below).
+          if (ctx.state?.isReadonly?.(n)) {
             errOut(ctx, `shell: ${name}: ${n}: readonly variable\n`);
             return 1;
           }
           if (isLocal) ctx.state?.declareLocal(n);
           if (!isAssoc) {
             const rhs = arg.slice(eq + 1);
-            ctx.env[n] = flagInteger ? String(ctx.evalArith?.(rhs) ?? 0) : rhs;
+            const prev = append ? (ctx.env[n] ?? '') : '';
+            if (flagInteger) {
+              const v = ctx.evalArith?.(rhs) ?? 0;
+              ctx.env[n] = String(append ? (ctx.evalArith?.(prev || '0') ?? 0) + v : v);
+            } else {
+              ctx.env[n] = prev + rhs; // `+=` appends (prev is '' when not append)
+            }
           }
         } else if (isLocal) {
           ctx.state?.declareLocal(arg);

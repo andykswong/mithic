@@ -1115,3 +1115,15 @@ test('unset clears arrays/assoc/elements (not just scalars)', async () => {
   expect((await run('x=5; unset x; echo "[$x]"')).out).toBe('[]\n');
   expect((await run('readonly r=1; unset r; echo "$r"')).err).toMatch(/readonly/);
 });
+
+test('declare/local/readonly with += appends (integer adds, string concats)', async () => {
+  expect((await run('declare -i s=10; declare -i s+=5; echo "$s"')).out).toBe('15\n');
+  expect((await run('declare s=hello; declare s+=world; echo "$s"')).out).toBe('helloworld\n');
+  expect((await run('f(){ local -i c=3; local -i c+=2; echo "$c"; }; f')).out).toBe('5\n');
+  // a second `readonly NAME=…` on an already-readonly var is rejected (value kept)
+  const r = await run('readonly RO=1; readonly RO=2; echo "$RO"');
+  expect(r.out).toBe('1\n');
+  expect(r.err).toMatch(/readonly/);
+  // but the FIRST readonly declaration succeeds
+  expect((await run('readonly RO=7; echo "$RO"')).out).toBe('7\n');
+});
