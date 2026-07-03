@@ -115,6 +115,19 @@ These are intentional design limits, not missing features:
   and `m["a b"]=X`. Only the rare unquoted-space-in-subscript literal falls through;
   fixing it would require the lexer to disambiguate an assoc subscript from a test
   command at tokenize time (ambiguous, high blast radius). Quote the key.
+- **Assigning to a readonly variable is not FATAL to a `-c` command string.** bash
+  aborts a `bash -c '…'` (only) on a readonly-variable assignment error (`readonly x=5;
+  x=9; echo after` prints nothing, exit 1), but a readonly reassignment in a *script
+  file* is non-fatal (the rest runs). mithic reports the error + exit 1 and CONTINUES
+  in both cases (matching the script-file behavior). It has no `-c`-vs-script-file
+  distinction in the Executor, and POSIX mode already makes readonly-reassign fatal;
+  the non-posix `-c`-only abort is a narrow bash quirk not worth a mode flag.
+- **`printf %c` / `%.1s` of a multibyte argument emits a whole codepoint, not the
+  first BYTE.** bash's byte-oriented `printf '%c' 'é'` writes one UTF-8 byte (`0xc3`);
+  mithic's JS-string interpreter emits the first code UNIT (the whole `é`, or a lone
+  surrogate half for an astral char). ASCII `%c` matches bash exactly. Faithful
+  single-byte output would require a byte-oriented printf rewrite over the JS-string
+  surface — out of scope; the common ASCII case is correct.
 
 ---
 
