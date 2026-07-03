@@ -222,6 +222,14 @@ export interface BuiltinContext {
    */
   resolveExternal?(name: string): string | undefined | Promise<string | undefined>;
   /**
+   * Evaluate a `test`/`[` unary file/variable/option operator (`-e`/`-f`/`-d`/`-v`/
+   * `-R`/…) or a file-comparison binary operator (`-nt`/`-ot`/`-ef`, whose two
+   * operands arrive NUL-joined) against the live VFS + shell state. Backs the same
+   * logic `[[ ]]` uses (the executor's `condFileTest`). Absent in pure-builtin unit
+   * tests, where such a test evaluates to false (nonexistent path).
+   */
+  condTest?(op: string, operand: string): boolean | Promise<boolean>;
+  /**
    * Structured assignment operands for an ASSIGNMENT BUILTIN (`declare`/`local`/
    * `readonly`/`export`/`typeset`), parsed by the parser as assignment words so an
    * array literal `declare -a arr=(a b c)` arrives as an Assignment with an `array`
@@ -1072,12 +1080,17 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         if (a[a.length - 1] !== ']') { errOut(ctx, 'shell: [: missing `]\'\n'); return 2; }
         a = a.slice(0, -1);
       }
-      // A numeric comparison (`-eq` …) on a non-integer / out-of-int64-range operand
-      // is a bash error: `integer expected`, exit 2.
+      // Errors are exit 2 + a bash diagnostic: a numeric comparison on a non-integer /
+      // out-of-int64-range operand (`integer expected`), or a malformed expression
+      // (`… operator expected` / `too many arguments`). File/variable/option unary
+      // tests + `-nt/-ot/-ef` route through ctx.condTest (executor-backed VFS/state).
       try {
-        return evalTest(a) ? 0 : 1;
+        return (await evalTest(a, ctx.condTest)) ? 0 : 1;
       } catch (e) {
-        if (e instanceof TestIntegerError) { errOut(ctx, `shell: ${name}: ${e.message}\n`); return 2; }
+        if (e instanceof TestIntegerError || e instanceof TestSyntaxError) {
+          errOut(ctx, `shell: ${name}: ${e.message}\n`);
+          return 2;
+        }
         throw e;
       }
     }
@@ -1651,15 +1664,36 @@ function splitKeepingDelimiter(data: string, delim: string): string[] {
   return out;
 }
 
-/** Unary string-test operators the pure `test`/`[` supports (no VFS file tests). */
-const TEST_UNARY = new Set(['-z', '-n']);
+/**
+ * The full set of `test`/`[` UNARY operators bash recognizes (its `test_unop`).
+ * `-z`/`-n` are pure string tests; the rest are file/variable/option/terminal
+ * tests delegated to the injected {@link BuiltinContext.condTest} callback (which
+ * the executor backs with the same VFS/state logic `[[ ]]` uses). Recognizing the
+ * whole set is what lets a bad operator produce "unary operator expected" rather
+ * than being silently treated as a truthy string.
+ */
+const TEST_UNARY = new Set([
+  '-a', '-b', '-c', '-d', '-e', '-f', '-g', '-h', '-k', '-n', '-o', '-p',
+  '-r', '-s', '-t', '-u', '-w', '-x', '-z', '-G', '-L', '-N', '-O', '-R', '-S', '-v',
+]);
 
-function unaryTest(op: string, s: string): boolean {
-  switch (op) {
-    case '-z': return s === '';
-    case '-n': return s !== '';
-    default: return s !== ''; // an unsupported unary treated as a 1-arg string test
-  }
+/** bash's `test_binop`: string, numeric, and file-comparison binary operators. */
+const TEST_BINARY = new Set([
+  '=', '==', '!=', '<', '>',
+  '-eq', '-ne', '-lt', '-le', '-gt', '-ge',
+  '-nt', '-ot', '-ef',
+]);
+
+/** A `test`/`[` unary evaluator — pure `-z`/`-n` plus an async file/var/option test. */
+type UnaryTestFn = (op: string, operand: string) => boolean | Promise<boolean>;
+
+async function unaryTest(op: string, s: string, fileTest?: UnaryTestFn): Promise<boolean> {
+  if (op === '-z') return s === '';
+  if (op === '-n') return s !== '';
+  // A file/variable/option/terminal test — delegate to the executor-backed callback
+  // (VFS stat, variable set-ness, …). With no callback (pure-builtin unit tests) a
+  // file test cannot be evaluated → false, matching a nonexistent path.
+  return fileTest ? await fileTest(op, s) : false;
 }
 
 /** Thrown by a `test -eq` numeric operand that is not a valid intmax_t integer;
@@ -1667,6 +1701,13 @@ function unaryTest(op: string, s: string): boolean {
 class TestIntegerError extends Error {
   operand: string;
   constructor(operand: string) { super(`${operand}: integer expected`); this.operand = operand; }
+}
+
+/** Thrown by a malformed `test`/`[` expression (bad operator, wrong arg count);
+ * the builtin catches it → bash's diagnostic (`… operator expected` / `too many
+ * arguments` / `argument expected`) on stderr + exit 2. */
+class TestSyntaxError extends Error {
+  constructor(message: string) { super(message); }
 }
 
 const TEST_INTMAX_MAX = (1n << 63n) - 1n;
@@ -1703,89 +1744,116 @@ export function testNumericCompare(a: string, op: string, b: string): boolean | 
   }
 }
 
-function binaryTest(a: string, op: string, b: string): boolean {
+async function binaryTest(a: string, op: string, b: string, fileTest?: UnaryTestFn): Promise<boolean> {
   switch (op) {
     case '=':
     case '==': return a === b;
     case '!=': return a !== b;
     case '<': return a < b;   // lexical (byte) ordering, as in bash test/[
     case '>': return a > b;
+    // File-comparison binops (`-nt`/`-ot`/`-ef`) delegate to the executor callback;
+    // with only `{dir}` stat available they compare conservatively (see condTest).
+    case '-nt': case '-ot': case '-ef':
+      return fileTest ? await fileTest(op, a + '\0' + b) : false;
     default: return testNumericCompare(a, op, b) ?? false;
   }
 }
 
 /**
- * POSIX `test`/`[` evaluation. Handles the 0/1/2/3-arg special forms exactly as
- * POSIX specifies, then a general recursive grammar for 4+ args with `!`
- * negation, `-a` (AND, binds tighter) / `-o` (OR), and `( )` grouping.
+ * bash `test`/`[` evaluation, argc-driven exactly as bash's `test_command`:
+ *   0 args → false; 1 → string non-empty; 2 → `! e` or `UNOP arg`; 3 → `a BINOP b`
+ *   / `! e` / `( e )`; 4 → `! e3`; else the general precedence grammar. A bad
+ *   operator or arg count throws {@link TestSyntaxError} (→ exit 2 + bash message).
+ * `fileTest` backs file/variable/option unary tests and the `-nt/-ot/-ef` binops.
  */
-function evalTest(args: string[]): boolean {
-  // POSIX-defined short forms (evaluated positionally, not by the grammar).
+async function evalTest(args: string[], fileTest?: UnaryTestFn): Promise<boolean> {
   switch (args.length) {
     case 0: return false;
     case 1: return args[0] !== '';
     case 2:
-      if (args[0] === '!') return !(args[1] !== '');
-      if (TEST_UNARY.has(args[0])) return unaryTest(args[0], args[1]);
-      return args[1] !== ''; // unknown unary → treat operand as a string test
+      if (args[0] === '!') return args[1] === '';
+      if (TEST_UNARY.has(args[0])) return await unaryTest(args[0], args[1], fileTest);
+      // args[0] is not a known unary operator → bash error (NOT a truthy string test).
+      throw new TestSyntaxError(`${args[0]}: unary operator expected`);
     case 3: {
-      // POSIX: when args[1] is a known binary operator, this is `a OP b` —
-      // regardless of what args[0] looks like (`[ "!" = "!" ]` is equality, not
-      // negation). Otherwise `! expr2` or `( expr1 )`.
-      const BINARY_OPS = ['=', '==', '!=', '<', '>', '-eq', '-ne', '-lt', '-le', '-gt', '-ge'];
-      if (BINARY_OPS.includes(args[1])) return binaryTest(args[0], args[1], args[2]);
-      if (args[0] === '!') return !evalTest(args.slice(1));
-      if (args[0] === '(' && args[2] === ')') return evalTest([args[1]]);
-      return binaryTest(args[0], args[1], args[2]);
+      // A known binary operator makes this `a OP b`, whatever `a` looks like
+      // (`[ ! = ! ]` is equality). In the 3-arg form bash ALSO treats `-a`/`-o` as
+      // binary AND/OR of two 1-arg string tests (`[ a -a b ]` = both non-empty).
+      // Else `! e2` or `( e1 )`; else it's a bad binop.
+      if (TEST_BINARY.has(args[1])) return await binaryTest(args[0], args[1], args[2], fileTest);
+      if (args[1] === '-a') return args[0] !== '' && args[2] !== '';
+      if (args[1] === '-o') return args[0] !== '' || args[2] !== '';
+      if (args[0] === '!') return !(await evalTest(args.slice(1), fileTest));
+      if (args[0] === '(' && args[2] === ')') return await evalTest([args[1]], fileTest);
+      throw new TestSyntaxError(`${args[1]}: binary operator expected`);
     }
     case 4:
-      if (args[0] === '!') return !evalTest(args.slice(1));
+      if (args[0] === '!') return !(await evalTest(args.slice(1), fileTest));
       break;
   }
-  return new TestParser(args).parseExpr();
+  const p = new TestParser(args, fileTest);
+  const v = await p.parseExpr();
+  if (!p.atEnd()) throw new TestSyntaxError('too many arguments');
+  return v;
 }
 
-/** Recursive-descent evaluator for 4+-token test expressions (-a/-o/!/( )). */
+/**
+ * Recursive-descent evaluator for the general test grammar (`-a`/`-o`/`!`/`( )`),
+ * mirroring bash's `expr` productions. Reports bash diagnostics via
+ * {@link TestSyntaxError}; unconsumed trailing tokens ⇒ "too many arguments".
+ */
 class TestParser {
   private pos = 0;
   private readonly toks: string[];
-  constructor(toks: string[]) { this.toks = toks; }
+  private readonly fileTest?: UnaryTestFn;
+  constructor(toks: string[], fileTest?: UnaryTestFn) { this.toks = toks; this.fileTest = fileTest; }
   private peek(): string | undefined { return this.toks[this.pos]; }
+  atEnd(): boolean { return this.pos >= this.toks.length; }
 
-  parseExpr(): boolean { return this.parseOr(); }
+  async parseExpr(): Promise<boolean> { return await this.parseOr(); }
 
-  private parseOr(): boolean {
-    let v = this.parseAnd();
-    while (this.peek() === '-o') { this.pos++; const r = this.parseAnd(); v = v || r; }
+  private async parseOr(): Promise<boolean> {
+    let v = await this.parseAnd();
+    while (this.peek() === '-o') { this.pos++; const r = await this.parseAnd(); v = v || r; }
     return v;
   }
-  private parseAnd(): boolean {
-    let v = this.parseUnary();
-    while (this.peek() === '-a') { this.pos++; const r = this.parseUnary(); v = v && r; }
+  private async parseAnd(): Promise<boolean> {
+    let v = await this.parseUnary();
+    while (this.peek() === '-a') { this.pos++; const r = await this.parseUnary(); v = v && r; }
     return v;
   }
-  private parseUnary(): boolean {
-    if (this.peek() === '!') { this.pos++; return !this.parseUnary(); }
-    return this.parsePrimary();
+  private async parseUnary(): Promise<boolean> {
+    if (this.peek() === '!') { this.pos++; return !(await this.parseUnary()); }
+    return await this.parsePrimary();
   }
-  private parsePrimary(): boolean {
+  private async parsePrimary(): Promise<boolean> {
     if (this.peek() === '(') {
       this.pos++;
-      const v = this.parseOr();
-      if (this.peek() === ')') this.pos++;
+      const v = await this.parseOr();
+      if (this.peek() !== ')') throw new TestSyntaxError('`)\' expected');
+      this.pos++;
       return v;
     }
-    // A binary primary `a OP b` when the next-next token is a known binary op;
-    // otherwise a single-token string test.
     const a = this.toks[this.pos];
     const op = this.toks[this.pos + 1];
-    const isBinaryOp = op !== undefined && ['=', '==', '!=', '<', '>', '-eq', '-ne', '-lt', '-le', '-gt', '-ge'].includes(op);
-    if (isBinaryOp) { this.pos += 3; return binaryTest(a, op, this.toks[this.pos - 1]); }
-    if (a !== undefined && TEST_UNARY.has(a) && this.toks[this.pos + 1] !== undefined) {
-      this.pos += 2; return unaryTest(a, this.toks[this.pos - 1]);
+    if (a === undefined) throw new TestSyntaxError('argument expected');
+    // `a OP b` when the next token is a known binary operator.
+    if (op !== undefined && TEST_BINARY.has(op)) {
+      const b = this.toks[this.pos + 2];
+      if (b === undefined) throw new TestSyntaxError('argument expected');
+      this.pos += 3;
+      return await binaryTest(a, op, b, this.fileTest);
     }
+    // A unary operator consuming the next token.
+    if (TEST_UNARY.has(a) && op !== undefined) {
+      this.pos += 2;
+      return await unaryTest(a, op, this.fileTest);
+    }
+    // A single token: `-z`/`-n` with a following operand were handled above; a lone
+    // `-X` operator with no operand here is a bad-operator error, otherwise it's a
+    // string non-empty test.
     this.pos++;
-    return a !== undefined && a !== '';
+    return a !== '';
   }
 }
 

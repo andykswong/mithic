@@ -1442,11 +1442,34 @@ export class Executor {
       }
       return nm in this.context.env || this.arrays.has(nm) || this.assocArrays.has(nm) || this.namerefs.has(nm);
     }
+    // `-o OPT`: shell-option test (`set -o`); NOT a filesystem path.
+    if (op === '-o') return SET_O_OPTIONS.includes(path as ShellOptionName) && this.options[path as ShellOptionName];
+    // File-comparison binops arrive with the two operands NUL-joined.
+    if (op === '-nt' || op === '-ot' || op === '-ef') {
+      const [pa, pb] = path.split('\0');
+      const sa = await this.statPath(this.absPath(pa));
+      const sb = await this.statPath(this.absPath(pb));
+      // `-ef` (same file): same canonical path AND both exist. `-nt`/`-ot` need mtime,
+      // which the `{dir}`-only FsClient does not expose → conservatively false.
+      if (op === '-ef') return sa !== undefined && sb !== undefined && this.absPath(pa) === this.absPath(pb);
+      return false;
+    }
     const stat = await this.statPath(this.absPath(path));
-    if (op === '-e') return stat !== undefined;
-    if (op === '-f') return stat !== undefined && !stat.dir;
-    if (op === '-d') return stat !== undefined && stat.dir;
-    return false;
+    const exists = stat !== undefined;
+    switch (op) {
+      case '-f': return exists && !stat!.dir;
+      case '-d': return exists && stat!.dir;
+      // Existence/accessibility tests: the sandbox VFS has no permission/size/owner
+      // metadata (FsClient exposes only `{dir}`), so an existing path is treated as
+      // readable/writable/executable/nonempty/owned — the common-case bash result.
+      case '-e': case '-a': case '-r': case '-w': case '-x': case '-s':
+      case '-O': case '-G': case '-N': case '-u': case '-g': case '-k':
+        return exists;
+      // Symlink / block / char / pipe / socket / terminal tests have no VFS analogue.
+      case '-h': case '-L': case '-b': case '-c': case '-p': case '-S': case '-t':
+        return false;
+      default: return false;
+    }
   }
 
   private absPath(p: string): string {
@@ -3173,6 +3196,7 @@ export class Executor {
       doReturn: (n) => { throw new FuncReturn(n); },
       evalArith: (expr) => evalArith(expr, this.arithEnvForExpr(), this.arithArrayAccessExec()),
       resolveExternal: (n) => this.resolveExternalPath(n),
+      condTest: (op, operand) => this.condFileTest(op, operand),
       builtinAssignments: opts.builtinAssignments,
       applyBuiltinAssignment: opts.assignExpander
         ? (a, global) => this.applyAssignment(a, opts.assignExpander!, global)

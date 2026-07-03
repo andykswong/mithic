@@ -1072,6 +1072,89 @@ test('[ ] numeric comparison errors (exit 2) on a non-integer or out-of-int64-ra
   expect((await run('[ 9223372036854775807 -gt 5 ] && echo OK')).out).toBe('OK\n');
 });
 
+// ── test/[ ] real file tests (were silently string-tests → always true) ──────
+// The plain `[`/`test` builtin previously had NO file-test support: `-f`/`-d`/`-e`
+// fell through to a 1-arg string test, so `[ -f /nonexistent ]` wrongly returned
+// true. These now stat the VFS exactly like `[[ -f ]]` does.
+
+test('test/[ ] -f/-d/-e are REAL file tests over the VFS (not string tests)', async () => {
+  const fs = mockFs({ '/exists.txt': 'hi', '/dir/inner': 'x' });
+  expect((await run('[ -f /exists.txt ]; echo $?', {}, fs)).out).toBe('0\n');
+  expect((await run('[ -f /missing.txt ]; echo $?', {}, fs)).out).toBe('1\n');
+  expect((await run('[ -e /exists.txt ]; echo $?', {}, fs)).out).toBe('0\n');
+  expect((await run('[ -e /missing ]; echo $?', {}, fs)).out).toBe('1\n');
+  expect((await run('[ -d /dir ]; echo $?', {}, fs)).out).toBe('0\n');
+  expect((await run('[ -d /exists.txt ]; echo $?', {}, fs)).out).toBe('1\n');
+  expect((await run('[ -f /dir ]; echo $?', {}, fs)).out).toBe('1\n');
+});
+
+test('test/[ ] -f negation and -a/-o combine with file tests', async () => {
+  const fs = mockFs({ '/exists.txt': 'hi' });
+  expect((await run('[ ! -f /missing ]; echo $?', {}, fs)).out).toBe('0\n');
+  expect((await run('[ -f /exists.txt -a -f /missing ]; echo $?', {}, fs)).out).toBe('1\n');
+  expect((await run('[ -f /exists.txt -o -f /missing ]; echo $?', {}, fs)).out).toBe('0\n');
+});
+
+test('test/[ ] -v NAME tests variable set-ness (like [[ -v ]])', async () => {
+  expect((await run('foo=1; [ -v foo ]; echo $?')).out).toBe('0\n');
+  expect((await run('[ -v bar ]; echo $?')).out).toBe('1\n');
+});
+
+// ── test/[ ] bash diagnostics: unary/binary operator expected, arg counts ────
+
+test('test/[ ] with a missing binary operand → "unary operator expected", exit 2', async () => {
+  const r = await run('[ 5 -gt ]; echo "rc=$?"');
+  expect(r.out).toBe('rc=2\n');
+  expect(r.err).toMatch(/5: unary operator expected/);
+});
+
+test('test/[ ] with an unknown unary operator → "unary operator expected", exit 2', async () => {
+  const r = await run('[ -q x ]; echo "rc=$?"');
+  expect(r.out).toBe('rc=2\n');
+  expect(r.err).toMatch(/-q: unary operator expected/);
+  const two = await run('[ abc def ]; echo "rc=$?"');
+  expect(two.out).toBe('rc=2\n');
+  expect(two.err).toMatch(/abc: unary operator expected/);
+});
+
+test('test/[ ] with an unknown binary operator → "binary operator expected", exit 2', async () => {
+  const r = await run('[ a -zz b ]; echo "rc=$?"');
+  expect(r.out).toBe('rc=2\n');
+  expect(r.err).toMatch(/-zz: binary operator expected/);
+  const three = await run('[ a b c ]; echo "rc=$?"');
+  expect(three.out).toBe('rc=2\n');
+  expect(three.err).toMatch(/b: binary operator expected/);
+});
+
+test('test/[ ] with too many arguments → "too many arguments", exit 2', async () => {
+  const r = await run('[ a b c d ]; echo "rc=$?"');
+  expect(r.out).toBe('rc=2\n');
+  expect(r.err).toMatch(/too many arguments/);
+  const t = await run('test 5 -gt 3 x; echo "rc=$?"');
+  expect(t.out).toBe('rc=2\n');
+  expect(t.err).toMatch(/test: too many arguments/);
+});
+
+test('test/[ ] 3-arg -a/-o are BINARY and/or (not the file/option unary forms)', async () => {
+  expect((await run('[ a -a b ]; echo $?')).out).toBe('0\n');
+  expect((await run('[ "" -a b ]; echo $?')).out).toBe('1\n');
+  expect((await run('[ a -o "" ]; echo $?')).out).toBe('0\n');
+  expect((await run('[ "" -o "" ]; echo $?')).out).toBe('1\n');
+});
+
+test('test/[ ] valid comparisons and short forms still pass (no false diagnostics)', async () => {
+  expect((await run('[ 5 -gt 3 ]; echo $?')).out).toBe('0\n');
+  expect((await run('[ a = a ]; echo $?')).out).toBe('0\n');
+  expect((await run('[ -z "" ]; echo $?')).out).toBe('0\n');
+  expect((await run('[ x ]; echo $?')).out).toBe('0\n');
+  expect((await run('[ "" ]; echo $?')).out).toBe('1\n');
+  expect((await run('[ ]; echo $?')).out).toBe('1\n');
+  expect((await run('[ -f ]; echo $?')).out).toBe('0\n'); // 1-arg: "-f" is non-empty
+  expect((await run('[ = ]; echo $?')).out).toBe('0\n');
+  expect((await run('[ ! x ]; echo $?')).out).toBe('1\n');
+  expect((await run('[ \\( a \\) ]; echo $?')).out).toBe('0\n');
+});
+
 test('test/[ ] lexical </> and [[ ]] lexical </>', async () => {
   expect((await run('[ apple \\< banana ] && echo ordered')).out).toBe('ordered\n');
   expect((await run('[ banana \\> apple ] && echo ok')).out).toBe('ok\n');
