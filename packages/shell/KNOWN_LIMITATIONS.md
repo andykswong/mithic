@@ -88,6 +88,25 @@ transforms + `@Q` always-quote with named/octal control escapes. Also migrated
 **`$(( ))` arithmetic to 64-bit BigInt** (matching printf) and fixed bare-array-name
 transforms (element [0]) and bare-assignment-in-function global scoping.
 
+A further **July 2026 "frontier" wave** then closed the low-level bash-5 items that
+had been documented below as intentional boundaries, again byte-exact vs bash 5.3.15:
+(5) **`printf` round-half-to-even** — `%f`/`%e`/`%g` now round exact ties to even
+against the true IEEE-754 value via an exact BigInt rational (`printf '%.0f' 2.5` →
+`2`, `3.5` → `4`), so ties match C/bash; non-tie values are unchanged. (6) **`printf
+%#`** forces a trailing decimal point on `%f`/`%e` (`%#.0f 3` → `3.`); `%#g`/`%#o`/
+`%#x` were already correct. (7) **`printf` invalid/missing format character** — a
+trailing/bare `%…` prints its prefix then errors `\`%…': missing format character`
+(exit 1) and a bad conversion char errors `\`X': invalid format character`; C length
+modifiers (`h hh l ll L j z t`) are consumed and ignored. (8) **`test`/`[` file
+tests + diagnostics** — `-e`/`-f`/`-d`/`-v`/`-o`/`-ef` are now REAL VFS/state tests
+(previously `-f`/`-d`/`-e` fell through to a string test, so `[ -f /nonexistent ]`
+wrongly returned true), the full unary/binary operator set is recognized, and a
+malformed expression emits bash's diagnostic (`X: unary operator expected`,
+`X: binary operator expected`, `too many arguments`) with exit 2 — sharing the same
+`condFileTest` logic as `[[ ]]`. (9) **`declare`/`typeset`/`local -l`/`-u`** case-fold
+attribute folds every assigned value (scalar/array/element/`+=`), `-lu` cancels,
+`+l`/`+u` clears, and `declare -p` shows `-l`/`-u` (flag order `a i r x l/u`).
+
 ## Deliberate boundaries (documented, not gaps)
 
 These are intentional design limits, not missing features:
@@ -128,19 +147,13 @@ These are intentional design limits, not missing features:
   surrogate half for an astral char). ASCII `%c` matches bash exactly. Faithful
   single-byte output would require a byte-oriented printf rewrite over the JS-string
   surface — out of scope; the common ASCII case is correct.
-- **`declare -l` / `-u` case-fold attributes are not applied.** `declare -l x=HELLO`
-  stores `HELLO` verbatim (bash folds to `hello` on assignment and on every later
-  write). The attribute needs per-name case-fold-on-assign state threaded through the
-  scalar/array/element assignment paths; low real-world use.
-- **`printf` float rounding is half-away-from-zero, not C's half-to-even.**
-  `printf '%.0f' 2.5` → `3` (mithic, JS `toFixed`) vs bash's banker's-rounding `2`.
-  Exact-half values at the rounding boundary differ; all other values match. A
-  faithful port needs a round-half-to-even formatter.
-- **`printf %#` alt-flag on `%f`/`%e`/`%g` (force a decimal point) is ignored**, and
-  `test`/`[` does not emit bash's operator/arg-count diagnostics (`unary operator
-  expected`, `too many arguments`) — a malformed `[ 5 -gt ]` yields a plain false
-  rather than exit 2. A trailing/partial `printf` conversion (`printf 'a%'`) prints
-  literally instead of erroring. All narrow, low-value diagnostics.
+- **`test`/`[` file tests that need permission / size / owner / type / mtime metadata
+  degrade to existence-or-false.** The sandbox `FsClient.fsStat` exposes only `{dir}`,
+  so `-r`/`-w`/`-x`/`-s`/`-O`/`-G`/`-N`/`-u`/`-g`/`-k`/`-a` report true for any
+  existing path (the common bash result for readable/writable/nonempty files), and the
+  type/symlink tests `-h`/`-L`/`-b`/`-c`/`-p`/`-S`/`-t` plus the mtime binops
+  `-nt`/`-ot` report false. `-e`/`-f`/`-d`/`-v`/`-R`/`-o`/`-ef` are exact. Faithful
+  permission/mtime tests would need a richer VFS stat — out of scope.
 
 ---
 
