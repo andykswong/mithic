@@ -322,6 +322,26 @@ test('${var@Q} does not break ${arr[@]} expansion', async () => {
   expect(await e.expandWord('"${a[@]}"')).toEqual(['1', '2 3', '4']);
 });
 
+test('${var@Q} of a lone single quote uses the \\\' backslash form (bash 5)', async () => {
+  const e = E({ x: '\'' });
+  expect(await e.expandWord('${x@Q}')).toEqual(['\\\'']);
+  // an embedded quote in a longer value still uses the '\'' wrap.
+  const e2 = E({ x: 'a\'b' });
+  expect(await e2.expandWord('"${x@Q}"')).toEqual(['\'a\'\\\'\'b\'']);
+});
+
+test('${var@Q} of a value with control chars uses named/octal escapes (bash 5)', async () => {
+  expect(await E({ x: '\x07' }).expandWord('${x@Q}')).toEqual(['$\'\\a\'']);
+  expect(await E({ x: '\x1b' }).expandWord('${x@Q}')).toEqual(['$\'\\E\'']);
+  expect(await E({ x: '\x01' }).expandWord('${x@Q}')).toEqual(['$\'\\001\'']);
+  expect(await E({ x: '\x7f' }).expandWord('${x@Q}')).toEqual(['$\'\\177\'']);
+  expect(await E({ x: 'a\tb' }).expandWord('${x@Q}')).toEqual(['$\'a\\tb\'']);
+});
+
+test('${var@Q} of an UNSET variable is empty (not \'\')', async () => {
+  expect(await E({}).expandWord('[${nope@Q}]')).toEqual(['[]']);
+});
+
 test('${var@U} uppercases all characters', async () => {
   const e = E({ x: 'abc' });
   expect(await e.expandWord('${x@U}')).toEqual(['ABC']);

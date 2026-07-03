@@ -1208,6 +1208,14 @@ test('name-keyed @P on an element prompt-expands the element value', async () =>
   expect(r.out).toBe('ada@box\n');
 });
 
+test('@Q of an unset element/key/scalar is empty (not \'\')', async () => {
+  expect((await run('arr=(a b); echo "[${arr[9]@Q}]"')).out).toBe('[]\n');
+  expect((await run('declare -A A=([x]=1); echo "[${A[zzz]@Q}]"')).out).toBe('[]\n');
+  expect((await run('unset y; echo "[${y@Q}]"')).out).toBe('[]\n');
+  // a SET-but-empty element still quotes to ''.
+  expect((await run('arr=("" b); echo "[${arr[0]@Q}]"')).out).toBe('[\'\']\n');
+});
+
 test('a BARE array-name transform operates on element [0] (bash: $a == ${a[0]})', async () => {
   expect((await run('a=(1 2 3); echo "${a@A}"')).out).toBe('declare -a a=\'1\'\n');
   expect((await run('a=(x y z); echo "${a@Q}"')).out).toBe('\'x\'\n');

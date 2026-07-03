@@ -665,7 +665,10 @@ export class Expander {
       }
       case 'P': return expandPrompt(elem, { cwd: this.env.cwd ?? '', env: this.promptEnv() });
       case 'K':
-      case 'k': return shellQuoteQ(elem);
+      case 'k':
+        // For a single element `@K`/`@k` == `@Q` on the value. An UNSET element/key
+        // yields empty (bash), not `''`.
+        return setElem ? shellQuoteQ(elem) : '';
       default: return undefined;
     }
   }
@@ -909,7 +912,8 @@ export class Expander {
         const et = this.elementTransform(name, value, rest, set0);
         if (et !== undefined) return et;
       }
-      if (op === 'Q') return shellQuoteQ(value);
+      // `@Q` of an UNSET variable is empty (bash), not `''`.
+      if (op === 'Q') return set ? shellQuoteQ(value) : '';
       if (op === 'U') return value.toUpperCase();
       if (op === 'u') return value.length > 0 ? value[0].toUpperCase() + value.slice(1) : value;
       if (op === 'L') return value.toLowerCase();
@@ -950,7 +954,8 @@ export class Expander {
     // by the scalar caller, not here.
     if (rest[0] === '@') {
       const op = rest[1];
-      if (op === 'Q') return shellQuoteQ(value);
+      // `@Q` of an UNSET element/var is empty (bash), not `''`.
+      if (op === 'Q') return set ? shellQuoteQ(value) : '';
       if (op === 'U') return value.toUpperCase();
       if (op === 'u') return value.length > 0 ? value[0].toUpperCase() + value.slice(1) : value;
       if (op === 'L') return value.toLowerCase();
