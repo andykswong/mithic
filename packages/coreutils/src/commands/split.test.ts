@@ -112,6 +112,36 @@ describe('split', () => {
     expect(h.out()).toBe('456');
   });
 
+  // ── -n l/K/N and r/K/N: write only the K-th of N chunks to stdout ─────────
+  test('-n l/2/3 writes the 2nd of 3 line-boundary chunks', async () => {
+    const h = makeIO({ args: ['split', '-n', 'l/2/3', '/in'], files: { '/in': 'a\nb\nc\n' } });
+    expect(await splitCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('b\n');
+  });
+  test('-n l/1/3 and l/3/3 select the other chunks', async () => {
+    const h1 = makeIO({ args: ['split', '-n', 'l/1/3', '/in'], files: { '/in': 'a\nb\nc\n' } });
+    expect(await splitCommand(h1.io)).toBe(0);
+    expect(h1.out()).toBe('a\n');
+    const h3 = makeIO({ args: ['split', '-n', 'l/3/3', '/in'], files: { '/in': 'a\nb\nc\n' } });
+    expect(await splitCommand(h3.io)).toBe(0);
+    expect(h3.out()).toBe('c\n');
+  });
+  test('-n r/2/3 writes the 2nd round-robin chunk', async () => {
+    const h = makeIO({ args: ['split', '-n', 'r/2/3', '/in'], files: { '/in': 'a\nb\nc\n' } });
+    expect(await splitCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('b\n');
+  });
+  test('-n r/2/3 on 6 lines: round-robin picks lines 2 and 5', async () => {
+    const h = makeIO({ args: ['split', '-n', 'r/2/3', '/in'], files: { '/in': '1\n2\n3\n4\n5\n6\n' } });
+    expect(await splitCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('2\n5\n');
+  });
+  test('-n l/K/N rejects an out-of-range K', async () => {
+    const h = makeIO({ args: ['split', '-n', 'l/4/3', '/in'], files: { '/in': 'a\nb\nc\n' } });
+    expect(await splitCommand(h.io)).toBe(1);
+    expect(h.err()).toContain('split: invalid chunk number: ‘4’');
+  });
+
   // ── -C line-bounded byte size ─────────────────────────────────────────────
   test('-C 4 fills up to N bytes on line boundaries; long lines are broken', async () => {
     const h = makeIO({ args: ['split', '-C', '4', '/in'], files: { '/in': 'aaa\nbbbbbbb\ncc\n' } });

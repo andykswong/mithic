@@ -150,6 +150,18 @@ describe('cksum command', () => {
     expect(h.out()).toBe('MD5 (/f.txt) = 6f5902ac237024bdd0c176cb93063dc4\n');
   });
 
+  test('-a sha224 uses the pure-TS SHA-224 (Web Crypto has none)', async () => {
+    const h = makeIO({ args: ['cksum', '-a', 'sha224', '/f.txt'], files: { '/f.txt': 'hello world\n' } });
+    expect(await cksumCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('SHA224 (/f.txt) = 95041dd60ab08c0bf5636d50be85fe9790300f39eb84602858a9b430\n');
+  });
+
+  test('--untagged -a sha224 prints the GNU sum form', async () => {
+    const h = makeIO({ args: ['cksum', '--untagged', '-a', 'sha224'], stdinText: 'hello world\n' });
+    await cksumCommand(h.io);
+    expect(h.out()).toBe('95041dd60ab08c0bf5636d50be85fe9790300f39eb84602858a9b430  -\n');
+  });
+
   test('--untagged -a sha256 prints the GNU sum form', async () => {
     const h = makeIO({ args: ['cksum', '--untagged', '-a', 'sha256', '/f.txt'], files: { '/f.txt': 'hello world\n' } });
     await cksumCommand(h.io);

@@ -10,15 +10,21 @@
  *   and-expr: cmp-expr ( '&' cmp-expr )*
  *   cmp-expr: add-expr ( ('='|'!='|'<'|'<='|'>'|'>=') add-expr )*
  *   add-expr: mul-expr ( ('+'|'-') mul-expr )*
- *   mul-expr: unary-expr ( ('*'|'/'|'%') unary-expr )*
+ *   mul-expr: match-expr ( ('*'|'/'|'%') match-expr )*
+ *   match-expr: unary-expr ( ':' unary-expr )*
  *   unary-expr: '(' expr ')' | STRING
+ *
+ * Integer arithmetic is exact (BigInt), matching GNU's GMP bignums.
  *
  * Returns: exit code 0 if result is non-null/non-zero/non-empty, 1 otherwise.
  */
 import { defineCommand, writeLine, exitWith } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
-type Value = string | number;
+type Value = string | bigint;
+
+/** GNU expr treats an operand as a number only if it is a signed decimal integer. */
+const INT_RE = /^[+-]?\d+$/;
 
 /** A syntax/usage error in an expr expression — GNU exits 2 for these. */
 class ExprSyntaxError extends Error {}
@@ -28,19 +34,84 @@ class ExprArithError extends Error {
 }
 
 function isZero(v: Value): boolean {
-  if (typeof v === 'number') return v === 0;
+  if (typeof v === 'bigint') return v === 0n;
   return v === '' || v === '0';
 }
 
 /**
  * Coerce an operand to an integer for arithmetic. GNU `expr` only does INTEGER
  * arithmetic: a float (`1.5`) or a non-numeric string (`abc`) is a fatal
- * `non-integer argument` error (exit 2), NOT a silent truncation to 0.
+ * `non-integer argument` error (exit 2), NOT a silent truncation to 0. BigInt is
+ * used so operands/results past 2^53 stay exact (GNU uses GMP bignums).
  */
-function toInt(v: Value): number {
-  if (typeof v === 'number') return v;
-  if (/^[+-]?\d+$/.test(v)) return parseInt(v, 10);
+function toInt(v: Value): bigint {
+  if (typeof v === 'bigint') return v;
+  if (INT_RE.test(v)) return BigInt(v);
   throw new ExprArithError();
+}
+
+/** A small non-negative integer index (for `substr`), clamped from a BigInt. */
+function toIndex(v: Value): number {
+  const n = toInt(v);
+  return Number(n);
+}
+
+/**
+ * Translate a POSIX Basic Regular Expression (BRE — what GNU `expr` uses) into an
+ * equivalent JS RegExp source. In a BRE the special forms are the BACKSLASHED
+ * ones: `\(` `\)` group, `\{` `\}` interval, `\+` `\?` `\|` (GNU extensions);
+ * the bare `+ ? | ( ) { }` are LITERAL characters. This is the inverse of a JS
+ * (extended) regex, so we swap which of each pair is escaped. Character classes
+ * `[...]` are copied verbatim (their contents are already the same in both).
+ */
+function breToJs(bre: string): string {
+  let out = '';
+  for (let i = 0; i < bre.length; i++) {
+    const c = bre[i];
+    if (c === '\\') {
+      const n = bre[i + 1];
+      if (n === undefined) { out += '\\\\'; break; }
+      // Backslashed metacharacters in BRE map to bare metacharacters in JS.
+      if (n === '(' || n === ')' || n === '{' || n === '}' || n === '+' || n === '?' || n === '|') {
+        out += n;
+      } else {
+        // \1..\9 backrefs, \. \* etc. — keep the escape as-is.
+        out += '\\' + n;
+      }
+      i++;
+    } else if (c === '(' || c === ')' || c === '{' || c === '}' || c === '+' || c === '?' || c === '|') {
+      // Bare metacharacter in BRE is a LITERAL → escape it for JS.
+      out += '\\' + c;
+    } else if (c === '[') {
+      // Copy the bracket expression verbatim up to the matching ']'.
+      let cls = '[';
+      let j = i + 1;
+      if (bre[j] === '^') { cls += '^'; j++; }
+      if (bre[j] === ']') { cls += ']'; j++; } // a leading ] is a literal member
+      while (j < bre.length && bre[j] !== ']') { cls += bre[j]; j++; }
+      cls += ']';
+      out += cls;
+      i = j;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
+/**
+ * GNU expr's anchored (implicit leading `^`) BRE match. Returns the captured
+ * `\(...\)` substring when the pattern has a group (empty string on no match),
+ * else the number of characters matched (0 on no match).
+ */
+function anchoredMatch(s: string, pat: string): Value {
+  const hasGroup = /\\\(/.test(pat);
+  let re: RegExp;
+  try { re = new RegExp('^(?:' + breToJs(pat) + ')'); }
+  catch { throw new ExprSyntaxError('Invalid regular expression'); }
+  const m = re.exec(s);
+  if (hasGroup) return m && m[1] !== undefined ? m[1] : '';
+  return m ? BigInt(m[0].length) : 0n;
 }
 
 class ExprParser {
@@ -76,7 +147,7 @@ class ExprParser {
       if (this.peek() === undefined) throw new ExprSyntaxError(`syntax error: missing argument after ‘${op}’`);
       const right = this.parseCmp();
       // & returns left if both non-zero, else 0
-      left = (!isZero(left) && !isZero(right)) ? left : 0;
+      left = (!isZero(left) && !isZero(right)) ? left : 0n;
     }
     return left;
   }
@@ -89,10 +160,13 @@ class ExprParser {
       if (this.peek() === undefined) throw new ExprSyntaxError(`syntax error: missing argument after ‘${op}’`);
       const right = this.parseAdd();
       const ls = String(left), rs = String(right);
-      const ln = parseFloat(ls), rn = parseFloat(rs);
-      const bothNum = !isNaN(ln) && !isNaN(rn);
+      // GNU compares numerically (exact, arbitrary precision) only when BOTH
+      // operands are signed decimal INTEGERS; anything else (floats, words) is a
+      // byte-wise string comparison.
+      const bothInt = INT_RE.test(ls) && INT_RE.test(rs);
       let res: boolean;
-      if (bothNum) {
+      if (bothInt) {
+        const ln = BigInt(ls), rn = BigInt(rs);
         if (op === '=') res = ln === rn;
         else if (op === '!=') res = ln !== rn;
         else if (op === '<') res = ln < rn;
@@ -107,7 +181,7 @@ class ExprParser {
         else if (op === '>') res = ls > rs;
         else res = ls >= rs;
       }
-      left = res ? 1 : 0;
+      left = res ? 1n : 0n;
     }
     return left;
   }
@@ -124,16 +198,35 @@ class ExprParser {
   }
 
   parseMul(): Value {
-    let left = this.parseUnary();
+    let left = this.parseMatch();
     while (this.peek() === '*' || this.peek() === '/' || this.peek() === '%') {
       const op = this.consume();
       if (this.peek() === undefined) throw new ExprSyntaxError(`syntax error: missing argument after ‘${op}’`);
-      const right = this.parseUnary();
+      const right = this.parseMatch();
       const l = toInt(left), r = toInt(right);
-      if ((op === '/' || op === '%') && r === 0) throw new Error('division by zero');
+      if ((op === '/' || op === '%') && r === 0n) throw new Error('division by zero');
+      // BigInt `/` and `%` already truncate toward zero, matching C/GNU.
       if (op === '*') left = l * r;
-      else if (op === '/') left = Math.trunc(l / r);
+      else if (op === '/') left = l / r;
       else left = l % r;
+    }
+    return left;
+  }
+
+  /**
+   * The `:` (anchored-regex match) operator — GNU's most common expr idiom, e.g.
+   * `expr "$s" : '.*'`. It has higher precedence than `* / %`. With no `\(...\)`
+   * capture the result is the number of leading characters matched (0 on no
+   * match); with a capture group it is the captured substring (empty on no
+   * match). It shares GNU's `match` semantics exactly.
+   */
+  parseMatch(): Value {
+    let left = this.parseUnary();
+    while (this.peek() === ':') {
+      const op = this.consume();
+      if (this.peek() === undefined) throw new ExprSyntaxError(`syntax error: missing argument after ‘${op}’`);
+      const right = this.parseUnary();
+      left = anchoredMatch(String(left), String(right));
     }
     return left;
   }
@@ -151,13 +244,13 @@ class ExprParser {
     if (t === 'length') {
       this.consume();
       const s = String(this.parseUnary());
-      return s.length;
+      return BigInt(s.length);
     }
     if (t === 'substr') {
       this.consume();
       const s = String(this.parseUnary());
-      const pos = toInt(this.parseUnary());
-      const len = toInt(this.parseUnary());
+      const pos = toIndex(this.parseUnary());
+      const len = toIndex(this.parseUnary());
       // GNU expr: 1-based; a POS < 1, LEN <= 0, or POS past the end → empty
       // string (which makes expr exit 1).
       if (pos < 1 || len < 1 || pos > s.length) return '';
@@ -169,17 +262,16 @@ class ExprParser {
       const chars = String(this.parseUnary());
       // Return position (1-based) of first char in chars found in s, or 0
       for (let i = 0; i < s.length; i++) {
-        if (chars.includes(s[i])) return i + 1;
+        if (chars.includes(s[i])) return BigInt(i + 1);
       }
-      return 0;
+      return 0n;
     }
     if (t === 'match') {
+      // `match S REGEX` is the prefix-function synonym of the infix `S : REGEX`.
       this.consume();
       const s = String(this.parseUnary());
       const pat = String(this.parseUnary());
-      const re = new RegExp('^(?:' + pat + ')');
-      const m = re.exec(s);
-      return m ? m[0].length : 0;
+      return anchoredMatch(s, pat);
     }
     // POSIX `+` quote operator: in operand position, `+ TOKEN` forces TOKEN to
     // be a plain string operand (so `+ length` yields "length", `3 + + 4` = 7).

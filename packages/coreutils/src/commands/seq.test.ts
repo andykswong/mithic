@@ -1,6 +1,6 @@
 import { expect, test, describe } from 'vitest';
 import { seqCommand } from './seq.ts';
-import { applySeqFormat, fractionalDigits } from './seq.ts';
+import { applySeqFormat, fractionalDigits, parseSeqNumber } from './seq.ts';
 import type { CommandIO } from '../harness.ts';
 
 function makeIO(args: string[]) {
@@ -198,6 +198,80 @@ describe('seq', () => {
     expect(await seqCommand(io)).toBe(0);
     expect(writes).toBeGreaterThan(0);
   });
+
+  // ── CR2 parity fixes: -f sign flags, hex operands, precision from FIRST/STEP ─
+
+  test('-f honors + sign flag (%+.1f)', async () => {
+    const h = makeIO(['seq', '-f', '%+.1f', '1', '2']);
+    expect(await seqCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('+1.0\n+2.0\n');
+  });
+
+  test('-f honors space sign flag (% .1f)', async () => {
+    const h = makeIO(['seq', '-f', '% .1f', '1', '2']);
+    expect(await seqCommand(h.io)).toBe(0);
+    expect(h.out()).toBe(' 1.0\n 2.0\n');
+  });
+
+  test('-f + with zero-pad: sign consumes one column (%+05.1f)', async () => {
+    const h = makeIO(['seq', '-f', '%+05.1f', '1', '2']);
+    expect(await seqCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('+01.0\n+02.0\n');
+  });
+
+  test('-f + with left-align width (%-+6.1f|)', async () => {
+    const h = makeIO(['seq', '-f', '%-+6.1f|', '1', '2']);
+    expect(await seqCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('+1.0  |\n+2.0  |\n');
+  });
+
+  test('-f + on a negative value keeps the minus (and +0.0)', async () => {
+    const h = makeIO(['seq', '-f', '%+.1f', '-2', '1', '0']);
+    expect(await seqCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('-2.0\n-1.0\n+0.0\n');
+  });
+
+  test('hex integer operand (seq 0x10 → 1..16)', async () => {
+    const h = makeIO(['seq', '0x10']);
+    expect(await seqCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n');
+  });
+
+  test('hex step operand (seq 1 0x10 32 → 1,17)', async () => {
+    const h = makeIO(['seq', '1', '0x10', '32']);
+    expect(await seqCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('1\n17\n');
+  });
+
+  test('hex float operand with binary exponent (seq 0x1.8p1 → 1,2,3)', async () => {
+    const h = makeIO(['seq', '0x1.8p1']);
+    expect(await seqCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('1\n2\n3\n');
+  });
+
+  test('precision comes from FIRST/STEP only, not LAST (seq 2.5e0 → 1,2)', async () => {
+    const h = makeIO(['seq', '2.5e0']);
+    expect(await seqCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('1\n2\n');
+  });
+
+  test('fractional LAST does not add precision (seq 3.9 → 1,2,3)', async () => {
+    const h = makeIO(['seq', '3.9']);
+    expect(await seqCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('1\n2\n3\n');
+  });
+
+  test('integer FIRST/STEP with fractional LAST prints integers (seq 1 2.5 → 1,2)', async () => {
+    const h = makeIO(['seq', '1', '2.5']);
+    expect(await seqCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('1\n2\n');
+  });
+
+  test('fractional FIRST still sets precision (seq 0.5 2.5)', async () => {
+    const h = makeIO(['seq', '0.5', '2.5']);
+    expect(await seqCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('0.5\n1.5\n2.5\n');
+  });
 });
 
 describe('applySeqFormat', () => {
@@ -207,6 +281,20 @@ describe('applySeqFormat', () => {
   test('%%', () => expect(applySeqFormat('%%', 0)).toBe('%'));
   test('literal text', () => expect(applySeqFormat('n=%d', 7)).toBe('n=7'));
   test('%e two-digit exponent', () => expect(applySeqFormat('%e', 1000000)).toBe('1.000000e+06'));
+  test('%+.1f positive sign', () => expect(applySeqFormat('%+.1f', 1)).toBe('+1.0'));
+  test('% .1f space sign', () => expect(applySeqFormat('% .1f', 1)).toBe(' 1.0'));
+  test('%+.1f negative keeps minus', () => expect(applySeqFormat('%+.1f', -1)).toBe('-1.0'));
+  test('%+05.1f sign takes a column', () => expect(applySeqFormat('%+05.1f', 1)).toBe('+01.0'));
+  test('%+05.1f negative zero-pad after minus', () => expect(applySeqFormat('%+05.1f', -1)).toBe('-01.0'));
+});
+
+describe('parseSeqNumber', () => {
+  test('decimal', () => expect(parseSeqNumber('1.5')).toBe(1.5));
+  test('scientific', () => expect(parseSeqNumber('2.5e0')).toBe(2.5));
+  test('hex integer', () => expect(parseSeqNumber('0x10')).toBe(16));
+  test('negative hex integer', () => expect(parseSeqNumber('-0xA')).toBe(-10));
+  test('hex float 0x1p4', () => expect(parseSeqNumber('0x1p4')).toBe(16));
+  test('hex float 0x1.8p1', () => expect(parseSeqNumber('0x1.8p1')).toBe(3));
 });
 
 describe('fractionalDigits', () => {

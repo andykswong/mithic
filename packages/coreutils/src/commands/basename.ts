@@ -6,7 +6,7 @@
  *   basename -a NAME...      — print the basename of each NAME
  *   basename -s SUF NAME...  — implies -a; strip SUF from each NAME
  */
-import { defineCommand, parseArgs, exitWith } from '../harness.ts';
+import { defineCommand, parseArgs, exitWith, optionError } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 /**
@@ -35,17 +35,23 @@ function stripSuffix(name: string, suffix: string): string {
 }
 
 const basenameCommand: CommandFn = async (io: CommandIO): Promise<number> => {
-  const { positionals, flags } = parseArgs(io.args.slice(1), {
+  const name = io.args[0] ?? 'basename';
+  const parsed = parseArgs(io.args.slice(1), {
     boolean: ['a', 'z'],
     string: ['s'],
     alias: { multiple: 'a', suffix: 's', zero: 'z' },
+    unknown: 'error',
   });
+  const { positionals, flags } = parsed;
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
   const sep = flags.z ? '\x00' : '\n';
   const writeOut = (s: string): Promise<void> => out.write(new TextEncoder().encode(s + sep));
 
   try {
+    if (parsed.unknown.length) {
+      return await exitWith(err, 1, optionError(name, parsed.unknown[0]));
+    }
     if (positionals.length === 0) {
       return await exitWith(err, 1, 'basename: missing operand');
     }

@@ -10,8 +10,27 @@
  *     mode read stdin round-robin per output row (`paste - -` pairs adjacent
  *     lines); in `-s` mode the first `-` drains stdin, later `-` see EOF.
  */
-import { defineCommand, isBrokenPipe, optionError, parseArgs, readAllText, streamLines, writeString, CoalescingWriter } from '../harness.ts';
+import { defineCommand, fsErrorText, isBrokenPipe, optionError, parseArgs, readAllText, streamLines, writeString, CoalescingWriter } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
+
+/** Raised by {@link parseDelims} when a `-d` list ends with an unescaped `\`. */
+export class DelimError extends Error {}
+
+/**
+ * Canonical POSIX errno text for an `fs/*` failure. The kernel re-serializes the
+ * FileSystemError with an uppercase errno `code`; {@link fsErrorText} maps only
+ * the lowercase VFS codes, so translate the errno first (see cat.ts rationale).
+ */
+const ERRNO_TEXT: Record<string, string> = {
+  ENOENT: 'No such file or directory', EACCES: 'Permission denied', EEXIST: 'File exists',
+  ENOTDIR: 'Not a directory', EISDIR: 'Is a directory', EXDEV: 'Invalid cross-device link',
+  ENOTEMPTY: 'Directory not empty', EINVAL: 'Invalid argument', ENOSPC: 'No space left on device',
+  EIO: 'Input/output error',
+};
+function errnoText(err: unknown): string {
+  const code = (err as { code?: string })?.code;
+  return (code && ERRNO_TEXT[code]) ?? fsErrorText(err);
+}
 
 async function readFileText(io: CommandIO, path: string): Promise<string> {
   const { fd } = (await io.syscall('fs/open', { path, oflags: {} })) as { fd: number };
@@ -33,19 +52,48 @@ async function readFileText(io: CommandIO, path: string): Promise<string> {
   }
 }
 
-/** Expand a -d LIST into delimiter chars, honoring `\t \n \0 \\`. */
+/**
+ * Expand a -d LIST into delimiter chars, honoring `\t \n \0 \\`. A backslash in
+ * the FINAL position (no following char to escape) is an error in GNU:
+ * `delimiter list ends with an unescaped backslash: <list>`.
+ */
 export function parseDelims(spec: string): string[] {
   if (spec === '') return [''];
   const out: string[] = [];
   let i = 0;
   while (i < spec.length) {
-    if (spec[i] === '\\' && i + 1 < spec.length) {
+    if (spec[i] === '\\') {
+      if (i + 1 >= spec.length) throw new DelimError(`delimiter list ends with an unescaped backslash: ${spec}`);
       const map: Record<string, string> = { t: '\t', n: '\n', '0': '', '\\': '\\' };
       out.push(map[spec[i + 1]] ?? spec[i + 1]);
       i += 2;
     } else { out.push(spec[i]); i++; }
   }
   return out.length > 0 ? out : [''];
+}
+
+/**
+ * Detect `-d`/`--delimiters` given with NO argument (the final token, no
+ * following value) — GNU's getopt "option requires an argument". Distinct from
+ * an explicit empty `-d ''`. Returns the diagnostic line or undefined.
+ */
+function missingDelimArg(argv: string[], name: string): string | undefined {
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--') break;
+    if (a === '--delimiters') { if (argv[i + 1] === undefined) return `${name}: option '--delimiters' requires an argument`; i++; continue; }
+    if (a.startsWith('--')) continue;
+    if (!a.startsWith('-') || a === '-') continue;
+    const cluster = a.slice(1);
+    for (let j = 0; j < cluster.length; j++) {
+      if (cluster[j] === 'd') {
+        if (cluster.slice(j + 1).length > 0) break; // inline value
+        if (argv[i + 1] === undefined) return `${name}: option requires an argument -- 'd'`;
+        i++; break;
+      }
+    }
+  }
+  return undefined;
 }
 
 /** Split `text` into lines on `sep` (a single char), dropping one trailing separator. */
@@ -64,7 +112,6 @@ const pasteCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   });
   const { positionals, flags } = parsed;
   const name = io.args[0] ?? 'paste';
-  const delims = flags.d !== undefined ? parseDelims(String(flags.d)) : ['\t'];
   const serial = Boolean(flags.s);
   const zero = Boolean(flags.z);
   const lineSep = zero ? '\0' : '\n';
@@ -76,6 +123,15 @@ const pasteCommand: CommandFn = async (io: CommandIO): Promise<number> => {
 
   try {
     if (parsed.unknown.length) { await writeString(err, optionError(name, parsed.unknown[0]) + '\n'); return 1; }
+    // `-d` with no argument is GNU's getopt "option requires an argument" error.
+    const missing = missingDelimArg(io.args.slice(1), name);
+    if (missing !== undefined) { await writeString(err, `${missing}\nTry '${name} --help' for more information.\n`); return 1; }
+    let delims: string[];
+    try { delims = flags.d !== undefined ? parseDelims(String(flags.d)) : ['\t']; }
+    catch (e) {
+      if (e instanceof DelimError) { await writeString(err, `${name}: ${e.message}\n`); return 1; }
+      throw e;
+    }
     const sources = positionals.length > 0 ? positionals : ['-'];
 
     // Fast path: a single stdin source in merge mode (no -s, no -z) is just a
@@ -114,8 +170,7 @@ const pasteCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         let text: string;
         try { text = await readFileText(io, src); }
         catch (e) {
-          const msg = (e as { message?: string }).message ?? 'No such file or directory';
-          await writeString(err, `${name}: ${src}: ${msg}\n`);
+          await writeString(err, `${name}: ${src}: ${errnoText(e)}\n`);
           return 1;
         }
         fileLines.push(splitLines(text, lineSep));

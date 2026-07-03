@@ -121,3 +121,6 @@ Cargo.lock
 
 # Mac OS
 .DS_Store
+
+# Claude Code Worktrees
+.claude/worktrees/

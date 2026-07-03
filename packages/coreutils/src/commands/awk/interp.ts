@@ -76,7 +76,10 @@ export class Interpreter {
   /** Per-call local scopes for user functions (innermost last). */
   private locals: Array<Map<string, Cell>> = [];
 
-  private fields: string[] = []; // fields[0] is $0
+  // fields[0] is $0. Seeded with "" so that in a BEGIN block (before any record
+  // is read) $0 reads as the empty string and `length`/length($0) return 0,
+  // matching awk — rather than dereferencing `undefined`.
+  private fields: string[] = [''];
   private record = '';
   private nf = 0;
   private exitCode = 0;

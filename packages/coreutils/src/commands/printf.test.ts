@@ -110,6 +110,46 @@ describe('sprintfAll', () => {
   test('\\c truncates format output', () => {
     expect(sprintfAll('ab\\cde', [])).toBe('ab');
   });
+
+  // ── round-half-to-EVEN (banker's rounding) for %f/%e/%E/%g, matching C/GNU ──
+  // JS toFixed/toExponential round exact .5-ties half-AWAY-from-zero; GNU rounds
+  // the true IEEE-754 value half-to-EVEN. Only exactly-representable ties diverge.
+  test('%.0f 2.5 → 2 (tie to even)', () => expect(sprintfAll('%.0f', ['2.5'])).toBe('2'));
+  test('%.0f 3.5 → 4 (tie to even)', () => expect(sprintfAll('%.0f', ['3.5'])).toBe('4'));
+  test('%.0f 0.5 → 0 (tie to even)', () => expect(sprintfAll('%.0f', ['0.5'])).toBe('0'));
+  test('%.0f 1.5 → 2 (tie to even)', () => expect(sprintfAll('%.0f', ['1.5'])).toBe('2'));
+  test('%.0f 4.5 → 4 (tie to even)', () => expect(sprintfAll('%.0f', ['4.5'])).toBe('4'));
+  test('%.0f -2.5 → -2 (tie to even)', () => expect(sprintfAll('%.0f', ['-2.5'])).toBe('-2'));
+  test('%.2f 0.125 → 0.12 (exact tie to even)', () => expect(sprintfAll('%.2f', ['0.125'])).toBe('0.12'));
+  test('%.2f -0.125 → -0.12 (exact tie to even)', () => expect(sprintfAll('%.2f', ['-0.125'])).toBe('-0.12'));
+  test('%.0f 0.45 → 0 (non-representable, rounds down)', () => expect(sprintfAll('%.0f', ['0.45'])).toBe('0'));
+  test('%.0f 2.4 → 2 (non-tie)', () => expect(sprintfAll('%.0f', ['2.4'])).toBe('2'));
+  test('%.0f 2.6 → 3 (non-tie)', () => expect(sprintfAll('%.0f', ['2.6'])).toBe('3'));
+  test('%f 2.5 default 6 digits', () => expect(sprintfAll('%f', ['2.5'])).toBe('2.500000'));
+  test('%.3e 12345 → 1.234e+04 (tie to even)', () => expect(sprintfAll('%.3e', ['12345'])).toBe('1.234e+04'));
+  test('%.3E 12345 → 1.234E+04', () => expect(sprintfAll('%.3E', ['12345'])).toBe('1.234E+04'));
+  test('%.0e 2.5 → 2e+00 (tie to even)', () => expect(sprintfAll('%.0e', ['2.5'])).toBe('2e+00'));
+  test('%.3g 12345 → 1.23e+04 (tie to even)', () => expect(sprintfAll('%.3g', ['12345'])).toBe('1.23e+04'));
+  test('%.2g 0.125 → 0.12 (tie to even)', () => expect(sprintfAll('%.2g', ['0.125'])).toBe('0.12'));
+  test('float ties honour width/flags: %08.2f 2.5', () => expect(sprintfAll('%08.2f', ['2.5'])).toBe('00002.50'));
+  test('float ties honour +/space: %+.0f 2.5', () => expect(sprintfAll('%+.0f', ['2.5'])).toBe('+2'));
+
+  // ── %u/%o/%x accept the full uintmax_t range [0, 2^64-1] (parsed as unsigned) ──
+  test('%u UINTMAX_MAX (2^64-1) accepted', () => {
+    expect(sprintfAll('%u', ['18446744073709551615'])).toBe('18446744073709551615');
+  });
+  test('%o UINTMAX_MAX octal', () => {
+    expect(sprintfAll('%o', ['18446744073709551615'])).toBe('1777777777777777777777');
+  });
+  test('%x UINTMAX_MAX hex', () => {
+    expect(sprintfAll('%x', ['18446744073709551615'])).toBe('ffffffffffffffff');
+  });
+  test('%u INTMAX_MAX+1 (2^63) accepted, not clamped', () => {
+    expect(sprintfAll('%u', ['9223372036854775808'])).toBe('9223372036854775808');
+  });
+  test('%x above INTMAX_MAX accepted', () => {
+    expect(sprintfAll('%x', ['9223372036854775808'])).toBe('8000000000000000');
+  });
 });
 
 describe('printf command', () => {
@@ -161,5 +201,25 @@ describe('printf command', () => {
     const h = makeIO(['printf', '%b\n', 'a\\cb']);
     expect(await printfCommand(h.io)).toBe(0);
     expect(h.out()).toBe('a');
+  });
+
+  test('%u UINTMAX_MAX: exits 0, no diagnostic (parsed as uintmax_t)', async () => {
+    const h = makeIO(['printf', '%u\n', '18446744073709551615']);
+    expect(await printfCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('18446744073709551615\n');
+    expect(h.err()).toBe('');
+  });
+
+  test('%u above UINTMAX_MAX: saturates + Result too large, exit 1', async () => {
+    const h = makeIO(['printf', '%u\n', '18446744073709551616']);
+    expect(await printfCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('18446744073709551615\n');
+    expect(h.err()).toContain('Result too large');
+  });
+
+  test('%.0f 2.5 tie-to-even prints 2, exit 0', async () => {
+    const h = makeIO(['printf', '%.0f\n', '2.5']);
+    expect(await printfCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('2\n');
   });
 });

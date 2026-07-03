@@ -127,9 +127,32 @@ export function expandText(text: string, tabs: TabStops, initialOnly = false): s
   return out;
 }
 
+/**
+ * Rewrite the obsolete `-NUMBER` tab-list form into `-t NUMBER`. GNU expand and
+ * unexpand accept a leading-digit option (`-4`, `-3,6`, `-4/8`) as shorthand for
+ * `-t` with that list. A token is the obsolete form iff, after the `-`, it is a
+ * run of digits/commas/blanks with optional trailing `/N`/`+N` markers — i.e. a
+ * valid tab-list. `-t4` (real `-t`) starts with a letter, so it is untouched.
+ */
+export function normalizeTabArgs(argv: string[]): string[] {
+  const out: string[] = [];
+  let afterDashDash = false;
+  for (const a of argv) {
+    if (afterDashDash) { out.push(a); continue; }
+    if (a === '--') { afterDashDash = true; out.push(a); continue; }
+    if (/^-[0-9]/.test(a) && /^-[0-9,/+ ]+$/.test(a)) {
+      out.push('-t', a.slice(1));
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
+}
+
 const expandCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const name = io.args[0] ?? 'expand';
-  const parsed = parseArgs(io.args.slice(1), {
+  const argv = normalizeTabArgs(io.args.slice(1));
+  const parsed = parseArgs(argv, {
     string: ['t', 'tabs'],
     boolean: ['i', 'initial'],
     alias: { tabs: 't', initial: 'i' },
@@ -138,10 +161,11 @@ const expandCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const { positionals, flags } = parsed;
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
+  let exitCode = 0;
   try {
     if (parsed.unknown.length) { await writeString(err, optionError(name, parsed.unknown[0]) + '\n'); return 1; }
     // Collect every `-t`/`--tabs` value (GNU accumulates repeats).
-    const tSpecs = collectFlagValues(io.args.slice(1), 't', 'tabs');
+    const tSpecs = collectFlagValues(argv, 't', 'tabs');
     let tabs: TabStops;
     try { tabs = parseTabStops(tSpecs); }
     catch (e) {
@@ -155,11 +179,11 @@ const expandCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       if (src === '-') text = await readAllText(io.stdin);
       else {
         try { text = new TextDecoder().decode(await readFile(io, src)); }
-        catch { await writeString(err, `${name}: ${src}: No such file or directory\n`); continue; }
+        catch { await writeString(err, `${name}: ${src}: No such file or directory\n`); exitCode = 1; continue; }
       }
       await writeString(out, expandText(text, tabs, initialOnly));
     }
-    return 0;
+    return exitCode;
   } finally {
     await out.close().catch(() => {});
     await err.close().catch(() => {});

@@ -86,4 +86,44 @@ describe('readlink', () => {
     expect(await readlinkCommand(h.io)).toBe(1);
     expect(h.err()).toContain('unrecognized option \'--bogus\'');
   });
+
+  // ── -v/--verbose: print the per-operand diagnostic (GNU parity) ──
+
+  test('default is quiet on a missing operand (no stderr)', async () => {
+    const h = makeIO({ args: ['readlink', '/missing'] });
+    expect(await readlinkCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('');
+  });
+
+  test('-v prints "No such file or directory" for a missing operand', async () => {
+    const h = makeIO({ args: ['readlink', '-v', '/missing'] });
+    expect(await readlinkCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('readlink: /missing: No such file or directory\n');
+  });
+
+  test('--verbose prints "Invalid argument" for a non-symlink', async () => {
+    const h = makeIO({ args: ['readlink', '--verbose', '/f'], files: { '/f': 'x' } });
+    expect(await readlinkCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('readlink: /f: Invalid argument\n');
+  });
+
+  test('-q -v: verbose still prints (overrides the quiet default)', async () => {
+    const h = makeIO({ args: ['readlink', '-q', '-v', '/missing'] });
+    expect(await readlinkCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('readlink: /missing: No such file or directory\n');
+  });
+
+  test('-v success on a real symlink prints no error', async () => {
+    const h = makeIO({ args: ['readlink', '-v', '/link'], files: { '/target': 'x' } });
+    await h.fs.symlink('/target', '/link');
+    expect(await readlinkCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('/target\n');
+    expect(h.err()).toBe('');
+  });
+
+  test('-e -v prints the diagnostic when the final component is missing', async () => {
+    const h = makeIO({ args: ['readlink', '-e', '-v', '/dir/nope'], files: { '/dir/file': 'x' } });
+    expect(await readlinkCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('readlink: /dir/nope: No such file or directory\n');
+  });
 });

@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'vitest';
-import { sortCommand, parseKey } from './sort.ts';
+import { sortCommand, parseKey, KeyError } from './sort.ts';
 import { makeIO } from './_test-io.ts';
 
 describe('sort', () => {
@@ -255,6 +255,55 @@ describe('sort', () => {
     });
     test('end char offset', () => {
       expect(parseKey('1.1,1.3')).toMatchObject({ startField: 1, startChar: 1, endField: 1, endChar: 3 });
+    });
+    test('zero field number throws with GNU diagnostic', () => {
+      expect(() => parseKey('0')).toThrow(KeyError);
+      expect(() => parseKey('0')).toThrow('field number is zero: invalid field specification ‘0’');
+      expect(() => parseKey('1,0')).toThrow('field number is zero: invalid field specification ‘1,0’');
+    });
+    test('zero start char offset throws', () => {
+      expect(() => parseKey('1.0')).toThrow('character offset is zero: invalid field specification ‘1.0’');
+    });
+    test('valid specs do not throw', () => {
+      expect(() => parseKey('1')).not.toThrow();
+      expect(() => parseKey('1.1')).not.toThrow();
+      expect(() => parseKey('2,3')).not.toThrow();
+      // An end char offset of `.0` (through end of field) is NOT an error.
+      expect(() => parseKey('1,1.0')).not.toThrow();
+    });
+  });
+
+  // ── -s/--stable, key/tab validation (GNU parity) ──────────────────────────
+  describe('stable and validation', () => {
+    test('-s keeps equal-key records in input order', async () => {
+      const h = makeIO({ args: ['sort', '-s', '-k1,1'], stdinText: 'a 2\na 1\nb 3\n' });
+      expect(await sortCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('a 2\na 1\nb 3\n');
+    });
+    test('--stable long form behaves identically', async () => {
+      const h = makeIO({ args: ['sort', '--stable', '-k1,1'], stdinText: 'a 2\na 1\n' });
+      expect(await sortCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('a 2\na 1\n');
+    });
+    test('without -s, the whole-line tiebreak reorders equal keys', async () => {
+      const h = makeIO({ args: ['sort', '-k1,1'], stdinText: 'a 2\na 1\nb 3\n' });
+      expect(await sortCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('a 1\na 2\nb 3\n');
+    });
+    test('-k0 → exit 2 with GNU diagnostic', async () => {
+      const h = makeIO({ args: ['sort', '-k0'], stdinText: 'a\nb\n' });
+      expect(await sortCommand(h.io)).toBe(2);
+      expect(h.err()).toBe('sort: field number is zero: invalid field specification ‘0’\n');
+    });
+    test('-k1.0 → exit 2 (character offset zero)', async () => {
+      const h = makeIO({ args: ['sort', '-k1.0'], stdinText: 'a\nb\n' });
+      expect(await sortCommand(h.io)).toBe(2);
+      expect(h.err()).toBe('sort: character offset is zero: invalid field specification ‘1.0’\n');
+    });
+    test('-t \'\' → exit 2 with "empty tab"', async () => {
+      const h = makeIO({ args: ['sort', '-t', ''], stdinText: 'ba\nab\n' });
+      expect(await sortCommand(h.io)).toBe(2);
+      expect(h.err()).toBe('sort: empty tab\n');
     });
   });
 });

@@ -53,30 +53,54 @@ export function b64Encode(data: Uint8Array, wrap: number): string {
   return out;
 }
 
+/**
+ * Decode a whitespace-free base64 string. Returns the bytes decodable from valid
+ * leading groups plus `ok`, which is false when the input is malformed. GNU
+ * behavior: a group of 4 data chars decodes 3 bytes; a terminal group may be
+ * either UNPADDED (2/3 data chars — legal only as the last group) or explicitly
+ * PADDED (2 data + `==`, or 3 data + `=`), in both cases the final data char's
+ * unused low bits must be zero. A lone tail char, a wrong padding count, a
+ * garbage char, or any data after a terminal group is an error — but GNU still
+ * emits (and we still return) the bytes decoded before the fault.
+ */
+export function b64DecodeGroup(s: string): { bytes: Uint8Array; ok: boolean } {
+  const buf = new Uint8Array(Math.ceil(s.length / 4) * 3);
+  let o = 0;
+  const fail = (): { bytes: Uint8Array; ok: boolean } => ({ bytes: buf.subarray(0, o), ok: false });
+  for (let i = 0; i < s.length; i += 4) {
+    const n = Math.min(4, s.length - i); // chars available in this quartet
+    // b64Val: ≥0 data value, -2 padding '=', -1 garbage. `pad` counts explicit
+    // '=' chars; `nd` is the count of leading real-data chars.
+    const raw = [b64Val(s.charCodeAt(i)),
+      n > 1 ? b64Val(s.charCodeAt(i + 1)) : -3,
+      n > 2 ? b64Val(s.charCodeAt(i + 2)) : -3,
+      n > 3 ? b64Val(s.charCodeAt(i + 3)) : -3];
+    if (raw.some((v) => v === -1)) return fail(); // garbage char
+    const pad = raw.filter((v) => v === -2).length;
+    const nd = raw.filter((v) => v >= 0).length;
+    const [v0, v1, v2, v3] = raw;
+    if (v0 < 0 || v1 < 0) return fail(); // need ≥2 data chars
+    // Data must be contiguous then padding (no data after a '=').
+    if (nd === 2 && v2 >= 0) return fail();
+    if (nd === 3 && v3 >= 0) return fail();
+    buf[o++] = (v0 << 2) | (v1 >> 4);
+    if (nd >= 3) buf[o++] = ((v1 & 0xf) << 4) | (v2 >> 2);
+    if (nd === 4) { buf[o++] = ((v2 & 3) << 6) | v3; continue; }
+    // Terminal group (2 or 3 data chars): must be the LAST quartet, trailing bits
+    // zero, and — when '=' padding is present — the group must be a full 4 chars.
+    if (nd === 3 && (v2 & 3)) return fail();
+    if (nd === 2 && (v1 & 0xf)) return fail();
+    if (pad > 0 && pad !== 4 - nd) return fail(); // wrong pad count
+    if (i + 4 < s.length) return fail(); // data after a terminal group
+  }
+  return { bytes: buf.subarray(0, o), ok: true };
+}
+
 export function b64Decode(input: string): Uint8Array | null {
-  // Strip all whitespace
   const s = input.replace(/\s/g, '');
   if (s.length === 0) return new Uint8Array(0);
-  if (s.length % 4 !== 0) return null;
-
-  const buf = new Uint8Array((s.length / 4) * 3);
-  let len = buf.length;
-  let o = 0;
-
-  for (let i = 0; i < s.length; i += 4) {
-    const v0 = b64Val(s.charCodeAt(i));
-    const v1 = b64Val(s.charCodeAt(i + 1));
-    const v2 = b64Val(s.charCodeAt(i + 2));
-    const v3 = b64Val(s.charCodeAt(i + 3));
-    if (v0 < 0 || v1 < 0) return null;
-
-    buf[o++] = (v0 << 2) | (v1 >> 4);
-    if (v2 >= 0) buf[o++] = ((v1 & 0xf) << 4) | (v2 >> 2);
-    else len--;
-    if (v3 >= 0) buf[o++] = ((v2 & 3) << 6) | v3;
-    else len--;
-  }
-  return buf.subarray(0, len);
+  const r = b64DecodeGroup(s);
+  return r.ok ? r.bytes : null;
 }
 
 function b64Val(code: number): number {
@@ -165,8 +189,9 @@ class StreamingB64Encoder {
 /**
  * A constant-memory base64 decoder driven chunk-by-chunk. Each `update()` strips
  * whitespace, carries a ≤3-char quartet tail across calls, and decodes complete
- * quartets to bytes; `final()` validates the leftover and returns its bytes.
- * Returns `null` from `update`/`final` on the first invalid quartet.
+ * quartets to bytes; `final()` validates the leftover (unpadded tails, trailing
+ * bits). Both return `{ bytes, ok }`; `ok` is false on the first malformed group
+ * (the caller still writes `bytes` decoded before the fault, matching GNU).
  */
 class StreamingB64Decoder {
   #carry = '';
@@ -180,18 +205,17 @@ class StreamingB64Decoder {
     return this.#ignoreGarbage ? stripped.replace(/[^A-Za-z0-9+/=]/g, '') : stripped;
   }
 
-  update(text: string): Uint8Array | null {
+  update(text: string): { bytes: Uint8Array; ok: boolean } {
     const s = this.#carry + this.#clean(text);
     const whole = s.length - (s.length % 4);
     this.#carry = s.slice(whole);
-    if (whole === 0) return new Uint8Array(0);
-    const decoded = b64Decode(s.slice(0, whole));
-    return decoded;
+    if (whole === 0) return { bytes: new Uint8Array(0), ok: true };
+    return b64DecodeGroup(s.slice(0, whole));
   }
 
-  final(): Uint8Array | null {
-    if (this.#carry.length === 0) return new Uint8Array(0);
-    const decoded = b64Decode(this.#carry);
+  final(): { bytes: Uint8Array; ok: boolean } {
+    if (this.#carry.length === 0) return { bytes: new Uint8Array(0), ok: true };
+    const decoded = b64DecodeGroup(this.#carry);
     this.#carry = '';
     return decoded;
   }
@@ -275,21 +299,22 @@ function makeBase64Command(name: string): CommandFn {
           if (enc) {
             await sink.push(enc.update(value));
           } else {
-            const piece = dec!.update(decoder.decode(value, { stream: true }));
-            if (piece === null) {
+            const { bytes, ok } = dec!.update(decoder.decode(value, { stream: true }));
+            // GNU still emits the bytes decoded before a malformed group.
+            if (bytes.byteLength > 0) { await sink.flush(); await writeChunked(out, bytes); }
+            if (!ok) {
               if (reader) reader.releaseLock();
               return await exitWith(err, 1, `${name}: invalid input`);
             }
-            if (piece.byteLength > 0) { await sink.flush(); await writeChunked(out, piece); }
           }
         }
         if (reader) reader.releaseLock();
         if (enc) { await sink.push(enc.final()); await sink.flush(); }
         else {
-          const piece = dec!.final();
-          if (piece === null) return await exitWith(err, 1, `${name}: invalid input`);
+          const { bytes, ok } = dec!.final();
           await sink.flush();
-          if (piece.byteLength > 0) await writeChunked(out, piece);
+          if (bytes.byteLength > 0) await writeChunked(out, bytes);
+          if (!ok) return await exitWith(err, 1, `${name}: invalid input`);
         }
       } catch (e) {
         try { if (reader) reader.releaseLock(); } catch { /* already released */ }

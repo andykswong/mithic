@@ -26,10 +26,45 @@
 import { defineCommand, parseArgs, CoalescingWriter, isBrokenPipe, exitWith } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
-/** A number literal accepted by `seq`, optionally in scientific notation. */
-const NUMBER_RE = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+/** A hexadecimal float literal with a binary exponent (`0x1p4`, `0x1.8p1`). */
+const HEX_FLOAT_RE = /^[+-]?0[xX][0-9a-fA-F]*\.?[0-9a-fA-F]*[pP][+-]?\d+$/;
+/**
+ * Any numeric operand `seq` accepts: decimal / scientific notation, hex integers
+ * (`0x10`, `-0xA`), or hex floats with a binary exponent (`0x1p4`) — matching the
+ * forms GNU's `strtold` recognizes.
+ */
+const NUMBER_RE = /^[+-]?(0[xX][0-9a-fA-F]*\.?[0-9a-fA-F]*[pP][+-]?\d+|0[xX][0-9a-fA-F]+|\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
 /** A plain integer literal (no decimal point, no exponent) — the BigInt path. */
 const INT_RE = /^[+-]?\d+$/;
+
+/**
+ * Parse a numeric operand to a JS number. Handles hex integers and hex floats
+ * (`0x1p4` → 16, `0x1.8p1` → 3) which `Number()` does not understand, matching
+ * the operand forms accepted by GNU's `strtold`.
+ */
+export function parseSeqNumber(s: string): number {
+  if (HEX_FLOAT_RE.test(s)) {
+    const neg = s[0] === '-';
+    let body = s.replace(/^[+-]/, '');
+    body = body.slice(2); // drop 0x
+    const [mantissa, expStr] = body.split(/[pP]/);
+    const [intPart, fracPart = ''] = mantissa.split('.');
+    let value = parseInt(intPart || '0', 16);
+    for (let i = 0; i < fracPart.length; i++) {
+      value += parseInt(fracPart[i], 16) / 16 ** (i + 1);
+    }
+    value *= 2 ** parseInt(expStr, 10);
+    return neg ? -value : value;
+  }
+  // JS `Number()` only parses UNSIGNED hex (`0x10`), so a signed hex integer
+  // (`-0xA`, `+0x1F`) must have its sign applied by hand.
+  const hexInt = /^([+-])(0[xX][0-9a-fA-F]+)$/.exec(s);
+  if (hexInt) {
+    const v = Number(hexInt[2]);
+    return hexInt[1] === '-' ? -v : v;
+  }
+  return Number(s);
+}
 
 /** Apply a simple printf-style format string to a numeric value. */
 export function applySeqFormat(fmt: string, val: number): string {
@@ -56,6 +91,8 @@ export function applySeqFormat(fmt: string, val: number): string {
       const p = prec !== '' ? parseInt(prec, 10) : undefined;
       const leftAlign = flags.includes('-');
       const zeroPad = flags.includes('0') && !leftAlign;
+      const plusFlag = flags.includes('+');
+      const spaceFlag = flags.includes(' ');
       let s: string;
       if (spec === 'f') {
         s = val.toFixed(p ?? 6);
@@ -71,11 +108,24 @@ export function applySeqFormat(fmt: string, val: number): string {
         // Fallback: treat as %g
         s = val.toString();
       }
-      if (w > s.length) {
-        const pad = w - s.length;
-        if (leftAlign) s = s + ' '.repeat(pad);
-        else if (zeroPad) s = '0'.repeat(pad) + s;
-        else s = ' '.repeat(pad) + s;
+      // Sign flags: '+' forces a leading '+' on non-negatives; ' ' emits a
+      // leading space on non-negatives (ignored when '+' is also present).
+      // Negatives already carry their '-' from the numeric conversion.
+      let sign = '';
+      if (s[0] !== '-') {
+        if (plusFlag) sign = '+';
+        else if (spaceFlag) sign = ' ';
+      }
+      if (w > s.length + sign.length) {
+        const pad = w - s.length - sign.length;
+        if (leftAlign) s = sign + s + ' '.repeat(pad);
+        else if (zeroPad) {
+          // Zero-pad sits between the sign and the digits: `%+05.1f` → `+01.0`.
+          if (s[0] === '-') s = '-' + '0'.repeat(pad) + s.slice(1);
+          else s = sign + '0'.repeat(pad) + s;
+        } else s = ' '.repeat(pad) + sign + s;
+      } else {
+        s = sign + s;
       }
       result += s;
     } else if (fmt[i] === '\\' && i + 1 < fmt.length) {
@@ -183,7 +233,7 @@ const seqCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     else { firstStr = positionals[0]; stepStr = positionals[1]; lastStr = positionals[2]; }
 
     // Zero step is an error regardless of path.
-    if (Number(stepStr) === 0) {
+    if (parseSeqNumber(stepStr) === 0) {
       return await exitWith(err, 1, `${name}: invalid Zero increment value: ‘${stepStr}’\nTry '${name} --help' for more information.`);
     }
 
@@ -260,31 +310,42 @@ async function emitDecimal(
   fmt: string | null,
   equalWidth: boolean,
 ): Promise<boolean> {
+  // GNU derives the output precision from FIRST and STEP only, never LAST — so
+  // `seq 1 2.5` and `seq 3.9` print integer-formatted terms.
   const prec = Math.max(
     fractionalDigits(firstStr),
     fractionalDigits(stepStr),
-    fractionalDigits(lastStr),
   );
   const scale = 10 ** prec;
   // Scaled integer representation to avoid float accumulation error.
-  const toScaled = (s: string): number => Math.round(Number(s) * scale);
+  const toScaled = (s: string): number => Math.round(parseSeqNumber(s) * scale);
   const first = toScaled(firstStr);
   const step = toScaled(stepStr);
-  const last = toScaled(lastStr);
+
+  // The loop bound must use LAST at full precision. Since the output precision
+  // excludes LAST, rounding LAST to `scale` could overshoot (`seq 1 2.5` would
+  // otherwise round 2.5→3 and emit a spurious `3`). Compare in a finer scale
+  // that also covers LAST's own fractional digits.
+  const cmpPrec = Math.max(prec, fractionalDigits(lastStr));
+  const cmpMul = 10 ** (cmpPrec - prec);
+  const cmpScale = 10 ** cmpPrec;
+  const lastCmp = Math.round(parseSeqNumber(lastStr) * cmpScale);
+  const stepCmp = step * cmpMul;
 
   // Pre-compute the equal-width field size from the formatted endpoints.
   let padWidth = 0;
   if (equalWidth) {
     padWidth = Math.max(
       formatScaled(first, prec).length,
-      formatScaled(last, prec).length,
+      formatScaled(toScaled(lastStr), prec).length,
     );
   }
 
   let any = false;
   let cur = first;
+  let curCmp = first * cmpMul;
   const up = step > 0;
-  while (up ? cur <= last : cur >= last) {
+  while (up ? curCmp <= lastCmp : curCmp >= lastCmp) {
     if (any) await cw.push(sep);
     let s: string;
     if (fmt) {
@@ -295,6 +356,7 @@ async function emitDecimal(
     }
     await cw.push(s);
     cur += step;
+    curCmp += stepCmp;
     any = true;
   }
   return any;

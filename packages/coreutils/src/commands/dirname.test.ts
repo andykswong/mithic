@@ -70,4 +70,24 @@ describe('dirname', () => {
     const h = makeIO({ args: ['dirname'] });
     expect(await dirnameCommand(h.io)).toBe(1);
   });
+
+  // GNU parity: unknown options are rejected (not silently swallowed).
+  test('an unknown short flag errors like GNU (exit 1, nothing on stdout)', async () => {
+    const h = makeIO({ args: ['dirname', '-x', '/a/b'] });
+    expect(await dirnameCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('');
+    expect(h.err()).toBe('dirname: invalid option -- \'x\'\nTry \'dirname --help\' for more information.\n');
+  });
+
+  test('an unknown long flag errors like GNU (exit 1)', async () => {
+    const h = makeIO({ args: ['dirname', '--bogus', '/a/b'] });
+    expect(await dirnameCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('dirname: unrecognized option \'--bogus\'\nTry \'dirname --help\' for more information.\n');
+  });
+
+  test('a valid -z still works while an unknown clustered flag errors', async () => {
+    const h = makeIO({ args: ['dirname', '-z', '-q', '/a/b/c'] });
+    expect(await dirnameCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('dirname: invalid option -- \'q\'\nTry \'dirname --help\' for more information.\n');
+  });
 });

@@ -126,10 +126,9 @@ function expand(spec: string, name: string, st: StatResult): string {
 
 /**
  * Apply a GNU-style format string, expanding %-directives. When `escapes` is
- * true (`--printf`) backslash escapes (`\n`, `\t`, …) are interpreted; `-c`
- * passes the format through literally except for `\n`/`\t` (GNU -c does not
- * process escapes, but the historical mithic behavior — and the tests — treat
- * `\n`/`\t` as escapes for -c too; the caller controls this via `escapes`).
+ * true (`--printf`) backslash escapes (`\n`, `\t`, `\\`, …) are interpreted;
+ * `-c`/--format (escapes=false) passes backslashes through literally, matching
+ * GNU (only `--printf` processes escapes).
  */
 function applyFormat(fmt: string, name: string, st: StatResult, escapes: boolean): string {
   let out = '';
@@ -207,7 +206,9 @@ const statCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       if (printfFmt !== undefined) {
         await writeString(out, applyFormat(printfFmt, file, st, true));
       } else if (formatFmt !== undefined) {
-        await writeLine(out, applyFormat(formatFmt, file, st, true));
+        // GNU `-c`/--format passes backslashes through literally; only --printf
+        // interprets escapes (\t \n \\ …). So escapes=false here.
+        await writeLine(out, applyFormat(formatFmt, file, st, false));
       } else if (flags.t) {
         await writeLine(out, terseFormat(file, st));
       } else {

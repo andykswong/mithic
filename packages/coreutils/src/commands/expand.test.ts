@@ -83,4 +83,37 @@ describe('expand', () => {
     expect(await expandCommand(h.io)).toBe(1);
     expect(h.err()).toContain('expand: invalid option -- \'Q\'');
   });
+
+  // ── obsolete -N tab-list shorthand (GNU parity) ───────────────────────────
+  test('-4 is shorthand for -t 4', async () => {
+    const h = makeIO({ args: ['expand', '-4'], stdinText: '\ta\n' });
+    expect(await expandCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('    a\n');
+  });
+
+  test('-3,6 is shorthand for -t 3,6 (explicit list)', async () => {
+    const h = makeIO({ args: ['expand', '-3,6'], stdinText: '\ta\tb\tc\n' });
+    expect(await expandCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('   a  b c\n');
+  });
+
+  test('-4 -8 accumulates like -t 4 -t 8', async () => {
+    const h = makeIO({ args: ['expand', '-4', '-8'], stdinText: '\ta\tb\n' });
+    expect(await expandCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('    a   b\n');
+  });
+
+  // ── file-read failure exits 1 (parity finding) ────────────────────────────
+  test('missing file operand exits 1', async () => {
+    const h = makeIO({ args: ['expand', '/noexist'] });
+    expect(await expandCommand(h.io)).toBe(1);
+    expect(h.err()).toContain('expand: /noexist: No such file or directory');
+  });
+
+  test('missing file still exits 1 even with a valid file present', async () => {
+    const h = makeIO({ args: ['expand', '/noexist', '/ok'], files: { '/ok': '\tx\n' } });
+    expect(await expandCommand(h.io)).toBe(1);
+    // The present file's expanded output is still emitted byte-exact.
+    expect(h.out()).toBe('        x\n');
+  });
 });

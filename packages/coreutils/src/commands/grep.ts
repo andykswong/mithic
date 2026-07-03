@@ -412,6 +412,9 @@ function colorize(line: string, spans: { start: number; end: number }[]): string
   let out = '';
   let pos = 0;
   for (const s of spans) {
+    // GNU grep only highlights matches of length > 0 — a zero-length match (from
+    // `o*`, `^`, `$`, etc.) is not wrapped in SGR codes (mirrors the -o guards).
+    if (s.end === s.start) continue;
     out += line.slice(pos, s.start) + RED + line.slice(s.start, s.end) + RESET;
     pos = s.end;
   }

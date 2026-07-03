@@ -86,6 +86,26 @@ describe('stat', () => {
     expect(h.out()).toBe('5\n'); // one \n from the escape, none appended
   });
 
+  // GNU: -c/--format passes backslashes through literally (only --printf escapes).
+  test('-c does NOT interpret backslash escapes (\\t \\n \\\\ stay literal)', async () => {
+    const h = makeIO({ args: ['stat', '-c', '%n\\t%s', '/f'], files: { '/f': 'hi' } });
+    expect(await statCommand(h.io)).toBe(0);
+    // literal backslash-t (0x5c 0x74), NOT a real tab; then the added newline.
+    expect(h.out()).toBe('/f\\t2\n');
+  });
+
+  test('-c keeps a literal \\n and a literal double-backslash', async () => {
+    const h = makeIO({ args: ['stat', '-c', '%n\\n%s\\\\', '/f'], files: { '/f': 'hi' } });
+    await statCommand(h.io);
+    expect(h.out()).toBe('/f\\n2\\\\\n'); // backslash-n and backslash-backslash literal
+  });
+
+  test('--format alias behaves like -c (no escape interpretation)', async () => {
+    const h = makeIO({ args: ['stat', '--format', 'x\\ty', '/f'], files: { '/f': 'hi' } });
+    await statCommand(h.io);
+    expect(h.out()).toBe('x\\ty\n');
+  });
+
   test('--printf with two operands does not append newlines', async () => {
     const h = makeIO({ args: ['stat', '--printf', '%s', '/a', '/b'], files: { '/a': 'x', '/b': 'yy' } });
     await statCommand(h.io);

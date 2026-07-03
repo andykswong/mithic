@@ -14,8 +14,67 @@
  * position of 0 all fail loud (exit 1) with GNU's diagnostic. Only one of
  * `-b/-c/-f` may be given; `-d`/`-s` require `-f`.
  */
-import { CoalescingWriter, defineCommand, isBrokenPipe, optionError, parseArgs, streamLines, writeString } from '../harness.ts';
+import { CoalescingWriter, defineCommand, fsErrorText, isBrokenPipe, optionError, parseArgs, streamLines, writeString } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
+
+/**
+ * Canonical POSIX errno text for an `fs/*` failure. Over the real kernel the
+ * FileSystemError is re-serialized with an uppercase POSIX errno `code` (e.g.
+ * `ENOENT`) and a provider message (`File not found: …`); {@link fsErrorText}
+ * only maps the lowercase VFS codes, so translate the errno first and fall back
+ * to it for the in-memory unit-test path (see cat.ts for the rationale).
+ */
+const ERRNO_TEXT: Record<string, string> = {
+  ENOENT: 'No such file or directory', EACCES: 'Permission denied', EEXIST: 'File exists',
+  ENOTDIR: 'Not a directory', EISDIR: 'Is a directory', EXDEV: 'Invalid cross-device link',
+  ENOTEMPTY: 'Directory not empty', EINVAL: 'Invalid argument', ENOSPC: 'No space left on device',
+  EIO: 'Input/output error',
+};
+function errnoText(err: unknown): string {
+  const code = (err as { code?: string })?.code;
+  return (code && ERRNO_TEXT[code]) ?? fsErrorText(err);
+}
+
+/** Short value-flags and their long-name spellings (getopt requires an argument). */
+const VALUE_FLAGS: Record<string, string> = { b: 'bytes', c: 'characters', f: 'fields', d: 'delimiter' };
+const LONG_VALUE_FLAGS = new Set(['bytes', 'characters', 'fields', 'delimiter', 'output-delimiter']);
+
+/**
+ * Detect a value-flag given with NO argument (the final token, no following
+ * value) — GNU's getopt `option requires an argument` case, distinct from an
+ * explicit empty value like `cut -f ''` (which is a LIST parse error). Returns
+ * the GNU diagnostic line, or undefined if every value-flag has an argument.
+ * (Short: `option requires an argument -- 'f'`; long: `option '--fields'
+ * requires an argument`.)
+ */
+function missingArgError(argv: string[], name: string): string | undefined {
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--') break;
+    if (a.startsWith('--')) {
+      const body = a.slice(2);
+      if (body.includes('=')) continue; // explicit value present
+      if (LONG_VALUE_FLAGS.has(body) && argv[i + 1] === undefined) {
+        return `${name}: option '--${body}' requires an argument`;
+      }
+      if (LONG_VALUE_FLAGS.has(body)) i++; // consumes the next token as its value
+      continue;
+    }
+    if (!a.startsWith('-') || a === '-') continue;
+    const cluster = a.slice(1);
+    for (let j = 0; j < cluster.length; j++) {
+      const ch = cluster[j];
+      if (VALUE_FLAGS[ch] !== undefined) {
+        const rest = cluster.slice(j + 1);
+        if (rest.length > 0) break; // inline value (e.g. -f1)
+        if (argv[i + 1] === undefined) return `${name}: option requires an argument -- '${ch}'`;
+        i++; // consumes the next token as its value
+        break;
+      }
+    }
+  }
+  return undefined;
+}
 
 // Note: `readFileText` (below) handles file operands; stdin is streamed.
 
@@ -56,7 +115,10 @@ export function parseList(spec: string, field: boolean): Range[] {
       if (b.includes('-')) throw new ListError(invalidRange);
       if (a === '' && b === '') throw new ListError('invalid range with no endpoint: -');
       const from = a === '' ? 1 : parsePos(a, invalidValue, numberedFrom1);
-      const to = b === '' ? Infinity : parsePos(b, invalidValue, numberedFrom1);
+      // The upper endpoint may be 0; GNU treats `N-0` (0 < N) as a DECREASING
+      // range, not a "numbered from 1" error — so parse it without the 0 reject
+      // and let the `to < from` check below diagnose it.
+      const to = b === '' ? Infinity : parseUpper(b, invalidValue);
       if (to < from) throw new ListError('invalid decreasing range');
       ranges.push({ from, to });
     } else {
@@ -74,6 +136,16 @@ function parsePos(tok: string, invalidValue: string, numberedFrom1: string): num
   const n = Number(tok);
   if (n === 0) throw new ListError(numberedFrom1);
   return n;
+}
+
+/**
+ * Parse a range's UPPER endpoint. Unlike {@link parsePos}, a value of 0 is
+ * permitted here (returned as 0) so the caller's `to < from` check reports GNU's
+ * `invalid decreasing range` for `N-0` rather than `numbered from 1`.
+ */
+function parseUpper(tok: string, invalidValue: string): number {
+  if (!/^\d+$/.test(tok)) throw new ListError(`${invalidValue} ${quote(tok)}`);
+  return Number(tok);
 }
 
 /**
@@ -183,7 +255,20 @@ const cutCommand: CommandFn = async (io: CommandIO): Promise<number> => {
 
   try {
     if (parsed.unknown.length) { await writeString(err, optionError(name, parsed.unknown[0]) + '\n'); return 1; }
-    const delim = flags.d !== undefined ? String(flags.d) : '\t';
+    // A value-flag with no argument at all (e.g. `cut -f`) is GNU's getopt
+    // "option requires an argument" error — distinct from an explicit empty
+    // value like `cut -f ''` (a LIST parse error handled by parseList).
+    const missing = missingArgError(io.args.slice(1), name);
+    if (missing !== undefined) return await fail(missing);
+    // GNU: an empty `-d`/`--output-delimiter` value is the NUL byte, not a
+    // zero-length string (so `-d ''` on a line with no NUL selects the whole
+    // line as field 1, and `--output-delimiter=` joins fields with NUL).
+    const delim = flags.d !== undefined ? (String(flags.d) === '' ? '\0' : String(flags.d)) : '\t';
+    // An explicit but empty `--output-delimiter=` is the NUL byte (GNU); an
+    // absent flag is `null` (caller falls back to `-d`/none).
+    const outDelimGiven = flags['output-delimiter'] !== undefined
+      ? (String(flags['output-delimiter']) === '' ? '\0' : String(flags['output-delimiter']))
+      : null;
     const onlyDelim = Boolean(flags.s);
     const complement = Boolean(flags.complement);
     const modeCount = (flags.b !== undefined ? 1 : 0) + (flags.c !== undefined ? 1 : 0) + (flags.f !== undefined ? 1 : 0);
@@ -194,20 +279,18 @@ const cutCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       if (flags.b !== undefined) {
         if (flags.d !== undefined) return await fail(`${name}: an input delimiter makes sense\n\tonly when operating on fields`);
         if (onlyDelim) return await fail(`${name}: suppressing non-delimited lines makes sense\n\tonly when operating on fields`);
-        const outDelim = flags['output-delimiter'] !== undefined ? String(flags['output-delimiter']) : null;
-        mode = { kind: 'bytes', ranges: parseList(String(flags.b), false), complement, outDelim };
+        mode = { kind: 'bytes', ranges: parseList(String(flags.b), false), complement, outDelim: outDelimGiven };
       } else if (flags.c !== undefined) {
         if (flags.d !== undefined) return await fail(`${name}: an input delimiter makes sense\n\tonly when operating on fields`);
         if (onlyDelim) return await fail(`${name}: suppressing non-delimited lines makes sense\n\tonly when operating on fields`);
-        const outDelim = flags['output-delimiter'] !== undefined ? String(flags['output-delimiter']) : null;
-        mode = { kind: 'chars', ranges: parseList(String(flags.c), false), complement, outDelim };
+        mode = { kind: 'chars', ranges: parseList(String(flags.c), false), complement, outDelim: outDelimGiven };
       } else if (flags.f !== undefined) {
         if (delim.length > 1) return await fail(`${name}: the delimiter must be a single character`);
-        const outDelim = flags['output-delimiter'] !== undefined ? String(flags['output-delimiter']) : delim;
+        const outDelim = outDelimGiven !== null ? outDelimGiven : delim;
         mode = { kind: 'fields', ranges: parseList(String(flags.f), true), complement, delim, outDelim, onlyDelim };
       } else {
-        await writeString(err, `${name}: you must specify a list of bytes, characters, or fields\n`);
-        return 1;
+        // GNU emits BOTH the diagnostic AND the `Try '<cmd> --help'` line here.
+        return await fail(`${name}: you must specify a list of bytes, characters, or fields`);
       }
     } catch (e) {
       if (e instanceof ListError) return await fail(`${name}: ${e.message}`);
@@ -236,8 +319,7 @@ const cutCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       let text: string;
       try { text = await readFileText(io, src); }
       catch (e) {
-        const msg = (e as { message?: string }).message ?? 'No such file or directory';
-        await writeString(err, `${name}: ${src}: ${msg}\n`);
+        await writeString(err, `${name}: ${src}: ${errnoText(e)}\n`);
         exitCode = 1;
         continue;
       }

@@ -16,6 +16,7 @@
 import { defineCommand, parseArgs, readAll, writeLine, writeString, exitWith } from '../harness.ts';
 import { readFile } from '../fs.ts';
 import { md5hex } from './_md5.ts';
+import { sha224hex } from './_sha224.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 // ── CRC-32 (POSIX cksum polynomial: 0xEDB88320 reflected) ───────────────────
@@ -198,7 +199,11 @@ const TAG_LABEL: Record<string, string> = { md5: 'MD5', sha1: 'SHA1', sha224: 'S
 /** Compute the hex digest of `bytes` for a hash algorithm (md5 or a SHA family). */
 async function hashHex(algo: string, bytes: Uint8Array): Promise<string> {
   if (algo === 'md5') return md5hex(bytes);
-  const cryptoName: Record<string, string> = { sha1: 'SHA-1', sha224: 'SHA-224', sha256: 'SHA-256', sha384: 'SHA-384', sha512: 'SHA-512' };
+  // Web Crypto has no SHA-224 (crypto.subtle.digest throws NotSupportedError),
+  // so it is computed pure-TS (same fallback precedent as md5). SHA-1/256/384/512
+  // use Web Crypto.
+  if (algo === 'sha224') return sha224hex(bytes);
+  const cryptoName: Record<string, string> = { sha1: 'SHA-1', sha256: 'SHA-256', sha384: 'SHA-384', sha512: 'SHA-512' };
   const buf = await crypto.subtle.digest(cryptoName[algo], bytes as unknown as BufferSource);
   let hex = '';
   for (const b of new Uint8Array(buf)) hex += b.toString(16).padStart(2, '0');
@@ -222,8 +227,9 @@ const cksumCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     }
     // Algorithms unavailable in-sandbox (no Web Crypto / pure-TS impl). Match
     // GNU's algorithm namespace but fail loudly rather than emit a wrong digest.
-    // (Web Crypto has no SHA-224, and none of sha2/sha3/blake2b/sm3.)
-    if (algo === 'sha224' || algo === 'sha2' || algo === 'sha3' || algo === 'blake2b' || algo === 'sm3') {
+    // (sha224 IS supported via the pure-TS _sha224 module; sha2/sha3/blake2b/sm3
+    // are the GNU "family selector" / unavailable digests.)
+    if (algo === 'sha2' || algo === 'sha3' || algo === 'blake2b' || algo === 'sm3') {
       return await exitWith(err, 1, `${name}: --algorithm=${algo} is not supported in this build`);
     }
 

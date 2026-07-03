@@ -123,5 +123,19 @@ describe('fold', () => {
       expect(new TextDecoder().decode(bytes)).toBe('ca\nf\né');
     });
     test('char mode wide chars', () => { expect(foldLine('你好', 2, false)).toBe('你\n好'); });
+
+    // ── -s breaks AFTER a blank at/before the width boundary (GNU parity) ────
+    test('-s keeps a blank that lands exactly on the width boundary', () => {
+      // 'ab  cd' width 4: the two trailing blanks fill columns 3-4, so the line
+      // is `ab  ` (4 chars) — NOT `ab ` (an earlier off-by-one broke one too soon).
+      expect(foldLine('ab  cd', 4, true)).toBe('ab  \ncd');
+    });
+    test('-s breaks after the last fitting blank, not the previous one', () => {
+      // width 9: `d dc  dc ` (9 chars incl. the trailing space) then `ab c`.
+      expect(foldLine('d dc  dc ab c', 9, true)).toBe('d dc  dc \nab c');
+    });
+    test('-s single word longer than width still hard-breaks', () => {
+      expect(foldLine('abcdef', 3, true)).toBe('abc\ndef');
+    });
   });
 });

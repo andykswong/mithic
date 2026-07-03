@@ -182,4 +182,53 @@ describe('uniq', () => {
     expect(await uniqCommand(h.io)).toBe(0);
     expect(h.out()).toBe('');
   });
+
+  // ── numeric-argument validation for -f/-s/-w (GNU parity) ─────────────────
+  describe('invalid numeric arguments', () => {
+    test('-f abc → invalid number of fields to skip', async () => {
+      const h = makeIO({ args: ['uniq', '-f', 'abc'], stdinText: 'a\n' });
+      expect(await uniqCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('uniq: abc: invalid number of fields to skip\n');
+    });
+    test('-f 1x → invalid (trailing junk)', async () => {
+      const h = makeIO({ args: ['uniq', '-f', '1x'], stdinText: 'a\n' });
+      expect(await uniqCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('uniq: 1x: invalid number of fields to skip\n');
+    });
+    test('-f -1 → invalid (negative)', async () => {
+      const h = makeIO({ args: ['uniq', '-f', '-1'], stdinText: 'a\n' });
+      expect(await uniqCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('uniq: -1: invalid number of fields to skip\n');
+    });
+    test('-s abc → invalid number of bytes to skip', async () => {
+      const h = makeIO({ args: ['uniq', '-s', 'abc'], stdinText: 'a\n' });
+      expect(await uniqCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('uniq: abc: invalid number of bytes to skip\n');
+    });
+    test('-w abc → invalid number of bytes to compare', async () => {
+      const h = makeIO({ args: ['uniq', '-w', 'abc'], stdinText: 'a\n' });
+      expect(await uniqCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('uniq: abc: invalid number of bytes to compare\n');
+    });
+    test('-w 2k → suffix rejected (no size-suffix support)', async () => {
+      const h = makeIO({ args: ['uniq', '-w', '2k'], stdinText: 'a\n' });
+      expect(await uniqCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('uniq: 2k: invalid number of bytes to compare\n');
+    });
+    test('valid: -f 007 (leading zeros) accepted', async () => {
+      const h = makeIO({ args: ['uniq', '-f', '007'], stdinText: 'x a\ny a\n' });
+      expect(await uniqCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('x a\n');
+    });
+    test('valid: -f +1 (leading plus) accepted', async () => {
+      const h = makeIO({ args: ['uniq', '-f', '+1'], stdinText: 'x a\ny a\n' });
+      expect(await uniqCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('x a\n');
+    });
+    test('valid: -w 0 collapses all lines', async () => {
+      const h = makeIO({ args: ['uniq', '-w', '0'], stdinText: 'a\nb\n' });
+      expect(await uniqCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('a\n');
+    });
+  });
 });

@@ -83,6 +83,18 @@ async function readFileRecords(io: CommandIO, path: string, zero: boolean): Prom
   }
 }
 
+/**
+ * Parse a `-f`/`-s`/`-w` count like GNU's `xstrtoumax`: optional leading
+ * whitespace, an optional `+`, then decimal digits (leading zeros allowed). A
+ * non-numeric value, a negative value, or a trailing size suffix is rejected —
+ * matching GNU (`uniq -w 2k` is an error). Returns undefined on any of those.
+ */
+function parseCount(raw: string): number | undefined {
+  const m = /^\s*\+?(\d+)$/.exec(raw);
+  if (!m) return undefined;
+  return Number(m[1]);
+}
+
 /** Drop the first `fields` whitespace-delimited fields, then the first `chars` chars, then cap at `width` chars. */
 function comparand(line: string, fields: number, chars: number, width: number, ignoreCase: boolean): string {
   let s = line;
@@ -137,15 +149,30 @@ const uniqCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const onlyUniq = Boolean(flags.u);
   const ignoreCase = Boolean(flags.i);
   const zero = Boolean(flags.z);
-  const skipFields = flags.f !== undefined ? Number(flags.f) : 0;
-  const skipChars = flags.s !== undefined ? Number(flags.s) : 0;
-  const width = flags.w !== undefined ? Number(flags.w) : -1;
 
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
   let stdinAborted = false;
 
   try {
+    // GNU validates the numeric argument to -f/-s/-w and errors (exit 1) on a
+    // non-numeric, negative, or suffixed value rather than silently no-op'ing.
+    let skipFields = 0, skipChars = 0, width = -1;
+    if (flags.f !== undefined) {
+      const v = parseCount(String(flags.f));
+      if (v === undefined) return await exitWith(err, 1, `${name}: ${flags.f}: invalid number of fields to skip`);
+      skipFields = v;
+    }
+    if (flags.s !== undefined) {
+      const v = parseCount(String(flags.s));
+      if (v === undefined) return await exitWith(err, 1, `${name}: ${flags.s}: invalid number of bytes to skip`);
+      skipChars = v;
+    }
+    if (flags.w !== undefined) {
+      const v = parseCount(String(flags.w));
+      if (v === undefined) return await exitWith(err, 1, `${name}: ${flags.w}: invalid number of bytes to compare`);
+      width = v;
+    }
     // `-D` (bare, no arg) / `--all-repeated[=METHOD]`: print every line of each
     // duplicated group. The short `-D` never takes an argument.
     const allRepeated = Boolean(flags.D) || allRepArg !== undefined;

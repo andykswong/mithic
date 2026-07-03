@@ -27,9 +27,12 @@
  *     -printf FORMAT              render FORMAT per match (%p %f %h %P %d %s %y %m + escapes)
  *     -exec cmd... ;              run cmd once per match, `{}` → the match path
  *     -exec cmd... +              run cmd once with ALL matches appended
+ *     -quit                       stop the whole traversal immediately (exit 0)
  *
  *   Global options (always true, position-independent):
  *     -maxdepth N / -mindepth N   limit traversal depth (start path = depth 0)
+ *     -depth                      process a directory's contents before the
+ *                                 directory itself (post-order traversal)
  *
  * The traversal is a recursive DFS over fs/readdir + fs/stat. Directory entries are
  * visited in sorted order for determinism (GNU uses raw readdir order). `-exec`
@@ -130,11 +133,15 @@ interface Entry {
 interface EvalCtx {
   io: CommandIO;
   out: WritableStreamDefaultWriter<Uint8Array>;
+  err: WritableStreamDefaultWriter<Uint8Array>;
   /** Paths collected by `-exec ... +` (batched, one spawn after the walk). */
   execBatch: Map<ExecNode, string[]>;
-  /** True once any per-match `-exec` child returned non-zero. */
-  execFailed: boolean;
+  /** True once `-quit` has fired — the whole traversal stops. */
+  quit: boolean;
 }
+
+/** Thrown by the `-quit` action to unwind the recursive DFS immediately. */
+class QuitWalk {}
 
 // ── Expression AST ────────────────────────────────────────────────────────────
 
@@ -179,6 +186,11 @@ const printfNode = (format: string): EvalNode => ({
   evaluate: async (entry, ctx) => { await writeBytes(ctx.out, encoder.encode(renderPrintf(format, entry))); return true; },
 });
 
+/** `-quit` action: evaluates true, then unwinds the walk immediately (exit 0). */
+const quitNode = (): EvalNode => ({
+  evaluate: async (_entry, ctx) => { ctx.quit = true; throw new QuitWalk(); },
+});
+
 function execNode(argv: string[], batch: boolean): ExecNode {
   const node: ExecNode = {
     argv, batch,
@@ -190,8 +202,12 @@ function execNode(argv: string[], batch: boolean): ExecNode {
         ctx.execBatch.set(node, list);
         return true;
       }
-      const code = await runExec(ctx.io, argv, [entry.path], ctx.out);
-      if (code !== 0) ctx.execFailed = true;
+      // The `;` variant's child result affects only the predicate value — NOT
+      // find's own exit code. Neither a nonzero child exit NOR a spawn FAILURE
+      // (unresolvable command; runExec already emitted the stderr message)
+      // changes find's exit status for the `;` variant (GNU exits 0). Only the
+      // `+` variant propagates, and it does so via the batched runExec path.
+      const code = await runExec(ctx.io, argv, [entry.path], ctx.out, ctx.err);
       return code === 0;
     },
   };
@@ -243,7 +259,7 @@ function typeChar(t: FileType): string {
 // ── Expression parser ───────────────────────────────────────────────────────
 
 /** Result of parsing the expression: an AST, whether it contains an action, plus depth options. */
-interface ParsedExpr { node: EvalNode; hasAction: boolean; maxdepth?: number; mindepth?: number; }
+interface ParsedExpr { node: EvalNode; hasAction: boolean; maxdepth?: number; mindepth?: number; depthFirst?: boolean; }
 
 class ParseError extends Error {}
 
@@ -261,6 +277,7 @@ class ExprParser {
   private hasAction = false;
   private maxdepth?: number;
   private mindepth?: number;
+  private depthFirst = false;
   private newerCache = new Map<string, number>();
 
   constructor(tokens: string[], io: CommandIO) {
@@ -270,7 +287,10 @@ class ExprParser {
 
   async parse(): Promise<ParsedExpr> {
     if (this.tokens.length === 0) {
-      return { node: printNode('\n'), hasAction: false, maxdepth: this.maxdepth, mindepth: this.mindepth };
+      // Default expression is `-print`. Return a plain true predicate (NOT a
+      // printNode): the driver wraps a no-action expression in the implicit
+      // `-a -print`, so returning printNode here would print each entry twice.
+      return { node: testNode(() => true), hasAction: false, maxdepth: this.maxdepth, mindepth: this.mindepth, depthFirst: this.depthFirst };
     }
     const node = await this.parseComma();
     if (this.pos < this.tokens.length) {
@@ -278,7 +298,7 @@ class ExprParser {
       if (tok === ')') throw new ParseError('you have too many \')\'');
       throw new ParseError(`paths must precede expression: \`${tok}'`);
     }
-    return { node, hasAction: this.hasAction, maxdepth: this.maxdepth, mindepth: this.mindepth };
+    return { node, hasAction: this.hasAction, maxdepth: this.maxdepth, mindepth: this.mindepth, depthFirst: this.depthFirst };
   }
 
   private peek(): string | undefined { return this.tokens[this.pos]; }
@@ -383,6 +403,7 @@ class ExprParser {
       }
       case '-maxdepth': { this.maxdepth = this.parseDepth(pred, this.requireValue(pred)); return testNode(() => true); }
       case '-mindepth': { this.mindepth = this.parseDepth(pred, this.requireValue(pred)); return testNode(() => true); }
+      case '-depth': { this.depthFirst = true; return testNode(() => true); }
       case '-size': {
         const t = parseSize(this.requireValue(pred));
         if (!t) throw new ParseError('invalid -size argument');
@@ -400,6 +421,7 @@ class ExprParser {
       case '-print': this.hasAction = true; return printNode('\n');
       case '-print0': this.hasAction = true; return printNode('\0');
       case '-printf': { this.hasAction = true; return printfNode(this.requireValue(pred)); }
+      case '-quit': this.hasAction = true; return quitNode();
       case '-exec': return this.parseExec();
       default:
         throw new ParseError(`unknown predicate \`${pred}'`);
@@ -453,16 +475,23 @@ class ExprParser {
 
 // ── exec spawning ───────────────────────────────────────────────────────────
 
+/** Sentinel returned by {@link runExec} when the child could not be SPAWNED. */
+const SPAWN_FAILED = -1;
+
 /**
  * Run `template` with each `{}` replaced by the match path(s). With many paths
  * (batch mode) a single `{}` (or no `{}`) expands to all of them. Spawns via
- * `process/pipeline`; forwards child stdout.
+ * `process/pipeline`; forwards child stdout. If the command cannot be spawned
+ * (unresolvable name → the syscall rejects), GNU names it on stderr, continues
+ * the walk, and sets find's exit status to 1 — so we emit that error and return
+ * {@link SPAWN_FAILED} rather than letting the rejection escape the walk.
  */
 async function runExec(
   io: CommandIO,
   template: string[],
   paths: string[],
   out: WritableStreamDefaultWriter<Uint8Array>,
+  err: WritableStreamDefaultWriter<Uint8Array>,
 ): Promise<number> {
   const argv: string[] = [];
   let expanded = false;
@@ -471,9 +500,15 @@ async function runExec(
     else argv.push(tok);
   }
   if (!expanded) argv.push(...paths); // GNU appends matches if no {} given
-  const result = (await io.syscall('process/pipeline', {
-    stages: [{ path: argv[0], argv }],
-  })) as { exitCodes: number[]; stdout?: Uint8Array };
+  let result: { exitCodes: number[]; stdout?: Uint8Array };
+  try {
+    result = (await io.syscall('process/pipeline', {
+      stages: [{ path: argv[0], argv }],
+    })) as { exitCodes: number[]; stdout?: Uint8Array };
+  } catch {
+    await writeLine(err, `find: ‘${template[0]}’: No such file or directory`);
+    return SPAWN_FAILED;
+  }
   if (result.stdout && result.stdout.byteLength > 0) await writeBytes(out, result.stdout);
   return result.exitCodes?.[0] ?? 0;
 }
@@ -540,13 +575,15 @@ const findCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       ? parsed.node
       : andNode(parsed.node, printNode('\n'));
 
-    const ctx: EvalCtx = { io, out, execBatch: new Map(), execFailed: false };
+    const ctx: EvalCtx = { io, out, err, execBatch: new Map(), quit: false };
     let code = 0;
     for (const start of starts) {
+      if (ctx.quit) break;
       const startPath = normalizeStart(start);
       try {
         await walk(io, startPath, 0, startPath, rootNode, parsed, ctx);
-      } catch {
+      } catch (e) {
+        if (e instanceof QuitWalk) break;
         // GNU: `find: ‘<operand>’: No such file or directory` (fancy quotes).
         await writeLine(err, `find: ‘${start}’: No such file or directory`);
         code = 1;
@@ -556,10 +593,10 @@ const findCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     // Batched `-exec ... +`: one spawn per exec node with every collected match.
     for (const [node, paths] of ctx.execBatch) {
       if (paths.length === 0) continue;
-      const childCode = await runExec(io, node.argv, paths, out);
+      const childCode = await runExec(io, node.argv, paths, out, err);
+      // The `+` variant DOES propagate a nonzero child (or spawn failure).
       if (childCode !== 0) code = 1;
     }
-    if (ctx.execFailed) code = 1;
     return code;
   } finally {
     await out.close().catch(() => {});
@@ -590,16 +627,22 @@ async function walk(
   };
 
   // -mindepth: entries shallower than mindepth are traversed but not evaluated.
-  if (opts.mindepth === undefined || depth >= opts.mindepth) {
+  const evaluated = opts.mindepth === undefined || depth >= opts.mindepth;
+  // Default is pre-order (a directory before its contents); `-depth` makes it
+  // post-order (contents before the directory).
+  if (evaluated && !opts.depthFirst) {
     await root.evaluate(entry, ctx);
   }
 
-  if (type === 'directory' && entries) {
-    if (opts.maxdepth !== undefined && depth >= opts.maxdepth) return;
+  if (type === 'directory' && entries && !(opts.maxdepth !== undefined && depth >= opts.maxdepth)) {
     const sorted = [...entries].sort((a, b) => a.name.localeCompare(b.name));
     for (const e of sorted) {
       await walk(io, findJoin(path, e.name), depth + 1, start, root, opts, ctx);
     }
+  }
+
+  if (evaluated && opts.depthFirst) {
+    await root.evaluate(entry, ctx);
   }
 }
 
@@ -617,9 +660,9 @@ Operators (decreasing precedence):
 Tests:  -name PATTERN -iname PATTERN -path PATTERN -type [bcdpfls]
         -size N[bckMG] -empty -newer FILE -true -false
 
-Options: -maxdepth LEVELS -mindepth LEVELS
+Options: -maxdepth LEVELS -mindepth LEVELS -depth
 
-Actions: -print -print0 -printf FORMAT -exec COMMAND ;
+Actions: -print -print0 -printf FORMAT -exec COMMAND ; -quit
 `;
 
 export default defineCommand(findCommand);

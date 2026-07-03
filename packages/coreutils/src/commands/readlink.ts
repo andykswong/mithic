@@ -9,12 +9,25 @@
  *   -n                  : do not output the trailing newline
  *   -q / -s / --quiet / --silent : suppress most error messages (default here)
  */
-import { defineCommand, parseArgs, exitWith, optionError } from '../harness.ts';
+import { defineCommand, parseArgs, exitWith, optionError, fsErrorText, writeLine } from '../harness.ts';
 import { readlink, normalize } from '../fs.ts';
 import { canonicalize } from './canonicalize.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 type Mode = 'f' | 'e' | 'm';
+
+// Over the real kernel an `fs/*` failure carries a POSIX errno `code`
+// (e.g. ENOENT/EINVAL) whose message repeats the path; fsErrorText only maps the
+// lowercase VFS codes, so translate the errno first (matching stat.ts).
+const ERRNO_TEXT: Record<string, string> = {
+  ENOENT: 'No such file or directory', EACCES: 'Permission denied', EINVAL: 'Invalid argument',
+  ENOTDIR: 'Not a directory', EISDIR: 'Is a directory', ELOOP: 'Too many levels of symbolic links',
+  ENAMETOOLONG: 'File name too long',
+};
+function errnoText(err: unknown): string {
+  const code = (err as { code?: string })?.code;
+  return (code && ERRNO_TEXT[code]) ?? fsErrorText(err);
+}
 
 const readlinkCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const parsed = parseArgs(io.args.slice(1), {
@@ -34,6 +47,9 @@ const readlinkCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const term = flags.n ? '' : (flags.z ? '\x00' : '\n');
   // Any of -f/-e/-m enables canonicalization; the most specific wins the mode.
   const mode: Mode | undefined = flags.e ? 'e' : flags.m ? 'm' : flags.f ? 'f' : undefined;
+  // GNU is quiet by default; `-v`/--verbose prints a per-operand error. `-q`/-s
+  // are the default here, so only `-v` (which overrides -q) enables diagnostics.
+  const verbose = Boolean(flags.v);
 
   try {
     if (parsed.unknown.length) {
@@ -53,11 +69,17 @@ const readlinkCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         } else {
           value = await readlink(io, p);
         }
-        if (value === undefined) { code = 1; continue; }
+        if (value === undefined) {
+          code = 1;
+          if (verbose) await writeLine(err, `${name}: ${p}: No such file or directory`);
+          continue;
+        }
         await out.write(enc.encode(value + term));
-      } catch {
-        // GNU (with -q, the default here) prints nothing and returns 1.
+      } catch (e) {
+        // GNU is quiet by default (returns 1, no output). With -v it prints the
+        // per-operand errno diagnostic (referencing the original operand).
         code = 1;
+        if (verbose) await writeLine(err, `${name}: ${p}: ${errnoText(e)}`);
       }
     }
     return code;

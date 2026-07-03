@@ -201,7 +201,19 @@ const splitCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     if (flags.n !== undefined) {
       const spec = String(flags.n);
       let m: RegExpExecArray | null;
-      if ((m = /^l\/(\d+)$/.exec(spec))) {
+      if ((m = /^l\/(\d+)\/(\d+)$/.exec(spec))) {
+        // `l/K/N`: write only the K-th of N line-boundary chunks to stdout.
+        const k = Number(m[1]); const parts = Number(m[2]);
+        if (parts <= 0 || k < 1 || k > parts) return await exitWith(err, 1, `${name}: invalid chunk number: ‘${m[1]}’`);
+        selectChunk = { k, parts };
+        pieces = splitLineChunks(bytes, parts);
+      } else if ((m = /^r\/(\d+)\/(\d+)$/.exec(spec))) {
+        // `r/K/N`: write only the K-th of N round-robin chunks to stdout.
+        const k = Number(m[1]); const parts = Number(m[2]);
+        if (parts <= 0 || k < 1 || k > parts) return await exitWith(err, 1, `${name}: invalid chunk number: ‘${m[1]}’`);
+        selectChunk = { k, parts };
+        pieces = splitRoundRobin(bytes, parts);
+      } else if ((m = /^l\/(\d+)$/.exec(spec))) {
         const parts = Number(m[1]);
         if (parts <= 0) return await exitWith(err, 1, `${name}: invalid number of chunks: ‘${spec}’`);
         pieces = splitLineChunks(bytes, parts);

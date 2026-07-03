@@ -76,4 +76,18 @@ describe('basename', () => {
     expect(await basenameCommand(h.io)).toBe(1);
     expect(h.err()).toContain('missing operand');
   });
+
+  // GNU parity: unknown options are rejected (not silently swallowed).
+  test('an unknown short flag errors like GNU (exit 1, nothing on stdout)', async () => {
+    const h = makeIO({ args: ['basename', '-x', '/a/b'] });
+    expect(await basenameCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('');
+    expect(h.err()).toBe('basename: invalid option -- \'x\'\nTry \'basename --help\' for more information.\n');
+  });
+
+  test('an unknown long flag errors like GNU (exit 1)', async () => {
+    const h = makeIO({ args: ['basename', '--bogus', '/a/b'] });
+    expect(await basenameCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('basename: unrecognized option \'--bogus\'\nTry \'basename --help\' for more information.\n');
+  });
 });

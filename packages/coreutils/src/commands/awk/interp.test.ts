@@ -305,6 +305,25 @@ describe('awk interp — string builtins', () => {
     expect(run('BEGIN{ a[1]=1; a[2]=1; a[3]=1; print length(a) }')).toBe('3\n');
   });
 
+  // CR2: in a BEGIN block (before any record is read) $0 is the empty string,
+  // so `print`, `length`, and length($0) behave like gawk instead of touching
+  // `undefined`.
+  test('BEGIN: bare print emits an empty line ($0 == "")', () => {
+    expect(run('BEGIN{ print }')).toBe('\n');
+  });
+
+  test('BEGIN: bare length is 0 (no crash on undefined $0)', () => {
+    expect(run('BEGIN{ print length }')).toBe('0\n');
+  });
+
+  test('BEGIN: $0 stringifies to empty, not nan', () => {
+    expect(run('BEGIN{ print "[" $0 "]" }')).toBe('[]\n');
+  });
+
+  test('BEGIN: length($0) == 0 guard works', () => {
+    expect(run('BEGIN{ if (length($0) == 0) print "empty" }')).toBe('empty\n');
+  });
+
   test('substr', () => {
     expect(run('BEGIN{ print substr("hello", 2, 3) }')).toBe('ell\n');
   });

@@ -208,6 +208,31 @@ function extractLegacy(args: string[]): { filtered: string[]; legacyN?: number }
   return { filtered, legacyN };
 }
 
+/**
+ * Which of `-c`/`-n` appeared LAST on the command line — GNU is last-wins when
+ * both are given (`head -c5 -n2` → line mode, `head -n2 -c5` → byte mode).
+ * parseArgs collapses both into `flags.c`/`flags.n` and loses the order, so scan
+ * the (legacy-filtered) argv directly. Returns 'c', 'n', or undefined (neither).
+ */
+function lastCountFlag(args: string[]): 'c' | 'n' | undefined {
+  let last: 'c' | 'n' | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--') break;
+    if (a === '-c' || a === '--bytes' || a.startsWith('--bytes=') || (a.startsWith('-c') && !a.startsWith('--'))) {
+      last = 'c';
+      if ((a === '-c' || a === '--bytes') && args[i + 1] !== undefined) i++;
+      continue;
+    }
+    if (a === '-n' || a === '--lines' || a.startsWith('--lines=') || (a.startsWith('-n') && !a.startsWith('--'))) {
+      last = 'n';
+      if ((a === '-n' || a === '--lines') && args[i + 1] !== undefined) i++;
+      continue;
+    }
+  }
+  return last;
+}
+
 const headCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const rawArgs = io.args.slice(1);
   const name = io.args[0] ?? 'head';
@@ -226,7 +251,10 @@ const headCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   let stdinHitLimit = false;
 
   try {
-    const byteMode = flags.c !== undefined;
+    // GNU is last-wins when both `-c` and `-n` are supplied; otherwise byte mode
+    // iff `-c` is present at all.
+    const last = lastCountFlag(filtered);
+    const byteMode = flags.c !== undefined && (flags.n === undefined || last === 'c');
     let count: Count;
     if (byteMode) {
       const parsed = parseCount(String(flags.c));
@@ -244,12 +272,12 @@ const headCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     const wantHeaders = Boolean(flags.v) || (sources.length > 1 && !flags.q);
 
     for (const src of sources) {
-      if (wantHeaders) {
-        const label = src === '-' ? 'standard input' : src;
-        await writeString(out, `${printed > 0 ? '\n' : ''}==> ${label} <==\n`);
-      }
-      printed++;
       if (src === '-') {
+        // stdin never fails to "open" — emit its header first.
+        if (wantHeaders) {
+          await writeString(out, `${printed > 0 ? '\n' : ''}==> standard input <==\n`);
+        }
+        printed++;
         if (count.fromEnd) {
           const bytes = await readAll(io.stdin);
           const piece = byteMode ? headBytesFromEnd(bytes, count.n) : headLinesFromEnd(bytes, count.n);
@@ -261,6 +289,9 @@ const headCommand: CommandFn = async (io: CommandIO): Promise<number> => {
           if (r === LIMIT) stdinHitLimit = true;
         }
       } else {
+        // GNU opens the file FIRST and only prints the `==> NAME <==` header on
+        // success — a file it cannot open produces no header (and no `printed`
+        // bump), so the byte stream and later files' headers stay correct.
         let fd: number;
         try {
           ({ fd } = (await io.syscall('fs/open', { path: src, oflags: {} })) as { fd: number });
@@ -269,6 +300,10 @@ const headCommand: CommandFn = async (io: CommandIO): Promise<number> => {
           exitCode = 1;
           continue;
         }
+        if (wantHeaders) {
+          await writeString(out, `${printed > 0 ? '\n' : ''}==> ${src} <==\n`);
+        }
+        printed++;
         try {
           if (count.fromEnd) {
             const bytes = await readFileFully(io, fd);

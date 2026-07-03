@@ -17,25 +17,81 @@
  * With no COMMAND, `env` prints the modified environment (one `NAME=value` per
  * line) and exits 0.
  */
-import { defineCommand, parseArgs, writeLine, writeBytes, exitWith } from '../harness.ts';
+import { defineCommand, writeLine, writeBytes, exitWith } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 const envCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const name = io.args[0] ?? 'env';
-  const { positionals, flags } = parseArgs(io.args.slice(1), {
-    boolean: ['i', 'ignore-environment'],
-    string: ['u', 'unset'],
-    alias: { 'ignore-environment': 'i', unset: 'u' },
-  });
 
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
   try {
-    // Build modified environment.
-    const env: Record<string, string> = flags.i ? {} : { ...io.env };
-    if (flags.u) {
-      delete env[String(flags.u)];
+    // Manually parse options so we can (a) collect multiple `-u NAME`/`--unset
+    // NAME` (env allows repeats), (b) detect a missing option-argument — which
+    // parseArgs would silently coerce to an empty string — and (c) reject unknown
+    // options. GNU env exits 125 with a getopt-style diagnostic. Options stop at
+    // the first non-option operand (a VAR=val assignment or the COMMAND).
+    const raw = io.args.slice(1);
+    const unsets: string[] = [];
+    let ignoreEnv = false;
+    let k = 0;
+    let optErr: string | undefined;
+    outer: for (; k < raw.length; k++) {
+      const a = raw[k];
+      if (a === '--') { k++; break; }
+      if (a === '-' || !a.startsWith('-')) break;
+      if (a.startsWith('--')) {
+        const body = a.slice(2);
+        const eq = body.indexOf('=');
+        const longName = eq >= 0 ? body.slice(0, eq) : body;
+        if (longName === 'ignore-environment') { ignoreEnv = true; continue; }
+        if (longName === 'unset') {
+          if (eq >= 0) { unsets.push(body.slice(eq + 1)); continue; }
+          const val = raw[k + 1];
+          if (val === undefined) {
+            optErr = `${name}: option '--unset' requires an argument`;
+            break outer;
+          }
+          unsets.push(val); k++; continue;
+        }
+        optErr = `${name}: unrecognized option '--${longName}'`;
+        break outer;
+      }
+      // Short-flag cluster: -i, -u NAME, -uNAME, -iu NAME.
+      const cluster = a.slice(1);
+      for (let j = 0; j < cluster.length; j++) {
+        const ch = cluster[j];
+        if (ch === 'i') { ignoreEnv = true; continue; }
+        if (ch === 'u') {
+          const attached = cluster.slice(j + 1);
+          if (attached.length > 0) { unsets.push(attached); break; }
+          const val = raw[k + 1];
+          if (val === undefined) {
+            optErr = `${name}: option requires an argument -- 'u'`;
+            break outer;
+          }
+          unsets.push(val); k++; break;
+        }
+        optErr = `${name}: invalid option -- '${ch}'`;
+        break outer;
+      }
     }
+    if (optErr !== undefined) {
+      return await exitWith(err, 125, `${optErr}\nTry '${name} --help' for more information.`);
+    }
+    const positionals = raw.slice(k);
+
+    // A `-u NAME` where NAME is empty or contains `=` is not a valid variable
+    // name to unset — GNU: `cannot unset ‘NAME’: Invalid argument`, exit 125.
+    for (const u of unsets) {
+      if (u === '' || u.includes('=')) {
+        return await exitWith(err, 125, `${name}: cannot unset ‘${u}’: Invalid argument`);
+      }
+    }
+
+    // Build modified environment.
+    const env: Record<string, string> = ignoreEnv ? {} : { ...io.env };
+    for (const u of unsets) delete env[u];
 
     // Consume leading VAR=val assignments; the first non-assignment operand
     // begins the COMMAND (and its args).

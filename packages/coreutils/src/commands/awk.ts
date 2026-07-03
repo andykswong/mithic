@@ -22,7 +22,7 @@
  */
 import { defineCommand, readAllText, writeLine } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
-import { parseProgram } from './awk/parser.ts';
+import { parseProgram, AwkFatalError } from './awk/parser.ts';
 import { Interpreter } from './awk/interp.ts';
 import type { AwkIO, InputSource } from './awk/interp.ts';
 
@@ -165,7 +165,8 @@ const awkCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       program = parseProgram(programText);
     } catch (e) {
       await writeLine(err, errText(name, e));
-      return 2;
+      // A wrong-builtin-arity diagnostic exits 1 in gawk; a plain syntax error exits 2.
+      return e instanceof AwkFatalError ? e.exitCode : 2;
     }
 
     // Read all input sources up front (the interpreter is synchronous). With no

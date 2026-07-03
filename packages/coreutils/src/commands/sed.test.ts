@@ -556,6 +556,54 @@ describe('sed — buffer anchors, M flag, -z', () => {
     expect(await sedCommand(h.io)).toBe(0);
     expect(h.out()).toBe('a,b\0c,d\0');
   });
+
+  // CR2: regex-address modifiers I (case-insensitive) and M (multiline).
+  test('address regex modifier I matches case-insensitively', async () => {
+    const h = makeIO({ args: ['sed', '-n', '/^B/Ip'], stdinText: 'a\nb\nc\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('b\n');
+  });
+
+  test('address regex modifier I with a space before the command', async () => {
+    const h = makeIO({ args: ['sed', '-n', '/^B/I p'], stdinText: 'a\nb\nc\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('b\n');
+  });
+
+  test('address regex modifier M is accepted (matches line b)', async () => {
+    const h = makeIO({ args: ['sed', '-n', '/^b/Mp'], stdinText: 'a\nb\nc\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('b\n');
+  });
+
+  test('address regex I modifier gating an s/// command', async () => {
+    // The address /abc/I matches both lines case-insensitively, but the
+    // case-sensitive s/abc/X/ only substitutes (and its p flag only prints) the
+    // lowercase line — matching GNU.
+    const h = makeIO({ args: ['sed', '-n', '/abc/I s/abc/X/p'], stdinText: 'abc\nABC\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('X\n');
+  });
+
+  // CR2: under -z, the M flag must NOT treat embedded \n as ^/$ boundaries —
+  // only the true pattern-space start/end anchor.
+  test('-z + M: ^ anchors only at the true pattern-space start', async () => {
+    const h = makeIO({ args: ['sed', '-z', 's/^./X/Mg'], stdinText: 'a\nb\nc\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('X\nb\nc\n');
+  });
+
+  test('-z + M: $ anchors only at the true pattern-space end', async () => {
+    const h = makeIO({ args: ['sed', '-z', 's/.$/X/Mg'], stdinText: 'a\nb\nc\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\nb\nc\n');
+  });
+
+  test('-z + M: leading ^ insertion fires once (not per embedded line)', async () => {
+    const h = makeIO({ args: ['sed', '-z', 's/^/>/Mg'], stdinText: 'a\nb\nc\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('>a\nb\nc\n');
+  });
 });
 
 describe('sed — l / z / F / v and empty a\\ i\\', () => {

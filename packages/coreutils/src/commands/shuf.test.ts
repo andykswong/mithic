@@ -222,4 +222,24 @@ describe('shuf command', () => {
     expect(h.out().split('\0').filter((x) => x !== '').sort()).toEqual(['a', 'b']);
     expect(h.out().endsWith('\0')).toBe(true);
   });
+
+  // ── multiple -i is a hard error (GNU parity) ──────────────────────────────
+  test('repeated -i exits 1 with "multiple -i options specified"', async () => {
+    const h = makeIO({ args: ['shuf', '-i', '5-5', '-i', '7-7'] });
+    expect(await shufCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('');
+    expect(h.err()).toBe('shuf: multiple -i options specified\n');
+  });
+
+  test('repeated -i via mixed short/long form also errors', async () => {
+    const h = makeIO({ args: ['shuf', '-i', '5-5', '--input-range', '7-7'] });
+    expect(await shufCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('shuf: multiple -i options specified\n');
+  });
+
+  test('a single -i is accepted', async () => {
+    const h = makeIO({ args: ['shuf', '-i', '5-5'] });
+    expect(await shufCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('5\n');
+  });
 });

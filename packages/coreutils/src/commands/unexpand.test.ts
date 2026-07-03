@@ -83,4 +83,49 @@ describe('unexpand', () => {
     expect(await unexpandCommand(h.io)).toBe(1);
     expect(h.err()).toContain('unexpand: invalid option -- \'Q\'');
   });
+
+  // ── obsolete -N shorthand + GNU tabify parity ─────────────────────────────
+  test('-a -2 collapses each blank stretch to a tab at the width-2 stops', async () => {
+    const h = makeIO({ args: ['unexpand', '-a', '-2'], stdinText: '  a  b\n' });
+    expect(await unexpandCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('\ta\t b\n');
+  });
+
+  test('-4 (obsolete) does NOT imply -a (only leading blanks converted)', async () => {
+    // Unlike an explicit -t, the obsolete -N form leaves interior blanks alone.
+    const h = makeIO({ args: ['unexpand', '-2'], stdinText: '  a  b\n' });
+    expect(await unexpandCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('\ta  b\n');
+  });
+
+  test('-t2 (explicit) DOES imply -a', async () => {
+    const h = makeIO({ args: ['unexpand', '-t2'], stdinText: '  a  b\n' });
+    expect(await unexpandCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('\ta\t b\n');
+  });
+
+  test('-a: a lone space landing on the last stop stays a space (default width 8)', async () => {
+    const h = makeIO({ args: ['unexpand', '-a'], stdinText: 'abcdefg h\n' });
+    expect(await unexpandCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('abcdefg h\n');
+  });
+
+  test('-a: a 1-column bridge tabs when the run continues past the stop', async () => {
+    const h = makeIO({ args: ['unexpand', '-a'], stdinText: 'abcdefg  h\n' });
+    expect(await unexpandCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('abcdefg\t h\n');
+  });
+
+  test('-a -t 1,3,5: single space before the LAST explicit stop stays a space', async () => {
+    const h = makeIO({ args: ['unexpand', '-a', '-t', '1,3,5'], stdinText: 'word    word\n' });
+    expect(await unexpandCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('word    word\n');
+  });
+
+  // ── file-read failure exits 1 (parity finding) ────────────────────────────
+  test('missing file operand exits 1', async () => {
+    const h = makeIO({ args: ['unexpand', '/noexist'] });
+    expect(await unexpandCommand(h.io)).toBe(1);
+    expect(h.err()).toContain('unexpand: /noexist: No such file or directory');
+  });
 });

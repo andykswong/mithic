@@ -95,32 +95,61 @@ function b32Val(code: number): number {
   return -1;
 }
 
+// Legal data-char counts within a base32 octet (mod 8): 0/2/4/5/7 chars →
+// 0/1/2/3/4 bytes. Counts 1/3/6 are impossible group boundaries.
+const LEGAL_TAIL = new Set([0, 2, 4, 5, 7]);
+
+/**
+ * Decode a whitespace-free, uppercased base32 string. Returns the decodable
+ * bytes plus `ok`, which is false on a malformed input (illegal group length,
+ * nonzero trailing bits, or a garbage char). GNU still emits (and we still
+ * return) the bytes decoded before the fault; only the exit status changes.
+ */
+export function b32DecodeGroup(s: string): { bytes: Uint8Array; ok: boolean } {
+  const buf = new Uint8Array(Math.ceil(s.length / 8) * 5);
+  let o = 0;
+  const fail = (): { bytes: Uint8Array; ok: boolean } => ({ bytes: buf.subarray(0, o), ok: false });
+  for (let i = 0; i < s.length; i += 8) {
+    const avail = Math.min(8, s.length - i);
+    // Data chars run until the first '=' padding (or the octet end).
+    let nd = 0;
+    while (nd < avail && b32Val(s.charCodeAt(i + nd)) !== -2) nd++;
+    let pad = 0;
+    for (let j = nd; j < avail; j++) { if (b32Val(s.charCodeAt(i + j)) !== -2) return fail(); pad++; } // data after '=' → garbage
+    // Decode the data chars into a bit accumulator.
+    let acc = 0, bits = 0;
+    const tmp: number[] = [];
+    for (let j = 0; j < nd; j++) {
+      const val = b32Val(s.charCodeAt(i + j));
+      if (val < 0) return fail(); // garbage char
+      acc = (acc << 5) | val;
+      bits += 5;
+      if (bits >= 8) { bits -= 8; tmp.push((acc >> bits) & 0xff); }
+    }
+    const trailingZero = (acc & ((1 << bits) - 1)) === 0;
+    if (pad > 0) {
+      // Explicit '=' padding: the octet must be complete (8 chars) with the exact
+      // pad count for a legal boundary, and trailing bits zero. A wrong pad count
+      // emits NOTHING for this octet (matching GNU).
+      if (avail !== 8 || !LEGAL_TAIL.has(nd) || nd === 0 || pad !== 8 - nd || !trailingZero) return fail();
+      if (i + 8 < s.length) return fail(); // data after a padded terminal octet
+    } else if (nd < 8) {
+      // Unpadded short octet: emit the decodable bytes, then require a legal
+      // boundary length and zero trailing bits (it must be the last octet).
+      for (const b of tmp) buf[o++] = b;
+      if (!LEGAL_TAIL.has(nd) || !trailingZero || i + 8 < s.length) return fail();
+      continue;
+    }
+    for (const b of tmp) buf[o++] = b;
+  }
+  return { bytes: buf.subarray(0, o), ok: true };
+}
+
 export function b32Decode(input: string): Uint8Array | null {
   const s = input.replace(/\s/g, '').toUpperCase();
   if (s.length === 0) return new Uint8Array(0);
-  if (s.length % 8 !== 0) return null;
-
-  const maxOut = (s.length / 8) * 5;
-  const buf = new Uint8Array(maxOut);
-  let o = 0;
-
-  for (let i = 0; i < s.length; i += 8) {
-    const v = [];
-    for (let j = 0; j < 8; j++) {
-      const val = b32Val(s.charCodeAt(i + j));
-      if (val < -2) return null; // invalid char
-      v.push(val);
-    }
-    // v[k] = -2 means padding
-    const pad = v.filter(x => x === -2).length;
-    const vs = v.map(x => x < 0 ? 0 : x);
-    buf[o++] = (vs[0] << 3) | (vs[1] >> 2);
-    if (pad < 6) buf[o++] = ((vs[1] & 3) << 6) | (vs[2] << 1) | (vs[3] >> 4);
-    if (pad < 4) buf[o++] = ((vs[3] & 0xf) << 4) | (vs[4] >> 1);
-    if (pad < 3) buf[o++] = ((vs[4] & 1) << 7) | (vs[5] << 2) | (vs[6] >> 3);
-    if (pad < 1) buf[o++] = ((vs[6] & 7) << 5) | vs[7];
-  }
-  return buf.subarray(0, o);
+  const r = b32DecodeGroup(s);
+  return r.ok ? r.bytes : null;
 }
 
 // ── incremental (streaming) encoder/decoder ─────────────────────────────────
@@ -166,7 +195,11 @@ class StreamingB32Encoder {
   }
 }
 
-/** Constant-memory base32 decoder: carries a ≤7-char octet tail across chunks. */
+/**
+ * Constant-memory base32 decoder: carries a ≤7-char octet tail across chunks.
+ * `update`/`final` return `{ bytes, ok }`; `ok` is false on the first malformed
+ * group (the caller still writes `bytes` decoded before the fault, per GNU).
+ */
 class StreamingB32Decoder {
   #carry = '';
   #ignoreGarbage: boolean;
@@ -179,17 +212,17 @@ class StreamingB32Decoder {
     return this.#ignoreGarbage ? stripped.replace(/[^A-Za-z2-7=]/g, '') : stripped;
   }
 
-  update(text: string): Uint8Array | null {
+  update(text: string): { bytes: Uint8Array; ok: boolean } {
     const s = this.#carry + this.#clean(text);
     const whole = s.length - (s.length % 8);
     this.#carry = s.slice(whole);
-    if (whole === 0) return new Uint8Array(0);
-    return b32Decode(s.slice(0, whole));
+    if (whole === 0) return { bytes: new Uint8Array(0), ok: true };
+    return b32DecodeGroup(s.slice(0, whole).toUpperCase());
   }
 
-  final(): Uint8Array | null {
-    if (this.#carry.length === 0) return new Uint8Array(0);
-    const decoded = b32Decode(this.#carry);
+  final(): { bytes: Uint8Array; ok: boolean } {
+    if (this.#carry.length === 0) return { bytes: new Uint8Array(0), ok: true };
+    const decoded = b32DecodeGroup(this.#carry.toUpperCase());
     this.#carry = '';
     return decoded;
   }
@@ -272,21 +305,22 @@ const base32Command: CommandFn = async (io: CommandIO): Promise<number> => {
         if (enc) {
           await sink.push(enc.update(value));
         } else {
-          const piece = dec!.update(decoder.decode(value, { stream: true }));
-          if (piece === null) {
+          const { bytes, ok } = dec!.update(decoder.decode(value, { stream: true }));
+          // GNU still emits the bytes decoded before a malformed group.
+          if (bytes.byteLength > 0) { await sink.flush(); await writeChunked(out, bytes); }
+          if (!ok) {
             if (reader) reader.releaseLock();
             return await exitWith(err, 1, `${name}: invalid input`);
           }
-          if (piece.byteLength > 0) { await sink.flush(); await writeChunked(out, piece); }
         }
       }
       if (reader) reader.releaseLock();
       if (enc) { await sink.push(enc.final()); await sink.flush(); }
       else {
-        const piece = dec!.final();
-        if (piece === null) return await exitWith(err, 1, `${name}: invalid input`);
+        const { bytes, ok } = dec!.final();
         await sink.flush();
-        if (piece.byteLength > 0) await writeChunked(out, piece);
+        if (bytes.byteLength > 0) await writeChunked(out, bytes);
+        if (!ok) return await exitWith(err, 1, `${name}: invalid input`);
       }
     } catch (e) {
       try { if (reader) reader.releaseLock(); } catch { /* already released */ }

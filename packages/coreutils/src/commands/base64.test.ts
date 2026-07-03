@@ -109,6 +109,35 @@ describe('b64Encode / b64Decode roundtrip', () => {
   test('decode returns null on invalid input', () => {
     expect(b64Decode('!!!')).toBeNull();
   });
+
+  // GNU accepts unpadded base64: a 2/3-char terminal group decodes 1/2 bytes.
+  test('unpadded 2-char group decodes 1 byte', () => {
+    expect(new TextDecoder().decode(b64Decode('YQ')!)).toBe('a'); // == 'YQ=='
+  });
+
+  test('unpadded 3-char group decodes 2 bytes', () => {
+    expect(new TextDecoder().decode(b64Decode('aGk')!)).toBe('hi'); // == 'aGk='
+  });
+
+  test('unpadded 7-char input decodes 5 bytes', () => {
+    expect(new TextDecoder().decode(b64Decode('aGVsbG8')!)).toBe('hello'); // == 'aGVsbG8='
+  });
+
+  test('a lone leftover char (len%4===1) is invalid', () => {
+    expect(b64Decode('a')).toBeNull();
+    expect(b64Decode('aGVsa')).toBeNull();
+  });
+
+  test('nonzero trailing bits are invalid but bytes still returned via group', () => {
+    // 'aG' → 'h' but the low 4 bits of G are nonzero, so GNU errors.
+    expect(b64Decode('aG')).toBeNull();
+  });
+
+  test('wrong explicit padding count is invalid', () => {
+    expect(b64Decode('YQ=')).toBeNull();   // 2 data need 2 pads, not 1
+    expect(b64Decode('aGk==')).toBeNull(); // 3 data need 1 pad, not 2
+    expect(b64Decode('aGVsbG8=x')).toBeNull(); // data after a terminal group
+  });
 });
 
 describe('base64 command', () => {
@@ -195,5 +224,21 @@ describe('base64 command', () => {
     const h = makeIO({ args: ['base64', '--bogus'], stdinText: '' });
     expect(await base64Command(h.io)).toBe(1);
     expect(h.err()).toBe('base64: unrecognized option \'--bogus\'\nTry \'base64 --help\' for more information.\n');
+  });
+
+  // GNU parity: unpadded (non-multiple-of-4) input decodes; only truly-impossible
+  // tails error. Regression for the incomplete-fix finding.
+  test('-d decodes unpadded input (7 chars → 5 bytes), exit 0', async () => {
+    const h = makeIO({ args: ['base64', '-d'], stdinText: 'aGVsbG8' });
+    expect(await base64Command(h.io)).toBe(0);
+    expect(new TextDecoder().decode(h.out())).toBe('hello');
+  });
+
+  test('-d emits the decoded prefix then errors on a malformed tail', async () => {
+    // 'aGVsbG9' → 'hello' then a nonzero-trailing-bit tail → exit 1.
+    const h = makeIO({ args: ['base64', '-d'], stdinText: 'aGVsbG9' });
+    expect(await base64Command(h.io)).toBe(1);
+    expect(new TextDecoder().decode(h.out())).toBe('hello');
+    expect(h.err()).toBe('base64: invalid input\n');
   });
 });

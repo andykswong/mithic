@@ -288,6 +288,32 @@ describe('grep', () => {
     );
   });
 
+  test('--color=always does NOT wrap zero-length matches (o* only colors the oo run)', async () => {
+    const h = makeIO({ args: ['grep', '--color=always', 'o*'], stdinText: 'foo bar\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    // GNU highlights only the non-empty `oo` run — no empty colored region at
+    // every character boundary.
+    expect(h.out()).toBe('f\x1b[01;31m\x1b[Koo\x1b[m\x1b[K bar\n');
+  });
+
+  test('--color=always with anchor-only pattern ^ emits no SGR (zero-length match)', async () => {
+    const h = makeIO({ args: ['grep', '--color=always', '^'], stdinText: 'hello\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('hello\n');
+  });
+
+  test('--color=always with $ anchor emits no SGR (zero-length match)', async () => {
+    const h = makeIO({ args: ['grep', '--color=always', '$'], stdinText: 'hello\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('hello\n');
+  });
+
+  test('--color=always [0-9]* only colors the digit run', async () => {
+    const h = makeIO({ args: ['grep', '--color=always', '-E', '[0-9]*'], stdinText: 'abc123def\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('abc\x1b[01;31m\x1b[K123\x1b[m\x1b[Kdef\n');
+  });
+
   // ── word-boundary / leading-orphan / -P / -H / -h / -b / -z ────────────────
 
   test('\\< \\> word-boundary anchors match whole words', async () => {

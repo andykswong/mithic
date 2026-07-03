@@ -24,6 +24,8 @@ interface ConvSpec {
 const INTMAX_MAX = 9223372036854775807n;
 const INTMAX_MIN = -9223372036854775808n;
 const UINTMAX = 18446744073709551616n; // 2^64
+const UINTMAX_MAX = 18446744073709551615n; // 2^64 - 1
+const UINTMAX_MIN = -(18446744073709551615n); // -(2^64-1): GNU's low bound for %u/%o/%x
 
 /**
  * A numeric-argument diagnostic accumulated while formatting (GNU printf prints
@@ -73,11 +75,15 @@ function parseNextConversion(fmt: string, pos: number): [ConvSpec, number] | nul
  *
  * Returns `{ value }` on success, plus an optional `diag`:
  *   - a non-numeric argument → value 0, `expected a numeric value`;
- *   - an out-of-intmax-range value → clamped to INTMAX_MIN/MAX, `Result too large`.
- * GNU prints the diagnostic on stderr, still emits the (clamped/zero) value, and
- * exits 1.
+ *   - an out-of-range value → clamped/saturated, `Result too large`.
+ *
+ * The target range depends on the conversion: SIGNED convs (`%d`/`%i`) clamp to
+ * [INTMAX_MIN, INTMAX_MAX]; UNSIGNED convs (`%u`/`%o`/`%x`) parse the arg as
+ * `uintmax_t`, so they accept the full [-(2^64-1), 2^64-1] range and saturate to
+ * UINTMAX_MAX (GNU parses unsigned-conversion args as uintmax_t). GNU prints the
+ * diagnostic on stderr, still emits the (clamped/zero) value, and exits 1.
  */
-function parseIntArg(raw: string): { value: bigint; diag?: PrintfDiag } {
+function parseIntArg(raw: string, unsigned = false): { value: bigint; diag?: PrintfDiag } {
   const s = raw.trim();
   if (s === '') return { value: 0n };
   if (s[0] === '\'' || s[0] === '"') {
@@ -97,7 +103,11 @@ function parseIntArg(raw: string): { value: bigint; diag?: PrintfDiag } {
     return { value: 0n, diag: { message: `‘${raw}’: expected a numeric value` } };
   }
   const value = sign * n;
-  // Clamp to intmax_t range (GNU: "Result too large" + exit 1).
+  // Clamp to the target range (GNU: "Result too large" + exit 1, saturated value).
+  if (unsigned) {
+    if (value > UINTMAX_MAX || value < UINTMAX_MIN) return { value: UINTMAX_MAX, diag: { message: `‘${raw}’: Result too large` } };
+    return { value };
+  }
   if (value > INTMAX_MAX) return { value: INTMAX_MAX, diag: { message: `‘${raw}’: Result too large` } };
   if (value < INTMAX_MIN) return { value: INTMAX_MIN, diag: { message: `‘${raw}’: Result too large` } };
   return { value };
@@ -109,34 +119,95 @@ function pad(s: string, width: number, flags: string, padChar = ' '): string {
   return flags.includes('-') ? s + p : p + s;
 }
 
-/** Force a C-style 2-digit minimum exponent (`1e+6` → `1e+06`). */
-function fixExp(s: string): string {
-  return s.replace(/[eE]([+-])(\d+)/, (_m, sign: string, digits: string) =>
-    'e' + sign + (digits.length < 2 ? digits.padStart(2, '0') : digits));
+/**
+ * Round the EXACT value of a non-negative finite double `ax`, scaled by 10^k, to the
+ * nearest integer with ties-to-EVEN — matching C/GNU printf (which round the true
+ * IEEE-754 value, not the shortest decimal literal). Decomposes `ax = mant·2^e2` from
+ * its bit pattern so the rational `ax·10^k = num/den` is exact; JS `toFixed`/
+ * `toExponential` instead round exact ties half-away-from-zero, so this is the ONLY
+ * place the output can differ from them, and only on exact-half values.
+ */
+function scaledRoundHalfEven(ax: number, k: number): bigint {
+  const buf = new DataView(new ArrayBuffer(8));
+  buf.setFloat64(0, ax);
+  const hi = buf.getUint32(0), lo = buf.getUint32(4);
+  const rawExp = (hi >>> 20) & 0x7ff;
+  let mant = (BigInt(hi & 0xfffff) << 32n) | BigInt(lo >>> 0);
+  let e2: number;
+  if (rawExp === 0) e2 = -1074;                       // subnormal (no implicit 1)
+  else { mant |= (1n << 52n); e2 = rawExp - 1075; }   // normal: add implicit leading 1
+  if (mant === 0n) return 0n;
+  let num = mant, den = 1n;                            // ax·10^k = num/den (exact)
+  if (k >= 0) num *= 10n ** BigInt(k); else den *= 10n ** BigInt(-k);
+  if (e2 >= 0) num <<= BigInt(e2); else den <<= BigInt(-e2);
+  let q = num / den;
+  const twiceRem = (num - q * den) * 2n;
+  if (twiceRem > den) q += 1n;
+  else if (twiceRem === den && (q % 2n) === 1n) q += 1n; // exact tie → round to even
+  return q;
+}
+
+/** `%f` magnitude of a non-negative finite double with `prec` fractional digits. */
+function formatFixed(ax: number, prec: number): string {
+  if (!Number.isFinite(ax)) return Math.abs(ax).toFixed(Math.min(prec, 100));
+  const q = scaledRoundHalfEven(ax, prec).toString();
+  if (prec === 0) return q;
+  const s = q.padStart(prec + 1, '0');
+  return s.slice(0, s.length - prec) + '.' + s.slice(s.length - prec);
+}
+
+/** `%e` formatting of a non-negative finite double: mantissa + e±NN (≥2 exponent
+ *  digits), ties-to-even. */
+function formatExp(n: number, prec: number, upper: boolean): string {
+  const e = upper ? 'E' : 'e';
+  if (!Number.isFinite(n)) {
+    const s = Math.abs(n).toExponential(prec).replace(/e([+-])(\d)$/, 'e$10$2');
+    return upper ? s.toUpperCase() : s;
+  }
+  if (n === 0) return (prec > 0 ? '0.' + '0'.repeat(prec) : '0') + e + '+00';
+  const digits = prec + 1;                            // total significant digits
+  let exp = Math.floor(Math.log10(n));
+  let q = scaledRoundHalfEven(n, prec - exp);
+  // A log10 estimate can be off by one, and rounding can carry a digit (9.99→10.0);
+  // re-scale until the integer part has exactly `digits` digits.
+  while (q.toString().length > digits) { exp += 1; q = scaledRoundHalfEven(n, prec - exp); }
+  while (q !== 0n && q.toString().length < digits) { exp -= 1; q = scaledRoundHalfEven(n, prec - exp); }
+  const ds = q.toString().padStart(digits, '0');
+  const mant = prec > 0 ? ds[0] + '.' + ds.slice(1) : ds;
+  const esign = exp < 0 ? '-' : '+';
+  return mant + e + esign + String(Math.abs(exp)).padStart(2, '0');
 }
 
 /**
- * C `%g` for a non-negative value `n`: precision `prec` significant digits
- * (0 → 1). Uses `%e` when the decimal exponent is < -4 or >= prec, else `%f`.
- * Trailing zeros are stripped unless the `#` (alt) flag is set.
+ * C `%g` for a non-negative value `n`: `sig` significant digits (0 → 1). Uses `%e`
+ * when the decimal exponent is < -4 or >= sig, else `%f`. Trailing zeros are
+ * stripped unless the `#` (alt) flag is set. Rounds ties-to-even.
  */
-function formatG(n: number, prec: number, upper: boolean, alt: boolean): string {
-  const p = prec === 0 ? 1 : prec;
-  let body: string;
-  if (n === 0) {
-    body = '0';
+function formatG(n: number, sig: number, upper: boolean, alt: boolean): string {
+  if (sig < 1) sig = 1;
+  if (n === 0) return alt ? '0.' + '0'.repeat(Math.max(0, sig - 1)) : '0';
+  if (!Number.isFinite(n)) return formatExp(n, sig - 1, upper);
+  // Determine the exponent of the value AFTER rounding to `sig` significant digits
+  // (rounding can bump the exponent, e.g. 9.99 @ 2 sig → 10 → e+01).
+  let exp = Math.floor(Math.log10(n));
+  let q = scaledRoundHalfEven(n, sig - 1 - exp);
+  while (q.toString().length > sig) { exp += 1; q = scaledRoundHalfEven(n, sig - 1 - exp); }
+  while (q !== 0n && q.toString().length < sig) { exp -= 1; q = scaledRoundHalfEven(n, sig - 1 - exp); }
+  let s: string;
+  if (exp < -4 || exp >= sig) {
+    s = formatExp(n, sig - 1, upper);
+    // Trim trailing zeros before the exponent. `formatExp` may have uppercased `e`
+    // to `E` (for `%G`), so match either case.
+    if (!alt) s = s.replace(/\.?0+([eE])/, '$1');
+    // `%#g` keeps the point even at precision 0 (`%#.1g 1e20` → `1.e+20`).
+    else if (!s.includes('.')) s = s.replace(/([eE])/, '.$1');
   } else {
-    const exp = Math.floor(Math.log10(n));
-    if (exp < -4 || exp >= p) {
-      body = n.toExponential(p - 1);
-      if (!alt) body = body.replace(/\.?0+e/, 'e');
-      body = fixExp(body);
-    } else {
-      body = n.toFixed(Math.max(0, p - 1 - exp));
-      if (!alt && body.includes('.')) body = body.replace(/\.?0+$/, '');
-    }
+    s = formatFixed(n, Math.max(0, sig - 1 - exp));
+    if (!alt && s.includes('.')) s = s.replace(/\.?0+$/, '');
+    // `%#g` on an integer-valued result forces a trailing point (`%#g 100000` → `100000.`).
+    else if (alt && !s.includes('.')) s = s + '.';
   }
-  return upper ? body.toUpperCase() : body;
+  return s;
 }
 
 /**
@@ -180,8 +251,9 @@ function applyConversion(
 
   const diags = state.diags;
   // Parse an integer argument (BigInt), routing any diagnostic to `diags`.
-  const intArg = (): bigint => {
-    const r = parseIntArg(rawArg);
+  // `unsigned` selects the uintmax_t range for %u/%o/%x.
+  const intArg = (unsigned = false): bigint => {
+    const r = parseIntArg(rawArg, unsigned);
     if (r.diag) diags.push(r.diag);
     return r.value;
   };
@@ -219,7 +291,7 @@ function applyConversion(
       break;
     }
     case 'u': {
-      let n = intArg();
+      let n = intArg(true);
       if (n < 0n) n = ((n % UINTMAX) + UINTMAX) % UINTMAX; // uintmax_t wrap
       let ns = n.toString();
       if (precision !== null) ns = ns.padStart(precision, '0');
@@ -228,7 +300,7 @@ function applyConversion(
       break;
     }
     case 'o': {
-      let n = intArg();
+      let n = intArg(true);
       if (n < 0n) n = ((n % UINTMAX) + UINTMAX) % UINTMAX;
       let ns = n.toString(8);
       if (alt && !ns.startsWith('0')) ns = '0' + ns;
@@ -238,7 +310,7 @@ function applyConversion(
       break;
     }
     case 'x': case 'X': {
-      let n = intArg();
+      let n = intArg(true);
       if (n < 0n) n = ((n % UINTMAX) + UINTMAX) % UINTMAX;
       let ns = n.toString(16);
       if (s === 'X') ns = ns.toUpperCase();
@@ -254,7 +326,7 @@ function applyConversion(
       let n = parseFloat(rawArg);
       if (isNaN(n)) { n = 0; if (rawArg.trim() !== '') diags.push({ message: `‘${rawArg}’: expected a numeric value` }); }
       const neg = n < 0 || Object.is(n, -0);
-      const ns = Math.abs(n).toFixed(precision ?? 6);
+      const ns = formatFixed(Math.abs(n), precision ?? 6);
       const sign = neg ? '-' : (plus ? '+' : (space ? ' ' : ''));
       if (zeroPad && width !== null && (sign.length + ns.length) < width) {
         out = zeroPadSigned(sign, ns, width);
@@ -267,8 +339,7 @@ function applyConversion(
       let n = parseFloat(rawArg);
       if (isNaN(n)) { n = 0; if (rawArg.trim() !== '') diags.push({ message: `‘${rawArg}’: expected a numeric value` }); }
       const neg = n < 0 || Object.is(n, -0);
-      let ns = fixExp(Math.abs(n).toExponential(precision ?? 6));
-      if (s === 'E') ns = ns.toUpperCase();
+      const ns = formatExp(Math.abs(n), precision ?? 6, s === 'E');
       const sign = neg ? '-' : (plus ? '+' : (space ? ' ' : ''));
       if (zeroPad && width !== null && (sign.length + ns.length) < width) {
         out = zeroPadSigned(sign, ns, width);

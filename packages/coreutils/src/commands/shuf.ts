@@ -73,6 +73,19 @@ const shufCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
   try {
+    // GNU rejects a REPEATED -i/--input-range (parseArgs would silently last-win).
+    let iCount = 0;
+    const raw = io.args.slice(1);
+    for (let k = 0; k < raw.length; k++) {
+      const a = raw[k];
+      if (a === '--') break;
+      if (a === '-i' || a === '--input-range') { iCount++; if (raw[k + 1] !== undefined) k++; }
+      else if (a.startsWith('--input-range=')) iCount++;
+      else if (a.startsWith('-i') && !a.startsWith('--')) iCount++;
+    }
+    if (iCount > 1) {
+      return await exitWith(err, 1, `${name}: multiple -i options specified`);
+    }
     const echo = Boolean(flags.e);
     const repeat = Boolean(flags.r);
     const zero = Boolean(flags.z);

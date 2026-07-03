@@ -10,7 +10,7 @@
  *
  * `-z` separates outputs with NUL instead of newline.
  */
-import { defineCommand, parseArgs, exitWith } from '../harness.ts';
+import { defineCommand, parseArgs, exitWith, optionError } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 /**
@@ -38,14 +38,20 @@ function posixDirname(path: string): string {
 }
 
 const dirnameCommand: CommandFn = async (io: CommandIO): Promise<number> => {
-  const { positionals, flags } = parseArgs(io.args.slice(1), {
+  const name = io.args[0] ?? 'dirname';
+  const parsed = parseArgs(io.args.slice(1), {
     boolean: ['z'],
     alias: { zero: 'z' },
+    unknown: 'error',
   });
+  const { positionals, flags } = parsed;
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
   const sep = flags.z ? '\x00' : '\n';
   try {
+    if (parsed.unknown.length) {
+      return await exitWith(err, 1, optionError(name, parsed.unknown[0]));
+    }
     if (positionals.length === 0) {
       return await exitWith(err, 1, 'dirname: missing operand');
     }

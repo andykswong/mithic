@@ -100,7 +100,12 @@ export function foldBytes(line: string, width: number, atSpaces: boolean, byteMo
     if (next > width && cur.length > 0) {
       let breakAt = cur.length; // default: break before this unit (at width)
       if (atSpaces) {
-        for (let i = cur.length - 1; i > 0; i--) {
+        // Break AFTER the last blank at or before the width boundary — GNU keeps
+        // that blank on the current line (so a blank landing exactly at `width`
+        // stays). Start the scan at cur.length so `breakAt = cur.length` (i.e. a
+        // trailing blank) is reachable; the earlier `cur.length - 1` start was an
+        // off-by-one that broke one unit too soon before a boundary blank.
+        for (let i = cur.length; i > 0; i--) {
           if (cur[i - 1] === ' ' || cur[i - 1] === '\t') { breakAt = i; break; }
         }
       }

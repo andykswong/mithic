@@ -111,6 +111,34 @@ describe('awk command — CLI wiring', () => {
     expect(h.err()).toContain('usage');
   });
 
+  // CR2: substr arity is checked at parse time; gawk exits 1 (not 2) for it.
+  test('substr with too many args → exit 1, gawk diagnostic', async () => {
+    const h = makeIO({ args: ['awk', 'BEGIN{ print substr("x",1,2,3) }'] });
+    expect(await awkCommand(h.io)).toBe(1);
+    expect(h.err()).toContain('4 is invalid as number of arguments for substr');
+  });
+
+  test('substr with too few args → exit 1 (no raw JS undefined crash)', async () => {
+    const h = makeIO({ args: ['awk', 'BEGIN{ print substr("hello") }'] });
+    expect(await awkCommand(h.io)).toBe(1);
+    expect(h.err()).toContain('1 is invalid as number of arguments for substr');
+    expect(h.err()).not.toContain('Cannot read properties');
+  });
+
+  // CR2: BEGIN $0 is the empty string, not undefined.
+  test('BEGIN bare print emits an empty line', async () => {
+    const h = makeIO({ args: ['awk', 'BEGIN{ print }'] });
+    expect(await awkCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('\n');
+  });
+
+  test('BEGIN print length does not crash and prints 0', async () => {
+    const h = makeIO({ args: ['awk', 'BEGIN{ print length }'] });
+    expect(await awkCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('0\n');
+    expect(h.err()).toBe('');
+  });
+
   test('printf field formatting end to end', async () => {
     const h = makeIO({ args: ['awk', '{ printf "%-5s|%3d\\n", $1, $2 }'], stdinText: 'hi 7\n' });
     expect(await awkCommand(h.io)).toBe(0);

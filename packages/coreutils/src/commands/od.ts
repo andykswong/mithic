@@ -46,6 +46,8 @@ interface TypeSpec {
   kind: 'a' | 'c' | 'd' | 'o' | 'u' | 'x' | 'f';
   /** Bytes per datum (1/2/4/8). For a/c always 1. */
   size: number;
+  /** `z` suffix: append the line's printable-ASCII rendering (`>text<`). */
+  z?: boolean;
 }
 
 const NAMED_C: Record<number, string> = {
@@ -90,23 +92,18 @@ function readWordLE(bytes: Uint8Array, start: number, end: number, size: number)
   return v;
 }
 
-/** Render one integer datum ` <field>` cell. */
+/** Render one integer datum's bare text (no leading space / field padding). */
 function formatInt(bytes: Uint8Array, start: number, end: number, spec: TypeSpec): string {
   const { kind, size } = spec;
-  const width = intCellWidth(kind, size) - 1;
   const u = readWordLE(bytes, start, end, size);
-  let text: string;
-  if (kind === 'x') text = u.toString(16).padStart(size * 2, '0');
-  else if (kind === 'o') text = u.toString(8).padStart({ 1: 3, 2: 6, 4: 11, 8: 22 }[size]!, '0');
-  else if (kind === 'u') text = u.toString(10);
-  else {
-    // signed: interpret the top bit as sign
-    const bits = BigInt(size) * 8n;
-    const signBit = 1n << (bits - 1n);
-    const s = u >= signBit ? u - (1n << bits) : u;
-    text = s.toString(10);
-  }
-  return ' ' + text.padStart(width, ' ');
+  if (kind === 'x') return u.toString(16).padStart(size * 2, '0');
+  if (kind === 'o') return u.toString(8).padStart({ 1: 3, 2: 6, 4: 11, 8: 22 }[size]!, '0');
+  if (kind === 'u') return u.toString(10);
+  // signed: interpret the top bit as sign
+  const bits = BigInt(size) * 8n;
+  const signBit = 1n << (bits - 1n);
+  const s = u >= signBit ? u - (1n << bits) : u;
+  return s.toString(10);
 }
 
 /**
@@ -115,17 +112,14 @@ function formatInt(bytes: Uint8Array, start: number, end: number, spec: TypeSpec
  * or 8 (double). Special values render as `nan` / `inf` / `-inf`.
  */
 function formatFloat(bytes: Uint8Array, start: number, end: number, size: number): string {
-  const width = size === 4 ? 15 : 24;
   const buf = new ArrayBuffer(size);
   const view = new DataView(buf);
   for (let k = 0; k < size; k++) view.setUint8(k, start + k < end ? bytes[start + k] : 0);
   const v = size === 4 ? view.getFloat32(0, true) : view.getFloat64(0, true);
-  let text: string;
-  if (Number.isNaN(v)) text = 'nan';
-  else if (v === Infinity) text = 'inf';
-  else if (v === -Infinity) text = '-inf';
-  else text = gStyle(shortest(v, size));
-  return ' ' + text.padStart(width, ' ');
+  if (Number.isNaN(v)) return 'nan';
+  if (v === Infinity) return 'inf';
+  if (v === -Infinity) return '-inf';
+  return gStyle(shortest(v, size));
 }
 
 /** Shortest decimal string that round-trips through the given float width. */
@@ -161,23 +155,19 @@ function gStyle(s: string): string {
   return `${sign}${mantTrim}e${esign}${edig.padStart(2, '0')}`;
 }
 
-/** Render one `-c` C-escape single byte cell (` %3s`). */
+/** Render one `-c` C-escape single byte's bare text (max 3 chars). */
 function formatCharC(b: number): string {
-  let rep: string;
-  if (b in NAMED_C) rep = NAMED_C[b];
-  else if (b >= 0x20 && b <= 0x7e) rep = String.fromCharCode(b);
-  else rep = b.toString(8).padStart(3, '0');
-  return ' ' + rep.padStart(3, ' ');
+  if (b in NAMED_C) return NAMED_C[b];
+  if (b >= 0x20 && b <= 0x7e) return String.fromCharCode(b);
+  return b.toString(8).padStart(3, '0');
 }
 
-/** Render one `-t a` named-character single byte cell (` %3s`). */
+/** Render one `-t a` named-character single byte's bare text. */
 function formatCharA(b: number): string {
-  let rep: string;
-  if (b < NAMED_A.length) rep = NAMED_A[b];
-  else if (b === 0x7f) rep = 'del';
-  else if (b >= 0x21 && b <= 0x7e) rep = String.fromCharCode(b);
-  else rep = (b & 0x7f).toString(); // high-bit chars fall back to low-7-bit name in GNU; rarely hit
-  return ' ' + rep.padStart(3, ' ');
+  if (b < NAMED_A.length) return NAMED_A[b];
+  if (b === 0x7f) return 'del';
+  if (b >= 0x21 && b <= 0x7e) return String.fromCharCode(b);
+  return (b & 0x7f).toString(); // high-bit chars fall back to low-7-bit name in GNU; rarely hit
 }
 
 /** Bytes per datum for a type (1 for a/c). */
@@ -201,25 +191,41 @@ function formatDatum(bytes: Uint8Array, i: number, end: number, spec: TypeSpec):
 }
 
 /**
- * Format the region of ONE spec over the byte group `[start,end)`. Datums are
- * emitted left-to-right (multi-byte types zero-pad a trailing partial datum),
- * then the whole group is left-padded to `groupWidth` so columns line up across
- * specs with different datum sizes (GNU alignment).
+ * Format ONE spec's physical line over the byte range `[start,end)`. GNU aligns
+ * columns across type specs of different datum sizes by giving every spec's line
+ * the same width per `bytesPerBlock` bytes: `widthPerBlock` chars, shared across
+ * that spec's `bytesPerBlock/size` fields via cumulative-ceil distribution so
+ * field k spans `[ceil(k·W/fpb), ceil((k+1)·W/fpb))`. Each datum's bare text is
+ * right-justified in its computed field. This exactly reproduces GNU's per-field
+ * widths (e.g. `-t x2 -t f8` → x2 fields 7,6,6,6 within each 8-byte group).
  */
-function formatGroup(bytes: Uint8Array, start: number, end: number, spec: TypeSpec, groupWidth: number): string {
+function formatSpecLine(
+  bytes: Uint8Array, start: number, end: number, spec: TypeSpec,
+  bytesPerBlock: number, widthPerBlock: number,
+): string {
   const size = datumSize(spec);
+  const fpb = bytesPerBlock / size; // fields per block (bytesPerBlock is a multiple of size)
   let region = '';
-  for (let i = start; i < end; i += size) region += formatDatum(bytes, i, end, spec);
-  return region.length >= groupWidth ? region : ' '.repeat(groupWidth - region.length) + region;
+  let k = 0; // running field index within the current block
+  for (let i = start; i < end; i += size, k++) {
+    if (k === fpb) k = 0; // new block: field index restarts
+    const fieldWidth = Math.ceil((k + 1) * widthPerBlock / fpb) - Math.ceil(k * widthPerBlock / fpb);
+    region += formatDatum(bytes, i, end, spec).padStart(fieldWidth, ' ');
+  }
+  return region;
 }
 
 /** Parse one `-t` argument into one-or-more {@link TypeSpec} (GNU allows `x1x2`). */
 function parseTypeArg(arg: string): TypeSpec[] | null {
   const specs: TypeSpec[] = [];
+  // `z` (append printable-ASCII display) is a suffix on the preceding spec.
+  const takeZ = (): void => {
+    if (arg[i] === 'z' && specs.length > 0) { specs[specs.length - 1].z = true; i++; }
+  };
   let i = 0;
   while (i < arg.length) {
     const kind = arg[i++];
-    if (kind === 'a' || kind === 'c') { specs.push({ kind, size: 1 }); continue; }
+    if (kind === 'a' || kind === 'c') { specs.push({ kind, size: 1 }); takeZ(); continue; }
     if (kind === 'd' || kind === 'o' || kind === 'u' || kind === 'x' || kind === 'f') {
       // optional size: a digit run, or a C-size letter (C=1 S=2 I=4 L=8) / F/D/L for floats.
       let size: number;
@@ -239,9 +245,10 @@ function parseTypeArg(arg: string): TypeSpec[] | null {
       if (kind === 'f') { if (size !== 4 && size !== 8) return null; }
       else if (size !== 1 && size !== 2 && size !== 4 && size !== 8) return null;
       specs.push({ kind, size });
+      takeZ();
       continue;
     }
-    return null; // unrecognized type letter
+    return null; // unrecognized type letter (a leading `z` has no preceding spec)
   }
   return specs.length > 0 ? specs : null;
 }
@@ -252,7 +259,9 @@ const SHORT_TYPE: Record<string, TypeSpec> = {
   b: { kind: 'o', size: 1 },
   c: { kind: 'c', size: 1 },
   d: { kind: 'u', size: 2 },
+  e: { kind: 'f', size: 8 }, // GNU -e == -t fD (double)
   f: { kind: 'f', size: 4 },
+  F: { kind: 'f', size: 8 }, // GNU -F == -t fD (double)
   h: { kind: 'x', size: 2 },
   i: { kind: 'd', size: 4 },
   l: { kind: 'd', size: 8 },
@@ -359,17 +368,32 @@ const odCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     }
     if (limitN !== undefined) bytes = bytes.subarray(0, limitN);
 
-    // Cross-type column alignment (GNU): bytes are laid out in groups of the
-    // largest datum size `G`; every group is `groupWidth = round(G * density)`
-    // chars wide, where `density = max(cellWidth_i / size_i)` — so each spec's
-    // group (whatever datum size it uses) left-pads to the same column width.
-    const G = specs.reduce((m, s) => Math.max(m, datumSize(s)), 1);
-    const density = specs.reduce((m, s) => Math.max(m, cellWidth(s) / datumSize(s)), 0);
-    const groupWidth = Math.round(G * density);
+    // Bytes-per-line must be a multiple of every datum size for columns to
+    // align; GNU rounds an invalid `-w` down to the nearest LCM multiple (and
+    // warns). Default 16 already divides 1/2/4/8.
+    const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+    const lcm = specs.reduce((m, s) => { const d = datumSize(s); return (m / gcd(m, d)) * d; }, 1);
+    if (width % lcm !== 0) {
+      const adjusted = Math.max(lcm, width - (width % lcm));
+      await writeString(err, `${name}: warning: invalid width ${width}; using ${adjusted} instead\n`);
+      width = adjusted;
+    }
+
+    // Cross-type column alignment (GNU): every spec's physical line is the same
+    // width per `width` bytes — `widthPerBlock` chars, the max over specs of
+    // `cellWidth_i * (width / size_i)`. Each spec spreads that budget across its
+    // own `width/size_i` fields (see formatSpecLine).
+    const widthPerBlock = specs.reduce((m, s) => Math.max(m, cellWidth(s) * (width / datumSize(s))), 0);
+    // `z` suffix: after the fields (padded to a full block), append `  >text<`
+    // where each byte of the line renders as itself if printable, else `.`.
+    const asciiDisplay = (start: number, end: number): string => {
+      let text = '';
+      for (let p = start; p < end; p++) { const b = bytes[p]; text += b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : '.'; }
+      return `  >${text}<`;
+    };
     const formatLine = (start: number, end: number, spec: TypeSpec): string => {
-      let region = '';
-      for (let g = start; g < end; g += G) region += formatGroup(bytes, g, Math.min(g + G, end), spec, groupWidth);
-      return region;
+      const region = formatSpecLine(bytes, start, end, spec, width, widthPerBlock);
+      return spec.z ? region.padEnd(widthPerBlock, ' ') + asciiDisplay(start, end) : region;
     };
 
     const addrWidth = formatAddress(0, radix).length;

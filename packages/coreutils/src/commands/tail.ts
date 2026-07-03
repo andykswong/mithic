@@ -243,6 +243,31 @@ function extractLegacy(args: string[]): { filtered: string[]; legacy?: string } 
   return { filtered, legacy };
 }
 
+/**
+ * Which of `-c`/`-n` appeared LAST on the command line — GNU is last-wins when
+ * both are given (`tail -c5 -n2` → line mode, `tail -n2 -c5` → byte mode).
+ * parseArgs collapses both into `flags.c`/`flags.n` and loses the order, so scan
+ * the (legacy-filtered) argv directly. Returns 'c', 'n', or undefined (neither).
+ */
+function lastCountFlag(args: string[]): 'c' | 'n' | undefined {
+  let last: 'c' | 'n' | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--') break;
+    if (a === '-c' || a === '--bytes' || a.startsWith('--bytes=') || (a.startsWith('-c') && !a.startsWith('--'))) {
+      last = 'c';
+      if ((a === '-c' || a === '--bytes') && args[i + 1] !== undefined) i++;
+      continue;
+    }
+    if (a === '-n' || a === '--lines' || a.startsWith('--lines=') || (a.startsWith('-n') && !a.startsWith('--'))) {
+      last = 'n';
+      if ((a === '-n' || a === '--lines') && args[i + 1] !== undefined) i++;
+      continue;
+    }
+  }
+  return last;
+}
+
 function tailLines(bytes: Uint8Array, spec: CountSpec): Uint8Array {
   // Offsets where each line starts (byte after each \n, plus 0).
   const starts: number[] = [0];
@@ -286,7 +311,10 @@ const tailCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   let printed = 0;
 
   try {
-    const byteMode = flags.c !== undefined;
+    // GNU is last-wins when both `-c` and `-n` are supplied; otherwise byte mode
+    // iff `-c` is present at all.
+    const last = lastCountFlag(filtered);
+    const byteMode = flags.c !== undefined && (flags.n === undefined || last === 'c');
     let spec: CountSpec;
     if (byteMode) {
       const parsed = parseCount(String(flags.c));

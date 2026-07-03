@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'vitest';
-import { parseProgram } from './parser.ts';
+import { parseProgram, AwkFatalError } from './parser.ts';
 import type { Expr, Stmt, Rule } from './ast.ts';
 
 /** Parse a program and return its rules. */
@@ -234,5 +234,34 @@ describe('awk parser — statements', () => {
 
   test('statements separated by newlines', () => {
     expect(stmts('x = 1\ny = 2\nprint x').length).toBe(3);
+  });
+});
+
+describe('awk parser — builtin arity (CR2)', () => {
+  test('substr with 2 or 3 args parses', () => {
+    expect(() => parseProgram('BEGIN{ substr("x", 1) }')).not.toThrow();
+    expect(() => parseProgram('BEGIN{ substr("x", 1, 2) }')).not.toThrow();
+  });
+
+  test('substr with too many args is a parse-time fatal error (exit 1)', () => {
+    let caught: unknown;
+    try { parseProgram('BEGIN{ print substr("x",1,2,3) }'); } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(AwkFatalError);
+    expect((caught as AwkFatalError).exitCode).toBe(1);
+    expect((caught as Error).message).toContain('4 is invalid as number of arguments for substr');
+  });
+
+  test('substr with zero args is a parse-time fatal error', () => {
+    let caught: unknown;
+    try { parseProgram('BEGIN{ print substr() }'); } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(AwkFatalError);
+    expect((caught as Error).message).toContain('0 is invalid as number of arguments for substr');
+  });
+
+  test('substr with one arg is a parse-time fatal error', () => {
+    let caught: unknown;
+    try { parseProgram('BEGIN{ print substr("hello") }'); } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(AwkFatalError);
+    expect((caught as Error).message).toContain('1 is invalid as number of arguments for substr');
   });
 });

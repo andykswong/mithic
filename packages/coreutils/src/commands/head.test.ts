@@ -176,4 +176,46 @@ describe('head', () => {
     expect(await headCommand(h.io)).toBe(0);
     expect(h.out()).toBe('a\nb\n'); // all but last 3
   });
+
+  // ── -c / -n last-wins ordering (GNU parity) ───────────────────────────────
+  test('-c5 -n2: -n wins (last), prints first 2 lines', async () => {
+    const h = makeIO({ args: ['head', '-c5', '-n2'], stdinText: 'l1\nl2\nl3\nl4\nl5\n' });
+    expect(await headCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('l1\nl2\n');
+  });
+
+  test('-n2 -c5: -c wins (last), prints first 5 bytes', async () => {
+    const h = makeIO({ args: ['head', '-n2', '-c5'], stdinText: 'l1\nl2\nl3\nl4\nl5\n' });
+    expect(await headCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('l1\nl2');
+  });
+
+  test('-c3 -n2 (bytes then lines): line mode wins, prints all input under limit', async () => {
+    const h = makeIO({ args: ['head', '-c3', '-n2'], stdinText: 'abcdefgh\nxyz\n' });
+    expect(await headCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('abcdefgh\nxyz\n');
+  });
+
+  // ── header printed only after a successful open (parity finding) ──────────
+  test('no spurious header before an open failure (multi-file)', async () => {
+    const h = makeIO({ args: ['head', '/f', '/g'], files: { '/f': '1\n2\n' } });
+    expect(await headCommand(h.io)).toBe(1);
+    // GNU emits no header for the file it cannot open, and no printed++ poison.
+    expect(h.out()).toBe('==> /f <==\n1\n2\n');
+    expect(h.err()).toContain('cannot open \'/g\' for reading');
+  });
+
+  test('-c3 with a missing second file does not inject a stray header/byte', async () => {
+    const h = makeIO({ args: ['head', '-c3', '/f', '/g'], files: { '/f': 'abc\n' } });
+    expect(await headCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('==> /f <==\nabc');
+  });
+
+  test('first file missing: second file gets an un-poisoned header (no leading blank line)', async () => {
+    const h = makeIO({ args: ['head', '-n1', '/g', '/f'], files: { '/f': 'A\n' } });
+    expect(await headCommand(h.io)).toBe(1);
+    // Only /f produces output; its header must NOT be preceded by a blank line
+    // (printed was not bumped by the failed /g open).
+    expect(h.out()).toBe('==> /f <==\nA\n');
+  });
 });

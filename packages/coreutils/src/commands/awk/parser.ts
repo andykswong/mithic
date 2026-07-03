@@ -33,6 +33,26 @@ import type {
 
 const ASSIGN_OPS = new Set(['=', '+=', '-=', '*=', '/=', '%=', '^=']);
 
+/**
+ * A fatal awk diagnostic (`N is invalid as number of arguments for FN`) raised
+ * at parse time for a builtin called with the wrong number of arguments. Unlike
+ * a plain syntax error (exit 2), gawk exits 1 for these, so the CLI wrapper reads
+ * `.exitCode` to return 1.
+ */
+export class AwkFatalError extends Error {
+  readonly exitCode: number;
+  constructor(message: string, exitCode = 1) {
+    super(message);
+    this.name = 'AwkFatalError';
+    this.exitCode = exitCode;
+  }
+}
+
+/** Valid argument-count ranges for the fixed-arity builtins gawk checks at parse time. */
+const BUILTIN_ARITY: Record<string, { min: number; max: number }> = {
+  substr: { min: 2, max: 3 },
+};
+
 class Parser {
   private toks: Token[];
   private pos = 0;
@@ -619,6 +639,10 @@ class Parser {
     if (this.accept('op', '(')) {
       args.push(...this.parseArgList(ctx));
       this.eat('op', ')');
+    }
+    const arity = BUILTIN_ARITY[name];
+    if (arity && (args.length < arity.min || args.length > arity.max)) {
+      throw new AwkFatalError(`awk: ${args.length} is invalid as number of arguments for ${name}`);
     }
     return { type: 'builtin', name, args };
   }

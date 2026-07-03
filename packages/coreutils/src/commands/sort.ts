@@ -45,19 +45,28 @@ function kindOfFlags(flags: string): SortKind | undefined {
   return undefined;
 }
 
+/** A `-k` key-spec validation failure carrying GNU's exact diagnostic (no `cmd:`). */
+export class KeyError extends Error {}
+
 /**
  * Parse a `-k` spec like `2`, `2.3`, `2,4`, `2,2n`, `2,2r`, `1.1,1.3`. Per-key
  * trailing flags (`n`/`h`/`g`/`V`/`M` ordering, `r` reverse, `f` fold case, `b`
- * ignore leading blanks) may appear on the start and/or end position.
+ * ignore leading blanks) may appear on the start and/or end position. Rejects a
+ * zero start field or an explicit zero START character offset with GNU's
+ * diagnostic (throws {@link KeyError}); the caller reports exit 2.
  */
 export function parseKey(spec: string): KeySpec {
   const [start, end] = spec.split(',');
-  const parse = (s: string): { field: number; char: number; flags: string } => {
+  const parse = (s: string): { field: number; char: number; charGiven: boolean; flags: string } => {
     const m = /^([0-9]+)(?:\.([0-9]+))?([a-zA-Z]*)$/.exec(s);
-    if (!m) return { field: 1, char: 0, flags: '' };
-    return { field: Number(m[1]), char: m[2] ? Number(m[2]) : 0, flags: m[3] ?? '' };
+    if (!m) return { field: 1, char: 0, charGiven: false, flags: '' };
+    return { field: Number(m[1]), char: m[2] ? Number(m[2]) : 0, charGiven: m[2] !== undefined, flags: m[3] ?? '' };
   };
   const s = parse(start);
+  // GNU: a zero field number, or an explicit `.0` START character offset, is a
+  // hard error (exit 2). The quoted spec is the ORIGINAL, unmodified key text.
+  if (s.field === 0) throw new KeyError(`field number is zero: invalid field specification ‘${spec}’`);
+  if (s.charGiven && s.char === 0) throw new KeyError(`character offset is zero: invalid field specification ‘${spec}’`);
   const flags = s.flags + (end !== undefined ? parse(end).flags : '');
   const result: KeySpec = {
     startField: s.field,
@@ -65,6 +74,7 @@ export function parseKey(spec: string): KeySpec {
   };
   if (end !== undefined) {
     const e = parse(end);
+    if (e.field === 0) throw new KeyError(`field number is zero: invalid field specification ‘${spec}’`);
     result.endField = e.field;
     // End char 0 (no `.C`) means "through the end of the end field".
     if (e.char > 0) result.endChar = e.char;
@@ -295,15 +305,15 @@ const sortCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const name = io.args[0] ?? 'sort';
   const { output, filtered } = extractOutput(io.args.slice(1));
   const { positionals, flags } = parseArgs(filtered, {
-    boolean: ['n', 'r', 'u', 'f', 'b', 'h', 'g', 'V', 'M', 'c', 'C', 'z',
+    boolean: ['n', 'r', 'u', 'f', 'b', 'h', 'g', 'V', 'M', 'c', 'C', 'z', 's',
       'numeric-sort', 'human-numeric-sort', 'general-numeric-sort', 'version-sort', 'month-sort',
-      'reverse', 'unique', 'ignore-case', 'ignore-leading-blanks', 'check', 'zero-terminated'],
+      'reverse', 'unique', 'ignore-case', 'ignore-leading-blanks', 'check', 'zero-terminated', 'stable'],
     string: ['t', 'k', 'field-separator', 'key'],
     alias: {
       'numeric-sort': 'n', 'human-numeric-sort': 'h', 'general-numeric-sort': 'g',
       'version-sort': 'V', 'month-sort': 'M', reverse: 'r', unique: 'u',
       'ignore-case': 'f', 'ignore-leading-blanks': 'b', 'field-separator': 't', key: 'k',
-      'zero-terminated': 'z',
+      'zero-terminated': 'z', stable: 's',
     },
   });
   const reverse = Boolean(flags.r);
@@ -311,6 +321,9 @@ const sortCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const fold = Boolean(flags.f);
   const ignoreBlanks = Boolean(flags.b);
   const zero = Boolean(flags.z);
+  // `-s`/`--stable`: suppress GNU's whole-line last-resort tiebreak, so records
+  // with equal keys keep their input order.
+  const stable = Boolean(flags.s);
   const sep = flags.t !== undefined ? String(flags.t) : undefined;
   const checkQuiet = Boolean(flags.C); // -C: check only, no message
   const check = Boolean(flags.c) || checkQuiet;
@@ -319,15 +332,25 @@ const sortCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const globalKind: SortKind =
     flags.n ? 'numeric' : flags.h ? 'human' : flags.g ? 'general' :
       flags.V ? 'version' : flags.M ? 'month' : 'lex';
-  // Collect ALL `-k`/`--key` specs (parseArgs only keeps the last), preserving
-  // their order so they apply as primary, secondary, … sort keys.
-  const keys = collectKeys(filtered).map(parseKey);
-
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
   let exitCode = 0;
 
   try {
+    // GNU rejects an empty field separator (`-t ''`) with `empty tab`, exit 2.
+    if (flags.t !== undefined && String(flags.t) === '') {
+      await writeString(err, `${name}: empty tab\n`);
+      return 2;
+    }
+    // Collect ALL `-k`/`--key` specs (parseArgs only keeps the last), preserving
+    // their order so they apply as primary, secondary, … sort keys. A zero field
+    // or explicit `.0` start offset is a GNU error (exit 2).
+    let keys: KeySpec[];
+    try { keys = collectKeys(filtered).map(parseKey); }
+    catch (e) {
+      if (e instanceof KeyError) { await writeString(err, `${name}: ${e.message}\n`); return 2; }
+      throw e;
+    }
     const sources = positionals.length > 0 ? positionals : ['-'];
     let lines: string[] = [];
     for (const src of sources) {
@@ -371,15 +394,17 @@ const sortCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         const c = compareValues(stripB(a), stripB(b), globalKind, fold);
         if (c !== 0) return reverse ? -c : c;
         // GNU applies a final whole-line byte comparison as the last resort
-        // (unless `-s`, which we do not implement), so equal-key non-identical
-        // lines (e.g. two unknown months under `-M`) get a deterministic order.
-        if (globalKind === 'lex') return 0;
+        // (unless `-s`/`--stable`), so equal-key non-identical lines (e.g. two
+        // unknown months under `-M`) get a deterministic order.
+        if (globalKind === 'lex' || stable) return 0;
         const w = compareValues(a, b, 'lex', false);
         return reverse ? -w : w;
       }
       const ck = compareKeys(a, b);
       if (ck !== 0) return reverse ? -ck : ck;
-      // GNU last-resort: whole-line comparison (lexicographic).
+      // GNU last-resort: whole-line comparison (lexicographic) — suppressed by
+      // `-s`/`--stable`, which keeps equal-key records in input order.
+      if (stable) return 0;
       const c = compareValues(a, b, 'lex', false);
       return reverse ? -c : c;
     };

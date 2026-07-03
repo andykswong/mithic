@@ -274,6 +274,58 @@ describe('od', () => {
     expect(h.out()).toBe('  41 42  43 44\n 041101 042103\n');
   });
 
+  // GNU parity: a 2-byte hex type combined with a 4-byte type gives each x2 datum
+  // its own column width (NOT a packed pair left-padded as a group).
+  test('-t x2 -t d4 aligns each 2-byte datum in its own column (GNU)', async () => {
+    const h = makeIO({ args: ['od', '-A', 'n', '-t', 'x2', '-t', 'd4', '/in'], files: { '/in': 'hello wo' } });
+    await odCommand(h.io);
+    expect(h.out()).toBe('  6568  6c6c  206f  6f77\n  1819043176  1870078063\n');
+  });
+
+  test('-t x2 -t f8 distributes the pad across the x2 fields (7,6,6,6 per group)', async () => {
+    const h = makeIO({ args: ['od', '-A', 'n', '-t', 'x2', '-t', 'f8', '/in'], files: { '/in': new Uint8Array(16).map((_, i) => i) } });
+    await odCommand(h.io);
+    const x2Line = h.out().split('\n')[0];
+    // Four 2-byte fields per 8-byte group, cumulative-ceil widths: 7,6,6,6.
+    expect(x2Line).toBe('   0100  0302  0504  0706   0908  0b0a  0d0c  0f0e');
+  });
+
+  // ── GNU parity: -e / -F double-float aliases ──
+
+  test('-e is an alias for -t fD (double)', async () => {
+    const h = makeIO({ args: ['od', '-A', 'n', '-e'], stdinText: 'hello wo' });
+    expect(await odCommand(h.io)).toBe(0);
+    expect(h.out().trim()).toBe('8.765776478827897e+228');
+  });
+
+  test('-F is an alias for -t fD (double)', async () => {
+    const h = makeIO({ args: ['od', '-A', 'n', '-F'], stdinText: 'hello wo' });
+    expect(await odCommand(h.io)).toBe(0);
+    expect(h.out().trim()).toBe('8.765776478827897e+228');
+  });
+
+  // ── GNU parity: `z` type suffix (append printable-ASCII display) ──
+
+  test('-t x1z appends the printable-ASCII display', async () => {
+    const h = makeIO({ args: ['od', '-A', 'n', '-t', 'x1z', '/in'], files: { '/in': 'hello world!' } });
+    await odCommand(h.io);
+    expect(h.out()).toBe(' 68 65 6c 6c 6f 20 77 6f 72 6c 64 21              >hello world!<\n');
+  });
+
+  test('-t x1z renders non-printable bytes as . in the display', async () => {
+    const h = makeIO({ args: ['od', '-A', 'n', '-t', 'cz', '/in'], files: { '/in': 'hi\tbye\n' } });
+    await odCommand(h.io);
+    expect(h.out()).toContain('>hi.bye.<');
+  });
+
+  test('z applies per-spec: only the z-tagged type carries the display', async () => {
+    const h = makeIO({ args: ['od', '-A', 'n', '-t', 'x1z', '-t', 'd4', '/in'], files: { '/in': 'hello world!' } });
+    await odCommand(h.io);
+    const lines = h.out().split('\n');
+    expect(lines[0]).toContain('>hello world!<');
+    expect(lines[1]).not.toContain('>'); // the d4 line has no display
+  });
+
   // ── GNU parity: -N / -j / -v / -w ──
 
   test('-N limits the number of bytes dumped', async () => {

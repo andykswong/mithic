@@ -61,7 +61,10 @@ interface Subst {
   // regex resolved during execution; otherwise it is compiled with 'g'.
   re?: RegExp;
   ignoreCase: boolean; // needed to rebuild the empty-pattern regex from lastRegex
-  multiline: boolean; // `M`/`m` flag: ^/$ match at embedded newlines
+  // Resolved JS `m`-flag intent for the `M`/`m` flag (^/$ match at embedded
+  // newlines). Already accounts for `-z`: false under NUL separation, where an
+  // embedded `\n` is not a line boundary. Used to rebuild an empty `s//…/` reuse.
+  multiline: boolean;
   replacement: string;
   global: boolean;
   nth: number; // replace the Nth occurrence (1-based); 0 = first only unless global
@@ -210,7 +213,17 @@ function anchorRegExp(re: RegExp): RegExp {
 
 class ScriptParser {
   #syntax: RegexSyntax;
-  constructor(syntax: RegexSyntax) { this.#syntax = syntax; }
+  // Under `-z`, the active line separator is NUL, so the `M` flag anchors ^/$
+  // only at the true pattern-space boundaries — an embedded `\n` is NOT a line
+  // boundary. We therefore suppress the JS `m` flag (which always anchors around
+  // `\n`) when `-z` is in effect; without `-z` (newline separator) `M` maps to `m`.
+  #nulData: boolean;
+  constructor(syntax: RegexSyntax, nulData = false) { this.#syntax = syntax; this.#nulData = nulData; }
+
+  /** Map sed's `M`/`m` regex flag to the JS `m` flag, honoring the active separator. */
+  #multilineFlag(multiline: boolean): string {
+    return multiline && !this.#nulData ? 'm' : '';
+  }
 
   #compile(pat: string, flags = ''): RegExp {
     return anchorRegExp(compilePattern(pat, { syntax: this.#syntax, flags }));
@@ -282,8 +295,14 @@ class ScriptParser {
         j++;
       }
       if (script[j] !== delim) throw new Error('unterminated address regex');
+      j++;
+      // GNU regex-address modifiers: `I` (case-insensitive), `M` (multiline).
+      // They may follow the closing delimiter, in any order (`/re/IM`, `/re/MI`).
+      let addrFlags = '';
+      while (script[j] === 'I' || script[j] === 'M') { addrFlags += script[j]; j++; }
+      const reFlags = (/I/.test(addrFlags) ? 'i' : '') + this.#multilineFlag(/M/.test(addrFlags));
       // An empty pattern (`//`) reuses the last regex at execution time.
-      return { addr: { kind: 'regex', re: pat === '' ? undefined : this.#compile(pat) }, next: j + 1 };
+      return { addr: { kind: 'regex', re: pat === '' ? undefined : this.#compile(pat, reFlags) }, next: j };
     }
     return { next: i };
   }
@@ -490,13 +509,16 @@ class ScriptParser {
     const nthMatch = flags.match(/(\d+)/);
     const nth = nthMatch ? Number(nthMatch[1]) : 0;
     // An empty pattern (`s//repl/`) reuses the last regex at execution time.
-    const reFlags = 'g' + (ignoreCase ? 'i' : '') + (multiline ? 'm' : '');
+    const reFlags = 'g' + (ignoreCase ? 'i' : '') + this.#multilineFlag(multiline);
     let re: RegExp | undefined;
     if (pattern !== '') {
       const compiled = compilePattern(pattern, { syntax: this.#syntax, flags: reFlags });
       re = anchorRegExp(compiled);
     }
-    return { cmd: { ...spec, type: 's', re, ignoreCase, multiline, replacement, global, nth, print, writeFile }, next: i };
+    // Store the resolved `m`-flag intent (false under `-z`) so the empty-pattern
+    // reuse rebuild does not re-add `m` when NUL is the separator.
+    const multilineFlag = this.#multilineFlag(multiline) === 'm';
+    return { cmd: { ...spec, type: 's', re, ignoreCase, multiline: multilineFlag, replacement, global, nth, print, writeFile }, next: i };
   }
 
   #parseTransliterate(script: string, i: number, spec: AddressSpec): { cmd: Command; next: number } {
@@ -1111,7 +1133,7 @@ const sedCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     const script = cfg.expressions.join('\n');
     let cmds: Command[];
     try {
-      cmds = new ScriptParser(cfg.syntax).parse(script);
+      cmds = new ScriptParser(cfg.syntax, cfg.nulData).parse(script);
     } catch (e) {
       await writeLine(err, `${name}: -e expression: ${(e as Error).message}`);
       return 1;

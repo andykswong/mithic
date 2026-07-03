@@ -62,6 +62,23 @@ describe('find', () => {
     expect(await findCommand(h.io)).toBe(1);
     expect(h.err()).toBe('find: unknown predicate `-bogus\'\n');
   });
+
+  test('REGRESSION: no-expression find prints each entry EXACTLY ONCE (not twice)', async () => {
+    // The default expression is `-print`; the driver adds the implicit print, so
+    // the empty-expression parse must NOT itself print (else every path doubles).
+    const h = makeIO({ args: ['find', '/r'], files: { '/r/a.txt': '1', '/r/sub/c.txt': '2' } });
+    expect(await findCommand(h.io)).toBe(0);
+    const lines = h.out().split('\n').filter(Boolean);
+    expect(lines).toEqual(['/r', '/r/a.txt', '/r/sub', '/r/sub/c.txt']);
+    // Each path appears once (no duplicates).
+    expect(new Set(lines).size).toBe(lines.length);
+  });
+
+  test('REGRESSION: bare `find PATH` with a single file prints it once', async () => {
+    const h = makeIO({ args: ['find', '/d'], files: { '/d/only.txt': 'x' } });
+    await findCommand(h.io);
+    expect(h.out()).toBe('/d\n/d/only.txt\n');
+  });
 });
 
 // ── Expression grammar: ! / -not / -o / -a / ( ) ────────────────────────────
@@ -365,13 +382,100 @@ describe('find -exec', () => {
     expect(spawns.map((s) => s.stages[0].argv)).toEqual([['rm', '/r/a.txt']]);
   });
 
-  test('-exec returns non-zero when a child fails', async () => {
+  test('-exec ; child failure does NOT affect find exit status (GNU: only + propagates)', async () => {
+    // A `;`-variant child returning non-zero is only the predicate value; it must
+    // NOT set find's exit code. GNU exits 0 here.
     const h = makeIO({
       args: ['find', '/r', '-name', 'a.txt', '-exec', 'false', '{}', ';'],
       files,
       onSpawn: () => ({ exitCodes: [1] }),
     });
+    expect(await findCommand(h.io)).toBe(0);
+  });
+
+  test('-exec + child failure DOES set find exit status to 1', async () => {
+    const h = makeIO({
+      args: ['find', '/r', '-name', 'a.txt', '-exec', 'false', '{}', '+'],
+      files,
+      onSpawn: () => ({ exitCodes: [1] }),
+    });
     expect(await findCommand(h.io)).toBe(1);
+  });
+
+  test('-exec ; predicate chaining: a non-zero child short-circuits a following -print, exit still 0', async () => {
+    // -exec grep -q ... {} \; -print → only paths where the child SUCCEEDS print.
+    const h = makeIO({
+      args: ['find', '/r', '-name', 'a.txt', '-exec', 'grep', '-q', 'zzz', '{}', ';', '-print'],
+      files,
+      onSpawn: () => ({ exitCodes: [1] }), // no match → non-zero
+    });
+    expect(await findCommand(h.io)).toBe(0);
+    expect(h.out()).toBe(''); // -print suppressed because the exec predicate was false
+  });
+
+  test('-exec ; unspawnable command: names the command on stderr, continues, exit 0', async () => {
+    // GNU find with a `;`-variant exec of an unresolvable command emits the error
+    // (naming the COMMAND, not the search path), continues the walk, and exits 0.
+    const h = makeIO({
+      args: ['find', '/r', '-name', 'a.txt', '-exec', 'nonexistent-cmd', '{}', ';'],
+      files,
+      onSpawn: () => { throw Object.assign(new Error('command not found: nonexistent-cmd'), { code: 'ENOENT' }); },
+    });
+    expect(await findCommand(h.io)).toBe(0);
+    expect(h.err()).toBe('find: ‘nonexistent-cmd’: No such file or directory\n');
+  });
+
+  test('-exec + unspawnable command: names the command on stderr, exit 1', async () => {
+    const h = makeIO({
+      args: ['find', '/r', '-name', 'a.txt', '-exec', 'nonexistent-cmd', '{}', '+'],
+      files,
+      onSpawn: () => { throw Object.assign(new Error('command not found: nonexistent-cmd'), { code: 'ENOENT' }); },
+    });
+    expect(await findCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('find: ‘nonexistent-cmd’: No such file or directory\n');
+  });
+});
+
+// ── -depth (post-order) / -quit ──────────────────────────────────────────────
+
+describe('find -depth / -quit', () => {
+  test('-depth processes a directory AFTER its contents (post-order)', async () => {
+    const h = makeIO({ args: ['find', '/r', '-depth'], files: { '/r/a.txt': '1', '/r/sub/c.txt': '2' } });
+    expect(await findCommand(h.io)).toBe(0);
+    const lines = h.out().split('\n').filter(Boolean);
+    // Every entry appears once, and each directory comes AFTER all of its children.
+    expect(lines.indexOf('/r/a.txt')).toBeLessThan(lines.indexOf('/r'));
+    expect(lines.indexOf('/r/sub/c.txt')).toBeLessThan(lines.indexOf('/r/sub'));
+    expect(lines.indexOf('/r/sub')).toBeLessThan(lines.indexOf('/r'));
+    expect(lines[lines.length - 1]).toBe('/r'); // the start dir prints last
+    expect(new Set(lines).size).toBe(lines.length);
+  });
+
+  test('-depth with a single file: file before its parent dir', async () => {
+    const h = makeIO({ args: ['find', '/d', '-depth'], files: { '/d/a.txt': 'x' } });
+    await findCommand(h.io);
+    expect(h.out()).toBe('/d/a.txt\n/d\n');
+  });
+
+  test('-quit stops the whole traversal after the first entry (no print, exit 0)', async () => {
+    // -quit is an action, so it suppresses the implicit -print and halts at the
+    // first evaluated entry.
+    const h = makeIO({ args: ['find', '/r', '-quit'], files });
+    expect(await findCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('');
+  });
+
+  test('-print -quit prints the first entry then stops', async () => {
+    const h = makeIO({ args: ['find', '/r', '-print', '-quit'], files });
+    expect(await findCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('/r\n');
+  });
+
+  test('-name a.txt -quit halts on the first match without printing', async () => {
+    // The match short-circuits into -quit; nothing prints (quit is the action).
+    const h = makeIO({ args: ['find', '/r', '-name', 'a.txt', '-quit'], files });
+    expect(await findCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('');
   });
 });
 

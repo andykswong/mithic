@@ -105,5 +105,37 @@ describe('paste', () => {
   describe('parseDelims', () => {
     test('escapes', () => { expect(parseDelims('\\t\\n')).toEqual(['\t', '\n']); });
     test('plain list', () => { expect(parseDelims(',;')).toEqual([',', ';']); });
+    test('trailing unescaped backslash throws', () => {
+      expect(() => parseDelims('\\')).toThrow('delimiter list ends with an unescaped backslash: \\');
+      expect(() => parseDelims('x\\')).toThrow('delimiter list ends with an unescaped backslash: x\\');
+    });
+    test('escaped backslash is a literal backslash delimiter', () => {
+      expect(parseDelims('\\\\')).toEqual(['\\']);
+    });
+  });
+
+  // ── error/validation diagnostics (GNU parity) ─────────────────────────────
+  describe('diagnostics', () => {
+    test('-d with a list ending in an unescaped backslash exits 1', async () => {
+      const h = makeIO({ args: ['paste', '-d', '\\', '/a', '/b'], files: { '/a': 'A\n', '/b': '1\n' } });
+      expect(await pasteCommand(h.io)).toBe(1);
+      expect(h.out()).toBe('');
+      expect(h.err()).toBe('paste: delimiter list ends with an unescaped backslash: \\\n');
+    });
+    test('-d with no argument exits 1 (option requires an argument)', async () => {
+      const h = makeIO({ args: ['paste', '-d'], stdinText: '' });
+      expect(await pasteCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('paste: option requires an argument -- \'d\'\nTry \'paste --help\' for more information.\n');
+    });
+    test('-d \'\' (explicit empty) is accepted, not a missing-arg error', async () => {
+      const h = makeIO({ args: ['paste', '-d', '', '/a', '/b'], files: { '/a': 'A\n', '/b': '1\n' } });
+      expect(await pasteCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('A1\n');
+    });
+    test('missing file uses canonical errno text', async () => {
+      const h = makeIO({ args: ['paste', '/noexist'] });
+      expect(await pasteCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('paste: /noexist: No such file or directory\n');
+    });
   });
 });

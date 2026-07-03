@@ -153,4 +153,59 @@ describe('comm', () => {
     const h = makeIO({ args: ['comm', '/only-one.txt'], files: { '/only-one.txt': 'x\n' } });
     expect(await commCommand(h.io)).toBe(1);
   });
+
+  // ── input order checking (GNU parity) ─────────────────────────────────────
+  test('default: unsorted input warns and exits 1 but still merges', async () => {
+    const h = makeIO({ args: ['comm', '/a', '/b'], files: { '/a': 'c\na\n', '/b': 'a\nb\n' } });
+    expect(await commCommand(h.io)).toBe(1);
+    // Full merge is still emitted on stdout.
+    expect(h.out()).toBe('\ta\n\tb\nc\na\n');
+    expect(h.err()).toBe('comm: file 1 is not in sorted order\ncomm: input is not in sorted order\n');
+  });
+
+  test('--check-order aborts on the first disorder', async () => {
+    const h = makeIO({ args: ['comm', '--check-order', '/a', '/b'], files: { '/a': 'a\nc\nb\n', '/b': 'a\nz\n' } });
+    expect(await commCommand(h.io)).toBe(1);
+    // Emits the common 'a' and the pairable 'c' before the fatal disorder read.
+    expect(h.out()).toBe('\t\ta\nc\n');
+    expect(h.err()).toBe('comm: file 1 is not in sorted order\n');
+  });
+
+  test('--check-order names the disordered file (file 2)', async () => {
+    const h = makeIO({ args: ['comm', '--check-order', '/a', '/b'], files: { '/a': 'a\nb\n', '/b': 'z\nx\n' } });
+    expect(await commCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('comm: file 2 is not in sorted order\n');
+  });
+
+  test('--nocheck-order stays silent on unsorted input and exits 0', async () => {
+    const h = makeIO({ args: ['comm', '--nocheck-order', '/a', '/b'], files: { '/a': 'c\na\n', '/b': 'z\nx\n' } });
+    expect(await commCommand(h.io)).toBe(0);
+    expect(h.err()).toBe('');
+  });
+
+  test('sorted input: no diagnostic, exit 0', async () => {
+    const h = makeIO({ args: ['comm', '/a', '/b'], files: { '/a': 'a\nb\n', '/b': 'b\nc\n' } });
+    expect(await commCommand(h.io)).toBe(0);
+    expect(h.err()).toBe('');
+    expect(h.out()).toBe('a\n\t\tb\n\tc\n');
+  });
+
+  test('--total still prints the count line on disordered input', async () => {
+    const h = makeIO({ args: ['comm', '--total', '/a', '/b'], files: { '/a': 'c\na\n', '/b': 'a\nb\n' } });
+    expect(await commCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('\ta\n\tb\nc\na\n2\t2\t0\ttotal\n');
+  });
+
+  // ── -z / --zero-terminated (NUL records) ──────────────────────────────────
+  test('-z splits input on NUL and terminates records with NUL', async () => {
+    const h = makeIO({ args: ['comm', '-z', '/a', '/b'], files: { '/a': 'a\0b\0', '/b': 'b\0c\0' } });
+    expect(await commCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\0\t\tb\0\tc\0');
+  });
+
+  test('-z --total: count line is NUL-terminated', async () => {
+    const h = makeIO({ args: ['comm', '-z', '--total', '/a', '/b'], files: { '/a': 'a\0b\0', '/b': 'b\0c\0' } });
+    expect(await commCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\0\t\tb\0\tc\0' + '1\t1\t1\ttotal\0');
+  });
 });

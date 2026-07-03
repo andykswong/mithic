@@ -117,4 +117,77 @@ describe('env command', () => {
     expect(h.out()).toContain('FOO=bar');
     expect(h.calls().length).toBe(0);
   });
+
+  // ── CR2 parity fixes: -u option-argument + name validation ──────────────────
+
+  test('-u with no argument → exit 125 with getopt diagnostic', async () => {
+    const h = makeIO(['env', '-u'], { FOO: 'bar' });
+    expect(await envCommand(h.io)).toBe(125);
+    expect(h.err()).toContain('option requires an argument -- \'u\'');
+    expect(h.err()).toContain('Try \'env --help\' for more information.');
+    expect(h.out()).toBe(''); // must NOT print the environment
+  });
+
+  test('--unset with no argument → exit 125 with long-option diagnostic', async () => {
+    const h = makeIO(['env', '--unset'], { FOO: 'bar' });
+    expect(await envCommand(h.io)).toBe(125);
+    expect(h.err()).toContain('option \'--unset\' requires an argument');
+    expect(h.out()).toBe('');
+  });
+
+  test('-u NAME containing = → cannot unset, exit 125', async () => {
+    const h = makeIO(['env', '-u', 'FOO=BAR'], { FOO: 'bar' });
+    expect(await envCommand(h.io)).toBe(125);
+    expect(h.err()).toContain('cannot unset ‘FOO=BAR’: Invalid argument');
+  });
+
+  test('-u with empty name → cannot unset, exit 125', async () => {
+    const h = makeIO(['env', '-u', ''], {});
+    expect(await envCommand(h.io)).toBe(125);
+    expect(h.err()).toContain('cannot unset ‘’: Invalid argument');
+  });
+
+  test('unknown short option → invalid option, exit 125', async () => {
+    const h = makeIO(['env', '-x'], {});
+    expect(await envCommand(h.io)).toBe(125);
+    expect(h.err()).toContain('invalid option -- \'x\'');
+  });
+
+  test('unknown long option → unrecognized option, exit 125', async () => {
+    const h = makeIO(['env', '--bad'], {});
+    expect(await envCommand(h.io)).toBe(125);
+    expect(h.err()).toContain('unrecognized option \'--bad\'');
+  });
+
+  test('multiple -u NAME unsets are all applied', async () => {
+    const h = makeIO(['env', '-u', 'A', '-u', 'B'], { A: '1', B: '2', C: '3' });
+    expect(await envCommand(h.io)).toBe(0);
+    const out = h.out();
+    expect(out).not.toContain('A=');
+    expect(out).not.toContain('B=');
+    expect(out).toContain('C=3');
+  });
+
+  test('attached -uNAME form removes the variable', async () => {
+    const h = makeIO(['env', '-uREMOVE'], { REMOVE: 'gone', KEEP: 'yes' });
+    expect(await envCommand(h.io)).toBe(0);
+    expect(h.out()).not.toContain('REMOVE=');
+    expect(h.out()).toContain('KEEP=yes');
+  });
+
+  test('--unset=NAME attached form removes the variable', async () => {
+    const h = makeIO(['env', '--unset=REMOVE'], { REMOVE: 'gone', KEEP: 'yes' });
+    expect(await envCommand(h.io)).toBe(0);
+    expect(h.out()).not.toContain('REMOVE=');
+    expect(h.out()).toContain('KEEP=yes');
+  });
+
+  test('combined -iu NAME cluster (empty env, unset no-op)', async () => {
+    const h = makeIO(['env', '-iu', 'FOO', 'NEW=1'], { FOO: 'x', SECRET: 'y' });
+    expect(await envCommand(h.io)).toBe(0);
+    const out = h.out();
+    expect(out).toContain('NEW=1');
+    expect(out).not.toContain('SECRET=');
+    expect(out).not.toContain('FOO=x');
+  });
 });

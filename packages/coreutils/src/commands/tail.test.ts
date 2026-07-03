@@ -140,4 +140,23 @@ describe('tail', () => {
     expect(await tailCommand(h.io)).toBe(0);
     expect(h.out()).toBe('a\nb\nc\n');
   });
+
+  // ── -c / -n last-wins ordering (GNU parity) ───────────────────────────────
+  test('-c5 -n2: -n wins (last), prints last 2 lines', async () => {
+    const h = makeIO({ args: ['tail', '-c5', '-n2'], stdinText: 'l1\nl2\nl3\nl4\nl5\n' });
+    expect(await tailCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('l4\nl5\n');
+  });
+
+  test('-n2 -c5: -c wins (last), prints last 5 bytes', async () => {
+    const h = makeIO({ args: ['tail', '-n2', '-c5'], stdinText: 'l1\nl2\nl3\nl4\nl5\n' });
+    expect(await tailCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('4\nl5\n');
+  });
+
+  test('-c3 -n2: line mode wins, prints last 2 lines', async () => {
+    const h = makeIO({ args: ['tail', '-c3', '-n2'], stdinText: 'a\nbb\nccc\n' });
+    expect(await tailCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('bb\nccc\n');
+  });
 });

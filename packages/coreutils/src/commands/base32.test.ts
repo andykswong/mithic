@@ -86,6 +86,30 @@ describe('b32Encode / b32Decode roundtrip', () => {
   test('decode is case-insensitive', () => {
     expect(new TextDecoder().decode(b32Decode('mzxw6===')!)).toBe('foo');
   });
+
+  // GNU accepts unpadded base32: legal terminal group lengths are 2/4/5/7 chars.
+  test('unpadded 5-char group decodes 3 bytes', () => {
+    expect(new TextDecoder().decode(b32Decode('MFRGG')!)).toBe('abc'); // == MFRGG===
+  });
+
+  test('unpadded 2-char group decodes 1 byte', () => {
+    expect(new TextDecoder().decode(b32Decode('ME')!)).toBe('a'); // == ME=====? (ME with 6 pad)
+  });
+
+  test('unpadded 7-char group decodes 4 bytes', () => {
+    expect(new TextDecoder().decode(b32Decode('MFRGGZA')!)).toBe('abcd');
+  });
+
+  test('impossible group lengths (1/3/6 chars) are invalid', () => {
+    expect(b32Decode('M')).toBeNull();
+    expect(b32Decode('MFR')).toBeNull();
+    expect(b32Decode('MFRGGZ')).toBeNull();
+  });
+
+  test('wrong explicit padding count is invalid', () => {
+    expect(b32Decode('MY=')).toBeNull();    // 2 data need 6 pads
+    expect(b32Decode('MZXW6==')).toBeNull(); // 5 data need 3 pads
+  });
 });
 
 describe('base32 command', () => {
@@ -143,5 +167,20 @@ describe('base32 command', () => {
     const h = makeIO({ args: ['base32', '-Z'], stdinText: '' });
     expect(await base32Command(h.io)).toBe(1);
     expect(h.err()).toBe('base32: invalid option -- \'Z\'\nTry \'base32 --help\' for more information.\n');
+  });
+
+  // GNU parity: unpadded input decodes. Regression for the incomplete-fix finding.
+  test('-d decodes unpadded input (5 chars → 3 bytes), exit 0', async () => {
+    const h = makeIO({ args: ['base32', '-d'], stdinText: 'MFRGG' });
+    expect(await base32Command(h.io)).toBe(0);
+    expect(new TextDecoder().decode(h.out())).toBe('abc');
+  });
+
+  test('-d emits the decoded prefix then errors on an impossible tail', async () => {
+    // 'MFRGGZDFM' → 'abcde' (full octet) then a lone leftover char → exit 1.
+    const h = makeIO({ args: ['base32', '-d'], stdinText: 'MFRGGZDFM' });
+    expect(await base32Command(h.io)).toBe(1);
+    expect(new TextDecoder().decode(h.out())).toBe('abcde');
+    expect(h.err()).toBe('base32: invalid input\n');
   });
 });

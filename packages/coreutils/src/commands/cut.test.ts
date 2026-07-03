@@ -194,4 +194,72 @@ describe('cut', () => {
       expect(h.out()).toBe('ab:de\n');
     });
   });
+
+  // ── empty -d / --output-delimiter map to NUL (GNU parity) ─────────────────
+  describe('empty delimiters = NUL', () => {
+    test('-d \'\' selects the whole line as field 1 (no NUL present)', async () => {
+      const h = makeIO({ args: ['cut', '-d', '', '-f', '1'], stdinText: 'a\tb\n' });
+      expect(await cutCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('a\tb\n');
+    });
+    test('-d \'\' splits on NUL', async () => {
+      const h = makeIO({ args: ['cut', '-d', '', '-f', '2'], stdinText: 'a\0b\n' });
+      expect(await cutCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('b\n');
+    });
+    test('--output-delimiter= joins fields with NUL', async () => {
+      const h = makeIO({ args: ['cut', '-d', ':', '--output-delimiter=', '-f', '1,2'], stdinText: 'a:b:c\n' });
+      expect(await cutCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('a\0b\n');
+    });
+    test('--output-delimiter= inserts NUL between merged char runs', async () => {
+      const h = makeIO({ args: ['cut', '-c', '1,3', '--output-delimiter='], stdinText: 'abcde\n' });
+      expect(await cutCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('a\0c\n');
+    });
+  });
+
+  // ── argument/validation diagnostics (GNU parity) ──────────────────────────
+  describe('argument diagnostics', () => {
+    test('no list → both diagnostic lines incl. the Try line', async () => {
+      const h = makeIO({ args: ['cut'], stdinText: '' });
+      expect(await cutCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('cut: you must specify a list of bytes, characters, or fields\nTry \'cut --help\' for more information.\n');
+    });
+    test('-f with no argument → option requires an argument', async () => {
+      const h = makeIO({ args: ['cut', '-f'], stdinText: '' });
+      expect(await cutCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('cut: option requires an argument -- \'f\'\nTry \'cut --help\' for more information.\n');
+    });
+    test('-c with no argument → option requires an argument', async () => {
+      const h = makeIO({ args: ['cut', '-c'], stdinText: '' });
+      expect(await cutCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('cut: option requires an argument -- \'c\'\nTry \'cut --help\' for more information.\n');
+    });
+    test('-f \'\' (explicit empty) is a LIST error, not a missing-arg error', async () => {
+      const h = makeIO({ args: ['cut', '-f', ''], stdinText: 'a\tb\n' });
+      expect(await cutCommand(h.io)).toBe(1);
+      expect(h.err()).toContain('cut: fields are numbered from 1');
+    });
+    test('-c 1-0 → invalid decreasing range (upper bound 0)', async () => {
+      const h = makeIO({ args: ['cut', '-c', '1-0'], stdinText: 'abc\n' });
+      expect(await cutCommand(h.io)).toBe(1);
+      expect(h.err()).toContain('cut: invalid decreasing range');
+    });
+    test('-c 2-0 → invalid decreasing range', async () => {
+      const h = makeIO({ args: ['cut', '-c', '2-0'], stdinText: 'abc\n' });
+      expect(await cutCommand(h.io)).toBe(1);
+      expect(h.err()).toContain('cut: invalid decreasing range');
+    });
+    test('-c 0-2 → numbered from 1 (lower bound 0)', async () => {
+      const h = makeIO({ args: ['cut', '-c', '0-2'], stdinText: 'abc\n' });
+      expect(await cutCommand(h.io)).toBe(1);
+      expect(h.err()).toContain('cut: byte/character positions are numbered from 1');
+    });
+    test('missing file uses canonical errno text', async () => {
+      const h = makeIO({ args: ['cut', '-c', '1', '/noexist'] });
+      expect(await cutCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('cut: /noexist: No such file or directory\n');
+    });
+  });
 });
