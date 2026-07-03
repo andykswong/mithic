@@ -1439,6 +1439,14 @@ test('declare -g updates the global even when a same-name local shadows it', asy
   expect((await run('g(){ local v=1; declare -g v=G; echo "in=$v"; }; g; echo "after=$v"')).out)
     .toBe('in=1\nafter=G\n');
   expect((await run('v=start; f(){ declare -g v=G; }; f; echo "top=$v"')).out).toBe('top=G\n');
+  // declare -g ARRAY with a local shadow updates the global array (local stays until return).
+  expect((await run('f(){ local arr=(a b); declare -g arr=(x y z); echo "in=${arr[*]}"; }; arr=(g0); f; echo "out=${arr[*]}"')).out)
+    .toBe('in=a b\nout=x y z\n');
+  // a readonly LOCAL does NOT block declare -g to the (non-readonly) global.
+  expect((await run('f(){ local x=1; readonly x; declare -g x=2; echo "in=$x"; }; x=0; f; echo "out=$x"')).out)
+    .toBe('in=1\nout=2\n');
+  // a genuinely GLOBAL readonly still blocks declare -g.
+  expect((await run('readonly R=1; declare -g R=2; echo "$R"')).err).toMatch(/readonly/);
 });
 
 test('read -a / mapfile assign GLOBALLY inside a function (not local)', async () => {

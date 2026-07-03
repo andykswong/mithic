@@ -763,6 +763,7 @@ export class Executor {
       killJob: (spec, signal) => this.jobControl.killJob(spec, signal),
       markReadonly: (name) => { this.readonlyNames.add(name); },
       isReadonly: (name) => this.readonlyNames.has(name),
+      isGlobalReadonly: (name) => this.isGlobalReadonly(name),
       unsetVar: (name, index) => this.unsetVar(name, index),
       markInteger: (name) => { this.integerNames.add(name); },
       isInteger: (name) => this.integerNames.has(name),
@@ -823,6 +824,16 @@ export class Executor {
    * local value. Returns true when a shadowing local exists (the caller must not also
    * write the flat env), false when it wrote the global (flat env) directly.
    */
+  /** True when the GLOBAL binding of `name` is readonly. If a local scope shadows
+   * `name`, its snapshot holds the global's pre-shadow readonly state; otherwise the
+   * flat set IS the global. Lets `declare -g` ignore a readonly LOCAL shadow. */
+  private isGlobalReadonly(name: string): boolean {
+    for (let i = 0; i < this.localScopes.length; i++) {
+      if (this.localScopes[i].has(name)) return this.localSavedArrays[i].get(name)?.readonly ?? false;
+    }
+    return this.readonlyNames.has(name);
+  }
+
   private setGlobal(name: string, value: string): boolean {
     // Find the OUTERMOST scope holding NAME as a local — its snapshot is the global
     // value that will surface once every shadowing frame returns.
@@ -2458,10 +2469,14 @@ export class Executor {
    *     the current length. The value of a `[i]=v` element is NOT word-split; a bare
    *     word IS field-expanded (so `arr=($x)` splits). Integer arrays arith-evaluate.
    */
-  private async applyArrayLiteral(name: string, words: string[], append: boolean, expander: Expander): Promise<boolean> {
+  private async applyArrayLiteral(name: string, words: string[], append: boolean, expander: Expander, global = false): Promise<boolean> {
+    // `declare -g` targets the GLOBAL array binding: if a same-name LOCAL shadows it,
+    // commit into the outermost scope's snapshot (surfaces after the frame returns)
+    // rather than the visible local. Otherwise `this.arrays` IS the global.
+    const globalScopeIdx = global ? this.localScopes.findIndex((s) => s.has(name)) : -1;
     const intAttr = this.integerNames.has(name);
     const evalIfInt = (v: string): string => intAttr ? String(this.evalArithValue(v)) : v;
-    const assoc = this.assocArrays.get(name);
+    const assoc = globalScopeIdx < 0 ? this.assocArrays.get(name) : undefined;
     if (assoc !== undefined) {
       if (!append) assoc.clear();
       for (const w of words) {
@@ -2474,7 +2489,10 @@ export class Executor {
       delete this.context.env[name];
       return false;
     }
-    const arr = append ? (this.arrays.get(name) ?? []) : [];
+    const base = globalScopeIdx >= 0
+      ? (this.localSavedArrays[globalScopeIdx].get(name)?.arr ?? [])
+      : (this.arrays.get(name) ?? []);
+    const arr = append ? base.slice() : [];
     let next = arr.length; // running index (append continues past existing length)
     for (const w of words) {
       const m = /^\[(.*?)\]([+]?)=(.*)$/s.exec(w);
@@ -2491,8 +2509,16 @@ export class Executor {
         for (const f of await expander.expandWord(w)) arr[next++] = evalIfInt(f);
       }
     }
-    this.arrays.set(name, arr);
-    delete this.context.env[name];
+    if (globalScopeIdx >= 0) {
+      // Update the enclosing scope's snapshot so the array surfaces globally on
+      // return; leave the visible local untouched (bash: local stays until return).
+      const snap = this.localSavedArrays[globalScopeIdx].get(name);
+      if (snap !== undefined) snap.arr = arr;
+      else this.localSavedArrays[globalScopeIdx].set(name, { arr, integer: intAttr, readonly: false });
+    } else {
+      this.arrays.set(name, arr);
+      delete this.context.env[name];
+    }
     return false;
   }
 
@@ -2504,7 +2530,7 @@ export class Executor {
    * Array element words are field-expanded (so `arr=($x)` splits), scalar values
    * are expanded to a single string.
    */
-  private async applyAssignment(a: { name: string; value: string; array?: string[]; index?: string; append?: boolean }, expander: Expander): Promise<boolean> {
+  private async applyAssignment(a: { name: string; value: string; array?: string[]; index?: string; append?: boolean }, expander: Expander, global = false): Promise<boolean> {
     // `declare -n ref=target`: a write to `ref` is redirected to `target`
     // (single-level). Rewrite the assignment name BEFORE the readonly check so a
     // write THROUGH a nameref to a readonly target is also rejected.
@@ -2516,7 +2542,9 @@ export class Executor {
     // the statement-loop aborts. The message must NOT carry its own `shell: `
     // prefix — that catch prepends one. Otherwise report to stderr and return
     // `true` (rejected) so the caller surfaces a nonzero status without writing.
-    if (this.readonlyNames.has(a.name)) {
+    // Readonly check: `declare -g` targets the global, so a readonly LOCAL shadow
+    // must not block it (check the global's readonly-ness in that case).
+    if (global ? this.isGlobalReadonly(a.name) : this.readonlyNames.has(a.name)) {
       const msg = `${a.name}: readonly variable`;
       if (this.options.posix) throw new PosixSpecialBuiltinError(a.name, 1, msg);
       this.io.stderr(`shell: ${msg}\n`);
@@ -2529,7 +2557,7 @@ export class Executor {
     // happens ONLY via the `local`/`declare`/`typeset` builtins (which call
     // declareLocal to snapshot for restore). So applyAssignment must NOT declareLocal.
     if (a.array !== undefined) {
-      return await this.applyArrayLiteral(a.name, a.array, a.append ?? false, expander);
+      return await this.applyArrayLiteral(a.name, a.array, a.append ?? false, expander, global);
     }
     if (a.index !== undefined) {
       // An integer-attributed array (`declare -i a`) arithmetic-evaluates element
@@ -3098,7 +3126,7 @@ export class Executor {
       resolveExternal: (n) => this.resolveExternalPath(n),
       builtinAssignments: opts.builtinAssignments,
       applyBuiltinAssignment: opts.assignExpander
-        ? (a) => this.applyAssignment(a, opts.assignExpander!)
+        ? (a, global) => this.applyAssignment(a, opts.assignExpander!, global)
         : undefined,
       state: this.shellState(),
     };

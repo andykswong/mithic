@@ -68,6 +68,12 @@ export interface ShellState {
   /** True when the name was marked `readonly`. */
   isReadonly?(name: string): boolean;
   /**
+   * True when the GLOBAL binding of `name` is readonly — for `declare -g`, whose
+   * write targets the global even when a same-name LOCAL (possibly readonly) shadows
+   * it. A readonly LOCAL does not block a `-g` write to the (non-readonly) global.
+   */
+  isGlobalReadonly?(name: string): boolean;
+  /**
    * `unset NAME` — fully remove a variable: scalar value, indexed/associative
    * array, and its attributes (integer/nameref). `unset NAME[idx]` removes a
    * single element (numeric index for an indexed array, string key for assoc).
@@ -229,7 +235,7 @@ export interface BuiltinContext {
    * assignment path — after the builtin has marked the name's flag attributes.
    * Returns true if rejected (e.g. readonly). Scalars are applied by the builtin.
    */
-  applyBuiltinAssignment?(a: BuiltinAssignment): Promise<boolean>;
+  applyBuiltinAssignment?(a: BuiltinAssignment, global?: boolean): Promise<boolean>;
   /** Richer state for local/declare/shift/getopts/jobs/wait. */
   state?: ShellState;
 }
@@ -558,10 +564,11 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         }
         if (isAssoc) ctx.state?.declareAssoc?.(a.name);
         if (flagInteger) ctx.state?.markInteger?.(a.name);
-        if (ctx.state?.isReadonly?.(a.name)) {
+        const roBlockedArr = flagGlobal ? (ctx.state?.isGlobalReadonly?.(a.name) ?? false) : (ctx.state?.isReadonly?.(a.name) ?? false);
+        if (roBlockedArr) {
           errOut(ctx, `shell: ${name}: ${a.name}: readonly variable\n`);
           declStatus = 1;
-        } else if (await ctx.applyBuiltinAssignment?.(a)) {
+        } else if (await ctx.applyBuiltinAssignment?.(a, flagGlobal)) {
           declStatus = 1;
         }
         if (flagReadonly) ctx.state?.markReadonly?.(a.name);
@@ -613,7 +620,10 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
           // succeeds because RO isn't readonly YET (it is marked below). A failure
           // sets the exit status but CONTINUES to the remaining names (bash: a
           // multi-name `readonly a b c` still assigns the non-readonly ones).
-          if (ctx.state?.isReadonly?.(n)) {
+          // `-g` targets the GLOBAL binding, so a readonly LOCAL shadow must not
+          // block it — check the global's readonly-ness in that case.
+          const roBlocked = flagGlobal ? (ctx.state?.isGlobalReadonly?.(n) ?? false) : (ctx.state?.isReadonly?.(n) ?? false);
+          if (roBlocked) {
             errOut(ctx, `shell: ${name}: ${n}: readonly variable\n`);
             declStatus = 1;
             continue;
