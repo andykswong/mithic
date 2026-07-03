@@ -24,6 +24,61 @@ function fakeFs(tree: Record<string, Entry[]>): FileManagerFs {
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
+test('Ctrl+V inside the search box does NOT hijack the browser paste (no preventDefault, no model.paste)', async () => {
+  let pasted = 0;
+  const fs: FileManagerFs = {
+    async list() { return [{ name: 'a.txt', kind: 'file' }]; },
+    async mkdir() {}, async createFile() {}, async remove() {}, async rename() {},
+    async copy() { pasted++; },
+  };
+  const h = renderFileManager(document, { fs, onOpen: () => {} });
+  document.body.appendChild(h.root);
+  await h.ready;
+  h.model.copy('a.txt'); // stage the clipboard so a hijacked paste WOULD call copy
+
+  const search = h.root.querySelector('[data-role="fm-search"]') as HTMLInputElement;
+  const ev = new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true });
+  search.focus();
+  search.dispatchEvent(ev);
+  await tick();
+
+  expect(ev.defaultPrevented).toBe(false); // native paste into the input is allowed
+  expect(pasted).toBe(0);                   // the file-manager paste did NOT fire
+
+  // But a Ctrl+V on the root (not a text field) still pastes.
+  const ev2 = new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true });
+  h.root.dispatchEvent(ev2);
+  await tick();
+  expect(pasted).toBe(1);
+  h.root.remove();
+});
+
+test('dispose() removes the document-level listeners it added (no leak across window lifecycles)', async () => {
+  const added: string[] = [];
+  const removed: string[] = [];
+  const origAdd = document.addEventListener.bind(document);
+  const origRemove = document.removeEventListener.bind(document);
+  const addSpy = vi.spyOn(document, 'addEventListener').mockImplementation((t, l, o) => { added.push(t as string); return origAdd(t as any, l as any, o as any); });
+  const removeSpy = vi.spyOn(document, 'removeEventListener').mockImplementation((t, l, o) => { removed.push(t as string); return origRemove(t as any, l as any, o as any); });
+  try {
+    const h = renderFileManager(document, { fs: fakeFs({ '/': [] }), onOpen: () => {} });
+    document.body.appendChild(h.root);
+    await h.ready;
+    // renderFileManager registers document mousedown + keydown listeners.
+    expect(added.filter((t) => t === 'mousedown').length).toBeGreaterThanOrEqual(1);
+    expect(added.filter((t) => t === 'keydown').length).toBeGreaterThanOrEqual(1);
+
+    h.dispose();
+    // dispose() must remove exactly those document listeners.
+    expect(removed).toContain('mousedown');
+    expect(removed).toContain('keydown');
+    h.root.remove();
+  } finally {
+    addSpy.mockRestore();
+    removeSpy.mockRestore();
+  }
+});
+
 test('file manager renders rows and opens a file on dblclick', async () => {
   const opened: string[] = [];
   const h = renderFileManager(document, {

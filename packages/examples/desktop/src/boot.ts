@@ -43,7 +43,18 @@ function fileManagerFs(vfs: FileSystemProvider): FileManagerFs {
   return {
     async list(path) {
       const entries = await vfs.readdir(path);
-      return entries.map((e): Entry => ({ name: e.name, kind: e.type === 'directory' ? 'directory' : 'file' }));
+      // Populate size (best-effort) so the Files app's sort-by-size is meaningful.
+      // stat-per-entry is fine here — the desktop's VFS is in-memory/OPFS, not remote.
+      return Promise.all(entries.map(async (e): Promise<Entry> => {
+        const kind = e.type === 'directory' ? 'directory' : 'file';
+        if (kind === 'directory') return { name: e.name, kind };
+        try {
+          const s = await vfs.stat(path === '/' ? `/${e.name}` : `${path}/${e.name}`);
+          return { name: e.name, kind, size: Number(s.size) };
+        } catch {
+          return { name: e.name, kind };
+        }
+      }));
     },
     async mkdir(path) { await vfs.mkdir(path); },
     async createFile(path) { const h = (await vfs.open(path, { write: true, create: true, truncate: true })) as FileHandle; await vfs.close(h); },

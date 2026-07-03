@@ -154,6 +154,7 @@ export function createFileManagerModel(deps: FileManagerDeps): FileManagerModel 
       histIndex = history.length - 1;
     }
     selected = null;
+    query = ''; // a search filter is scoped to the folder it was typed in
     await refresh();
   };
 
@@ -191,6 +192,7 @@ export function createFileManagerModel(deps: FileManagerDeps): FileManagerModel 
       histIndex -= 1;
       cwd = history[histIndex];
       selected = null;
+      query = '';
       await refresh();
     },
     async forward() {
@@ -198,6 +200,7 @@ export function createFileManagerModel(deps: FileManagerDeps): FileManagerModel 
       histIndex += 1;
       cwd = history[histIndex];
       selected = null;
+      query = '';
       await refresh();
     },
     async open(name) { deps.onOpen(join(cwd, name)); },
@@ -221,6 +224,8 @@ export interface FileManagerHandle {
   readonly root: HTMLElement;
   readonly model: FileManagerModel;
   readonly ready: Promise<void>;
+  /** Remove the document-level listeners this instance installed (call on window close). */
+  dispose(): void;
 }
 
 interface MenuItem { id: string; label: string; run: () => void; }
@@ -522,7 +527,10 @@ export function renderFileManager(doc: Document, deps: FileManagerDeps): FileMan
     fwdBtn.disabled = !model.canForward;
   };
 
-  const drawAll = (): void => { drawCrumb(); drawButtons(); if (useSidebar) drawSidebar(); else drawTree(); drawList(); };
+  const drawAll = (): void => {
+    if (search.value !== model.query) search.value = model.query; // keep the box in sync (query clears on nav)
+    drawCrumb(); drawButtons(); if (useSidebar) drawSidebar(); else drawTree(); drawList();
+  };
 
   // --- Wiring --------------------------------------------------------------
   backBtn.addEventListener('click', () => { void model.back().then(drawAll); });
@@ -549,6 +557,9 @@ export function renderFileManager(doc: Document, deps: FileManagerDeps): FileMan
   root.tabIndex = 0; // make the manager focusable so it receives key events
   root.addEventListener('keydown', (ev) => {
     if (!ev.ctrlKey && !ev.metaKey) return;
+    // Never hijack copy/cut/paste while the user is typing in a text field (the
+    // search box, a future rename field): let the browser's native clipboard win.
+    if ((ev.target as Element | null)?.closest('input, textarea, [contenteditable]')) return;
     const key = ev.key.toLowerCase();
     if (key === 'c' && model.selected) { ev.preventDefault(); model.copy(model.selected); }
     else if (key === 'x' && model.selected) { ev.preventDefault(); model.cut(model.selected); }
@@ -561,7 +572,13 @@ export function renderFileManager(doc: Document, deps: FileManagerDeps): FileMan
     drawAll();
   })();
 
-  return { root, model, ready };
+  const dispose = (): void => {
+    doc.removeEventListener('mousedown', onDocMouseDown);
+    doc.removeEventListener('keydown', onDocKeyDown);
+    closeMenu();
+  };
+
+  return { root, model, ready, dispose };
 }
 
 function menuX(ev: MouseEvent): number { return ev.offsetX ?? ev.clientX; }
@@ -579,5 +596,6 @@ export function mountFileManager(ctx: WindowContext, deps: FileManagerDeps): Fil
   const h = renderFileManager(ctx.content.ownerDocument, deps);
   ctx.content.appendChild(h.root);
   ctx.setTitle('Files');
+  ctx.onClose(() => h.dispose());
   return h;
 }

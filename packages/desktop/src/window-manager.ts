@@ -295,7 +295,10 @@ export class WindowManager {
     if (!host) return;
     host.textContent = '';   // clears ONLY the WM's own container, never sibling launcher/pinned regions
     const topId = [...this.#tracked.values()].reduce<number | undefined>(
-      (top, t) => (top === undefined || t.window.z > this.#tracked.get(top)!.window.z ? t.window.id : top),
+      (top, t) => (
+        t.window.state === 'minimized' ? top
+          : top === undefined || t.window.z > this.#tracked.get(top)!.window.z ? t.window.id : top
+      ),
       undefined,
     );
     for (const t of this.#tracked.values()) {

@@ -10,10 +10,12 @@ export interface TaskbarElements {
   readonly pinnedRegion: HTMLElement;
   /** The WindowManager renders running-window chips here (pass as `WindowManagerOptions.taskbar`). */
   readonly runningRegion: HTMLElement;
-  /** The 1px separator between pinned and running; hidden when `setRunningEmpty(true)`. */
+  /** The 1px separator between pinned and running; auto-hidden while the running region is empty. */
   readonly divider: HTMLElement;
-  /** Show/hide the divider (call when the running count changes). */
+  /** Force the divider's visibility. Rarely needed — it auto-tracks the running region. */
   setRunningEmpty(empty: boolean): void;
+  /** Disconnect the running-region observer (call on desktop teardown). */
+  dispose(): void;
 }
 
 export interface TaskbarOptions {
@@ -59,9 +61,19 @@ export function createTaskbar(doc: Document, opts: TaskbarOptions = {}): Taskbar
   root.appendChild(group);
 
   const setRunningEmpty = (empty: boolean): void => { divider.style.display = empty ? 'none' : 'block'; };
-  setRunningEmpty(true);
+  const syncDivider = (): void => { setRunningEmpty(runningRegion.childElementCount === 0); };
+  syncDivider();
 
-  return { root, appMenuButton, pinnedRegion, runningRegion, divider, setRunningEmpty };
+  // Auto-track the running region so the WM (which owns its chips) needs no
+  // reference to the taskbar: the divider shows exactly when a window is running.
+  const Observer = doc.defaultView?.MutationObserver ?? (globalThis as { MutationObserver?: typeof MutationObserver }).MutationObserver;
+  const observer = Observer ? new Observer(() => syncDivider()) : undefined;
+  observer?.observe(runningRegion, { childList: true });
+
+  return {
+    root, appMenuButton, pinnedRegion, runningRegion, divider, setRunningEmpty,
+    dispose: () => observer?.disconnect(),
+  };
 }
 
 export interface RenderPinnedDeps {

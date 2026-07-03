@@ -83,6 +83,25 @@ describe('file manager model', () => {
     m.setQuery('');
     expect(m.entries.length).toBe(3);
   });
+
+  test('the search query is cleared on navigation (no stale filter carried into a new dir)', async () => {
+    const m = createFileManagerModel({ fs: fakeFs({
+      '/': [{ name: 'invoice.pdf', kind: 'file' }, { name: 'docs', kind: 'directory' }],
+      '/docs': [{ name: 'readme.md', kind: 'file' }],
+    }), onOpen: () => {} });
+    await m.navigate('/');
+    m.setQuery('invoice');
+    expect(m.entries.map((e) => e.name)).toEqual(['invoice.pdf']);
+    // Entering a new directory must reset the filter — else /docs would appear empty.
+    await m.enter('docs');
+    expect(m.query).toBe('');
+    expect(m.entries.map((e) => e.name)).toEqual(['readme.md']);
+    // Back/forward also reset it.
+    m.setQuery('nomatch');
+    await m.back();
+    expect(m.query).toBe('');
+    expect(m.entries.length).toBe(2);
+  });
 });
 
 describe('clipboard', () => {
@@ -116,6 +135,22 @@ describe('clipboard', () => {
     await m.pasteInto('/sub');
     expect(calls).toEqual(['rename /a.txt -> /sub/a.txt']);
     expect(m.clipboard).toBeNull(); // cut consumed
+  });
+
+  test('cut + paste back into the SAME dir force-de-dups so the source is not clobbered', async () => {
+    const calls: string[] = [];
+    const fs: FileManagerFs = {
+      async list(p) { return p === '/' ? [{ name: 'a.txt', kind: 'file' }] : []; },
+      async mkdir() {}, async createFile() {}, async remove() {},
+      async rename(from, to) { calls.push(`rename ${from} -> ${to}`); },
+      async copy() {},
+    };
+    const m = createFileManagerModel({ fs, onOpen: () => {} });
+    await m.navigate('/');
+    m.cut('a.txt');
+    await m.paste(); // pastes into '/', the source's own dir → must de-dup
+    expect(calls).toEqual(['rename /a.txt -> /a (1).txt']);
+    expect(m.clipboard).toBeNull();
   });
 });
 

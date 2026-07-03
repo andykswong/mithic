@@ -246,6 +246,29 @@ test('running chips show the app icon and mark the focused window', async () => 
   wm.dispose(); desktop.remove(); taskbar.remove();
 });
 
+test('focused chip marks the top VISIBLE window even when a higher-z window is minimized', async () => {
+  const desktop = setupDesktop();
+  const taskbar = document.createElement('div');
+  document.body.appendChild(taskbar);
+  const kernel = fakeKernel();
+  const apps = new AppRegistry();
+  apps.register({ name: 'a', title: 'Alpha', defaultSize: [200, 150], mount: () => {} });
+  apps.register({ name: 'b', title: 'Beta', defaultSize: [200, 150], mount: () => {} });
+  const wm = new WindowManager({ desktop, taskbar, kernel: kernel as any, apps });
+
+  const a = await wm.open('a');
+  const b = await wm.open('b'); // b opened last → highest z
+  wm.minimize(b.id);            // the highest-z window is now minimized
+
+  const chipA = taskbar.querySelector(`[data-role="taskbar-item"][data-id="${a.id}"]`) as HTMLButtonElement;
+  const chipB = taskbar.querySelector(`[data-role="taskbar-item"][data-id="${b.id}"]`) as HTMLButtonElement;
+  // The visible window (a) must be marked focused; the minimized one (b) must not.
+  expect(chipA.dataset.focused).toBe('true');
+  expect(chipB.dataset.focused).toBeUndefined();
+
+  wm.dispose(); desktop.remove(); taskbar.remove();
+});
+
 test('dragging a window titlebar across a live iframe still tracks the pointer (H2 — pointer shield)', async () => {
   const desktop = setupDesktop();
   const kernel = fakeKernel();
