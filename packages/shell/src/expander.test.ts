@@ -394,11 +394,12 @@ test('${arr[@]@A} on a readonly indexed array combines flags as -ar', async () =
   expect(await e.expandWord('"${arr[@]@A}"')).toEqual(['declare -ar arr=([0]="a")']);
 });
 
-test('${map[@]@A} reconstructs an assoc-array declare', async () => {
+test('${map[@]@A} reconstructs an assoc-array declare (trailing space before `)`)', async () => {
   const e = E({}, {
     getAssoc: (n) => (n === 'map' ? new Map([['k', 'v'], ['x', 'y z']]) : undefined),
   });
-  expect(await e.expandWord('"${map[@]@A}"')).toEqual(['declare -A map=([k]="v" [x]="y z")']);
+  // bash appends a trailing space after the last pair for an associative array.
+  expect(await e.expandWord('"${map[@]@A}"')).toEqual(['declare -A map=([k]="v" [x]="y z" )']);
 });
 
 test('a BARE array-name transform operates on element [0] (bash: $a == ${a[0]})', async () => {
@@ -412,12 +413,14 @@ test('a BARE array-name transform operates on element [0] (bash: $a == ${a[0]})'
   expect(await e.expandWord('${arr@K}')).toEqual(["'a'"]);
 });
 
-test('${ref@A} reconstructs a nameref declare', async () => {
-  const e = E({ ref: 'ignored' }, {
+test('${ref@A} FOLLOWS the nameref and reconstructs the TARGET (bash 5)', async () => {
+  // bash: `${ref@A}` where ref→target reconstructs `target='value'`, NOT the nameref
+  // itself (that is what `declare -p ref` shows). Here target `t` holds `hi`.
+  const e = E({ t: 'hi' }, {
     attrFlags: (n) => (n === 'ref' ? 'n' : ''),
-    resolveNameref: (n) => (n === 'ref' ? 'target' : undefined),
+    resolveNameref: (n) => (n === 'ref' ? 't' : undefined),
   } as Partial<ShellEnv>);
-  expect(await e.expandWord('${ref@A}')).toEqual(['declare', '-n', 'ref=target']);
+  expect(await e.expandWord('"${ref@A}"')).toEqual(["t='hi'"]);
 });
 
 test('${var@A} of an unset variable is empty', async () => {

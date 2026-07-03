@@ -27,6 +27,7 @@ import type { ArithArrayAccess } from './arith.ts';
 import { globMatch } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
 import { Expander, ExpansionError } from './expander.ts';
+import { shellQuoteQ } from './quote.ts';
 import { expandHistory, HistoryEventNotFound } from './history-expand.ts';
 import { isBuiltin, isShellKeyword, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES, PosixSpecialBuiltinError, POSIX_SPECIAL_BUILTINS, testNumericCompare } from './builtins.ts';
 import type { BuiltinContext, ShellState, ShellOptionName } from './builtins.ts';
@@ -2740,7 +2741,13 @@ export class Executor {
    * no names, lists every set scalar + array + assoc (sorted).
    */
   private declareP(names: string[]): { lines: string[]; missing: string[] } {
-    const dq = (s: string): string => '"' + s.replace(/[\\"$`]/g, (c) => '\\' + c) + '"';
+    // A value is double-quoted normally, or the ANSI-C `$'…'` form for control chars
+    // (bash: `declare -a a=([0]=$'x\ty')`).
+    const CTRL = /[\x00-\x1f\x7f]/; // eslint-disable-line no-control-regex
+    const val = (s: string): string => CTRL.test(s) ? shellQuoteQ(s) : '"' + s.replace(/[\\"$`]/g, (c) => '\\' + c) + '"';
+    // Assoc keys stay BARE when safe, double-quoted otherwise (bash: `[one]`, `["a b"]`).
+    const KEY_SAFE = /^[A-Za-z0-9_./:=@%+,-]+$/;
+    const key = (k: string): string => KEY_SAFE.test(k) ? k : '"' + k.replace(/[\\"$`]/g, (c) => '\\' + c) + '"';
     const flagFor = (n: string): string => {
       let f = '';
       if (this.assocArrays.has(n)) f += 'A';
@@ -2753,16 +2760,17 @@ export class Executor {
       const flags = flagFor(n);
       const opt = flags === '' ? '--' : '-' + flags;
       if (this.assocArrays.has(n)) {
+        // Assoc arrays get a TRAILING space after the last pair (bash); indexed don't.
         const m = this.assocArrays.get(n)!;
-        const body = [...m.entries()].map(([k, v]) => `[${dq(k)}]=${dq(v)}`).join(' ');
-        return `declare ${opt} ${n}=(${body})`;
+        const body = [...m.entries()].map(([k, v]) => `[${key(k)}]=${val(v)}`).join(' ');
+        return `declare ${opt} ${n}=(${body}${body === '' ? '' : ' '})`;
       }
       if (this.arrays.has(n)) {
         const arr = this.arrays.get(n)!;
-        const body = arr.map((v, i) => `[${i}]=${dq(v)}`).join(' ');
+        const body = arr.map((v, i) => i in arr ? `[${i}]=${val(v)}` : undefined).filter((x) => x !== undefined).join(' ');
         return `declare ${opt} ${n}=(${body})`;
       }
-      if (n in this.context.env) return `declare ${opt} ${n}=${dq(this.context.env[n])}`;
+      if (n in this.context.env) return `declare ${opt} ${n}=${val(this.context.env[n])}`;
       if (this.readonlyNames.has(n) || this.integerNames.has(n)) return `declare ${opt} ${n}`;
       return undefined;
     };

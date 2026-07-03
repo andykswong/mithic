@@ -538,13 +538,16 @@ export class Expander {
   private declareStatement(name: string, set: boolean, value: string): string {
     const arr = this.env.getArray?.(name);
     const map = this.env.getAssoc?.(name);
-    if (!set && arr === undefined && map === undefined) return '';
     const flags = this.env.attrFlags?.(name) ?? '';
-    // Nameref: `declare -n ref=target` (the value is the target NAME).
+    // Nameref FIRST (before the unset-guard: a nameref's own scalar slot is empty,
+    // but `${ref@A}` FOLLOWS it to reconstruct the TARGET variable — bash gives
+    // `v='target'`, not `declare -n ref="v"` which is `declare -p ref`'s form).
     if (flags.includes('n')) {
-      const target = this.env.resolveNameref?.(name) ?? value;
-      return `declare -n ${name}=${target}`;
+      const target = this.env.resolveNameref?.(name);
+      if (target !== undefined && target !== name) return this.declareStatement(target, true, this.resolveVar(target));
+      return `declare -n ${name}=${target ?? value}`;
     }
+    if (!set && arr === undefined && map === undefined) return '';
     // Flag group: type letter (a/A) then i (integer) then r (readonly), bash order.
     let group = '';
     if (map !== undefined || flags.includes('A')) group += 'A';
@@ -552,11 +555,14 @@ export class Expander {
     if (flags.includes('i')) group += 'i';
     if (flags.includes('r')) group += 'r';
     if (map !== undefined) {
-      const body = [...map.entries()].map(([k, v]) => `[${k}]=${declareElemQuote(v)}`).join(' ');
-      return `declare -${group} ${name}=(${body})`;
+      // Assoc keys are double-quoted only when not bare-safe (bash), and bash appends
+      // a TRAILING space after the last pair for an associative array.
+      const body = [...map.entries()].map(([k, v]) => `[${declareKeyQuote(k)}]=${declareElemQuote(v)}`).join(' ');
+      return `declare -${group} ${name}=(${body}${body === '' ? '' : ' '})`;
     }
     if (arr !== undefined) {
-      // Skip sparse holes; keep the real indices (bash: `[2]="x" [5]="y"`).
+      // Skip sparse holes; keep the real indices (bash: `[2]="x" [5]="y"`). Indexed
+      // arrays have NO trailing space (unlike assoc).
       const body = denseIndices(arr).map((i) => `[${i}]=${declareElemQuote(arr[i])}`).join(' ');
       return `declare -${group} ${name}=(${body})`;
     }
@@ -589,9 +595,8 @@ export class Expander {
       // `@K`: value is quoted (double-quoted, or `$'…'` for control chars); a key is
       // double-quoted only when it is not a bare-safe word (numeric indices and
       // identifier-like keys stay bare) — matching bash (`k1 "v1"`, `"k 1" "v x"`).
-      const KEY_SAFE = /^[A-Za-z0-9_./:=@%+,-]+$/;
       const body = pairs
-        .map(([k, v]) => `${KEY_SAFE.test(k) ? k : `"${dqEscape(k)}"`} ${declareElemQuote(v)}`)
+        .map(([k, v]) => `${declareKeyQuote(k)} ${declareElemQuote(v)}`)
         .join(' ');
       // bash appends a TRAILING space after the final pair for an ASSOCIATIVE array
       // (indexed arrays have none).
@@ -615,12 +620,15 @@ export class Expander {
     if (op.length !== 2 || op[0] !== '@') return undefined; // not an @-op → slice spec
     const t = op[1];
     // Whole-variable reconstructions.
-    if (t === 'A') return this.declareStatement(name, true, '');
-    if (t === 'K' || t === 'k') return this.keyValuePairs(name, '', t === 'K');
+    if (t === 'A') return this.declareStatement(name, true, this.resolveVar(name));
+    if (t === 'K' || t === 'k') return this.keyValuePairs(name, this.resolveVar(name), t === 'K');
     // Per-element transforms: apply OP to each element value, preserving keys' order.
+    // A plain SCALAR (no array/assoc storage) is treated as its single value.
     const map = this.env.getAssoc?.(name);
     const arr = this.env.getArray?.(name);
-    const values = map !== undefined ? [...map.values()] : (arr !== undefined ? denseValues(arr) : []);
+    const values = map !== undefined ? [...map.values()]
+      : arr !== undefined ? denseValues(arr)
+        : (this.env.has(name) ? [this.resolveVar(name)] : []);
     const perElem = (v: string): string | undefined => {
       switch (t) {
         case 'Q': return shellQuoteQ(v);
@@ -666,10 +674,11 @@ export class Expander {
         if (flags.includes('A')) group += 'A'; else if (flags.includes('a')) group += 'a';
         if (flags.includes('i')) group += 'i';
         if (flags.includes('r')) group += 'r';
-        const flagStr = group === '' ? '--' : `-${group}`;
-        // An UNSET element yields the bare declaration (no `=value`); a set element
-        // (even empty string) yields `name='<@Q value>'` (bash element @A form).
-        return setElem ? `declare ${flagStr} ${name}=${shellQuoteQ(elem)}` : `declare ${flagStr} ${name}`;
+        // An attribute-less name (a plain scalar via `${s[0]@A}`) emits the bare
+        // `name='value'` form (NO `declare --`), like the whole-scalar @A; with any
+        // attribute it prefixes `declare -FLAGS `. An UNSET element omits the value.
+        const prefix = group === '' ? '' : `declare -${group} `;
+        return setElem ? `${prefix}${name}=${shellQuoteQ(elem)}` : (group === '' ? `${prefix}${name}=''` : `declare -${group} ${name}`);
       }
       case 'P': return expandPrompt(elem, { cwd: this.env.cwd ?? '', env: this.promptEnv() });
       case 'K':
@@ -889,18 +898,22 @@ export class Expander {
       return elem;
     }
     // A subscript on a SCALAR treats it as a one-element array (bash): `${s[0]}` is
-    // the value, any other index is empty. `${s[0]@Q}` / `${s[0]#pat}` / `${#s[0]}`
-    // operate on element 0 / empty. `[@]`/`[*]` on a scalar is the value as one field.
+    // the value, any OTHER index (incl. negative) is empty. `${s[0]@Q}`/`${s[0]#pat}`
+    // operate on element 0. `${s[@]OP}`/`${s[*]OP}` apply the transform to that one
+    // element (bash treats the scalar as `[0]=value`).
     if (subAccess && subAccess.name !== '' && this.env.has(subAccess.name)
         && this.env.getArray?.(subAccess.name) === undefined
         && this.env.getAssoc?.(subAccess.name) === undefined) {
       const scalarVal = this.resolveVar(subAccess.name);
       if (subAccess.subscript === '@' || subAccess.subscript === '*') {
+        // `${s[@]@A/@K/@k}` = whole-var reconstruction; `${s[@]@Q/@U/@a/…}` = per-element.
+        const whole = subAccess.op !== undefined ? this.wholeArrayTransform(subAccess.name, subAccess.op, subAccess.subscript === '*') : undefined;
+        if (whole !== undefined) return whole;
         const fields = subAccess.op !== undefined ? await this.sliceArray([scalarVal], sliceSpec(subAccess.op)) : [scalarVal];
         return { fields, join: subAccess.subscript === '*' ? this.ifsFirst() : undefined };
       }
       const idx = await this.resolveIndex(subAccess.subscript);
-      const isZero = idx === 0 || idx === -1; // element 0 (or [-1] of a 1-element array)
+      const isZero = idx === 0; // ONLY index 0 is the scalar's value; else empty (bash)
       const elem = isZero ? scalarVal : '';
       if (subAccess.op !== undefined) {
         const nameKeyed = this.elementTransform(subAccess.name, elem, subAccess.op, isZero);
@@ -1458,6 +1471,13 @@ const CTRL_CHARS = /[\x00-\x1f\x7f]/;
  */
 function declareElemQuote(v: string): string {
   return CTRL_CHARS.test(v) ? shellQuoteQ(v) : `"${dqEscape(v)}"`;
+}
+
+/** Charset a bash assoc key stays BARE for in `@A`/`@K`/`declare -p` (`[k]`); an
+ * unsafe key (space/special) is double-quoted (`["a b"]`). */
+const KEY_SAFE = /^[A-Za-z0-9_./:=@%+,-]+$/;
+function declareKeyQuote(k: string): string {
+  return KEY_SAFE.test(k) ? k : `"${dqEscape(k)}"`;
 }
 
 // ── pattern matching (glob-style for ${} strip/subst and pathname) ───────────

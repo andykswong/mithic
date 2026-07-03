@@ -806,11 +806,11 @@ test('${ref:=x} default-assign through a nameref writes the target, not the ref 
   expect(out.trim().split('\n')).toEqual(['hi', 'hi']);
 });
 
-test('${ref@A} on a nameref reconstructs declare -n ref=target (target NAME, not value) — real Environment', async () => {
-  // Regression: this must run through the REAL Environment.resolveNameref, not a
-  // test mock. Before the fix, @A emitted the target's VALUE (declare -n ref=hi).
+test('${ref@A} FOLLOWS the nameref and reconstructs the TARGET variable (bash 5) — real Environment', async () => {
+  // bash 5.3: `${ref@A}` where ref→target reconstructs the TARGET (`target='hi'`),
+  // NOT `declare -n ref=target` (which is what `declare -p ref` shows).
   const { out } = await run('target=hi; declare -n ref=target; echo "${ref@A}"');
-  expect(out.trim()).toBe('declare -n ref=target');
+  expect(out.trim()).toBe('target=\'hi\'');
 });
 
 test('${x@A} on a plain scalar reconstructs `name=\'value\'` (bash-5 @Q form) — real Environment', async () => {
@@ -1276,6 +1276,24 @@ test('a subscript on a SCALAR treats it as a 1-element array (bash)', async () =
   expect((await run('s=hello; echo "${#s[1]}"')).out).toBe('0\n');
   expect((await run('s=hello; echo "${s[0]^^}"')).out).toBe('HELLO\n');
   expect((await run('s=hello; echo "${s[0]}"')).out).toBe('hello\n');
+  // ${s[0]@A} of an attribute-less scalar is the bare `s='value'` form (not declare --).
+  expect((await run('s=hello; echo "${s[0]@A}"')).out).toBe('s=\'hello\'\n');
+  // a negative / non-zero subscript on a scalar is empty (bash "bad array subscript").
+  expect((await run('s=hello; echo "[${s[-1]}]"')).out).toBe('[]\n');
+});
+
+test('${s[@]OP} / ${s[*]OP} transforms treat a scalar as a one-element array', async () => {
+  expect((await run('s=hello; echo "${s[@]@U}"')).out).toBe('HELLO\n');
+  expect((await run('s=hello; echo "${s[*]@U}"')).out).toBe('HELLO\n');
+  expect((await run('s=hello; echo "${s[@]@Q}"')).out).toBe('\'hello\'\n');
+  expect((await run('s=hello; echo "[${s[@]@a}]"')).out).toBe('[]\n');       // plain scalar: no attrs
+  expect((await run('declare -i n=42; echo "[${n[@]@a}]"')).out).toBe('[i]\n'); // integer attr
+});
+
+test('${ref@A} follows a nameref; declare -p reconstructs assoc with bare-safe keys + trailing space', async () => {
+  expect((await run('target=hi; declare -n ref=target; echo "${ref@A}"')).out).toBe('target=\'hi\'\n');
+  expect((await run('declare -A m=([one]=1 [two]=2); declare -p m')).out).toBe('declare -A m=([one]="1" [two]="2" )\n');
+  expect((await run('declare -A m=(["a b"]=1 [ok]=2); declare -p m')).out).toBe('declare -A m=(["a b"]="1" [ok]="2" )\n');
 });
 
 test('sparse array @A skips holes; array/element values use $\'…\' for control chars', async () => {
