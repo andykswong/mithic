@@ -137,3 +137,30 @@ test('64-bit intmax_t semantics (BigInt): shifts, precision, twos-complement wra
   // Bitwise ops operate on the 64-bit value.
   expect(evalArith('~0', {})).toBe(-1n);
 });
+
+test('&& / || / ?: short-circuit — the untaken side is not evaluated', () => {
+  // Untaken ternary arm side effect is suppressed.
+  const e1 = { x: '0' };
+  expect(evalArith('1 ? 10 : (x=99)', e1)).toBe(10n);
+  expect(e1.x).toBe('0');
+  // || short-circuits: RHS assignment does not run when LHS is true.
+  const e2 = {};
+  expect(evalArith('1 || (c=5)', e2)).toBe(1n);
+  expect((e2 as Record<string, string>).c).toBeUndefined();
+  // && short-circuits: RHS divide-by-zero does NOT throw when LHS is false.
+  expect(evalArith('0 && 1/0', {})).toBe(0n);
+  expect(evalArith('5 || 0/0', {})).toBe(1n);
+});
+
+test('leading-zero values are octal; invalid octal / negative exponent error', () => {
+  // A leading-zero VARIABLE value is octal (n=017 → 15).
+  expect(evalArith('n', { n: '017' })).toBe(15n);
+  expect(evalArith('n + 1', { n: '010' })).toBe(9n);
+  // Octal literals.
+  expect(evalArith('017', {})).toBe(15n);
+  // Invalid octal digit → error (both literal and variable value).
+  expect(() => evalArith('08', {})).toThrow(/value too great for base/);
+  expect(() => evalArith('n', { n: '09' })).toThrow(/value too great for base/);
+  // Negative exponent is a bash error.
+  expect(() => evalArith('2 ** -1', {})).toThrow(/exponent less than 0/);
+});

@@ -84,13 +84,28 @@ function tokenize(src: string): Tok[] {
   return toks;
 }
 
+/**
+ * Parse a numeric arithmetic token — a literal (`tokenize`) or a variable's value
+ * (`read`). Handles an optional sign, `0x` hex, leading-zero octal, and decimal.
+ * A leading-zero token with a non-octal digit (`08`/`09`) is a bash error
+ * ("value too great for base"). Wraps to 64-bit. A non-numeric string is 0 (the
+ * caller re-tries it as a recursive arithmetic expression).
+ */
+function parseArithInt(raw: string): bigint | undefined {
+  const m = /^([+-]?)(.*)$/.exec(raw.trim());
+  if (m === null) return undefined;
+  const sign = m[1] === '-' ? -1n : 1n;
+  const body = m[2];
+  if (/^0[xX][0-9a-fA-F]+$/.test(body)) return wrap64(BigInt(body) * sign);
+  if (/^0[0-7]+$/.test(body)) return wrap64(BigInt('0o' + body.slice(1)) * sign);
+  if (/^0[0-9]+$/.test(body)) throw new SyntaxError(`arith: ${raw}: value too great for base (error token is "${raw}")`);
+  if (/^[0-9]+$/.test(body)) return wrap64(BigInt(body) * sign);
+  return undefined;
+}
+
 function parseIntLiteral(raw: string): bigint {
-  try {
-    if (/^0[xX][0-9a-fA-F]+$/.test(raw)) return wrap64(BigInt(raw));
-    if (/^0[0-7]+$/.test(raw)) return wrap64(BigInt('0o' + raw.slice(1)));
-    if (/^[0-9]+$/.test(raw)) return wrap64(BigInt(raw));
-  } catch { /* fall through */ }
-  return 0n;
+  const v = parseArithInt(raw); // may throw on invalid octal (08/09)
+  return v ?? 0n;
 }
 
 /**
@@ -132,11 +147,35 @@ class ArithParser {
   private pos = 0;
   private env: Record<string, string>;
   private arr?: ArithArrayAccess;
+  /**
+   * >0 while parsing a short-circuited / untaken branch (the RHS of a decided
+   * `&&`/`||`, or the non-selected `?:` arm). Tokens are still CONSUMED (so the
+   * expression parses), but side effects are suppressed: writes are no-ops and a
+   * `/ 0` / `% 0` does not throw — matching bash's lazy evaluation.
+   */
+  private suppress = 0;
 
   constructor(toks: Tok[], env: Record<string, string>, arr?: ArithArrayAccess) {
     this.toks = toks;
     this.env = env;
     this.arr = arr;
+  }
+
+  /** Parse a sub-production with side effects suppressed (untaken branch). */
+  private lazy<T>(fn: () => T): T {
+    this.suppress++;
+    try { return fn(); } finally { this.suppress--; }
+  }
+
+  /** Guard a divisor: bash errors on `/ 0` / `% 0`. In a suppressed (untaken)
+   * branch a zero divisor does NOT throw — return 1n so the dead computation is
+   * harmless (bash never evaluates it). */
+  private checkNonZero(n: bigint): bigint {
+    if (n === 0n) {
+      if (this.suppress > 0) return 1n;
+      throw new SyntaxError('arith: division by 0');
+    }
+    return n;
   }
 
   /** Split an `a[idx]` name into its parts, evaluating the subscript arithmetically. */
@@ -160,19 +199,16 @@ class ArithParser {
     const ref = this.arrayRef(name);
     const raw = ref ? this.arr?.getElement(ref.arr, ref.index) : this.env[name];
     if (raw === undefined || raw === '') return 0n;
-    // A variable's value is itself an arithmetic expression in bash (recursive),
-    // but the common case is a plain integer; parse leniently and wrap to 64-bit.
-    const s = raw.trim();
-    try {
-      if (/^[+-]?0[xX][0-9a-fA-F]+$/.test(s)) return wrap64(BigInt(s.replace('+', '')));
-      if (/^[+-]?[0-9]+$/.test(s)) return wrap64(BigInt(s));
-    } catch { /* fall through */ }
-    // Non-numeric / expression-valued variable: evaluate it (bash recursive arith).
-    try { return wrap64(new ArithParser(tokenize(s), this.env, this.arr).parse()); }
-    catch { return 0n; }
+    // A variable's value is a numeric token (hex/octal/decimal — a leading-zero
+    // value IS octal, `n=017` → 15) or, failing that, itself an arithmetic
+    // expression (bash recursive arith). An invalid octal (`08`) throws.
+    const num = parseArithInt(raw); // may throw on invalid octal
+    if (num !== undefined) return num;
+    return wrap64(new ArithParser(tokenize(raw.trim()), this.env, this.arr).parse());
   }
   private write(name: string, value: bigint): bigint {
     const v = wrap64(value);
+    if (this.suppress > 0) return v; // untaken branch: compute but do not persist
     const ref = this.arrayRef(name);
     if (ref) { this.arr?.setElement(ref.arr, ref.index, String(v)); return v; }
     this.env[name] = String(v);
@@ -209,14 +245,14 @@ class ArithParser {
           case '+=': result = cur + rhs; break;
           case '-=': result = cur - rhs; break;
           case '*=': result = cur * rhs; break;
-          case '/=': result = trunc(cur, checkNonZero(rhs)); break;
-          case '%=': result = cur % checkNonZero(rhs); break;
+          case '/=': result = trunc(cur, this.checkNonZero(rhs)); break;
+          case '%=': result = cur % this.checkNonZero(rhs); break;
           case '&=': result = cur & rhs; break;
           case '|=': result = cur | rhs; break;
           case '^=': result = cur ^ rhs; break;
           case '<<=': result = cur << bshift(rhs); break;
           case '>>=': result = cur >> bshift(rhs); break;
-          case '**=': result = ipow(cur, rhs); break;
+          case '**=': result = this.powOp(cur, rhs); break;
           default: result = rhs;
         }
         return this.write(t.v, result);
@@ -230,22 +266,39 @@ class ArithParser {
     const cond = this.logicalOr();
     if (this.isOp('?')) {
       this.pos++;
-      const a = this.assign();
+      // Only the SELECTED arm is evaluated for real; the other is parsed with side
+      // effects suppressed (bash: `1 ? 10 : (x=99)` does not run `x=99`).
+      const taken = cond !== 0n;
+      const a = taken ? this.assign() : this.lazy(() => this.assign());
       this.eat(':');
-      const b = this.assign();
-      return cond !== 0n ? a : b;
+      const b = taken ? this.lazy(() => this.assign()) : this.assign();
+      return taken ? a : b;
     }
     return cond;
   }
 
   private logicalOr(): bigint {
     let v = this.logicalAnd();
-    while (this.isOp('||')) { this.pos++; const r = this.logicalAnd(); v = (v !== 0n || r !== 0n) ? 1n : 0n; }
+    // `||` short-circuits: once the result is known true, the RHS is parsed with
+    // side effects suppressed (no assignment / no divide-by-zero error leaks).
+    while (this.isOp('||')) {
+      this.pos++;
+      const known = v !== 0n;
+      const r = known ? this.lazy(() => this.logicalAnd()) : this.logicalAnd();
+      v = (v !== 0n || r !== 0n) ? 1n : 0n;
+    }
     return v;
   }
   private logicalAnd(): bigint {
     let v = this.bitOr();
-    while (this.isOp('&&')) { this.pos++; const r = this.bitOr(); v = (v !== 0n && r !== 0n) ? 1n : 0n; }
+    // `&&` short-circuits: once the result is known false, the RHS is parsed with
+    // side effects suppressed.
+    while (this.isOp('&&')) {
+      this.pos++;
+      const known = v === 0n;
+      const r = known ? this.lazy(() => this.bitOr()) : this.bitOr();
+      v = (v !== 0n && r !== 0n) ? 1n : 0n;
+    }
     return v;
   }
   private bitOr(): bigint {
@@ -305,16 +358,24 @@ class ArithParser {
     let v = this.power();
     for (;;) {
       if (this.isOp('*')) { this.pos++; v = wrap64(v * this.power()); }
-      else if (this.isOp('/')) { this.pos++; v = trunc(v, checkNonZero(this.power())); }
-      else if (this.isOp('%')) { this.pos++; v = v % checkNonZero(this.power()); }
+      else if (this.isOp('/')) { this.pos++; v = trunc(v, this.checkNonZero(this.power())); }
+      else if (this.isOp('%')) { this.pos++; v = v % this.checkNonZero(this.power()); }
       else break;
     }
     return v;
   }
   private power(): bigint {
     const v = this.unary();
-    if (this.isOp('**')) { this.pos++; return ipow(v, this.power()); } // right-assoc
+    if (this.isOp('**')) { this.pos++; return this.powOp(v, this.power()); } // right-assoc
     return v;
+  }
+  /** `base ** exp`. A negative exponent is a bash error (unless in a dead branch). */
+  private powOp(base: bigint, exp: bigint): bigint {
+    if (exp < 0n) {
+      if (this.suppress > 0) return 0n;
+      throw new SyntaxError('arith: exponent less than 0');
+    }
+    return ipow(base, exp);
   }
   private unary(): bigint {
     if (this.isOp('+')) { this.pos++; return this.unary(); }
@@ -362,7 +423,6 @@ function trunc(a: bigint, b: bigint): bigint {
 
 /** `x ** y` for integer exponents (bash): y < 0 → 0 (integer), else repeated mul. */
 function ipow(base: bigint, exp: bigint): bigint {
-  if (exp < 0n) return 0n; // bash: negative exponent in integer arithmetic → 0
   let result = 1n;
   let b = base;
   let e = exp;
@@ -380,11 +440,6 @@ function bshift(n: bigint): bigint {
   return m < 0n ? m + 64n : m;
 }
 
-/** Guard a divisor: bash errors on `/ 0` / `% 0` (the result is not Infinity). */
-function checkNonZero(n: bigint): bigint {
-  if (n === 0n) throw new SyntaxError('arith: division by 0');
-  return n;
-}
 
 /**
  * Evaluate an arithmetic expression to a 64-bit `bigint` (bash intmax_t; overflow
