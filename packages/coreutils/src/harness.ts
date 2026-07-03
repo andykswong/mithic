@@ -30,6 +30,15 @@ export interface CommandIO {
   stderr: WritableStream<Uint8Array>;
   /** Kernel syscall hook — e.g. `syscall('fs/open', { path, oflags })`. */
   syscall: (call: string, args: Record<string, unknown>) => Promise<unknown>;
+  /**
+   * POSIX `isatty(fd)`: true when fd 0/1/2 is an interactive terminal rather than a
+   * pipe/redirect. Lets a command switch output format by destination the way GNU
+   * does — notably `ls`, which is multi-column to a TTY but one-per-line to a pipe.
+   * False for any non-tty fd (the common batch/pipeline case). Optional so existing
+   * test helpers that build a partial `CommandIO` still typecheck; a command reads it
+   * as `io.isatty?.(1) ?? false` (defaulting to the pipe/batch behavior).
+   */
+  isatty?: (fd: number) => boolean;
 }
 
 /** A command's core logic: operate on {@link CommandIO}, return an exit code. */
@@ -47,6 +56,14 @@ export interface ParseOptions {
   count?: string[];
   /** Map of alias name → canonical name (e.g. `{ number: 'n' }` so `--number` sets `n`). */
   alias?: Record<string, string>;
+  /**
+   * How to treat a flag not present in `boolean`/`string`/`count`/`alias`:
+   *   - `'ignore'` (default) — record it as `true` (legacy permissive behavior);
+   *   - `'error'` — collect it in {@link ParsedArgs.unknown} so the command can
+   *     emit GNU's `invalid option` diagnostic + exit non-zero (bash/coreutils
+   *     reject unknown flags, exit 1/2). Recommended for GNU parity.
+   */
+  unknown?: 'ignore' | 'error';
 }
 
 /** The result of {@link parseArgs}: positional operands and a flag bag. */
@@ -55,6 +72,12 @@ export interface ParsedArgs {
   positionals: string[];
   /** Flag values: boolean flags → `true`, counted flags → number, string flags → string. */
   flags: Record<string, string | number | boolean>;
+  /**
+   * Undeclared flags seen when `unknown: 'error'` — as they appeared on the command
+   * line (`-Z`, `--bad`), in order. Empty otherwise. A command checks this and emits
+   * `<name>: invalid option -- 'Z'` / `unrecognized option '--bad'` + exit 1/2.
+   */
+  unknown: string[];
 }
 
 /**
@@ -79,6 +102,16 @@ export function parseArgs(args: string[], options: ParseOptions = {}): ParsedArg
   const counts = new Set(options.count ?? []);
   const alias = options.alias ?? {};
   const canonical = (name: string): string => alias[name] ?? name;
+  // When `unknown: 'error'`, a flag is "known" iff it is declared (or an alias). The
+  // allowlist is the union of the declared boolean/string/count names, their aliases,
+  // and the aliases' canonical targets (so `--number`→`n` counts `n` as known too).
+  const strict = options.unknown === 'error';
+  const known = new Set<string>([
+    ...(options.boolean ?? []), ...(options.string ?? []), ...(options.count ?? []),
+    ...Object.keys(alias), ...Object.values(alias),
+  ]);
+  const unknown: string[] = [];
+  const isKnown = (name: string): boolean => known.has(name) || known.has(canonical(name));
 
   const positionals: string[] = [];
   const flags: Record<string, string | number | boolean> = {};
@@ -101,11 +134,17 @@ export function parseArgs(args: string[], options: ParseOptions = {}): ParsedArg
       const body = arg.slice(2);
       const eq = body.indexOf('=');
       const name = eq >= 0 ? body.slice(0, eq) : body;
-      if (eq >= 0) { setValue(name, body.slice(eq + 1)); continue; }
+      if (eq >= 0) {
+        if (strict && !isKnown(name)) { unknown.push('--' + name); continue; }
+        setValue(name, body.slice(eq + 1));
+        continue;
+      }
       if (strings.has(canonical(name)) || strings.has(name)) {
         // Value-taking long flag with separate value: --flag val
         const next = args[i + 1];
         if (next !== undefined) { setValue(name, next); i++; } else { setValue(name, ''); }
+      } else if (strict && !isKnown(name)) {
+        unknown.push('--' + name);
       } else {
         setBool(name);
       }
@@ -123,16 +162,45 @@ export function parseArgs(args: string[], options: ParseOptions = {}): ParsedArg
         else { const next = args[i + 1]; if (next !== undefined) { setValue(ch, next); i++; } else { setValue(ch, ''); } }
         break; // value flag consumes the rest of the cluster
       }
+      if (strict && !isKnown(ch)) { unknown.push('-' + ch); continue; }
       setBool(ch);
     }
   }
   // Anything after a `--` terminator.
   for (; i < args.length; i++) positionals.push(args[i]);
 
-  return { positionals, flags };
+  return { positionals, flags, unknown };
 }
 
 const ENCODER = new TextEncoder();
+
+/**
+ * Canonical POSIX/GNU errno text for a caught filesystem error, mapped from the
+ * VFS `FileSystemError.code` (the stable contract) rather than its human message
+ * (which varies by provider — memory/opfs say "File not found: <path>", node-fs
+ * leaks the raw node message). A command formats `<cmd>: <path>: <fsErrorText(e)>`
+ * to match `cat: foo: No such file or directory`. Falls back to the error's own
+ * message for an unrecognized/non-FS error.
+ */
+export function fsErrorText(err: unknown): string {
+  const code = (err as { code?: string })?.code;
+  switch (code) {
+    case 'no-entry': return 'No such file or directory';
+    case 'access': return 'Permission denied';
+    case 'exist': return 'File exists';
+    case 'not-directory': return 'Not a directory';
+    case 'is-directory': return 'Is a directory';
+    case 'cross-device': return 'Invalid cross-device link';
+    case 'not-empty': return 'Directory not empty';
+    case 'invalid': return 'Invalid argument';
+    case 'no-space': return 'No space left on device';
+    case 'io': return 'Input/output error';
+    default: {
+      const msg = (err as { message?: string })?.message;
+      return msg && msg.trim() !== '' ? msg : 'No such file or directory';
+    }
+  }
+}
 
 // ── stdin readers ─────────────────────────────────────────────────────────────
 
@@ -346,6 +414,21 @@ export function writeLine(writer: WritableStreamDefaultWriter<Uint8Array>, text:
 }
 
 /**
+ * GNU-style "invalid option" diagnostic for the first undeclared flag from
+ * {@link ParsedArgs.unknown} (populated when `parseArgs(..., { unknown: 'error' })`).
+ * A short `-Z` → `<cmd>: invalid option -- 'Z'`; a long `--bad` → `<cmd>:
+ * unrecognized option '--bad'`, each followed by GNU's `Try '<cmd> --help' for more
+ * information.` line. Returns the two-line message (no trailing newline). Commands do:
+ *   `if (parsed.unknown.length) return exitWith(err, 1, optionError(name, parsed.unknown[0]));`
+ */
+export function optionError(cmd: string, badFlag: string): string {
+  const line1 = badFlag.startsWith('--')
+    ? `${cmd}: unrecognized option '${badFlag}'`
+    : `${cmd}: invalid option -- '${badFlag.replace(/^-/, '')}'`;
+  return `${line1}\nTry '${cmd} --help' for more information.`;
+}
+
+/**
  * The error-and-exit-code idiom: optionally write `errMsg` (with a newline) to
  * the given stderr writer, then resolve to `code`. Commands typically
  * `return exitWith(errWriter, 1, 'cat: foo: No such file or directory')`.
@@ -385,6 +468,7 @@ export function defineCommand(fn: CommandFn): (boot: unknown) => Promise<void> {
       stdout: guest.stdout,
       stderr: guest.stderr,
       syscall: (call, args) => guest.syscall(call, args),
+      isatty: (fd) => guest.isatty(fd),
     };
 
     let code = 0;
