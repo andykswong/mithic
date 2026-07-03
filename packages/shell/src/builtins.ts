@@ -1823,9 +1823,25 @@ function formatPrintf(format: string, args: string[]): PrintfResult {
       const c = fmt[i];
       if (c !== '%') { out += c; i++; continue; }
       if (fmt[i + 1] === '%') { out += '%'; i += 2; continue; }
-      // Parse a conversion spec: %[flags][width][.precision]conv
-      const m = /^%([-+ 0#]*)(\*|\d+)?(?:\.(\*|\d+))?([sbcdiuoxXeEfgGq])/.exec(fmt.slice(i));
-      if (!m) { out += c; i++; continue; } // lone % with no valid conversion
+      // Parse the spec PREFIX `%[flags][width][.prec][length-modifier]` (always
+      // matches; every part is optional). bash treats `h hh l ll L j z t` as C length
+      // modifiers — consumed then ignored (`intmax_t` is already the widest). The
+      // CONVERSION char follows the prefix.
+      const m = /^%([-+ 0#]*)(\*|\d+)?(?:\.(\*|\d+))?((?:hh|ll|[hlLjzt])*)/.exec(fmt.slice(i));
+      if (!m) { out += c; i++; continue; } // unreachable (all groups optional) — defensive
+      const spec = m[0];
+      const conv = fmt[i + spec.length]; // the conversion char, or undefined at end
+      if (conv === undefined || !'sbcdiuoxXeEfgGq'.includes(conv)) {
+        // Missing conversion (trailing `%`, or flags/modifier that ran off the end) →
+        // "missing format character" quoting the whole spec; a present-but-unknown
+        // char → "invalid format character" quoting that char. Either way bash stops
+        // ALL further output (exit 1) — matched by setting `stop` + breaking.
+        errors.push(conv === undefined
+          ? `\`${spec}': missing format character`
+          : `\`${conv}': invalid format character`);
+        stop = true;
+        break;
+      }
       consumedConversion = true;
       let flags = m[1];
       let width = m[2] === '*' ? parseInt(nextArg(), 10) || 0 : (m[2] ? parseInt(m[2], 10) : undefined);
@@ -1837,7 +1853,6 @@ function formatPrintf(format: string, args: string[]): PrintfResult {
         const dyn = parseInt(nextArg(), 10) || 0;
         prec = dyn < 0 ? undefined : dyn;
       } else if (m[3] !== undefined) prec = parseInt(m[3], 10);
-      const conv = m[4];
       const argVal = nextArg();
       const argPresent = lastPresent;
       const r = formatOne(conv, flags, width, prec, argVal);
@@ -1846,7 +1861,7 @@ function formatPrintf(format: string, args: string[]): PrintfResult {
       // out-of-range arg errors (exit 1, but the value is still printed).
       if (argPresent && r.error !== undefined) errors.push(r.error);
       if (r.stop) stop = true;
-      i += m[0].length;
+      i += spec.length + 1; // advance past the prefix AND the conversion char
     }
     if (stop) break;
     if (!consumedConversion) break;           // no conversions ⇒ print once
@@ -1928,9 +1943,16 @@ function formatOne(conv: string, flags: string, width: number | undefined, prec:
       if (prec !== undefined && prec < 0) prec = undefined; // defensive: negative → unset
       const p = prec ?? 6;
       let s: string;
-      if (conv === 'f') s = Math.abs(num).toFixed(p);
+      if (conv === 'f') s = formatFixed(Math.abs(num), p);
       else if (conv === 'e' || conv === 'E') s = formatExp(Math.abs(num), p, conv === 'E');
       else s = formatG(Math.abs(num), prec === undefined ? 6 : (prec === 0 ? 1 : prec), conv === 'G', alt);
+      // `%#` forces a decimal point even when precision trimmed it away. For %g the
+      // trailing-zero trim is already suppressed above; %f/%e with precision 0 print
+      // no point, so inject one right after the integer/mantissa digits (bash: `3.`).
+      if (alt && (conv === 'f' || conv === 'e' || conv === 'E') && !s.includes('.')) {
+        const m = /^(\d+)(.*)$/s.exec(s); // digits then optional exponent (e±NN)
+        if (m !== null) s = m[1] + '.' + m[2];
+      }
       const neg = num < 0 || Object.is(num, -0);
       signPrefix = neg ? '-' : plus ? '+' : space ? ' ' : '';
       body = s;
@@ -1975,17 +1997,75 @@ function padNum(prefix: string, body: string, width: number | undefined, left: b
   return ' '.repeat(fillLen) + prefix + body;
 }
 
-/** `%e` formatting: mantissa + e±NN (≥2 exponent digits). */
-function formatExp(n: number, prec: number, upper: boolean): string {
-  let s = n.toExponential(prec); // e.g. "1.234500e+4"
-  s = s.replace(/e([+-])(\d)$/, 'e$10$2'); // pad exponent to 2 digits
-  return upper ? s.toUpperCase() : s;
+/**
+ * Round the EXACT value of a non-negative finite double `ax`, scaled by 10^k, to the
+ * nearest integer with ties-to-EVEN — matching C/bash printf (which round the true
+ * IEEE-754 value, not the shortest decimal literal). Decomposes `ax = mant·2^e2` from
+ * its bit pattern so the rational `ax·10^k = num/den` is exact; JS `toFixed`/
+ * `toExponential` instead round exact ties half-away-from-zero, so this is the ONLY
+ * place the output can differ from them, and only on exact-half values.
+ */
+function scaledRoundHalfEven(ax: number, k: number): bigint {
+  const buf = new DataView(new ArrayBuffer(8));
+  buf.setFloat64(0, ax);
+  const hi = buf.getUint32(0), lo = buf.getUint32(4);
+  const rawExp = (hi >>> 20) & 0x7ff;
+  let mant = (BigInt(hi & 0xfffff) << 32n) | BigInt(lo >>> 0);
+  let e2: number;
+  if (rawExp === 0) e2 = -1074;                       // subnormal (no implicit 1)
+  else { mant |= (1n << 52n); e2 = rawExp - 1075; }   // normal: add implicit leading 1
+  if (mant === 0n) return 0n;
+  let num = mant, den = 1n;                            // ax·10^k = num/den (exact)
+  if (k >= 0) num *= 10n ** BigInt(k); else den *= 10n ** BigInt(-k);
+  if (e2 >= 0) num <<= BigInt(e2); else den <<= BigInt(-e2);
+  let q = num / den;
+  const twiceRem = (num - q * den) * 2n;
+  if (twiceRem > den) q += 1n;
+  else if (twiceRem === den && (q % 2n) === 1n) q += 1n; // exact tie → round to even
+  return q;
 }
 
-/** `%g` formatting: shortest of %e/%f, trailing zeros trimmed unless `#`. */
+/** `%f` magnitude of a non-negative finite double with `prec` fractional digits. */
+function formatFixed(ax: number, prec: number): string {
+  if (!Number.isFinite(ax)) return Math.abs(ax).toFixed(Math.min(prec, 100));
+  const q = scaledRoundHalfEven(ax, prec).toString();
+  if (prec === 0) return q;
+  const s = q.padStart(prec + 1, '0');
+  return s.slice(0, s.length - prec) + '.' + s.slice(s.length - prec);
+}
+
+/** `%e` formatting: mantissa + e±NN (≥2 exponent digits), ties-to-even. */
+function formatExp(n: number, prec: number, upper: boolean): string {
+  if (!Number.isFinite(n)) {
+    const s = n.toExponential(prec).replace(/e([+-])(\d)$/, 'e$10$2');
+    return upper ? s.toUpperCase() : s;
+  }
+  const e = upper ? 'E' : 'e';
+  if (n === 0) return (prec > 0 ? '0.' + '0'.repeat(prec) : '0') + e + '+00';
+  const digits = prec + 1;                            // total significant digits
+  let exp = Math.floor(Math.log10(n));
+  let q = scaledRoundHalfEven(n, prec - exp);
+  // A log10 estimate can be off by one, and rounding can carry a digit (9.99→10.0);
+  // re-scale until the integer part has exactly `digits` digits.
+  while (q.toString().length > digits) { exp += 1; q = scaledRoundHalfEven(n, prec - exp); }
+  while (q !== 0n && q.toString().length < digits) { exp -= 1; q = scaledRoundHalfEven(n, prec - exp); }
+  const ds = q.toString().padStart(digits, '0');
+  const mant = prec > 0 ? ds[0] + '.' + ds.slice(1) : ds;
+  const esign = exp < 0 ? '-' : '+';
+  return mant + e + esign + String(Math.abs(exp)).padStart(2, '0');
+}
+
+/** `%g` formatting: shortest of %e/%f, trailing zeros trimmed unless `#`, ties-to-even. */
 function formatG(n: number, sig: number, upper: boolean, alt: boolean): string {
+  if (sig < 1) sig = 1;
   if (n === 0) return alt ? '0.' + '0'.repeat(Math.max(0, sig - 1)) : '0';
-  const exp = Math.floor(Math.log10(n));
+  if (!Number.isFinite(n)) return formatExp(n, sig - 1, upper);
+  // Determine the exponent of the value AFTER rounding to `sig` significant digits
+  // (rounding can bump the exponent, e.g. 9.99 @ 2 sig → 10 → e+01).
+  let exp = Math.floor(Math.log10(n));
+  let q = scaledRoundHalfEven(n, sig - 1 - exp);
+  while (q.toString().length > sig) { exp += 1; q = scaledRoundHalfEven(n, sig - 1 - exp); }
+  while (q !== 0n && q.toString().length < sig) { exp -= 1; q = scaledRoundHalfEven(n, sig - 1 - exp); }
   let s: string;
   if (exp < -4 || exp >= sig) {
     s = formatExp(n, sig - 1, upper);
@@ -1993,7 +2073,7 @@ function formatG(n: number, sig: number, upper: boolean, alt: boolean): string {
     // to `E` (for `%G`), so match either case (was lowercase-only → %G never trimmed).
     if (!alt) s = s.replace(/\.?0+([eE])/, '$1');
   } else {
-    s = n.toFixed(Math.max(0, sig - 1 - exp));
+    s = formatFixed(n, Math.max(0, sig - 1 - exp));
     if (!alt && s.includes('.')) s = s.replace(/\.?0+$/, '');
   }
   return s;

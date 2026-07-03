@@ -173,6 +173,117 @@ test('printf %q empty string', async () => {
   expect(await printf('%q', '')).toBe('\'\'');
 });
 
+// ── printf round-half-to-EVEN (banker's rounding), matching C/bash ───────────
+// JS toFixed/toExponential round exact ties half-AWAY-from-zero; bash/C round
+// exact ties to the nearest EVEN digit. Only exact-half values differ; every
+// other value is unchanged. Verified byte-exact against bash 5.3.15.
+
+test('printf %.0f rounds exact .5 ties to even (2.5→2, 3.5→4, 0.5→0, 1.5→2)', async () => {
+  expect(await printf('%.0f', '2.5')).toBe('2');
+  expect(await printf('%.0f', '3.5')).toBe('4');
+  expect(await printf('%.0f', '0.5')).toBe('0');
+  expect(await printf('%.0f', '1.5')).toBe('2');
+  expect(await printf('%.0f', '4.5')).toBe('4');
+});
+
+test('printf %.0f ties-to-even honors sign (-1.5→-2, -2.5→-2, -0.5→-0)', async () => {
+  expect(await printf('%.0f', '-1.5')).toBe('-2');
+  expect(await printf('%.0f', '-2.5')).toBe('-2');
+  expect(await printf('%.0f', '-0.5')).toBe('-0');
+});
+
+test('printf %.1f rounds using the EXACT double, not the decimal literal', async () => {
+  // 2.25 is exactly representable → tie → down to even 2.2; 2.35 as a double is
+  // slightly > 2.35 → up to 2.4 (both match bash, neither is a naive .5 rule).
+  expect(await printf('%.1f', '2.25')).toBe('2.2');
+  expect(await printf('%.1f', '2.35')).toBe('2.4');
+  expect(await printf('%.1f', '0.45')).toBe('0.5');
+});
+
+test('printf %.2f ties-to-even (0.125→0.12, 0.135→0.14)', async () => {
+  expect(await printf('%.2f', '0.125')).toBe('0.12');
+  expect(await printf('%.2f', '0.135')).toBe('0.14');
+});
+
+test('printf %e rounds ties to even (2.5→2e+00, 1.25→1.2e+00, 1.35→1.4e+00)', async () => {
+  expect(await printf('%.0e', '2.5')).toBe('2e+00');
+  expect(await printf('%.0e', '1.5')).toBe('2e+00');
+  expect(await printf('%.1e', '1.25')).toBe('1.2e+00');
+  expect(await printf('%.1e', '1.35')).toBe('1.4e+00');
+});
+
+test('printf %g rounds ties to even (%.2g 1.25→1.2, 1.35→1.4)', async () => {
+  expect(await printf('%.2g', '1.25')).toBe('1.2');
+  expect(await printf('%.2g', '1.35')).toBe('1.4');
+  expect(await printf('%.2g', '12500')).toBe('1.2e+04');
+});
+
+test('printf non-tie float values are unchanged by ties-to-even', async () => {
+  expect(await printf('%.2f', '3.14159')).toBe('3.14');
+  expect(await printf('%.0f', '2.7')).toBe('3');
+  expect(await printf('%e', '12345')).toBe('1.234500e+04');
+  expect(await printf('%.4e', '0.00001')).toBe('1.0000e-05');
+});
+
+// ── printf %# alt-flag: force a decimal point on %f/%e (bash) ─────────────────
+
+test('printf %#.0f forces a trailing decimal point', async () => {
+  expect(await printf('%#.0f', '3')).toBe('3.');
+});
+
+test('printf %#.0e forces a trailing decimal point in the mantissa', async () => {
+  expect(await printf('%#.0e', '3')).toBe('3.e+00');
+});
+
+test('printf %#g keeps trailing zeros (already correct) and %g still trims', async () => {
+  expect(await printf('%#g', '3')).toBe('3.00000');
+  expect(await printf('%g', '3')).toBe('3');
+});
+
+// ── printf invalid / missing format character → exit 1 + diagnostic ──────────
+
+test('printf bare trailing % is "missing format character" (exit 1, prints prefix)', async () => {
+  let out = ''; let err = '';
+  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s), writeErr: (s: string) => (err += s) };
+  const code = await runBuiltin('printf', ['a%'], ctx);
+  expect(out).toBe('a');
+  expect(err).toMatch(/missing format character/);
+  expect(code).toBe(1);
+});
+
+test('printf a lone length-modifier with no conversion is "missing format character"', async () => {
+  // `z` is a C length modifier (like `l`/`ll`/`L`): consumed then a conversion is
+  // expected. `%z` at end of format = whole `%z` is the "missing" spec.
+  let out = ''; let err = '';
+  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s), writeErr: (s: string) => (err += s) };
+  const code = await runBuiltin('printf', ['a%z'], ctx);
+  expect(out).toBe('a');
+  expect(err).toMatch(/`%z': missing format character/);
+  expect(code).toBe(1);
+});
+
+test('printf length modifiers l/ll/z/j/L/hh are consumed and ignored before a conversion', async () => {
+  expect(await printf('%ld', '5')).toBe('5');
+  expect(await printf('%lld', '5')).toBe('5');
+  expect(await printf('%zd', '5')).toBe('5');
+  expect(await printf('%jd', '5')).toBe('5');
+  expect(await printf('%Lf', '2.5')).toBe('2.500000');
+  expect(await printf('%lx', '255')).toBe('ff');
+  // `%zb` = z-modifier + %b conversion (of an empty arg)
+  expect(await printf('a%zb')).toBe('a');
+});
+
+test('printf an INVALID conversion char stops output + errors (X%dY%zZ → invalid `Z`)', async () => {
+  // `z` is a modifier, `Z` is not a valid conversion → "invalid format character",
+  // and (like bash) all further output stops after the last good directive.
+  let out = ''; let err = '';
+  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s), writeErr: (s: string) => (err += s) };
+  const code = await runBuiltin('printf', ['X%dY%zZ', '5'], ctx);
+  expect(out).toBe('X5Y');
+  expect(err).toMatch(/`Z': invalid format character/);
+  expect(code).toBe(1);
+});
+
 // ── A2: readonly enforcement on a getopts variable ──────────────────────────
 
 test('getopts into a readonly variable is rejected (status 1, no write)', async () => {
