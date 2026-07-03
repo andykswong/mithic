@@ -74,6 +74,20 @@ negation, `[[ ]]` lexical `<>`, `command`/`builtin`, `type -t/-a`, `declare -r/-
 output-stop), and `DEBUG`/`RETURN` traps. Previously-shipped items (through June
 2026) were already removed per the open-only convention.
 
+A follow-up **July 2026 "architectural gaps" wave** then closed the four items that
+had been parked here as "out of scope," each verified byte-exact against a real
+**bash 5.3.15**: (1) **printf 64-bit `intmax_t`/`uintmax_t`** via BigInt (`%x -1` →
+`ffffffffffffffff`, exact `%d 9223372036854775807`, out-of-range = exit-1 error);
+(2) **`type -a` / `command -v|-V` `$PATH` resolution** over the VFS (incl. `-P`
+force-search, clustered flags, `--`, default PATH); (3) **`declare`/`local`/
+`readonly`/`export`/`typeset` NAME=(…) array-literal** (parser routes assignment-
+builtin operands as assignment words; `[k]=v` elements, `-g` global scope, local
+array scoping, prefix-transient); (4) **name-keyed `@`-transforms on array/assoc
+elements** (`@a`/`@A`/`@P`/`@K`/`@k`) + the `${a[@]OP}` whole-array/per-element
+transforms + `@Q` always-quote with named/octal control escapes. Also migrated
+**`$(( ))` arithmetic to 64-bit BigInt** (matching printf) and fixed bare-array-name
+transforms (element [0]) and bare-assignment-in-function global scoping.
+
 ## Deliberate boundaries (documented, not gaps)
 
 These are intentional design limits, not missing features:
@@ -94,25 +108,13 @@ These are intentional design limits, not missing features:
   reads a whole line/datagram, ignoring the count/delimiter — an inherited limit of
   the numbered-fd read path. Chunked reads over pipe/here-string stdin honor `-n`/`-d`
   normally; the UDP round-trip uses whole-datagram `read -r`.
-- **`type -a NAME` lists builtins/functions/keywords but NOT PATH files.** The pure
-  builtin surface has no real `$PATH` search — external commands are resolved by the
-  kernel's `resolveCommand`, which is not callable from the `type` builtin. `type -t`
-  (which only classifies known names) is correct; `-a`'s PATH-hit listing is partial.
-- **printf `%x`/`%u`/`%o`/`%d` of very large or negative integers uses JS double
-  precision (52-bit mantissa) and 32-bit unsigned reinterpretation**, not bash's
-  64-bit `intmax_t`. `printf '%x' -1` → `ffffffff` (32-bit) vs bash's
-  `ffffffffffffffff` (64-bit); `printf '%d' 9223372036854775807` loses precision
-  beyond 2^53. Full 64-bit parity would require BigInt arithmetic throughout — out
-  of scope. The common ≤ 32-bit range is correct.
-- **`declare`/`local`/`readonly` NAME=(…) array-literal is not applied.**
-  `declare -a arr=(a b c)` leaves `arr` empty — the parenthesised element list is
-  a separate token the declaration builtins do not collect (the array literal only
-  works as a bare assignment `arr=(a b c)`, no `declare` prefix). Pre-existing.
-- **The NAME-keyed `@`-transforms `${arr[i]@a}` / `@A` / `@P` / `@K` / `@k` are
-  not applied to array/assoc elements.** The VALUE transforms `@Q`/`@U`/`@u`/`@L`/
-  `@E` DO work on elements; only the attribute/declare-reconstruction/prompt forms
-  (which need whole-variable metadata) fall through to the raw element value.
-  Scalar `${var@a}` etc. work fully.
+- **An UNQUOTED associative-array key containing whitespace in an array literal**
+  (`declare -A m=([a b]=X)`) is not collected — the lexer splits the `[a b]` at the
+  blank (the same rule that keeps `[ -f x ]` test syntax from being swallowed as a
+  glob bracket). The QUOTED forms all work and match bash: `declare -A m=(["a b"]=X)`
+  and `m["a b"]=X`. Only the rare unquoted-space-in-subscript literal falls through;
+  fixing it would require the lexer to disambiguate an assoc subscript from a test
+  command at tokenize time (ambiguous, high blast radius). Quote the key.
 
 ---
 
