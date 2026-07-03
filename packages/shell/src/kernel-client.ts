@@ -235,8 +235,18 @@ export interface FsClient {
   /** List directory entries (names only). Optional — enables glob expansion. */
   fsReaddir?(path: string): string[] | Promise<string[]>;
 
-  /** Stat a path. Optional — enables `[[ -f ]]`/`-d` and glob directory descent. */
-  fsStat?(path: string): { dir: boolean } | undefined | Promise<{ dir: boolean } | undefined>;
+  /**
+   * Stat a path. Optional — enables `[[ -f ]]`/`-d` and glob directory descent, plus
+   * the metadata-bearing file tests (`-s` size, `-x`/`-w`/`-r` mode, `-h`/`-L` symlink,
+   * `-nt`/`-ot` mtime). `dir` is required; the rest are best-effort (a minimal mock may
+   * omit them, in which case those tests fall to FALSE rather than a plausible-but-wrong
+   * true). `type` is the VFS `DescriptorType` (`'file'`/`'directory'`/`'symlink'`/…);
+   * `size` in bytes; `mode` POSIX permission bits; `mtimeMs` the mtime as epoch millis.
+   */
+  fsStat?(path: string):
+    | { dir: boolean; type?: string; size?: number; mode?: number; mtimeMs?: number }
+    | undefined
+    | Promise<{ dir: boolean; type?: string; size?: number; mode?: number; mtimeMs?: number } | undefined>;
 
   /**
    * Open a LIVE bidirectional descriptor for `exec N<>path` (see {@link DuplexFd}).

@@ -250,3 +250,21 @@ test('plain $(echo hi) still expands correctly (no stdin double-consume)', async
 test('echo hi | grep $(echo h) — a non-reading sub does not steal the pipe', async () => {
   expect((await run('echo hi | grep $(echo h)')).trim()).toBe('hi');
 }, 15000);
+
+// END-TO-END proof that the widened `fs/stat` metadata (size/mode/type) reaches
+// `test`/`[` over the REAL kernel wire (guest → fs/stat syscall → makeFsClient
+// adapter → condFileTest), not just via a mock. A memory-provider file defaults
+// to mode 0o644 (readable, not executable); `/data.txt` is seeded non-empty.
+test('test -s / -x / -r read REAL VFS metadata end-to-end over the kernel', async () => {
+  const script = [
+    '[ -s /data.txt ] && echo s-yes || echo s-no',   // non-empty → yes
+    'printf "" > /empty.txt',
+    '[ -s /empty.txt ] && echo e-yes || echo e-no',  // empty → no
+    '[ -x /data.txt ] && echo x-yes || echo x-no',   // 0o644, no exec → no
+    '[ -r /data.txt ] && echo r-yes || echo r-no',   // readable → yes
+    '[ -d / ] && echo d-yes || echo d-no',           // root dir → yes
+  ].join('; ');
+  expect((await run(script)).trim().split('\n')).toEqual(
+    ['s-yes', 'e-no', 'x-no', 'r-yes', 'd-yes'],
+  );
+}, 15000);

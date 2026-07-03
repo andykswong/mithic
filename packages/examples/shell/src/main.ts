@@ -177,10 +177,17 @@ function makeFsClient(fs: FileSystemProvider): FsClient & { flush(): Promise<voi
       const entries = await fs.readdir(path);
       return entries.map((e) => e.name);
     },
-    async fsStat(path): Promise<{ dir: boolean } | undefined> {
+    async fsStat(path) {
       try {
         const s = await fs.stat(path);
-        return { dir: s.type === 'directory' };
+        // Pass VFS metadata through so `test -s`/`-x`/`-nt`… get real answers.
+        return {
+          dir: s.type === 'directory',
+          type: s.type,
+          size: Number(s.size),
+          mode: s.mode,
+          mtimeMs: s.mtime instanceof Date ? s.mtime.getTime() : undefined,
+        };
       } catch { return undefined; }
     },
   };

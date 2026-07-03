@@ -498,6 +498,19 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
 
     case 'export': {
       let status = 0;
+      // `export` accepts only `-f`/`-n`/`-p` — reject any other option letter loudly
+      // (bash: `-i: invalid option`, exit 2) rather than silently ignoring it. Only
+      // LEADING `-…` tokens are options (a later `-`-looking operand is a value).
+      for (const arg of args) {
+        if (arg.length > 1 && arg[0] === '-') {
+          for (const ch of arg.slice(1)) {
+            if (ch !== 'f' && ch !== 'n' && ch !== 'p') {
+              errOut(ctx, `shell: export: -${ch}: invalid option\nexport: usage: export [-fn] [name[=value] ...] or export -p [-f]\n`);
+              return 2;
+            }
+          }
+        } else break;
+      }
       // `export arr=(a b c)` creates the (non-exported) array via the shared
       // assignment path, matching bash (an array cannot be exported, but the
       // variable is still created).
@@ -576,6 +589,18 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         if (a.length > 1 && a[0] === '-') { for (const ch of a.slice(1)) flags.add(ch); }
         else if (a.length > 1 && a[0] === '+') { for (const ch of a.slice(1)) plusFlags.add(ch); }
         else break; // first operand — stop flag scanning
+      }
+      // `readonly` accepts a NARROW option set (`-aAfp`), NOT the full `declare` set —
+      // reject a declare-only letter loudly (`-l: invalid option`, exit 2) rather than
+      // silently applying it. (`declare`/`typeset`/`local` take the wide set.)
+      if (isReadonly) {
+        const allowed = new Set(['a', 'A', 'f', 'p']);
+        for (const ch of [...flags, ...plusFlags]) {
+          if (!allowed.has(ch)) {
+            errOut(ctx, `shell: readonly: -${ch}: invalid option\nreadonly: usage: readonly [-aAf] [name[=value] ...] or readonly -p\n`);
+            return 2;
+          }
+        }
       }
       const isAssoc = (isDeclare || isLocal) && flags.has('A');
       // `declare -n ref=target` / `local -n ref=target` declares a nameref (single-

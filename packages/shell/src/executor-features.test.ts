@@ -1102,6 +1102,24 @@ test('declare -gu/-gl (fold flag ON the -g command) folds + records on the globa
   expect((await run('f(){ declare g=lv; declare -gu g=hi; }; f; g=more; echo "[$g]"')).out).toBe('[MORE]\n');
 });
 
+test('readonly/export reject declare-only options loudly (exit 2), not silently', async () => {
+  // readonly accepts only -aAfp; a declare-only letter is an invalid option (bash).
+  const ro = await run('readonly -l x; echo "rc=$?"');
+  expect(ro.out).toBe('rc=2\n');
+  expect(ro.err).toMatch(/readonly: -l: invalid option/);
+  expect((await run('readonly -u x; echo "rc=$?"')).out).toBe('rc=2\n');
+  expect((await run('readonly -i x; echo "rc=$?"')).out).toBe('rc=2\n');
+  // valid readonly options still accepted
+  expect((await run('readonly -a arr; echo "rc=$?"')).out).toBe('rc=0\n');
+  // export accepts only -fnp; -i is invalid
+  const ex = await run('export -i x; echo "rc=$?"');
+  expect(ex.out).toBe('rc=2\n');
+  expect(ex.err).toMatch(/export: -i: invalid option/);
+  expect((await run('export -n x; echo "rc=$?"')).out).toBe('rc=0\n');
+  // the correct combined forms are unaffected
+  expect((await run('declare -rl x=Hi; echo "$x"')).out).toBe('hi\n');
+});
+
 test('declare -g NAME[i]=v element write folds by the VISIBLE (local) attribute, not the global', async () => {
   // An element write lands in the visible local binding, so it folds by the local's
   // attribute (bash). The global's -l/-u must NOT apply to it.
@@ -1184,6 +1202,46 @@ test('test/[ ] -f negation and -a/-o combine with file tests', async () => {
 test('test/[ ] -v NAME tests variable set-ness (like [[ -v ]])', async () => {
   expect((await run('foo=1; [ -v foo ]; echo $?')).out).toBe('0\n');
   expect((await run('[ -v bar ]; echo $?')).out).toBe('1\n');
+});
+
+test('test/[ ] metadata file tests use real size/mode/mtime (fall FALSE when unknowable)', async () => {
+  // A rich FsClient carrying size/mode/type/mtimeMs (as the real VFS does).
+  const meta: Record<string, any> = {
+    '/x': { dir: false, type: 'file', size: 5, mode: 0o755, mtimeMs: 2000 },
+    '/plain': { dir: false, type: 'file', size: 5, mode: 0o644, mtimeMs: 1000 },
+    '/empty': { dir: false, type: 'file', size: 0, mode: 0o644, mtimeMs: 1000 },
+    '/noperm': { dir: false, type: 'file', size: 5, mode: 0o000, mtimeMs: 1000 },
+    '/d': { dir: true, type: 'directory', size: 0, mode: 0o755, mtimeMs: 1000 },
+  };
+  const richFs = { fsStat: async (p: string) => meta[p] };
+  const t = async (src: string) => (await run(src + '; echo $?', {}, richFs)).out;
+  // -s non-empty (size), and a dir is always non-empty
+  expect(await t('[ -s /plain ]')).toBe('0\n');
+  expect(await t('[ -s /empty ]')).toBe('1\n');
+  expect(await t('[ -s /d ]')).toBe('0\n');
+  // -x honors the exec bit; a dir is searchable (true)
+  expect(await t('[ -x /x ]')).toBe('0\n');
+  expect(await t('[ -x /plain ]')).toBe('1\n');
+  expect(await t('[ -x /d ]')).toBe('0\n');
+  // -r/-w honor the read/write bits
+  expect(await t('[ -r /plain ]')).toBe('0\n');
+  expect(await t('[ -w /noperm ]')).toBe('1\n');
+  // -nt/-ot compare mtime; a missing operand is "older than any existing file"
+  expect(await t('[ /plain -nt /x ]')).toBe('1\n');
+  expect(await t('[ /x -nt /plain ]')).toBe('0\n');
+  expect(await t('[ /x -nt /nope ]')).toBe('0\n');
+  expect(await t('[ /nope -nt /x ]')).toBe('1\n');
+});
+
+test('test/[ ] metadata tests fall FALSE (never silently true) when a mock omits the metadata', async () => {
+  // A {dir}-only FsClient (no size/mode) — mode-based tests must NOT return a
+  // plausible-but-wrong true; they fall to false (fail-safe, never silently wrong).
+  const fs = mockFs({ '/exists.txt': 'hi' });
+  expect((await run('[ -x /exists.txt ]; echo $?', {}, fs)).out).toBe('1\n');
+  expect((await run('[ -r /exists.txt ]; echo $?', {}, fs)).out).toBe('1\n');
+  // but existence-only tests still work
+  expect((await run('[ -e /exists.txt ]; echo $?', {}, fs)).out).toBe('0\n');
+  expect((await run('[ -f /exists.txt ]; echo $?', {}, fs)).out).toBe('0\n');
 });
 
 test('test/[ ] an EMPTY path operand is nonexistent (not resolved to cwd)', async () => {

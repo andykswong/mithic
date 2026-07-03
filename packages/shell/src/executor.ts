@@ -638,9 +638,9 @@ export class Executor {
     catch { return undefined; }
   }
 
-  async statPath(path: string): Promise<{ dir: boolean } | undefined> {
+  async statPath(path: string): Promise<{ dir: boolean; type?: string; size?: number; mode?: number; mtimeMs?: number } | undefined> {
     if (!this.fs?.fsStat) return undefined;
-    try { const s = await this.fs.fsStat(path); return s ? { dir: s.dir } : undefined; }
+    try { const s = await this.fs.fsStat(path); return s ? { dir: s.dir, type: s.type, size: s.size, mode: s.mode, mtimeMs: s.mtimeMs } : undefined; }
     catch { return undefined; }
   }
 
@@ -1511,27 +1511,54 @@ export class Executor {
       const [pa, pb] = path.split('\0');
       const sa = pa === '' ? undefined : await this.statPath(this.absPath(pa));
       const sb = pb === '' ? undefined : await this.statPath(this.absPath(pb));
-      // `-ef` (same file): same canonical path AND both exist. `-nt`/`-ot` need mtime,
-      // which the `{dir}`-only FsClient does not expose → conservatively false.
+      // `-ef` (same file): same canonical path AND both exist.
       if (op === '-ef') return sa !== undefined && sb !== undefined && this.absPath(pa) === this.absPath(pb);
-      return false;
+      // `-nt`/`-ot` (mtime): bash treats a MISSING file as older than any existing one
+      // (`[ f -nt missing ]` true, `[ missing -nt f ]` false; equal mtimes → false).
+      // When both exist but mtime metadata is absent, there is no ordering → false.
+      const ma = sa?.mtimeMs, mb = sb?.mtimeMs;
+      if (op === '-nt') {
+        if (sa === undefined) return false;      // a missing → never newer
+        if (sb === undefined) return true;       // b missing → a is newer
+        return ma !== undefined && mb !== undefined && ma > mb;
+      }
+      // -ot
+      if (sb === undefined) return false;        // b missing → a never older
+      if (sa === undefined) return true;         // a missing → a is older
+      return ma !== undefined && mb !== undefined && ma < mb;
     }
     // An EMPTY path operand is never a filesystem entry (bash: `[ -e '' ]` is false).
     // Guard before absPath, which would otherwise resolve '' to the cwd.
     const stat = path === '' ? undefined : await this.statPath(this.absPath(path));
     const exists = stat !== undefined;
+    // A permission bit is set on the mode (any of the r/w/x triads). With no uid model
+    // in the sandbox we honor the raw mode bits (bash's common non-root result).
+    const modeHas = (bits: number): boolean => stat?.mode !== undefined && (stat.mode & bits) !== 0;
+    const isSymlink = stat?.type === 'symlink';
     switch (op) {
-      case '-f': return exists && !stat!.dir;
+      // `-f`/`-d`/`-h`/`-L` classify by TYPE. `-f` follows a symlink to a regular file;
+      // a bare `-h`/`-L` tests symlink-ness (needs the un-followed type — best-effort).
+      case '-f': return exists && !stat!.dir && !isSymlink;
       case '-d': return exists && stat!.dir;
-      // Existence/accessibility tests: the sandbox VFS has no permission/size/owner
-      // metadata (FsClient exposes only `{dir}`), so an existing path is treated as
-      // readable/writable/executable/nonempty/owned — the common-case bash result.
-      case '-e': case '-a': case '-r': case '-w': case '-x': case '-s':
-      case '-O': case '-G': case '-N': case '-u': case '-g': case '-k':
-        return exists;
-      // Symlink / block / char / pipe / socket / terminal tests have no VFS analogue.
-      case '-h': case '-L': case '-b': case '-c': case '-p': case '-S': case '-t':
-        return false;
+      case '-h': case '-L': return isSymlink;
+      case '-e': case '-a': return exists;            // exists (`-a` unary = `-e`)
+      // non-empty: a directory always reports nonzero on disk (bash), and some
+      // providers stat a dir as size 0 — so treat any existing dir as non-empty.
+      case '-s': return exists && (stat!.dir || (stat!.size ?? 0) > 0);
+      case '-r': return modeHas(0o444);               // any read bit
+      case '-w': return modeHas(0o222);               // any write bit
+      case '-x': return exists && (stat!.dir || modeHas(0o111)); // exec bit, or a dir (searchable)
+      // Owner/sticky/setid tests have no uid model → best-effort: existing = owned by us.
+      case '-O': case '-G': case '-N': return exists;
+      case '-u': return modeHas(0o4000);              // setuid
+      case '-g': return modeHas(0o2000);              // setgid
+      case '-k': return modeHas(0o1000);              // sticky
+      // Block / char / pipe / socket by TYPE; `-t` (terminal) has no VFS analogue.
+      case '-b': return stat?.type === 'block-device';
+      case '-c': return stat?.type === 'character-device';
+      case '-p': return stat?.type === 'fifo';
+      case '-S': return stat?.type === 'socket';
+      case '-t': return false;
       default: return false;
     }
   }

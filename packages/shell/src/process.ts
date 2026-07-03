@@ -108,12 +108,23 @@ function makeFsClient(guest: Guest): FsClient & { flush(): Promise<void> } {
         | undefined;
       return (entries ?? []).map((e) => (typeof e === 'string' ? e : e.name));
     },
-    async fsStat(path): Promise<{ dir: boolean } | undefined> {
+    async fsStat(path) {
       try {
-        const r = (await guest.syscall('fs/stat', { path })) as { type?: string; isDir?: boolean };
+        const r = (await guest.syscall('fs/stat', { path })) as
+          { type?: string; isDir?: boolean; size?: number; mode?: number; mtime?: unknown };
         // `fs/stat` reports the VFS `DescriptorType` — a directory is `'directory'`
         // (not `'dir'`). Honor an explicit `isDir` if present, else match the type.
-        return { dir: r.isDir ?? (r.type === 'directory' || r.type === 'dir') };
+        // Pass through size/mode/mtime so metadata file tests (`-s`/`-x`/`-nt`…) work.
+        const mtimeMs = r.mtime instanceof Date ? r.mtime.getTime()
+          : typeof r.mtime === 'number' ? r.mtime
+            : typeof r.mtime === 'string' ? Date.parse(r.mtime) : undefined;
+        return {
+          dir: r.isDir ?? (r.type === 'directory' || r.type === 'dir'),
+          type: r.type,
+          size: typeof r.size === 'number' ? r.size : undefined,
+          mode: typeof r.mode === 'number' ? r.mode : undefined,
+          mtimeMs: mtimeMs !== undefined && !Number.isNaN(mtimeMs) ? mtimeMs : undefined,
+        };
       } catch { return undefined; }
     },
     // STREAMING `exec N<>path` (e.g. `/dev/tcp/host/port`): open ONE real fd via
