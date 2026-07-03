@@ -775,6 +775,7 @@ export class Executor {
       isInteger: (name) => this.integerNames.has(name),
       markCaseFold: (name, mode) => { if (mode === undefined) this.caseFoldNames.delete(name); else this.caseFoldNames.set(name, mode); },
       caseFoldOf: (name) => this.caseFoldNames.get(name),
+      globalCaseFoldOf: (name) => this.globalCaseFoldOf(name),
       markExport: (name) => { this.exportedNames.add(name); },
       declareP: (names) => this.declareP(names),
       setNameref: (ref, target) => { this.namerefs.set(ref, target); },
@@ -841,6 +842,16 @@ export class Executor {
       if (this.localScopes[i].has(name)) return this.localSavedArrays[i].get(name)?.readonly ?? false;
     }
     return this.readonlyNames.has(name);
+  }
+
+  /** The case-fold attribute of the GLOBAL binding of `name`, ignoring any local
+   * shadow (its snapshot holds the pre-shadow global fold). Lets `declare -g` fold
+   * by the global's own `-l`/`-u`, not a same-name function-local's attribute. */
+  private globalCaseFoldOf(name: string): 'lower' | 'upper' | undefined {
+    for (let i = 0; i < this.localScopes.length; i++) {
+      if (this.localScopes[i].has(name)) return this.localSavedArrays[i].get(name)?.caseFold;
+    }
+    return this.caseFoldNames.get(name);
   }
 
   private setGlobal(name: string, value: string): boolean {
@@ -1369,37 +1380,42 @@ export class Executor {
       // [[ ]] does not word-split, but we expand each token to a single string.
       words.push(await exp.expandToString(w));
     }
-    return (await this.evalConditional(words)) ? 0 : 1;
+    // `condGroup` marks which words are genuine grouping parens (vs quoted `(`/`)`
+    // operands) — expansion collapses quoting, so this parallel array is how the
+    // evaluator tells `[[ ( a ) ]]` from `[[ '(' == '(' ]]`.
+    const group = stmt.condGroup ?? words.map(() => false);
+    return (await this.evalConditional(words, group)) ? 0 : 1;
   }
 
-  /** Evaluate a `[[ ... ]]` expression (supports !, &&, ||, ( ), =~, -f/-d/-z/-n, comparisons). */
-  private async evalConditional(words: string[]): Promise<boolean> {
-    // Split binary logicals at the SHALLOWEST paren depth (so `( a && b ) || c` groups
-    // correctly); scan for the LAST top-level `||` then `&&` (left-associative). A
-    // top-level connective binds looser than a parenthesized subgroup.
+  /** Evaluate a `[[ ... ]]` expression (supports !, &&, ||, ( ), =~, -f/-d/-z/-n, comparisons).
+   * `group[i]` is true where `words[i]` is a genuine grouping paren (not an operand). */
+  private async evalConditional(words: string[], group: boolean[]): Promise<boolean> {
+    // Split binary logicals at the SHALLOWEST GROUPING-paren depth (so `( a && b ) || c`
+    // groups correctly); scan for the LAST top-level `||` then `&&` (left-associative).
+    // Only genuine grouping parens (group[i]) change depth — a quoted `(` operand does not.
     const topLevel = (op: string): number => {
       let depth = 0, found = -1;
       for (let i = 0; i < words.length; i++) {
-        if (words[i] === '(') depth++;
-        else if (words[i] === ')') depth--;
+        if (group[i] && words[i] === '(') depth++;
+        else if (group[i] && words[i] === ')') depth--;
         else if (depth === 0 && words[i] === op) found = i;
       }
       return found;
     };
     const orIdx = topLevel('||');
     if (orIdx >= 0) {
-      return (await this.evalConditional(words.slice(0, orIdx)))
-        || (await this.evalConditional(words.slice(orIdx + 1)));
+      return (await this.evalConditional(words.slice(0, orIdx), group.slice(0, orIdx)))
+        || (await this.evalConditional(words.slice(orIdx + 1), group.slice(orIdx + 1)));
     }
     const andIdx = topLevel('&&');
     if (andIdx >= 0) {
-      return (await this.evalConditional(words.slice(0, andIdx)))
-        && (await this.evalConditional(words.slice(andIdx + 1)));
+      return (await this.evalConditional(words.slice(0, andIdx), group.slice(0, andIdx)))
+        && (await this.evalConditional(words.slice(andIdx + 1), group.slice(andIdx + 1)));
     }
-    if (words[0] === '!') return !(await this.evalConditional(words.slice(1)));
-    // A fully-parenthesized group `( expr )`: strip the outer parens and recurse.
-    if (words[0] === '(' && words[words.length - 1] === ')') {
-      return await this.evalConditional(words.slice(1, -1));
+    if (words[0] === '!') return !(await this.evalConditional(words.slice(1), group.slice(1)));
+    // A fully-parenthesized group `( expr )`: strip the outer GROUPING parens and recurse.
+    if (group[0] && words[0] === '(' && group[words.length - 1] && words[words.length - 1] === ')') {
+      return await this.evalConditional(words.slice(1, -1), group.slice(1, -1));
     }
     if (words.length === 3 && words[1] === '=~') {
       try {

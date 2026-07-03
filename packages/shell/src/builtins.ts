@@ -91,6 +91,12 @@ export interface ShellState {
   markCaseFold?(name: string, mode: 'lower' | 'upper' | undefined): void;
   /** A name's case-fold mode (`declare -l`/`-u`), or undefined if none. */
   caseFoldOf?(name: string): 'lower' | 'upper' | undefined;
+  /**
+   * The case-fold mode of the GLOBAL binding of `name`, ignoring a local shadow — so
+   * `declare -g NAME=v` folds by the global's own `-l`/`-u`, not a function-local
+   * same-name attribute (bash: a `-g` write targets the global binding's attributes).
+   */
+  globalCaseFoldOf?(name: string): 'lower' | 'upper' | undefined;
   /** Mark a name as exported (`export` / `declare -x`) — for `declare -p`'s `-x`. */
   markExport?(name: string): void;
   /**
@@ -735,8 +741,10 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
               ? String(append ? (ctx.evalArith?.(prev || '0') ?? 0n) + (ctx.evalArith?.(rhs) ?? 0n) : (ctx.evalArith?.(rhs) ?? 0n))
               : prev + rhs; // `+=` appends (prev is '' when not append)
             // Case-fold the value on assignment (`declare -l`/`-u`). `+=` folds the
-            // combined string (bash folds each write, so prev is already folded).
-            const foldMode = ctx.state?.caseFoldOf?.(n);
+            // combined string (bash folds each write, so prev is already folded). A
+            // `-g` write folds by the GLOBAL binding's attribute, not a same-name
+            // function-local shadow's (bash: the global carries its own fold).
+            const foldMode = flagGlobal ? ctx.state?.globalCaseFoldOf?.(n) : ctx.state?.caseFoldOf?.(n);
             if (foldMode !== undefined && !flagInteger) val = applyCaseFold(val, foldMode);
             // `declare -g` writes the GLOBAL binding (updating an enclosing local's
             // snapshot rather than clobbering it); otherwise write the current env.
@@ -2071,7 +2079,12 @@ function formatOne(conv: string, flags: string, width: number | undefined, prec:
       }
       const neg = num < 0 || Object.is(num, -0);
       signPrefix = neg ? '-' : plus ? '+' : space ? ' ' : '';
-      body = formatHexFloat(Math.abs(num), prec !== undefined && prec >= 0 ? prec : undefined, conv === 'A');
+      const hx = formatHexFloat(Math.abs(num), prec !== undefined && prec >= 0 ? prec : undefined, conv === 'A', alt);
+      // Fold the `0x`/`0X` radix prefix into the sign-prefix so a `0`-flag pad fills
+      // BETWEEN the prefix and the mantissa (`%010a 1.5` → `0x001.8p+0`), not before it.
+      const radix = hx.slice(0, 2); // 0x or 0X
+      signPrefix += radix;
+      body = hx.slice(2);
       return { text: padNum(signPrefix, body, width, left, zero), error: parsed.error };
     }
     case 'f': case 'F': case 'e': case 'E': case 'g': case 'G': {
@@ -2175,22 +2188,29 @@ function scaledRoundHalfEven(ax: number, k: number): bigint {
 
 /**
  * `%a`/`%A` C99 hex-float of a non-negative finite double: `0x` + leading hex digit
- * (1 for normals, 0 for subnormals/zero) + optional `.frac` + `p±exp` (decimal binary
- * exponent). `prec` = exact number of hex fraction digits (rounded half-to-even,
- * carrying into the leading digit); undefined = shortest exact. `upper` → uppercase.
+ * (1 for a nonzero value — subnormals are NORMALIZED, `0` only for zero) + optional
+ * `.frac` + `p±exp` (decimal binary exponent). `prec` = exact number of hex fraction
+ * digits (rounded half-to-even, carrying into the leading digit); undefined = shortest
+ * exact. `upper` → uppercase. `alt` (`#`) forces a trailing point when no fraction.
  */
-function formatHexFloat(ax: number, prec: number | undefined, upper: boolean): string {
+function formatHexFloat(ax: number, prec: number | undefined, upper: boolean, alt: boolean): string {
   let out: string;
   if (ax === 0) {
-    out = '0x0' + (prec !== undefined && prec > 0 ? '.' + '0'.repeat(prec) : '') + 'p+0';
+    const frac = prec !== undefined && prec > 0 ? '.' + '0'.repeat(prec) : (alt ? '.' : '');
+    out = '0x0' + frac + 'p+0';
   } else {
     const buf = new DataView(new ArrayBuffer(8)); buf.setFloat64(0, ax);
     const hi = buf.getUint32(0), lo = buf.getUint32(4);
     const rawExp = (hi >>> 20) & 0x7ff;
-    const mant = (BigInt(hi & 0xfffff) << 32n) | BigInt(lo >>> 0); // 52-bit fraction
+    let mant = (BigInt(hi & 0xfffff) << 32n) | BigInt(lo >>> 0); // 52-bit fraction
     let e2: number; let lead: bigint;
-    if (rawExp === 0) { e2 = -1022; lead = 0n; }  // subnormal: leading 0
-    else { e2 = rawExp - 1023; lead = 1n; }       // normal: leading 1, unbiased exp
+    if (rawExp === 0) {
+      // Subnormal: NORMALIZE to a leading 1 (bash/C `%a` prints `0x1.…`, not `0x0.…`).
+      // Value = mant·2^-1074; shift the highest set bit to the implicit-1 position.
+      let k = 51; while (k >= 0 && (mant & (1n << BigInt(k))) === 0n) k--;
+      mant = (mant - (1n << BigInt(k))) << BigInt(52 - k); // 52-bit fraction field
+      e2 = k - 1074; lead = 1n;
+    } else { e2 = rawExp - 1023; lead = 1n; } // normal: leading 1, unbiased exponent
     let fracDigits = mant.toString(16).padStart(13, '0'); // 52 bits = 13 hex digits
     if (prec === undefined) {
       fracDigits = fracDigits.replace(/0+$/, ''); // shortest exact
@@ -2206,7 +2226,8 @@ function formatHexFloat(ax: number, prec: number | undefined, upper: boolean): s
     } else {
       fracDigits = fracDigits.padEnd(prec, '0');
     }
-    const frac = fracDigits.length > 0 ? '.' + fracDigits : '';
+    // `%#a` forces a trailing point even with no fraction digits (bash: `0x1.p+0`).
+    const frac = fracDigits.length > 0 ? '.' + fracDigits : (alt ? '.' : '');
     out = '0x' + lead.toString(16) + frac + 'p' + (e2 < 0 ? '-' : '+') + Math.abs(e2);
   }
   return upper ? out.toUpperCase() : out;
@@ -2360,8 +2381,26 @@ function clampInt(v: bigint, unsigned: boolean, arg: string): IntArg {
   return { value: v };
 }
 
+/** Smallest positive NORMAL double (2^-1022) — below this a value is subnormal. */
+const DBL_MIN = 2 ** -1022;
+
+/**
+ * Flag ERANGE for a finite parse: bash's `strtold` sets `Result too large` (exit 1,
+ * value still printed) when a nonzero magnitude OVERFLOWS to ±inf OR UNDERFLOWS below
+ * the smallest normal double (rounds into the subnormal range). Exact zero and normal
+ * magnitudes have no error.
+ */
+function floatRange(value: number, arg: string): NumArg {
+  if (!Number.isNaN(value) && (Math.abs(value) === Infinity || (value !== 0 && Math.abs(value) < DBL_MIN))) {
+    return { value, error: `${arg.trim()}: Result too large` };
+  }
+  return { value };
+}
+
 function parseFloatArg(arg: string): NumArg {
-  const s = arg.trim();
+  // Only LEADING whitespace is skipped (C strtold); TRAILING content makes it a
+  // partial/invalid number (bash: `printf '%f' '1.5 '` → invalid number, exit 1).
+  const s = arg.replace(/^\s+/, '');
   if (s[0] === '\'' || s[0] === '"') return { value: s.codePointAt(1) ?? 0 };
   // `inf`/`infinity`/`nan` (any case, optional sign) — bash/C strtold specials.
   const spec = /^([+-]?)(inf(inity)?|nan)$/i.exec(s);
@@ -2370,23 +2409,29 @@ function parseFloatArg(arg: string): NumArg {
     if (/^nan$/i.test(spec[2])) return { value: NaN };
     return { value: neg ? -Infinity : Infinity };
   }
-  // Decimal float.
-  if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(s)) return { value: parseFloat(s) };
-  // Hex integer (`0x10`) or C hex-float (`0x1.8p3`). JS `parseFloat`/`Number` cannot
-  // parse hex floats, so compute them directly: mantissa (hex, with optional frac)
-  // scaled by the binary exponent `p±N`.
+  // Decimal float (may overflow to ±inf or underflow — floatRange flags ERANGE).
+  if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(s)) return floatRange(parseFloat(s), arg);
+  // Hex integer (`0x10`) or C hex-float (`0x1.8p3`). JS cannot parse these, so compute
+  // directly. A `0x` prefix with NO mantissa AND no fraction digits (`0x`, `0x.`,
+  // `0xp3`) is an invalid hex number (bash), not zero.
   const hex = /^([+-]?)0[xX]([0-9a-fA-F]*)(?:\.([0-9a-fA-F]*))?(?:[pP]([+-]?\d+))?$/.exec(s);
-  if (hex !== null && (hex[2] !== '' || hex[3] !== undefined)) {
+  if (hex !== null) {
+    const intDigits = hex[2], fracDigits = hex[3];
+    if (intDigits === '' && (fracDigits === undefined || fracDigits === '')) {
+      return { value: 0, error: `${arg}: invalid hex number` };
+    }
     const sign = hex[1] === '-' ? -1 : 1;
-    let mant = hex[2] === '' ? 0 : parseInt(hex[2], 16);
-    if (hex[3] !== undefined && hex[3] !== '') {
-      for (let i = 0; i < hex[3].length; i++) mant += parseInt(hex[3][i], 16) * 16 ** -(i + 1);
+    let mant = intDigits === '' ? 0 : parseInt(intDigits, 16);
+    if (fracDigits !== undefined && fracDigits !== '') {
+      for (let i = 0; i < fracDigits.length; i++) mant += parseInt(fracDigits[i], 16) * 16 ** -(i + 1);
     }
     const bexp = hex[4] !== undefined ? parseInt(hex[4], 10) : 0;
-    return { value: sign * mant * 2 ** bexp };
+    return floatRange(sign * mant * 2 ** bexp, arg);
   }
+  // A `0x…` shape that failed the hex grammar (e.g. `0xg`) is an invalid hex number.
+  if (/^[+-]?0[xX]/.test(s)) return { value: 0, error: `${arg}: invalid hex number` };
   const v = parseFloat(s);
   if (Number.isNaN(v)) return { value: 0, error: `${arg}: invalid number` };
-  return { value: v, error: `${arg}: value not completely converted` };
+  return { value: v, error: `${arg}: invalid number` };
 }
 

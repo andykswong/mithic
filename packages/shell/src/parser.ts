@@ -453,9 +453,15 @@ class Parser {
   private parseCond(): Statement {
     this.next(); // [[
     const words: string[] = [];
+    const group: boolean[] = []; // parallel: true = genuine grouping paren token
     while (this.peek() && !this.atType('DRBRACKET')) {
+      // A GROUPING `(`/`)` lexes as LPAREN/RPAREN; a quoted/literal operand `'('`
+      // lexes as a WORD. Record which so the evaluator can group correctly even
+      // after expansion collapses quoting (`[[ '(' == '(' ]]` must NOT group).
+      const isGroup = this.atType('LPAREN') || this.atType('RPAREN');
       const raw = this.next()!.raw;
       words.push(raw);
+      group.push(isGroup);
       // After `=~`, the right-hand side is a regex whose unquoted `(`/`)`/etc. are
       // lexed as separate tokens (`([a-z]+)` → `(` `[a-z]+` `)`). Coalesce the
       // whole RHS — up to `]]` or a `&&`/`||` connective — into ONE regex word so
@@ -467,10 +473,11 @@ class Parser {
           re += this.next()!.raw;
         }
         words.push(re);
+        group.push(false);
       }
     }
     if (this.atType('DRBRACKET')) this.next();
-    return { type: 'Cond', condWords: words };
+    return { type: 'Cond', condWords: words, condGroup: group };
   }
 
   private expectReserved(word: string): void {

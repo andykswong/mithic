@@ -66,10 +66,10 @@ test('echo WITHOUT -e prints escapes literally', async () => {
 
 // ── printf (SH-3) ────────────────────────────────────────────────────────────
 
-/** Run printf and return what it wrote to stdout. */
+/** Run printf and return what it wrote to STDOUT (diagnostics go to a separate sink). */
 async function printf(...args: string[]): Promise<string> {
   let out = '';
-  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s) };
+  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s), writeErr: () => {} };
   await runBuiltin('printf', args, ctx);
   return out;
 }
@@ -304,6 +304,50 @@ test('printf %a / %A C99 hex float', async () => {
   // inf/nan share the float path
   expect(await printf('%a', 'inf')).toBe('inf');
   expect(await printf('%A', 'nan')).toBe('NAN');
+});
+
+test('printf %a zero-fill pads between 0x and mantissa; %#a forces a point; %+ honored', async () => {
+  expect(await printf('%010a', '1.5')).toBe('0x001.8p+0');
+  expect(await printf('[%-10a]', '1.5')).toBe('[0x1.8p+0  ]');
+  expect(await printf('%#a', '1')).toBe('0x1.p+0');
+  expect(await printf('%#.0a', '1')).toBe('0x1.p+0');
+  expect(await printf('%+010a', '1.5')).toBe('+0x01.8p+0');
+});
+
+test('printf %a NORMALIZES subnormals to a leading 1 (not 0x0.…)', async () => {
+  expect(await printf('%a', '5e-324')).toBe('0x1p-1074'); // smallest subnormal
+  expect(await printf('%a', '2.5e-323')).toBe('0x1.4p-1072');
+});
+
+test('printf float ERANGE: overflow → inf and subnormal underflow → exit 1 + Result too large', async () => {
+  let err = '';
+  const ctx: any = { cwd: '/', env: {}, write: () => {}, writeErr: (s: string) => (err += s) };
+  expect(await runBuiltin('printf', ['%f', '1e400'], ctx)).toBe(1);
+  expect(err).toMatch(/Result too large/);
+  err = '';
+  const ctx2: any = { cwd: '/', env: {}, write: () => {}, writeErr: (s: string) => (err += s) };
+  expect(await runBuiltin('printf', ['%g', '5e-324'], ctx2)).toBe(1);
+  expect(err).toMatch(/Result too large/);
+});
+
+test('printf float rejects an incomplete hex prefix and trailing content', async () => {
+  let err = '';
+  const ctx: any = { cwd: '/', env: {}, write: () => {}, writeErr: (s: string) => (err += s) };
+  expect(await runBuiltin('printf', ['%f', '0x.'], ctx)).toBe(1);
+  expect(err).toMatch(/invalid hex number/);
+  err = '';
+  const ctx2: any = { cwd: '/', env: {}, write: () => {}, writeErr: (s: string) => (err += s) };
+  expect(await runBuiltin('printf', ['%f', '1.5 '], ctx2)).toBe(1);
+  expect(err).toMatch(/invalid number/);
+});
+
+test('printf float keeps a normal magnitude with NO error (no false ERANGE)', async () => {
+  let err = '';
+  const ctx: any = { cwd: '/', env: {}, write: () => {}, writeErr: (s: string) => (err += s) };
+  expect(await runBuiltin('printf', ['%f', '1.5'], ctx)).toBe(0);
+  expect(await runBuiltin('printf', ['%e', '1e300'], ctx)).toBe(0);
+  expect(await runBuiltin('printf', ['%f', '0'], ctx)).toBe(0);
+  expect(err).toBe('');
 });
 
 test('printf %n consumes no arg and emits nothing (exit 0)', async () => {

@@ -196,6 +196,23 @@ These are intentional design limits, not missing features:
   precomposed accented Latin (`déjà`→`DÉJÀ`) match exactly; only the rare 1-to-many /
   special-casing codepoints differ. A faithful port would map each code point through the
   Unicode SIMPLE case mapping only.
+- **`readonly`/`export` do not reject `declare`-only option letters.** `readonly -l x`
+  (or `-u`/`-i`) is silently accepted and applies the attribute; bash's `readonly`
+  accepts only `-aAfp` and errors `-l: invalid option` (exit 2). The shared assignment-
+  builtin flag scanner does no per-builtin option validation — mithic is more permissive,
+  never less; the correct forms (`declare -rl`, `declare -ri`) behave identically.
+- **`declare -FLAG` with no name operands does not list matching variables, and
+  `declare +l NAME` does not pre-declare an unset variable.** `declare -i` / `declare -l`
+  (no names) prints nothing where bash lists every var carrying that attribute; `declare
+  +l newvar` leaves `newvar` unset-and-unknown where bash creates it (`declare -- newvar`).
+  Attribute-flag *listing mode* and *bare-declaration* are interactive-leaning; the common
+  assignment/fold paths and `+l` on an existing var are exact.
+- **`[[ ]]` does not emit bash's parse-time diagnostics for a malformed expression.** A
+  missing operand / unbalanced literal paren / unknown operator (`[[ -e ]]`, `[[ ( a ]]`,
+  `[[ x -badop y ]]`) evaluates to false (exit 1) rather than bash's `syntax error` / 
+  `conditional binary operator expected` (exit 2). A well-formed `[[ ]]` — including
+  `( )` grouping, `&&`/`||`, and all operators — matches bash; only the diagnostic on
+  malformed input differs.
 
 ---
 

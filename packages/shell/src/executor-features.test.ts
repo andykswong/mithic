@@ -1083,6 +1083,15 @@ test('a function-local declare -l does not leak its fold attribute to the caller
   expect((await run(src)).out).toBe('inner\nOUTER\nAGAIN\n');
 });
 
+test('a function-local -l/-u fold does NOT apply to a same-name declare -g global write', async () => {
+  // bash: the -g write targets the global binding, which has no fold from the local.
+  expect((await run('f(){ declare -u g; declare -g g=hello; }; f; echo "[$g]"')).out).toBe('[hello]\n');
+  expect((await run('h(){ declare -l g2; declare -g g2=HELLO; }; h; echo "[$g2]"')).out).toBe('[HELLO]\n');
+  expect((await run('k(){ declare -u g3=inner; declare -g g3=hello; }; k; echo "[$g3]"')).out).toBe('[hello]\n');
+  // but a GLOBAL that itself has -u DOES fold a -g write from inside a function
+  expect((await run('declare -u G=x; m(){ declare -g G=hello; }; m; echo "[$G]"')).out).toBe('[HELLO]\n');
+});
+
 test('logical NOT usable in arithmetic (history expansion off for non-interactive)', async () => {
   expect((await run('echo $((!0))')).out).toBe('1\n');
   expect((await run('echo $((!5))')).out).toBe('0\n');
@@ -1229,6 +1238,15 @@ test('[[ ]] parenthesized grouping', async () => {
   // grouping overrides the flat left-to-right of && / ||
   expect((await run('[[ -n a || -n b && -z c ]]; echo $?')).out).toBe('0\n');
   expect((await run('[[ ( -n a || -n b ) && -z c ]]; echo $?')).out).toBe('1\n');
+});
+
+test('[[ ]] QUOTED ( / ) operands are strings, not grouping (no miscount around && / ||)', async () => {
+  // A quoted '(' operand must NOT affect the top-level && / || split.
+  expect((await run('[[ \'(\' == \'(\' && a == a ]] && echo T || echo F')).out).toBe('T\n');
+  expect((await run('[[ \')\' == \')\' || x == y ]] && echo T || echo F')).out).toBe('T\n');
+  expect((await run('[[ \'(\' == \')\' ]] && echo T || echo F')).out).toBe('F\n');
+  // real grouping still works alongside a quoted-paren operand
+  expect((await run('[[ ( \'(\' == \'(\' ) && a == a ]] && echo T || echo F')).out).toBe('T\n');
 });
 
 test('[[ ]] -ef/-nt/-ot binary file-comparison operators', async () => {

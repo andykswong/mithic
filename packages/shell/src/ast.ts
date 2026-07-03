@@ -150,6 +150,13 @@ export interface Statement {
   /** Cond `[[ ... ]]`: tokenized words. */
   condWords?: string[];
   /**
+   * Cond `[[ ... ]]`: parallel to `condWords`, true where the word is a genuine
+   * GROUPING paren (`LPAREN`/`RPAREN` token), false for a normal operand — including
+   * a quoted/literal `(`/`)` operand. Lets the evaluator distinguish `[[ ( a ) ]]`
+   * (grouping) from `[[ '(' == '(' ]]` (string operands) after expansion loses quoting.
+   */
+  condGroup?: boolean[];
+  /**
    * Coproc: the coproc array NAME (default `COPROC`). The shell exposes
    * `${NAME[0]}` (read fd), `${NAME[1]}` (write fd) and `NAME_PID`.
    */
