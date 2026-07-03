@@ -496,6 +496,11 @@ export class Expander {
         if (env.isReadonly?.(name)) { env.warn?.(`${name}: readonly variable`); return; }
         env.setArrayElement!(name, index, value);
       },
+      // Assoc-array element READ in a word-context `$(( c[k] ))` (the common case);
+      // an assoc element WRITE from a word-context arith is left to the executor.
+      isAssoc: (name) => env.getAssoc?.(name) !== undefined,
+      getAssocElement: (name, key) => env.getAssoc?.(name)?.get(key),
+      setAssocElement: (name, key, value) => { env.getAssoc?.(name)?.set(key, value); },
     };
   }
 
@@ -648,6 +653,20 @@ export class Expander {
       fields.push(f);
     }
     return { fields, join: star ? this.ifsFirst() : undefined };
+  }
+
+  /**
+   * Apply a `${arr[@]OP}` / `${arr[*]OP}` operator to EACH element. A `:off:len`
+   * slice (op[0] === ':') selects a sub-range of the array (handled by the caller's
+   * sliceArray). Every other op — string ops (`#`/`##`/`%`/`%%`/`/`/`//`), case-mod
+   * (`^`/`^^`/`,`/`,,`), default/alt (`:-` etc.) — applies PER ELEMENT (bash), so
+   * `${arr[@]#pre}` / `${arr[@]^^}` transform each value.
+   */
+  private async applyOpToEach(values: string[], op: string): Promise<string[] | undefined> {
+    if (op === '' || op[0] === ':') return undefined; // slice / bare → caller handles
+    const out: string[] = [];
+    for (const v of values) out.push(await this.applyValueOp(v, true, op, 'element'));
+    return out;
   }
 
   /**
@@ -811,7 +830,9 @@ export class Expander {
           return { fields: [...map.keys()], join: sub.subscript === '*' ? this.ifsFirst() : undefined };
         }
         const arr = this.env.getArray?.(sub.name) ?? [];
-        return denseIndices(arr).join(' ');
+        // Indices are SEPARATE fields (like `${arr[@]}`), so quoted `"${!a[@]}"`
+        // splits into distinct index words for `for i in "${!a[@]}"` iteration.
+        return { fields: denseIndices(arr).map(String), join: sub.subscript === '*' ? this.ifsFirst() : undefined };
       }
       // ${!prefix*} / ${!prefix@}: every set variable name starting with prefix.
       if ((inner.endsWith('*') || inner.endsWith('@')) && /^[A-Za-z_][A-Za-z0-9_]*[*@]$/.test(inner)) {
@@ -859,7 +880,9 @@ export class Expander {
         const whole = subAccess.op !== undefined ? this.wholeArrayTransform(subAccess.name, subAccess.op, subAccess.subscript === '*') : undefined;
         if (whole !== undefined) return whole;
         const values = [...map.values()];
-        const fields = subAccess.op !== undefined ? await this.sliceArray(values, sliceSpec(subAccess.op)) : values;
+        // Per-element string ops (`${m[@]#pat}`, `${m[@]^^}`, …) transform each value.
+        const perElem = subAccess.op !== undefined ? await this.applyOpToEach(values, subAccess.op) : undefined;
+        const fields = perElem ?? (subAccess.op !== undefined ? await this.sliceArray(values, sliceSpec(subAccess.op)) : values);
         return { fields, join: subAccess.subscript === '*' ? this.ifsFirst() : undefined };
       }
       const key = await this.substituteOnly(subAccess.subscript);
@@ -879,7 +902,9 @@ export class Expander {
         const whole = subAccess.op !== undefined ? this.wholeArrayTransform(subAccess.name, subAccess.op, subAccess.subscript === '*') : undefined;
         if (whole !== undefined) return whole;
         const values = denseValues(arr); // skip sparse holes (bash sparse-map semantics)
-        const fields = subAccess.op !== undefined ? await this.sliceArray(values, sliceSpec(subAccess.op)) : values;
+        // Per-element string ops (`${a[@]#pat}`, `${a[@]^^}`, `${a[@]/x/y}`, …).
+        const perElem = subAccess.op !== undefined ? await this.applyOpToEach(values, subAccess.op) : undefined;
+        const fields = perElem ?? (subAccess.op !== undefined ? await this.sliceArray(values, sliceSpec(subAccess.op)) : values);
         return { fields, join: subAccess.subscript === '*' ? this.ifsFirst() : undefined };
       }
       let idx = await this.resolveIndex(subAccess.subscript);

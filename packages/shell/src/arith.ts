@@ -136,10 +136,16 @@ function parseBaseLiteral(baseStr: string, digits: string): bigint {
   return wrap64(result);
 }
 
-/** Optional indexed-array element accessors for `a[i]` lvalues in arithmetic. */
+/** Optional array element accessors for `a[i]` / `m[k]` lvalues in arithmetic. */
 export interface ArithArrayAccess {
   getElement(name: string, index: number): string | undefined;
   setElement(name: string, index: number, value: string): void;
+  /** True when `name` is an ASSOCIATIVE array — its subscript is a string KEY,
+   * NOT an arithmetic index (bash: `c[foo]` in `$(( ))` uses key `foo`). Optional. */
+  isAssoc?(name: string): boolean;
+  /** Read/write an associative-array element by string key (for `m[k]` in arith). */
+  getAssocElement?(name: string, key: string): string | undefined;
+  setAssocElement?(name: string, key: string, value: string): void;
 }
 
 class ArithParser {
@@ -178,12 +184,15 @@ class ArithParser {
     return n;
   }
 
-  /** Split an `a[idx]` name into its parts, evaluating the subscript arithmetically. */
-  private arrayRef(name: string): { arr: string; index: number } | undefined {
+  /** Split an `a[idx]` / `m[key]` name. For an ASSOCIATIVE array the subscript is a
+   * literal string KEY (bash: `m[foo]` uses key `foo`); otherwise it is evaluated
+   * arithmetically to a numeric index. */
+  private arrayRef(name: string): { arr: string; index: number; key?: string } | undefined {
     const b = name.indexOf('[');
     if (b < 0 || !name.endsWith(']')) return undefined;
     const arr = name.slice(0, b);
     const idxSrc = name.slice(b + 1, -1);
+    if (this.arr?.isAssoc?.(arr)) return { arr, index: 0, key: idxSrc };
     // Inherit the current suppression: a subscript inside a short-circuited / untaken
     // branch (`0 ? a[i++] : 9`) must NOT run its side effects (bash never evaluates it).
     const sub = new ArithParser(tokenize(idxSrc), this.env, this.arr);
@@ -201,7 +210,9 @@ class ArithParser {
 
   private read(name: string): bigint {
     const ref = this.arrayRef(name);
-    const raw = ref ? this.arr?.getElement(ref.arr, ref.index) : this.env[name];
+    const raw = ref
+      ? (ref.key !== undefined ? this.arr?.getAssocElement?.(ref.arr, ref.key) : this.arr?.getElement(ref.arr, ref.index))
+      : this.env[name];
     if (raw === undefined || raw === '') return 0n;
     // A variable's value is a numeric token (hex/octal/decimal — a leading-zero
     // value IS octal, `n=017` → 15) or, failing that, itself an arithmetic
@@ -218,7 +229,11 @@ class ArithParser {
     const v = wrap64(value);
     if (this.suppress > 0) return v; // untaken branch: compute but do not persist
     const ref = this.arrayRef(name);
-    if (ref) { this.arr?.setElement(ref.arr, ref.index, String(v)); return v; }
+    if (ref) {
+      if (ref.key !== undefined) this.arr?.setAssocElement?.(ref.arr, ref.key, String(v));
+      else this.arr?.setElement(ref.arr, ref.index, String(v));
+      return v;
+    }
     this.env[name] = String(v);
     return v;
   }

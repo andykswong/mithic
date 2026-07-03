@@ -1225,6 +1225,16 @@ export class Executor {
         arr[i] = value;
         this.arrays.set(name, arr);
       },
+      // Associative-array access in arithmetic (`c[k]` / `$(( c[k]+1 ))`): the
+      // subscript is a string KEY, not an arithmetic index (bash).
+      isAssoc: (name) => this.assocArrays.has(name),
+      getAssocElement: (name, key) => this.assocArrays.get(name)?.get(key),
+      setAssocElement: (name, key, value) => {
+        if (this.readonlyNames.has(name)) { this.io.stderr(`shell: ${name}: readonly variable\n`); return; }
+        const m = this.assocArrays.get(name) ?? new Map<string, string>();
+        m.set(key, value);
+        this.assocArrays.set(name, m);
+      },
     };
   }
 
@@ -1325,8 +1335,17 @@ export class Executor {
 
   private async execArithCmd(stmt: Statement): Promise<number> {
     const exp = this.expander();
-    // Expand $vars in the expression, then evaluate against a live proxy.
-    const expanded = await exp.expandToString('$(( ' + (stmt.expr ?? '0') + ' ))');
+    // Expand $vars in the expression, then evaluate against a live proxy. A runtime
+    // arith error (division by zero, invalid octal) in the `(( ))` COMMAND form is a
+    // NON-FATAL per-command failure (status 1) — bash reports it and continues, NOT
+    // abort the script (unlike a `$(( ))` word-context error, which does abort).
+    let expanded: string;
+    try {
+      expanded = await exp.expandToString('$(( ' + (stmt.expr ?? '0') + ' ))');
+    } catch (e) {
+      this.io.stderr(`shell: ((: ${e instanceof ExpansionError ? e.message.replace(/^arith: /, '') : String(e)}\n`);
+      return 1;
+    }
     const v = parseInt(expanded, 10) || 0;
     return v !== 0 ? 0 : 1; // bash: nonzero arith result → success
   }

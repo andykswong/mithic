@@ -440,8 +440,21 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
     }
 
     case 'printf': {
-      const r = formatPrintf(args[0] ?? '', args.slice(1));
-      ctx.write(r.out);
+      // `printf -v VAR fmt args` assigns the formatted output to VAR instead of
+      // writing to stdout. `-vVAR` (attached) and `-v VAR` (separate) both work; a
+      // lone `--` ends option parsing.
+      let pargs = args;
+      let assignVar: string | undefined;
+      if (pargs[0] === '-v' && pargs.length > 1) { assignVar = pargs[1]; pargs = pargs.slice(2); }
+      else if (pargs[0]?.startsWith('-v') && pargs[0].length > 2) { assignVar = pargs[0].slice(2); pargs = pargs.slice(1); }
+      else if (pargs[0] === '--') pargs = pargs.slice(1);
+      const r = formatPrintf(pargs[0] ?? '', pargs.slice(1));
+      if (assignVar !== undefined) {
+        if (ctx.state?.isReadonly?.(assignVar)) { errOut(ctx, `shell: printf: ${assignVar}: readonly variable\n`); return 1; }
+        ctx.env[assignVar] = r.out;
+      } else {
+        ctx.write(r.out);
+      }
       for (const e of r.errors) errOut(ctx, `shell: printf: ${e}\n`);
       return r.errors.length > 0 ? 1 : 0;
     }

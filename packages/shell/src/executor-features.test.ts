@@ -139,6 +139,39 @@ test('an integer-attributed assignment with a malformed arith RHS errors (exit 1
   expect(r.err).not.toBe('');         // a diagnostic is emitted
 });
 
+test('a (( )) command arith error is non-fatal (status 1), the script continues', async () => {
+  expect((await run('echo before; (( 5/0 )); echo "after=$?"')).out).toBe('before\nafter=1\n');
+  expect((await run('(( 08 )); echo "rc=$?"; echo tail')).out).toBe('rc=1\ntail\n');
+  // a genuine $(( )) word-context error still aborts (bash) — unchanged.
+});
+
+test('associative arrays work in arithmetic context ((( )), $(( )), let)', async () => {
+  expect((await run('declare -A c; c[k]=10; echo $((c[k]+5))')).out).toBe('15\n');
+  expect((await run('declare -A c; for w in a a b; do (( c[$w]++ )); done; echo "a=${c[a]} b=${c[b]}"')).out)
+    .toBe('a=2 b=1\n');
+  expect((await run('declare -A m; (( m[x] = 3 * 4 )); echo "${m[x]}"')).out).toBe('12\n');
+});
+
+test('per-element string ops apply to ${arr[@]} / ${arr[*]}', async () => {
+  expect((await run('arr=(hello world); echo "${arr[@]^^}"')).out).toBe('HELLO WORLD\n');
+  expect((await run('arr=(a.txt b.txt); echo "${arr[@]%.txt}"')).out).toBe('a b\n');
+  expect((await run('arr=(hello world); echo "${arr[@]/o/0}"')).out).toBe('hell0 w0rld\n');
+  expect((await run('arr=(pre_a pre_b); echo "${arr[@]#pre_}"')).out).toBe('a b\n');
+});
+
+test('quoted "${!arr[@]}" splits into separate index words', async () => {
+  expect((await run('a=(x y z); n=0; for i in "${!a[@]}"; do n=$((n+1)); done; echo "$n"')).out).toBe('3\n');
+  expect((await run('a=(10 20 30); t=0; for i in "${!a[@]}"; do t=$((t+a[i])); done; echo "$t"')).out).toBe('60\n');
+});
+
+test('printf -v VAR assigns the formatted output to a variable', async () => {
+  expect((await run('printf -v x "%d" 42; echo "[$x]"')).out).toBe('[42]\n');
+  expect((await run('printf -v msg "%s-%s" a b; echo "$msg"')).out).toBe('a-b\n');
+  expect((await run('printf -vx "%d" 9; echo "$x"')).out).toBe('9\n');       // attached -vNAME
+  // without -v it still writes to stdout.
+  expect((await run('printf "%d\\n" 7')).out).toBe('7\n');
+});
+
 // ── command substitution ──────────────────────────────────────────────────────
 
 test('$(cmd) command substitution', async () => {
