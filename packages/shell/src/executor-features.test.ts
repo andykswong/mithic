@@ -116,6 +116,20 @@ test('(( )) arithmetic command sets status', async () => {
   expect((await run('(( 0 )); echo $?')).out.trim()).toBe('1');
 });
 
+test('(( )) and arith-for handle shift-assign <<= />>= (lexer splits << from =)', async () => {
+  expect((await run('x=1; (( x <<= 3 )); echo $x')).out).toBe('8\n');
+  expect((await run('x=8; (( x >>= 1 )); echo $x')).out).toBe('4\n');
+  expect((await run('for ((i=1;i<8;i<<=1)); do echo $i; done')).out).toBe('1\n2\n4\n');
+  // other compound-assign + comparisons in (( )) still parse.
+  expect((await run('x=1; (( x += 2 )); echo $x')).out).toBe('3\n');
+  expect((await run('(( a = 3 < 5 )); echo $a')).out).toBe('1\n');
+});
+
+test('arithmetic short-circuit in $(( )) does not leak errors/side-effects', async () => {
+  expect((await run('echo before; echo $((0 && 1/0)); echo after')).out).toBe('before\n0\nafter\n');
+  expect((await run('x=0; echo $((1 ? 10 : (x=99))); echo $x')).out).toBe('10\n0\n');
+});
+
 // ── command substitution ──────────────────────────────────────────────────────
 
 test('$(cmd) command substitution', async () => {

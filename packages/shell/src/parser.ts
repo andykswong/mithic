@@ -306,8 +306,10 @@ class Parser {
 
   /**
    * C-style `for (( init; cond; incr )); do … done`. The lexer splits the inner
-   * expression on `;` into SEMI tokens and the rest into WORDs; we reassemble
-   * the three clauses by collecting tokens up to `))`, joining WORD `value`s.
+   * expression on `;` into SEMI tokens and the rest into WORDs; we reassemble the
+   * three clauses by collecting tokens up to `))`, joining RAW tokens with NO
+   * separator (spaces are insignificant in arithmetic; a space-join would split a
+   * shift-assign like `i<<=1` — lexed as `<<` + `=` — into an invalid `i << =1`).
    */
   private parseArithFor(): Statement {
     this.next(); // ((
@@ -316,8 +318,7 @@ class Parser {
       if (this.atType('SEMI')) { clauses.push(''); this.next(); continue; }
       // `for ((;;))` tokenizes the empty middle as a single DSEMI (`;;`).
       if (this.atType('DSEMI')) { clauses.push(''); clauses.push(''); this.next(); continue; }
-      const t = this.next()!;
-      clauses[clauses.length - 1] += (clauses[clauses.length - 1] ? ' ' : '') + (t.value ?? t.raw);
+      clauses[clauses.length - 1] += this.next()!.raw;
     }
     if (this.atType('DRPAREN')) this.next();
     while (this.atType('SEMI') || this.atType('NEWLINE')) this.next();
@@ -437,10 +438,16 @@ class Parser {
 
   private parseArithCmd(): Statement {
     this.next(); // ((
-    const words: string[] = [];
-    while (this.peek() && !this.atType('DRPAREN')) words.push(this.next()!.value);
+    // Reconstruct the arithmetic source. The shell lexer greedily splits redirect
+    // operators (`<<`/`>>`/`<`/`>`/`&`/`|`), so `x <<= 3` arrives as tokens `x`,
+    // `<<`, `=`, `3`. Joining with SPACES would produce `x << = 3` (arith parse
+    // error on the stray `=`); the arith tokenizer re-lexes the full operator set
+    // itself, so we join the RAW tokens with NO separator — spaces are never
+    // significant in arithmetic, and this reunites `<<`+`=` into `<<=`.
+    let expr = '';
+    while (this.peek() && !this.atType('DRPAREN')) expr += this.next()!.raw;
     if (this.atType('DRPAREN')) this.next();
-    return { type: 'Arithmetic', expr: words.join(' ') };
+    return { type: 'Arithmetic', expr };
   }
 
   private parseCond(): Statement {
