@@ -83,6 +83,14 @@ export interface ShellState {
   markInteger?(name: string): void;
   /** True when the name was marked integer (`declare -i`). */
   isInteger?(name: string): boolean;
+  /**
+   * Set/clear a name's case-fold attribute (`declare -l` lower, `-u` upper, `+l`/`+u`
+   * clears). Every subsequent assignment to the name (scalar, array, element, `+=`)
+   * folds its value; the attribute also shows in `declare -p` (`declare -l`/`-u`).
+   */
+  markCaseFold?(name: string, mode: 'lower' | 'upper' | undefined): void;
+  /** A name's case-fold mode (`declare -l`/`-u`), or undefined if none. */
+  caseFoldOf?(name: string): 'lower' | 'upper' | undefined;
   /** Mark a name as exported (`export` / `declare -x`) — for `declare -p`'s `-x`. */
   markExport?(name: string): void;
   /**
@@ -108,6 +116,13 @@ export interface ShellState {
    * The current directory (`ctx.cwd`) is the conceptual top and is NOT stored here.
    */
   dirStack?(): string[];
+}
+
+/** Apply a `declare -l`/`-u` case-fold to a value (no-op when `mode` is undefined). */
+export function applyCaseFold(value: string, mode: 'lower' | 'upper' | undefined): string {
+  if (mode === 'lower') return value.toLowerCase();
+  if (mode === 'upper') return value.toUpperCase();
+  return value;
 }
 
 /** Shell reserved words, for `type`/`type -t`/`command -v` classification (`keyword`). */
@@ -544,8 +559,10 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       // Only tokens before the first non-flag operand are options (bash); a bare
       // `-` or `+…` is not a flag token here.
       const flags = new Set<string>();
+      const plusFlags = new Set<string>(); // `+l`/`+u`/… REMOVE an attribute (bash)
       for (const a of args) {
         if (a.length > 1 && a[0] === '-') { for (const ch of a.slice(1)) flags.add(ch); }
+        else if (a.length > 1 && a[0] === '+') { for (const ch of a.slice(1)) plusFlags.add(ch); }
         else break; // first operand — stop flag scanning
       }
       const isAssoc = (isDeclare || isLocal) && flags.has('A');
@@ -573,6 +590,14 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       const flagInteger = flags.has('i');
       const flagReadonly = isReadonly || flags.has('r');
       const flagExport = flags.has('x'); // `declare -x` / `-rx` → exported attribute
+      // `declare -l` (lowercase) / `-u` (uppercase) case-fold attribute. Both together
+      // (`-lu`) cancel to NO fold (bash). Only meaningful on declare/typeset/local.
+      const flagCaseFold: 'lower' | 'upper' | undefined =
+        (flags.has('l') && flags.has('u')) ? undefined
+          : flags.has('l') ? 'lower' : flags.has('u') ? 'upper' : undefined;
+      // `+l`/`+u` clear the fold; `-l`/`-u`/`-lu` set it. Either presence means we
+      // (re)assign the name's fold attribute below.
+      const hasCaseFoldFlag = flags.has('l') || flags.has('u') || plusFlags.has('l') || plusFlags.has('u');
       if (isAssoc && (ctx.state?.getOption('posix') ?? false)) {
         errOut(ctx, 'shell: declare: -A: not supported in POSIX mode\n');
         return 2;
@@ -595,6 +620,9 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         }
         if (isAssoc) ctx.state?.declareAssoc?.(a.name);
         if (flagInteger) ctx.state?.markInteger?.(a.name);
+        // Mark case-fold BEFORE applying the array so applyBuiltinAssignment folds
+        // each element (bash: `declare -la a=(FOO Bar)` → foo bar).
+        if (hasCaseFoldFlag) ctx.state?.markCaseFold?.(a.name, flagCaseFold);
         const roBlockedArr = flagGlobal ? (ctx.state?.isGlobalReadonly?.(a.name) ?? false) : (ctx.state?.isReadonly?.(a.name) ?? false);
         if (roBlockedArr) {
           errOut(ctx, `shell: ${name}: ${a.name}: readonly variable\n`);
@@ -635,6 +663,7 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
             if (isLocal && scope === 'none') { errOut(ctx, 'shell: local: can only be used in a function\n'); return 1; }
           }
           if (flagInteger) ctx.state?.markInteger?.(subM[1]);
+          if (hasCaseFoldFlag) ctx.state?.markCaseFold?.(subM[1], flagCaseFold);
           if (await ctx.applyBuiltinAssignment({ name: subM[1], value: arg.slice(eq + 1), index: subM[2], append: subM[3] === '+' }, flagGlobal)) declStatus = 1;
           if (flagReadonly) ctx.state?.markReadonly?.(subM[1]);
           if (flagExport) ctx.state?.markExport?.(subM[1]);
@@ -669,6 +698,10 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         // `declare -i name` marks the name integer BEFORE assigning, so the RHS
         // is arithmetic-evaluated (bash: `declare -i n=1+2` → n=3).
         if (flagInteger) ctx.state?.markInteger?.(n);
+        // `declare -l`/`-u` set/clear the case-fold attribute before assigning so the
+        // value below folds. Applying the attribute to an EXISTING value does NOT
+        // refold it (bash: `x=HELLO; declare -l x` keeps HELLO; only later writes fold).
+        if (hasCaseFoldFlag) ctx.state?.markCaseFold?.(n, flagCaseFold);
         if (eq > 0) {
           // A write to an ALREADY-readonly var fails — even via `readonly NAME=val`
           // (bash: `readonly r=a; readonly r=b` errors). The first `readonly RO=1`
@@ -686,9 +719,13 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
           if (!isAssoc) {
             const rhs = arg.slice(eq + 1);
             const prev = append ? (ctx.env[n] ?? '') : '';
-            const val = flagInteger
+            let val = flagInteger
               ? String(append ? (ctx.evalArith?.(prev || '0') ?? 0n) + (ctx.evalArith?.(rhs) ?? 0n) : (ctx.evalArith?.(rhs) ?? 0n))
               : prev + rhs; // `+=` appends (prev is '' when not append)
+            // Case-fold the value on assignment (`declare -l`/`-u`). `+=` folds the
+            // combined string (bash folds each write, so prev is already folded).
+            const foldMode = ctx.state?.caseFoldOf?.(n);
+            if (foldMode !== undefined && !flagInteger) val = applyCaseFold(val, foldMode);
             // `declare -g` writes the GLOBAL binding (updating an enclosing local's
             // snapshot rather than clobbering it); otherwise write the current env.
             if (flagGlobal && ctx.state?.setGlobal?.(n, val)) { /* global updated */ }

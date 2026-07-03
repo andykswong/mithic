@@ -1026,6 +1026,58 @@ test('array-element arithmetic inside (( ))', async () => {
   expect((await run('a=(5); ((a[0]++)); echo ${a[0]}')).out).toBe('6\n');
 });
 
+// ── declare -l / -u case-fold attribute (fold every assigned value) ──────────
+
+test('declare -l lowercases and -u uppercases on assignment', async () => {
+  expect((await run('declare -l x=HELLO; echo $x')).out).toBe('hello\n');
+  expect((await run('declare -u y=hello; echo $y')).out).toBe('HELLO\n');
+  expect((await run('typeset -l q=BIG; echo $q')).out).toBe('big\n');
+});
+
+test('declare -l/-u folds on LATER writes too (attribute is sticky)', async () => {
+  expect((await run('declare -l x=HELLO; x=WORLD; echo $x')).out).toBe('world\n');
+  expect((await run('declare -l x; x=MiXeD; echo $x')).out).toBe('mixed\n');
+  expect((await run('declare -u v=ab; v+=CD; echo $v')).out).toBe('ABCD\n');
+  expect((await run('declare -l w=AB; w+=cd; echo $w')).out).toBe('abcd\n');
+});
+
+test('declare -l/-u fold array literals and element writes', async () => {
+  expect((await run('declare -la arr=(FOO Bar); echo ${arr[0]} ${arr[1]}')).out).toBe('foo bar\n');
+  expect((await run('declare -la arr; arr[0]=HeLLo; echo ${arr[0]}')).out).toBe('hello\n');
+  expect((await run('declare -uA m=([k]=abc); echo ${m[k]}')).out).toBe('ABC\n');
+});
+
+test('declare -lu (both) cancels to NO case-fold attribute', async () => {
+  expect((await run('declare -lu z=Hi; echo $z')).out).toBe('Hi\n');
+  expect((await run('declare -ul z=Hi; echo $z')).out).toBe('Hi\n');
+});
+
+test('applying -l to an EXISTING value does not refold it; only later writes fold', async () => {
+  expect((await run('x=HELLO; declare -l x; echo $x')).out).toBe('HELLO\n');
+  expect((await run('x=HELLO; declare -l x; x=AGAIN; echo $x')).out).toBe('again\n');
+});
+
+test('+l / +u removes the case-fold attribute', async () => {
+  expect((await run('declare -l x=abc; declare +l x; x=DEF; echo $x')).out).toBe('DEF\n');
+});
+
+test('declare -p reflects the -l/-u attribute (and bare -l name with no value)', async () => {
+  expect((await run('declare -l x=Hi; declare -p x')).out).toBe('declare -l x="hi"\n');
+  expect((await run('declare -u y=hi; declare -p y')).out).toBe('declare -u y="HI"\n');
+  expect((await run('declare -l n; declare -p n')).out).toBe('declare -l n\n');
+  // flag order: a/i/r/x then l/u last (bash)
+  expect((await run('declare -rxl m=Hi; declare -p m')).out).toBe('declare -rxl m="hi"\n');
+});
+
+test('declare -i overrides -l for scalar (arithmetic value, digits unaffected)', async () => {
+  expect((await run('declare -i -l x=5+3; echo $x')).out).toBe('8\n');
+});
+
+test('a function-local declare -l does not leak its fold attribute to the caller', async () => {
+  const src = 'x=OUTER; f() { local -l x; x=INNER; echo "$x"; }; f; echo "$x"; x=AGAIN; echo "$x"';
+  expect((await run(src)).out).toBe('inner\nOUTER\nAGAIN\n');
+});
+
 test('logical NOT usable in arithmetic (history expansion off for non-interactive)', async () => {
   expect((await run('echo $((!0))')).out).toBe('1\n');
   expect((await run('echo $((!5))')).out).toBe('0\n');

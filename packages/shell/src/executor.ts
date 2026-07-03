@@ -29,7 +29,7 @@ import type { GlobOptions } from './glob.ts';
 import { Expander, ExpansionError } from './expander.ts';
 import { shellQuoteQ } from './quote.ts';
 import { expandHistory, HistoryEventNotFound } from './history-expand.ts';
-import { isBuiltin, isShellKeyword, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES, PosixSpecialBuiltinError, POSIX_SPECIAL_BUILTINS, testNumericCompare } from './builtins.ts';
+import { isBuiltin, isShellKeyword, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES, PosixSpecialBuiltinError, POSIX_SPECIAL_BUILTINS, testNumericCompare, applyCaseFold } from './builtins.ts';
 import type { BuiltinContext, ShellState, ShellOptionName } from './builtins.ts';
 import { Environment, computeShlvl } from './environment.ts';
 import type { EnvHost } from './environment.ts';
@@ -272,6 +272,7 @@ export class Executor {
    */
   private localSavedArrays: Array<Map<string, {
     arr?: string[]; assoc?: Map<string, string>; integer: boolean; readonly: boolean; nameref?: string;
+    caseFold?: 'lower' | 'upper';
   }>> = [];
   /** Names marked `readonly` — reassigning one is rejected (fatal in POSIX mode). */
   private readonlyNames = new Set<string>();
@@ -279,6 +280,8 @@ export class Executor {
   private integerNames = new Set<string>();
   /** Names marked exported (`export` / `declare -x`) — for `declare -p`'s `-x` flag. */
   private exportedNames = new Set<string>();
+  /** Names with a `declare -l`/`-u` case-fold attribute → fold every assigned value. */
+  private caseFoldNames = new Map<string, 'lower' | 'upper'>();
   /** `$BASH_REMATCH` capture groups from the last successful `[[ =~ ]]` match. */
   private bashRematch: string[] = [];
   /** `$_` — the last argument (post-expansion) of the previous simple command. */
@@ -770,6 +773,8 @@ export class Executor {
       unsetVar: (name, index) => this.unsetVar(name, index),
       markInteger: (name) => { this.integerNames.add(name); },
       isInteger: (name) => this.integerNames.has(name),
+      markCaseFold: (name, mode) => { if (mode === undefined) this.caseFoldNames.delete(name); else this.caseFoldNames.set(name, mode); },
+      caseFoldOf: (name) => this.caseFoldNames.get(name),
       markExport: (name) => { this.exportedNames.add(name); },
       declareP: (names) => this.declareP(names),
       setNameref: (ref, target) => { this.namerefs.set(ref, target); },
@@ -869,6 +874,7 @@ export class Executor {
       integer: this.integerNames.has(name),
       readonly: this.readonlyNames.has(name),
       nameref: this.namerefs.get(name),
+      caseFold: this.caseFoldNames.get(name),
     });
     // A fresh local shadows the outer variable with an EMPTY, attribute-less binding
     // (bash: `local x` hides a global `x`; `local a` on a global array yields an
@@ -879,6 +885,7 @@ export class Executor {
     this.assocArrays.delete(name);
     this.integerNames.delete(name);
     this.readonlyNames.delete(name);
+    this.caseFoldNames.delete(name);
     this.namerefs.delete(name);
     return 'fresh';
   }
@@ -1210,6 +1217,7 @@ export class Executor {
     this.arrays.delete(name);
     this.assocArrays.delete(name);
     this.integerNames.delete(name);
+    this.caseFoldNames.delete(name);
     this.namerefs.delete(name);
   }
 
@@ -2543,7 +2551,10 @@ export class Executor {
     // rather than the visible local. Otherwise `this.arrays` IS the global.
     const globalScopeIdx = global ? this.localScopes.findIndex((s) => s.has(name)) : -1;
     const intAttr = this.integerNames.has(name);
-    const evalIfInt = (v: string): string => intAttr ? String(this.evalArithValue(v)) : v;
+    const foldMode = this.caseFoldNames.get(name);
+    // Integer arrays arith-evaluate; a `declare -l`/`-u` array folds each element.
+    const evalIfInt = (v: string): string =>
+      intAttr ? String(this.evalArithValue(v)) : applyCaseFold(v, foldMode);
     const assoc = globalScopeIdx < 0 ? this.assocArrays.get(name) : undefined;
     if (assoc !== undefined) {
       if (!append) assoc.clear();
@@ -2631,8 +2642,9 @@ export class Executor {
       // An integer-attributed array (`declare -i a`) arithmetic-evaluates element
       // RHS values; `+=` adds numerically. Otherwise the value is a plain string.
       const intAttr = this.integerNames.has(a.name);
+      const foldMode = this.caseFoldNames.get(a.name);
       const evalIfInt = (raw: string, prev: string): string => {
-        if (!intAttr) return a.append ? prev + raw : raw;
+        if (!intAttr) return applyCaseFold(a.append ? prev + raw : raw, foldMode);
         const rhs = this.evalArithValue(raw);
         return String(a.append ? this.evalArithValue(prev || '0') + rhs : rhs);
       };
@@ -2687,7 +2699,10 @@ export class Executor {
         return true; // rejected → caller surfaces nonzero status; var unchanged
       }
     }
-    this.context.env[a.name] = a.append ? (this.context.env[a.name] ?? '') + val : val;
+    // Case-fold the scalar value on assignment (`declare -l`/`-u`); `+=` folds the
+    // whole combined string (each prior write was already folded).
+    const folded = applyCaseFold(a.append ? (this.context.env[a.name] ?? '') + val : val, this.caseFoldNames.get(a.name));
+    this.context.env[a.name] = folded;
     return false;
   }
 
@@ -2824,6 +2839,8 @@ export class Executor {
         else this.integerNames.add(k);
         if (sa === undefined || !sa.readonly) this.readonlyNames.delete(k);
         else this.readonlyNames.add(k);
+        if (sa === undefined || sa.caseFold === undefined) this.caseFoldNames.delete(k);
+        else this.caseFoldNames.set(k, sa.caseFold);
         if (sa === undefined || sa.nameref === undefined) this.namerefs.delete(k);
         else this.namerefs.set(k, sa.nameref);
       }
@@ -2859,6 +2876,9 @@ export class Executor {
       if (this.integerNames.has(n)) f += 'i';
       if (this.readonlyNames.has(n)) f += 'r';
       if (this.exportedNames.has(n)) f += 'x';
+      const fold = this.caseFoldNames.get(n);
+      if (fold === 'lower') f += 'l';
+      else if (fold === 'upper') f += 'u';
       return f;
     };
     const line = (n: string): string | undefined => {
@@ -2879,7 +2899,7 @@ export class Executor {
         return `declare ${opt} ${n}=(${body})`;
       }
       if (n in this.context.env) return `declare ${opt} ${n}=${val(this.context.env[n])}`;
-      if (this.readonlyNames.has(n) || this.integerNames.has(n)) return `declare ${opt} ${n}`;
+      if (this.readonlyNames.has(n) || this.integerNames.has(n) || this.caseFoldNames.has(n)) return `declare ${opt} ${n}`;
       return undefined;
     };
     if (names.length === 0) {
