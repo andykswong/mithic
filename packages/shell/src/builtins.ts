@@ -1014,7 +1014,14 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         if (a[a.length - 1] !== ']') { errOut(ctx, 'shell: [: missing `]\'\n'); return 2; }
         a = a.slice(0, -1);
       }
-      return evalTest(a) ? 0 : 1;
+      // A numeric comparison (`-eq` …) on a non-integer / out-of-int64-range operand
+      // is a bash error: `integer expected`, exit 2.
+      try {
+        return evalTest(a) ? 0 : 1;
+      } catch (e) {
+        if (e instanceof TestIntegerError) { errOut(ctx, `shell: ${name}: ${e.message}\n`); return 2; }
+        throw e;
+      }
     }
 
     case 'exit': {
@@ -1597,29 +1604,43 @@ function unaryTest(op: string, s: string): boolean {
   }
 }
 
+/** Thrown by a `test -eq` numeric operand that is not a valid intmax_t integer;
+ * the `test`/`[` builtin catches it → `integer expected` diagnostic + exit 2. */
+class TestIntegerError extends Error {
+  operand: string;
+  constructor(operand: string) { super(`${operand}: integer expected`); this.operand = operand; }
+}
+
+const TEST_INTMAX_MAX = (1n << 63n) - 1n;
+const TEST_INTMAX_MIN = -(1n << 63n);
+
 /**
- * Parse a `test`/`[ ]` numeric operand as a 64-bit integer. POSIX `test` operands
- * are DECIMAL (bash `[ 010 -eq 10 ]` is true — `010` is decimal ten, not octal;
- * `[ 0x10 ... ]` errors). 64-bit BigInt keeps precision beyond 2^53 (a JS `Number`
- * would not). A non-numeric operand → 0 (the mock surface returns false, not error).
+ * Parse a `test`/`[ ]` numeric operand as a 64-bit `intmax_t`. POSIX `test` operands
+ * are DECIMAL (bash `[ 010 -eq 10 ]` is true — `010` is decimal ten, not octal).
+ * A non-integer operand OR one outside [INTMAX_MIN, INTMAX_MAX] is an error (bash:
+ * `integer expected`, exit 2), thrown as {@link TestIntegerError}. 64-bit BigInt
+ * keeps precision beyond 2^53 that a JS `Number` would lose.
  */
 function testInt(s: string): bigint {
   const t = s.trim();
   const m = /^([+-]?)0*([0-9]+)$/.exec(t); // decimal, leading zeros stripped
-  if (m === null) return 0n;
-  try { return BigInt(m[1] + (m[2] || '0')); } catch { return 0n; }
+  if (m === null) throw new TestIntegerError(s);
+  let v: bigint;
+  try { v = BigInt(m[1] + (m[2] || '0')); } catch { throw new TestIntegerError(s); }
+  if (v > TEST_INTMAX_MAX || v < TEST_INTMAX_MIN) throw new TestIntegerError(s);
+  return v;
 }
 
-/** The 64-bit integer comparison operators for `test`/`[` (DECIMAL operands). */
+/** The 64-bit integer comparison operators for `test`/`[` (DECIMAL operands). May
+ * throw {@link TestIntegerError} on a non-integer / out-of-range operand. */
 export function testNumericCompare(a: string, op: string, b: string): boolean | undefined {
-  const x = testInt(a), y = testInt(b);
   switch (op) {
-    case '-eq': return x === y;
-    case '-ne': return x !== y;
-    case '-lt': return x < y;
-    case '-le': return x <= y;
-    case '-gt': return x > y;
-    case '-ge': return x >= y;
+    case '-eq': return testInt(a) === testInt(b);
+    case '-ne': return testInt(a) !== testInt(b);
+    case '-lt': return testInt(a) < testInt(b);
+    case '-le': return testInt(a) <= testInt(b);
+    case '-gt': return testInt(a) > testInt(b);
+    case '-ge': return testInt(a) >= testInt(b);
     default: return undefined;
   }
 }

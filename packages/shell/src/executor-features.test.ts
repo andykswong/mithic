@@ -980,6 +980,17 @@ test('numeric comparisons are 64-bit; [ ] is decimal, [[ ]] is arithmetic', asyn
   expect((await run('x=100; [[ x -eq 100 ]] && echo VAR')).out).toBe('VAR\n');
 });
 
+test('[ ] numeric comparison errors (exit 2) on a non-integer or out-of-int64-range operand', async () => {
+  const big = await run('[ 10000000000000000000 -gt 5 ]; echo "rc=$?"');
+  expect(big.out).toBe('rc=2\n'); expect(big.err).toMatch(/integer expected/);
+  const over = await run('[ 9223372036854775808 -gt 5 ]; echo "rc=$?"'); // INT64_MAX + 1
+  expect(over.out).toBe('rc=2\n');
+  const nan = await run('[ abc -gt 5 ]; echo "rc=$?"');
+  expect(nan.out).toBe('rc=2\n'); expect(nan.err).toMatch(/integer expected/);
+  // INT64_MAX itself is valid.
+  expect((await run('[ 9223372036854775807 -gt 5 ] && echo OK')).out).toBe('OK\n');
+});
+
 test('test/[ ] lexical </> and [[ ]] lexical </>', async () => {
   expect((await run('[ apple \\< banana ] && echo ordered')).out).toBe('ordered\n');
   expect((await run('[ banana \\> apple ] && echo ok')).out).toBe('ok\n');

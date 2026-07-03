@@ -3170,7 +3170,9 @@ function evalTestArgs(args: string[]): boolean {
     switch (op) {
       case '=': case '==': return a === b;
       case '!=': return a !== b;
-      default: return testNumericCompare(a, op, b) ?? false; // 64-bit -eq/-ne/-lt/…
+      // Numeric `-eq`… inside `[[ ]]` are intercepted upstream (arith); this
+      // fall-through is defensive. A non-integer operand → false (never throws here).
+      default: try { return testNumericCompare(a, op, b) ?? false; } catch { return false; }
     }
   }
   return false;
