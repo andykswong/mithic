@@ -272,7 +272,7 @@ export class Executor {
    */
   private localSavedArrays: Array<Map<string, {
     arr?: string[]; assoc?: Map<string, string>; integer: boolean; readonly: boolean; nameref?: string;
-    caseFold?: 'lower' | 'upper';
+    caseFold?: 'lower' | 'upper'; declaredUnset?: 'scalar' | 'array' | 'assoc' | 'nameref';
   }>> = [];
   /** Names marked `readonly` — reassigning one is rejected (fatal in POSIX mode). */
   private readonlyNames = new Set<string>();
@@ -286,7 +286,7 @@ export class Executor {
    * shows these as a bare `declare -a NAME` (no `=(…)`), distinct from an explicitly
    * EMPTY `declare -a NAME=()`. The kind is the intended container. A name leaves this
    * map the moment any value/element is assigned (see {@link clearDeclaredUnset}). */
-  private declaredUnset = new Map<string, 'scalar' | 'array' | 'assoc'>();
+  private declaredUnset = new Map<string, 'scalar' | 'array' | 'assoc' | 'nameref'>();
   /** `$BASH_REMATCH` capture groups from the last successful `[[ =~ ]]` match. */
   private bashRematch: string[] = [];
   /** `$_` — the last argument (post-expansion) of the previous simple command. */
@@ -731,7 +731,22 @@ export class Executor {
         this.context.positional = p.slice(n);
       },
       declareLocal: (name) => this.declareLocal(name),
-      declareAssoc: (name) => {
+      declareAssoc: (name, global) => {
+        // `declare -gA NAME` while a same-name LOCAL shadows NAME must NOT clobber the
+        // visible local (bash keeps the local until return). The GLOBAL assoc attribute
+        // is committed by applyArrayLiteral into the outermost scope's snapshot; here we
+        // only ensure the live local is left intact and mark the global snapshot assoc.
+        if (global) {
+          for (let i = 0; i < this.localScopes.length; i++) {
+            if (this.localScopes[i].has(name)) {
+              const snap = this.localSavedArrays[i].get(name);
+              const m = snap?.assoc ?? new Map<string, string>();
+              if (snap !== undefined) { snap.assoc = m; snap.arr = undefined; }
+              else this.localSavedArrays[i].set(name, { assoc: m, integer: false, readonly: false });
+              return; // live local untouched
+            }
+          }
+        }
         if (!this.assocArrays.has(name)) this.assocArrays.set(name, new Map());
         // An associative declaration shadows any prior scalar/indexed value.
         delete this.context.env[name];
@@ -776,10 +791,12 @@ export class Executor {
       removeJob: (spec) => this.jobControl.remove(spec),
       killJob: (spec, signal) => this.jobControl.killJob(spec, signal),
       markReadonly: (name) => { this.readonlyNames.add(name); },
+      markGlobalReadonly: (name) => this.markGlobalReadonly(name),
       isReadonly: (name) => this.readonlyNames.has(name),
       isGlobalReadonly: (name) => this.isGlobalReadonly(name),
       unsetVar: (name, index) => this.unsetVar(name, index),
       markInteger: (name) => { this.integerNames.add(name); },
+      markGlobalInteger: (name) => this.markGlobalInteger(name),
       isInteger: (name) => this.integerNames.has(name),
       markCaseFold: (name, mode) => { if (mode === undefined) this.caseFoldNames.delete(name); else this.caseFoldNames.set(name, mode); },
       caseFoldOf: (name) => this.caseFoldNames.get(name),
@@ -882,6 +899,36 @@ export class Executor {
     else this.caseFoldNames.set(name, mode);
   }
 
+  /** Set the INTEGER (`declare -gi`) or READONLY (`declare -gr`) attribute of the GLOBAL
+   * binding of `name`. When a local shadows `name`, record it on the OUTERMOST shadowing
+   * scope's snapshot so the attribute SURVIVES the function return (the restore loop
+   * replays the snapshot) — mirroring markGlobalCaseFold. Otherwise the live set IS the
+   * global. Without this, `declare -gi`/`-gr` under a local shadow set the LIVE set,
+   * which the return-restore then wipes (losing the attribute on the global). */
+  private markGlobalInteger(name: string): void {
+    for (let i = 0; i < this.localScopes.length; i++) {
+      if (this.localScopes[i].has(name)) {
+        const snap = this.localSavedArrays[i].get(name);
+        if (snap !== undefined) snap.integer = true;
+        else this.localSavedArrays[i].set(name, { integer: true, readonly: false });
+        return;
+      }
+    }
+    this.integerNames.add(name);
+  }
+
+  private markGlobalReadonly(name: string): void {
+    for (let i = 0; i < this.localScopes.length; i++) {
+      if (this.localScopes[i].has(name)) {
+        const snap = this.localSavedArrays[i].get(name);
+        if (snap !== undefined) snap.readonly = true;
+        else this.localSavedArrays[i].set(name, { integer: false, readonly: true });
+        return;
+      }
+    }
+    this.readonlyNames.add(name);
+  }
+
   private setGlobal(name: string, value: string): boolean {
     // Find the OUTERMOST scope holding NAME as a local — its snapshot is the global
     // value that will surface once every shadowing frame returns.
@@ -909,10 +956,7 @@ export class Executor {
    * `declare -a`/`-A`/`-x`). For an array/assoc kind we also seed an empty container so
    * `${NAME[@]}`/`${#NAME[@]}` read as an empty array; `declare -p` still prints the
    * bare form (no `=(…)`) while the name stays in {@link declaredUnset}. */
-  private predeclare(name: string, kind: 'scalar' | 'array' | 'assoc'): void {
-    // The bare-vs-empty distinction is a GLOBAL inspection concern; if a function-local
-    // shadows `name`, leave it to the local's own (snapshot-restored) lifecycle.
-    if (this.localScopes.some((s) => s.has(name))) return;
+  private predeclare(name: string, kind: 'scalar' | 'array' | 'assoc' | 'nameref'): void {
     // Never override an existing VALUE (bash: `v=hi; declare v` keeps hi). A name that
     // already holds a value/array/assoc is not "unset" — leave it and its storage be.
     // (A pre-existing empty `-A`/`-a` container with no entries is still "declared, no
@@ -920,6 +964,8 @@ export class Executor {
     if (name in this.context.env) return;
     if (this.arrays.has(name) && this.arrays.get(name)!.length > 0) return;
     if (this.assocArrays.has(name) && this.assocArrays.get(name)!.size > 0) return;
+    // A bare `declare -n r` (targetless nameref) is recorded only as a declared-unset
+    // marker (no mapping in `namerefs`), so `declare -p r` prints the bare `declare -n r`.
     if (kind === 'array' && !this.arrays.has(name)) this.arrays.set(name, []);
     else if (kind === 'assoc' && !this.assocArrays.has(name)) this.assocArrays.set(name, new Map());
     this.declaredUnset.set(name, kind);
@@ -950,6 +996,7 @@ export class Executor {
       readonly: this.readonlyNames.has(name),
       nameref: this.namerefs.get(name),
       caseFold: this.caseFoldNames.get(name),
+      declaredUnset: this.declaredUnset.get(name),
     });
     // A fresh local shadows the outer variable with an EMPTY, attribute-less binding
     // (bash: `local x` hides a global `x`; `local a` on a global array yields an
@@ -962,6 +1009,7 @@ export class Executor {
     this.readonlyNames.delete(name);
     this.caseFoldNames.delete(name);
     this.namerefs.delete(name);
+    this.declaredUnset.delete(name);
     return 'fresh';
   }
 
@@ -1294,6 +1342,10 @@ export class Executor {
     this.integerNames.delete(name);
     this.caseFoldNames.delete(name);
     this.namerefs.delete(name);
+    // Also drop a declared-but-unset marker: after `unset`, `declare -p NAME` must
+    // report "not found" (exit 1), not the stale bare form.
+    this.declaredUnset.delete(name);
+    this.exportedNames.delete(name);
   }
 
   private arithArrayAccessExec(): ArithArrayAccess {
@@ -1445,18 +1497,33 @@ export class Executor {
     // expansion (quotes → literal, unquoted backslashes kept) — used by the evaluator
     // instead of the quote-collapsed `expandToString`. `undefined` elsewhere.
     const regexSources: (string | undefined)[] = [];
+    // Parallel to `words`: true where the token was a LITERAL operator in the SOURCE
+    // (no quoting, no expansion). bash classifies conditional operators lexically at
+    // parse time, so an operator arriving via `$var`/quoting is DATA (a string operand),
+    // NOT an operator: `x=-e; [[ $x ]]` is a string test, not a malformed unary op. Only
+    // a source-literal operator can be recognized as an operator or flagged malformed.
+    const literalOp: boolean[] = [];
     for (let i = 0; i < raw.length; i++) {
       const w = raw[i];
       // [[ ]] does not word-split, but we expand each token to a single string.
-      words.push(await exp.expandToString(w));
+      const expanded = await exp.expandToString(w);
+      words.push(expanded);
       regexSources.push(raw[i - 1] === '=~' ? await exp.expandRegexOperand(w) : undefined);
+      // A literal operator token has no expansion/quote characters and survives
+      // expansion unchanged (`-e`, `==`, `-eq`, `<`, `=~`, `-nt`, …).
+      literalOp.push(w === expanded && !/[$`'"\\]/.test(w));
     }
     // `condGroup` marks which words are genuine grouping parens (vs quoted `(`/`)`
     // operands) — expansion collapses quoting, so this parallel array is how the
     // evaluator tells `[[ ( a ) ]]` from `[[ '(' == '(' ]]`.
     const group = stmt.condGroup ?? words.map(() => false);
     try {
-      return (await this.evalConditional(words, group, regexSources)) ? 0 : 1;
+      // bash validates the WHOLE `[[ ]]` structure at PARSE time, independent of operand
+      // truth values — so a malformed operand hidden behind a short-circuit (`[[ x || -e ]]`,
+      // `[[ z || w && ]]`) still errors. Validate the full tree up front (recursing BOTH
+      // sides, no short-circuit, no I/O) so evaluation can then short-circuit freely.
+      this.validateCond(words, group, literalOp);
+      return (await this.evalConditional(words, group, regexSources, literalOp)) ? 0 : 1;
     } catch (e) {
       // A malformed conditional (`[[ -e ]]`, `[[ x -badop y ]]`, `[[ ]]`, `[[ a b ]]`)
       // is FAIL-LOUD in bash: a `syntax error` on stderr + exit 2, NOT a fabricated
@@ -1466,10 +1533,78 @@ export class Executor {
     }
   }
 
+  /** Structural PARSE-TIME validation of a `[[ ]]` expression — mirrors the shape checks
+   * in {@link evalConditional} but recurses into BOTH sides of `&&`/`||` (no short-circuit)
+   * and performs NO file/regex/variable tests. Throws {@link TestSyntaxError} on any
+   * malformed leaf so a malformed operand in a would-be-short-circuited branch is still
+   * caught (bash validates the whole construct regardless of operand truth). */
+  private validateCond(words: string[], group: boolean[], literalOp: boolean[]): void {
+    const isOp = (i: number, op: string): boolean => words[i] === op && (literalOp.length === 0 || literalOp[i]);
+    const wasLiteral = (i: number): boolean => literalOp.length === 0 || literalOp[i];
+    const topLevel = (op: string): number => {
+      let depth = 0, found = -1;
+      for (let i = 0; i < words.length; i++) {
+        if (group[i] && words[i] === '(') depth++;
+        else if (group[i] && words[i] === ')') depth--;
+        else if (depth === 0 && words[i] === op) found = i;
+      }
+      return found;
+    };
+    const orIdx = topLevel('||');
+    if (orIdx >= 0) {
+      if (orIdx === 0 || orIdx === words.length - 1) throw new TestSyntaxError('syntax error near `||\'');
+      this.validateCond(words.slice(0, orIdx), group.slice(0, orIdx), literalOp.slice(0, orIdx));
+      this.validateCond(words.slice(orIdx + 1), group.slice(orIdx + 1), literalOp.slice(orIdx + 1));
+      return;
+    }
+    const andIdx = topLevel('&&');
+    if (andIdx >= 0) {
+      if (andIdx === 0 || andIdx === words.length - 1) throw new TestSyntaxError('syntax error near `&&\'');
+      this.validateCond(words.slice(0, andIdx), group.slice(0, andIdx), literalOp.slice(0, andIdx));
+      this.validateCond(words.slice(andIdx + 1), group.slice(andIdx + 1), literalOp.slice(andIdx + 1));
+      return;
+    }
+    if (words[0] === '!') {
+      if (words.length === 1) throw new TestSyntaxError('syntax error near `!\'');
+      this.validateCond(words.slice(1), group.slice(1), literalOp.slice(1));
+      return;
+    }
+    if (group[0] && words[0] === '(' && group[words.length - 1] && words[words.length - 1] === ')') {
+      this.validateCond(words.slice(1, -1), group.slice(1, -1), literalOp.slice(1, -1));
+      return;
+    }
+    // Leaf shapes accepted by the evaluator (3-word binary op, 2-word literal unary op,
+    // 1-word string test). A shape that the evaluator would fail-loud on is caught here.
+    if (words.length === 0) throw new TestSyntaxError('syntax error: conditional expression expected');
+    if (words.length === 1) {
+      if ((TEST_UNARY.has(words[0]) || words[0] === '<' || words[0] === '>') && wasLiteral(0)) {
+        throw new TestSyntaxError(`unexpected argument to conditional unary operator; syntax error near \`${words[0]}'`);
+      }
+      return;
+    }
+    if (words.length === 2) {
+      if (TEST_UNARY.has(words[0]) && wasLiteral(0)) return; // valid `-X arg`
+      throw new TestSyntaxError(`syntax error: \`${words[1]}' unexpected; conditional binary operator expected`);
+    }
+    if (words.length === 3) {
+      const BINOPS = ['=~', '==', '=', '!=', '<', '>', '-nt', '-ot', '-ef', '-eq', '-ne', '-lt', '-le', '-gt', '-ge'];
+      if (BINOPS.some((o) => isOp(1, o))) return; // valid `a OP b`
+      throw new TestSyntaxError(`syntax error: \`${words[1]}' conditional binary operator expected`);
+    }
+    throw new TestSyntaxError(`syntax error near \`${words[1] ?? ''}'`);
+  }
+
   /** Evaluate a `[[ ... ]]` expression (supports !, &&, ||, ( ), =~, -f/-d/-z/-n, comparisons).
    * `group[i]` is true where `words[i]` is a genuine grouping paren (not an operand).
-   * `regexSources[i]` (parallel) is the regex-preserving expansion of a `=~` RHS token. */
-  private async evalConditional(words: string[], group: boolean[], regexSources: (string | undefined)[] = []): Promise<boolean> {
+   * `regexSources[i]` (parallel) is the regex-preserving expansion of a `=~` RHS token.
+   * `literalOp[i]` is true where the token was a LITERAL operator in the SOURCE — bash
+   * recognizes conditional operators lexically at parse time, so an operator arriving via
+   * `$var`/quoting is a DATA operand, not an operator (`x=-e; [[ $x ]]` is a string test). */
+  private async evalConditional(words: string[], group: boolean[], regexSources: (string | undefined)[] = [], literalOp: boolean[] = []): Promise<boolean> {
+    // A token is usable as an OPERATOR only if it was a literal operator in the source.
+    // (`literalOp` defaults empty for internal callers with no provenance; treat missing
+    // entries as literal there, preserving those callers' operator-by-value behavior.)
+    const isOp = (i: number, op: string): boolean => words[i] === op && (literalOp.length === 0 || literalOp[i]);
     // Split binary logicals at the SHALLOWEST GROUPING-paren depth (so `( a && b ) || c`
     // groups correctly); scan for the LAST top-level `||` then `&&` (left-associative).
     // Only genuine grouping parens (group[i]) change depth — a quoted `(` operand does not.
@@ -1482,22 +1617,28 @@ export class Executor {
       }
       return found;
     };
+    // A DANGLING logical connective (`[[ x || ]]`, `[[ && y ]]`, `[[ a || || b ]]`) is a
+    // syntax error at parse time in bash, INDEPENDENT of operand truth — so it must be
+    // caught BEFORE the short-circuit recursion (a truthy `||` LHS would otherwise skip
+    // validating the empty RHS). An empty side around a top-level `&&`/`||` is malformed.
     const orIdx = topLevel('||');
     if (orIdx >= 0) {
-      return (await this.evalConditional(words.slice(0, orIdx), group.slice(0, orIdx), regexSources.slice(0, orIdx)))
-        || (await this.evalConditional(words.slice(orIdx + 1), group.slice(orIdx + 1), regexSources.slice(orIdx + 1)));
+      if (orIdx === 0 || orIdx === words.length - 1) throw new TestSyntaxError('syntax error near `||\'');
+      return (await this.evalConditional(words.slice(0, orIdx), group.slice(0, orIdx), regexSources.slice(0, orIdx), literalOp.slice(0, orIdx)))
+        || (await this.evalConditional(words.slice(orIdx + 1), group.slice(orIdx + 1), regexSources.slice(orIdx + 1), literalOp.slice(orIdx + 1)));
     }
     const andIdx = topLevel('&&');
     if (andIdx >= 0) {
-      return (await this.evalConditional(words.slice(0, andIdx), group.slice(0, andIdx), regexSources.slice(0, andIdx)))
-        && (await this.evalConditional(words.slice(andIdx + 1), group.slice(andIdx + 1), regexSources.slice(andIdx + 1)));
+      if (andIdx === 0 || andIdx === words.length - 1) throw new TestSyntaxError('syntax error near `&&\'');
+      return (await this.evalConditional(words.slice(0, andIdx), group.slice(0, andIdx), regexSources.slice(0, andIdx), literalOp.slice(0, andIdx)))
+        && (await this.evalConditional(words.slice(andIdx + 1), group.slice(andIdx + 1), regexSources.slice(andIdx + 1), literalOp.slice(andIdx + 1)));
     }
-    if (words[0] === '!') return !(await this.evalConditional(words.slice(1), group.slice(1), regexSources.slice(1)));
+    if (words[0] === '!') return !(await this.evalConditional(words.slice(1), group.slice(1), regexSources.slice(1), literalOp.slice(1)));
     // A fully-parenthesized group `( expr )`: strip the outer GROUPING parens and recurse.
     if (group[0] && words[0] === '(' && group[words.length - 1] && words[words.length - 1] === ')') {
-      return await this.evalConditional(words.slice(1, -1), group.slice(1, -1), regexSources.slice(1, -1));
+      return await this.evalConditional(words.slice(1, -1), group.slice(1, -1), regexSources.slice(1, -1), literalOp.slice(1, -1));
     }
-    if (words.length === 3 && words[1] === '=~') {
+    if (words.length === 3 && isOp(1, '=~')) {
       try {
         // The regex operand uses the regex-PRESERVING expansion (quoted → literal,
         // unquoted backslashes kept) — NOT the quote-collapsed `words[2]`, which would
@@ -1512,30 +1653,31 @@ export class Executor {
         return m !== null;
       } catch { return false; }
     }
-    if (words.length === 3 && (words[1] === '==' || words[1] === '=')) {
+    if (words.length === 3 && (isOp(1, '==') || isOp(1, '='))) {
       return globMatch(words[0], words[2], this.globMatchOpts());
     }
-    if (words.length === 3 && words[1] === '!=') {
+    if (words.length === 3 && isOp(1, '!=')) {
       return !globMatch(words[0], words[2], this.globMatchOpts());
     }
     // Inside `[[ ]]`, `<` / `>` are lexical (byte) string comparisons — NOT
     // redirections and needing no escaping (bash).
-    if (words.length === 3 && words[1] === '<') return words[0] < words[2];
-    if (words.length === 3 && words[1] === '>') return words[0] > words[2];
+    if (words.length === 3 && isOp(1, '<')) return words[0] < words[2];
+    if (words.length === 3 && isOp(1, '>')) return words[0] > words[2];
     // File-comparison binops `-nt`/`-ot`/`-ef` — same VFS logic as `[ ]` (condFileTest
     // takes the two operands NUL-joined).
-    if (words.length === 3 && (words[1] === '-nt' || words[1] === '-ot' || words[1] === '-ef')) {
+    if (words.length === 3 && (isOp(1, '-nt') || isOp(1, '-ot') || isOp(1, '-ef'))) {
       return this.condFileTest(words[1], words[0] + '\0' + words[2]);
     }
-    // `[[ -X arg ]]` — a KNOWN unary operator applied to its argument. An unknown
-    // `-X` is NOT a silent false: it falls to the malformed check below (fail-loud).
-    if (words.length === 2 && TEST_UNARY.has(words[0])) {
+    // `[[ -X arg ]]` — a KNOWN LITERAL unary operator applied to its argument. An unknown
+    // `-X`, or one that arrived via expansion, is NOT an operator: it falls to the
+    // malformed check below (fail-loud for a literal bad op; string test for expanded).
+    if (words.length === 2 && TEST_UNARY.has(words[0]) && (literalOp.length === 0 || literalOp[0])) {
       return this.condFileTest(words[0], words[1]);
     }
     // `[[ a -eq b ]]` numeric comparison: operands are ARITHMETIC expressions (bash),
     // so `[[ 010 -eq 8 ]]` (octal) and `[[ 0x10 -eq 16 ]]` (hex) hold — evaluated in
     // 64-bit BigInt. (`[ ]`/`test` use decimal-only operands; see testNumericCompare.)
-    if (words.length === 3 && ['-eq', '-ne', '-lt', '-le', '-gt', '-ge'].includes(words[1])) {
+    if (words.length === 3 && ['-eq', '-ne', '-lt', '-le', '-gt', '-ge'].some((o) => isOp(1, o))) {
       const arrHook = this.arithArrayAccessExec();
       const env = this.arithEnvForExpr();
       // A malformed arithmetic operand (`08` invalid octal) is a bash error: report
@@ -1555,32 +1697,37 @@ export class Executor {
     // ── FAIL-LOUD leaf validation (bash: a malformed conditional is exit-2 `syntax
     // error`, NOT a fabricated false). Everything above handled the well-formed
     // shapes; a leaf that reaches here is either a valid 1-word string test or a
-    // syntax error. Mirror bash's diagnostics (unary/binary operator expected /
-    // near-token). ──
+    // syntax error. bash classifies operators LEXICALLY, so only a SOURCE-LITERAL
+    // operator token is malformed; a token that arrived via expansion is data. Mirror
+    // bash's diagnostics (unary/binary operator expected / near-token). ──
+    const wasLiteral = (i: number): boolean => literalOp.length === 0 || literalOp[i];
     if (words.length === 0) throw new TestSyntaxError('syntax error: conditional expression expected');
     if (words.length === 1) {
-      // A lone token errors ONLY when it is a UNARY operator (it demands an argument),
-      // or the always-binary `<`/`>` comparison operators. Every OTHER single word —
-      // including binary word-operators that double as ordinary strings (`=`, `==`,
-      // `=~`, `-eq`, `!=`, `-nt`, `-ef`) — is a plain string non-empty test (bash:
-      // `[[ = ]]` is true, `[[ -e ]]` and `[[ < ]]` are exit-2 syntax errors).
-      if (TEST_UNARY.has(words[0]) || words[0] === '<' || words[0] === '>') {
+      // A lone token errors ONLY when it was a LITERAL unary operator (it demands an
+      // argument) or the always-binary `<`/`>`. Every other single word — an expanded
+      // value (`x=-e; [[ $x ]]`), or a binary word-operator that doubles as a string
+      // (`=`, `==`, `=~`, `-eq`, `!=`, `-nt`, `-ef`) — is a string non-empty test
+      // (bash: `[[ = ]]` true, `[[ -e ]]`/`[[ < ]]` exit-2 syntax errors).
+      if ((TEST_UNARY.has(words[0]) || words[0] === '<' || words[0] === '>') && wasLiteral(0)) {
         throw new TestSyntaxError(`unexpected argument to conditional unary operator; syntax error near \`${words[0]}'`);
       }
       return words[0] !== '';
     }
-    // 2 words where word[0] is not a known unary operator (the known case returned
-    // above): bash reports the SECOND word as an unexpected binary operator.
+    // 2 words: if word[0] was a literal unary operator we handled it above. A literal
+    // operator here is malformed; otherwise two adjacent operands with no operator is
+    // bash's "conditional binary operator expected" near the second word.
     if (words.length === 2) {
       throw new TestSyntaxError(`syntax error: \`${words[1]}' unexpected; conditional binary operator expected`);
     }
-    // 3 words whose middle token is not a recognized binary operator (the `=~`/glob/
-    // comparison/`-nt` cases all returned above): bad conditional binary operator.
+    // 3 words whose middle token is not a recognized LITERAL binary operator (the
+    // `=~`/glob/comparison/`-nt` cases all returned above): bad conditional binary
+    // operator (also covers an operator that only arrived via expansion — data, bash
+    // errors the same way: `op="=="; [[ a $op a ]]` → binary operator expected).
     if (words.length === 3) {
       throw new TestSyntaxError(`syntax error: \`${words[1]}' conditional binary operator expected`);
     }
     // 4+ words with no logical/grouping structure: too many arguments / near-token.
-    throw new TestSyntaxError(`syntax error near \`${words[words.length === 0 ? 0 : 1] ?? ''}'`);
+    throw new TestSyntaxError(`syntax error near \`${words[1] ?? ''}'`);
   }
 
   private async condFileTest(op: string, path: string): Promise<boolean> {
@@ -3062,6 +3209,10 @@ export class Executor {
         else this.caseFoldNames.set(k, sa.caseFold);
         if (sa === undefined || sa.nameref === undefined) this.namerefs.delete(k);
         else this.namerefs.set(k, sa.nameref);
+        // Restore the declared-but-unset marker (a function-local bare `declare -a A`
+        // must not leak to the caller — after return, `declare -p A` is "not found").
+        if (sa === undefined || sa.declaredUnset === undefined) this.declaredUnset.delete(k);
+        else this.declaredUnset.set(k, sa.declaredUnset);
       }
       for (const k of overlayKeys) {
         if (savedOverlay[k] === undefined) delete this.context.env[k];
@@ -3104,6 +3255,8 @@ export class Executor {
       // A nameref prints `declare -n NAME="target"` (the target NAME, quoted).
       const target = this.namerefs.get(n);
       if (target !== undefined) return `declare -n ${n}="${target.replace(/[\\"$`]/g, (c) => '\\' + c)}"`;
+      // A bare (targetless) nameref declared via `declare -n r` prints `declare -n r`.
+      if (this.declaredUnset.get(n) === 'nameref') return `declare -n ${n}`;
       const flags = flagFor(n);
       const opt = flags === '' ? '--' : '-' + flags;
       // A DECLARED-but-unset name prints the BARE form (`declare -a NAME`) — no `=(…)` /

@@ -198,10 +198,17 @@ export class Expander {
     while (i < n) {
       const c = word[i];
       if (c === '\\') {
-        // Unquoted backslash escape: keep BOTH chars so the regex engine sees `\x`
-        // (a literal dot `\.`, a literal `\|`, etc.). A trailing lone `\` is kept.
-        out += word[i + 1] !== undefined ? '\\' + word[i + 1] : '\\';
-        i += word[i + 1] !== undefined ? 2 : 1;
+        // Unquoted backslash escape. POSIX ERE (bash's `=~` engine) reads `\<X>` as:
+        //   - `\<metacharacter>` → the LITERAL metacharacter (keep the escape so the JS
+        //     RegExp sees `\.`/`\*`/`\|` etc.);
+        //   - `\<anything-else>` → the LITERAL character, backslash dropped (bash: `a\nb`
+        //     matches "anb" not a newline; `\d`/`\w`/`\s` are literal `d`/`w`/`s`).
+        // Emitting `\n`/`\d` verbatim would wrongly hand JS RegExp a newline / digit
+        // class. A trailing lone `\` is kept.
+        const nxt = word[i + 1];
+        if (nxt === undefined) { out += '\\'; i += 1; continue; }
+        out += '.*+?^${}()|[]\\'.includes(nxt) ? '\\' + nxt : nxt;
+        i += 2;
         continue;
       }
       if (c === '\'') {

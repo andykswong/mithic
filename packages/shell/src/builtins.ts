@@ -24,8 +24,10 @@ export interface ShellState {
    *                back to global scope.
    */
   declareLocal(name: string): 'fresh' | 'existing' | 'none';
-  /** Register a name as an associative array (`declare -A`). */
-  declareAssoc?(name: string): void;
+  /** Register a name as an associative array (`declare -A`). With `global` (from
+   * `declare -gA`), a same-name function-local shadow is preserved and the assoc
+   * attribute is recorded on the global binding's snapshot instead. */
+  declareAssoc?(name: string, global?: boolean): void;
   /**
    * Record a name as DECLARED-but-unset (`declare NAME` / `declare -a NAME` /
    * `declare -A NAME` / `declare -x NAME`, no value). bash prints these as a bare
@@ -33,7 +35,7 @@ export interface ShellState {
    * NAME=()`. Any later value/element assignment clears the flag. Never overrides an
    * existing value (`v=hi; declare v` keeps `hi`).
    */
-  predeclare?(name: string, kind: 'scalar' | 'array' | 'assoc'): void;
+  predeclare?(name: string, kind: 'scalar' | 'array' | 'assoc' | 'nameref'): void;
   /** Drop a name from the declared-but-unset set (any real value/element assignment). */
   clearDeclaredUnset?(name: string): void;
   /**
@@ -75,6 +77,9 @@ export interface ShellState {
   killJob?(spec: number, signal: string): boolean;
   /** Mark a name as `readonly` (reassignment is then rejected). */
   markReadonly?(name: string): void;
+  /** Mark the GLOBAL binding of a name `readonly` (`declare -gr`): if a function-local
+   * shadows it, record on the global snapshot so the attribute survives return. */
+  markGlobalReadonly?(name: string): void;
   /** True when the name was marked `readonly`. */
   isReadonly?(name: string): boolean;
   /**
@@ -91,6 +96,9 @@ export interface ShellState {
   unsetVar?(name: string, index?: string): void;
   /** Mark a name as integer (`declare -i`): assignments are arithmetic-evaluated. */
   markInteger?(name: string): void;
+  /** Mark the GLOBAL binding of a name integer (`declare -gi`): if a function-local
+   * shadows it, record on the global snapshot so the attribute survives return. */
+  markGlobalInteger?(name: string): void;
   /** True when the name was marked integer (`declare -i`). */
   isInteger?(name: string): boolean;
   /**
@@ -658,6 +666,17 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       const flagInteger = flags.has('i');
       const flagReadonly = isReadonly || flags.has('r');
       const flagExport = flags.has('x'); // `declare -x` / `-rx` → exported attribute
+      // Attribute markers pick the GLOBAL-binding variant under `declare -g` so the
+      // integer/readonly/assoc attribute lands on the global snapshot (surviving the
+      // function return) rather than a same-name function-local shadow that the
+      // return-restore would wipe (bash: `declare -gi`/`-gr`/`-gA` target the global).
+      const markIntegerAttr = (nm: string): void => {
+        if (flagGlobal) ctx.state?.markGlobalInteger?.(nm); else ctx.state?.markInteger?.(nm);
+      };
+      const markReadonlyAttr = (nm: string): void => {
+        if (flagGlobal) ctx.state?.markGlobalReadonly?.(nm); else ctx.state?.markReadonly?.(nm);
+      };
+      const declareAssocAttr = (nm: string): void => ctx.state?.declareAssoc?.(nm, flagGlobal);
       // `declare -l` (lowercase) / `-u` (uppercase) set the case-fold attribute;
       // `-l -u` together cancel to NO fold. `+l`/`+u` REMOVE a fold, but only the
       // MATCHING direction (`+u` on a `-l` var keeps the lower fold — bash). Either a
@@ -702,8 +721,8 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
           const scope = ctx.state?.declareLocal(a.name) ?? 'none';
           if (isLocal && scope === 'none') { errOut(ctx, 'shell: local: can only be used in a function\n'); return 1; }
         }
-        if (isAssoc) ctx.state?.declareAssoc?.(a.name);
-        if (flagInteger) ctx.state?.markInteger?.(a.name);
+        if (isAssoc) declareAssocAttr(a.name);
+        if (flagInteger) markIntegerAttr(a.name);
         // Mark case-fold BEFORE applying the array so applyBuiltinAssignment folds
         // each element (bash: `declare -la a=(FOO Bar)` → foo bar).
         markFold(a.name);
@@ -714,7 +733,7 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         } else if (await ctx.applyBuiltinAssignment?.(a, flagGlobal)) {
           declStatus = 1;
         }
-        if (flagReadonly) ctx.state?.markReadonly?.(a.name);
+        if (flagReadonly) markReadonlyAttr(a.name);
         if (flagExport) ctx.state?.markExport?.(a.name);
       }
       for (const arg of args) {
@@ -735,6 +754,10 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
             if (isLocal && scope === 'none') { errOut(ctx, 'shell: local: can only be used in a function\n'); return 1; }
           }
           if (eq > 0) ctx.state?.setNameref?.(n, arg.slice(eq + 1));
+          // A bare `declare -n r` (no target) records the nameref ATTRIBUTE with no
+          // mapping — bash's `declare -p r` prints `declare -n r` (exit 0), not
+          // "not found". Predeclare it as a nameref-kind unset name.
+          else ctx.state?.predeclare?.(n, 'nameref');
           continue;
         }
         // `declare NAME[i]=value` is an ELEMENT write (bash: `declare a[1]=X` sets
@@ -746,10 +769,10 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
             const scope = ctx.state?.declareLocal(subM[1]) ?? 'none';
             if (isLocal && scope === 'none') { errOut(ctx, 'shell: local: can only be used in a function\n'); return 1; }
           }
-          if (flagInteger) ctx.state?.markInteger?.(subM[1]);
+          if (flagInteger) markIntegerAttr(subM[1]);
           markFold(subM[1]);
           if (await ctx.applyBuiltinAssignment({ name: subM[1], value: arg.slice(eq + 1), index: subM[2], append: subM[3] === '+' }, flagGlobal)) declStatus = 1;
-          if (flagReadonly) ctx.state?.markReadonly?.(subM[1]);
+          if (flagReadonly) markReadonlyAttr(subM[1]);
           if (flagExport) ctx.state?.markExport?.(subM[1]);
           continue;
         }
@@ -778,10 +801,10 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
           if (freshLocal) delete ctx.env[n];
         }
         // `declare -A name` registers an associative array (G6).
-        if (isAssoc) ctx.state?.declareAssoc?.(n);
+        if (isAssoc) declareAssocAttr(n);
         // `declare -i name` marks the name integer BEFORE assigning, so the RHS
         // is arithmetic-evaluated (bash: `declare -i n=1+2` → n=3).
-        if (flagInteger) ctx.state?.markInteger?.(n);
+        if (flagInteger) markIntegerAttr(n);
         // `declare -l`/`-u` (and `+l`/`+u`) set/clear the case-fold attribute before
         // assigning so the value below folds. Applying the attribute to an EXISTING
         // value does NOT refold it (bash: `x=HELLO; declare -l x` keeps HELLO; only
@@ -829,9 +852,9 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
           // unset. bash's `declare -p` shows the bare form (`declare -a NAME`), distinct
           // from an explicitly-empty `declare -a NAME=()`. `declare -A` already ran
           // declareAssoc above; predeclare records the declared-but-unset marker (and
-          // seeds an empty array for `-a`). It targets the GLOBAL binding — the executor
-          // no-ops when a function-local shadows the name (bare-vs-empty is a global
-          // inspection concern, not tracked per function-local frame).
+          // seeds an empty array for `-a`). A function-local bare declare records the
+          // marker too (declareLocal snapshotted the pre-shadow state; the return-restore
+          // clears it so it does not leak to the caller).
           ctx.state?.predeclare?.(n, isAssoc ? 'assoc' : flags.has('a') ? 'array' : 'scalar');
         }
         // A bare `declare NAME` / `local NAME` (no `=value`) declares the name but
@@ -840,7 +863,7 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         // `readonly`/`-r` mark the name AFTER its value is set, so the builtin's
         // own assignment succeeds; later reassignments are rejected by the
         // executor's applyAssignment (POSIX-fatal in posix mode).
-        if (flagReadonly) ctx.state?.markReadonly?.(n);
+        if (flagReadonly) markReadonlyAttr(n);
         if (flagExport) ctx.state?.markExport?.(n);
       }
       return declStatus;

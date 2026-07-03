@@ -1988,3 +1988,87 @@ test('[[ =~ ]] a QUOTED regex operand is a LITERAL string, not a pattern (bash)'
   expect((await run('re="a.b"; [[ "aXb" =~ $re ]]; echo active=$?')).out).toBe('active=0\n');
   expect((await run('re="a.b"; [[ "axb" =~ "$re" ]]; echo lit=$?')).out).toBe('lit=1\n');
 });
+
+// ── Review-round regression fixes (adversarial bash-5.3 review of the fixes above) ──
+
+test('[[ ]] operators are recognized LEXICALLY, not by post-expansion value', async () => {
+  // A var holding an operator token is DATA, not an operator (bash classifies operators
+  // at parse time). Regression: the malformed-leaf check saw the expanded `-e` and threw.
+  expect((await run('x=-e; [[ $x ]]; echo $?')).out).toBe('0\n');    // string test, not unary op
+  expect((await run('x=-e; [[ "$x" ]]; echo $?')).out).toBe('0\n');
+  expect((await run('mode=-v; if [[ $mode ]]; then echo set; fi')).out).toBe('set\n');
+  expect((await run('x=-z; [[ $x ]]; echo $?')).out).toBe('0\n');
+  // A binary operator arriving via expansion is NOT an operator — 3 operands, no op → error.
+  expect((await run('op="=="; [[ a $op a ]]; echo $?')).out).toBe('2\n');
+  expect((await run('x=-n; [[ $x foo ]]; echo $?')).out).toBe('2\n');
+  // A LITERAL operator still errors (the fail-loud intent is intact).
+  expect((await run('[[ -e ]]; echo $?')).out).toBe('2\n');
+  expect((await run('[[ a == a ]]; echo $?')).out).toBe('0\n');   // literal == still works
+});
+
+test('[[ ]] dangling logical connective is fail-loud even behind a short-circuit', async () => {
+  // bash validates the WHOLE [[ ]] at parse time, so a malformed operand in a branch a
+  // truthy LHS would short-circuit past is STILL an error.
+  expect((await run('[[ x || ]]; echo $?')).out).toBe('2\n');
+  expect((await run('[[ x && ]]; echo $?')).out).toBe('2\n');
+  expect((await run('[[ x || -e ]]; echo $?')).out).toBe('2\n');   // -e (missing arg) behind || short-circuit
+  expect((await run('[[ z || x && ]]; echo $?')).out).toBe('2\n');
+  expect((await run('[[ x || y || ]]; echo $?')).out).toBe('2\n');
+  // Well-formed short-circuits are unchanged.
+  expect((await run('[[ 1 == 1 || 2 == 3 ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ -n x || -n y ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ ( a == a ) || ( b == c ) ]]; echo $?')).out).toBe('0\n');
+});
+
+test('[[ =~ ]] backslash-escape follows POSIX ERE, not JS control escapes', async () => {
+  // In ERE, `\<char>` is the literal char (a metachar-escape for metacharacters, else the
+  // bare letter). Regression: preserving `\n` verbatim handed JS RegExp a newline.
+  expect((await run('[[ "anb" =~ a\\nb ]]; echo $?')).out).toBe('0\n');   // \n = literal n → matches "anb"
+  expect((await run('[[ "a5b" =~ a\\db ]]; echo $?')).out).toBe('1\n');   // \d = literal d, not a digit class
+  expect((await run('[[ "adb" =~ a\\db ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ "a.b" =~ a\\.b ]]; echo $?')).out).toBe('0\n');   // \. metachar-escape still literal dot
+  expect((await run('[[ "axb" =~ a\\.b ]]; echo $?')).out).toBe('1\n');
+});
+
+test('[[ =~ ]] with no RHS operand is a string test, not a parse error', async () => {
+  // `[[ =~ ]]` — a dangling `=~` with no regex is a lone `=~` string test (bash: true).
+  expect((await run('[[ =~ ]]; echo $?')).out).toBe('0\n');
+});
+
+test('unset clears a declared-but-unset marker (declare -p reports not-found after)', async () => {
+  const r = await run('declare -a A; unset A; declare -p A; echo code=$?');
+  expect(r.out).toBe('code=1\n');
+  expect(r.err).toMatch(/A: not found/);
+});
+
+test('a bare predeclare inside a function is local and shows in-scope, not leaked', async () => {
+  expect((await run('f(){ declare -a A; declare -p A; }; f')).out).toBe('declare -a A\n');
+  expect((await run('g(){ local x; declare -p x; }; g')).out).toBe('declare -- x\n');
+  // No leak: after return, the name is gone.
+  const r = await run('f(){ declare -a A; }; f; declare -p A; echo code=$?');
+  expect(r.out).toBe('code=1\n');
+  expect(r.err).toMatch(/A: not found/);
+});
+
+test('a bare declare -n (targetless nameref) is recorded and shown by declare -p', async () => {
+  const r = await run('declare -n r; declare -p r; echo code=$?');
+  expect(r.out).toBe('declare -n r\ncode=0\n');
+});
+
+test('declare -gA under a local scalar/indexed shadow does not clobber the local', async () => {
+  // Regression: declareAssoc unconditionally cleared the local before applyArrayLiteral.
+  expect((await run('f(){ local H=sc; declare -gA H=([c]=3); echo "in=[$H]"; }; f; declare -p H')).out)
+    .toBe('in=[sc]\ndeclare -A H=([c]="3" )\n');
+  expect((await run('f(){ local -a H=(a b); declare -gA H=([c]=3); echo "in=[${H[0]}]"; }; f; declare -p H')).out)
+    .toBe('in=[a]\ndeclare -A H=([c]="3" )\n');
+});
+
+test('declare -gr / -gi under a local shadow keep the attribute on the global after return', async () => {
+  // Regression: -r/-i were set on the LIVE set and wiped by the function-return restore.
+  const ro = await run('f(){ local R=loc; declare -gr R=frozen; }; f; R=x; echo "after=$R code=$?"');
+  expect(ro.out).toBe('after=frozen code=1\n');
+  expect(ro.err).toMatch(/readonly/);
+  // -gi: integer attribute survives → later += is arithmetic, not string concat.
+  expect((await run('n=orig; f(){ local n=hi; declare -gi n=5; }; f; declare -p n; n+=3; echo "$n"')).out)
+    .toBe('declare -i n="5"\n8\n');
+});

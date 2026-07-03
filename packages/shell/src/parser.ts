@@ -472,14 +472,21 @@ class Parser {
       if (raw === '=~') {
         let re = '';
         let reDepth = 0; // balance of the regex's OWN parens
+        let consumed = 0;
         while (this.peek() && !this.atType('DRBRACKET') && !this.atType('AND_IF') && !this.atType('OR_IF')) {
           if (this.atType('RPAREN') && reDepth === 0) break; // closes an outer group
           if (this.atType('LPAREN')) reDepth++;
           else if (this.atType('RPAREN')) reDepth--;
           re += this.next()!.raw;
+          consumed++;
         }
-        words.push(re);
-        group.push(false);
+        // Only append a RHS word when `=~` actually had a following operand. A dangling
+        // `=~` with no RHS (`[[ =~ ]]`) leaves `=~` as a lone word — the evaluator then
+        // treats it as a string test (bash: `[[ =~ ]]` is true; `[[ a =~ ]]` errors).
+        if (consumed > 0) {
+          words.push(re);
+          group.push(false);
+        }
       }
     }
     if (this.atType('DRBRACKET')) this.next();
