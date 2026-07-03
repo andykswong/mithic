@@ -207,6 +207,45 @@ test('taskbar reflects open windows and their titles', async () => {
   wm.dispose(); desktop.remove(); taskbar.remove();
 });
 
+test('renderTaskbar never clobbers sibling nodes it did not create (Bug B regression)', async () => {
+  const desktop = setupDesktop();
+  const taskbar = document.createElement('div');
+  document.body.appendChild(taskbar);
+  // A host-owned launcher lives in the taskbar (mirrors example-desktop main.ts).
+  const launcher = document.createElement('div');
+  launcher.dataset.role = 'launcher';
+  taskbar.appendChild(launcher);
+
+  const kernel = fakeKernel();
+  const apps = new AppRegistry();
+  apps.register({ name: 'a', title: 'Alpha', defaultSize: [200, 150], mount: () => {} });
+  const wm = new WindowManager({ desktop, taskbar, kernel: kernel as any, apps });
+
+  await wm.open('a');            // triggers #renderTaskbar via focus() + open()
+  // The launcher must still be present AND a running-item must have been rendered.
+  expect(taskbar.querySelector('[data-role="launcher"]')).toBe(launcher);
+  expect(taskbar.querySelectorAll('[data-role="taskbar-item"]').length).toBe(1);
+
+  wm.dispose(); desktop.remove(); taskbar.remove();
+});
+
+test('running chips show the app icon and mark the focused window', async () => {
+  const desktop = setupDesktop();
+  const taskbar = document.createElement('div');
+  document.body.appendChild(taskbar);
+  const kernel = fakeKernel();
+  const apps = new AppRegistry();
+  apps.register({ name: 'a', title: 'Alpha', icon: '🅰️', defaultSize: [200, 150], mount: () => {} });
+  const wm = new WindowManager({ desktop, taskbar, kernel: kernel as any, apps });
+
+  const win = await wm.open('a');
+  const chip = taskbar.querySelector('[data-role="taskbar-item"]') as HTMLButtonElement;
+  expect(chip.textContent).toContain('🅰️');
+  expect(chip.dataset.focused).toBe('true'); // newest window is focused
+
+  wm.dispose(); desktop.remove(); taskbar.remove();
+});
+
 test('dragging a window titlebar across a live iframe still tracks the pointer (H2 — pointer shield)', async () => {
   const desktop = setupDesktop();
   const kernel = fakeKernel();
@@ -252,6 +291,33 @@ test('dragging a window titlebar across a live iframe still tracks the pointer (
   expect(document.body.classList.contains(SHIELD_CLASS)).toBe(false);
 
   iframe.remove();
+  wm.dispose(); desktop.remove();
+});
+
+test('clicking titlebar chrome buttons drives the window (Bug A regression)', async () => {
+  const desktop = setupDesktop();
+  const kernel = fakeKernel();
+  const apps = new AppRegistry();
+  apps.register({ name: 'a', title: 'A', defaultSize: [300, 200], mount: () => {} });
+  const wm = new WindowManager({ desktop, kernel: kernel as any, apps });
+  const win = await wm.open('a');
+
+  const closeBtn = win.frame.querySelector('button:nth-of-type(3)') as HTMLButtonElement;
+  const minBtn = win.frame.querySelector('button:nth-of-type(1)') as HTMLButtonElement;
+
+  // A pointerdown on a chrome button must NOT arm the drag shield (else capture steals the click).
+  minBtn.dispatchEvent(new PointerEvent('pointerdown', { clientX: 1, clientY: 1, pointerId: 1, bubbles: true }));
+  expect(document.body.classList.contains(SHIELD_CLASS)).toBe(false);
+  expect(win.state).toBe('normal');
+
+  // The wired click handlers reach the WM: a click on minimize minimizes, on close removes.
+  minBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  expect(win.state).toBe('minimized');
+
+  closeBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  expect(desktop.querySelector('[data-role="window"]')).toBeNull();
+  expect(wm.windows.length).toBe(0);
+
   wm.dispose(); desktop.remove();
 });
 

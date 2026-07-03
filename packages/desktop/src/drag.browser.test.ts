@@ -139,3 +139,39 @@ test('makeResizable clamps to minW/minH when dragging smaller', () => {
   document.dispatchEvent(pointer('pointerup', 100, 100));
   handle.remove();
 });
+
+test('makeDraggable ignores a pointerdown that originated on a child button (Bug A regression)', () => {
+  installShieldStyle(document);
+  const handle = document.createElement('div');   // stands in for the titlebar
+  const btn = document.createElement('button');   // a chrome button, child of the handle
+  handle.appendChild(btn);
+  document.body.appendChild(handle);
+
+  let started = false;
+  makeDraggable(handle, { onStart: () => { started = true; return { x: 0, y: 0 }; }, onMove: () => {} });
+
+  // A real user pressing the button produces a pointerdown whose target is the button,
+  // bubbling to the handle. The drag must NOT engage (no onStart, no shield) — otherwise
+  // setPointerCapture on the handle steals the click and the button never fires.
+  btn.dispatchEvent(new PointerEvent('pointerdown', { clientX: 5, clientY: 5, pointerId: 1, bubbles: true }));
+
+  expect(started).toBe(false);
+  expect(document.body.classList.contains(SHIELD_CLASS)).toBe(false);
+
+  handle.remove();
+});
+
+test('makeDraggable still starts a drag when the pointerdown is on the handle body', () => {
+  installShieldStyle(document);
+  const handle = document.createElement('div');
+  document.body.appendChild(handle);
+  let started = false;
+  makeDraggable(handle, { onStart: () => { started = true; return { x: 0, y: 0 }; }, onMove: () => {} });
+
+  handle.dispatchEvent(new PointerEvent('pointerdown', { clientX: 5, clientY: 5, pointerId: 1, bubbles: true }));
+  expect(started).toBe(true);
+  expect(document.body.classList.contains(SHIELD_CLASS)).toBe(true);
+
+  handle.dispatchEvent(new PointerEvent('pointerup', { clientX: 5, clientY: 5, pointerId: 1, bubbles: true }));
+  handle.remove();
+});

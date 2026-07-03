@@ -42,6 +42,11 @@ export interface DragOptions {
 export function makeDraggable(handle: HTMLElement, opts: DragOptions): () => void {
   const doc = handle.ownerDocument;
   const onDown = (e: PointerEvent): void => {
+    // Do NOT hijack pointerdowns that originate on an interactive control inside the
+    // handle (e.g. the titlebar's min/max/close buttons). Engaging the drag would call
+    // setPointerCapture on the handle, retargeting the pointerup + synthesized click
+    // away from the button, so the button's own click listener would never fire (Bug A).
+    if ((e.target as Element | null)?.closest('button, a, input, select, textarea, [role="button"]')) return;
     e.preventDefault();
     const origin = opts.onStart();
     const startX = e.clientX;
