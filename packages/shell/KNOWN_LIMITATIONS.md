@@ -63,9 +63,9 @@ _No open shell-language or shell/runtime gaps are currently tracked._ Per the op
 convention, closed work is not narrated here — the shipped bash-parity waves (through
 July 2026, incl. the 64-bit-`intmax_t`/`$PATH`-resolution/array-literal/`@`-transform
 "architectural" wave, the printf-rounding/format-char/test-diagnostics/case-fold
-"frontier" wave, and its multi-round adversarial review) are summarized in
-[docs `ARCHIVE_TODO.md`](../../../../docs/mithic/ARCHIVE_TODO.md). Only genuine, still-open
-divergences live below.
+"frontier" wave, its multi-round adversarial review, and the `[[ ]]`/`[[ =~ ]]`/`declare`
+known-bug closeout) have been removed from this open-only registry. Only genuine,
+still-open divergences live below.
 
 ## Deliberate boundaries (documented, not gaps)
 
@@ -136,30 +136,11 @@ degradation, the printf-underflow ERANGE miss — have been fixed, not documente
   error + exit 1 and CONTINUES (matching the script-file behavior — it has no
   `-c`-vs-script distinction). POSIX mode already makes readonly-reassign fatal.
 
-### Known bugs (fail-safe / narrow, tracked in docs `TODO.md`)
-
-These DO diverge but stay bounded (fail-safe false, or a rare corner) rather than
-silently-wrong-in-the-common-case; open follow-ups are tracked in the docs `TODO.md`
-shell-limitations section.
-
-- **`[[ ]]` does not emit bash's parse-time diagnostic for a malformed expression.**
-  `[[ -e ]]` / `[[ x -badop y ]]` evaluate to false (exit 1) instead of bash's exit-2
-  `syntax error`. A well-formed `[[ ]]` — grouping, `&&`/`||`, all operators — matches
-  bash; only the malformed-input diagnostic differs. (Borderline: a fabricated false is
-  worse than a fail-loud; tracked for a fail-loud pass.)
-- **A `[[ ]]` `=~` regex containing an UNQUOTED `&&`/`||`, or an unquoted backslash
-  escape, is mis-parsed** (the `=~` lex/expansion path). QUOTE the regex:
-  `[[ "a&&b" =~ "a&&b" ]]`. Ordinary regexes — anchors, classes, alternation, backrefs,
-  grouped patterns `([a-z]+)([0-9]+)`, including inside `[[ ( … ) ]]` — match bash.
-- **`declare -FLAG` with no name operands does not list matching variables, and
-  `declare +l NAME` does not pre-declare an unset variable.** Attribute-flag *listing
-  mode* + *bare-declaration* are interactive-leaning; the common assignment/fold paths
-  and `+l` on an existing var are exact.
-- **`declare -g` on a name a function-local shadows has two narrow scoping gaps** —
-  a `-gA` assoc-literal drops the `-A` attribute + key, and a scalar `-g NAME+=v` append
-  reads the local shadow's value. The common `-g` paths (scalar/array/element assign,
-  fold by the global attribute, `declare -p`) match bash; needs a global-binding
-  value/assoc accessor symmetric to `setGlobal`/`globalCaseFoldOf`.
+_No known-buggy divergences are currently tracked._ The four that were listed here
+(the `[[ ]]` malformed-expression fabricated-false, the `[[ =~ ]]` unquoted-backslash /
+quoted-literal mis-expansion, `declare -FLAG` attribute-listing + bare-predeclaration,
+and the `declare -g` assoc-literal / `+=`-append scoping gaps) have shipped — each now
+matches bash 5.3 byte-for-byte, with regression tests in `src/executor-features.test.ts`.
 
 ---
 

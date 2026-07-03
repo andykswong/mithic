@@ -1853,3 +1853,138 @@ test('declare NAME=(…) array literal is rejected in POSIX mode (parse-time)', 
   // non-posix parse is fine.
   expect(() => parse('declare -a arr=(a b c)')).not.toThrow();
 });
+
+// ── [[ ]] malformed-expression is FAIL-LOUD (exit 2 + diagnostic), not fabricated ──
+// bash reports a `syntax error` (exit 2) for a conditional expression that is not a
+// well-formed test — a lone unary operator with no argument, a bad binary operator,
+// a bare `[[ ]]`, a dangling `!`, or too many words. mithic previously fabricated a
+// false (exit 1), which can mask a script bug. A WELL-FORMED expression is unchanged.
+test('[[ ]] with a lone unary operator and no argument is a syntax error (exit 2)', async () => {
+  for (const op of ['-e', '-f', '-d', '-z', '-n', '-r', '-s']) {
+    const r = await run(`[[ ${op} ]]; echo "rc=$?"`);
+    expect(r.out).toBe('rc=2\n');
+    expect(r.err).toMatch(/syntax error|conditional (unary|binary) operator/);
+  }
+});
+
+test('[[ ]] with a bad binary operator is a syntax error (exit 2)', async () => {
+  const r = await run('[[ x -badop y ]]; echo "rc=$?"');
+  expect(r.out).toBe('rc=2\n');
+  expect(r.err).toMatch(/syntax error|conditional binary operator/);
+  // A binary operator with a missing right operand is also malformed.
+  expect((await run('[[ x -eq ]]; echo "rc=$?"')).out).toBe('rc=2\n');
+  // Two bare words with no operator between them.
+  expect((await run('[[ a b ]]; echo "rc=$?"')).out).toBe('rc=2\n');
+});
+
+test('[[ ]] empty / dangling-! / too-many-words are syntax errors (exit 2)', async () => {
+  expect((await run('[[ ]]; echo "rc=$?"')).out).toBe('rc=2\n');
+  expect((await run('[[ ! ]]; echo "rc=$?"')).out).toBe('rc=2\n');
+  expect((await run('[[ a b c d ]]; echo "rc=$?"')).out).toBe('rc=2\n');
+});
+
+test('[[ ]] well-formed expressions are UNCHANGED by the fail-loud pass', async () => {
+  // Single-word string test (nonempty → 0, empty → 1); a non-operator word is a string.
+  expect((await run('[[ x ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ "" ]]; echo $?')).out).toBe('1\n');
+  expect((await run('[[ = ]]; echo $?')).out).toBe('0\n');   // `=` alone is a string, not an operator
+  expect((await run('[[ - ]]; echo $?')).out).toBe('0\n');
+  // Unary with an argument; negation; grouping; logical connectives; comparisons.
+  expect((await run('[[ -n x ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ -z "" ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ ! x ]]; echo $?')).out).toBe('1\n');
+  expect((await run('[[ ! "" ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ a == a ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ 1 -eq 1 ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ ( a == a ) ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ a == a && b == b ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ a == a || b == c ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ "abc" =~ b ]]; echo $?')).out).toBe('0\n');
+  // -v / -o variable/option tests are unary-with-arg, still fine.
+  expect((await run('foo=1; [[ -v foo ]]; echo $?')).out).toBe('0\n');
+});
+
+// ── declare bare-predeclare: `declare -FLAG NAME` with no value declares an unset,
+// attribute-carrying name that `declare -p` reflects (bash) ─────────────────────────
+test('declare -a/-A/-x NAME (no value) predeclares an unset, attributed name', async () => {
+  expect((await run('declare -a ARR; declare -p ARR')).out).toBe('declare -a ARR\n');
+  expect((await run('declare -A M; declare -p M')).out).toBe('declare -A M\n');
+  expect((await run('declare -x XP; declare -p XP')).out).toBe('declare -x XP\n');
+  // plain `declare NAME` predeclares with no attributes (`--`).
+  expect((await run('declare NAME; declare -p NAME')).out).toBe('declare -- NAME\n');
+  // `declare +l FOO` predeclares an unset name (the +l is a no-op fold-clear).
+  expect((await run('declare +l FOO; declare -p FOO')).out).toBe('declare -- FOO\n');
+});
+
+test('a predeclared -a/-A name is empty, not unset-scalar, once populated', async () => {
+  expect((await run('declare -a ARR; ARR[0]=x; ARR[1]=y; declare -p ARR')).out)
+    .toBe('declare -a ARR=([0]="x" [1]="y")\n');
+  expect((await run('declare -A M; M[k]=v; declare -p M')).out)
+    .toBe('declare -A M=([k]="v" )\n');
+});
+
+// ── declare -FLAG with NO names lists every variable carrying that attribute (bash) ──
+test('declare -i (no names) lists integer variables; -r lists readonly; -a lists arrays', async () => {
+  const r = await run('declare -i a=1 b=2; s=str; declare -i');
+  expect(r.out).toBe('declare -i a="1"\ndeclare -i b="2"\n');
+  expect((await run('declare -r RR=z; s=1; declare -r')).out).toBe('declare -r RR="z"\n');
+  expect((await run('declare -a arr=(x y); v=1; declare -a')).out)
+    .toBe('declare -a arr=([0]="x" [1]="y")\n');
+  expect((await run('declare -A m=([k]=v); s=1; declare -A')).out)
+    .toBe('declare -A m=([k]="v" )\n');
+  // Combined -ir lists only vars carrying BOTH attributes.
+  expect((await run('declare -ir c=5; declare -i x=1; declare -ir')).out).toBe('declare -ir c="5"\n');
+});
+
+// ── declare -g under a same-name function-local shadow (two narrow scoping gaps) ─────
+test('declare -gA assoc-literal under a local -A shadow writes the GLOBAL assoc', async () => {
+  // Regression: the -A attribute was dropped and the [key]=value mangled to [0]=value.
+  expect((await run('f(){ local -A m=([x]=local); declare -gA m=([y]=global); }; f; declare -p m')).out)
+    .toBe('declare -A m=([y]="global" )\n');
+  // The visible local stays until the function returns.
+  expect((await run('f(){ local -A m=([x]=loc); declare -gA m=([y]=glob); echo "in=${m[x]}${m[y]}"; }; f; echo "out=${m[x]}${m[y]}"')).out)
+    .toBe('in=loc\nout=glob\n');
+});
+
+test('declare -g NAME+=v append reads the GLOBAL binding, not the local shadow', async () => {
+  // Regression: the append prev-value read the local shadow (LOCALAPPEND) not the global.
+  expect((await run('g=start; f(){ local g=LOCAL; declare -g g+=APPEND; }; f; echo "g=$g"')).out)
+    .toBe('g=startAPPEND\n');
+});
+
+// ── [[ =~ ]] with an unquoted &&/||/backslash in the regex is coalesced correctly ──
+// bash treats a NO-SPACE `&&`/`||` as regex CONTENT (a single regex word), while a
+// SPACED `&&`/`||` is a logical connective between two conditionals. An unquoted
+// backslash escape survives into the regex. (Regression-lock: this was tracked as a
+// mis-parse; the R3 =~ coalescer fixed it — these guard against a re-break.)
+test('[[ =~ ]] regex with unquoted && / || is treated as regex content, not a connective', async () => {
+  expect((await run('[[ "a&&b" =~ a&&b ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ "aXb" =~ aXb&&junk ]]; echo $?')).out).toBe('0\n');   // .* style still matches whole
+  // A SPACED && is a real connective joining two matches.
+  expect((await run('[[ "aXbYc" =~ a.b && "aXbYc" =~ b.c ]]; echo conj=$?')).out).toBe('conj=0\n');
+  expect((await run('[[ "aXb" =~ a.b || "z" =~ q ]]; echo disj=$?')).out).toBe('disj=0\n');
+});
+
+test('[[ =~ ]] regex with unquoted backslash escapes survives into the pattern', async () => {
+  // FIX: an unquoted `\.` is a LITERAL dot in the regex — previously the backslash was
+  // stripped by ordinary word expansion, so `.` matched any char (a false match).
+  expect((await run('[[ "a.b" =~ a\\.b ]]; echo $?')).out).toBe('0\n');       // \. is a literal dot
+  expect((await run('[[ "axb" =~ a\\.b ]]; echo $?')).out).toBe('1\n');       // ...so "axb" does NOT match
+  expect((await run('[[ "a|b" =~ a\\|b ]]; echo $?')).out).toBe('0\n');       // \| literal pipe
+  expect((await run('[[ "a b" =~ a\\ b ]]; echo $?')).out).toBe('0\n');       // \<space> literal space
+  // Grouped/alternation patterns (incl. inside an enclosing [[ ( … ) ]]) still work.
+  expect((await run('[[ "cat" =~ ^(cat|dog)$ ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ "foo123" =~ ^[a-z]+[0-9]+$ ]]; echo $?')).out).toBe('0\n');
+});
+
+test('[[ =~ ]] a QUOTED regex operand is a LITERAL string, not a pattern (bash)', async () => {
+  // FIX: quoting the regex anchors it as a literal — `"a.b"` matches only "a.b", NOT
+  // "aXb". Previously mithic collapsed the quotes and treated `.` as a metacharacter.
+  expect((await run('[[ "axb" =~ "a.b" ]]; echo $?')).out).toBe('1\n');       // quoted → literal, no match
+  expect((await run('[[ "a.b" =~ "a.b" ]]; echo $?')).out).toBe('0\n');       // literal a.b matches
+  expect((await run('[[ "a+b" =~ \'a+b\' ]]; echo $?')).out).toBe('0\n');     // single-quoted literal +
+  expect((await run('[[ "aab" =~ \'a+b\' ]]; echo $?')).out).toBe('1\n');     // + is literal, not one-or-more
+  // An UNQUOTED variable's value stays regex-ACTIVE; a QUOTED expansion is literal.
+  expect((await run('re="a.b"; [[ "aXb" =~ $re ]]; echo active=$?')).out).toBe('active=0\n');
+  expect((await run('re="a.b"; [[ "axb" =~ "$re" ]]; echo lit=$?')).out).toBe('lit=1\n');
+});

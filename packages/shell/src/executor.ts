@@ -29,7 +29,7 @@ import type { GlobOptions } from './glob.ts';
 import { Expander, ExpansionError } from './expander.ts';
 import { shellQuoteQ } from './quote.ts';
 import { expandHistory, HistoryEventNotFound } from './history-expand.ts';
-import { isBuiltin, isShellKeyword, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES, PosixSpecialBuiltinError, POSIX_SPECIAL_BUILTINS, testNumericCompare, applyCaseFold } from './builtins.ts';
+import { isBuiltin, isShellKeyword, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES, PosixSpecialBuiltinError, POSIX_SPECIAL_BUILTINS, applyCaseFold, TEST_UNARY, TestSyntaxError } from './builtins.ts';
 import type { BuiltinContext, ShellState, ShellOptionName } from './builtins.ts';
 import { Environment, computeShlvl } from './environment.ts';
 import type { EnvHost } from './environment.ts';
@@ -282,6 +282,11 @@ export class Executor {
   private exportedNames = new Set<string>();
   /** Names with a `declare -l`/`-u` case-fold attribute → fold every assigned value. */
   private caseFoldNames = new Map<string, 'lower' | 'upper'>();
+  /** Names DECLARED (`declare`/`declare -a`/`-A`/`-x`/`+l …`) with NO value yet — bash
+   * shows these as a bare `declare -a NAME` (no `=(…)`), distinct from an explicitly
+   * EMPTY `declare -a NAME=()`. The kind is the intended container. A name leaves this
+   * map the moment any value/element is assigned (see {@link clearDeclaredUnset}). */
+  private declaredUnset = new Map<string, 'scalar' | 'array' | 'assoc'>();
   /** `$BASH_REMATCH` capture groups from the last successful `[[ =~ ]]` match. */
   private bashRematch: string[] = [];
   /** `$_` — the last argument (post-expansion) of the previous simple command. */
@@ -739,7 +744,10 @@ export class Executor {
         // create a local (bash), so it must NOT go through declareLocal.
         this.arrays.set(name, values);
         delete this.context.env[name];
+        this.clearDeclaredUnset(name);
       },
+      predeclare: (name, kind) => this.predeclare(name, kind),
+      clearDeclaredUnset: (name) => this.clearDeclaredUnset(name),
       waitJob: (id) => this.jobControl.waitJob(id),
       waitAll: () => this.jobControl.waitAll(),
       waitNext: () => this.jobControl.waitNext(),
@@ -779,9 +787,11 @@ export class Executor {
       markGlobalCaseFold: (name, mode) => this.markGlobalCaseFold(name, mode),
       markExport: (name) => { this.exportedNames.add(name); },
       declareP: (names) => this.declareP(names),
+      declarePByAttr: (flags) => this.declarePByAttr(flags),
       setNameref: (ref, target) => { this.namerefs.set(ref, target); },
       resolveNameref: (name) => this.namerefs.get(name),
       setGlobal: (name, value) => this.setGlobal(name, value),
+      getGlobal: (name) => this.getGlobal(name),
       dirStack: () => this.dirStackBelow,
     };
   }
@@ -883,6 +893,42 @@ export class Executor {
     }
     this.context.env[name] = value; // no local shadows it → the flat env IS the global
     return false;
+  }
+
+  /** The current SCALAR value of the GLOBAL binding of `name`, ignoring any local
+   * shadow (its snapshot holds the pre-shadow global value). Lets `declare -g NAME+=v`
+   * append to the global's value, not a same-name function-local shadow's (bash). */
+  private getGlobal(name: string): string | undefined {
+    for (let i = 0; i < this.localScopes.length; i++) {
+      if (this.localScopes[i].has(name)) return this.localSaved[i].get(name);
+    }
+    return this.context.env[name];
+  }
+
+  /** Record `name` as DECLARED-but-unset with the given container kind (bare `declare`,
+   * `declare -a`/`-A`/`-x`). For an array/assoc kind we also seed an empty container so
+   * `${NAME[@]}`/`${#NAME[@]}` read as an empty array; `declare -p` still prints the
+   * bare form (no `=(…)`) while the name stays in {@link declaredUnset}. */
+  private predeclare(name: string, kind: 'scalar' | 'array' | 'assoc'): void {
+    // The bare-vs-empty distinction is a GLOBAL inspection concern; if a function-local
+    // shadows `name`, leave it to the local's own (snapshot-restored) lifecycle.
+    if (this.localScopes.some((s) => s.has(name))) return;
+    // Never override an existing VALUE (bash: `v=hi; declare v` keeps hi). A name that
+    // already holds a value/array/assoc is not "unset" — leave it and its storage be.
+    // (A pre-existing empty `-A`/`-a` container with no entries is still "declared, no
+    // value assigned", so an empty assoc/array does NOT count as a value here.)
+    if (name in this.context.env) return;
+    if (this.arrays.has(name) && this.arrays.get(name)!.length > 0) return;
+    if (this.assocArrays.has(name) && this.assocArrays.get(name)!.size > 0) return;
+    if (kind === 'array' && !this.arrays.has(name)) this.arrays.set(name, []);
+    else if (kind === 'assoc' && !this.assocArrays.has(name)) this.assocArrays.set(name, new Map());
+    this.declaredUnset.set(name, kind);
+  }
+
+  /** Drop `name` from the declared-but-unset set — called whenever a real value or
+   * element is assigned, so `declare -p` switches from the bare form to `=value`/`=(…)`. */
+  private clearDeclaredUnset(name: string): void {
+    this.declaredUnset.delete(name);
   }
 
   private declareLocal(name: string): 'fresh' | 'existing' | 'none' {
@@ -1393,21 +1439,37 @@ export class Executor {
 
   private async execCond(stmt: Statement): Promise<number> {
     const exp = this.expander();
+    const raw = stmt.condWords ?? [];
     const words: string[] = [];
-    for (const w of stmt.condWords ?? []) {
+    // Parallel to `words`: for a token that is the RHS of a `=~`, its regex-preserving
+    // expansion (quotes → literal, unquoted backslashes kept) — used by the evaluator
+    // instead of the quote-collapsed `expandToString`. `undefined` elsewhere.
+    const regexSources: (string | undefined)[] = [];
+    for (let i = 0; i < raw.length; i++) {
+      const w = raw[i];
       // [[ ]] does not word-split, but we expand each token to a single string.
       words.push(await exp.expandToString(w));
+      regexSources.push(raw[i - 1] === '=~' ? await exp.expandRegexOperand(w) : undefined);
     }
     // `condGroup` marks which words are genuine grouping parens (vs quoted `(`/`)`
     // operands) — expansion collapses quoting, so this parallel array is how the
     // evaluator tells `[[ ( a ) ]]` from `[[ '(' == '(' ]]`.
     const group = stmt.condGroup ?? words.map(() => false);
-    return (await this.evalConditional(words, group)) ? 0 : 1;
+    try {
+      return (await this.evalConditional(words, group, regexSources)) ? 0 : 1;
+    } catch (e) {
+      // A malformed conditional (`[[ -e ]]`, `[[ x -badop y ]]`, `[[ ]]`, `[[ a b ]]`)
+      // is FAIL-LOUD in bash: a `syntax error` on stderr + exit 2, NOT a fabricated
+      // false. mithic mirrors the diagnostic phrasing (operator-expected / near-token).
+      if (e instanceof TestSyntaxError) { this.io.stderr(`shell: ${e.message}\n`); return 2; }
+      throw e;
+    }
   }
 
   /** Evaluate a `[[ ... ]]` expression (supports !, &&, ||, ( ), =~, -f/-d/-z/-n, comparisons).
-   * `group[i]` is true where `words[i]` is a genuine grouping paren (not an operand). */
-  private async evalConditional(words: string[], group: boolean[]): Promise<boolean> {
+   * `group[i]` is true where `words[i]` is a genuine grouping paren (not an operand).
+   * `regexSources[i]` (parallel) is the regex-preserving expansion of a `=~` RHS token. */
+  private async evalConditional(words: string[], group: boolean[], regexSources: (string | undefined)[] = []): Promise<boolean> {
     // Split binary logicals at the SHALLOWEST GROUPING-paren depth (so `( a && b ) || c`
     // groups correctly); scan for the LAST top-level `||` then `&&` (left-associative).
     // Only genuine grouping parens (group[i]) change depth — a quoted `(` operand does not.
@@ -1422,22 +1484,27 @@ export class Executor {
     };
     const orIdx = topLevel('||');
     if (orIdx >= 0) {
-      return (await this.evalConditional(words.slice(0, orIdx), group.slice(0, orIdx)))
-        || (await this.evalConditional(words.slice(orIdx + 1), group.slice(orIdx + 1)));
+      return (await this.evalConditional(words.slice(0, orIdx), group.slice(0, orIdx), regexSources.slice(0, orIdx)))
+        || (await this.evalConditional(words.slice(orIdx + 1), group.slice(orIdx + 1), regexSources.slice(orIdx + 1)));
     }
     const andIdx = topLevel('&&');
     if (andIdx >= 0) {
-      return (await this.evalConditional(words.slice(0, andIdx), group.slice(0, andIdx)))
-        && (await this.evalConditional(words.slice(andIdx + 1), group.slice(andIdx + 1)));
+      return (await this.evalConditional(words.slice(0, andIdx), group.slice(0, andIdx), regexSources.slice(0, andIdx)))
+        && (await this.evalConditional(words.slice(andIdx + 1), group.slice(andIdx + 1), regexSources.slice(andIdx + 1)));
     }
-    if (words[0] === '!') return !(await this.evalConditional(words.slice(1), group.slice(1)));
+    if (words[0] === '!') return !(await this.evalConditional(words.slice(1), group.slice(1), regexSources.slice(1)));
     // A fully-parenthesized group `( expr )`: strip the outer GROUPING parens and recurse.
     if (group[0] && words[0] === '(' && group[words.length - 1] && words[words.length - 1] === ')') {
-      return await this.evalConditional(words.slice(1, -1), group.slice(1, -1));
+      return await this.evalConditional(words.slice(1, -1), group.slice(1, -1), regexSources.slice(1, -1));
     }
     if (words.length === 3 && words[1] === '=~') {
       try {
-        const m = new RegExp(words[2]).exec(words[0]);
+        // The regex operand uses the regex-PRESERVING expansion (quoted → literal,
+        // unquoted backslashes kept) — NOT the quote-collapsed `words[2]`, which would
+        // turn `"a.b"`/`a\.b` into the metacharacter `a.b`. Falls back to `words[2]`
+        // only if the parallel source is absent (defensive).
+        const source = regexSources[2] ?? words[2];
+        const m = new RegExp(source).exec(words[0]);
         // On a match, populate $BASH_REMATCH (0 = whole match, N = group N); a
         // non-match clears it (bash leaves the previous value, but clearing is the
         // safer, predictable choice and matches the common test-then-read idiom).
@@ -1460,7 +1527,9 @@ export class Executor {
     if (words.length === 3 && (words[1] === '-nt' || words[1] === '-ot' || words[1] === '-ef')) {
       return this.condFileTest(words[1], words[0] + '\0' + words[2]);
     }
-    if (words.length === 2 && words[0].startsWith('-')) {
+    // `[[ -X arg ]]` — a KNOWN unary operator applied to its argument. An unknown
+    // `-X` is NOT a silent false: it falls to the malformed check below (fail-loud).
+    if (words.length === 2 && TEST_UNARY.has(words[0])) {
       return this.condFileTest(words[0], words[1]);
     }
     // `[[ a -eq b ]]` numeric comparison: operands are ARITHMETIC expressions (bash),
@@ -1483,7 +1552,35 @@ export class Executor {
         case '-ge': return x >= y;
       }
     }
-    return evalTestArgs(words);
+    // ── FAIL-LOUD leaf validation (bash: a malformed conditional is exit-2 `syntax
+    // error`, NOT a fabricated false). Everything above handled the well-formed
+    // shapes; a leaf that reaches here is either a valid 1-word string test or a
+    // syntax error. Mirror bash's diagnostics (unary/binary operator expected /
+    // near-token). ──
+    if (words.length === 0) throw new TestSyntaxError('syntax error: conditional expression expected');
+    if (words.length === 1) {
+      // A lone token errors ONLY when it is a UNARY operator (it demands an argument),
+      // or the always-binary `<`/`>` comparison operators. Every OTHER single word —
+      // including binary word-operators that double as ordinary strings (`=`, `==`,
+      // `=~`, `-eq`, `!=`, `-nt`, `-ef`) — is a plain string non-empty test (bash:
+      // `[[ = ]]` is true, `[[ -e ]]` and `[[ < ]]` are exit-2 syntax errors).
+      if (TEST_UNARY.has(words[0]) || words[0] === '<' || words[0] === '>') {
+        throw new TestSyntaxError(`unexpected argument to conditional unary operator; syntax error near \`${words[0]}'`);
+      }
+      return words[0] !== '';
+    }
+    // 2 words where word[0] is not a known unary operator (the known case returned
+    // above): bash reports the SECOND word as an unexpected binary operator.
+    if (words.length === 2) {
+      throw new TestSyntaxError(`syntax error: \`${words[1]}' unexpected; conditional binary operator expected`);
+    }
+    // 3 words whose middle token is not a recognized binary operator (the `=~`/glob/
+    // comparison/`-nt` cases all returned above): bad conditional binary operator.
+    if (words.length === 3) {
+      throw new TestSyntaxError(`syntax error: \`${words[1]}' conditional binary operator expected`);
+    }
+    // 4+ words with no logical/grouping structure: too many arguments / near-token.
+    throw new TestSyntaxError(`syntax error near \`${words[words.length === 0 ? 0 : 1] ?? ''}'`);
   }
 
   private async condFileTest(op: string, path: string): Promise<boolean> {
@@ -2640,6 +2737,35 @@ export class Executor {
     // Integer arrays arith-evaluate; a `declare -l`/`-u` array folds each element.
     const evalIfInt = (v: string): string =>
       intAttr ? String(this.evalArithValue(v)) : applyCaseFold(v, foldMode);
+    // Is the TARGET binding associative? For a live (non-`-g`) target that's
+    // `this.assocArrays`. For a `declare -g` target shadowed by a same-name local,
+    // it is the GLOBAL binding's assoc-ness: either its snapshot already holds an
+    // assoc, or `declare -gA` just marked the live name assoc (declareAssoc set
+    // `this.assocArrays`, meaning the -A attribute is intended for the global). In
+    // either case route the `[key]=value` literal into the GLOBAL snapshot's assoc
+    // map — WITHOUT this, the assoc literal fell through to the indexed path, which
+    // dropped the `-A` attribute and mangled `[y]=v` into `[0]="v"`.
+    if (globalScopeIdx >= 0) {
+      const snap = this.localSavedArrays[globalScopeIdx].get(name);
+      const targetIsAssoc = snap?.assoc !== undefined || this.assocArrays.has(name);
+      if (targetIsAssoc) {
+        const gAssoc = snap?.assoc ?? new Map<string, string>();
+        if (!append) gAssoc.clear();
+        for (const w of words) {
+          const m = /^\[(.*?)\]([+]?)=(.*)$/s.exec(w);
+          if (m === null) continue; // assoc literal needs [key]=value pairs
+          const key = await expander.substituteOnly(m[1]);
+          const val = evalIfInt(await expander.expandToString(m[3]));
+          gAssoc.set(key, m[2] === '+' ? (gAssoc.get(key) ?? '') + val : val);
+        }
+        // Commit onto the global snapshot; clear any indexed snapshot so the global
+        // surfaces as an assoc on return. The live local (this.assocArrays[name]) is
+        // left untouched — it stays visible until the function returns (bash).
+        if (snap !== undefined) { snap.assoc = gAssoc; snap.arr = undefined; }
+        else this.localSavedArrays[globalScopeIdx].set(name, { assoc: gAssoc, integer: intAttr, readonly: false });
+        return false;
+      }
+    }
     const assoc = globalScopeIdx < 0 ? this.assocArrays.get(name) : undefined;
     if (assoc !== undefined) {
       if (!append) assoc.clear();
@@ -2715,6 +2841,9 @@ export class Executor {
       this.lastStatus = 1;
       return true;
     }
+    // Any real value/element assignment promotes the name out of declared-but-unset
+    // (bash: `declare -a a; a+=(x)` → `declare -p a` now shows `=(…)`, not the bare form).
+    this.clearDeclaredUnset(a.name);
     // NOTE: a bare `name=value` / `name=(…)` assignment (even inside a function) is
     // GLOBAL in bash — it modifies the existing variable in the nearest enclosing
     // scope, defaulting to global. It is NOT auto-localized. Function-local scoping
@@ -2977,6 +3106,9 @@ export class Executor {
       if (target !== undefined) return `declare -n ${n}="${target.replace(/[\\"$`]/g, (c) => '\\' + c)}"`;
       const flags = flagFor(n);
       const opt = flags === '' ? '--' : '-' + flags;
+      // A DECLARED-but-unset name prints the BARE form (`declare -a NAME`) — no `=(…)` /
+      // `=value` — distinct from an explicitly-empty `declare -a NAME=()` (bash).
+      if (this.declaredUnset.has(n)) return `declare ${opt} ${n}`;
       if (this.assocArrays.has(n)) {
         // Assoc arrays get a TRAILING space after the last pair (bash); indexed don't.
         const m = this.assocArrays.get(n)!;
@@ -2989,11 +3121,11 @@ export class Executor {
         return `declare ${opt} ${n}=(${body})`;
       }
       if (n in this.context.env) return `declare ${opt} ${n}=${val(this.context.env[n])}`;
-      if (this.readonlyNames.has(n) || this.integerNames.has(n) || this.caseFoldNames.has(n)) return `declare ${opt} ${n}`;
+      if (this.readonlyNames.has(n) || this.integerNames.has(n) || this.caseFoldNames.has(n) || this.exportedNames.has(n)) return `declare ${opt} ${n}`;
       return undefined;
     };
     if (names.length === 0) {
-      const all = new Set<string>([...Object.keys(this.context.env), ...this.arrays.keys(), ...this.assocArrays.keys()]);
+      const all = new Set<string>([...Object.keys(this.context.env), ...this.arrays.keys(), ...this.assocArrays.keys(), ...this.declaredUnset.keys(), ...this.exportedNames]);
       const lines: string[] = [];
       for (const n of [...all].sort()) { const l = line(n); if (l !== undefined) lines.push(l); }
       return { lines, missing: [] };
@@ -3002,6 +3134,42 @@ export class Executor {
     const missing: string[] = [];
     for (const n of names) { const l = line(n); if (l !== undefined) lines.push(l); else missing.push(n); }
     return { lines, missing };
+  }
+
+  /**
+   * `declare -FLAG` with NO name operands: list every variable carrying ALL of the
+   * requested attribute flags (bash's attribute-listing mode). `flags` is the set of
+   * requested letters restricted to attribute flags (`a A i r x l u n`); a name must
+   * satisfy EACH. Returns the same `declare …` reconstruction lines as {@link declareP},
+   * sorted by name (bash order).
+   */
+  private declarePByAttr(flags: Set<string>): string[] {
+    const has = (n: string, ch: string): boolean => {
+      switch (ch) {
+        case 'a': return this.arrays.has(n) && !this.assocArrays.has(n);
+        case 'A': return this.assocArrays.has(n);
+        case 'i': return this.integerNames.has(n);
+        case 'r': return this.readonlyNames.has(n);
+        case 'x': return this.exportedNames.has(n);
+        case 'l': return this.caseFoldNames.get(n) === 'lower';
+        case 'u': return this.caseFoldNames.get(n) === 'upper';
+        case 'n': return this.namerefs.has(n);
+        default: return true; // non-attribute letters (g/p handled by caller) don't filter
+      }
+    };
+    const all = new Set<string>([
+      ...Object.keys(this.context.env), ...this.arrays.keys(), ...this.assocArrays.keys(),
+      ...this.declaredUnset.keys(), ...this.exportedNames, ...this.namerefs.keys(),
+      ...this.readonlyNames, ...this.integerNames, ...this.caseFoldNames.keys(),
+    ]);
+    const wanted = [...flags].filter((ch) => 'aAirxlun'.includes(ch));
+    const out: string[] = [];
+    for (const n of [...all].sort()) {
+      if (!wanted.every((ch) => has(n, ch))) continue;
+      const l = this.declareP([n]).lines[0];
+      if (l !== undefined) out.push(l);
+    }
+    return out;
   }
 
   // ── background / jobs ─────────────────────────────────────────────────────────
@@ -3380,19 +3548,3 @@ function describeStatement(stmt: Statement): string {
   return stmt.type.toLowerCase();
 }
 
-/** test(1)-style argument evaluation for `[[ ]]` fallback (string truthiness, numeric/string comparisons). */
-function evalTestArgs(args: string[]): boolean {
-  if (args.length === 0) return false;
-  if (args.length === 1) return args[0] !== '';
-  if (args.length === 3) {
-    const [a, op, b] = args;
-    switch (op) {
-      case '=': case '==': return a === b;
-      case '!=': return a !== b;
-      // Numeric `-eq`… inside `[[ ]]` are intercepted upstream (arith); this
-      // fall-through is defensive. A non-integer operand → false (never throws here).
-      default: try { return testNumericCompare(a, op, b) ?? false; } catch { return false; }
-    }
-  }
-  return false;
-}

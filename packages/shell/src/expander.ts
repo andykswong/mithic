@@ -177,6 +177,66 @@ export class Expander {
   }
 
   /**
+   * Expand the RIGHT-HAND operand of `[[ … =~ RE ]]`, preserving regex semantics the
+   * way bash does — which ordinary word expansion (see {@link expandToString}) would
+   * destroy by stripping backslashes and collapsing quotes:
+   *   - a SINGLE- or DOUBLE-quoted run becomes a regex-ESCAPED LITERAL (bash anchors
+   *     quoted regex text as literal string — `[[ axb =~ "a.b" ]]` does NOT match);
+   *     inside `"…"`, `$var`/`` `cmd` `` still expand, then the result is escaped.
+   *   - an UNQUOTED backslash escape is PRESERVED verbatim (`a\.b` → literal dot).
+   *   - an UNQUOTED `$var`/`` `cmd` `` expands and its value is inserted REGEX-ACTIVE
+   *     (bash: `re='a.b'; [[ aXb =~ $re ]]` matches — the `.` from the variable is a
+   *     metacharacter).
+   *   - every other unquoted char passes through as regex source.
+   * The result is a JS-`RegExp`-ready source string.
+   */
+  async expandRegexOperand(word: string): Promise<string> {
+    const escapeLiteral = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, (m) => '\\' + m);
+    const n = word.length;
+    let out = '';
+    let i = 0;
+    while (i < n) {
+      const c = word[i];
+      if (c === '\\') {
+        // Unquoted backslash escape: keep BOTH chars so the regex engine sees `\x`
+        // (a literal dot `\.`, a literal `\|`, etc.). A trailing lone `\` is kept.
+        out += word[i + 1] !== undefined ? '\\' + word[i + 1] : '\\';
+        i += word[i + 1] !== undefined ? 2 : 1;
+        continue;
+      }
+      if (c === '\'') {
+        i++;
+        let inner = '';
+        while (i < n && word[i] !== '\'') { inner += word[i]; i++; }
+        i++;
+        out += escapeLiteral(inner);
+        continue;
+      }
+      if (c === '"') {
+        i++;
+        let inner = '';
+        while (i < n && word[i] !== '"') {
+          if (word[i] === '\\') {
+            const next = word[i + 1] ?? '';
+            if (next === '"' || next === '\\' || next === '$' || next === '`') { inner += next; i += 2; continue; }
+            inner += '\\'; i++; continue;
+          }
+          if (word[i] === '$') { const r = await this.readDollar(word, i); inner += r.value ?? ''; i = r.next; continue; }
+          if (word[i] === '`') { const r = await this.readBacktick(word, i); inner += r.value; i = r.next; continue; }
+          inner += word[i]; i++;
+        }
+        i++;
+        out += escapeLiteral(inner); // quoted content is a regex LITERAL (bash)
+        continue;
+      }
+      if (c === '$') { const r = await this.readDollar(word, i); out += r.value ?? ''; i = r.next; continue; }
+      if (c === '`') { const r = await this.readBacktick(word, i); out += r.value; i = r.next; continue; }
+      out += c; i++;
+    }
+    return out;
+  }
+
+  /**
    * Tilde expansion (H6): a leading unquoted `~` → `$HOME`, `~/rest` →
    * `$HOME/rest`. Only fires when the word literally starts with `~` (so quoted
    * `"~"` and mid-word `a~` are left alone). `~user` is left literal — there is

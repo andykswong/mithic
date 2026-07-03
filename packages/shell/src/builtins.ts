@@ -27,6 +27,16 @@ export interface ShellState {
   /** Register a name as an associative array (`declare -A`). */
   declareAssoc?(name: string): void;
   /**
+   * Record a name as DECLARED-but-unset (`declare NAME` / `declare -a NAME` /
+   * `declare -A NAME` / `declare -x NAME`, no value). bash prints these as a bare
+   * `declare -a NAME` (no `=(…)`), distinct from an explicitly-empty `declare -a
+   * NAME=()`. Any later value/element assignment clears the flag. Never overrides an
+   * existing value (`v=hi; declare v` keeps `hi`).
+   */
+  predeclare?(name: string, kind: 'scalar' | 'array' | 'assoc'): void;
+  /** Drop a name from the declared-but-unset set (any real value/element assignment). */
+  clearDeclaredUnset?(name: string): void;
+  /**
    * Set an indexed array variable (`read -a` / `mapfile`). Reuses the same
    * storage the `name=(a b c)` assignment path writes, so the values are visible
    * to `${name[i]}` / `${name[@]}` / `${#name[@]}` expansion.
@@ -110,6 +120,9 @@ export interface ShellState {
    * Returns the `declare …` lines and any requested names that were not found.
    */
   declareP?(names: string[]): { lines: string[]; missing: string[] };
+  /** `declare -FLAG` with no names: list every variable carrying ALL requested
+   * attribute flags (bash attribute-listing mode). Returns `declare …` lines, sorted. */
+  declarePByAttr?(flags: Set<string>): string[];
   /** Record a `declare -n ref=target` nameref (single-level). */
   setNameref?(ref: string, target: string): void;
   /** Resolve a nameref to its target (single-level), or undefined if not a nameref. */
@@ -122,6 +135,12 @@ export interface ShellState {
    * the flat env), false if it wrote the global directly.
    */
   setGlobal?(name: string, value: string): boolean;
+  /**
+   * The current SCALAR value of the GLOBAL binding of `name`, ignoring any same-name
+   * function-local shadow. Lets `declare -g NAME+=v` append to the global's value
+   * (not the local's) — symmetric to {@link setGlobal}.
+   */
+  getGlobal?(name: string): string | undefined;
   /**
    * The directory stack BELOW the current directory (`pushd`/`popd`/`dirs`),
    * most-recent-first. The live array — `dirs`/`pushd`/`popd` mutate it in place.
@@ -616,6 +635,18 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         for (const line of out.lines) ctx.write(line + '\n');
         return out.missing.length > 0 ? 1 : 0;
       }
+      // `declare -FLAG` with NO name operands is ATTRIBUTE-LISTING mode (bash): print
+      // every variable carrying ALL of the requested attribute flags. This fires only
+      // when there are attribute flags present and no name/assignment operands (a bare
+      // `declare` with no flags is a full dump, handled elsewhere / not here).
+      const hasNameOperand = args.some((x) => !x.startsWith('-') && !x.startsWith('+'))
+        || (ctx.builtinAssignments ?? []).length > 0;
+      const attrFlags = new Set([...flags].filter((ch) => 'aAirxlun'.includes(ch)));
+      if (isDeclare && !hasNameOperand && attrFlags.size > 0) {
+        const listed = ctx.state?.declarePByAttr?.(attrFlags) ?? [];
+        for (const line of listed) ctx.write(line + '\n');
+        return 0;
+      }
       // Scoping: `local` is always function-local (and errors outside a function).
       // A bare `declare`/`typeset` inside a function is LOCAL by default; `-g` forces
       // GLOBAL. `readonly`/`export` are always global. `scopeLocal` requests the
@@ -772,7 +803,10 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
           }
           if (!isAssoc) {
             const rhs = arg.slice(eq + 1);
-            const prev = append ? (ctx.env[n] ?? '') : '';
+            // `+=` reads the PRIOR value. Under `declare -g`, that is the GLOBAL
+            // binding's value, not a same-name function-local shadow's (bash:
+            // `g=start; f(){ local g=L; declare -g g+=X; }` → global `startX`).
+            const prev = append ? ((flagGlobal ? ctx.state?.getGlobal?.(n) : ctx.env[n]) ?? '') : '';
             let val = flagInteger
               ? String(append ? (ctx.evalArith?.(prev || '0') ?? 0n) + (ctx.evalArith?.(rhs) ?? 0n) : (ctx.evalArith?.(rhs) ?? 0n))
               : prev + rhs; // `+=` appends (prev is '' when not append)
@@ -786,7 +820,19 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
             // snapshot rather than clobbering it); otherwise write the current env.
             if (flagGlobal && ctx.state?.setGlobal?.(n, val)) { /* global updated */ }
             else ctx.env[n] = val;
+            // A real scalar value promotes the name out of declared-but-unset.
+            ctx.state?.clearDeclaredUnset?.(n);
           }
+        } else if (!isNameref) {
+          // A bare `declare NAME` / `declare -a NAME` / `declare -A NAME` / `declare -x
+          // NAME` (no `=value`) DECLARES the name (attribute-carrying) but leaves it
+          // unset. bash's `declare -p` shows the bare form (`declare -a NAME`), distinct
+          // from an explicitly-empty `declare -a NAME=()`. `declare -A` already ran
+          // declareAssoc above; predeclare records the declared-but-unset marker (and
+          // seeds an empty array for `-a`). It targets the GLOBAL binding — the executor
+          // no-ops when a function-local shadows the name (bare-vs-empty is a global
+          // inspection concern, not tracked per function-local frame).
+          ctx.state?.predeclare?.(n, isAssoc ? 'assoc' : flags.has('a') ? 'array' : 'scalar');
         }
         // A bare `declare NAME` / `local NAME` (no `=value`) declares the name but
         // leaves it UNSET (bash: `local x; echo ${x+SET}` prints nothing) — a fresh
@@ -1765,13 +1811,15 @@ function splitKeepingDelimiter(data: string, delim: string): string[] {
  * whole set is what lets a bad operator produce "unary operator expected" rather
  * than being silently treated as a truthy string.
  */
-const TEST_UNARY = new Set([
+export const TEST_UNARY = new Set([
   '-a', '-b', '-c', '-d', '-e', '-f', '-g', '-h', '-k', '-n', '-o', '-p',
   '-r', '-s', '-t', '-u', '-w', '-x', '-z', '-G', '-L', '-N', '-O', '-R', '-S', '-v',
 ]);
 
-/** bash's `test_binop`: string, numeric, and file-comparison binary operators. */
-const TEST_BINARY = new Set([
+/** bash's `test_binop`: string, numeric, and file-comparison binary operators.
+ * `=~` is `[[ ]]`-only (regex match) and handled by the conditional evaluator, not
+ * here — it is added to the `[[ ]]` malformed-detection set separately. */
+export const TEST_BINARY = new Set([
   '=', '==', '!=', '<', '>',
   '-eq', '-ne', '-lt', '-le', '-gt', '-ge',
   '-nt', '-ot', '-ef',
@@ -1798,8 +1846,9 @@ class TestIntegerError extends Error {
 
 /** Thrown by a malformed `test`/`[` expression (bad operator, wrong arg count);
  * the builtin catches it → bash's diagnostic (`… operator expected` / `too many
- * arguments` / `argument expected`) on stderr + exit 2. */
-class TestSyntaxError extends Error {
+ * arguments` / `argument expected`) on stderr + exit 2. Also thrown by a malformed
+ * `[[ ]]` conditional (the executor catches it → `syntax error` + exit 2). */
+export class TestSyntaxError extends Error {
   constructor(message: string) { super(message); }
 }
 
