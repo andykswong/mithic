@@ -1,15 +1,16 @@
 /**
  * POSIX/bash arithmetic evaluator for `$(( ... ))` and `(( ... ))`.
  *
- * Integer-only (bash semantics): division truncates toward zero, results are
- * 64-bit-ish JS numbers. Supports the full operator set including assignment
- * (`=`, `+=` …), pre/post increment, ternary, comma, bitwise, shifts, logical,
- * and comparisons. Variable references read/write the supplied `env` (bare
- * names and `$name` both resolve; an unset/non-numeric var is 0).
+ * Integer-only, 64-bit `intmax_t` semantics via BigInt (matching bash): every
+ * operation wraps modulo 2^64 as two's-complement, division truncates toward zero,
+ * `1 << 62` and values beyond 2^53 are exact. Supports the full operator set
+ * including assignment (`=`, `+=` …), pre/post increment, ternary, comma, bitwise,
+ * shifts, logical, and comparisons. Variable references read/write the supplied
+ * `env` (bare names and `$name` both resolve; an unset/non-numeric var is 0).
  */
 
 type Tok =
-  | { t: 'num'; v: number }
+  | { t: 'num'; v: bigint }
   | { t: 'name'; v: string }
   | { t: 'op'; v: string };
 
@@ -19,6 +20,15 @@ const OPS2 = [
   '++', '--', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=',
 ];
 const OPS1 = ['+', '-', '*', '/', '%', '(', ')', '~', '!', '<', '>', '&', '|', '^', '?', ':', ',', '='];
+
+const TWO_POW_64 = 1n << 64n;
+const INT64_MAX = (1n << 63n) - 1n;
+
+/** Wrap a BigInt to signed 64-bit two's-complement (bash intmax_t overflow). */
+function wrap64(v: bigint): bigint {
+  const m = ((v % TWO_POW_64) + TWO_POW_64) % TWO_POW_64; // 0 .. 2^64-1
+  return m > INT64_MAX ? m - TWO_POW_64 : m;
+}
 
 function tokenize(src: string): Tok[] {
   const toks: Tok[] = [];
@@ -74,11 +84,13 @@ function tokenize(src: string): Tok[] {
   return toks;
 }
 
-function parseIntLiteral(raw: string): number {
-  if (/^0[xX]/.test(raw)) { const v = parseInt(raw, 16); return Number.isNaN(v) ? 0 : v; }
-  if (/^0[0-7]+$/.test(raw)) return parseInt(raw, 8);
-  const v = parseInt(raw, 10);
-  return Number.isNaN(v) ? 0 : v;
+function parseIntLiteral(raw: string): bigint {
+  try {
+    if (/^0[xX][0-9a-fA-F]+$/.test(raw)) return wrap64(BigInt(raw));
+    if (/^0[0-7]+$/.test(raw)) return wrap64(BigInt('0o' + raw.slice(1)));
+    if (/^[0-9]+$/.test(raw)) return wrap64(BigInt(raw));
+  } catch { /* fall through */ }
+  return 0n;
 }
 
 /**
@@ -86,10 +98,11 @@ function parseIntLiteral(raw: string): number {
  * 0-9 → 0..9, a-z → 10..35, A-Z → 36..61, `@` → 62, `_` → 63. For bases ≤ 36 the
  * digits are case-insensitive (bash). A digit ≥ base or a bad base throws.
  */
-function parseBaseLiteral(baseStr: string, digits: string): number {
+function parseBaseLiteral(baseStr: string, digits: string): bigint {
   const base = parseInt(baseStr, 10);
   if (Number.isNaN(base) || base < 2 || base > 64) throw new SyntaxError(`arith: ${baseStr}: invalid arithmetic base`);
-  const digitValue = (ch: string): number => {
+  const bigBase = BigInt(base);
+  const digitValue = (ch: string): bigint => {
     let v: number;
     if (ch >= '0' && ch <= '9') v = ch.charCodeAt(0) - 48;
     else if (base <= 36) {
@@ -101,11 +114,11 @@ function parseBaseLiteral(baseStr: string, digits: string): number {
     else if (ch === '_') v = 63;
     else v = base;
     if (v >= base) throw new SyntaxError(`arith: ${baseStr}#${digits}: value too great for base`);
-    return v;
+    return BigInt(v);
   };
-  let result = 0;
-  for (const ch of digits) result = result * base + digitValue(ch);
-  return result;
+  let result = 0n;
+  for (const ch of digits) result = result * bigBase + digitValue(ch);
+  return wrap64(result);
 }
 
 /** Optional indexed-array element accessors for `a[i]` lvalues in arithmetic. */
@@ -132,7 +145,7 @@ class ArithParser {
     if (b < 0 || !name.endsWith(']')) return undefined;
     const arr = name.slice(0, b);
     const idxSrc = name.slice(b + 1, -1);
-    const index = new ArithParser(tokenize(idxSrc), this.env, this.arr).parse();
+    const index = Number(new ArithParser(tokenize(idxSrc), this.env, this.arr).parse());
     return { arr, index };
   }
 
@@ -143,35 +156,44 @@ class ArithParser {
     this.pos++;
   }
 
-  private read(name: string): number {
+  private read(name: string): bigint {
     const ref = this.arrayRef(name);
     const raw = ref ? this.arr?.getElement(ref.arr, ref.index) : this.env[name];
-    if (raw === undefined || raw === '') return 0;
-    const v = parseInt(raw.trim(), 10);
-    return Number.isNaN(v) ? 0 : v;
+    if (raw === undefined || raw === '') return 0n;
+    // A variable's value is itself an arithmetic expression in bash (recursive),
+    // but the common case is a plain integer; parse leniently and wrap to 64-bit.
+    const s = raw.trim();
+    try {
+      if (/^[+-]?0[xX][0-9a-fA-F]+$/.test(s)) return wrap64(BigInt(s.replace('+', '')));
+      if (/^[+-]?[0-9]+$/.test(s)) return wrap64(BigInt(s));
+    } catch { /* fall through */ }
+    // Non-numeric / expression-valued variable: evaluate it (bash recursive arith).
+    try { return wrap64(new ArithParser(tokenize(s), this.env, this.arr).parse()); }
+    catch { return 0n; }
   }
-  private write(name: string, value: number): number {
+  private write(name: string, value: bigint): bigint {
+    const v = wrap64(value);
     const ref = this.arrayRef(name);
-    if (ref) { this.arr?.setElement(ref.arr, ref.index, String(value)); return value; }
-    this.env[name] = String(value);
-    return value;
+    if (ref) { this.arr?.setElement(ref.arr, ref.index, String(v)); return v; }
+    this.env[name] = String(v);
+    return v;
   }
 
-  parse(): number {
+  parse(): bigint {
     const v = this.comma();
     if (this.pos < this.toks.length) throw new SyntaxError('arith: trailing tokens');
     return v;
   }
 
   // comma → assignment ( ',' assignment )*
-  private comma(): number {
+  private comma(): bigint {
     let v = this.assign();
     while (this.isOp(',')) { this.pos++; v = this.assign(); }
     return v;
   }
 
   // assignment: lvalue ('='|'+='...) assignment | ternary
-  private assign(): number {
+  private assign(): bigint {
     const start = this.pos;
     const t = this.peek();
     if (t?.t === 'name') {
@@ -181,20 +203,20 @@ class ArithParser {
         this.pos += 2;
         const rhs = this.assign();
         const cur = this.read(t.v);
-        let result: number;
+        let result: bigint;
         switch (next.v) {
           case '=': result = rhs; break;
           case '+=': result = cur + rhs; break;
           case '-=': result = cur - rhs; break;
           case '*=': result = cur * rhs; break;
-          case '/=': result = trunc(cur / checkNonZero(rhs)); break;
+          case '/=': result = trunc(cur, checkNonZero(rhs)); break;
           case '%=': result = cur % checkNonZero(rhs); break;
           case '&=': result = cur & rhs; break;
           case '|=': result = cur | rhs; break;
           case '^=': result = cur ^ rhs; break;
-          case '<<=': result = cur << rhs; break;
-          case '>>=': result = cur >> rhs; break;
-          case '**=': result = Math.pow(cur, rhs); break;
+          case '<<=': result = cur << bshift(rhs); break;
+          case '>>=': result = cur >> bshift(rhs); break;
+          case '**=': result = ipow(cur, rhs); break;
           default: result = rhs;
         }
         return this.write(t.v, result);
@@ -204,125 +226,125 @@ class ArithParser {
     return this.ternary();
   }
 
-  private ternary(): number {
+  private ternary(): bigint {
     const cond = this.logicalOr();
     if (this.isOp('?')) {
       this.pos++;
       const a = this.assign();
       this.eat(':');
       const b = this.assign();
-      return cond !== 0 ? a : b;
+      return cond !== 0n ? a : b;
     }
     return cond;
   }
 
-  private logicalOr(): number {
+  private logicalOr(): bigint {
     let v = this.logicalAnd();
-    while (this.isOp('||')) { this.pos++; const r = this.logicalAnd(); v = (v !== 0 || r !== 0) ? 1 : 0; }
+    while (this.isOp('||')) { this.pos++; const r = this.logicalAnd(); v = (v !== 0n || r !== 0n) ? 1n : 0n; }
     return v;
   }
-  private logicalAnd(): number {
+  private logicalAnd(): bigint {
     let v = this.bitOr();
-    while (this.isOp('&&')) { this.pos++; const r = this.bitOr(); v = (v !== 0 && r !== 0) ? 1 : 0; }
+    while (this.isOp('&&')) { this.pos++; const r = this.bitOr(); v = (v !== 0n && r !== 0n) ? 1n : 0n; }
     return v;
   }
-  private bitOr(): number {
+  private bitOr(): bigint {
     let v = this.bitXor();
-    while (this.isOp('|')) { this.pos++; v = v | this.bitXor(); }
+    while (this.isOp('|')) { this.pos++; v = wrap64(v | this.bitXor()); }
     return v;
   }
-  private bitXor(): number {
+  private bitXor(): bigint {
     let v = this.bitAnd();
-    while (this.isOp('^')) { this.pos++; v = v ^ this.bitAnd(); }
+    while (this.isOp('^')) { this.pos++; v = wrap64(v ^ this.bitAnd()); }
     return v;
   }
-  private bitAnd(): number {
+  private bitAnd(): bigint {
     let v = this.equality();
-    while (this.isOp('&')) { this.pos++; v = v & this.equality(); }
+    while (this.isOp('&')) { this.pos++; v = wrap64(v & this.equality()); }
     return v;
   }
-  private equality(): number {
+  private equality(): bigint {
     let v = this.relational();
     for (;;) {
-      if (this.isOp('==')) { this.pos++; v = v === this.relational() ? 1 : 0; }
-      else if (this.isOp('!=')) { this.pos++; v = v !== this.relational() ? 1 : 0; }
+      if (this.isOp('==')) { this.pos++; v = v === this.relational() ? 1n : 0n; }
+      else if (this.isOp('!=')) { this.pos++; v = v !== this.relational() ? 1n : 0n; }
       else break;
     }
     return v;
   }
-  private relational(): number {
+  private relational(): bigint {
     let v = this.shift();
     for (;;) {
-      if (this.isOp('<=')) { this.pos++; v = v <= this.shift() ? 1 : 0; }
-      else if (this.isOp('>=')) { this.pos++; v = v >= this.shift() ? 1 : 0; }
-      else if (this.isOp('<')) { this.pos++; v = v < this.shift() ? 1 : 0; }
-      else if (this.isOp('>')) { this.pos++; v = v > this.shift() ? 1 : 0; }
+      if (this.isOp('<=')) { this.pos++; v = v <= this.shift() ? 1n : 0n; }
+      else if (this.isOp('>=')) { this.pos++; v = v >= this.shift() ? 1n : 0n; }
+      else if (this.isOp('<')) { this.pos++; v = v < this.shift() ? 1n : 0n; }
+      else if (this.isOp('>')) { this.pos++; v = v > this.shift() ? 1n : 0n; }
       else break;
     }
     return v;
   }
-  private shift(): number {
+  private shift(): bigint {
     let v = this.additive();
     for (;;) {
-      if (this.isOp('<<')) { this.pos++; v = v << this.additive(); }
-      else if (this.isOp('>>')) { this.pos++; v = v >> this.additive(); }
+      if (this.isOp('<<')) { this.pos++; v = wrap64(v << bshift(this.additive())); }
+      else if (this.isOp('>>')) { this.pos++; v = wrap64(v >> bshift(this.additive())); }
       else break;
     }
     return v;
   }
-  private additive(): number {
+  private additive(): bigint {
     let v = this.multiplicative();
     for (;;) {
-      if (this.isOp('+')) { this.pos++; v = v + this.multiplicative(); }
-      else if (this.isOp('-')) { this.pos++; v = v - this.multiplicative(); }
+      if (this.isOp('+')) { this.pos++; v = wrap64(v + this.multiplicative()); }
+      else if (this.isOp('-')) { this.pos++; v = wrap64(v - this.multiplicative()); }
       else break;
     }
     return v;
   }
-  private multiplicative(): number {
+  private multiplicative(): bigint {
     let v = this.power();
     for (;;) {
-      if (this.isOp('*')) { this.pos++; v = v * this.power(); }
-      else if (this.isOp('/')) { this.pos++; v = trunc(v / checkNonZero(this.power())); }
+      if (this.isOp('*')) { this.pos++; v = wrap64(v * this.power()); }
+      else if (this.isOp('/')) { this.pos++; v = trunc(v, checkNonZero(this.power())); }
       else if (this.isOp('%')) { this.pos++; v = v % checkNonZero(this.power()); }
       else break;
     }
     return v;
   }
-  private power(): number {
+  private power(): bigint {
     const v = this.unary();
-    if (this.isOp('**')) { this.pos++; return Math.pow(v, this.power()); } // right-assoc
+    if (this.isOp('**')) { this.pos++; return ipow(v, this.power()); } // right-assoc
     return v;
   }
-  private unary(): number {
-    if (this.isOp('+')) { this.pos++; return +this.unary(); }
-    if (this.isOp('-')) { this.pos++; return -this.unary(); }
-    if (this.isOp('!')) { this.pos++; return this.unary() === 0 ? 1 : 0; }
-    if (this.isOp('~')) { this.pos++; return ~this.unary(); }
-    if (this.isOp('++')) { this.pos++; return this.prefixIncr(1); }
-    if (this.isOp('--')) { this.pos++; return this.prefixIncr(-1); }
+  private unary(): bigint {
+    if (this.isOp('+')) { this.pos++; return this.unary(); }
+    if (this.isOp('-')) { this.pos++; return wrap64(-this.unary()); }
+    if (this.isOp('!')) { this.pos++; return this.unary() === 0n ? 1n : 0n; }
+    if (this.isOp('~')) { this.pos++; return wrap64(~this.unary()); }
+    if (this.isOp('++')) { this.pos++; return this.prefixIncr(1n); }
+    if (this.isOp('--')) { this.pos++; return this.prefixIncr(-1n); }
     return this.postfix();
   }
-  private prefixIncr(delta: number): number {
+  private prefixIncr(delta: bigint): bigint {
     const t = this.peek();
     if (t?.t !== 'name') throw new SyntaxError('arith: ++/-- needs lvalue');
     this.pos++;
     return this.write(t.v, this.read(t.v) + delta);
   }
-  private postfix(): number {
+  private postfix(): bigint {
     const t = this.peek();
     if (t?.t === 'name') {
       const next = this.toks[this.pos + 1];
       if (next?.t === 'op' && (next.v === '++' || next.v === '--')) {
         this.pos += 2;
         const old = this.read(t.v);
-        this.write(t.v, old + (next.v === '++' ? 1 : -1));
+        this.write(t.v, old + (next.v === '++' ? 1n : -1n));
         return old;
       }
     }
     return this.primary();
   }
-  private primary(): number {
+  private primary(): bigint {
     const t = this.peek();
     if (!t) throw new SyntaxError('arith: unexpected end');
     if (t.t === 'num') { this.pos++; return t.v; }
@@ -332,20 +354,46 @@ class ArithParser {
   }
 }
 
-function trunc(n: number): number {
-  return n < 0 ? Math.ceil(n) : Math.floor(n);
+/** Truncate a/b toward zero (bash integer division), wrapped to 64-bit. */
+function trunc(a: bigint, b: bigint): bigint {
+  // BigInt `/` already truncates toward zero.
+  return wrap64(a / b);
+}
+
+/** `x ** y` for integer exponents (bash): y < 0 → 0 (integer), else repeated mul. */
+function ipow(base: bigint, exp: bigint): bigint {
+  if (exp < 0n) return 0n; // bash: negative exponent in integer arithmetic → 0
+  let result = 1n;
+  let b = base;
+  let e = exp;
+  while (e > 0n) {
+    if (e & 1n) result = wrap64(result * b);
+    e >>= 1n;
+    if (e > 0n) b = wrap64(b * b);
+  }
+  return wrap64(result);
+}
+
+/** A shift amount is taken modulo 64 (as C/bash do for a 64-bit type). */
+function bshift(n: bigint): bigint {
+  const m = n % 64n;
+  return m < 0n ? m + 64n : m;
 }
 
 /** Guard a divisor: bash errors on `/ 0` / `% 0` (the result is not Infinity). */
-function checkNonZero(n: number): number {
-  if (n === 0) throw new SyntaxError('arith: division by 0');
+function checkNonZero(n: bigint): bigint {
+  if (n === 0n) throw new SyntaxError('arith: division by 0');
   return n;
 }
 
-/** Evaluate an arithmetic expression. Mutates `env` for assignments; `arr` (if
- * given) backs `a[i]` element reads/writes. */
-export function evalArith(src: string, env: Record<string, string>, arr?: ArithArrayAccess): number {
+/**
+ * Evaluate an arithmetic expression to a 64-bit `bigint` (bash intmax_t; overflow
+ * wraps two's-complement). Mutates `env` for assignments; `arr` (if given) backs
+ * `a[i]` element reads/writes. Callers needing a JS `number` (array indices) apply
+ * `Number(...)`; `$(( ))` / `let` stringify the exact BigInt.
+ */
+export function evalArith(src: string, env: Record<string, string>, arr?: ArithArrayAccess): bigint {
   const toks = tokenize(src);
-  if (toks.length === 0) return 0;
+  if (toks.length === 0) return 0n;
   return new ArithParser(toks, env, arr).parse();
 }

@@ -376,7 +376,7 @@ export class Expander {
       const expr = word.slice(i + 3, end);
       const expanded = await this.expandSubExpr(expr);
       const liveEnv = this.arithEnvProxy();
-      let v: number;
+      let v: bigint;
       try { v = evalArith(expanded, liveEnv, this.arithArrayAccess()); }
       catch (e) { throw new ExpansionError((e as Error).message); }
       return { value: String(v), next: end + 2 };
@@ -724,7 +724,7 @@ export class Expander {
       const expanded = await this.expandSubExpr(s);
       // Pass the array-access hook (like the `$(( ))` path) so a subscript in the
       // offset/length — `${a[@]:i[0]:2}` — resolves the element, not 0.
-      const v = evalArith(expanded, this.arithEnvProxy(), this.arithArrayAccess());
+      const v = Number(evalArith(expanded, this.arithEnvProxy(), this.arithArrayAccess()));
       return Number.isFinite(v) ? Math.trunc(v) : 0;
     } catch { return 0; }
   }

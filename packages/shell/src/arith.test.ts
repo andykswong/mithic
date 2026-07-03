@@ -1,9 +1,11 @@
 import { expect, test } from 'vitest';
 import { evalArith } from './arith.ts';
 
+// evalArith now returns a 64-bit bigint; these small-value assertions coerce to a
+// JS number for readability. 64-bit-precision cases are asserted separately below.
 const ev = (src: string, env: Record<string, string> = {}) => {
   const e = { ...env };
-  return { value: evalArith(src, e), env: e };
+  return { value: Number(evalArith(src, e)), env: e };
 };
 
 test('basic arithmetic operators', () => {
@@ -116,8 +118,22 @@ test('array-element lvalues a[i]++ / a[i]+=n via an ArithArrayAccess', () => {
     getElement: (n: string, i: number) => store[n]?.[i],
     setElement: (n: string, i: number, v: string) => { (store[n] ??= [])[i] = v; },
   };
-  expect(evalArith('a[1]+=10', {}, access)).toBe(12);
+  expect(evalArith('a[1]+=10', {}, access)).toBe(12n);
   expect(store.a[1]).toBe('12');
-  expect(evalArith('a[0]++', {}, access)).toBe(1);
+  expect(evalArith('a[0]++', {}, access)).toBe(1n);
   expect(store.a[0]).toBe('2');
+});
+
+test('64-bit intmax_t semantics (BigInt): shifts, precision, twos-complement wrap', () => {
+  // `1 << 62` is exact (was 32-bit-truncated before).
+  expect(evalArith('1 << 62', {})).toBe(4611686018427387904n);
+  expect(evalArith('2 ** 40', {})).toBe(1099511627776n);
+  // Values beyond 2^53 keep full precision.
+  expect(evalArith('9223372036854775807', {})).toBe(9223372036854775807n);
+  // INTMAX_MAX + 1 wraps to INTMAX_MIN (two's-complement).
+  expect(evalArith('9223372036854775807 + 1', {})).toBe(-9223372036854775808n);
+  // A shift amount is taken modulo 64.
+  expect(evalArith('1 << 64', {})).toBe(1n);
+  // Bitwise ops operate on the 64-bit value.
+  expect(evalArith('~0', {})).toBe(-1n);
 });

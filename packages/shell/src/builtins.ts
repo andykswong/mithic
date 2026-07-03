@@ -198,7 +198,7 @@ export interface BuiltinContext {
    * mutate the env), returning its integer value — backs the `let` builtin.
    * Implemented by the executor over the same env proxy `(( ))` uses.
    */
-  evalArith?(expr: string): number;
+  evalArith?(expr: string): bigint;
   /**
    * Resolve a command NAME to its `$PATH` executable path (or an explicit path) —
    * backs `type`/`command -v`'s file reporting. Returns the resolved absolute path
@@ -602,8 +602,8 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
             const rhs = arg.slice(eq + 1);
             const prev = append ? (ctx.env[n] ?? '') : '';
             if (flagInteger) {
-              const v = ctx.evalArith?.(rhs) ?? 0;
-              ctx.env[n] = String(append ? (ctx.evalArith?.(prev || '0') ?? 0) + v : v);
+              const v = ctx.evalArith?.(rhs) ?? 0n;
+              ctx.env[n] = String(append ? (ctx.evalArith?.(prev || '0') ?? 0n) + v : v);
             } else {
               ctx.env[n] = prev + rhs; // `+=` appends (prev is '' when not append)
             }
@@ -626,14 +626,14 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       // 0. No expressions → status 1. A malformed expression / division by zero is
       // a per-command error (status 2 + diagnostic), NOT a script abort.
       if (args.length === 0) return 1;
-      let last = 0;
+      let last = 0n;
       try {
-        for (const expr of args) last = ctx.evalArith?.(expr) ?? 0;
+        for (const expr of args) last = ctx.evalArith?.(expr) ?? 0n;
       } catch (e) {
         errOut(ctx, `shell: let: ${e instanceof Error ? e.message : String(e)}\n`);
         return 2;
       }
-      return last === 0 ? 1 : 0;
+      return last === 0n ? 1 : 0;
     }
 
     case 'shift': {

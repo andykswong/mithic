@@ -1081,7 +1081,7 @@ export class Executor {
     const cond = stmt.arithCond ?? '';
     let guard = 0;
     for (;;) {
-      if (cond !== '' && evalArith(cond, env, arr) === 0) break;
+      if (cond !== '' && evalArith(cond, env, arr) === 0n) break;
       if (++guard > 1_000_000) break;
       try {
         status = await this.execList(stmt.body ?? [], io);
@@ -1147,7 +1147,7 @@ export class Executor {
       if (arr !== undefined) {
         const i = /^-?\d+$/.test(index.trim())
           ? parseInt(index.trim(), 10)
-          : (() => { try { return evalArith(index, this.arithEnvForExpr(), this.arithArrayAccessExec()); } catch { return 0; } })();
+          : (() => { try { return Number(evalArith(index, this.arithEnvForExpr(), this.arithArrayAccessExec())); } catch { return 0; } })();
         const idx = i < 0 ? arr.length + i : i;
         delete arr[idx]; // leaves a hole (bash sparse-array semantics)
       }
@@ -2426,7 +2426,7 @@ export class Executor {
       if (m !== null) {
         const sub = (await expander.substituteOnly(m[1])).trim();
         let idx = /^-?\d+$/.test(sub) ? parseInt(sub, 10)
-          : (() => { try { return evalArith(sub, this.arithEnvForExpr(), this.arithArrayAccessExec()); } catch { return 0; } })();
+          : (() => { try { return Number(evalArith(sub, this.arithEnvForExpr(), this.arithArrayAccessExec())); } catch { return 0; } })();
         if (idx < 0) idx = arr.length + idx;
         const val = evalIfInt(await expander.expandToString(m[3]));
         arr[idx] = m[2] === '+' ? (arr[idx] ?? '') + val : val;
@@ -2497,7 +2497,7 @@ export class Executor {
       // The subscript is arithmetic (bash): `a[i]=`, `a[i+1]=`, `a[b[0]]=` all work.
       const sub = await expander.substituteOnly(a.index);
       let idx = /^-?\d+$/.test(sub.trim()) ? parseInt(sub.trim(), 10)
-        : (() => { try { return evalArith(sub, this.arithEnvForExpr(), this.arithArrayAccessExec()); } catch { return 0; } })();
+        : (() => { try { return Number(evalArith(sub, this.arithEnvForExpr(), this.arithArrayAccessExec())); } catch { return 0; } })();
       const arr = this.arrays.get(a.name) ?? (this.context.env[a.name] !== undefined ? [this.context.env[a.name]] : []);
       if (idx < 0) idx = arr.length + idx; // negative index counts from the end
       const val = await expander.expandToString(a.value);
@@ -2532,10 +2532,10 @@ export class Executor {
     return false;
   }
 
-  /** Arithmetic-evaluate a string for an integer-attributed assignment (0 on error). */
-  private evalArithValue(expr: string): number {
+  /** Arithmetic-evaluate a string to a 64-bit bigint for an integer-attributed assignment (0 on error). */
+  private evalArithValue(expr: string): bigint {
     try { return evalArith(expr, this.arithEnvForExpr(), this.arithArrayAccessExec()); }
-    catch { return 0; }
+    catch { return 0n; }
   }
 
   private async spawnExternal(name: string, argv: string[], localEnv: Record<string, string>, io: CommandIO, fd0?: StdinFdSpec, stdinStream?: ReadableStream<Uint8Array>): Promise<number> {

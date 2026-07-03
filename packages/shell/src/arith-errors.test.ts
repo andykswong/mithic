@@ -14,6 +14,6 @@ test('/= by zero throws', () => {
 });
 
 test('normal division still truncates toward zero', () => {
-  expect(evalArith('7/2', {})).toBe(3);
-  expect(evalArith('-7/2', {})).toBe(-3);
+  expect(evalArith('7/2', {})).toBe(3n);
+  expect(evalArith('-7/2', {})).toBe(-3n);
 });
