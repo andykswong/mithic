@@ -1082,6 +1082,34 @@ test('command -v / -V report a $PATH executable path (not the bare name)', async
   expect(miss.out).toBe('rc=1\n');
 });
 
+test('type -P forces a $PATH search even when a builtin shadows the name', async () => {
+  // `echo` is a builtin AND at /bin/echo; -p yields nothing (shadowed), -P forces it.
+  expect((await run('type -p echo', PATHENV, pathFs())).out).toBe('');       // shadowed → empty
+  expect((await run('type -P echo', PATHENV, pathFs())).out).toBe('/bin/echo\n');
+  expect((await run('type -p ls', PATHENV, pathFs())).out).toBe('/bin/ls\n');  // ls not a builtin
+});
+
+test('type / command accept clustered flags and -- terminator', async () => {
+  expect((await run('type -ta echo', PATHENV, pathFs())).out).toBe('builtin\nfile\n');
+  expect((await run('type -- ls', PATHENV, pathFs())).out).toBe('ls is /bin/ls\n');
+  expect((await run('command -vp ls', PATHENV, pathFs())).out).toBe('/bin/ls\n');
+  expect((await run('command -Vp ls', PATHENV, pathFs())).out).toBe('ls is /bin/ls\n');
+  expect((await run('command -- ls', PATHENV, pathFs())).out).toBe('');       // no /bin/ls to spawn in mock; just must not error on --
+});
+
+test('type -p / -P of an unknown name is silent (rc 1)', async () => {
+  const p = await run('type -p nonexistent; echo "rc=$?"', PATHENV, pathFs());
+  expect(p.out).toBe('rc=1\n'); expect(p.err).toBe('');
+  const bigp = await run('type -P nonexistent; echo "rc=$?"', PATHENV, pathFs());
+  expect(bigp.out).toBe('rc=1\n'); expect(bigp.err).toBe('');
+});
+
+test('type/command fall back to a default PATH when PATH is entirely unset', async () => {
+  // No PATH var at all → bash uses a compiled-in default (/usr/bin:/bin here).
+  expect((await run('type ls', {}, pathFs())).out).toBe('ls is /bin/ls\n');
+  expect((await run('command -v ls', {}, pathFs())).out).toBe('/bin/ls\n');
+});
+
 test('array-element references work in let / declare -i / C-style for arithmetic', async () => {
   expect((await run('a=(5 9); let "x = a[1] + 1"; echo $x')).out).toBe('10\n');
   expect((await run('a=(5 9); declare -i x=a[1]+1; echo $x')).out).toBe('10\n');

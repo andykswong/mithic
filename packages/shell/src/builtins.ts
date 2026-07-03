@@ -731,37 +731,62 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
     }
 
     case 'type': {
-      // Flags: -t (type word only), -a (all locations), -p/-P (path only), -f accepted.
-      let flagT = false, flagA = false, flagP = false;
+      // Flags (may be CLUSTERED, e.g. -ta): -t (type word), -a (all locations),
+      // -p (path, only when not shadowed), -P (force PATH search), -f (suppress
+      // function lookup). `--` ends option processing.
+      let flagT = false, flagA = false, flagP = false, flagBigP = false, flagF = false;
       const names: string[] = [];
+      let noMoreOpts = false;
       for (const a of args) {
-        if (a === '-t') flagT = true;
-        else if (a === '-a') flagA = true;
-        else if (a === '-p' || a === '-P') flagP = true;
-        else if (a === '-f') { /* accepted: suppress function lookup — no-op here */ }
-        else if (a.startsWith('-') && a.length > 1) { errOut(ctx, `shell: type: ${a}: invalid option\n`); return 2; }
-        else names.push(a);
+        if (!noMoreOpts && a === '--') { noMoreOpts = true; continue; }
+        if (!noMoreOpts && a.length > 1 && a[0] === '-') {
+          let bad = '';
+          for (const ch of a.slice(1)) {
+            if (ch === 't') flagT = true;
+            else if (ch === 'a') flagA = true;
+            else if (ch === 'p') flagP = true;
+            else if (ch === 'P') flagBigP = true;
+            else if (ch === 'f') flagF = true;
+            else { bad = ch; break; }
+          }
+          if (bad !== '') { errOut(ctx, `shell: type: -${bad}: invalid option\n`); return 2; }
+          continue;
+        }
+        names.push(a);
       }
       let status = 0;
       for (const nm of names) {
         const isKeyword = SHELL_KEYWORDS.has(nm);
-        const isFunc = ctx.state?.functions.has(nm) ?? false;
+        const isFunc = !flagF && (ctx.state?.functions.has(nm) ?? false);
         const isBn = isBuiltin(nm);
-        // A $PATH file is resolved only when needed (`-a`, or nothing shadowed it).
-        const wantFile = flagA || (!isKeyword && !isFunc && !isBn);
+        // -P forces a PATH search even when a builtin/keyword/function shadows the
+        // name. Otherwise resolve a file only when needed (`-a`, or unshadowed).
+        const shadowed = isKeyword || isFunc || isBn;
+        const wantFile = flagBigP || flagA || !shadowed;
         const file = wantFile ? await ctx.resolveExternal?.(nm) : undefined;
-        if (!isKeyword && !isFunc && !isBn && file === undefined) {
-          if (!flagT) errOut(ctx, `type: ${nm}: not found\n`);
-          status = 1; continue; // -t prints nothing for an unknown name
+        if (!shadowed && file === undefined) {
+          // -t / -p / -P print nothing for an unknown name (silent); default warns.
+          if (!flagT && !flagP && !flagBigP) errOut(ctx, `type: ${nm}: not found\n`);
+          status = 1; continue;
         }
-        if (flagT) {
-          // First (highest-priority) classification wins for -t.
-          ctx.write(`${isKeyword ? 'keyword' : isFunc ? 'function' : isBn ? 'builtin' : 'file'}\n`);
+        if (flagP || flagBigP) {
+          // Path forms: print ONLY the file path (nothing for a shadowed name under
+          // -p; -P prints the forced PATH hit). A shadowed name with no file → silent.
+          if (file !== undefined) ctx.write(`${file}\n`);
+          else if (!shadowed) status = 1;
           continue;
         }
-        if (flagP) {
-          // -p/-P: print ONLY the file path (nothing for keyword/function/builtin).
-          if (file !== undefined) ctx.write(`${file}\n`);
+        if (flagT) {
+          // `-t` prints the type WORD. With `-a` it lists one per location (bash
+          // order: keyword, function, builtin, file); without `-a`, only the first.
+          if (flagA) {
+            if (isKeyword) ctx.write('keyword\n');
+            if (isFunc) ctx.write('function\n');
+            if (isBn) ctx.write('builtin\n');
+            if (file !== undefined) ctx.write('file\n');
+          } else {
+            ctx.write(`${isKeyword ? 'keyword' : isFunc ? 'function' : isBn ? 'builtin' : 'file'}\n`);
+          }
           continue;
         }
         // Default / -a: emit in bash order — keyword, function, builtin, then file.
@@ -781,19 +806,33 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       // Best-effort: run the target through eval (functions not bypassed here).
       let rest = args;
       if (name === 'command') {
-        if (rest[0] === '-v' || rest[0] === '-V') {
-          const bigV = rest[0] === '-V';
-          const t = rest[1];
+        // Parse leading option flags, which may be CLUSTERED (`-vp`, `-Vp`, `-pv`).
+        let dashV = false, dashBigV = false;
+        while (rest.length > 0 && rest[0].length > 1 && rest[0][0] === '-' && rest[0] !== '--') {
+          let bad = '';
+          for (const ch of rest[0].slice(1)) {
+            if (ch === 'v') dashV = true;
+            else if (ch === 'V') dashBigV = true;
+            else if (ch === 'p') { /* default-PATH search: accepted, no-op here */ }
+            else { bad = ch; break; }
+          }
+          if (bad !== '') break; // unknown flag → treat as the command word (bash-ish)
+          rest = rest.slice(1);
+        }
+        if (rest[0] === '--') rest = rest.slice(1);
+        if (dashV || dashBigV) {
+          const bigV = dashBigV;
+          const t = rest[0];
           if (t !== undefined) {
             if (isShellKeyword(t)) { ctx.write(bigV ? `${t} is a shell keyword\n` : `${t}\n`); return 0; }
-            if (ctx.state?.functions.has(t) || isBuiltin(t)) { ctx.write(bigV ? `${t} is a shell builtin\n` : `${t}\n`); return 0; }
+            if (ctx.state?.functions.has(t)) { ctx.write(bigV ? `${t} is a function\n` : `${t}\n`); return 0; }
+            if (isBuiltin(t)) { ctx.write(bigV ? `${t} is a shell builtin\n` : `${t}\n`); return 0; }
             const p = await ctx.resolveExternal?.(t);
             if (p !== undefined) { ctx.write(bigV ? `${t} is ${p}\n` : `${p}\n`); return 0; }
             if (bigV) errOut(ctx, `shell: command: ${t}: not found\n`);
           }
           return 1;
         }
-        while (rest[0] === '-p') rest = rest.slice(1);
       }
       if (rest.length === 0) return 0;
       if (name === 'builtin' && !isBuiltin(rest[0])) { errOut(ctx, `shell: builtin: ${rest[0]}: not a shell builtin\n`); return 1; }

@@ -655,7 +655,10 @@ export class Executor {
       const p = this.absPath(name);
       return (await isFile(p)) ? p : undefined;
     }
-    for (const dir of (this.context.env.PATH ?? '').split(':')) {
+    // bash falls back to a compiled-in default PATH when PATH is entirely UNSET (but
+    // an explicitly EMPTY PATH="" means "no search dirs"). Match that distinction.
+    const pathVar = this.context.env.PATH ?? '/usr/bin:/bin';
+    for (const dir of pathVar.split(':')) {
       if (dir === '') continue; // empty segment: bash does NOT search cwd for a bare name
       const p = (dir.endsWith('/') ? dir.slice(0, -1) : dir) + '/' + name;
       if (await isFile(p)) return p;
@@ -2285,11 +2288,19 @@ export class Executor {
       let rest = argv;
       let dashV = false, dashBigV = false;
       if (name === 'command') {
-        while (rest.length > 0 && (rest[0] === '-v' || rest[0] === '-V' || rest[0] === '-p')) {
-          if (rest[0] === '-v') dashV = true;
-          else if (rest[0] === '-V') dashBigV = true;
+        // Leading option flags, possibly CLUSTERED (`-vp`, `-Vp`); `--` ends options.
+        while (rest.length > 0 && rest[0].length > 1 && rest[0][0] === '-' && rest[0] !== '--') {
+          let bad = false;
+          for (const ch of rest[0].slice(1)) {
+            if (ch === 'v') dashV = true;
+            else if (ch === 'V') dashBigV = true;
+            else if (ch === 'p') { /* default-PATH search: accepted */ }
+            else { bad = true; break; }
+          }
+          if (bad) break;
           rest = rest.slice(1);
         }
+        if (rest[0] === '--') rest = rest.slice(1);
       }
       if (rest.length === 0) return 0;
       const target = rest[0];
