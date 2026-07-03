@@ -87,6 +87,14 @@ export interface ShellState {
   /** Resolve a nameref to its target (single-level), or undefined if not a nameref. */
   resolveNameref?(name: string): string | undefined;
   /**
+   * Set a variable at GLOBAL scope (`declare -g NAME=v`). Even when a same-name
+   * local shadows it in the current/enclosing frame, the global binding is updated
+   * so it is visible after those frames return — while the live local value is left
+   * untouched. Returns true if a shadowing local exists (caller must NOT also write
+   * the flat env), false if it wrote the global directly.
+   */
+  setGlobal?(name: string, value: string): boolean;
+  /**
    * The directory stack BELOW the current directory (`pushd`/`popd`/`dirs`),
    * most-recent-first. The live array — `dirs`/`pushd`/`popd` mutate it in place.
    * The current directory (`ctx.cwd`) is the conceptual top and is NOT stored here.
@@ -504,11 +512,11 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         if (a.length > 1 && a[0] === '-') { for (const ch of a.slice(1)) flags.add(ch); }
         else break; // first operand — stop flag scanning
       }
-      const isAssoc = isDeclare && flags.has('A');
-      // `declare -n ref=target` declares a nameref (single-level): reads of `ref`
-      // and writes to `ref` are redirected to `target` (the latter in the
-      // executor's applyAssignment). Recorded instead of storing a literal value.
-      const isNameref = isDeclare && flags.has('n');
+      const isAssoc = (isDeclare || isLocal) && flags.has('A');
+      // `declare -n ref=target` / `local -n ref=target` declares a nameref (single-
+      // level): reads of `ref` and writes to `ref` are redirected to `target` (the
+      // latter in the executor's applyAssignment). Recorded, not stored as a value.
+      const isNameref = (isDeclare || isLocal) && flags.has('n');
       // `declare -p [name...]` prints the declare reconstruction (no assignment).
       if (isDeclare && flags.has('p')) {
         const names = args.filter((x) => !x.startsWith('-'));
@@ -567,20 +575,32 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         const append = rawName.endsWith('+');
         const n = (append ? rawName.slice(0, -1) : rawName).replace(/\[.*\]$/, '');
         if (isNameref) {
-          // `declare -n ref=target`: record the mapping (no literal value stored).
+          // `declare -n ref=target` / `local -n ref=target`: record the mapping (no
+          // literal value stored). A bare `declare -n`/`local -n` in a function is
+          // local-by-default, so scope it first (the executor snapshots+restores the
+          // nameref mapping on return); `-g` keeps it global.
+          if (scopeLocal) {
+            const scope = ctx.state?.declareLocal(n) ?? 'none';
+            if (isLocal && scope === 'none') { errOut(ctx, 'shell: local: can only be used in a function\n'); return 1; }
+          }
           if (eq > 0) ctx.state?.setNameref?.(n, arg.slice(eq + 1));
           continue;
         }
         // Function scoping FIRST (bash: `declare`/`typeset`/`local` shadow the global
         // as a local before assigning). A bare `declare` inside a function is local;
         // `-g`/`readonly`/`export` are global. `local` outside a function is an error.
+        let freshLocal = false;
         if (scopeLocal) {
           const scope = ctx.state?.declareLocal(n) ?? 'none';
           if (isLocal && scope === 'none') { errOut(ctx, 'shell: local: can only be used in a function\n'); return 1; }
-          // A FRESH local (first shadow of a global) starts UNSET, so `+=` appends to
-          // '' rather than the shadowed global value. An ALREADY-local name keeps its
-          // current local value (so `local -i c=3; local -i c+=2` → 5).
-          if (scope === 'fresh' && eq > 0 && append) delete ctx.env[n];
+          // A FRESH local shadows the outer variable with an EMPTY value: `local x`
+          // hides a global `x` (`${x}` is empty inside), and `local x+=v` appends to
+          // '' not the shadowed global. An ALREADY-local name keeps its current local
+          // value (so `local -i c=3; local -i c+=2` → 5). The array/assoc storage was
+          // already snapshotted+cleared conceptually via declareLocal's snapshot; we
+          // clear the scalar here.
+          freshLocal = scope === 'fresh';
+          if (freshLocal) delete ctx.env[n];
         }
         // `declare -A name` registers an associative array (G6).
         if (isAssoc) ctx.state?.declareAssoc?.(n);
@@ -601,17 +621,18 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
           if (!isAssoc) {
             const rhs = arg.slice(eq + 1);
             const prev = append ? (ctx.env[n] ?? '') : '';
-            if (flagInteger) {
-              const v = ctx.evalArith?.(rhs) ?? 0n;
-              ctx.env[n] = String(append ? (ctx.evalArith?.(prev || '0') ?? 0n) + v : v);
-            } else {
-              ctx.env[n] = prev + rhs; // `+=` appends (prev is '' when not append)
-            }
+            const val = flagInteger
+              ? String(append ? (ctx.evalArith?.(prev || '0') ?? 0n) + (ctx.evalArith?.(rhs) ?? 0n) : (ctx.evalArith?.(rhs) ?? 0n))
+              : prev + rhs; // `+=` appends (prev is '' when not append)
+            // `declare -g` writes the GLOBAL binding (updating an enclosing local's
+            // snapshot rather than clobbering it); otherwise write the current env.
+            if (flagGlobal && ctx.state?.setGlobal?.(n, val)) { /* global updated */ }
+            else ctx.env[n] = val;
           }
-        } else if (scopeLocal && !(n in ctx.env)) {
-          // Bare `declare x` / `local x` in a function creates an empty local.
-          ctx.env[n] = '';
         }
+        // A bare `declare NAME` / `local NAME` (no `=value`) declares the name but
+        // leaves it UNSET (bash: `local x; echo ${x+SET}` prints nothing) — a fresh
+        // local was already cleared by declareLocal, so nothing to write here.
         // `readonly`/`-r` mark the name AFTER its value is set, so the builtin's
         // own assignment succeeds; later reassignments are rejected by the
         // executor's applyAssignment (POSIX-fatal in posix mode).

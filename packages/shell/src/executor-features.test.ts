@@ -1337,6 +1337,39 @@ test('readonly/export in a function are GLOBAL (not local)', async () => {
   expect((await run('s=g; f() { export s=ex; }; f; echo "out=$s"')).out).toBe('out=ex\n');
 });
 
+test('a function-local readonly/nameref/integer attribute does NOT leak on return', async () => {
+  // local -r: the readonly attr is gone after return, so the outer reassign succeeds.
+  const ro = await run('f(){ local -r x=5; }; f; x=9; echo "[$x]"');
+  expect(ro.out).toBe('[9]\n'); expect(ro.err).toBe('');
+  // declare -n / local -n: the nameref mapping is local and restored on return.
+  expect((await run('f(){ declare -n ref=g; }; g=hi; f; echo "[${ref-UNSET}]"')).out).toBe('[UNSET]\n');
+  expect((await run('f(){ local -n r=g; echo "[$r]"; }; g=hi; f')).out).toBe('[hi]\n');
+  // local -A registers an assoc; scoped + restored.
+  expect((await run('declare -A g=([k]=1); f(){ local -A g=([x]=9); }; f; echo "gk=${g[k]-U} gx=${g[x]-U}"')).out)
+    .toBe('gk=1 gx=U\n');
+});
+
+test('a bare local NAME (no value) shadows the outer scalar/array/assoc with EMPTY', async () => {
+  expect((await run('x=global; f(){ local x; echo "in=[${x-UNSET}]"; }; f; echo "out=[$x]"')).out)
+    .toBe('in=[UNSET]\nout=[global]\n');
+  expect((await run('a=(1 2 3); f(){ local a; echo "in=[${a[@]}] n=${#a[@]}"; }; f; echo "out=[${a[@]}]"')).out)
+    .toBe('in=[] n=0\nout=[1 2 3]\n');
+});
+
+test('declare -g updates the global even when a same-name local shadows it', async () => {
+  // Inner sets -g while outer has a local: the local stays until return, then global shows.
+  expect((await run('outer(){ local v=1; inner; echo "mid=$v"; }; inner(){ declare -g v=G; }; outer; echo "out=$v"')).out)
+    .toBe('mid=1\nout=G\n');
+  expect((await run('g(){ local v=1; declare -g v=G; echo "in=$v"; }; g; echo "after=$v"')).out)
+    .toBe('in=1\nafter=G\n');
+  expect((await run('v=start; f(){ declare -g v=G; }; f; echo "top=$v"')).out).toBe('top=G\n');
+});
+
+test('read -a / mapfile assign GLOBALLY inside a function (not local)', async () => {
+  expect((await run('a=(old); f(){ read -a a <<< "new1 new2"; }; f; echo "[${a[@]}]"')).out)
+    .toBe('[new1 new2]\n');
+});
+
 test('a bare assignment inside a function modifies the GLOBAL (not auto-local)', async () => {
   expect((await run('x=g; f() { x=new; }; f; echo "out=$x"')).out).toBe('out=new\n');
   expect((await run('a=(g); f() { a=(new); }; f; echo "out=${a[@]}"')).out).toBe('out=new\n');

@@ -269,7 +269,9 @@ export class Executor {
    * -a`, `declare -A` in a function) is restored on function exit and does not leak
    * to the caller. Keyed by name; `undefined` value ⇒ the name had no array before.
    */
-  private localSavedArrays: Array<Map<string, { arr?: string[]; assoc?: Map<string, string>; integer: boolean }>> = [];
+  private localSavedArrays: Array<Map<string, {
+    arr?: string[]; assoc?: Map<string, string>; integer: boolean; readonly: boolean; nameref?: string;
+  }>> = [];
   /** Names marked `readonly` — reassigning one is rejected (fatal in POSIX mode). */
   private readonlyNames = new Set<string>();
   /** Names declared `declare -i` (integer): assignments are arithmetic-evaluated. */
@@ -724,9 +726,10 @@ export class Executor {
         this.arrays.delete(name);
       },
       setArray: (name, values) => {
-        // Mirror the `name=(a b c)` assignment path so `read -a` / `mapfile`
-        // values are seen by ${name[i]}/${name[@]}/${#name[@]} expansion.
-        this.declareLocal(name);
+        // Mirror the bare `name=(a b c)` assignment path so `read -a` / `mapfile`
+        // values are seen by ${name[i]}/${name[@]}/${#name[@]} expansion. Like a
+        // bare assignment, this is GLOBAL — `read -a` inside a function does NOT
+        // create a local (bash), so it must NOT go through declareLocal.
         this.arrays.set(name, values);
         delete this.context.env[name];
       },
@@ -765,6 +768,7 @@ export class Executor {
       declareP: (names) => this.declareP(names),
       setNameref: (ref, target) => { this.namerefs.set(ref, target); },
       resolveNameref: (name) => this.namerefs.get(name),
+      setGlobal: (name, value) => this.setGlobal(name, value),
       dirStack: () => this.dirStackBelow,
     };
   }
@@ -811,6 +815,26 @@ export class Executor {
     this.context.env.BASHOPTS = on.join(':');
   }
 
+  /**
+   * `declare -g NAME=v`: set the GLOBAL binding. If any enclosing function scope has
+   * NAME as a local, its snapshot (restored on that frame's return) is updated to
+   * `v` so the global surfaces afterward — WITHOUT disturbing the currently-visible
+   * local value. Returns true when a shadowing local exists (the caller must not also
+   * write the flat env), false when it wrote the global (flat env) directly.
+   */
+  private setGlobal(name: string, value: string): boolean {
+    // Find the OUTERMOST scope holding NAME as a local — its snapshot is the global
+    // value that will surface once every shadowing frame returns.
+    for (let i = 0; i < this.localScopes.length; i++) {
+      if (this.localScopes[i].has(name)) {
+        this.localSaved[i].set(name, value);
+        return true; // do NOT touch context.env: it holds a shadowing local's value
+      }
+    }
+    this.context.env[name] = value; // no local shadows it → the flat env IS the global
+    return false;
+  }
+
   private declareLocal(name: string): 'fresh' | 'existing' | 'none' {
     if (this.localScopes.length === 0) return 'none';
     const scope = this.localScopes[this.localScopes.length - 1];
@@ -818,15 +842,28 @@ export class Executor {
     if (scope.has(name)) return 'existing';
     scope.add(name);
     saved.set(name, name in this.context.env ? this.context.env[name] : undefined);
-    // Snapshot array/assoc storage + integer flag too, so a `local arr=(…)` /
-    // `local -A m` / `read -a arr` inside a function is restored on exit and does
-    // not leak to the caller (bash: locals include their array value).
+    // Snapshot array/assoc storage + integer/readonly/nameref attributes too, so a
+    // `local arr=(…)` / `local -A m` / `local -r x` / `declare -n ref` inside a
+    // function is fully restored on exit and does not leak to the caller (bash:
+    // locals carry their value AND their attributes).
     const savedArr = this.localSavedArrays[this.localSavedArrays.length - 1];
     savedArr.set(name, {
       arr: this.arrays.has(name) ? this.arrays.get(name)!.slice() : undefined,
       assoc: this.assocArrays.has(name) ? new Map(this.assocArrays.get(name)!) : undefined,
       integer: this.integerNames.has(name),
+      readonly: this.readonlyNames.has(name),
+      nameref: this.namerefs.get(name),
     });
+    // A fresh local shadows the outer variable with an EMPTY, attribute-less binding
+    // (bash: `local x` hides a global `x`; `local a` on a global array yields an
+    // empty array). Clear the live storage now; a following `local x=v` / `-i`/`-r`
+    // then sets the local's value/attributes. The snapshot above restores the outer
+    // binding on function return.
+    this.arrays.delete(name);
+    this.assocArrays.delete(name);
+    this.integerNames.delete(name);
+    this.readonlyNames.delete(name);
+    this.namerefs.delete(name);
     return 'fresh';
   }
 
@@ -2654,7 +2691,8 @@ export class Executor {
         const v = saved.get(k);
         if (v === undefined) delete this.context.env[k];
         else this.context.env[k] = v;
-        // Restore array/assoc storage + integer flag to the pre-local snapshot.
+        // Restore array/assoc storage + integer/readonly/nameref attributes to the
+        // pre-local snapshot (a function-local `-r`/`-n`/`-i`/array must not leak).
         const sa = savedArr.get(k);
         if (sa === undefined || sa.arr === undefined) this.arrays.delete(k);
         else this.arrays.set(k, sa.arr);
@@ -2662,6 +2700,10 @@ export class Executor {
         else this.assocArrays.set(k, sa.assoc);
         if (sa === undefined || !sa.integer) this.integerNames.delete(k);
         else this.integerNames.add(k);
+        if (sa === undefined || !sa.readonly) this.readonlyNames.delete(k);
+        else this.readonlyNames.add(k);
+        if (sa === undefined || sa.nameref === undefined) this.namerefs.delete(k);
+        else this.namerefs.set(k, sa.nameref);
       }
       for (const k of overlayKeys) {
         if (savedOverlay[k] === undefined) delete this.context.env[k];
