@@ -1403,8 +1403,11 @@ export class Executor {
     if (words.length === 3 && ['-eq', '-ne', '-lt', '-le', '-gt', '-ge'].includes(words[1])) {
       const arrHook = this.arithArrayAccessExec();
       const env = this.arithEnvForExpr();
-      const ev = (s: string): bigint => { try { return evalArith(s, env, arrHook); } catch { return 0n; } };
-      const x = ev(words[0]), y = ev(words[2]);
+      // A malformed arithmetic operand (`08` invalid octal) is a bash error: report
+      // it and evaluate the comparison to FALSE (bash: stderr + `[[ ]]` fails, rc 1).
+      let x: bigint, y: bigint;
+      try { x = evalArith(words[0], env, arrHook); y = evalArith(words[2], env, arrHook); }
+      catch (e) { this.io.stderr(`shell: [[: ${e instanceof Error ? e.message.replace(/^arith: /, '') : String(e)}\n`); return false; }
       switch (words[1]) {
         case '-eq': return x === y;
         case '-ne': return x !== y;
@@ -1420,6 +1423,21 @@ export class Executor {
   private async condFileTest(op: string, path: string): Promise<boolean> {
     if (op === '-z') return path === '';
     if (op === '-n') return path !== '';
+    // `-v NAME` / `-R NAME`: test whether a variable (or nameref) is SET. The operand
+    // is a variable name (possibly with a `[subscript]`), not a filesystem path.
+    if (op === '-v' || op === '-R') {
+      const m = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[(.*)\])?$/s.exec(path);
+      if (m === null) return false;
+      const nm = m[1], sub = m[2];
+      if (op === '-R') return this.namerefs.has(nm);
+      if (sub === '@' || sub === '*') return (this.arrays.get(nm)?.length ?? this.assocArrays.get(nm)?.size ?? 0) > 0;
+      if (sub !== undefined) {
+        if (this.assocArrays.has(nm)) return this.assocArrays.get(nm)!.has(sub);
+        const arr = this.arrays.get(nm);
+        return arr !== undefined && arr[Number(sub)] !== undefined;
+      }
+      return nm in this.context.env || this.arrays.has(nm) || this.assocArrays.has(nm) || this.namerefs.has(nm);
+    }
     const stat = await this.statPath(this.absPath(path));
     if (op === '-e') return stat !== undefined;
     if (op === '-f') return stat !== undefined && !stat.dir;
@@ -2429,11 +2447,15 @@ export class Executor {
           for (const k of overlayKeys) savedPrefix[k] = this.context.env[k];
         }
         Object.assign(this.context.env, localEnv);
-        // Array-literal operands of an assignment builtin (`declare -a arr=(…)`)
-        // are structured assignments the builtin applies via applyBuiltinAssignment.
+        // Array-literal operands of an assignment builtin (`declare -a arr=(…)`) are
+        // structured assignments the builtin applies via applyBuiltinAssignment; the
+        // assignExpander is also needed for `declare NAME[i]=v` element writes, so
+        // pass it to every assignment builtin (declare/local/readonly/export/typeset).
         const arrayAssigns = cmd.assignments.filter((a) => a.array !== undefined);
+        const isAssignBuiltin = name === 'declare' || name === 'typeset' || name === 'local'
+          || name === 'readonly' || name === 'export';
         const status = await this.dispatch(name, argv, io,
-          arrayAssigns.length > 0 ? { stdin, builtinAssignments: arrayAssigns, assignExpander: expander } : { stdin });
+          isAssignBuiltin ? { stdin, builtinAssignments: arrayAssigns, assignExpander: expander } : { stdin });
         if (overlayKeys.length > 0) {
           for (const k of overlayKeys) {
             // The builtin reassigned this key (operand won over the prefix) → keep it.
@@ -2812,6 +2834,9 @@ export class Executor {
       return f;
     };
     const line = (n: string): string | undefined => {
+      // A nameref prints `declare -n NAME="target"` (the target NAME, quoted).
+      const target = this.namerefs.get(n);
+      if (target !== undefined) return `declare -n ${n}="${target.replace(/[\\"$`]/g, (c) => '\\' + c)}"`;
       const flags = flagFor(n);
       const opt = flags === '' ? '--' : '-' + flags;
       if (this.assocArrays.has(n)) {

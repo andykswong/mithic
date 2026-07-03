@@ -1097,6 +1097,19 @@ export class Expander {
       if (all) return value.split('').map(conv).join('');
       return value.length === 0 ? value : conv(value[0]) + value.slice(1);
     }
+    // `${var~}` toggles the first char's case; `${var~~}` toggles every char (bash).
+    if (rest[0] === '~') {
+      const all = rest[1] === '~';
+      const patStr = rest.slice(all ? 2 : 1);
+      const pat = patStr === '' ? '?' : await this.expandToString(patStr);
+      const re = new RegExp('^' + globToReSource(pat, this.globOpts()) + '$');
+      const toggle = (ch: string): string => {
+        if (!re.test(ch)) return ch;
+        const up = ch.toUpperCase(); return ch === up ? ch.toLowerCase() : up;
+      };
+      if (all) return value.split('').map(toggle).join('');
+      return value.length === 0 ? value : toggle(value[0]) + value.slice(1);
+    }
 
     // ${var:offset:len} substring. bash evaluates offset/len arithmetically, so
     // `${v:i}`, `${v:1+1}`, `${v:(-3)}` all work.
@@ -1407,9 +1420,21 @@ function expandRange(body: string): string[] {
   // numeric
   if (/^-?\d+$/.test(a) && /^-?\d+$/.test(b)) {
     const start = parseInt(a, 10), end = parseInt(b, 10);
+    // Zero-padding: if EITHER endpoint has a leading zero (`{01..05}`, `{001..3}`),
+    // every value is padded to the max endpoint WIDTH (bash), preserving a `-` sign.
+    const zeroPad = /^-?0\d/.test(a) || /^-?0\d/.test(b);
+    // Target TOTAL width = widest endpoint (sign included); a negative value's digits
+    // pad to width-1 after the `-` (bash: `{-01..01}` → `-01 000 001`, total width 3).
+    const width = Math.max(a.length, b.length);
+    const fmt = (v: number): string => {
+      if (!zeroPad) return String(v);
+      const neg = v < 0;
+      const digits = Math.abs(v).toString().padStart(neg ? width - 1 : width, '0');
+      return neg ? '-' + digits : digits;
+    };
     const out: string[] = [];
-    if (start <= end) for (let v = start; v <= end; v += step) out.push(String(v));
-    else for (let v = start; v >= end; v -= step) out.push(String(v));
+    if (start <= end) for (let v = start; v <= end; v += step) out.push(fmt(v));
+    else for (let v = start; v >= end; v -= step) out.push(fmt(v));
     return out;
   }
   // alpha

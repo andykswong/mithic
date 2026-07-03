@@ -606,6 +606,28 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
           if (eq > 0) ctx.state?.setNameref?.(n, arg.slice(eq + 1));
           continue;
         }
+        // `declare NAME[i]=value` is an ELEMENT write (bash: `declare a[1]=X` sets
+        // a[1]), not a scalar write to the base name. Route it through the shared
+        // assignment path with an `index`. (`+=` element append is honored too.)
+        const subM = /^([A-Za-z_][A-Za-z0-9_]*)\[(.*)\](\+?)$/s.exec(rawName);
+        if (subM !== null && eq > 0 && ctx.applyBuiltinAssignment !== undefined) {
+          if (scopeLocal) {
+            const scope = ctx.state?.declareLocal(subM[1]) ?? 'none';
+            if (isLocal && scope === 'none') { errOut(ctx, 'shell: local: can only be used in a function\n'); return 1; }
+          }
+          if (flagInteger) ctx.state?.markInteger?.(subM[1]);
+          if (await ctx.applyBuiltinAssignment({ name: subM[1], value: arg.slice(eq + 1), index: subM[2], append: subM[3] === '+' }, flagGlobal)) declStatus = 1;
+          if (flagReadonly) ctx.state?.markReadonly?.(subM[1]);
+          continue;
+        }
+        // A `local`/`declare`/`typeset` on an ALREADY-readonly name is rejected BEFORE
+        // scoping (bash: `readonly R=c; local R=x` → "R: readonly variable", R kept) —
+        // declareLocal below would clear the readonly attribute, so check it first.
+        if (scopeLocal && (ctx.state?.isReadonly?.(n) ?? false)) {
+          errOut(ctx, `shell: ${name}: ${n}: readonly variable\n`);
+          declStatus = 1;
+          continue;
+        }
         // Function scoping FIRST (bash: `declare`/`typeset`/`local` shadow the global
         // as a local before assigning). A bare `declare` inside a function is local;
         // `-g`/`readonly`/`export` are global. `local` outside a function is an error.

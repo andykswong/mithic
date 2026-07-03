@@ -172,6 +172,36 @@ test('printf -v VAR assigns the formatted output to a variable', async () => {
   expect((await run('printf "%d\\n" 7')).out).toBe('7\n');
 });
 
+test('declare -p prints a nameref; [[ -v NAME ]] tests set-ness', async () => {
+  expect((await run('declare -n ref=v; v=hi; declare -p ref')).out).toBe('declare -n ref="v"\n');
+  expect((await run('foo=1; [[ -v foo ]] && echo set || echo unset')).out).toBe('set\n');
+  expect((await run('[[ -v bar ]] && echo set || echo unset')).out).toBe('unset\n');
+  expect((await run('a=(x y); [[ -v a[1] ]] && echo set || echo unset')).out).toBe('set\n');
+  expect((await run('a=(x); [[ -v a[5] ]] && echo set || echo unset')).out).toBe('unset\n');
+});
+
+test('declare NAME[i]=value is an element write; local on a readonly var is rejected', async () => {
+  expect((await run('a=(1 2 3); declare a[1]=X; echo "${a[@]}"')).out).toBe('1 X 3\n');
+  expect((await run('declare -A m=([x]=1); declare m[y]=2; echo "${m[x]}${m[y]}"')).out).toBe('12\n');
+  const r = await run('readonly R=c; f(){ local R=x; echo "in=$R"; }; f; echo "out=$R"');
+  expect(r.out).toBe('in=c\nout=c\n'); expect(r.err).toMatch(/readonly/);
+});
+
+test('[[ N -eq M ]] with an invalid arith operand errors (false + diagnostic)', async () => {
+  const r = await run('[[ 08 -eq 0 ]]; echo "rc=$?"');
+  expect(r.out).toBe('rc=1\n'); expect(r.err).toMatch(/value too great for base/);
+});
+
+test('${var~} / ${var~~} toggle case; numeric brace ranges zero-pad', async () => {
+  expect((await run('a=hello; echo "${a~}"')).out).toBe('Hello\n');
+  expect((await run('a=hello; echo "${a~~}"')).out).toBe('HELLO\n');
+  expect((await run('a=HELLO; echo "${a~~}"')).out).toBe('hello\n');
+  expect((await run('echo {01..05}')).out).toBe('01 02 03 04 05\n');
+  expect((await run('echo {001..3}')).out).toBe('001 002 003\n');
+  expect((await run('echo {-01..01}')).out).toBe('-01 000 001\n');
+  expect((await run('echo {1..5}')).out).toBe('1 2 3 4 5\n'); // no padding without leading zero
+});
+
 // ── command substitution ──────────────────────────────────────────────────────
 
 test('$(cmd) command substitution', async () => {
