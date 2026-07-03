@@ -813,9 +813,9 @@ test('${ref@A} on a nameref reconstructs declare -n ref=target (target NAME, not
   expect(out.trim()).toBe('declare -n ref=target');
 });
 
-test('${x@A} on a plain scalar reconstructs a double-quoted declare — real Environment', async () => {
+test('${x@A} on a plain scalar reconstructs `name=\'value\'` (bash-5 @Q form) — real Environment', async () => {
   const { out } = await run('x="a b"; echo "${x@A}"');
-  expect(out.trim()).toBe('declare -- x="a b"');
+  expect(out.trim()).toBe('x=\'a b\'');
 });
 
 // ── A8: ${var@a} attribute-flags transform ───────────────────────────────────
@@ -1256,7 +1256,25 @@ test('${arr[@]@A}/@K/@k and @Q/@U per-element transforms over the whole array', 
   expect((await run('a=(x "y z"); echo "${a[@]@Q}"')).out).toBe('\'x\' \'y z\'\n');
   expect((await run('a=(hi bye); echo "${a[@]@U}"')).out).toBe('HI BYE\n');
   expect((await run('a=(a "b c"); echo "${a[@]@K}"')).out).toBe('0 "a" 1 "b c"\n');
-  expect((await run('declare -A m=([k1]=v1 [k2]=v2); echo "${m[@]@K}"')).out).toBe('k1 "v1" k2 "v2"\n');
+  // assoc @K has a TRAILING space after the last pair (bash); indexed does not.
+  expect((await run('declare -A m=([k1]=v1 [k2]=v2); echo "${m[@]@K}"')).out).toBe('k1 "v1" k2 "v2" \n');
+});
+
+test('a subscript on a SCALAR treats it as a 1-element array (bash)', async () => {
+  expect((await run('s=hello; echo "${s[0]@Q}"')).out).toBe('\'hello\'\n');
+  expect((await run('s=hello; echo "[${s[1]@Q}]"')).out).toBe('[]\n');
+  expect((await run('s=hello; echo "${s[0]#he}"')).out).toBe('llo\n');
+  expect((await run('s=hello; echo "${#s[0]}"')).out).toBe('5\n');
+  expect((await run('s=hello; echo "${#s[1]}"')).out).toBe('0\n');
+  expect((await run('s=hello; echo "${s[0]^^}"')).out).toBe('HELLO\n');
+  expect((await run('s=hello; echo "${s[0]}"')).out).toBe('hello\n');
+});
+
+test('sparse array @A skips holes; array/element values use $\'…\' for control chars', async () => {
+  expect((await run('declare -a a=([2]=x [5]=y); echo "${a[@]@A}"')).out)
+    .toBe('declare -a a=([2]="x" [5]="y")\n');
+  const tab = await run('declare -a a=("normal" $\'x\\ty\'); echo "${a[@]@A}"');
+  expect(tab.out).toBe('declare -a a=([0]="normal" [1]=$\'x\\ty\')\n');
 });
 
 test('unset clears arrays/assoc/elements (not just scalars)', async () => {

@@ -523,17 +523,17 @@ export class Expander {
   }
 
   /**
-   * `${var@A}`: reconstruct a `declare` statement that recreates the variable
-   * and its attributes, matching bash-5's format:
-   *   scalar          → `declare -- name="value"`   (value in bash's `"…"` form)
-   *   readonly scalar → `declare -r name="value"`
-   *   indexed array   → `declare -a name=([0]="v0" [1]="v1")`
+   * `${var@A}`: reconstruct a `declare` statement that recreates the variable and
+   * its attributes, matching bash-5's `@A` format (which differs from `declare -p`):
+   *   scalar          → `name='value'`               (value @Q-quoted; NO `declare --`)
+   *   int/readonly    → `declare -i name='5'` / `declare -r name='hi'`  (flags → @Q)
+   *   indexed array   → `declare -a name=([0]="v0" [2]="v2")`  (sparse holes skipped)
    *   assoc array     → `declare -A name=([k]="v" …)`
    *   nameref         → `declare -n name=target`
-   *   readonly+array  → flags combine in order `a`/`A` then `r` (`declare -ar …`)
-   * Scalar and array/assoc element VALUES all use bash's double-quoted `"…"` form
-   * (escape `\ " $` + backtick), matching bash-5's `declare -p`/@A output exactly.
-   * An unset variable yields the empty string (bash emits nothing).
+   * SCALAR values use the `@Q` single-quote form (`shellQuoteQ`, `$'…'` for control
+   * chars); ARRAY/ASSOC element values use the double-quoted `"…"` form, or `$'…'`
+   * when they contain control characters (bash). An unset variable → '' (bash emits
+   * nothing).
    */
   private declareStatement(name: string, set: boolean, value: string): string {
     const arr = this.env.getArray?.(name);
@@ -545,21 +545,26 @@ export class Expander {
       const target = this.env.resolveNameref?.(name) ?? value;
       return `declare -n ${name}=${target}`;
     }
-    // Flag group: type letter (a/A) then `r` (readonly), matching bash order.
+    // Flag group: type letter (a/A) then i (integer) then r (readonly), bash order.
     let group = '';
     if (map !== undefined || flags.includes('A')) group += 'A';
     else if (arr !== undefined || flags.includes('a')) group += 'a';
+    if (flags.includes('i')) group += 'i';
     if (flags.includes('r')) group += 'r';
-    const flagStr = group === '' ? '--' : `-${group}`;
     if (map !== undefined) {
-      const body = [...map.entries()].map(([k, v]) => `[${k}]="${dqEscape(v)}"`).join(' ');
-      return `declare ${flagStr} ${name}=(${body})`;
+      const body = [...map.entries()].map(([k, v]) => `[${k}]=${declareElemQuote(v)}`).join(' ');
+      return `declare -${group} ${name}=(${body})`;
     }
     if (arr !== undefined) {
-      const body = arr.map((v, i) => `[${i}]="${dqEscape(v)}"`).join(' ');
-      return `declare ${flagStr} ${name}=(${body})`;
+      // Skip sparse holes; keep the real indices (bash: `[2]="x" [5]="y"`).
+      const body = denseIndices(arr).map((i) => `[${i}]=${declareElemQuote(arr[i])}`).join(' ');
+      return `declare -${group} ${name}=(${body})`;
     }
-    return `declare ${flagStr} ${name}="${dqEscape(value)}"`;
+    // Scalar @A: `name='value'` for an attribute-less var (no `declare --`); with
+    // attributes a `declare -FLAGS ` prefix. The value is @Q-quoted either way.
+    return group === ''
+      ? `${name}=${shellQuoteQ(value)}`
+      : `declare -${group} ${name}=${shellQuoteQ(value)}`;
   }
 
   /**
@@ -581,13 +586,16 @@ export class Expander {
     else if (arr !== undefined) pairs = denseValues(arr).map((v, i) => [String(denseIndices(arr)[i]), v]);
     else return value;
     if (quoted) {
-      // `@K`: value is ALWAYS double-quoted; a key is double-quoted only when it is
-      // not a bare-safe word (numeric indices and identifier-like keys stay bare) —
-      // matching bash (`k1 "v1"`, `"k 1" "v x"`).
+      // `@K`: value is quoted (double-quoted, or `$'…'` for control chars); a key is
+      // double-quoted only when it is not a bare-safe word (numeric indices and
+      // identifier-like keys stay bare) — matching bash (`k1 "v1"`, `"k 1" "v x"`).
       const KEY_SAFE = /^[A-Za-z0-9_./:=@%+,-]+$/;
-      return pairs
-        .map(([k, v]) => `${KEY_SAFE.test(k) ? k : `"${dqEscape(k)}"`} "${dqEscape(v)}"`)
+      const body = pairs
+        .map(([k, v]) => `${KEY_SAFE.test(k) ? k : `"${dqEscape(k)}"`} ${declareElemQuote(v)}`)
         .join(' ');
+      // bash appends a TRAILING space after the final pair for an ASSOCIATIVE array
+      // (indexed arrays have none).
+      return map !== undefined && body !== '' ? body + ' ' : body;
     }
     const fields: string[] = [];
     for (const [k, v] of pairs) { fields.push(k, v); }
@@ -768,10 +776,16 @@ export class Expander {
           const key = await this.substituteOnly(sub.subscript);
           return String((map.get(key) ?? '').length);
         }
-        const arr = this.env.getArray?.(sub.name) ?? [];
-        if (sub.subscript === '@' || sub.subscript === '*') return String(denseIndices(arr).length);
+        const arr = this.env.getArray?.(sub.name);
+        if (arr !== undefined) {
+          if (sub.subscript === '@' || sub.subscript === '*') return String(denseIndices(arr).length);
+          const idx = await this.resolveIndex(sub.subscript);
+          return String((arr[idx] ?? '').length);
+        }
+        // A subscript on a SCALAR: `${#s[0]}` is the value's length, other indices 0.
+        if (sub.subscript === '@' || sub.subscript === '*') return String(this.env.has(sub.name) ? 1 : 0);
         const idx = await this.resolveIndex(sub.subscript);
-        return String((arr[idx] ?? '').length);
+        return String(idx === 0 || idx === -1 ? this.resolveVar(sub.name).length : 0);
       }
       return String(this.resolveVar(inner).length);
     }
@@ -871,6 +885,28 @@ export class Expander {
         if (nameKeyed !== undefined) return nameKeyed;
         return this.applyValueOp(elem, setElem, subAccess.op, `${subAccess.name}[${idx}]`,
           (word) => { this.env.setArrayElement?.(subAccess.name, idx, word); return word; });
+      }
+      return elem;
+    }
+    // A subscript on a SCALAR treats it as a one-element array (bash): `${s[0]}` is
+    // the value, any other index is empty. `${s[0]@Q}` / `${s[0]#pat}` / `${#s[0]}`
+    // operate on element 0 / empty. `[@]`/`[*]` on a scalar is the value as one field.
+    if (subAccess && subAccess.name !== '' && this.env.has(subAccess.name)
+        && this.env.getArray?.(subAccess.name) === undefined
+        && this.env.getAssoc?.(subAccess.name) === undefined) {
+      const scalarVal = this.resolveVar(subAccess.name);
+      if (subAccess.subscript === '@' || subAccess.subscript === '*') {
+        const fields = subAccess.op !== undefined ? await this.sliceArray([scalarVal], sliceSpec(subAccess.op)) : [scalarVal];
+        return { fields, join: subAccess.subscript === '*' ? this.ifsFirst() : undefined };
+      }
+      const idx = await this.resolveIndex(subAccess.subscript);
+      const isZero = idx === 0 || idx === -1; // element 0 (or [-1] of a 1-element array)
+      const elem = isZero ? scalarVal : '';
+      if (subAccess.op !== undefined) {
+        const nameKeyed = this.elementTransform(subAccess.name, elem, subAccess.op, isZero);
+        if (nameKeyed !== undefined) return nameKeyed;
+        return this.applyValueOp(elem, isZero, subAccess.op, `${subAccess.name}[${idx}]`,
+          (word) => { if (isZero) this.env.set(subAccess.name, word); return word; });
       }
       return elem;
     }
@@ -1410,6 +1446,18 @@ function stripTrailingNewlines(s: string): string {
  */
 function dqEscape(s: string): string {
   return s.replace(/[\\"$`]/g, (c) => '\\' + c);
+}
+
+// eslint-disable-next-line no-control-regex
+const CTRL_CHARS = /[\x00-\x1f\x7f]/;
+
+/**
+ * Quote an array/assoc element VALUE for `@A` / `@K` reconstruction: bash uses the
+ * double-quoted `"…"` form normally, but the ANSI-C `$'…'` form when the value
+ * contains control characters (tab/newline/etc.) — e.g. `[0]=$'x\ty'`.
+ */
+function declareElemQuote(v: string): string {
+  return CTRL_CHARS.test(v) ? shellQuoteQ(v) : `"${dqEscape(v)}"`;
 }
 
 // ── pattern matching (glob-style for ${} strip/subst and pathname) ───────────

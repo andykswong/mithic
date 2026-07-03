@@ -364,19 +364,19 @@ test('${var@E} expands ANSI-C backslash escapes', async () => {
 
 // ── ${var@A} declare-statement reconstruction (bash-5 format) ────────────────
 
-test('${var@A} reconstructs a scalar declare (bash-5 double-quoted value)', async () => {
+test('${var@A} of an attribute-less scalar is `name=\'value\'` (bash-5: no `declare --`, @Q-quoted)', async () => {
   const e = E({ x: 'hello world' });
-  expect(await e.expandWord('"${x@A}"')).toEqual(['declare -- x="hello world"']);
+  expect(await e.expandWord('"${x@A}"')).toEqual(["x='hello world'"]);
 });
 
-test('${var@A} double-quotes even a safe scalar value (matches bash-5)', async () => {
+test('${var@A} @Q-quotes even a safe scalar value (matches bash-5)', async () => {
   const e = E({ x: 'plain' });
-  expect(await e.expandWord('"${x@A}"')).toEqual(['declare -- x="plain"']);
+  expect(await e.expandWord('"${x@A}"')).toEqual(["x='plain'"]);
 });
 
-test('${var@A} on a readonly scalar adds -r', async () => {
+test('${var@A} on a readonly scalar adds -r and @Q-quotes', async () => {
   const e = E({ x: 'v' }, { attrFlags: (n) => (n === 'x' ? 'r' : '') });
-  expect(await e.expandWord('"${x@A}"')).toEqual(['declare -r x="v"']);
+  expect(await e.expandWord('"${x@A}"')).toEqual(["declare -r x='v'"]);
 });
 
 test('${arr[@]@A} reconstructs an indexed-array declare', async () => {
@@ -450,8 +450,9 @@ test('${map[@]@K} produces key-value pairs (value always quoted, safe key bare)'
   const e = E({}, {
     getAssoc: (n) => (n === 'map' ? new Map([['k1', 'v1'], ['k 2', 'v 2']]) : undefined),
   });
-  // Safe key `k1` stays bare; key `k 2` (has a space) is double-quoted; values always quoted.
-  expect(await e.expandWord('"${map[@]@K}"')).toEqual(['k1 "v1" "k 2" "v 2"']);
+  // Safe key `k1` stays bare; key `k 2` (space) is double-quoted; values always
+  // quoted. bash appends a TRAILING space after the last pair for an ASSOC array.
+  expect(await e.expandWord('"${map[@]@K}"')).toEqual(['k1 "v1" "k 2" "v 2" ']);
 });
 
 test('${map[@]@k} produces unquoted key-value words', async () => {
