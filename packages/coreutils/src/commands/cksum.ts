@@ -1,16 +1,21 @@
 /**
- * `cksum` — print CRC32 checksum and byte count of each file.
- * `sum` — print BSD checksum (16-bit sum) and block count (512-byte blocks).
+ * `cksum` — print a checksum and byte count of each file (GNU coreutils 9
+ * interface: `-a/--algorithm` selects the digest).
+ * `sum` — print BSD (default) or System V (`-s`) checksum + block count.
  *
- * cksum uses the POSIX cksum CRC (polynomial 0x04C11DB7, non-reflected, with the
- * byte length fed into the CRC after the data) — matching GNU/BSD `cksum` output,
- * NOT the reflected zlib CRC-32. sum uses the traditional BSD algorithm: sum of
- * all bytes mod 65536, plus number of 512-byte blocks.
+ * The default `cksum` algorithm is the POSIX cksum CRC (polynomial 0x04C11DB7,
+ * non-reflected, with the byte length fed into the CRC after the data) — this
+ * matches GNU/BSD `cksum`, NOT the reflected zlib CRC-32. `-a crc32b` selects
+ * the reflected zlib CRC-32. `-a bsd|sysv` reuse the `sum` algorithms; the hash
+ * algorithms (`md5`, `sha1/224/256/384/512`) print in GNU's BSD-tag form
+ * (`ALGO (name) = hex`) by default or `hex  name` with `--untagged`.
  *
- * Usage: cksum [FILE...]    (or stdin if no files)
- *        sum [FILE...]
+ * Usage: cksum [-a ALGO] [--tag|--untagged] [FILE...]   (stdin if no FILE)
+ *        sum  [-r|-s] [FILE...]
  */
-import { defineCommand, parseArgs, writeLine } from '../harness.ts';
+import { defineCommand, parseArgs, readAll, writeLine, writeString, exitWith } from '../harness.ts';
+import { readFile } from '../fs.ts';
+import { md5hex } from './_md5.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 // ── CRC-32 (POSIX cksum polynomial: 0xEDB88320 reflected) ───────────────────
@@ -71,7 +76,9 @@ export function posixCksum(data: Uint8Array): number {
   return posixCksumFinal(posixCksumUpdate(0, data), data.length);
 }
 
-// ── BSD sum (sum -s, the default) ────────────────────────────────────────────
+// ── BSD sum (the `sum` default / `sum -r`) ───────────────────────────────────
+// The BSD algorithm is a 16-bit rotate-add; GNU `sum` reports the block count in
+// 1024-byte units (NOT 512) and zero-pads the checksum to 5 digits.
 
 /** Fold `data` into a running BSD sum (16-bit rotate-add). */
 function bsdSumUpdate(s: number, data: Uint8Array): number {
@@ -80,21 +87,41 @@ function bsdSumUpdate(s: number, data: Uint8Array): number {
 }
 
 export function bsdSum(data: Uint8Array): { checksum: number; blocks: number } {
-  return { checksum: bsdSumUpdate(0, data), blocks: Math.ceil(data.length / 512) };
+  return { checksum: bsdSumUpdate(0, data), blocks: Math.ceil(data.length / 1024) };
+}
+
+// ── System V sum (sum -s / --sysv) ───────────────────────────────────────────
+// The SysV algorithm sums every byte, then folds the 32-bit total twice into a
+// 16-bit result: r = (s & 0xffff) + (s >> 16); checksum = (r & 0xffff) + (r >> 16).
+// GNU reports the block count in 512-byte units and formats `%d %d name`.
+
+/** Finalize a running byte-total into the SysV 16-bit checksum. */
+function sysvFinal(total: number): number {
+  const r = (total & 0xffff) + (Math.floor(total / 0x10000) & 0xffff);
+  return (r & 0xffff) + (r >> 16);
 }
 
 // ── incremental checksum over one source (stream, never buffer the input) ──────
 
+/** Byte-fold algorithms usable in constant memory (no full-input buffering). */
+type FoldMode = 'crc' | 'crc32b' | 'bsd' | 'sysv';
+
+/** Fold `data` into a running reflected zlib CRC-32 (the `-a crc32b` digest). */
+function crc32bUpdate(crc: number, data: Uint8Array): number {
+  for (const b of data) crc = CRC32_TABLE[(crc ^ b) & 0xff] ^ (crc >>> 8);
+  return crc >>> 0;
+}
+
 interface ChecksumResult { value: number; length: number; blocks: number; }
 
 /**
- * Compute the checksum of one source by READING IT CHUNK-BY-CHUNK and folding
- * each chunk into the running CRC/sum (constant memory). `path === '-'` reads
- * stdin; otherwise the VFS file. This is the OOM fix: `… | cksum` never buffers
- * its (possibly huge/infinite) input — only the running 32-bit state is kept.
+ * Compute a byte-fold checksum of one source by READING IT CHUNK-BY-CHUNK and
+ * folding each chunk into the running state (constant memory). `path === '-'`
+ * reads stdin; otherwise the VFS file. This is the OOM fix: `… | cksum` never
+ * buffers its (possibly huge/infinite) input — only the running state is kept.
  */
-async function checksumSource(io: CommandIO, path: string, isCksum: boolean): Promise<ChecksumResult> {
-  let crc = 0;
+async function checksumSource(io: CommandIO, path: string, mode: FoldMode): Promise<ChecksumResult> {
+  let state = mode === 'crc32b' ? 0xffffffff : 0; // crc32b starts inverted
   let length = 0;
   const reader = path === '-' ? io.stdin.getReader() : null;
   let fd = -1;
@@ -114,51 +141,140 @@ async function checksumSource(io: CommandIO, path: string, isCksum: boolean): Pr
       }
       if (!chunk || chunk.byteLength === 0) continue;
       length += chunk.byteLength;
-      crc = isCksum ? posixCksumUpdate(crc, chunk) : bsdSumUpdate(crc, chunk);
+      if (mode === 'crc') state = posixCksumUpdate(state, chunk);
+      else if (mode === 'crc32b') state = crc32bUpdate(state, chunk);
+      else if (mode === 'bsd') state = bsdSumUpdate(state, chunk);
+      else for (const b of chunk) state += b; // sysv: plain byte total (folded at end)
     }
   } finally {
     if (reader) reader.releaseLock();
     else await io.syscall('fs/close', { fd }).catch(() => { /* best effort */ });
   }
-  if (isCksum) return { value: posixCksumFinal(crc, length), length, blocks: 0 };
-  return { value: crc, length, blocks: Math.ceil(length / 512) };
+  if (mode === 'crc') return { value: posixCksumFinal(state, length), length, blocks: 0 };
+  if (mode === 'crc32b') return { value: (~state) >>> 0, length, blocks: 0 };
+  if (mode === 'bsd') return { value: state, length, blocks: Math.ceil(length / 1024) };
+  return { value: sysvFinal(state), length, blocks: Math.ceil(length / 512) };
 }
 
-function makeCksumCommand(cmdName: string, isCksum: boolean): CommandFn {
-  return async (io: CommandIO): Promise<number> => {
-    const name = io.args[0] ?? cmdName;
-    const { positionals } = parseArgs(io.args.slice(1), {});
-    const sources = positionals.length > 0 ? positionals : ['-'];
+// `sum`: BSD (default / -r) or System V (-s / --sysv). BSD zero-pads the 5-digit
+// checksum and space-pads a 5-wide block count; SysV prints `%d %d name`.
+const sumCommand: CommandFn = async (io: CommandIO): Promise<number> => {
+  const name = io.args[0] ?? 'sum';
+  const { positionals, flags } = parseArgs(io.args.slice(1), {
+    boolean: ['r', 's', 'sysv'],
+    alias: { sysv: 's' },
+  });
+  const sysv = Boolean(flags.s); // -r (BSD) is the default and simply overrides nothing
+  const mode: FoldMode = sysv ? 'sysv' : 'bsd';
+  const sources = positionals.length > 0 ? positionals : ['-'];
 
-    const out = io.stdout.getWriter();
-    const err = io.stderr.getWriter();
-    let exitCode = 0;
-    try {
-      for (const src of sources) {
-        let r: ChecksumResult;
-        try { r = await checksumSource(io, src, isCksum); }
-        catch {
-          await writeLine(err, `${name}: ${src}: No such file or directory`);
-          exitCode = 1;
-          continue;
-        }
-        const label = src === '-' ? '' : ' ' + src;
-        if (isCksum) {
-          await writeLine(out, `${r.value} ${r.length}${label}`);
-        } else {
-          await writeLine(out, `${String(r.value).padStart(5)} ${String(r.blocks).padStart(5)}${label}`);
-        }
-      }
-      return exitCode;
-    } finally {
-      await out.close().catch(() => { /* already closed */ });
-      await err.close().catch(() => { /* already closed */ });
+  const out = io.stdout.getWriter();
+  const err = io.stderr.getWriter();
+  let exitCode = 0;
+  try {
+    for (const src of sources) {
+      let r: ChecksumResult;
+      try { r = await checksumSource(io, src, mode); }
+      catch { await writeLine(err, `${name}: ${src}: No such file or directory`); exitCode = 1; continue; }
+      const label = src === '-' ? '' : ' ' + src;
+      if (sysv) await writeLine(out, `${r.value} ${r.blocks}${label}`);
+      else await writeLine(out, `${String(r.value).padStart(5, '0')} ${String(r.blocks).padStart(5)}${label}`);
     }
-  };
+    return exitCode;
+  } finally {
+    await out.close().catch(() => { /* already closed */ });
+    await err.close().catch(() => { /* already closed */ });
+  }
+};
+
+// ── cksum (GNU 9 `-a`/`--algorithm` interface) ───────────────────────────────
+
+/** Valid `-a` argument list (GNU order), for the diagnostic on an invalid one. */
+const CKSUM_ALGOS = ['bsd', 'sysv', 'crc', 'crc32b', 'md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'sha2', 'sha3', 'blake2b', 'sm3'];
+
+/** Uppercase BSD-tag label for a hash algorithm. */
+const TAG_LABEL: Record<string, string> = { md5: 'MD5', sha1: 'SHA1', sha224: 'SHA224', sha256: 'SHA256', sha384: 'SHA384', sha512: 'SHA512' };
+
+/** Compute the hex digest of `bytes` for a hash algorithm (md5 or a SHA family). */
+async function hashHex(algo: string, bytes: Uint8Array): Promise<string> {
+  if (algo === 'md5') return md5hex(bytes);
+  const cryptoName: Record<string, string> = { sha1: 'SHA-1', sha224: 'SHA-224', sha256: 'SHA-256', sha384: 'SHA-384', sha512: 'SHA-512' };
+  const buf = await crypto.subtle.digest(cryptoName[algo], bytes as unknown as BufferSource);
+  let hex = '';
+  for (const b of new Uint8Array(buf)) hex += b.toString(16).padStart(2, '0');
+  return hex;
 }
 
-const cksumCommand = makeCksumCommand('cksum', true);
-const sumCommand = makeCksumCommand('sum', false);
+const cksumCommand: CommandFn = async (io: CommandIO): Promise<number> => {
+  const name = io.args[0] ?? 'cksum';
+  const { positionals, flags } = parseArgs(io.args.slice(1), {
+    string: ['a', 'algorithm'],
+    boolean: ['tag', 'untagged'],
+    alias: { algorithm: 'a' },
+  });
+  const algo = (flags.a !== undefined ? String(flags.a) : 'crc');
+  const out = io.stdout.getWriter();
+  const err = io.stderr.getWriter();
+  try {
+    if (!CKSUM_ALGOS.includes(algo)) {
+      const list = CKSUM_ALGOS.map((a) => `  - ‘${a}’`).join('\n');
+      return await exitWith(err, 1, `${name}: invalid argument ‘${algo}’ for ‘--algorithm’\nValid arguments are:\n${list}\nTry '${name} --help' for more information.`);
+    }
+    // Algorithms unavailable in-sandbox (no Web Crypto / pure-TS impl). Match
+    // GNU's algorithm namespace but fail loudly rather than emit a wrong digest.
+    // (Web Crypto has no SHA-224, and none of sha2/sha3/blake2b/sm3.)
+    if (algo === 'sha224' || algo === 'sha2' || algo === 'sha3' || algo === 'blake2b' || algo === 'sm3') {
+      return await exitWith(err, 1, `${name}: --algorithm=${algo} is not supported in this build`);
+    }
+
+    const isHash = algo === 'md5' || algo.startsWith('sha');
+    const untagged = Boolean(flags.untagged);
+    const sources = positionals.length > 0 ? positionals : ['-'];
+    let exitCode = 0;
+
+    for (const src of sources) {
+      const label = src === '-' ? '' : ' ' + src;
+      if (algo === 'crc' || algo === 'crc32b') {
+        let r: ChecksumResult;
+        try { r = await checksumSource(io, src, algo); }
+        catch { await writeLine(err, `${name}: ${src}: No such file or directory`); exitCode = 1; continue; }
+        await writeLine(out, `${r.value} ${r.length}${label}`);
+        continue;
+      }
+      if (algo === 'bsd') {
+        let r: ChecksumResult;
+        try { r = await checksumSource(io, src, 'bsd'); }
+        catch { await writeLine(err, `${name}: ${src}: No such file or directory`); exitCode = 1; continue; }
+        await writeLine(out, `${String(r.value).padStart(5, '0')} ${String(r.blocks).padStart(5)}${label}`);
+        continue;
+      }
+      if (algo === 'sysv') {
+        let r: ChecksumResult;
+        try { r = await checksumSource(io, src, 'sysv'); }
+        catch { await writeLine(err, `${name}: ${src}: No such file or directory`); exitCode = 1; continue; }
+        await writeLine(out, `${r.value} ${r.blocks}${label}`);
+        continue;
+      }
+      // Hash algorithms: buffer the source and digest it.
+      if (isHash) {
+        let bytes: Uint8Array;
+        try { bytes = src === '-' ? await readAll(io.stdin) : await readFile(io, src); }
+        catch { await writeLine(err, `${name}: ${src}: No such file or directory`); exitCode = 1; continue; }
+        const hex = await hashHex(algo, bytes);
+        const shown = src === '-' ? '-' : src;
+        if (untagged) await writeString(out, `${hex}  ${shown}\n`);
+        else await writeString(out, `${TAG_LABEL[algo]} (${shown}) = ${hex}\n`);
+      }
+    }
+    return exitCode;
+  } finally {
+    await out.close().catch(() => { /* already closed */ });
+    await err.close().catch(() => { /* already closed */ });
+  }
+};
+
+export { checksumSource };
+export type { FoldMode, ChecksumResult };
 
 // cksum default export
 export default defineCommand(cksumCommand);

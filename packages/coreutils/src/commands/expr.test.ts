@@ -125,3 +125,88 @@ describe('expr errors', () => {
     expect(await exprCommand(h.io)).toBe(2);
   });
 });
+
+describe('expr GNU-parity gap fixes', () => {
+  test('float arithmetic is a non-integer error (exit 2), not truncated', async () => {
+    const h = makeIO(['expr', '1.5', '+', '2']);
+    expect(await exprCommand(h.io)).toBe(2);
+    expect(h.err()).toContain('non-integer argument');
+  });
+
+  test('non-numeric arithmetic operand is a non-integer error (exit 2)', async () => {
+    const h = makeIO(['expr', 'abc', '+', '2']);
+    expect(await exprCommand(h.io)).toBe(2);
+    expect(h.err()).toContain('non-integer argument');
+  });
+
+  test('float on the right side of arithmetic errors too', async () => {
+    const h = makeIO(['expr', '3', '+', '1.5']);
+    expect(await exprCommand(h.io)).toBe(2);
+  });
+
+  test('multiplication by non-integer errors', async () => {
+    const h = makeIO(['expr', '2', '*', 'x']);
+    expect(await exprCommand(h.io)).toBe(2);
+    expect(h.err()).toContain('non-integer argument');
+  });
+
+  test('missing operand after operator is a syntax error (exit 2)', async () => {
+    const h = makeIO(['expr', '1', '+']);
+    expect(await exprCommand(h.io)).toBe(2);
+    expect(h.err()).toContain('missing argument after');
+  });
+
+  test('missing operand after comparison operator (exit 2)', async () => {
+    const h = makeIO(['expr', '5', '<']);
+    expect(await exprCommand(h.io)).toBe(2);
+    expect(h.err()).toContain('missing argument after');
+  });
+
+  test('substr POS < 1 → empty string, exit 1', async () => {
+    const h = makeIO(['expr', 'substr', 'hello', '0', '3']);
+    expect(await exprCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('');
+  });
+
+  test('substr negative POS → empty string, exit 1', async () => {
+    const h = makeIO(['expr', 'substr', 'hello', '-1', '3']);
+    expect(await exprCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('');
+  });
+
+  test('substr LEN <= 0 → empty string, exit 1', async () => {
+    const h = makeIO(['expr', 'substr', 'hello', '2', '0']);
+    expect(await exprCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('');
+  });
+
+  test('substr POS beyond end → empty string, exit 1', async () => {
+    const h = makeIO(['expr', 'substr', 'hello', '10', '3']);
+    expect(await exprCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('');
+  });
+
+  test('substr LEN past end clamps to available', async () => {
+    const h = makeIO(['expr', 'substr', 'hello', '2', '100']);
+    await exprCommand(h.io);
+    expect(h.out()).toBe('ello');
+  });
+
+  test('leading + quote operator: + hello → hello', async () => {
+    const h = makeIO(['expr', '+', 'hello']);
+    expect(await exprCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('hello');
+  });
+
+  test('lone + is a syntax error (exit 2)', async () => {
+    const h = makeIO(['expr', '+']);
+    expect(await exprCommand(h.io)).toBe(2);
+    expect(h.err()).toContain('missing argument after');
+  });
+
+  test('3 + + 4 → + quotes the 4 (=7)', async () => {
+    const h = makeIO(['expr', '3', '+', '+', '4']);
+    expect(await exprCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('7');
+  });
+});

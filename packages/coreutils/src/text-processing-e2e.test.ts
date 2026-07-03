@@ -84,7 +84,8 @@ test('sort <file> sorts as a real spawned process', async () => {
 test('wc -l <file> counts lines end-to-end', async () => {
   const k = await bootKernel({ '/n.txt': 'a\nb\nc\n' });
   const out = await k.spawn(['wc', '-l', '/n.txt']);
-  expect(out.stdout).toBe('      3 /n.txt\n');
+  // GNU: a single count field from a single source prints with no padding.
+  expect(out.stdout).toBe('3 /n.txt\n');
   expect(out.code).toBe(0);
 }, 20000);
 

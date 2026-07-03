@@ -22,7 +22,7 @@
  */
 import { CoalescingWriter, defineCommand, isBrokenPipe, readAllText, streamLines, writeBytes, writeLine } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
-import { compilePattern, escapeRegExp } from './_regex.ts';
+import { breToEre, escapeRegExp, translatePosixClasses } from './_regex.ts';
 import type { RegexSyntax } from './_regex.ts';
 
 interface GrepOptions {
@@ -37,11 +37,16 @@ interface GrepOptions {
   line: boolean; // -x
   recursive: boolean;
   syntax: RegexSyntax;
+  perl: boolean; // -P: PCRE (map the pattern straight to a JS RegExp)
   after: number;
   before: number;
   color: boolean;
   quiet: boolean; // -q: suppress output, exit 0 on first match
   maxCount: number; // -m N: stop after N matches per file (0 = unlimited)
+  withFilename: boolean; // -H: always prefix output with the filename
+  noFilename: boolean; // -h: never prefix output with the filename
+  byteOffset: boolean; // -b: prefix each output line with its 0-based byte offset
+  nulData: boolean; // -z: input/output records are NUL-separated (lines may span \n)
   include: RegExp[]; // --include=GLOB filters (-r): keep only matching basenames
   exclude: RegExp[]; // --exclude=GLOB filters (-r): drop matching basenames
   patterns: string[];
@@ -76,8 +81,25 @@ function baseName(path: string): string {
   return i < 0 ? path : path.slice(i + 1);
 }
 
-const RED = '\x1b[01;31m';
-const RESET = '\x1b[0m';
+// GNU grep's default GREP_COLORS: matches are `01;31` (bold red), filenames `35`
+// (magenta), line numbers / byte offsets `32` (green), separators `36` (cyan).
+// Each SGR is followed by `\e[K` (erase to end of line) and the reset is the bare
+// `\e[m` — byte-exact with GNU's output.
+const CL_ERASE = '\x1b[K';
+const CL_RESET = '\x1b[m' + CL_ERASE;
+const CL_MATCH = '\x1b[01;31m' + CL_ERASE;
+const CL_FILE = '\x1b[35m' + CL_ERASE;
+const CL_LINENO = '\x1b[32m' + CL_ERASE;
+const CL_SEP = '\x1b[36m' + CL_ERASE;
+const RED = CL_MATCH;
+const RESET = CL_RESET;
+
+/** Wrap a filename prefix in the filename color, GNU-style. */
+function colFile(s: string): string { return CL_FILE + s + CL_RESET; }
+/** Wrap the line-number / byte-offset field in the "line" color, GNU-style. */
+function colLineno(s: string): string { return CL_LINENO + s + CL_RESET; }
+/** Wrap a field separator (`:`/`-`) in the separator color, GNU-style. */
+function colSep(s: string): string { return CL_SEP + s + CL_RESET; }
 
 async function readFileText(io: CommandIO, path: string): Promise<string> {
   const { fd } = (await io.syscall('fs/open', { dirfd: -100, path, oflags: {} })) as { fd: number };
@@ -139,9 +161,11 @@ function parseGrepArgs(argv: string[]): GrepOptions {
   const o: GrepOptions = {
     ignoreCase: false, invert: false, lineNumber: false, count: false,
     listMatches: false, listNoMatches: false, onlyMatching: false,
-    word: false, line: false, recursive: false, syntax: 'bre',
+    word: false, line: false, recursive: false, syntax: 'bre', perl: false,
     after: 0, before: 0, color: false,
-    quiet: false, maxCount: 0, include: [], exclude: [],
+    quiet: false, maxCount: 0,
+    withFilename: false, noFilename: false, byteOffset: false, nulData: false,
+    include: [], exclude: [],
     patterns: [], patternFiles: [], files: [],
   };
   let patternSeen = false;
@@ -174,6 +198,11 @@ function parseGrepArgs(argv: string[]): GrepOptions {
         case 'recursive': o.recursive = true; break;
         case 'extended-regexp': o.syntax = 'ere'; break;
         case 'fixed-strings': o.syntax = 'fixed'; break;
+        case 'perl-regexp': o.perl = true; break;
+        case 'with-filename': o.withFilename = true; break;
+        case 'no-filename': o.noFilename = true; break;
+        case 'byte-offset': o.byteOffset = true; break;
+        case 'null-data': o.nulData = true; break;
         case 'regexp': if (val !== undefined) { o.patterns.push(val); patternSeen = true; } else { o.patterns.push(argv[++i] ?? ''); patternSeen = true; } break;
         case 'file': if (val !== undefined) o.patternFiles.push(val); else o.patternFiles.push(argv[++i] ?? ''); patternSeen = true; break;
         case 'after-context': o.after = num(val ?? argv[++i]); break;
@@ -208,6 +237,11 @@ function parseGrepArgs(argv: string[]): GrepOptions {
           case 'q': o.quiet = true; break;
           case 'E': o.syntax = 'ere'; break;
           case 'F': o.syntax = 'fixed'; break;
+          case 'P': o.perl = true; break;
+          case 'H': o.withFilename = true; break;
+          case 'h': o.noFilename = true; break;
+          case 'b': o.byteOffset = true; break;
+          case 'z': o.nulData = true; break;
           case 'm': {
             const rest = cluster.slice(j + 1);
             o.maxCount = rest.length > 0 ? num(rest) : (consumedNext = true, num(argv[++i]));
@@ -267,16 +301,81 @@ interface CompiledMatcher {
   spans(line: string): { start: number; end: number }[];
 }
 
+/**
+ * Translate the GNU word-boundary operators `\<` (start of word) and `\>` (end
+ * of word) into the JS `\b` word boundary. GNU accepts these in both BRE and
+ * ERE; JS RegExp has no `\<`/`\>` so we map both to `\b`. We skip the transform
+ * inside bracket expressions (where they are literal) and leave every other
+ * escape untouched.
+ */
+function translateWordAnchors(pattern: string): string {
+  let out = '';
+  let i = 0;
+  let inClass = false;
+  while (i < pattern.length) {
+    const c = pattern[i];
+    if (inClass) {
+      out += c;
+      if (c === ']') inClass = false;
+      i++;
+      continue;
+    }
+    if (c === '[') { inClass = true; out += c; i++; continue; }
+    if (c === '\\' && (pattern[i + 1] === '<' || pattern[i + 1] === '>')) {
+      out += '\\b';
+      i += 2;
+      continue;
+    }
+    if (c === '\\' && i + 1 < pattern.length) { out += c + pattern[i + 1]; i += 2; continue; }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+/**
+ * Neutralize an orphan quantifier at the start of a (translated) regex source so
+ * the JS engine does not throw "Nothing to repeat", matching GNU grep (which
+ * only warns). The two grammars differ:
+ *   - BRE: a leading `*` is a LITERAL `*` (GNU) → escape it. `+ ? ` are already
+ *     literal in BRE (they were escaped by breToEre), so only `*` appears here.
+ *   - ERE: a leading `* + ?` is a NO-OP → drop it (so `*x` behaves as `x`);
+ *     repeat to collapse runs like `**x`.
+ * Applies at the very start of the source and immediately after an opening group
+ * `(` or an alternation `|` (both positions have nothing to repeat).
+ */
+function fixOrphanQuantifiers(source: string, ere: boolean): string {
+  if (ere) {
+    let prev: string;
+    let cur = source;
+    do { prev = cur; cur = prev.replace(/(^|[(|])[*+?]/g, (_m, pre: string) => pre); } while (cur !== prev);
+    return cur;
+  }
+  return source.replace(/(^|[(|])(\*)/g, (_m, pre: string, q: string) => pre + '\\' + q);
+}
+
 function buildMatcher(o: GrepOptions): CompiledMatcher {
   const flags = (o.ignoreCase ? 'i' : '');
   // Wrap each pattern source per -w / -x semantics, then OR them in one RegExp.
   const wrap = (raw: string): string => {
     let body: string;
-    if (o.syntax === 'fixed') body = escapeRegExp(raw);
-    else if (o.syntax === 'ere') body = compilePattern(raw, { syntax: 'ere' }).source;
-    else body = compilePattern(raw, { syntax: 'bre' }).source; // reuse BRE→ERE translation
-    if (o.line) return `(?:${body})`;
-    if (o.word) return `(?:${body})`;
+    if (o.perl) {
+      // -P: PCRE — pass the pattern straight through to the JS RegExp engine
+      // (a close superset for the common lookaround / class / anchor cases).
+      body = raw === '' ? '(?:)' : raw;
+    } else if (o.syntax === 'fixed') {
+      body = escapeRegExp(raw);
+    } else {
+      // Build the ERE/JS source WITHOUT compiling yet (compiling here would
+      // throw on a leading orphan `*`), then translate `\<`/`\>` word anchors
+      // and neutralize an orphan quantifier (literal in GNU) before the union
+      // is compiled once below.
+      const ere = o.syntax === 'ere';
+      const translated = translatePosixClasses(raw);
+      const src = ere ? translated : breToEre(translated);
+      const fixed = fixOrphanQuantifiers(translateWordAnchors(src), ere);
+      body = fixed === '' ? '(?:)' : fixed;
+    }
     return `(?:${body})`;
   };
   const sources = o.patterns.map(wrap);
@@ -320,12 +419,33 @@ function colorize(line: string, spans: { start: number; end: number }[]): string
   return out;
 }
 
+const TEXT_ENC = new TextEncoder();
+/** UTF-8 byte length of a string (for `-b` offsets over non-ASCII input). */
+function byteLen(s: string): number { return TEXT_ENC.encode(s).length; }
+
+/**
+ * Build the leading prefix fields (`filename`, `-b` byte offset, `-n` line
+ * number) joined and terminated by `sep` (`:` for a match line, `-` for a
+ * context line). Colors each field per GNU's GREP_COLORS when `o.color`. The
+ * `prefix` is the filename to show (undefined = none). `byteOff` is the field's
+ * byte offset; omit (undefined) to skip `-b`.
+ */
+function buildPrefix(o: GrepOptions, prefix: string | undefined, byteOff: number | undefined, lineno: number, sep: ':' | '-'): string {
+  let s = '';
+  const sepStr = o.color ? colSep(sep) : sep;
+  if (prefix !== undefined) s += (o.color ? colFile(prefix) : prefix) + sepStr;
+  if (o.byteOffset && byteOff !== undefined) s += (o.color ? colLineno(String(byteOff)) : String(byteOff)) + sepStr;
+  if (o.lineNumber) s += (o.color ? colLineno(String(lineno)) : String(lineno)) + sepStr;
+  return s;
+}
+
 /** Run the matcher over one file's lines, producing formatted output lines. */
 function grepLines(
   lines: string[],
   matcher: CompiledMatcher,
   o: GrepOptions,
   prefix: string | undefined,
+  lineByteOffset?: number[],
 ): MatchResult {
   const matchedIdx: number[] = [];
   for (let i = 0; i < lines.length; i++) {
@@ -336,6 +456,7 @@ function grepLines(
   const matched = matchedIdx.length > 0;
 
   if (o.count) {
+    // `-c` never colors and never carries a byte offset.
     const text = prefix !== undefined ? `${prefix}:${matchedIdx.length}` : `${matchedIdx.length}`;
     return { output: [text], matched, matchCount: matchedIdx.length };
   }
@@ -343,23 +464,23 @@ function grepLines(
   const fmt = (line: string, idx: number, sep: ':' | '-'): string => {
     let body = line;
     if (o.color && sep === ':' && !o.invert) body = colorize(line, matcher.spans(line));
-    let s = '';
-    if (prefix !== undefined) s += prefix + sep;
-    if (o.lineNumber) s += `${idx + 1}${sep}`;
-    return s + body;
+    const bo = lineByteOffset ? lineByteOffset[idx] : undefined;
+    return buildPrefix(o, prefix, bo, idx + 1, sep) + body;
   };
 
   const output: string[] = [];
 
   if (o.onlyMatching && !o.invert) {
     for (const idx of matchedIdx) {
+      const lineBo = lineByteOffset ? lineByteOffset[idx] : undefined;
       for (const span of matcher.spans(lines[idx])) {
+        // `-o` suppresses empty matches entirely (no spurious blank lines).
+        if (span.end === span.start) continue;
         let piece = lines[idx].slice(span.start, span.end);
         if (o.color) piece = RED + piece + RESET;
-        let s = '';
-        if (prefix !== undefined) s += prefix + ':';
-        if (o.lineNumber) s += `${idx + 1}:`;
-        output.push(s + piece);
+        // `-b` with `-o` reports the byte offset of the MATCH, not the line.
+        const bo = lineBo !== undefined ? lineBo + byteLen(lines[idx].slice(0, span.start)) : undefined;
+        output.push(buildPrefix(o, prefix, bo, idx + 1, ':') + piece);
       }
     }
     return { output, matched, matchCount: matchedIdx.length };
@@ -395,12 +516,33 @@ function toLines(text: string): string[] {
 }
 
 /**
+ * Split `text` into records for `-z` (NUL-separated) mode: records are delimited
+ * by `\0`; a trailing empty record after the last `\0` is dropped. Newlines are
+ * ordinary characters within a record.
+ */
+function toRecords(text: string): string[] {
+  if (text === '') return [];
+  const parts = text.split('\0');
+  if (parts[parts.length - 1] === '') parts.pop();
+  return parts;
+}
+
+/** Byte offset of the start of each line (parallel to {@link toLines}). Each
+ * line contributes its own byte length plus one for the `\n` (or `\0` in `-z`). */
+function lineByteOffsets(lines: string[]): number[] {
+  const offs: number[] = [];
+  let acc = 0;
+  for (const l of lines) { offs.push(acc); acc += byteLen(l) + 1; }
+  return offs;
+}
+
+/**
  * Format ONE matching line (1-based `lineno`) for the simple mode (no context,
- * no count, no list). Returns the output text WITH a trailing newline, or '' if
- * the line is not selected. `-o` may emit multiple output lines for one input
+ * no count, no list). Returns the output text WITH a trailing terminator, or ''
+ * if the line is not selected. `-o` may emit multiple output lines for one input
  * line. This is the streaming-path equivalent of {@link grepLines}.
  */
-function formatLine(line: string, lineno: number, matcher: CompiledMatcher, o: GrepOptions, prefix: string | undefined): string {
+function formatLine(line: string, lineno: number, matcher: CompiledMatcher, o: GrepOptions, prefix: string | undefined, byteOff: number | undefined, term: string): string {
   const m = matcher.rawMatch(line);
   const selected = o.invert ? !m : m;
   if (!selected) return '';
@@ -408,22 +550,18 @@ function formatLine(line: string, lineno: number, matcher: CompiledMatcher, o: G
   if (o.onlyMatching && !o.invert) {
     let out = '';
     for (const span of matcher.spans(line)) {
+      if (span.end === span.start) continue; // `-o`: no empty-match blank lines
       let piece = line.slice(span.start, span.end);
       if (o.color) piece = RED + piece + RESET;
-      let s = '';
-      if (prefix !== undefined) s += prefix + ':';
-      if (o.lineNumber) s += `${lineno}:`;
-      out += s + piece + '\n';
+      const bo = byteOff !== undefined ? byteOff + byteLen(line.slice(0, span.start)) : undefined;
+      out += buildPrefix(o, prefix, bo, lineno, ':') + piece + term;
     }
     return out;
   }
 
   let body = line;
   if (o.color && !o.invert) body = colorize(line, matcher.spans(line));
-  let s = '';
-  if (prefix !== undefined) s += prefix + ':';
-  if (o.lineNumber) s += `${lineno}:`;
-  return s + body + '\n';
+  return buildPrefix(o, prefix, byteOff, lineno, ':') + body + term;
 }
 
 const grepCommand: CommandFn = async (io: CommandIO): Promise<number> => {
@@ -473,6 +611,14 @@ const grepCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     }
 
     const multiFile = files.length > 1;
+    // GNU: `-H` forces the filename prefix, `-h` suppresses it; otherwise the
+    // filename is shown when there is more than one file or under `-r`.
+    const showFilename = o.withFilename || (!o.noFilename && (multiFile || o.recursive));
+    // Record splitter + output terminator honor `-z` (NUL-separated data).
+    const splitRecords = o.nulData ? toRecords : toLines;
+    const term = o.nulData ? '\0' : '\n';
+    // `-c` always terminates its count line with a newline, even under `-z`.
+    const outTerm = o.count ? '\n' : term;
     let anyMatch = false;
     let hadError = false;
 
@@ -488,7 +634,7 @@ const grepCommand: CommandFn = async (io: CommandIO): Promise<number> => {
           hadError = true;
           continue;
         }
-        const lines = toLines(text);
+        const lines = splitRecords(text);
         const fileMatched = lines.some((l) => (o.invert ? !matcher.rawMatch(l) : matcher.rawMatch(l)));
         const label = f === '-' ? '(standard input)' : f;
         if (o.listMatches && fileMatched) { await writeLine(out, label); anyMatch = true; }
@@ -520,7 +666,7 @@ const grepCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         try { text = await readFileText(io, f); }
         catch { hadError = true; continue; }
         // A match wins over any prior read error (GNU precedence: match → 0).
-        if (toLines(text).some(test)) return 0;
+        if (splitRecords(text).some(test)) return 0;
       }
       // No match: a read error makes the exit 2 (GNU), else 1.
       return hadError ? 2 : 1;
@@ -528,11 +674,12 @@ const grepCommand: CommandFn = async (io: CommandIO): Promise<number> => {
 
     // Normal / count / context modes.
     if (files.length === 0) {
-      // Stream stdin line-by-line for the simple mode (no count, no context) so
-      // `producer | grep x | head` terminates in constant memory and stops on a
-      // broken downstream pipe. Count/context modes need the whole input, so they
-      // buffer via readAllText (now capped to prevent host OOM).
-      const simple = !o.count && o.after === 0 && o.before === 0;
+      const stdinPrefix = showFilename ? '(standard input)' : undefined;
+      // Stream stdin line-by-line for the simple mode (no count, no context, no
+      // byte offsets, no NUL records) so `producer | grep x | head` terminates
+      // in constant memory and stops on a broken downstream pipe. The other
+      // modes need the whole input, so they buffer via readAllText.
+      const simple = !o.count && o.after === 0 && o.before === 0 && !o.byteOffset && !o.nulData;
       if (simple) {
         const sink = new CoalescingWriter(out);
         let lineno = 0;
@@ -541,13 +688,16 @@ const grepCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         try {
           for await (const { line } of streamLines(io.stdin)) {
             lineno++;
-            const piece = formatLine(line, lineno, matcher, o, undefined);
-            if (piece !== '') {
-              matched = true; matchCount++;
-              await sink.push(piece);
-              // -m N: stop reading once N lines have matched.
-              if (o.maxCount > 0 && matchCount >= o.maxCount) { await io.stdin.cancel().catch(() => {}); break; }
-            }
+            const rm = matcher.rawMatch(line);
+            const selected = o.invert ? !rm : rm;
+            if (!selected) continue;
+            // A selected line counts as a match even when `-o` prints nothing
+            // for it (e.g. `x*` matching only the empty string): exit stays 0.
+            matched = true; matchCount++;
+            const piece = formatLine(line, lineno, matcher, o, stdinPrefix, undefined, term);
+            if (piece !== '') await sink.push(piece);
+            // -m N: stop reading once N lines have matched.
+            if (o.maxCount > 0 && matchCount >= o.maxCount) { await io.stdin.cancel().catch(() => {}); break; }
           }
           await sink.flush();
         } catch (e) {
@@ -557,8 +707,10 @@ const grepCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         return matched ? 0 : 1;
       }
       const text = await readAllText(io.stdin);
-      const res = grepLines(toLines(text), matcher, o, undefined);
-      for (const line of res.output) await writeBytes(out, enc.encode(line + '\n'));
+      const recs = splitRecords(text);
+      const offs = o.byteOffset ? lineByteOffsets(recs) : undefined;
+      const res = grepLines(recs, matcher, o, stdinPrefix, offs);
+      for (const line of res.output) await writeBytes(out, enc.encode(line + outTerm));
       return res.matched ? 0 : 1;
     }
 
@@ -571,11 +723,11 @@ const grepCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         hadError = true;
         continue;
       }
-      // -r always labels by filename (recursion is filename-oriented in GNU),
-      // even when the include/exclude filter leaves a single file.
-      const prefix = (multiFile || o.recursive) ? f : undefined;
-      const res = grepLines(toLines(text), matcher, o, prefix);
-      for (const line of res.output) await writeBytes(out, enc.encode(line + '\n'));
+      const prefix = showFilename ? f : undefined;
+      const recs = splitRecords(text);
+      const offs = o.byteOffset ? lineByteOffsets(recs) : undefined;
+      const res = grepLines(recs, matcher, o, prefix, offs);
+      for (const line of res.output) await writeBytes(out, enc.encode(line + outTerm));
       if (res.matched) anyMatch = true;
     }
 

@@ -3,7 +3,7 @@ import { base32Command } from './base32.ts';
 import { b32Encode, b32Decode } from './base32.ts';
 import type { CommandIO } from '../harness.ts';
 
-function makeIO(opts: { args: string[]; stdinText?: string; stdinBytes?: Uint8Array }) {
+function makeIO(opts: { args: string[]; stdinText?: string; stdinBytes?: Uint8Array; files?: Record<string, string | Uint8Array> }) {
   const enc = new TextEncoder();
   const bytes = opts.stdinBytes ?? enc.encode(opts.stdinText ?? '');
   const stdin = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(bytes); c.close(); } });
@@ -23,8 +23,29 @@ function makeIO(opts: { args: string[]; stdinText?: string; stdinBytes?: Uint8Ar
     for (const c of chunks) { b.set(c, o); o += c.byteLength; }
     return b;
   };
+  const files = new Map<string, Uint8Array>();
+  for (const [p, c] of Object.entries(opts.files ?? {})) {
+    files.set(p.startsWith('/') ? p : '/' + p, typeof c === 'string' ? enc.encode(c) : c);
+  }
+  const fds = new Map<number, { data: Uint8Array; off: number }>();
+  let nextFd = 3;
+  const syscall = async (call: string, args: Record<string, unknown>): Promise<unknown> => {
+    if (call === 'fs/open') {
+      const path = String(args.path);
+      const data = files.get(path.startsWith('/') ? path : '/' + path);
+      if (data === undefined) throw Object.assign(new Error('no-entry'), { code: 'ENOENT' });
+      const fd = nextFd++; fds.set(fd, { data, off: 0 }); return { fd };
+    }
+    if (call === 'fs/read') {
+      const e = fds.get(Number(args.fd))!;
+      const slice = e.data.subarray(e.off, e.off + Number(args.len ?? 65536));
+      e.off += slice.byteLength; return new Uint8Array(slice);
+    }
+    if (call === 'fs/close') { fds.delete(Number(args.fd)); return {}; }
+    return {};
+  };
   return {
-    io: { args: opts.args, env: {}, cwd: '/', stdin, stdout, stderr, syscall: async () => ({}) } as CommandIO,
+    io: { args: opts.args, env: {}, cwd: '/', stdin, stdout, stderr, syscall } as CommandIO,
     outText: () => decode(outChunks),
     out: () => concat(outChunks),
     err: () => decode(errChunks),
@@ -90,5 +111,37 @@ describe('base32 command', () => {
     const h = makeIO({ args: ['base32', '-w', '0'], stdinText: 'foobar' });
     await base32Command(h.io);
     expect(h.outText()).not.toContain('\n');
+  });
+
+  // ── GNU parity: FILE operand, extra-operand, missing-file, -i, bad option ──
+
+  test('reads the FILE operand (not stdin) when given', async () => {
+    const h = makeIO({ args: ['base32', 'f.txt'], files: { 'f.txt': 'hi\n' }, stdinText: 'DECOY' });
+    expect(await base32Command(h.io)).toBe(0);
+    expect(h.outText()).toBe('NBUQU===\n');
+  });
+
+  test('an extra operand errors and exits 1', async () => {
+    const h = makeIO({ args: ['base32', 'a.txt', 'b.txt'], files: { 'a.txt': 'x', 'b.txt': 'y' } });
+    expect(await base32Command(h.io)).toBe(1);
+    expect(h.err()).toBe('base32: extra operand ‘b.txt’\nTry \'base32 --help\' for more information.\n');
+  });
+
+  test('a missing FILE errors and exits 1', async () => {
+    const h = makeIO({ args: ['base32', 'nope.txt'], files: {} });
+    expect(await base32Command(h.io)).toBe(1);
+    expect(h.err()).toBe('base32: nope.txt: No such file or directory\n');
+  });
+
+  test('-d -i ignores non-alphabet garbage', async () => {
+    const h = makeIO({ args: ['base32', '-d', '-i'], stdinText: 'NBSWY3DP\n!!!\n' });
+    expect(await base32Command(h.io)).toBe(0);
+    expect(new TextDecoder().decode(h.out())).toBe('hello');
+  });
+
+  test('an unknown short flag errors like GNU (exit 1)', async () => {
+    const h = makeIO({ args: ['base32', '-Z'], stdinText: '' });
+    expect(await base32Command(h.io)).toBe(1);
+    expect(h.err()).toBe('base32: invalid option -- \'Z\'\nTry \'base32 --help\' for more information.\n');
   });
 });

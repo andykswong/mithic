@@ -633,10 +633,12 @@ export class Interpreter {
       case 'substr': {
         const s = this.valToStr(this.eval(args[0]));
         const m = Math.trunc(toNum(this.eval(args[1])));
-        // awk substr is 1-based; positions < 1 count from before the string.
+        // gawk 5.x substr: 1-based; a start position < 1 clamps to 1 WITHOUT
+        // reducing the requested length (`substr("hello",-1,3)` -> "hel"), so
+        // the length is taken from the clamped start. The end is capped at the
+        // string length by String.slice.
         let len = args.length >= 3 ? Math.trunc(toNum(this.eval(args[2]))) : Infinity;
-        let start = m - 1;
-        if (start < 0) { len += start; start = 0; }
+        const start = m - 1 < 0 ? 0 : m - 1;
         if (len < 0) len = 0;
         if (len === Infinity) return s.slice(start);
         return s.slice(start, start + len);

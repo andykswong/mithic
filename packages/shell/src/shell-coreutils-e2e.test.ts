@@ -154,21 +154,22 @@ test('redirect: echo hi > file, then read it back with an external command', asy
   expect(await k.readFile('/tmp/x.txt')).toBe('hi\n');
 }, T);
 
-test('command substitution drives a real pipeline (unquoted strips padding)', async () => {
+test('command substitution drives a real pipeline', async () => {
   const k = await bootShell();
-  // `wc -l` over a pipe emits a space-padded count. UNQUOTED command
-  // substitution is word-split on IFS, collapsing the padding to a bare number.
+  // `wc -l` reading a single count from stdin emits a bare, unpadded number (GNU
+  // parity — no fixed field width for a single source). The command substitution
+  // captures it and echo prints `count: 3`.
   const out = await k.run('echo count: $(seq 1 3 | wc -l)');
   expect(out.stdout.trim()).toBe('count: 3');
   expect(out.code).toBe(0);
 }, T);
 
-test('command substitution inside double quotes preserves wc padding', async () => {
+test('command substitution inside double quotes captures wc output verbatim', async () => {
   const k = await bootShell();
-  // Inside double quotes, substitution output is NOT word-split, so `wc -l`'s
-  // leading padding is preserved verbatim (correct POSIX behavior).
+  // Inside double quotes, substitution output is NOT word-split. GNU `wc -l` on a
+  // single stdin source emits an UNPADDED count, so the captured text is exactly `3`.
   const out = await k.run('echo "count:$(seq 1 3 | wc -l)"');
-  expect(out.stdout).toMatch(/^count:\s+3\n$/);
+  expect(out.stdout).toBe('count:3\n');
   expect(out.code).toBe(0);
 }, T);
 

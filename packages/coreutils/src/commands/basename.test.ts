@@ -1,6 +1,26 @@
 import { expect, test, describe } from 'vitest';
-import { basenameCommand } from './basename.ts';
+import { basenameCommand, posixBasename } from './basename.ts';
 import { makeIO } from './_testio.ts';
+
+describe('posixBasename', () => {
+  test('all-slash paths collapse to /', () => {
+    expect(posixBasename('//')).toBe('/');
+    expect(posixBasename('/')).toBe('/');
+    expect(posixBasename('///')).toBe('/');
+  });
+  test('internal and trailing slashes', () => {
+    expect(posixBasename('a//b//c')).toBe('c');
+    expect(posixBasename('foo//bar//')).toBe('bar');
+    expect(posixBasename('/usr//lib')).toBe('lib');
+    expect(posixBasename('//foo')).toBe('foo');
+    expect(posixBasename('foo//')).toBe('foo');
+    expect(posixBasename('a/b//')).toBe('b');
+    expect(posixBasename('///foo///')).toBe('foo');
+  });
+  test('empty string stays empty', () => {
+    expect(posixBasename('')).toBe('');
+  });
+});
 
 describe('basename', () => {
   test('strips directory', async () => {
@@ -37,6 +57,18 @@ describe('basename', () => {
     const h = makeIO({ args: ['basename', '/a/b/'] });
     await basenameCommand(h.io);
     expect(h.out()).toBe('b\n');
+  });
+
+  test('// resolves to / (not empty)', async () => {
+    const h = makeIO({ args: ['basename', '//'] });
+    expect(await basenameCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('/\n');
+  });
+
+  test('collapses internal duplicate slashes to the last component', async () => {
+    const h = makeIO({ args: ['basename', '/usr//lib'] });
+    await basenameCommand(h.io);
+    expect(h.out()).toBe('lib\n');
   });
 
   test('missing operand errors', async () => {

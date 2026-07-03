@@ -43,4 +43,44 @@ describe('unexpand', () => {
     await unexpandCommand(h.io);
     expect(h.out()).toBe('\t\ty        z\n');
   });
+
+  describe('-t LIST', () => {
+    test('explicit stops convert leading run', async () => {
+      const h = makeIO({ args: ['unexpand', '-t', '4,8', '/in'], files: { '/in': '        x\n' } });
+      expect(await unexpandCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('\t\tx\n');
+    });
+    test('past the last explicit stop, blanks are NOT converted', async () => {
+      // -a implied by -t; 2 tabs to col8, then 4 remaining spaces (no stop past 8) stay.
+      const h = makeIO({ args: ['unexpand', '-a', '-t', '4,8', '/in'], files: { '/in': 'a       b       c\n' } });
+      await unexpandCommand(h.io);
+      expect(h.out()).toBe('a\t\tb       c\n');
+    });
+    test('any -t implies -a (embedded runs convert)', async () => {
+      const h = makeIO({ args: ['unexpand', '-t', '8', '/in'], files: { '/in': 'xy      z\n' } });
+      await unexpandCommand(h.io);
+      expect(h.out()).toBe('xy\tz\n');
+    });
+    test('default (no -t) converts only the leading run', async () => {
+      const h = makeIO({ args: ['unexpand', '/in'], files: { '/in': 'xy      z\n' } });
+      await unexpandCommand(h.io);
+      expect(h.out()).toBe('xy      z\n');
+    });
+    test('tab size 0 rejected', async () => {
+      const h = makeIO({ args: ['unexpand', '-t', '0', '/in'], files: { '/in': '  x\n' } });
+      expect(await unexpandCommand(h.io)).toBe(1);
+      expect(h.err()).toContain('unexpand: tab size cannot be 0');
+    });
+    test('non-ascending list rejected', async () => {
+      const h = makeIO({ args: ['unexpand', '-t', '5,3', '/in'], files: { '/in': '  x\n' } });
+      expect(await unexpandCommand(h.io)).toBe(1);
+      expect(h.err()).toContain('unexpand: tab sizes must be ascending');
+    });
+  });
+
+  test('unknown flag exits 1', async () => {
+    const h = makeIO({ args: ['unexpand', '-Q', '/in'], files: { '/in': 'x\n' } });
+    expect(await unexpandCommand(h.io)).toBe(1);
+    expect(h.err()).toContain('unexpand: invalid option -- \'Q\'');
+  });
 });

@@ -5,9 +5,12 @@
  *   - default: merge corresponding lines of all files, TAB-separated.
  *   - `-d LIST`: cycle through delimiter chars in LIST (`\t`, `\n`, `\0`, `\\`).
  *   - `-s`: serial — concatenate all lines of each file onto one line.
- *   - operands: file paths; `-` (or none) reads stdin.
+ *   - `-z`: line delimiter is NUL for both input and output (not newline).
+ *   - operands: file paths; `-` (or none) reads stdin. Multiple `-` in merge
+ *     mode read stdin round-robin per output row (`paste - -` pairs adjacent
+ *     lines); in `-s` mode the first `-` drains stdin, later `-` see EOF.
  */
-import { CoalescingWriter, defineCommand, isBrokenPipe, parseArgs, readAllText, streamLines, writeString } from '../harness.ts';
+import { defineCommand, isBrokenPipe, optionError, parseArgs, readAllText, streamLines, writeString, CoalescingWriter } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 async function readFileText(io: CommandIO, path: string): Promise<string> {
@@ -45,37 +48,40 @@ export function parseDelims(spec: string): string[] {
   return out.length > 0 ? out : [''];
 }
 
-function splitLines(text: string): string[] {
+/** Split `text` into lines on `sep` (a single char), dropping one trailing separator. */
+function splitLines(text: string, sep: string): string[] {
   if (text === '') return [];
-  const body = text.endsWith('\n') ? text.slice(0, -1) : text;
-  return body.split('\n');
+  const body = text.endsWith(sep) ? text.slice(0, -1) : text;
+  return body.split(sep);
 }
 
 const pasteCommand: CommandFn = async (io: CommandIO): Promise<number> => {
-  const { positionals, flags } = parseArgs(io.args.slice(1), {
+  const parsed = parseArgs(io.args.slice(1), {
     string: ['d', 'delimiters'],
-    boolean: ['s', 'serial'],
-    alias: { delimiters: 'd', serial: 's' },
+    boolean: ['s', 'serial', 'z', 'zero-terminated'],
+    alias: { delimiters: 'd', serial: 's', 'zero-terminated': 'z' },
+    unknown: 'error',
   });
+  const { positionals, flags } = parsed;
   const name = io.args[0] ?? 'paste';
   const delims = flags.d !== undefined ? parseDelims(String(flags.d)) : ['\t'];
   const serial = Boolean(flags.s);
+  const zero = Boolean(flags.z);
+  const lineSep = zero ? '\0' : '\n';
 
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
-  let exitCode = 0;
+  const exitCode = 0;
   let stdinAborted = false;
 
   try {
+    if (parsed.unknown.length) { await writeString(err, optionError(name, parsed.unknown[0]) + '\n'); return 1; }
     const sources = positionals.length > 0 ? positionals : ['-'];
 
-    // Fast path: a single stdin source in merge mode (no -s) is just a line
-    // passthrough — stream it (constant memory) so `producer | paste | head`
+    // Fast path: a single stdin source in merge mode (no -s, no -z) is just a
+    // line passthrough — stream it (constant memory) so `producer | paste | head`
     // terminates instead of buffering an unbounded input.
-    if (!serial && sources.length === 1 && sources[0] === '-') {
-      // Each input line becomes one output record terminated by '\n' (matching
-      // the buffered path's `rows.join('\n') + '\n'`, which newline-terminates
-      // every row including a final unterminated input line).
+    if (!serial && !zero && sources.length === 1 && sources[0] === '-') {
       const sink = new CoalescingWriter(out);
       try {
         for await (const { line } of streamLines(io.stdin)) {
@@ -89,42 +95,75 @@ const pasteCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       return exitCode;
     }
 
+    // Read stdin at most once (shared by all `-` sources).
+    let stdinText: string | null = null;
+    const readStdin = async (): Promise<string> => {
+      if (stdinText === null) stdinText = await readAllText(io.stdin);
+      return stdinText;
+    };
+
+    // GNU opens/reads all inputs before producing output; a missing file aborts
+    // with no output at all (exit 1).
     const fileLines: string[][] = [];
+    const dashIndices: number[] = [];
     for (const src of sources) {
-      let text: string;
-      if (src === '-') text = await readAllText(io.stdin);
-      else {
+      if (src === '-') {
+        dashIndices.push(fileLines.length);
+        fileLines.push(splitLines(await readStdin(), lineSep));
+      } else {
+        let text: string;
         try { text = await readFileText(io, src); }
         catch (e) {
           const msg = (e as { message?: string }).message ?? 'No such file or directory';
           await writeString(err, `${name}: ${src}: ${msg}\n`);
-          exitCode = 1;
-          continue;
+          return 1;
         }
+        fileLines.push(splitLines(text, lineSep));
       }
-      fileLines.push(splitLines(text));
     }
 
     if (serial) {
-      // One output line per file: that file's lines joined by cycling delims.
-      const outLines = fileLines.map((lines) =>
-        lines.map((l, idx) => (idx === 0 ? l : delims[(idx - 1) % delims.length] + l)).join(''),
-      );
-      if (outLines.length > 0) await writeString(out, outLines.join('\n') + '\n');
-    } else {
-      // Merge: row r takes line r from each file, joined by cycling delims.
-      const maxLines = fileLines.reduce((m, l) => Math.max(m, l.length), 0);
-      const rows: string[] = [];
-      for (let r = 0; r < maxLines; r++) {
-        let row = '';
-        for (let f = 0; f < fileLines.length; f++) {
-          if (f > 0) row += delims[(f - 1) % delims.length];
-          row += fileLines[f][r] ?? '';
+      // One output line per source: that source's lines joined by cycling delims.
+      // Multiple `-` share one stdin read, so only the first `-` sees any lines;
+      // later `-` sources are empty (splitLines('') === []).
+      let firstDashUsed = false;
+      const outLines = fileLines.map((lines, idx) => {
+        if (dashIndices.includes(idx)) {
+          if (firstDashUsed) lines = [];
+          firstDashUsed = true;
         }
-        rows.push(row);
-      }
-      if (rows.length > 0) await writeString(out, rows.join('\n') + '\n');
+        return lines.map((l, i) => (i === 0 ? l : delims[(i - 1) % delims.length] + l)).join('');
+      });
+      if (outLines.length > 0) await writeString(out, outLines.join(lineSep) + lineSep);
+      return exitCode;
     }
+
+    // Merge: multiple `-` sources read the SHARED stdin round-robin per row, so
+    // for each row the dash columns consume consecutive stdin lines.
+    const stdinLines = dashIndices.length > 0 ? fileLines[dashIndices[0]] : [];
+    const numDashes = dashIndices.length;
+    const dashRank = new Map<number, number>();
+    dashIndices.forEach((srcIdx, rank) => dashRank.set(srcIdx, rank));
+
+    const nonDashMax = fileLines.reduce(
+      (m, lines, idx) => (dashRank.has(idx) ? m : Math.max(m, lines.length)),
+      0,
+    );
+    const dashRows = numDashes > 0 ? Math.ceil(stdinLines.length / numDashes) : 0;
+    const maxRows = Math.max(nonDashMax, dashRows);
+
+    const rows: string[] = [];
+    for (let r = 0; r < maxRows; r++) {
+      let row = '';
+      for (let f = 0; f < fileLines.length; f++) {
+        if (f > 0) row += delims[(f - 1) % delims.length];
+        const rank = dashRank.get(f);
+        if (rank !== undefined) row += stdinLines[r * numDashes + rank] ?? '';
+        else row += fileLines[f][r] ?? '';
+      }
+      rows.push(row);
+    }
+    if (rows.length > 0) await writeString(out, rows.join(lineSep) + lineSep);
     return exitCode;
   } finally {
     await out.close().catch(() => {});

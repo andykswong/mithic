@@ -61,10 +61,12 @@ interface Subst {
   // regex resolved during execution; otherwise it is compiled with 'g'.
   re?: RegExp;
   ignoreCase: boolean; // needed to rebuild the empty-pattern regex from lastRegex
+  multiline: boolean; // `M`/`m` flag: ^/$ match at embedded newlines
   replacement: string;
   global: boolean;
   nth: number; // replace the Nth occurrence (1-based); 0 = first only unless global
   print: boolean; // s///p
+  writeFile?: string; // `w file` flag: also write the (changed) result to file
 }
 
 type Command =
@@ -76,10 +78,25 @@ type Command =
   | (AddressSpec & { type: 'q'; code: number })
   | (AddressSpec & { type: 'Q'; code: number })
   | (AddressSpec & { type: '=' })
-  | (AddressSpec & { type: 'a'; text: string })
-  | (AddressSpec & { type: 'i'; text: string })
-  | (AddressSpec & { type: 'c'; text: string })
+  // `text: undefined` = `a\`/`i\`/`c\` at end-of-script with no text at all
+  // (GNU appends/inserts nothing); '' = an explicit empty line.
+  | (AddressSpec & { type: 'a'; text: string | undefined })
+  | (AddressSpec & { type: 'i'; text: string | undefined })
+  | (AddressSpec & { type: 'c'; text: string | undefined })
   | (AddressSpec & { type: 'y'; from: string; to: string })
+  // `l` list pattern space with C-escapes; `n` overrides the wrap width (0 = off).
+  | (AddressSpec & { type: 'l'; width?: number })
+  // `z` zap the pattern space to empty; `F` print the current filename.
+  | (AddressSpec & { type: 'z' })
+  | (AddressSpec & { type: 'F' })
+  // `v` version assert (no-op here); we ignore any version argument.
+  | (AddressSpec & { type: 'v' })
+  // File I/O: `r`/`R` read a file / one line at a time; `w`/`W` write pattern
+  // space / its first line to a file.
+  | (AddressSpec & { type: 'r'; file: string })
+  | (AddressSpec & { type: 'R'; file: string })
+  | (AddressSpec & { type: 'w'; file: string })
+  | (AddressSpec & { type: 'W'; file: string })
   | (AddressSpec & { type: 'h' })
   | (AddressSpec & { type: 'H' })
   | (AddressSpec & { type: 'g' })
@@ -100,6 +117,7 @@ interface SedConfig {
   suppress: boolean;
   inPlace: boolean;
   syntax: RegexSyntax;
+  nulData: boolean; // -z / --null-data: lines are NUL-separated
   expressions: string[];
   files: string[];
 }
@@ -107,7 +125,7 @@ interface SedConfig {
 // ── argument parsing ──────────────────────────────────────────────────────────
 
 function parseSedArgs(argv: string[]): SedConfig {
-  const c: SedConfig = { suppress: false, inPlace: false, syntax: 'bre', expressions: [], files: [] };
+  const c: SedConfig = { suppress: false, inPlace: false, syntax: 'bre', nulData: false, expressions: [], files: [] };
   let scriptTaken = false;
   let i = 0;
   while (i < argv.length) {
@@ -121,6 +139,7 @@ function parseSedArgs(argv: string[]): SedConfig {
         case 'in-place': c.inPlace = true; break;
         case 'quiet': case 'silent': c.suppress = true; break;
         case 'regexp-extended': c.syntax = 'ere'; break;
+        case 'null-data': case 'zero-terminated': c.nulData = true; break;
         case 'expression':
           c.expressions.push(val !== undefined ? val : (argv[++i] ?? ''));
           scriptTaken = true;
@@ -137,6 +156,7 @@ function parseSedArgs(argv: string[]): SedConfig {
         if (ch === 'i') c.inPlace = true;
         else if (ch === 'n') c.suppress = true;
         else if (ch === 'r' || ch === 'E') c.syntax = 'ere';
+        else if (ch === 'z') c.nulData = true;
         else if (ch === 'e') {
           const rest = cluster.slice(j + 1);
           c.expressions.push(rest.length > 0 ? rest : (argv[++i] ?? ''));
@@ -159,6 +179,33 @@ function parseSedArgs(argv: string[]): SedConfig {
   return c;
 }
 
+/**
+ * Rewrite GNU's buffer-anchor escapes in a compiled regex's source: `` \` `` =
+ * start of the pattern space and `\'` = its end. Both survive the BRE→ERE
+ * translation unchanged (backtick/quote are not metacharacters), so we can map
+ * them on the final JS source to zero-width assertions that stay anchored to the
+ * whole buffer even under the `M`/`m` flag (unlike `^`/`$`). We skip the rewrite
+ * inside bracket expressions, where they are literal.
+ */
+function anchorRegExp(re: RegExp): RegExp {
+  const src = re.source;
+  if (!src.includes('\\`') && !src.includes('\\\'')) return re;
+  let out = '';
+  let i = 0;
+  let inClass = false;
+  while (i < src.length) {
+    const c = src[i];
+    if (inClass) { out += c; if (c === ']') inClass = false; i++; continue; }
+    if (c === '[') { inClass = true; out += c; i++; continue; }
+    if (c === '\\' && src[i + 1] === '`') { out += '(?<![\\s\\S])'; i += 2; continue; }
+    if (c === '\\' && src[i + 1] === '\'') { out += '(?![\\s\\S])'; i += 2; continue; }
+    if (c === '\\' && i + 1 < src.length) { out += c + src[i + 1]; i += 2; continue; }
+    out += c;
+    i++;
+  }
+  return new RegExp(out, re.flags);
+}
+
 // ── script parsing ─────────────────────────────────────────────────────────────
 
 class ScriptParser {
@@ -166,7 +213,7 @@ class ScriptParser {
   constructor(syntax: RegexSyntax) { this.#syntax = syntax; }
 
   #compile(pat: string, flags = ''): RegExp {
-    return compilePattern(pat, { syntax: this.#syntax, flags });
+    return anchorRegExp(compilePattern(pat, { syntax: this.#syntax, flags }));
   }
 
   /**
@@ -314,6 +361,32 @@ class ScriptParser {
         const t = this.#parseText(script, i);
         return { cmd: { ...spec, type: cmdChar, text: t.text }, next: t.next };
       }
+      case 'l': {
+        // Optional line-wrap width argument: `l`, `l 0`, `l72`.
+        while (script[i] === ' ' || script[i] === '\t') i++;
+        let j = i;
+        while (j < script.length && script[j] >= '0' && script[j] <= '9') j++;
+        const width = j > i ? Number(script.slice(i, j)) : undefined;
+        return { cmd: { ...spec, type: 'l', width }, next: j };
+      }
+      case 'z': return { cmd: { ...spec, type: 'z' }, next: i };
+      case 'F': return { cmd: { ...spec, type: 'F' }, next: i };
+      case 'v': {
+        // Version assert: consume an optional version token; no-op at runtime.
+        while (i < script.length && script[i] !== ';' && script[i] !== '\n' && script[i] !== '}') i++;
+        return { cmd: { ...spec, type: 'v' }, next: i };
+      }
+      case 'e': {
+        // GNU `e [cmd]` executes a shell command. Unsupported in the sandbox (no
+        // external processes): parse and consume its argument, then no-op so the
+        // rest of the script still runs instead of aborting.
+        while (i < script.length && script[i] !== '\n') i++;
+        return { cmd: { ...spec, type: 'v' }, next: i };
+      }
+      case 'r': case 'R': case 'w': case 'W': {
+        const f = this.#parseFilename(script, i);
+        return { cmd: { ...spec, type: cmdChar, file: f.file }, next: f.next };
+      }
       default:
         throw new Error(`unknown command: \`${cmdChar}'`);
     }
@@ -330,11 +403,27 @@ class ScriptParser {
     return { label: label.trim(), next: i };
   }
 
-  /** Parse the text argument of a/i/c. Supports `a\<newline>text` and `a text`. */
-  #parseText(script: string, i: number): { text: string; next: number } {
+  /**
+   * Parse a filename argument for `r`/`R`/`w`/`W`: it runs from the first
+   * non-space to end-of-line (GNU treats the rest of the line, including
+   * embedded spaces, as the filename).
+   */
+  #parseFilename(script: string, i: number): { file: string; next: number } {
+    while (script[i] === ' ' || script[i] === '\t') i++;
+    let file = '';
+    while (i < script.length && script[i] !== '\n') { file += script[i]; i++; }
+    return { file, next: i };
+  }
+
+  /** Parse the text argument of a/i/c. Supports `a\<newline>text` and `a text`.
+   * Returns `text: undefined` when the command is a bare `a\`/`i\`/`c\` at the
+   * very end of the script (no following newline or text) — GNU appends nothing
+   * in that case, versus a lone empty line for `a\<newline>`. */
+  #parseText(script: string, i: number): { text: string | undefined; next: number } {
     // Skip a leading backslash (GNU `a\` form) and any spaces.
     if (script[i] === '\\') {
       i++;
+      if (i >= script.length) return { text: undefined, next: i }; // `a\` at EOF → no text
       if (script[i] === '\n') i++;
     } else {
       while (script[i] === ' ' || script[i] === '\t') i++;
@@ -378,22 +467,36 @@ class ScriptParser {
     };
     const pattern = readField();
     const replacement = readField();
-    // Flags up to a separator (`;`, newline, or a closing brace).
+    // Flags up to a separator (`;`, newline, or a closing brace). A `w` flag,
+    // if present, must be LAST and its argument is the rest of the line.
     let flags = '';
+    let writeFile: string | undefined;
     while (i < script.length && script[i] !== ';' && script[i] !== '\n' && script[i] !== '}') {
+      if (script[i] === 'w') {
+        i++;
+        while (script[i] === ' ' || script[i] === '\t') i++;
+        let f = '';
+        while (i < script.length && script[i] !== '\n') { f += script[i]; i++; }
+        writeFile = f;
+        break;
+      }
       flags += script[i];
       i++;
     }
     const global = /g/.test(flags);
     const ignoreCase = /[iI]/.test(flags);
+    const multiline = /[mM]/.test(flags);
     const print = /p/.test(flags);
     const nthMatch = flags.match(/(\d+)/);
     const nth = nthMatch ? Number(nthMatch[1]) : 0;
     // An empty pattern (`s//repl/`) reuses the last regex at execution time.
-    const re = pattern === ''
-      ? undefined
-      : compilePattern(pattern, { syntax: this.#syntax, flags: 'g' + (ignoreCase ? 'i' : '') });
-    return { cmd: { ...spec, type: 's', re, ignoreCase, replacement, global, nth, print }, next: i };
+    const reFlags = 'g' + (ignoreCase ? 'i' : '') + (multiline ? 'm' : '');
+    let re: RegExp | undefined;
+    if (pattern !== '') {
+      const compiled = compilePattern(pattern, { syntax: this.#syntax, flags: reFlags });
+      re = anchorRegExp(compiled);
+    }
+    return { cmd: { ...spec, type: 's', re, ignoreCase, multiline, replacement, global, nth, print, writeFile }, next: i };
   }
 
   #parseTransliterate(script: string, i: number, spec: AddressSpec): { cmd: Command; next: number } {
@@ -429,25 +532,51 @@ class ScriptParser {
 
 // ── execution ──────────────────────────────────────────────────────────────────
 
-/** Build the replacement string for one match: `&` = whole, `\1..\9` = groups. */
+/**
+ * Build the replacement string for one match: `&` = whole match, `\1..\9` =
+ * capture groups. Supports GNU case-conversion escapes: `\U`/`\L` begin
+ * upper/lower conversion for all following characters until `\E` (or end);
+ * `\u`/`\l` convert only the next single character (and take precedence over an
+ * active `\U`/`\L` for that one character).
+ */
 function buildReplacement(replacement: string, m: RegExpExecArray): string {
+  // Mode applied to a run of characters: 'U' upper, 'L' lower, '' none.
+  let mode: '' | 'U' | 'L' = '';
+  // One-shot conversion for the very next character: 'u' upper, 'l' lower.
+  let oneShot: '' | 'u' | 'l' = '';
   let out = '';
+
+  const emit = (text: string): void => {
+    for (const ch of text) {
+      if (oneShot === 'u') { out += ch.toUpperCase(); oneShot = ''; continue; }
+      if (oneShot === 'l') { out += ch.toLowerCase(); oneShot = ''; continue; }
+      if (mode === 'U') out += ch.toUpperCase();
+      else if (mode === 'L') out += ch.toLowerCase();
+      else out += ch;
+    }
+  };
+
   let i = 0;
   while (i < replacement.length) {
     const c = replacement[i];
-    if (c === '&') { out += m[0]; i++; continue; }
+    if (c === '&') { emit(m[0]); i++; continue; }
     if (c === '\\' && i + 1 < replacement.length) {
       const nx = replacement[i + 1];
-      if (nx >= '0' && nx <= '9') { out += m[Number(nx)] ?? ''; i += 2; continue; }
-      if (nx === 'n') { out += '\n'; i += 2; continue; }
-      if (nx === 't') { out += '\t'; i += 2; continue; }
-      if (nx === '&') { out += '&'; i += 2; continue; }
-      if (nx === '\\') { out += '\\'; i += 2; continue; }
-      out += nx;
+      if (nx >= '0' && nx <= '9') { emit(m[Number(nx)] ?? ''); i += 2; continue; }
+      if (nx === 'n') { emit('\n'); i += 2; continue; }
+      if (nx === 't') { emit('\t'); i += 2; continue; }
+      if (nx === '&') { emit('&'); i += 2; continue; }
+      if (nx === '\\') { emit('\\'); i += 2; continue; }
+      if (nx === 'U') { mode = 'U'; oneShot = ''; i += 2; continue; }
+      if (nx === 'L') { mode = 'L'; oneShot = ''; i += 2; continue; }
+      if (nx === 'E') { mode = ''; oneShot = ''; i += 2; continue; }
+      if (nx === 'u') { oneShot = 'u'; i += 2; continue; }
+      if (nx === 'l') { oneShot = 'l'; i += 2; continue; }
+      emit(nx);
       i += 2;
       continue;
     }
-    out += c;
+    emit(c);
     i++;
   }
   return out;
@@ -458,8 +587,17 @@ function applySubst(line: string, cmd: Subst, st: ExecState): { result: string; 
   // regex but applies this command's own flags (g/i). We always need a `g` copy
   // so we can walk occurrences ourselves.
   const base = resolveRegex(cmd.re, st);
-  const flags = base.flags.includes('g') ? base.flags : base.flags + 'g';
-  const re = cmd.re ? base : new RegExp(base.source, flags);
+  // A concrete pattern is already compiled with the right g/i/m flags; only the
+  // empty `s//…/` reuse needs a rebuilt regex, applying this command's own g/i/m.
+  let re: RegExp;
+  if (cmd.re) {
+    re = base;
+  } else {
+    let flags = base.flags.includes('g') ? base.flags : base.flags + 'g';
+    if (cmd.ignoreCase && !flags.includes('i')) flags += 'i';
+    if (cmd.multiline && !flags.includes('m')) flags += 'm';
+    re = new RegExp(base.source, flags);
+  }
   re.lastIndex = 0;
   let out = '';
   let last = 0;
@@ -635,9 +773,53 @@ function resolveRegex(re: RegExp | undefined, st: ExecState): RegExp {
   return r;
 }
 
-function applyScript(text: string, cmds: Command[], suppress: boolean): ApplyResult {
-  const hasTrailing = text.endsWith('\n');
-  const lines = text === '' ? [] : (hasTrailing ? text.slice(0, -1) : text).split('\n');
+/**
+ * Per-file execution context: the record separator (`\n`, or `\0` under `-z`),
+ * the current filename (for `F`), a file-content cache for `r`/`R`, per-`R`
+ * read cursors, and the write-sink callback for `w`/`W`/`s///w`.
+ */
+interface ExecContext {
+  sep: string;
+  filename: string;
+  /** Whole-file contents for `r`/`R`, keyed by path (undefined = unreadable). */
+  fileCache: Map<string, string | undefined>;
+  /** Per-`R`-command read cursor (line index), keyed by command index. */
+  rCursor: Map<number, number>;
+  /** Sink for `w`/`W`/`s///w`; text is appended to the named file after the run. */
+  writeFile: (path: string, text: string) => void;
+}
+
+/** GNU `l` command: render `s` with C-style escapes, `$` line-end marker, and
+ * optional wrap at `width` columns (0 = no wrap). Non-printable bytes become
+ * 3-digit octal escapes over the UTF-8 encoding. */
+function listFormat(s: string, width: number): string {
+  const bytes = new TextEncoder().encode(s);
+  const map: Record<number, string> = {
+    0x5c: '\\\\', 0x07: '\\a', 0x08: '\\b', 0x0c: '\\f', 0x0a: '\\n', 0x0d: '\\r', 0x09: '\\t', 0x0b: '\\v',
+  };
+  const tokens: string[] = [];
+  for (const b of bytes) {
+    if (map[b] !== undefined) tokens.push(map[b]);
+    else if (b >= 0x20 && b < 0x7f) tokens.push(String.fromCharCode(b));
+    else tokens.push('\\' + b.toString(8).padStart(3, '0'));
+  }
+  if (width <= 1) return tokens.join('') + '$';
+  // Wrap: emit `\` + newline whenever appending the next token would reach the
+  // wrap column (GNU reserves the last column for the continuation backslash).
+  let out = '';
+  let col = 0;
+  for (const t of tokens) {
+    if (col + t.length > width - 1) { out += '\\\n'; col = 0; }
+    out += t;
+    col += t.length;
+  }
+  return out + '$';
+}
+
+function applyScript(text: string, cmds: Command[], suppress: boolean, ctx: ExecContext): ApplyResult {
+  const sep = ctx.sep;
+  const hasTrailing = text.endsWith(sep);
+  const lines = text === '' ? [] : (hasTrailing ? text.slice(0, -1) : text).split(sep);
   const lastLineno = lines.length;
   const ranges: RangeState[] = cmds.map(() => ({ active: false, endLine: -1 }));
 
@@ -653,14 +835,16 @@ function applyScript(text: string, cmds: Command[], suppress: boolean): ApplyRes
   let quit = false;
   let quitCode = 0;
 
-  // Emit a finished line into output, honoring the input's trailing-newline
+  // Emit a finished line into output, honoring the input's trailing-separator
   // convention only for the final input line.
   const emitLine = (s: string, isLastInput: boolean): void => {
     if (isLastInput && !hasTrailing) outParts.push(s);
-    else outParts.push(s + '\n');
+    else outParts.push(s + sep);
   };
-  // Auxiliary output (p, =, a/i/c, etc.) always carries a newline.
-  const emitAux = (s: string): void => { outParts.push(s + '\n'); };
+  // Auxiliary output (p/P, =, l, F) carries the record separator (`\0` under -z).
+  const emitAux = (s: string): void => { outParts.push(s + sep); };
+  // a/i/c text is always terminated by a literal newline, even under `-z`.
+  const emitText = (s: string): void => { outParts.push(s + '\n'); };
 
   // Pointer-based reader so `N`/`n` can pull the next input line.
   let lineIdx = 0;
@@ -688,7 +872,12 @@ function applyScript(text: string, cmds: Command[], suppress: boolean): ApplyRes
     // A pattern space is "the last input line" when no further input remains.
     const isLast = (): boolean => lineIdx >= lines.length && carry === null;
 
-    const appendQueue: string[] = [];
+    // `a`/`R` text is newline-terminated; `r` file content is emitted raw.
+    const appendQueue: { raw: boolean; s: string }[] = [];
+    const flushAppends = (): void => {
+      for (const a of appendQueue) { if (a.raw) outParts.push(a.s); else emitText(a.s); }
+      appendQueue.length = 0;
+    };
     let deleted = false; // suppress the end-of-cycle auto-print
     let pc = 0;
     let restart = false; // `D` requested a cycle restart with the carried pattern
@@ -714,7 +903,11 @@ function applyScript(text: string, cmds: Command[], suppress: boolean): ApplyRes
         case 's': {
           const r = applySubst(pattern, cmd, st);
           pattern = r.result;
-          if (r.changed) { st.substMade = true; if (cmd.print) emitLine(pattern, isLast()); }
+          if (r.changed) {
+            st.substMade = true;
+            if (cmd.print) emitLine(pattern, isLast());
+            if (cmd.writeFile !== undefined) ctx.writeFile(cmd.writeFile, pattern + '\n');
+          }
           break;
         }
         case 'p': emitLine(pattern, isLast()); break;
@@ -744,8 +937,10 @@ function applyScript(text: string, cmds: Command[], suppress: boolean): ApplyRes
           break;
         case '=': emitAux(String(lineno)); break;
         case 'y': pattern = transliterate(pattern, cmd.from, cmd.to); break;
-        case 'a': appendQueue.push(cmd.text); break;
-        case 'i': emitAux(cmd.text); break;
+        // `a\`/`i\`/`c\` with no text at all (text === undefined) append/insert
+        // nothing (GNU); an explicit empty line ('') still emits a blank line.
+        case 'a': if (cmd.text !== undefined) appendQueue.push({ raw: false, s: cmd.text }); break;
+        case 'i': if (cmd.text !== undefined) emitText(cmd.text); break;
         case 'c': {
           // GNU `c`: on a single address (or a non-range) emit the text and
           // delete the line. On a RANGE, emit once at the END of the range only
@@ -754,9 +949,36 @@ function applyScript(text: string, cmds: Command[], suppress: boolean): ApplyRes
           // current cycle: no commands after it run on the (deleted) pattern.
           deleted = true;
           const isRange = cmd.end !== undefined;
-          if (!isRange || !ranges[pc].active) emitAux(cmd.text);
+          if ((!isRange || !ranges[pc].active) && cmd.text !== undefined) emitText(cmd.text);
           pc = cmds.length; // end the cycle
           continue;
+        }
+        case 'l': emitAux(listFormat(pattern, cmd.width ?? 70)); break;
+        case 'z': pattern = ''; break;
+        case 'F': emitAux(ctx.filename); break;
+        case 'v': break; // version assert: no-op
+        case 'r': {
+          // `r file`: queue the file's ENTIRE contents (raw) to print after the
+          // cycle. A missing/empty file appends nothing (GNU is silent on error).
+          const content = ctx.fileCache.get(cmd.file);
+          if (content !== undefined && content !== '') appendQueue.push({ raw: true, s: content });
+          break;
+        }
+        case 'R': {
+          // `R file`: queue the NEXT unread line of the file (one per invocation).
+          const content = ctx.fileCache.get(cmd.file);
+          if (content !== undefined && content !== '') {
+            const fl = content.endsWith('\n') ? content.slice(0, -1).split('\n') : content.split('\n');
+            const cur = ctx.rCursor.get(pc) ?? 0;
+            if (cur < fl.length) { appendQueue.push({ raw: false, s: fl[cur] }); ctx.rCursor.set(pc, cur + 1); }
+          }
+          break;
+        }
+        case 'w': ctx.writeFile(cmd.file, pattern + '\n'); break;
+        case 'W': {
+          const nl = pattern.indexOf('\n');
+          ctx.writeFile(cmd.file, (nl >= 0 ? pattern.slice(0, nl) : pattern) + '\n');
+          break;
         }
         case 'h': st.hold = pattern; break;
         case 'H': st.hold = st.hold + '\n' + pattern; break;
@@ -766,8 +988,7 @@ function applyScript(text: string, cmds: Command[], suppress: boolean): ApplyRes
         case 'n': {
           // Print current pattern (unless -n), then load the next input line.
           if (!suppress) emitLine(pattern, isLast());
-          for (const a of appendQueue) emitAux(a);
-          appendQueue.length = 0;
+          flushAppends();
           const nx = nextInput();
           if (nx === undefined) { deleted = true; quit = true; break; }
           pattern = nx;
@@ -824,12 +1045,12 @@ function applyScript(text: string, cmds: Command[], suppress: boolean): ApplyRes
 
     if (restart) {
       // Flush any queued appends from this pass, then re-run with the carry.
-      for (const a of appendQueue) emitAux(a);
+      flushAppends();
       continue;
     }
 
     if (!deleted && !suppress) emitLine(pattern, isLast());
-    for (const a of appendQueue) emitAux(a);
+    flushAppends();
     if (quit) break;
   }
 
@@ -896,20 +1117,48 @@ const sedCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       return 1;
     }
 
+    const sep = cfg.nulData ? '\0' : '\n';
+
+    // Pre-read every `r`/`R` file so the synchronous executor can resolve them.
+    const fileCache = new Map<string, string | undefined>();
+    for (const c of cmds) {
+      if ((c.type === 'r' || c.type === 'R') && !fileCache.has(c.file)) {
+        try { fileCache.set(c.file, await readFileText(io, c.file)); }
+        catch { fileCache.set(c.file, undefined); }
+      }
+    }
+
+    // Collect `w`/`W`/`s///w` writes; flush (truncate-once) after the whole run.
+    const pendingWrites = new Map<string, string>();
+    const writeSink = (path: string, text: string): void => {
+      pendingWrites.set(path, (pendingWrites.get(path) ?? '') + text);
+    };
+    const flushWrites = async (): Promise<void> => {
+      for (const [path, text] of pendingWrites) {
+        try { await writeFileText(io, path, text); }
+        catch (e) { await writeLine(err, `${name}: couldn't write ${path}: ${(e as Error).message}`); }
+      }
+    };
+
     if (cfg.files.length === 0) {
       const text = await readAllText(io.stdin);
       let r: ApplyResult;
       try {
-        r = applyScript(text, cmds, cfg.suppress);
+        r = applyScript(text, cmds, cfg.suppress, {
+          sep, filename: '-', fileCache, rCursor: new Map(), writeFile: writeSink,
+        });
       } catch (e) {
         await writeLine(err, `${name}: ${(e as Error).message}`);
         return 1;
       }
       await writeBytes(out, enc.encode(r.output));
+      await flushWrites();
       return r.code;
     }
 
     let exitCode = 0;
+    // `R` cursors persist across files within one run (GNU reads the file once).
+    const rCursor = new Map<number, number>();
     for (const path of cfg.files) {
       let text: string;
       try {
@@ -921,7 +1170,9 @@ const sedCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       }
       let r: ApplyResult;
       try {
-        r = applyScript(text, cmds, cfg.suppress);
+        r = applyScript(text, cmds, cfg.suppress, {
+          sep, filename: path, fileCache, rCursor, writeFile: writeSink,
+        });
       } catch (e) {
         await writeLine(err, `${name}: ${(e as Error).message}`);
         return 1;
@@ -939,6 +1190,7 @@ const sedCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       // `q`/`Q` stops processing further files and sets the exit code.
       if (r.quit) { if (r.code !== 0) exitCode = r.code; break; }
     }
+    await flushWrites();
     return exitCode;
   } finally {
     await out.close().catch(() => { /* already closed */ });

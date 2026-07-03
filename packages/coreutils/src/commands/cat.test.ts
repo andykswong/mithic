@@ -170,6 +170,117 @@ describe('cat', () => {
     const code = await catCommand(h.io);
     expect(code).toBe(1);
     expect(h.out()).toBe('B\n');
-    expect(h.err()).toContain('cat: /missing:');
+    expect(h.err()).toBe('cat: /missing: No such file or directory\n');
+  });
+
+  // ── -A / -e / -t / -v / -E / -T (GNU parity) ────────────────────────────────
+
+  test('-A shows tabs, line-ends, and nonprinting bytes', async () => {
+    const enc = new TextEncoder();
+    const h = makeIOBytes(['cat', '-A'], enc.encode('a\tb\r\n\x01\n'));
+    expect(await catCommand(h.io)).toBe(0);
+    expect(h.outText()).toBe('a^Ib^M$\n^A$\n');
+  });
+
+  test('-e shows ends + nonprinting but not tabs', async () => {
+    const enc = new TextEncoder();
+    const h = makeIOBytes(['cat', '-e'], enc.encode('a\tb\n'));
+    expect(await catCommand(h.io)).toBe(0);
+    expect(h.outText()).toBe('a\tb$\n');
+  });
+
+  test('-t shows tabs + nonprinting but not ends', async () => {
+    const enc = new TextEncoder();
+    const h = makeIOBytes(['cat', '-t'], enc.encode('a\tb\n'));
+    expect(await catCommand(h.io)).toBe(0);
+    expect(h.outText()).toBe('a^Ib\n');
+  });
+
+  test('-v renders control, DEL, and high bytes', async () => {
+    const h = makeIOBytes(['cat', '-v'], new Uint8Array([0x61, 0x01, 0x7f, 0x80, 0x0a]));
+    expect(await catCommand(h.io)).toBe(0);
+    expect(h.outText()).toBe('a^A^?M-^@\n');
+  });
+
+  test('-v renders high printable and high control bytes', async () => {
+    const h = makeIOBytes(['cat', '-v'], new Uint8Array([0xa9, 0xc0, 0xe9, 0x0a]));
+    expect(await catCommand(h.io)).toBe(0);
+    expect(h.outText()).toBe('M-)M-@M-i\n');
+  });
+
+  test('-T shows tabs as ^I', async () => {
+    const enc = new TextEncoder();
+    const h = makeIOBytes(['cat', '-T'], enc.encode('a\tb\n'));
+    expect(await catCommand(h.io)).toBe(0);
+    expect(h.outText()).toBe('a^Ib\n');
+  });
+
+  test('-E shows line ends as $', async () => {
+    const enc = new TextEncoder();
+    const h = makeIOBytes(['cat', '-E'], enc.encode('a\nb\n'));
+    expect(await catCommand(h.io)).toBe(0);
+    expect(h.outText()).toBe('a$\nb$\n');
+  });
+
+  test('-An combines numbering with show-all', async () => {
+    const enc = new TextEncoder();
+    const h = makeIOBytes(['cat', '-An'], enc.encode('a\tb\n'));
+    expect(await catCommand(h.io)).toBe(0);
+    expect(h.outText()).toBe('     1\ta^Ib$\n');
+  });
+
+  test('-b numbers only non-blank lines', async () => {
+    const enc = new TextEncoder();
+    const h = makeIOBytes(['cat', '-b'], enc.encode('a\n\nb\n'));
+    expect(await catCommand(h.io)).toBe(0);
+    expect(h.outText()).toBe('     1\ta\n\n     2\tb\n');
+  });
+
+  test('-s squeezes runs of blank lines', async () => {
+    const enc = new TextEncoder();
+    const h = makeIOBytes(['cat', '-s'], enc.encode('a\n\n\n\nb\n'));
+    expect(await catCommand(h.io)).toBe(0);
+    expect(h.outText()).toBe('a\n\nb\n');
+  });
+
+  test('-E does not add $ to an unterminated final line', async () => {
+    const enc = new TextEncoder();
+    const h = makeIOBytes(['cat', '-E'], enc.encode('ab'));
+    expect(await catCommand(h.io)).toBe(0);
+    expect(h.outText()).toBe('ab');
+  });
+
+  // ── -Z unknown-flag reject ──────────────────────────────────────────────────
+
+  test('unknown flag → invalid option, exit 1', async () => {
+    const h = makeIOBytes(['cat', '-Z'], new Uint8Array([0x78, 0x0a]));
+    expect(await catCommand(h.io)).toBe(1);
+    expect(h.errText()).toBe('cat: invalid option -- \'Z\'\nTry \'cat --help\' for more information.\n');
+    expect(h.outText()).toBe('');
   });
 });
+
+// A byte-oriented CommandIO builder (for -v/-A which need raw bytes, not text).
+function makeIOBytes(args: string[], stdinBytes: Uint8Array): {
+  io: CommandIO; outText(): string; errText(): string;
+} {
+  const stdin = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(stdinBytes); c.close(); } });
+  const outChunks: Uint8Array[] = [];
+  const errChunks: Uint8Array[] = [];
+  const stdout = new WritableStream<Uint8Array>({ write(c) { outChunks.push(c.slice()); } });
+  const stderr = new WritableStream<Uint8Array>({ write(c) { errChunks.push(c.slice()); } });
+  const decode = (chunks: Uint8Array[]): string => {
+    let total = 0;
+    for (const c of chunks) total += c.byteLength;
+    const buf = new Uint8Array(total);
+    let off = 0;
+    for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+    // Latin-1 decode so a byte like 0x80/0xa9 renders 1:1 for assertions.
+    return Array.from(buf, (b) => String.fromCharCode(b)).join('');
+  };
+  return {
+    io: { args, env: {}, cwd: '/', stdin, stdout, stderr, syscall: async () => ({}) },
+    outText: () => decode(outChunks),
+    errText: () => decode(errChunks),
+  };
+}

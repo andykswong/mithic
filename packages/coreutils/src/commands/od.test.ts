@@ -134,10 +134,12 @@ describe('od', () => {
   // --- C1: combining MULTIPLE -t specs (one line per type per block, GNU) ---
 
   test('od combines multiple -t specs (one line per type, blanked continuation address)', async () => {
+    // x1 (natural cell 3) is padded to 4 to align with the same-size `c` type's
+    // 4-wide cells (GNU cross-type column alignment).
     const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x1', '-t', 'c', '/in'], files: { '/in': 'ABCD' } });
     expect(await odCommand(h.io)).toBe(0);
     expect(h.out()).toBe(
-      '000000 41 42 43 44\n' +
+      '000000  41  42  43  44\n' +
       '         A   B   C   D\n' +
       '000004\n',
     );
@@ -147,7 +149,7 @@ describe('od', () => {
     const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x1', '-c', '/in'], files: { '/in': 'AB' } });
     expect(await odCommand(h.io)).toBe(0);
     expect(h.out()).toBe(
-      '000000 41 42\n' +
+      '000000  41  42\n' +
       '         A   B\n' +
       '000002\n',
     );
@@ -170,7 +172,7 @@ describe('od', () => {
     // default to o1 when -t is the final argument.
     const h = makeIO({ args: ['od', '-t'] });
     expect(await odCommand(h.io)).toBe(1);
-    expect(h.err()).toBe('od: option requires an argument -- \'t\'\n');
+    expect(h.err()).toBe('od: option requires an argument -- \'t\'\nTry \'od --help\' for more information.\n');
   });
 
   test('-t x1 followed by other args is unaffected', async () => {
@@ -185,5 +187,142 @@ describe('od', () => {
     const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x1', '--', '/in'], files: { '/in': 'AB' } });
     expect(await odCommand(h.io)).toBe(0);
     expect(h.out()).toBe('000000 41 42\n000002\n');
+  });
+
+  // ── GNU parity: default type o2, short type flags, 4-byte + float types ──
+
+  test('the default type is o2 (2-byte octal words), NOT o1', async () => {
+    const h = makeIO({ args: ['od', '/in'], files: { '/in': 'ABCD' } });
+    expect(await odCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('0000000 041101 042103\n0000004\n');
+  });
+
+  test('-x is hex 2-byte words (x2)', async () => {
+    const h = makeIO({ args: ['od', '-A', 'n', '-x', '/in'], files: { '/in': 'ABCD' } });
+    await odCommand(h.io);
+    expect(h.out()).toBe(' 4241 4443\n');
+  });
+
+  test('-d is unsigned 2-byte words (u2)', async () => {
+    const h = makeIO({ args: ['od', '-A', 'n', '-d', '/in'], files: { '/in': 'ABCD' } });
+    await odCommand(h.io);
+    expect(h.out()).toBe(' 16961 17475\n');
+  });
+
+  test('-o is octal 2-byte words (o2)', async () => {
+    const h = makeIO({ args: ['od', '-A', 'n', '-o', '/in'], files: { '/in': 'ABCD' } });
+    await odCommand(h.io);
+    expect(h.out()).toBe(' 041101 042103\n');
+  });
+
+  test('-i is signed 4-byte decimal (d4)', async () => {
+    const h = makeIO({ args: ['od', '-A', 'n', '-i', '/in'], files: { '/in': 'ABCD' } });
+    await odCommand(h.io);
+    expect(h.out()).toBe('  1145258561\n');
+  });
+
+  test('-b is octal bytes (o1)', async () => {
+    const h = makeIO({ args: ['od', '-A', 'n', '-b', '/in'], files: { '/in': 'AB' } });
+    await odCommand(h.io);
+    expect(h.out()).toBe(' 101 102\n');
+  });
+
+  test('-t x4 is 4-byte little-endian hex words', async () => {
+    const h = makeIO({ args: ['od', '-A', 'n', '-t', 'x4', '/in'], files: { '/in': 'ABCD' } });
+    await odCommand(h.io);
+    expect(h.out()).toBe(' 44434241\n');
+  });
+
+  test('-t d4 is 4-byte signed decimal', async () => {
+    const h = makeIO({ args: ['od', '-A', 'n', '-t', 'd4', '/in'], files: { '/in': 'ABCD' } });
+    await odCommand(h.io);
+    expect(h.out()).toBe('  1145258561\n');
+  });
+
+  test('-f / -t f4 is single-precision float (shortest round-trip, width 15)', async () => {
+    // 0x3f800000 LE = bytes 00 00 80 3f = 1.0
+    const h = makeIO({ args: ['od', '-A', 'n', '-t', 'f4', '/in'], files: { '/in': new Uint8Array([0x00, 0x00, 0x80, 0x3f]) } });
+    await odCommand(h.io);
+    expect(h.out()).toBe('               1\n');
+  });
+
+  test('-t f4 renders scientific notation with a 2-digit-padded exponent', async () => {
+    // 0x00000001 LE = smallest positive float32; the shortest round-trip is `1e-45`.
+    const h = makeIO({ args: ['od', '-A', 'n', '-t', 'f4', '/in'], files: { '/in': new Uint8Array([0x01, 0x00, 0x00, 0x00]) } });
+    await odCommand(h.io);
+    expect(h.out().trim()).toBe('1e-45');
+  });
+
+  test('-t f4 pads a scientific exponent to 2 digits (e-8 → e-08)', async () => {
+    // 0x33000000 LE = bytes 00 00 00 33 ≈ 2.98e-8 → GNU prints `e-08` (2 digits).
+    const h = makeIO({ args: ['od', '-A', 'n', '-t', 'f4', '/in'], files: { '/in': new Uint8Array([0x00, 0x00, 0x00, 0x33]) } });
+    await odCommand(h.io);
+    expect(h.out().trim()).toBe('2.9802322e-08');
+  });
+
+  // ── GNU parity: cross-type column alignment ──
+
+  test('same-size types share a per-cell width (x1 padded to align with c)', async () => {
+    const h = makeIO({ args: ['od', '-A', 'n', '-t', 'x1', '-c', '/in'], files: { '/in': 'ABCD' } });
+    await odCommand(h.io);
+    expect(h.out()).toBe('  41  42  43  44\n   A   B   C   D\n');
+  });
+
+  test('mixed sizes align by group (x1 group left-padded to match o2)', async () => {
+    const h = makeIO({ args: ['od', '-A', 'n', '-t', 'x1', '-t', 'o2', '/in'], files: { '/in': 'ABCD' } });
+    await odCommand(h.io);
+    expect(h.out()).toBe('  41 42  43 44\n 041101 042103\n');
+  });
+
+  // ── GNU parity: -N / -j / -v / -w ──
+
+  test('-N limits the number of bytes dumped', async () => {
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x1', '-N', '4', '/in'], files: { '/in': 'ABCDEFGH' } });
+    await odCommand(h.io);
+    expect(h.out()).toBe('000000 41 42 43 44\n000004\n');
+  });
+
+  test('-j skips bytes and offsets stay absolute', async () => {
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x1', '-j', '2', '/in'], files: { '/in': 'ABCD' } });
+    await odCommand(h.io);
+    expect(h.out()).toBe('000002 43 44\n000004\n');
+  });
+
+  test('-j past end errors and exits 1', async () => {
+    const h = makeIO({ args: ['od', '-j', '99', '/in'], files: { '/in': 'ABCD' } });
+    expect(await odCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('od: cannot skip past end of combined input\n');
+  });
+
+  test('-w8 sets 8 bytes per output line', async () => {
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x1', '-w8', '/in'], files: { '/in': '0123456789' } });
+    await odCommand(h.io);
+    expect(h.out()).toBe(
+      '000000 30 31 32 33 34 35 36 37\n' +
+      '000008 38 39\n' +
+      '00000a\n',
+    );
+  });
+
+  test('-w0 is an invalid width (exit 1)', async () => {
+    const h = makeIO({ args: ['od', '-w0', '/in'], files: { '/in': 'AB' } });
+    expect(await odCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('od: invalid -w argument \'0\'\n');
+  });
+
+  test('-v disables duplicate-line elision', async () => {
+    const h = makeIO({ args: ['od', '-A', 'x', '-t', 'x1', '-v', '/in'], files: { '/in': new Uint8Array(32).fill(0) } });
+    await odCommand(h.io);
+    expect(h.out()).toBe(
+      '000000 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00\n' +
+      '000010 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00\n' +
+      '000020\n',
+    );
+  });
+
+  test('an invalid address radix errors with the GNU message', async () => {
+    const h = makeIO({ args: ['od', '-A', 'z', '/in'], files: { '/in': 'AB' } });
+    expect(await odCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('od: invalid output address radix \'z\'; it must be one character from [doxn]\n');
   });
 });

@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'vitest';
-import { tacCommand } from './tac.ts';
+import { tacCommand, tacText } from './tac.ts';
 import type { CommandIO } from '../harness.ts';
 
 function makeIO(opts: { args: string[]; stdinText?: string; files?: Record<string, string> }) {
@@ -57,10 +57,17 @@ describe('tac', () => {
     expect(h.out()).toBe('hello\n');
   });
 
-  test('no trailing newline handled', async () => {
+  test('no trailing newline: no spurious newline added', async () => {
+    // records a\n , b → reversed b + a\n = "ba\n"
     const h = makeIO({ args: ['tac'], stdinText: 'a\nb' });
     await tacCommand(h.io);
-    expect(h.out()).toBe('b\na\n');
+    expect(h.out()).toBe('ba\n');
+  });
+
+  test('three lines, no trailing newline', async () => {
+    const h = makeIO({ args: ['tac'], stdinText: 'a\nb\nc' });
+    await tacCommand(h.io);
+    expect(h.out()).toBe('cb\na\n');
   });
 
   test('reads from a file', async () => {
@@ -77,5 +84,76 @@ describe('tac', () => {
     const code = await tacCommand(h.io);
     expect(code).toBe(1);
     expect(h.err()).toContain('/missing.txt');
+  });
+
+  // ── -s separator (GNU parity) ────────────────────────────────────────────
+
+  test('-s custom separator, no trailing sep', async () => {
+    const h = makeIO({ args: ['tac', '-s', ':'], stdinText: 'a:b:c' });
+    expect(await tacCommand(h.io)).toBe(0);
+    // records a: , b: , c → reversed c + b: + a: = "cb:a:"
+    expect(h.out()).toBe('cb:a:');
+  });
+
+  test('-s custom separator, trailing sep dropped', async () => {
+    const h = makeIO({ args: ['tac', '-s', ':'], stdinText: 'a:b:c:' });
+    expect(await tacCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('c:b:a:');
+  });
+
+  test('-s multi-char separator', async () => {
+    const h = makeIO({ args: ['tac', '-s', 'XX'], stdinText: 'aXXbXXc' });
+    expect(await tacCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('cbXXaXX');
+  });
+
+  test('-s treats a regex-special separator literally', async () => {
+    const h = makeIO({ args: ['tac', '-s', '.'], stdinText: 'a.b.c' });
+    expect(await tacCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('cb.a.');
+  });
+
+  // ── -b before mode ────────────────────────────────────────────────────────
+
+  test('-b attaches the separator to the following record', async () => {
+    const h = makeIO({ args: ['tac', '-b'], stdinText: 'a\nb\nc\n' });
+    expect(await tacCommand(h.io)).toBe(0);
+    // records: a, \nb, \nc, \n → reversed \n + \nc + \nb + a = "\n\nc\nba"
+    expect(h.out()).toBe('\n\nc\nba');
+  });
+
+  // ── -r regex ──────────────────────────────────────────────────────────────
+
+  test('-r treats separator as a regex', async () => {
+    const h = makeIO({ args: ['tac', '-r', '-s', '[0-9]'], stdinText: 'a1b2c3' });
+    expect(await tacCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('c3b2a1');
+  });
+
+  test('-r with an invalid regex errors and exits 1', async () => {
+    const h = makeIO({ args: ['tac', '-r', '-s', '['], stdinText: 'ab' });
+    expect(await tacCommand(h.io)).toBe(1);
+    expect(h.err()).toContain('Invalid regular expression');
+  });
+
+  // ── unknown-flag reject ─────────────────────────────────────────────────────
+
+  test('unknown flag → invalid option, exit 1', async () => {
+    const h = makeIO({ args: ['tac', '-Z'], stdinText: 'x\n' });
+    expect(await tacCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('tac: invalid option -- \'Z\'\nTry \'tac --help\' for more information.\n');
+  });
+
+  describe('tacText', () => {
+    test('trailing mode keeps separators with preceding record', () => {
+      expect(tacText('a\nb\nc\n', /\n/, false)).toBe('c\nb\na\n');
+    });
+    test('trailing mode, unterminated last record', () => {
+      expect(tacText('a\nb\nc', /\n/, false)).toBe('cb\na\n');
+    });
+    test('before mode leads with the separator', () => {
+      expect(tacText('a\nb\nc\n', /\n/, true)).toBe('\n\nc\nba');
+    });
+    test('empty input', () => { expect(tacText('', /\n/, false)).toBe(''); });
   });
 });

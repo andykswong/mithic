@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'vitest';
-import { foldCommand, foldLine } from './fold.ts';
+import { foldCommand, foldLine, foldBytes } from './fold.ts';
 import { makeIO } from './_test-io.ts';
 
 describe('fold', () => {
@@ -46,8 +46,82 @@ describe('fold', () => {
     expect(h.err()).toContain('fold: /missing:');
   });
 
-  describe('foldLine', () => {
-    test('hard wrap', () => { expect(foldLine('abcdef', 2, false)).toEqual(['ab', 'cd', 'ef']); });
-    test('space wrap', () => { expect(foldLine('ab cd ef', 4, true)).toEqual(['ab ', 'cd ', 'ef']); });
+  // ── obsolete -N width ─────────────────────────────────────────────────────
+
+  test('obsolete -N is treated as -w N', async () => {
+    const h = makeIO({ args: ['fold', '-3'], stdinText: 'abcdefg\n' });
+    expect(await foldCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('abc\ndef\ng\n');
+  });
+
+  test('obsolete -N combines with -s', async () => {
+    const h = makeIO({ args: ['fold', '-3', '-s'], stdinText: 'ab cd ef\n' });
+    expect(await foldCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('ab \ncd \nef\n');
+  });
+
+  test('obsolete -bN combines byte mode + width', async () => {
+    const h = makeIO({ args: ['fold', '-b3'], stdinText: 'café\n' });
+    expect(await foldCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('caf\né\n');
+  });
+
+  // ── char-mode column semantics ────────────────────────────────────────────
+
+  test('tab advances to the next multiple of 8', async () => {
+    const h = makeIO({ args: ['fold', '-w', '3'], stdinText: '12\t3\n' });
+    expect(await foldCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('12\n\t\n3\n');
+  });
+
+  test('backspace decrements the column', async () => {
+    const h = makeIO({ args: ['fold', '-w', '2'], stdinText: 'ab\bc\n' });
+    expect(await foldCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('ab\bc\n');
+  });
+
+  test('carriage return resets the column', async () => {
+    const h = makeIO({ args: ['fold', '-w', '3'], stdinText: 'a\rbcdef\n' });
+    expect(await foldCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\rbcd\nef\n');
+  });
+
+  test('wide CJK chars count as 2 columns', async () => {
+    const h = makeIO({ args: ['fold', '-w', '2'], stdinText: '你好\n' });
+    expect(await foldCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('你\n好\n');
+  });
+
+  // ── -b byte mode with multibyte ───────────────────────────────────────────
+
+  test('-b measures multibyte by byte length but never splits a char', async () => {
+    const h = makeIO({ args: ['fold', '-b', '-w', '2'], stdinText: 'café\n' });
+    expect(await foldCommand(h.io)).toBe(0);
+    // c a | f | é(2 bytes) — the multibyte char stays whole
+    expect(h.out()).toBe('ca\nf\né\n');
+  });
+
+  test('-b reads a file byte-exactly', async () => {
+    const h = makeIO({ args: ['fold', '-b', '-w', '2', '/f'], files: { '/f': 'café\n' } });
+    expect(await foldCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('ca\nf\né\n');
+  });
+
+  // ── unknown-flag reject ────────────────────────────────────────────────────
+
+  test('unknown flag → invalid option, exit 1', async () => {
+    const h = makeIO({ args: ['fold', '-Z'], stdinText: 'x\n' });
+    expect(await foldCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('fold: invalid option -- \'Z\'\nTry \'fold --help\' for more information.\n');
+  });
+
+  describe('foldLine / foldBytes', () => {
+    test('hard wrap', () => { expect(foldLine('abcdef', 2, false)).toBe('ab\ncd\nef'); });
+    test('space wrap', () => { expect(foldLine('ab cd ef', 4, true)).toBe('ab \ncd \nef'); });
+    test('byte mode never splits a multibyte char', () => {
+      const bytes = foldBytes('café', 2, false, true);
+      expect(new TextDecoder().decode(bytes)).toBe('ca\nf\né');
+    });
+    test('char mode wide chars', () => { expect(foldLine('你好', 2, false)).toBe('你\n好'); });
   });
 });

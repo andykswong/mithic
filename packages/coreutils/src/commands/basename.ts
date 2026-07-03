@@ -7,8 +7,26 @@
  *   basename -s SUF NAME...  — implies -a; strip SUF from each NAME
  */
 import { defineCommand, parseArgs, exitWith } from '../harness.ts';
-import { basename } from '../fs.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
+
+/**
+ * POSIX `basename`: strip trailing slashes, then take the final path component.
+ * A path that is entirely slashes (`/`, `//`, `///`) is `/`; an empty string is
+ * empty. Internal multiple slashes are irrelevant (only the tail after the last
+ * slash matters). This is the POSIX/GNU algorithm — the shared `fs.basename`
+ * helper mishandles the all-slash case (`//` → `''`), so basename uses its own.
+ */
+function posixBasename(path: string): string {
+  if (path === '') return '';
+  // Trim trailing slashes.
+  let end = path.length;
+  while (end > 0 && path[end - 1] === '/') end--;
+  if (end === 0) return '/'; // string was all slashes
+  // Find the start of the last component.
+  let start = end;
+  while (start > 0 && path[start - 1] !== '/') start--;
+  return path.slice(start, end);
+}
 
 /** Remove `suffix` from `name`, but never reduce the name to empty. */
 function stripSuffix(name: string, suffix: string): string {
@@ -35,7 +53,7 @@ const basenameCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     if (multiple) {
       const suffix = typeof flags.s === 'string' ? flags.s : '';
       for (const name of positionals) {
-        await writeOut(stripSuffix(basename(name), suffix));
+        await writeOut(stripSuffix(posixBasename(name), suffix));
       }
     } else {
       // Single form: basename NAME [SUFFIX]
@@ -43,7 +61,7 @@ const basenameCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         return await exitWith(err, 1, `basename: extra operand '${positionals[2]}'`);
       }
       const suffix = positionals[1] ?? '';
-      await writeOut(stripSuffix(basename(positionals[0]), suffix));
+      await writeOut(stripSuffix(posixBasename(positionals[0]), suffix));
     }
     return 0;
   } finally {
@@ -53,4 +71,4 @@ const basenameCommand: CommandFn = async (io: CommandIO): Promise<number> => {
 };
 
 export default defineCommand(basenameCommand);
-export { basenameCommand };
+export { basenameCommand, posixBasename };

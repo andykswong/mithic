@@ -9,7 +9,8 @@
  * ≤4-byte remainder across chunks and emits complete 5-byte groups as they
  * fill, tracking the wrap column; the decoder carries a ≤7-char octet tail.
  */
-import { CoalescingWriter, defineCommand, isBrokenPipe, parseArgs, exitWith } from '../harness.ts';
+import { CoalescingWriter, defineCommand, isBrokenPipe, parseArgs, exitWith, optionError } from '../harness.ts';
+import { AT_FDCWD } from '../fs.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 const ENCODE_TABLE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -168,9 +169,18 @@ class StreamingB32Encoder {
 /** Constant-memory base32 decoder: carries a ≤7-char octet tail across chunks. */
 class StreamingB32Decoder {
   #carry = '';
+  #ignoreGarbage: boolean;
+  constructor(ignoreGarbage = false) { this.#ignoreGarbage = ignoreGarbage; }
+
+  // Whitespace is always stripped; `-i` additionally drops any non-alphabet
+  // (non-[A-Za-z2-7=]) character before decoding.
+  #clean(text: string): string {
+    const stripped = text.replace(/\s/g, '');
+    return this.#ignoreGarbage ? stripped.replace(/[^A-Za-z2-7=]/g, '') : stripped;
+  }
 
   update(text: string): Uint8Array | null {
-    const s = this.#carry + text.replace(/\s/g, '');
+    const s = this.#carry + this.#clean(text);
     const whole = s.length - (s.length % 8);
     this.#carry = s.slice(whole);
     if (whole === 0) return new Uint8Array(0);
@@ -195,49 +205,82 @@ async function writeChunked(out: WritableStreamDefaultWriter<Uint8Array>, bytes:
 
 const base32Command: CommandFn = async (io: CommandIO): Promise<number> => {
   const name = io.args[0] ?? 'base32';
-  const { flags } = parseArgs(io.args.slice(1), {
-    boolean: ['d', 'decode'],
+  const parsed = parseArgs(io.args.slice(1), {
+    boolean: ['d', 'decode', 'i', 'ignore-garbage'],
     string: ['w', 'wrap'],
-    alias: { decode: 'd', wrap: 'w' },
+    alias: { decode: 'd', wrap: 'w', 'ignore-garbage': 'i' },
+    unknown: 'error',
   });
 
-  const decode = Boolean(flags.d);
-  const wrapRaw = flags.w !== undefined ? String(flags.w) : '76';
+  const err0 = () => io.stderr.getWriter();
+  if (parsed.unknown.length) {
+    const err = err0();
+    try { return await exitWith(err, 1, optionError(name, parsed.unknown[0])); }
+    finally { await err.close().catch(() => { /* already closed */ }); }
+  }
+
+  const decode = Boolean(parsed.flags.d);
+  const ignoreGarbage = Boolean(parsed.flags.i);
+  const wrapRaw = parsed.flags.w !== undefined ? String(parsed.flags.w) : '76';
   const wrap = parseInt(wrapRaw, 10);
   if (isNaN(wrap) || wrap < 0) {
-    const err = io.stderr.getWriter();
+    const err = err0();
     try { return await exitWith(err, 1, `${name}: invalid wrap size: ${wrapRaw}`); }
     finally { await err.close().catch(() => { /* already closed */ }); }
   }
 
+  // GNU accepts at most one FILE operand (stdin when omitted or `-`).
+  const positionals = parsed.positionals;
+  if (positionals.length > 1) {
+    const err = err0();
+    try { return await exitWith(err, 1, `${name}: extra operand ‘${positionals[1]}’\nTry '${name} --help' for more information.`); }
+    finally { await err.close().catch(() => { /* already closed */ }); }
+  }
+  const file = positionals[0];
+
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
   let stdinAborted = false;
+  let fd = -1;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  if (file !== undefined && file !== '-') {
+    try { ({ fd } = (await io.syscall('fs/open', { dirfd: AT_FDCWD, path: file, oflags: { read: true } })) as { fd: number }); }
+    catch {
+      try { return await exitWith(err, 1, `${name}: ${file}: No such file or directory`); }
+      finally { await out.close().catch(() => {}); await err.close().catch(() => {}); }
+    }
+  } else {
+    reader = io.stdin.getReader();
+  }
+  const readChunk = async (): Promise<Uint8Array | undefined> => {
+    if (reader) { const { value, done } = await reader.read(); return done ? undefined : value; }
+    const chunk = (await io.syscall('fs/read', { fd, len: 65536 })) as Uint8Array;
+    return chunk && chunk.byteLength > 0 ? chunk : undefined;
+  };
   try {
-    // Stream stdin (constant memory) so an unbounded producer drains incrementally
-    // and EPIPE from a closed downstream stops us.
+    // Stream the source (constant memory) so an unbounded producer drains
+    // incrementally and EPIPE from a closed downstream stops us.
     const sink = new CoalescingWriter(out);
-    const reader = io.stdin.getReader();
     const decoder = new TextDecoder();
     const enc = decode ? null : new StreamingB32Encoder(wrap);
-    const dec = decode ? new StreamingB32Decoder() : null;
+    const dec = decode ? new StreamingB32Decoder(ignoreGarbage) : null;
     try {
       for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        if (!value || value.byteLength === 0) continue;
+        const value = await readChunk();
+        if (value === undefined) break;
+        if (value.byteLength === 0) continue;
         if (enc) {
           await sink.push(enc.update(value));
         } else {
           const piece = dec!.update(decoder.decode(value, { stream: true }));
           if (piece === null) {
-            reader.releaseLock();
+            if (reader) reader.releaseLock();
             return await exitWith(err, 1, `${name}: invalid input`);
           }
           if (piece.byteLength > 0) { await sink.flush(); await writeChunked(out, piece); }
         }
       }
-      reader.releaseLock();
+      if (reader) reader.releaseLock();
       if (enc) { await sink.push(enc.final()); await sink.flush(); }
       else {
         const piece = dec!.final();
@@ -246,12 +289,13 @@ const base32Command: CommandFn = async (io: CommandIO): Promise<number> => {
         if (piece.byteLength > 0) await writeChunked(out, piece);
       }
     } catch (e) {
-      try { reader.releaseLock(); } catch { /* already released */ }
+      try { if (reader) reader.releaseLock(); } catch { /* already released */ }
       if (isBrokenPipe(e)) { stdinAborted = true; return 0; }
       throw e;
     }
     return 0;
   } finally {
+    if (fd >= 0) await io.syscall('fs/close', { fd }).catch(() => { /* best effort */ });
     await out.close().catch(() => { /* already closed */ });
     await err.close().catch(() => { /* already closed */ });
     if (stdinAborted) await io.stdin.cancel().catch(() => { /* best effort */ });

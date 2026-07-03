@@ -64,37 +64,84 @@ describe('comm', () => {
     expect(out).toContain('\t\tcat\n');
   });
 
-  test('-1 suppresses col1', async () => {
+  test('-1 suppresses col1: col2 unindented, col3 keeps one tab', async () => {
     const h = makeIO({
       args: ['comm', '-1', '/a.txt', '/b.txt'],
       files: { '/a.txt': 'a\nb\n', '/b.txt': 'b\nc\n' },
     });
     await commCommand(h.io);
-    const out = h.out();
-    expect(out).not.toContain('a\n');   // 'a' is col1 — suppressed
-    expect(out).toContain('c');          // col2
-    expect(out).toContain('b');          // col3
+    // col3 (common 'b') is indented by one tab (col2 still shown); col2 ('c') has none.
+    expect(h.out()).toBe('\tb\nc\n');
   });
 
-  test('-12 only shows common lines', async () => {
+  test('-12 shows common lines with NO indent (prefixes reduce)', async () => {
     const h = makeIO({
       args: ['comm', '-12', '/a.txt', '/b.txt'],
       files: { '/a.txt': 'a\nb\nc\n', '/b.txt': 'b\nc\nd\n' },
     });
     await commCommand(h.io);
-    expect(h.out()).toBe('\t\tb\n\t\tc\n');
+    expect(h.out()).toBe('b\nc\n');
   });
 
-  test('-3 hides common lines', async () => {
+  test('-2 suppresses col2: col1 unindented, col3 keeps one tab', async () => {
     const h = makeIO({
-      args: ['comm', '-3', '/a.txt', '/b.txt'],
-      files: { '/a.txt': 'a\nb\n', '/b.txt': 'b\nc\n' },
+      args: ['comm', '-2', '/a.txt', '/b.txt'],
+      files: { '/a.txt': 'apple\nbanana\n', '/b.txt': 'banana\n' },
     });
     await commCommand(h.io);
-    const out = h.out();
-    expect(out).not.toContain('b'); // col3 (common) suppressed
-    expect(out).toContain('a');
-    expect(out).toContain('c');
+    expect(h.out()).toBe('apple\n\tbanana\n');
+  });
+
+  test('-3 hides common lines: col1 unindented, col2 one tab', async () => {
+    const h = makeIO({
+      args: ['comm', '-3', '/a.txt', '/b.txt'],
+      files: { '/a.txt': 'apple\nbanana\n', '/b.txt': 'banana\ndog\n' },
+    });
+    await commCommand(h.io);
+    expect(h.out()).toBe('apple\n\tdog\n');
+  });
+
+  test('--output-delimiter replaces the tab prefixes', async () => {
+    const h = makeIO({
+      args: ['comm', '--output-delimiter=:', '/a.txt', '/b.txt'],
+      files: { '/a.txt': 'apple\nbanana\ncat\n', '/b.txt': 'banana\ncat\ndog\n' },
+    });
+    await commCommand(h.io);
+    // col1 apple no prefix; col3 (banana,cat) double delim; col2 (dog) single delim.
+    expect(h.out()).toBe('apple\n::banana\n::cat\n:dog\n');
+  });
+
+  test('--total appends a delimiter-separated count line', async () => {
+    const h = makeIO({
+      args: ['comm', '--total', '/a.txt', '/b.txt'],
+      files: { '/a.txt': 'apple\nbanana\ncat\n', '/b.txt': 'banana\ncat\ndog\n' },
+    });
+    await commCommand(h.io);
+    expect(h.out()).toBe('apple\n\t\tbanana\n\t\tcat\n\tdog\n1\t1\t2\ttotal\n');
+  });
+
+  test('--total counts all columns even when suppressed', async () => {
+    const h = makeIO({
+      args: ['comm', '--total', '-12', '/a.txt', '/b.txt'],
+      files: { '/a.txt': 'apple\nbanana\ncat\n', '/b.txt': 'banana\ncat\ndog\n' },
+    });
+    await commCommand(h.io);
+    expect(h.out()).toBe('banana\ncat\n1\t1\t2\ttotal\n');
+  });
+
+  test('--total honors --output-delimiter in the count line', async () => {
+    const h = makeIO({
+      args: ['comm', '--total', '--output-delimiter=:', '/a.txt', '/b.txt'],
+      files: { '/a.txt': 'apple\nbanana\ncat\n', '/b.txt': 'banana\ncat\ndog\n' },
+    });
+    await commCommand(h.io);
+    expect(h.out()).toBe('apple\n::banana\n::cat\n:dog\n1:1:2:total\n');
+  });
+
+  test('invalid option exits 1', async () => {
+    const h = makeIO({ args: ['comm', '-x', '/a.txt', '/b.txt'], files: { '/a.txt': 'a\n', '/b.txt': 'b\n' } });
+    expect(await commCommand(h.io)).toBe(1);
+    expect(h.err()).toContain('comm: invalid option -- \'x\'');
   });
 
   test('missing file exits 1', async () => {

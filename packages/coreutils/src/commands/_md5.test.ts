@@ -57,4 +57,105 @@ describe('md5sum', () => {
     expect(h.out()).toContain('/a: OK');
     expect(h.out()).toContain('/b: FAILED');
   });
+
+  // ── GNU parity: --tag / -b / -z ──
+
+  test('--tag prints the BSD reversed form', async () => {
+    const h = makeIO({ args: ['md5sum', '--tag', '/f.txt'], files: { '/f.txt': 'hello world\n' } });
+    expect(await md5sumCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('MD5 (/f.txt) = 6f5902ac237024bdd0c176cb93063dc4\n');
+  });
+
+  test('--tag over stdin names the source `-`', async () => {
+    const h = makeIO({ args: ['md5sum', '--tag'], stdinText: 'hello world\n' });
+    await md5sumCommand(h.io);
+    expect(h.out()).toBe('MD5 (-) = 6f5902ac237024bdd0c176cb93063dc4\n');
+  });
+
+  test('-b marks the name with an asterisk (binary mode)', async () => {
+    const h = makeIO({ args: ['md5sum', '-b', '/f.txt'], files: { '/f.txt': 'hello world\n' } });
+    await md5sumCommand(h.io);
+    expect(h.out()).toBe('6f5902ac237024bdd0c176cb93063dc4 */f.txt\n');
+  });
+
+  test('-z terminates the line with NUL instead of newline', async () => {
+    const h = makeIO({ args: ['md5sum', '-z', '/f.txt'], files: { '/f.txt': 'hello world\n' } });
+    await md5sumCommand(h.io);
+    expect(h.out()).toBe('6f5902ac237024bdd0c176cb93063dc4  /f.txt\0');
+  });
+
+  test('-b -z keeps the asterisk and NUL-terminates', async () => {
+    const h = makeIO({ args: ['md5sum', '-b', '-z', '/f.txt'], files: { '/f.txt': 'hello world\n' } });
+    await md5sumCommand(h.io);
+    expect(h.out()).toBe('6f5902ac237024bdd0c176cb93063dc4 */f.txt\0');
+  });
+
+  // ── GNU parity: verify-only options error without -c ──
+
+  test('--status without -c errors and exits 1', async () => {
+    const h = makeIO({ args: ['md5sum', '--status', '/f.txt'], files: { '/f.txt': 'x' } });
+    expect(await md5sumCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('md5sum: the --status option is meaningful only when verifying checksums\nTry \'md5sum --help\' for more information.\n');
+  });
+
+  test('--quiet without -c errors and exits 1', async () => {
+    const h = makeIO({ args: ['md5sum', '--quiet', '/f.txt'], files: { '/f.txt': 'x' } });
+    expect(await md5sumCommand(h.io)).toBe(1);
+    expect(h.err()).toContain('the --quiet option is meaningful only when verifying checksums');
+  });
+
+  test('--ignore-missing without -c errors and exits 1', async () => {
+    const h = makeIO({ args: ['md5sum', '--ignore-missing', '/f.txt'], files: { '/f.txt': 'x' } });
+    expect(await md5sumCommand(h.io)).toBe(1);
+    expect(h.err()).toContain('the --ignore-missing option is meaningful only when verifying checksums');
+  });
+
+  // ── GNU parity: -c summaries, --status, --quiet ──
+
+  test('-c prints the WARNING summary on a mismatch', async () => {
+    const h = makeIO({
+      args: ['md5sum', '-c', '/sums'],
+      files: { '/sums': 'ffffffffffffffffffffffffffffffff  /a\n', '/a': 'abc' },
+    });
+    expect(await md5sumCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('/a: FAILED\n');
+    expect(h.err()).toBe('md5sum: WARNING: 1 computed checksum did NOT match\n');
+  });
+
+  test('-c --status is silent, exit reflects the mismatch', async () => {
+    const h = makeIO({
+      args: ['md5sum', '-c', '--status', '/sums'],
+      files: { '/sums': 'ffffffffffffffffffffffffffffffff  /a\n', '/a': 'abc' },
+    });
+    expect(await md5sumCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('');
+    expect(h.err()).toBe('');
+  });
+
+  test('-c --quiet suppresses OK lines (keeps FAILED + warning)', async () => {
+    const h = makeIO({
+      args: ['md5sum', '-c', '--quiet', '/sums'],
+      files: {
+        '/sums': '900150983cd24fb0d6963f7d28e17f72  /a\nffffffffffffffffffffffffffffffff  /b\n',
+        '/a': 'abc', '/b': 'xyz',
+      },
+    });
+    expect(await md5sumCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('/b: FAILED\n');
+  });
+
+  test('-c --ignore-missing skips a missing listed file', async () => {
+    const h = makeIO({
+      args: ['md5sum', '-c', '--ignore-missing', '/sums'],
+      files: { '/sums': '900150983cd24fb0d6963f7d28e17f72  /a\nffffffffffffffffffffffffffffffff  /gone\n', '/a': 'abc' },
+    });
+    expect(await md5sumCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('/a: OK\n');
+  });
+
+  test('-c with all-malformed lines reports no formatted lines and exits 1', async () => {
+    const h = makeIO({ args: ['md5sum', '-c', '/sums'], files: { '/sums': 'garbage\nmore garbage\n' } });
+    expect(await md5sumCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('md5sum: /sums: no properly formatted checksum lines found\n');
+  });
 });

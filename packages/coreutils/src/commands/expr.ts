@@ -20,14 +20,27 @@ import type { CommandFn, CommandIO } from '../harness.ts';
 
 type Value = string | number;
 
+/** A syntax/usage error in an expr expression — GNU exits 2 for these. */
+class ExprSyntaxError extends Error {}
+/** A non-integer operand to an arithmetic operator — GNU exits 2. */
+class ExprArithError extends Error {
+  constructor() { super('non-integer argument'); }
+}
+
 function isZero(v: Value): boolean {
   if (typeof v === 'number') return v === 0;
   return v === '' || v === '0';
 }
 
-function toNum(v: Value): number {
-  const n = typeof v === 'number' ? v : parseInt(String(v), 10);
-  return isNaN(n) ? 0 : n;
+/**
+ * Coerce an operand to an integer for arithmetic. GNU `expr` only does INTEGER
+ * arithmetic: a float (`1.5`) or a non-numeric string (`abc`) is a fatal
+ * `non-integer argument` error (exit 2), NOT a silent truncation to 0.
+ */
+function toInt(v: Value): number {
+  if (typeof v === 'number') return v;
+  if (/^[+-]?\d+$/.test(v)) return parseInt(v, 10);
+  throw new ExprArithError();
 }
 
 class ExprParser {
@@ -47,7 +60,8 @@ class ExprParser {
   parseOr(): Value {
     let left = this.parseAnd();
     while (this.peek() === '|') {
-      this.consume();
+      const op = this.consume();
+      if (this.peek() === undefined) throw new ExprSyntaxError(`syntax error: missing argument after ‘${op}’`);
       const right = this.parseAnd();
       // | returns left if left is non-zero/non-empty, else right
       left = (!isZero(left)) ? left : right;
@@ -58,7 +72,8 @@ class ExprParser {
   parseAnd(): Value {
     let left = this.parseCmp();
     while (this.peek() === '&') {
-      this.consume();
+      const op = this.consume();
+      if (this.peek() === undefined) throw new ExprSyntaxError(`syntax error: missing argument after ‘${op}’`);
       const right = this.parseCmp();
       // & returns left if both non-zero, else 0
       left = (!isZero(left) && !isZero(right)) ? left : 0;
@@ -71,6 +86,7 @@ class ExprParser {
     const ops = new Set(['=', '!=', '<', '<=', '>', '>=']);
     while (this.peek() !== undefined && ops.has(this.peek()!)) {
       const op = this.consume();
+      if (this.peek() === undefined) throw new ExprSyntaxError(`syntax error: missing argument after ‘${op}’`);
       const right = this.parseAdd();
       const ls = String(left), rs = String(right);
       const ln = parseFloat(ls), rn = parseFloat(rs);
@@ -100,8 +116,9 @@ class ExprParser {
     let left = this.parseMul();
     while (this.peek() === '+' || this.peek() === '-') {
       const op = this.consume();
+      if (this.peek() === undefined) throw new ExprSyntaxError(`syntax error: missing argument after ‘${op}’`);
       const right = this.parseMul();
-      left = op === '+' ? toNum(left) + toNum(right) : toNum(left) - toNum(right);
+      left = op === '+' ? toInt(left) + toInt(right) : toInt(left) - toInt(right);
     }
     return left;
   }
@@ -110,8 +127,9 @@ class ExprParser {
     let left = this.parseUnary();
     while (this.peek() === '*' || this.peek() === '/' || this.peek() === '%') {
       const op = this.consume();
+      if (this.peek() === undefined) throw new ExprSyntaxError(`syntax error: missing argument after ‘${op}’`);
       const right = this.parseUnary();
-      const l = toNum(left), r = toNum(right);
+      const l = toInt(left), r = toInt(right);
       if ((op === '/' || op === '%') && r === 0) throw new Error('division by zero');
       if (op === '*') left = l * r;
       else if (op === '/') left = Math.trunc(l / r);
@@ -124,7 +142,8 @@ class ExprParser {
     if (this.peek() === '(') {
       this.consume();
       const v = this.parse();
-      if (this.consume() !== ')') throw new Error('missing )');
+      const last = this.tokens[this.pos - 1];
+      if (this.consume() !== ')') throw new ExprSyntaxError(`syntax error: expecting ')' after ‘${last ?? ''}’`);
       return v;
     }
     // Built-in string functions
@@ -137,9 +156,12 @@ class ExprParser {
     if (t === 'substr') {
       this.consume();
       const s = String(this.parseUnary());
-      const pos = toNum(this.parseUnary());
-      const len = toNum(this.parseUnary());
-      return s.substr(pos - 1, len); // expr uses 1-based index
+      const pos = toInt(this.parseUnary());
+      const len = toInt(this.parseUnary());
+      // GNU expr: 1-based; a POS < 1, LEN <= 0, or POS past the end → empty
+      // string (which makes expr exit 1).
+      if (pos < 1 || len < 1 || pos > s.length) return '';
+      return s.substr(pos - 1, len);
     }
     if (t === 'index') {
       this.consume();
@@ -159,6 +181,16 @@ class ExprParser {
       const m = re.exec(s);
       return m ? m[0].length : 0;
     }
+    // POSIX `+` quote operator: in operand position, `+ TOKEN` forces TOKEN to
+    // be a plain string operand (so `+ length` yields "length", `3 + + 4` = 7).
+    // A trailing `+` with no operand is a syntax error.
+    if (t === '+') {
+      this.consume();
+      if (this.peek() === undefined) throw new ExprSyntaxError('syntax error: missing argument after ‘+’');
+      return this.consume();
+    }
+    const tok = this.peek();
+    if (tok === undefined) throw new ExprSyntaxError('syntax error: missing operand');
     return this.consume();
   }
 }

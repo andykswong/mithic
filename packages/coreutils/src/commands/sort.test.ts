@@ -109,10 +109,146 @@ describe('sort', () => {
     expect(h.out()).toBe('xab\nxaa\n');
   });
 
+  test('missing file uses canonical errno text', async () => {
+    const h = makeIO({ args: ['sort', '/missing'] });
+    expect(await sortCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('sort: cannot read: /missing: No such file or directory\n');
+  });
+
+  // ── -h human numeric ──────────────────────────────────────────────────────
+  test('-h human-readable numeric sort', async () => {
+    const h = makeIO({ args: ['sort', '-h'], stdinText: '2K\n1M\n500\n3G\n' });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('500\n2K\n1M\n3G\n');
+  });
+
+  test('-h with decimals and negatives', async () => {
+    const h = makeIO({ args: ['sort', '-h'], stdinText: '-1K\n2K\n-3M\n0\n' });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('-3M\n-1K\n0\n2K\n');
+  });
+
+  // ── -V version sort ───────────────────────────────────────────────────────
+  test('-V version sort', async () => {
+    const h = makeIO({ args: ['sort', '-V'], stdinText: 'v1.10\nv1.9\nv1.2\n' });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('v1.2\nv1.9\nv1.10\n');
+  });
+
+  test('-V leading-zero ordering', async () => {
+    const h = makeIO({ args: ['sort', '-V'], stdinText: '1.001\n1.01\n1.1\n' });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('1.001\n1.01\n1.1\n');
+  });
+
+  test('-V numeric vs string runs', async () => {
+    const h = makeIO({ args: ['sort', '-V'], stdinText: 'foo1\nfoo10\nfoo2\nfoo2a\n' });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('foo1\nfoo2\nfoo2a\nfoo10\n');
+  });
+
+  // ── -M month sort ─────────────────────────────────────────────────────────
+  test('-M month sort', async () => {
+    const h = makeIO({ args: ['sort', '-M'], stdinText: 'Mar\nJan\nFeb\nDec\n' });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('Jan\nFeb\nMar\nDec\n');
+  });
+
+  test('-M unknowns sort before months, then whole-line', async () => {
+    const h = makeIO({ args: ['sort', '-M'], stdinText: 'foo\nJan\nbar\nDec\n' });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('bar\nfoo\nJan\nDec\n');
+  });
+
+  // ── -g general numeric ────────────────────────────────────────────────────
+  test('-g general numeric with scientific notation', async () => {
+    const h = makeIO({ args: ['sort', '-g'], stdinText: '1e3\n5\n1.5e1\n' });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('5\n1.5e1\n1e3\n');
+  });
+
+  test('-g orders nan < -inf < finite < inf', async () => {
+    const h = makeIO({ args: ['sort', '-g'], stdinText: 'inf\n-inf\n0\nnan\n' });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('nan\n-inf\n0\ninf\n');
+  });
+
+  // ── -c / -C check modes ───────────────────────────────────────────────────
+  test('-c passes on sorted input (exit 0, no output)', async () => {
+    const h = makeIO({ args: ['sort', '-c'], stdinText: 'a\nb\nc\n' });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('');
+    expect(h.err()).toBe('');
+  });
+
+  test('-c reports first disorder and exits 1', async () => {
+    const h = makeIO({ args: ['sort', '-c'], stdinText: 'b\na\n' });
+    expect(await sortCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('');
+    expect(h.err()).toBe('sort: -:2: disorder: a\n');
+  });
+
+  test('-c on a file names the file in the diagnostic', async () => {
+    const h = makeIO({ args: ['sort', '-c', '/f'], files: { '/f': 'b\na\n' } });
+    expect(await sortCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('sort: /f:2: disorder: a\n');
+  });
+
+  test('-C is quiet on disorder (exit 1, no message)', async () => {
+    const h = makeIO({ args: ['sort', '-C'], stdinText: 'b\na\n' });
+    expect(await sortCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('');
+  });
+
+  test('-c -u treats an equal adjacent pair as disorder', async () => {
+    const h = makeIO({ args: ['sort', '-c', '-u'], stdinText: 'a\na\n' });
+    expect(await sortCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('sort: -:2: disorder: a\n');
+  });
+
+  test('-c on equal adjacent pair without -u is ordered', async () => {
+    const h = makeIO({ args: ['sort', '-c'], stdinText: 'a\na\nb\n' });
+    expect(await sortCommand(h.io)).toBe(0);
+  });
+
+  // ── -u -k dedups by key only ──────────────────────────────────────────────
+  test('-u -k dedups by the key, not the whole line', async () => {
+    const h = makeIO({ args: ['sort', '-u', '-k1,1'], stdinText: 'a 1\na 2\nb 3\n' });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a 1\nb 3\n');
+  });
+
+  // ── -z NUL delimiter ──────────────────────────────────────────────────────
+  test('-z reads/writes NUL-delimited records', async () => {
+    const h = makeIO({ args: ['sort', '-z'], stdinText: 'b\0a\0c\0' });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\0b\0c\0');
+  });
+
+  // ── -o output file ────────────────────────────────────────────────────────
+  test('-o writes the sorted result to a file (stdout empty)', async () => {
+    const h = makeIO({ args: ['sort', '-o', '/out', '/in'], files: { '/in': 'b\na\nc\n' } });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('');
+    expect(h.file('/out')).toBe('a\nb\nc\n');
+  });
+
+  test('-o with a separate input operand (not misparsed as input)', async () => {
+    const h = makeIO({ args: ['sort', '-o', '/out', '/in'], files: { '/in': 'z\ny\nx\n' } });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.file('/out')).toBe('x\ny\nz\n');
+  });
+
+  test('-k2,2h per-key human numeric', async () => {
+    const h = makeIO({ args: ['sort', '-t', ' ', '-k2,2h'], stdinText: 'a 2K\nb 1M\nc 500\n' });
+    expect(await sortCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('c 500\na 2K\nb 1M\n');
+  });
+
   describe('parseKey', () => {
     test('field only', () => { expect(parseKey('2')).toMatchObject({ startField: 2, startChar: 1 }); });
     test('field.char with end+numeric', () => {
-      expect(parseKey('2.3,4n')).toMatchObject({ startField: 2, startChar: 3, endField: 4, numeric: true });
+      expect(parseKey('2.3,4n')).toMatchObject({ startField: 2, startChar: 3, endField: 4, kind: 'numeric' });
     });
     test('per-key reverse flag', () => {
       expect(parseKey('2,2r')).toMatchObject({ startField: 2, endField: 2, reverse: true });

@@ -7,6 +7,7 @@ function makeIO(opts: {
   args: string[];
   stdinBytes?: Uint8Array;
   stdinText?: string;
+  files?: Record<string, string | Uint8Array>;
 }): { io: CommandIO; out(): Uint8Array; outText(): string; err(): string } {
   const enc = new TextEncoder();
   const bytes = opts.stdinBytes ?? (opts.stdinText !== undefined ? enc.encode(opts.stdinText) : new Uint8Array());
@@ -27,8 +28,32 @@ function makeIO(opts: {
     for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
     return buf;
   };
+  // A minimal fd-backed fs for FILE operands: `fs/open` opens a seeded file (or
+  // throws ENOENT), `fs/read` streams it in 64 KiB chunks, `fs/close` frees the fd.
+  const files = new Map<string, Uint8Array>();
+  for (const [p, c] of Object.entries(opts.files ?? {})) {
+    files.set(p.startsWith('/') ? p : '/' + p, typeof c === 'string' ? enc.encode(c) : c);
+  }
+  const fds = new Map<number, { data: Uint8Array; off: number }>();
+  let nextFd = 3;
+  const syscall = async (call: string, args: Record<string, unknown>): Promise<unknown> => {
+    if (call === 'fs/open') {
+      const path = String(args.path);
+      const key = path.startsWith('/') ? path : '/' + path;
+      const data = files.get(key);
+      if (data === undefined) throw Object.assign(new Error('no-entry'), { code: 'ENOENT' });
+      const fd = nextFd++; fds.set(fd, { data, off: 0 }); return { fd };
+    }
+    if (call === 'fs/read') {
+      const e = fds.get(Number(args.fd))!;
+      const slice = e.data.subarray(e.off, e.off + Number(args.len ?? 65536));
+      e.off += slice.byteLength; return new Uint8Array(slice);
+    }
+    if (call === 'fs/close') { fds.delete(Number(args.fd)); return {}; }
+    return {};
+  };
   return {
-    io: { args: opts.args, env: {}, cwd: '/', stdin, stdout, stderr, syscall: async () => ({}) },
+    io: { args: opts.args, env: {}, cwd: '/', stdin, stdout, stderr, syscall },
     out: () => concat(outChunks),
     outText: () => decode(outChunks),
     err: () => decode(errChunks),
@@ -119,5 +144,56 @@ describe('base64 command', () => {
     const code = await base64Command(h.io);
     expect(code).toBe(1);
     expect(h.err()).toContain('invalid');
+  });
+
+  // ── GNU parity: FILE operand, extra-operand, missing-file, -i, bad option ──
+
+  test('reads the FILE operand (not stdin) when given', async () => {
+    // stdin here is a decoy; GNU reads the file operand.
+    const h = makeIO({ args: ['base64', 'f.txt'], files: { 'f.txt': 'hello world\n' }, stdinText: 'DECOY' });
+    expect(await base64Command(h.io)).toBe(0);
+    expect(h.outText()).toBe('aGVsbG8gd29ybGQK\n');
+  });
+
+  test('a lone - reads stdin', async () => {
+    const h = makeIO({ args: ['base64', '-'], stdinText: 'hello' });
+    expect(await base64Command(h.io)).toBe(0);
+    expect(h.outText()).toBe('aGVsbG8=\n');
+  });
+
+  test('an extra operand errors and exits 1', async () => {
+    const h = makeIO({ args: ['base64', 'a.txt', 'b.txt'], files: { 'a.txt': 'x', 'b.txt': 'y' } });
+    expect(await base64Command(h.io)).toBe(1);
+    expect(h.err()).toBe('base64: extra operand ‘b.txt’\nTry \'base64 --help\' for more information.\n');
+  });
+
+  test('a missing FILE errors and exits 1', async () => {
+    const h = makeIO({ args: ['base64', 'nope.txt'], files: {} });
+    expect(await base64Command(h.io)).toBe(1);
+    expect(h.err()).toBe('base64: nope.txt: No such file or directory\n');
+  });
+
+  test('-d -i ignores non-alphabet garbage', async () => {
+    const h = makeIO({ args: ['base64', '-d', '-i'], stdinText: 'aGVsbG8=\n!!!\n' });
+    expect(await base64Command(h.io)).toBe(0);
+    expect(new TextDecoder().decode(h.out())).toBe('hello');
+  });
+
+  test('-d without -i rejects garbage (exit 1)', async () => {
+    const h = makeIO({ args: ['base64', '-d'], stdinText: 'aGVsbG8=\n!!!\n' });
+    expect(await base64Command(h.io)).toBe(1);
+    expect(h.err()).toBe('base64: invalid input\n');
+  });
+
+  test('an unknown short flag errors like GNU (exit 1)', async () => {
+    const h = makeIO({ args: ['base64', '-Z'], stdinText: '' });
+    expect(await base64Command(h.io)).toBe(1);
+    expect(h.err()).toBe('base64: invalid option -- \'Z\'\nTry \'base64 --help\' for more information.\n');
+  });
+
+  test('an unknown long flag errors like GNU (exit 1)', async () => {
+    const h = makeIO({ args: ['base64', '--bogus'], stdinText: '' });
+    expect(await base64Command(h.io)).toBe(1);
+    expect(h.err()).toBe('base64: unrecognized option \'--bogus\'\nTry \'base64 --help\' for more information.\n');
   });
 });

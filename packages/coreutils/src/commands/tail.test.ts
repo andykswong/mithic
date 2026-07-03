@@ -64,4 +64,80 @@ describe('tail', () => {
     expect(await tailCommand(h.io)).toBe(1);
     expect(h.err()).toContain('tail:');
   });
+
+  test('missing file uses canonical errno text', async () => {
+    const h = makeIO({ args: ['tail', '/missing'] });
+    expect(await tailCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('tail: cannot open \'/missing\' for reading: No such file or directory\n');
+  });
+
+  // ── legacy -N ─────────────────────────────────────────────────────────────
+  test('legacy -N form (last N lines)', async () => {
+    const h = makeIO({ args: ['tail', '-3'], stdinText: 'a\nb\nc\nd\ne\n' });
+    expect(await tailCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('c\nd\ne\n');
+  });
+
+  // ── negative -c/-n mean "last N" ──────────────────────────────────────────
+  test('-c -3 = last 3 bytes', async () => {
+    const h = makeIO({ args: ['tail', '-c', '-3'], stdinText: 'abcdef' });
+    expect(await tailCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('def');
+  });
+
+  test('-n -3 = last 3 lines', async () => {
+    const h = makeIO({ args: ['tail', '-n', '-3'], stdinText: 'a\nb\nc\nd\ne\n' });
+    expect(await tailCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('c\nd\ne\n');
+  });
+
+  test('-c -3 on a file', async () => {
+    const h = makeIO({ args: ['tail', '-c', '-3', '/a'], files: { '/a': 'abcdef' } });
+    expect(await tailCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('def');
+  });
+
+  // ── size suffixes ─────────────────────────────────────────────────────────
+  test('-c 1k = last 1024 bytes', async () => {
+    const h = makeIO({ args: ['tail', '-c', '1k'], stdinText: 'x'.repeat(2000) });
+    expect(await tailCommand(h.io)).toBe(0);
+    expect(h.out().length).toBe(1024);
+  });
+
+  test('-c 2b = last 1024 bytes', async () => {
+    const h = makeIO({ args: ['tail', '-c', '2b'], stdinText: 'x'.repeat(2000) });
+    expect(await tailCommand(h.io)).toBe(0);
+    expect(h.out().length).toBe(1024);
+  });
+
+  test('-c +1k starts at byte 1024', async () => {
+    const h = makeIO({ args: ['tail', '-c', '+1k'], stdinText: 'x'.repeat(2000) });
+    expect(await tailCommand(h.io)).toBe(0);
+    expect(h.out().length).toBe(2000 - 1024 + 1); // 977
+  });
+
+  // ── invalid counts ────────────────────────────────────────────────────────
+  test('non-numeric -n exits 1 with GNU message', async () => {
+    const h = makeIO({ args: ['tail', '-n', 'abc'], stdinText: 'a\n' });
+    expect(await tailCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('tail: invalid number of lines: ‘abc’\n');
+  });
+
+  test('non-numeric -c exits 1 with GNU message', async () => {
+    const h = makeIO({ args: ['tail', '-c', 'xyz'], stdinText: 'a\n' });
+    expect(await tailCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('tail: invalid number of bytes: ‘xyz’\n');
+  });
+
+  test('lowercase g suffix is invalid', async () => {
+    const h = makeIO({ args: ['tail', '-c', '1g'], stdinText: 'a\n' });
+    expect(await tailCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('tail: invalid number of bytes: ‘1g’\n');
+  });
+
+  test('-n +0 = whole file (same as +1)', async () => {
+    const h = makeIO({ args: ['tail', '-n', '+0'], stdinText: 'a\nb\nc\n' });
+    expect(await tailCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\nb\nc\n');
+  });
 });

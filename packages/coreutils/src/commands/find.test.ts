@@ -60,6 +60,229 @@ describe('find', () => {
   test('unknown predicate errors', async () => {
     const h = makeIO({ args: ['find', '/r', '-bogus'], files });
     expect(await findCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('find: unknown predicate `-bogus\'\n');
+  });
+});
+
+// ── Expression grammar: ! / -not / -o / -a / ( ) ────────────────────────────
+
+describe('find expression grammar', () => {
+  test('! negates the following test', async () => {
+    const h = makeIO({ args: ['find', '/r', '!', '-name', '*.txt'], files });
+    expect(await findCommand(h.io)).toBe(0);
+    const lines = h.out().trim().split('\n');
+    expect(lines).toEqual(['/r', '/r/b.md', '/r/sub', '/r/sub/deep']);
+    expect(lines).not.toContain('/r/a.txt');
+  });
+
+  test('-not is an alias for !', async () => {
+    const h = makeIO({ args: ['find', '/r', '-not', '-type', 'f'], files });
+    await findCommand(h.io);
+    const lines = h.out().trim().split('\n');
+    expect(lines).toEqual(['/r', '/r/sub', '/r/sub/deep']);
+  });
+
+  test('-o is a short-circuiting OR', async () => {
+    const h = makeIO({ args: ['find', '/r', '-name', '*.txt', '-o', '-name', '*.md'], files });
+    await findCommand(h.io);
+    const lines = h.out().trim().split('\n').sort();
+    expect(lines).toEqual(['/r/a.txt', '/r/b.md', '/r/sub/c.txt', '/r/sub/deep/d.txt']);
+  });
+
+  test('parentheses group -o under a following -a', async () => {
+    // ( -name *.txt -o -name *.md ) -a -type f
+    const h = makeIO({ args: ['find', '/r', '(', '-name', '*.txt', '-o', '-name', '*.md', ')', '-type', 'f'], files });
+    await findCommand(h.io);
+    const lines = h.out().trim().split('\n').sort();
+    expect(lines).toEqual(['/r/a.txt', '/r/b.md', '/r/sub/c.txt', '/r/sub/deep/d.txt']);
+    expect(lines).not.toContain('/r'); // /r is a dir, fails -type f
+  });
+
+  test('precedence: -a binds tighter than -o', async () => {
+    // name *.txt  -o  ( name b.md -a type f )  → both branches match files
+    const h = makeIO({ args: ['find', '/r', '-name', '*.txt', '-o', '-name', 'b.md', '-a', '-type', 'f'], files });
+    await findCommand(h.io);
+    const lines = h.out().trim().split('\n').sort();
+    expect(lines).toEqual(['/r/a.txt', '/r/b.md', '/r/sub/c.txt', '/r/sub/deep/d.txt']);
+  });
+
+  test('an action in the expression suppresses the implicit -print (short-circuit -o -print)', async () => {
+    // name b.md -o -print : b.md matches (no print), everything else prints.
+    const h = makeIO({ args: ['find', '/r', '-name', 'b.md', '-o', '-print'], files });
+    await findCommand(h.io);
+    const lines = h.out().trim().split('\n');
+    expect(lines).not.toContain('/r/b.md');
+    expect(lines).toContain('/r/a.txt');
+    expect(lines).toContain('/r');
+  });
+
+  test('empty parentheses error', async () => {
+    const h = makeIO({ args: ['find', '/r', '(', ')'], files });
+    expect(await findCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('find: invalid expression; empty parentheses are not allowed.\n');
+  });
+
+  test('unbalanced open paren error', async () => {
+    const h = makeIO({ args: ['find', '/r', '(', '-name', 'x'], files });
+    expect(await findCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('find: invalid expression; I was expecting to find a \')\' somewhere but did not see one.\n');
+  });
+
+  test('too many close parens error', async () => {
+    const h = makeIO({ args: ['find', '/r', '-name', 'x', ')'], files });
+    expect(await findCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('find: you have too many \')\'\n');
+  });
+
+  test('binary operator with nothing before it errors', async () => {
+    const h = makeIO({ args: ['find', '/r', '-o', '-name', 'x'], files });
+    expect(await findCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('find: invalid expression; you have used a binary operator \'-o\' with nothing before it.\n');
+  });
+
+  test('binary operator with nothing after it errors', async () => {
+    const h = makeIO({ args: ['find', '/r', '-name', 'x', '-o'], files });
+    expect(await findCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('find: expected an expression after \'-o\'\n');
+  });
+
+  test('trailing operator before a close paren errors', async () => {
+    const h = makeIO({ args: ['find', '/r', '(', '-name', 'x', '-o', ')'], files });
+    expect(await findCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('find: expected an expression between \'-o\' and \')\'\n');
+  });
+
+  test('! with nothing after it errors', async () => {
+    const h = makeIO({ args: ['find', '/r', '!'], files });
+    expect(await findCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('find: expected an expression after \'!\'\n');
+  });
+
+  test('a leading ) is a PATH operand (not an operator) — GNU stat()s it', async () => {
+    // GNU treats a leading `)` / `,` as a starting path, erroring with fancy quotes.
+    const h = makeIO({ args: ['find', ')'], files });
+    expect(await findCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('find: ‘)’: No such file or directory\n');
+  });
+
+  test('-true always matches, -false never does', async () => {
+    const t = makeIO({ args: ['find', '/r', '-maxdepth', '0', '-true'], files });
+    await findCommand(t.io);
+    expect(t.out().trim()).toBe('/r');
+    const f = makeIO({ args: ['find', '/r', '-maxdepth', '0', '-false'], files });
+    expect(await findCommand(f.io)).toBe(0);
+    expect(f.out()).toBe('');
+  });
+});
+
+// ── -print0 / multi-action / path prefix ────────────────────────────────────
+
+describe('find -print0 / actions / paths', () => {
+  test('-print0 separates matches with NUL and no trailing newline', async () => {
+    const h = makeIO({ args: ['find', '/d', '-print0'], files: { '/d/f.txt': '1' } });
+    await findCommand(h.io);
+    expect(h.out()).toBe('/d\0/d/f.txt\0');
+  });
+
+  test('multiple actions each run (-print -print)', async () => {
+    const h = makeIO({ args: ['find', '/d', '-name', 'f.txt', '-print', '-print'], files: { '/d/f.txt': '1' } });
+    await findCommand(h.io);
+    expect(h.out()).toBe('/d/f.txt\n/d/f.txt\n');
+  });
+
+  test('start operand `.` keeps its ./ prefix on children', async () => {
+    // Path-prefix normalization must NOT strip `./` — needed for `find | xargs` and `-exec {}`.
+    const h = makeIO({ args: ['find', '.', '-name', '*.txt'], cwd: '/', files: { '/r/a.txt': '1' } });
+    await findCommand(h.io);
+    expect(h.out().trim().split('\n')).toEqual(['./r/a.txt']);
+  });
+
+  test('start operand with trailing slash does not double the separator', async () => {
+    const h = makeIO({ args: ['find', '/r/', '-name', 'a.txt'], files });
+    await findCommand(h.io);
+    expect(h.out().trim().split('\n')).toEqual(['/r/a.txt']);
+  });
+});
+
+// ── -type comma-list / validation ───────────────────────────────────────────
+
+describe('find -type list and validation', () => {
+  test('-type f,d matches files OR directories', async () => {
+    const h = makeIO({ args: ['find', '/r', '-type', 'f,d'], files });
+    await findCommand(h.io);
+    const lines = h.out().trim().split('\n').sort();
+    // everything (only files + dirs in the fixture)
+    expect(lines).toEqual(['/r', '/r/a.txt', '/r/b.md', '/r/sub', '/r/sub/c.txt', '/r/sub/deep', '/r/sub/deep/d.txt']);
+  });
+
+  test('invalid -type value errors like GNU', async () => {
+    const h = makeIO({ args: ['find', '/r', '-type', 'x'], files });
+    expect(await findCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('find: Unknown argument to -type: x\n');
+  });
+
+  test('invalid -maxdepth value errors like GNU (fancy quotes)', async () => {
+    const h = makeIO({ args: ['find', '/r', '-maxdepth', 'abc'], files });
+    expect(await findCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('find: Expected a positive decimal integer argument to -maxdepth, but got ‘abc’\n');
+  });
+
+  test('negative -maxdepth is rejected', async () => {
+    const h = makeIO({ args: ['find', '/r', '-maxdepth', '-1'], files });
+    expect(await findCommand(h.io)).toBe(1);
+    expect(h.err()).toContain('Expected a positive decimal integer');
+  });
+});
+
+// ── -printf %d / %h / %P / %m ────────────────────────────────────────────────
+
+describe('find -printf %d/%h/%P/%m', () => {
+  test('%d is the depth from the start point (start = 0)', async () => {
+    const h = makeIO({ args: ['find', '/r', '-printf', '%d %p\n'], files: { '/r/a.txt': '1', '/r/sub/c.txt': '2' } });
+    await findCommand(h.io);
+    const lines = h.out().trim().split('\n').sort();
+    expect(lines).toContain('0 /r');
+    expect(lines).toContain('1 /r/a.txt');
+    expect(lines).toContain('2 /r/sub/c.txt');
+  });
+
+  test('%h is the leading directories (dirname); %P is the path minus the start prefix', async () => {
+    const h = makeIO({ args: ['find', '/r', '-printf', '%h|%P\n'], files: { '/r/sub/c.txt': '1' } });
+    await findCommand(h.io);
+    const lines = h.out().trim().split('\n');
+    // start point: %h = /, %P = ''  ; nested: %h = /r/sub, %P = sub/c.txt
+    expect(lines).toContain('/|');
+    expect(lines).toContain('/r|sub');
+    expect(lines).toContain('/r/sub|sub/c.txt');
+  });
+
+  test('%m is the octal permission bits without a leading 0', async () => {
+    const h = makeIO({ args: ['find', '/p', '-type', 'f', '-printf', '%m\n'], files: { '/p/file': 'x' } });
+    await findCommand(h.io);
+    expect(h.out()).toBe('644\n');
+  });
+
+  test('\\0 escape in -printf emits a NUL', async () => {
+    const h = makeIO({ args: ['find', '/p', '-type', 'f', '-printf', '%p\\0'], files: { '/p/file': 'x' } });
+    await findCommand(h.io);
+    expect(h.out()).toBe('/p/file\0');
+  });
+});
+
+// ── --version / --help ───────────────────────────────────────────────────────
+
+describe('find --version / --help', () => {
+  test('--version prints a version line and exits 0', async () => {
+    const h = makeIO({ args: ['find', '--version'], files });
+    expect(await findCommand(h.io)).toBe(0);
+    expect(h.out()).toContain('find');
+    expect(h.out()).toMatch(/\d+\.\d+\.\d+/);
+  });
+
+  test('--help prints usage and exits 0', async () => {
+    const h = makeIO({ args: ['find', '--help'], files });
+    expect(await findCommand(h.io)).toBe(0);
+    expect(h.out()).toContain('Usage: find');
   });
 });
 

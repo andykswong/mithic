@@ -90,11 +90,11 @@ describe('bsdSum', () => {
     expect(checksum).toBeGreaterThanOrEqual(0);
     expect(checksum).toBeLessThanOrEqual(65535);
   });
-  test('block count', () => {
-    const data = new Uint8Array(512);
-    expect(bsdSum(data).blocks).toBe(1);
-    const data2 = new Uint8Array(513);
-    expect(bsdSum(data2).blocks).toBe(2);
+  test('block count (GNU sum uses 1024-byte blocks for the BSD algorithm)', () => {
+    expect(bsdSum(new Uint8Array(1024)).blocks).toBe(1);
+    expect(bsdSum(new Uint8Array(1025)).blocks).toBe(2);
+    expect(bsdSum(new Uint8Array(512)).blocks).toBe(1);
+    expect(bsdSum(new Uint8Array(0)).blocks).toBe(0);
   });
 });
 
@@ -122,6 +122,63 @@ describe('cksum command', () => {
     const h = makeIO({ args: ['cksum', '/missing.txt'] });
     expect(await cksumCommand(h.io)).toBe(1);
     expect(h.err()).toContain('missing.txt');
+  });
+
+  // ── GNU-9 -a/--algorithm interface ──
+
+  test('-a crc is the POSIX cksum CRC (default)', async () => {
+    const h = makeIO({ args: ['cksum', '-a', 'crc', '/f.txt'], files: { '/f.txt': 'hello world\n' } });
+    expect(await cksumCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('3733384285 12 /f.txt\n');
+  });
+
+  test('-a crc32b is the reflected zlib CRC-32', async () => {
+    const h = makeIO({ args: ['cksum', '-a', 'crc32b', '/f.txt'], files: { '/f.txt': 'hello world\n' } });
+    await cksumCommand(h.io);
+    expect(h.out()).toBe('2936552237 12 /f.txt\n');
+  });
+
+  test('-a sha256 prints the BSD-tag form by default', async () => {
+    const h = makeIO({ args: ['cksum', '-a', 'sha256', '/f.txt'], files: { '/f.txt': 'hello world\n' } });
+    expect(await cksumCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('SHA256 (/f.txt) = a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447\n');
+  });
+
+  test('-a md5 tag form', async () => {
+    const h = makeIO({ args: ['cksum', '-a', 'md5', '/f.txt'], files: { '/f.txt': 'hello world\n' } });
+    await cksumCommand(h.io);
+    expect(h.out()).toBe('MD5 (/f.txt) = 6f5902ac237024bdd0c176cb93063dc4\n');
+  });
+
+  test('--untagged -a sha256 prints the GNU sum form', async () => {
+    const h = makeIO({ args: ['cksum', '--untagged', '-a', 'sha256', '/f.txt'], files: { '/f.txt': 'hello world\n' } });
+    await cksumCommand(h.io);
+    expect(h.out()).toBe('a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447  /f.txt\n');
+  });
+
+  test('-a sha256 over stdin names the source `-`', async () => {
+    const h = makeIO({ args: ['cksum', '-a', 'sha256'], stdinText: 'hello world\n' });
+    await cksumCommand(h.io);
+    expect(h.out()).toBe('SHA256 (-) = a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447\n');
+  });
+
+  test('-a bsd reuses the BSD sum format', async () => {
+    const h = makeIO({ args: ['cksum', '-a', 'bsd', '/f.txt'], files: { '/f.txt': 'hello world\n' } });
+    await cksumCommand(h.io);
+    expect(h.out()).toBe('03762     1 /f.txt\n');
+  });
+
+  test('-a sysv reuses the System V sum format', async () => {
+    const h = makeIO({ args: ['cksum', '-a', 'sysv', '/f.txt'], files: { '/f.txt': 'hello world\n' } });
+    await cksumCommand(h.io);
+    expect(h.out()).toBe('1126 1 /f.txt\n');
+  });
+
+  test('an invalid -a argument lists the valid ones and exits 1', async () => {
+    const h = makeIO({ args: ['cksum', '-a', 'bogus', '/f.txt'], files: { '/f.txt': 'x' } });
+    expect(await cksumCommand(h.io)).toBe(1);
+    expect(h.err()).toContain('invalid argument ‘bogus’ for ‘--algorithm’');
+    expect(h.err()).toContain('- ‘sha256’');
   });
 });
 

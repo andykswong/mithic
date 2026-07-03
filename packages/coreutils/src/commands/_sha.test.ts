@@ -48,6 +48,58 @@ describe('sha256sum', () => {
     expect(await sha256sumCommand(h.io)).toBe(0);
     expect(h.out()).toBe('/good: OK\n');
   });
+
+  // ── GNU parity: --tag / -b / -z, verify-only-option errors, wrong-length line ──
+
+  test('--tag prints "SHA256 (name) = hex"', async () => {
+    const h = makeIO({ args: ['sha256sum', '--tag', '/f'], files: { '/f': 'abc' } });
+    await sha256sumCommand(h.io);
+    expect(h.out()).toBe(`SHA256 (/f) = ${ABC.sha256}\n`);
+  });
+
+  test('-b marks the name with an asterisk', async () => {
+    const h = makeIO({ args: ['sha256sum', '-b', '/f'], files: { '/f': 'abc' } });
+    await sha256sumCommand(h.io);
+    expect(h.out()).toBe(`${ABC.sha256} */f\n`);
+  });
+
+  test('-z NUL-terminates the line', async () => {
+    const h = makeIO({ args: ['sha256sum', '-z', '/f'], files: { '/f': 'abc' } });
+    await sha256sumCommand(h.io);
+    expect(h.out()).toBe(`${ABC.sha256}  /f\0`);
+  });
+
+  test('--status without -c errors', async () => {
+    const h = makeIO({ args: ['sha256sum', '--status', '/f'], files: { '/f': 'abc' } });
+    expect(await sha256sumCommand(h.io)).toBe(1);
+    expect(h.err()).toContain('the --status option is meaningful only when verifying checksums');
+  });
+
+  test('-c rejects a wrong-length (non-SHA256) hex line as unformatted', async () => {
+    // A 32-char (MD5-length) hex is not a valid SHA256 line → "no properly formatted".
+    const h = makeIO({
+      args: ['sha256sum', '-c', '/sums'],
+      files: { '/f': 'abc', '/sums': '6f5902ac237024bdd0c176cb93063dc4  /f\n' },
+    });
+    expect(await sha256sumCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('sha256sum: /sums: no properly formatted checksum lines found\n');
+  });
+
+  test('-c --status is silent on mismatch', async () => {
+    const h = makeIO({
+      args: ['sha256sum', '-c', '--status', '/sums'],
+      files: { '/bad': 'xyz', '/sums': `${ABC.sha256}  /bad\n` },
+    });
+    expect(await sha256sumCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('');
+    expect(h.err()).toBe('');
+  });
+
+  test('--tag label matches each algorithm (SHA1)', async () => {
+    const h = makeIO({ args: ['sha1sum', '--tag', '/f'], files: { '/f': 'abc' } });
+    await sha1sumCommand(h.io);
+    expect(h.out()).toBe(`SHA1 (/f) = ${ABC.sha1}\n`);
+  });
 });
 
 describe('sha1sum', () => {

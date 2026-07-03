@@ -264,10 +264,129 @@ describe('grep', () => {
     expect(h.out()).toBe('a.c\n');
   });
 
-  test('--color=always wraps matches in SGR', async () => {
+  test('--color=always wraps matches in SGR with GNU \\e[K', async () => {
     const h = makeIO({ args: ['grep', '--color=always', 'b'], stdinText: 'abc\n' });
     expect(await grepCommand(h.io)).toBe(0);
-    expect(h.out()).toBe('a\x1b[01;31mb\x1b[0mc\n');
+    // GNU emits `\e[01;31m\e[K` before and `\e[m\e[K` after each match.
+    expect(h.out()).toBe('a\x1b[01;31m\x1b[Kb\x1b[m\x1b[Kc\n');
+  });
+
+  test('--color=always colors -o matches only', async () => {
+    const h = makeIO({ args: ['grep', '--color=always', '-o', 'foo'], stdinText: 'xfooxfoo\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('\x1b[01;31m\x1b[Kfoo\x1b[m\x1b[K\n\x1b[01;31m\x1b[Kfoo\x1b[m\x1b[K\n');
+  });
+
+  test('--color=always colors filename/line-number/separator fields', async () => {
+    const h = makeIO({ args: ['grep', '--color=always', '-Hn', 'foo', '/a.txt'], files: { '/a.txt': 'abc\nfoobar\n' } });
+    expect(await grepCommand(h.io)).toBe(0);
+    // magenta filename (35), cyan `:` (36), green line number (32), red match.
+    expect(h.out()).toBe(
+      '\x1b[35m\x1b[K/a.txt\x1b[m\x1b[K\x1b[36m\x1b[K:\x1b[m\x1b[K'
+      + '\x1b[32m\x1b[K2\x1b[m\x1b[K\x1b[36m\x1b[K:\x1b[m\x1b[K'
+      + '\x1b[01;31m\x1b[Kfoo\x1b[m\x1b[Kbar\n',
+    );
+  });
+
+  // ── word-boundary / leading-orphan / -P / -H / -h / -b / -z ────────────────
+
+  test('\\< \\> word-boundary anchors match whole words', async () => {
+    const h = makeIO({ args: ['grep', '\\<bar\\>'], stdinText: 'foo bar\nbarfoo\nfoobar\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('foo bar\n');
+  });
+
+  test('\\< with -o extracts the word start', async () => {
+    const h = makeIO({ args: ['grep', '-o', '\\<foo'], stdinText: 'foo barfoo\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('foo\n');
+  });
+
+  test('leading orphan * in BRE is a literal, not an error', async () => {
+    const h = makeIO({ args: ['grep', '*star'], stdinText: '*star\nplain\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('*star\n');
+  });
+
+  test('leading orphan * in ERE is a no-op (matches as if absent)', async () => {
+    const h = makeIO({ args: ['grep', '-E', '*x'], stdinText: '*x\nax\ny\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('*x\nax\n');
+  });
+
+  test('-o suppresses spurious empty-match blank lines', async () => {
+    const h = makeIO({ args: ['grep', '-o', 'a*'], stdinText: 'aaabaaa\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('aaa\naaa\n');
+  });
+
+  test('-o with an all-empty match matches the line but prints nothing (exit 0)', async () => {
+    const h = makeIO({ args: ['grep', '-o', 'x*'], stdinText: 'abc\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('');
+  });
+
+  test('-P PCRE lookahead', async () => {
+    const h = makeIO({ args: ['grep', '-P', 'foo(?=bar)'], stdinText: 'foobar\nfoobaz\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('foobar\n');
+  });
+
+  test('-P PCRE lookbehind', async () => {
+    const h = makeIO({ args: ['grep', '-oP', '(?<=foo)bar'], stdinText: 'foobar\nxxbar\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('bar\n');
+  });
+
+  test('-H forces the filename prefix on a single file', async () => {
+    const h = makeIO({ args: ['grep', '-H', 'bar', '/a.txt'], files: { '/a.txt': 'foo bar\nbarfoo\n' } });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('/a.txt:foo bar\n/a.txt:barfoo\n');
+  });
+
+  test('-h suppresses the filename prefix even with multiple files', async () => {
+    const h = makeIO({
+      args: ['grep', '-h', 'bar', '/a.txt', '/b.txt'],
+      files: { '/a.txt': 'foo bar\n', '/b.txt': 'zzbar\n' },
+    });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('foo bar\nzzbar\n');
+  });
+
+  test('-b prints the byte offset of each matching line', async () => {
+    const h = makeIO({ args: ['grep', '-b', 'bar', '/a.txt'], files: { '/a.txt': 'foo bar\nbarfoo\n' } });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('0:foo bar\n8:barfoo\n');
+  });
+
+  test('-b with -o prints the byte offset of each match', async () => {
+    const h = makeIO({ args: ['grep', '-bo', 'bar'], stdinText: 'xxbarxxbar\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('2:bar\n7:bar\n');
+  });
+
+  test('-b with -n prints byteoffset then line number', async () => {
+    const h = makeIO({ args: ['grep', '-bn', 'bar'], stdinText: 'a\nbar\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('2:2:bar\n');
+  });
+
+  test('-z NUL-separated records, NUL-terminated output', async () => {
+    const h = makeIO({ args: ['grep', '-z', 'foo'], stdinText: 'foo\0bar\0foobar\0' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('foo\0foobar\0');
+  });
+
+  test('-z record may contain newlines', async () => {
+    const h = makeIO({ args: ['grep', '-z', 'x'], stdinText: 'a\nx\0b\ny\0' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\nx\0');
+  });
+
+  test('-c with -z still terminates the count with a newline', async () => {
+    const h = makeIO({ args: ['grep', '-cz', 'x'], stdinText: 'x\0y\0x\0' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('2\n');
   });
 
   // ── B2.1: -q / -m / --include / --exclude ─────────────────────────────────

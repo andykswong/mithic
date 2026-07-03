@@ -481,3 +481,181 @@ describe('sed cycle-engine edge cases (SED-1)', () => {
     expect(h.out()).toBe('a\nb');
   });
 });
+
+describe('sed — case conversion in replacement', () => {
+  test('\\U uppercases the rest', async () => {
+    const h = makeIO({ args: ['sed', 's/.*/\\U&/'], stdinText: 'hello world\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('HELLO WORLD\n');
+  });
+
+  test('\\L lowercases the rest', async () => {
+    const h = makeIO({ args: ['sed', 's/.*/\\L&/'], stdinText: 'HELLO\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('hello\n');
+  });
+
+  test('\\u uppercases only the next character (per word)', async () => {
+    const h = makeIO({ args: ['sed', 's/\\w\\+/\\u&/g'], stdinText: 'hello world\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('Hello World\n');
+  });
+
+  test('\\l lowercases only the next character', async () => {
+    const h = makeIO({ args: ['sed', 's/\\(.\\)/\\l\\1/'], stdinText: 'ABC\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('aBC\n');
+  });
+
+  test('\\E ends a \\U run', async () => {
+    const h = makeIO({ args: ['sed', 's/abc/\\U&\\Edef/'], stdinText: 'abcdef\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('ABCdefdef\n');
+  });
+
+  test('\\u + \\L combine for title-casing', async () => {
+    const h = makeIO({ args: ['sed', 's/\\(\\w\\)\\(\\w*\\)/\\u\\1\\L\\2/g'], stdinText: 'hELLO wORLD\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('Hello World\n');
+  });
+});
+
+describe('sed — buffer anchors, M flag, -z', () => {
+  test('\\` anchors to the start of the pattern space', async () => {
+    const h = makeIO({ args: ['sed', 'N;s/\\`a/X/'], stdinText: 'a\nb\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('X\nb\n');
+  });
+
+  test('\\\' anchors to the end of the pattern space', async () => {
+    const h = makeIO({ args: ['sed', 'N;s/b\\\'/Y/'], stdinText: 'a\nb\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\nY\n');
+  });
+
+  test('M flag makes ^/$ match at embedded newlines', async () => {
+    const h = makeIO({ args: ['sed', 'N;s/^b$/X/M'], stdinText: 'a\nb\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\nX\n');
+  });
+
+  test('M flag with g matches every embedded line start', async () => {
+    const h = makeIO({ args: ['sed', 'N;s/^./X/Mg'], stdinText: 'ab\ncd\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('Xb\nXd\n');
+  });
+
+  test('-z treats NUL as the record separator', async () => {
+    const h = makeIO({ args: ['sed', '-z', 's/a/X/'], stdinText: 'a b\0c a\0' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('X b\0c X\0');
+  });
+
+  test('-z: newlines inside a record can be substituted', async () => {
+    const h = makeIO({ args: ['sed', '-z', 's/\\n/,/g'], stdinText: 'a\nb\0c\nd\0' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a,b\0c,d\0');
+  });
+});
+
+describe('sed — l / z / F / v and empty a\\ i\\', () => {
+  test('l lists the pattern space with escapes and a $ marker', async () => {
+    const h = makeIO({ args: ['sed', '-n', 'l'], stdinText: 'a\tb\\c\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\\tb\\\\c$\n');
+  });
+
+  test('l with a wrap width breaks long lines with a trailing backslash', async () => {
+    const h = makeIO({ args: ['sed', '-n', 'l 5'], stdinText: 'aaaaaaaaaa\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('aaaa\\\naaaa\\\naa$\n');
+  });
+
+  test('l 0 disables wrapping', async () => {
+    const long = 'x'.repeat(80);
+    const h = makeIO({ args: ['sed', '-n', 'l 0'], stdinText: long + '\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe(long + '$\n');
+  });
+
+  test('z zaps the pattern space to empty', async () => {
+    const h = makeIO({ args: ['sed', 'z'], stdinText: 'abc\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('\n');
+  });
+
+  test('F prints the current filename', async () => {
+    const h = makeIO({ args: ['sed', '-n', 'F', '/f.txt'], files: { '/f.txt': 'x\ny\n' } });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('/f.txt\n/f.txt\n');
+  });
+
+  test('v is a no-op that does not abort the script', async () => {
+    const h = makeIO({ args: ['sed', 'v;s/x/Y/'], stdinText: 'x\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('Y\n');
+  });
+
+  test('e command (unsupported in sandbox) is a no-op, not a parse error', async () => {
+    const h = makeIO({ args: ['sed', 'e echo hi'], stdinText: 'x\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('x\n');
+  });
+
+  test('bare a\\ at end of script appends nothing', async () => {
+    const h = makeIO({ args: ['sed', 'a\\'], stdinText: 'x\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('x\n');
+  });
+
+  test('bare i\\ at end of script inserts nothing', async () => {
+    const h = makeIO({ args: ['sed', 'i\\'], stdinText: 'x\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('x\n');
+  });
+
+  test('a\\ followed by an empty line appends a blank line', async () => {
+    const h = makeIO({ args: ['sed', '-e', 'a\\', '-e', ''], stdinText: 'x\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('x\n\n');
+  });
+});
+
+describe('sed — file commands r / R / w / W', () => {
+  test('r reads a whole file after the cycle', async () => {
+    const h = makeIO({ args: ['sed', 'r /rc.txt'], stdinText: 'x\ny\n', files: { '/rc.txt': 'RC1\nRC2\n' } });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('x\nRC1\nRC2\ny\nRC1\nRC2\n');
+  });
+
+  test('r on a missing file appends nothing', async () => {
+    const h = makeIO({ args: ['sed', 'r /missing'], stdinText: 'x\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('x\n');
+  });
+
+  test('R reads one line of the file per invocation', async () => {
+    const h = makeIO({ args: ['sed', 'R /rr.txt'], stdinText: 'x\ny\nz\n', files: { '/rr.txt': 'L1\nL2\n' } });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('x\nL1\ny\nL2\nz\n');
+  });
+
+  test('w writes each pattern space to a file', async () => {
+    const h = makeIO({ args: ['sed', '-n', 'w /out.txt'], stdinText: 'a\nb\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.files['/out.txt']).toBe('a\nb\n');
+  });
+
+  test('s///w writes only the changed lines', async () => {
+    const h = makeIO({ args: ['sed', 's/a/X/w /out.txt'], stdinText: 'apple\nbanana\ncherry\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('Xpple\nbXnana\ncherry\n');
+    expect(h.files['/out.txt']).toBe('Xpple\nbXnana\n');
+  });
+
+  test('W writes the first line of a multiline pattern space', async () => {
+    const h = makeIO({ args: ['sed', '-n', 'N;W /out.txt'], stdinText: 'a\nb\nc\nd\n' });
+    expect(await sedCommand(h.io)).toBe(0);
+    expect(h.files['/out.txt']).toBe('a\nc\n');
+  });
+});

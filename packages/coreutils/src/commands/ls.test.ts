@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'vitest';
-import { lsCommand, columns, permString, humanSize } from './ls.ts';
+import { lsCommand, columns, commaList, indent, permString, humanSize } from './ls.ts';
 import { makeIO } from './_testio.ts';
 
 describe('ls helpers', () => {
@@ -13,9 +13,22 @@ describe('ls helpers', () => {
     expect(humanSize(1536)).toBe('1.5K');
     expect(humanSize(1048576)).toBe('1.0M');
   });
-  test('columns wraps and newline-terminates', () => {
-    const c = columns(['a', 'b']);
-    expect(c.endsWith('\n')).toBe(true);
+  test('columns (vertical) newline-terminates and lays entries down', () => {
+    const c = columns(['a', 'b'], false);
+    expect(c).toBe('a  b\n');
+  });
+  test('columns (horizontal) lays entries across', () => {
+    // Short names fit on one line; 2-space inter-column gap.
+    expect(columns(['a', 'b', 'c'], true)).toBe('a  b  c\n');
+  });
+  test('commaList joins with ", "', () => {
+    expect(commaList(['a', 'b', 'c'])).toBe('a, b, c\n');
+  });
+  test('indent matches GNU tab-stop rule (2-space gap uses spaces not tab)', () => {
+    // from=47 to=49 → no tab (to/8 == (from+1)/8), two spaces.
+    expect(indent(47, 49)).toBe('  ');
+    // from=1 to=12 → tab to 8 then spaces to 12.
+    expect(indent(1, 12)).toBe('\t    ');
   });
 });
 
@@ -37,25 +50,27 @@ describe('ls', () => {
     expect(h2.out().split('\n')).toContain('.');
   });
 
-  test('-l long format shows perms and size', async () => {
+  test('-l long format shows total header, perms and size', async () => {
     const h = makeIO({ args: ['ls', '-l', '/d'], files: { '/d/f': { content: 'hello', mode: 0o644 } } });
     await lsCommand(h.io);
+    expect(h.out().split('\n')[0]).toMatch(/^total \d+$/); // GNU total header
     expect(h.out()).toContain('-rw-r--r--');
     expect(h.out()).toContain(' 5 ');
   });
 
-  test('-l emits 7 whitespace-delimited fields incl. owner/group (M20)', async () => {
+  test('-l emits GNU-shaped fields incl. owner/group and a Mon DD HH:MM date', async () => {
     const h = makeIO({ args: ['ls', '-l', '/d'], files: { '/d/f': { content: 'hello', mode: 0o644 } } });
     await lsCommand(h.io);
     const line = h.out().trim().split('\n').find((l) => l.includes('-rw-r--r--'))!;
     const fields = line.trim().split(/\s+/);
-    // mode links owner group size mtime name  →  7 fields (mtime is one token).
-    expect(fields).toHaveLength(7);
+    // mode links owner group size Mon DD HH:MM name → date is 3 tokens → 9 total.
+    expect(fields).toHaveLength(9);
     expect(fields[0]).toBe('-rw-r--r--');
     expect(fields[2]).toBe('root'); // owner placeholder
     expect(fields[3]).toBe('root'); // group placeholder
     expect(fields[4]).toBe('5');    // size
-    expect(fields[6]).toBe('f');    // name
+    expect(fields[8]).toBe('f');    // name
+    expect(fields[7]).toMatch(/^\d\d:\d\d$/); // HH:MM
   });
 
   test('-d lists directory itself', async () => {
@@ -89,10 +104,66 @@ describe('ls', () => {
     expect(h.out()).toBe('/f\n');
   });
 
-  test('missing target errors', async () => {
+  test('missing target errors with exit 2 (GNU serious error)', async () => {
     const h = makeIO({ args: ['ls', '/nope'] });
-    expect(await lsCommand(h.io)).toBe(1);
-    expect(h.err()).toContain('cannot access');
+    expect(await lsCommand(h.io)).toBe(2);
+    expect(h.err()).toContain('cannot access \'/nope\': No such file or directory');
+  });
+
+  // ── layout: default one-per-line to a pipe (isatty false) ──────────────────
+
+  test('default is one-per-line to a non-tty (pipe)', async () => {
+    // makeIO does not wire isatty → io.isatty?.(1) ?? false → pipe layout.
+    const h = makeIO({ args: ['ls', '/d'], files: { '/d/f': '1', '/d/g': '2', '/d/sub/b': 'x' } });
+    expect(await lsCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('f\ng\nsub\n');
+  });
+
+  test('default is multi-column (down) to a TTY', async () => {
+    const h = makeIO({ args: ['ls', '/d'], files: { '/d/f': '1', '/d/g': '2', '/d/sub/b': 'x' } });
+    (h.io as { isatty?: (fd: number) => boolean }).isatty = () => true;
+    await lsCommand(h.io);
+    // Short names fit one line, 2-space gaps.
+    expect(h.out()).toBe('f  g  sub\n');
+  });
+
+  test('-m comma-separated list', async () => {
+    const h = makeIO({ args: ['ls', '-m', '/d'], files: { '/d/f': '1', '/d/g': '2', '/d/sub/b': 'x' } });
+    await lsCommand(h.io);
+    expect(h.out()).toBe('f, g, sub\n');
+  });
+
+  test('-x lays entries across (rows first)', async () => {
+    const h = makeIO({ args: ['ls', '-x', '/d'], files: { '/d/a': '1', '/d/b': '2', '/d/c': '3' } });
+    await lsCommand(h.io);
+    expect(h.out()).toBe('a  b  c\n');
+  });
+
+  test('-C forces multi-column even to a pipe', async () => {
+    const h = makeIO({ args: ['ls', '-C', '/d'], files: { '/d/a': '1', '/d/b': '2', '/d/c': '3' } });
+    await lsCommand(h.io);
+    expect(h.out()).toBe('a  b  c\n');
+  });
+
+  test('unknown long flag → exit 2 with GNU diagnostic', async () => {
+    const h = makeIO({ args: ['ls', '--bogus', '/d'], files: { '/d/f': '1' } });
+    expect(await lsCommand(h.io)).toBe(2);
+    expect(h.err()).toContain('unrecognized option \'--bogus\'');
+    expect(h.out()).toBe('');
+  });
+
+  test('unknown short flag → exit 2', async () => {
+    const h = makeIO({ args: ['ls', '-W', '/d'], files: { '/d/f': '1' } });
+    // -W is genuinely undeclared; declared no-op flags do not error.
+    expect(await lsCommand(h.io)).toBe(2);
+    expect(h.err()).toContain('invalid option -- \'W\'');
+  });
+
+  test('-i prints an inode column (synthetic; layout only)', async () => {
+    const h = makeIO({ args: ['ls', '-1', '-i', '/d'], files: { '/d/a': '1' } });
+    await lsCommand(h.io);
+    // <inode> a — synthetic inode (VFS carries none), so match the shape not value.
+    expect(h.out()).toMatch(/^\d+ a\n$/);
   });
 
   // ── B2.3: -F classify indicators ───────────────────────────────────────────

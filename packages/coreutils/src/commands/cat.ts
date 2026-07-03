@@ -6,16 +6,18 @@
  *   2. defines a pure {@link import('../harness.ts').CommandFn} (`(io) => exitCode`),
  *   3. `export default defineCommand(catCommand);` to become a guest module.
  *
- * The repo's vite `preserveModules` build emits this 1:1 as `dist/commands/cat.js`,
- * which {@link import('../resolver.ts').createCoreutilsResolver} hands to the kernel
- * by URL. The kernel launches it as a sandboxed process; `createGuest` (inside
- * `defineCommand`) wires stdio and the `fs/*` syscalls.
- *
- * Supported:
+ * Supported (GNU parity):
  *   - operands: file paths to read in order; `-` (or none) reads stdin.
- *   - `-n` / `--number`: number all output lines, 1-based, right-aligned in 6.
+ *   - `-n` / `--number`: number all output lines; `-b` / `--number-nonblank`
+ *     numbers only non-empty lines (and overrides `-n`).
+ *   - `-s` / `--squeeze-blank`: collapse runs of blank lines.
+ *   - `-E` / `--show-ends` (`$` at line ends), `-T` / `--show-tabs` (`^I`),
+ *     `-v` / `--show-nonprinting` (`^X` / `M-` forms); `-A`=`-vET`, `-e`=`-vE`,
+ *     `-t`=`-vT`.
+ *
+ * With no formatting flag, stdin/files stream byte-exact (constant memory).
  */
-import { defineCommand, isBrokenPipe, parseArgs, writeBytes, writeLine } from '../harness.ts';
+import { defineCommand, exitWith, fsErrorText, isBrokenPipe, optionError, parseArgs, writeBytes, writeLine } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 /** Read a whole VFS file via the kernel `fs/*` syscalls into bytes. */
@@ -60,30 +62,134 @@ async function streamFile(io: CommandIO, path: string, out: WritableStreamDefaul
   }
 }
 
-const catCommand: CommandFn = async (io: CommandIO): Promise<number> => {
-  const { positionals, flags } = parseArgs(io.args.slice(1), {
-    boolean: ['n', 'number'],
-    alias: { number: 'n' },
-  });
-  const number = Boolean(flags.n);
-  const name = io.args[0] ?? 'cat';
+/**
+ * Canonical POSIX errno text for an `fs/*` failure. Over the real kernel the
+ * FileSystemError is re-serialized with a POSIX errno `code` (e.g. `ENOENT`) and
+ * a provider-specific message (`File not found: …`); {@link fsErrorText} only maps
+ * the VFS codes, so we translate the errno here first and fall back to it for the
+ * VFS-code path used by the in-memory unit tests.
+ */
+const ERRNO_TEXT: Record<string, string> = {
+  ENOENT: 'No such file or directory',
+  EACCES: 'Permission denied',
+  EEXIST: 'File exists',
+  ENOTDIR: 'Not a directory',
+  EISDIR: 'Is a directory',
+  EXDEV: 'Invalid cross-device link',
+  ENOTEMPTY: 'Directory not empty',
+  EINVAL: 'Invalid argument',
+  ENOSPC: 'No space left on device',
+  EIO: 'Input/output error',
+};
+function errnoText(err: unknown): string {
+  const code = (err as { code?: string })?.code;
+  return (code && ERRNO_TEXT[code]) ?? fsErrorText(err);
+}
 
-  // No operands → read stdin once. `-` operands also mean stdin.
-  const sources = positionals.length > 0 ? positionals : ['-'];
+interface Options { number: boolean; numberNonblank: boolean; squeeze: boolean; showEnds: boolean; showTabs: boolean; showNonprint: boolean; }
+
+/** Render one non-newline byte under `-v`/`-T` (show-nonprinting / show-tabs). */
+function renderByte(b: number, opts: Options, out: number[]): void {
+  if (b === 0x09) { // tab
+    if (opts.showTabs) { out.push(0x5e, 0x49); } else { out.push(0x09); } // ^I
+    return;
+  }
+  if (!opts.showNonprint) { out.push(b); return; }
+  let v = b;
+  if (v >= 128) { out.push(0x4d, 0x2d); v -= 128; } // M-
+  if (v < 32) { out.push(0x5e, v + 64); } // ^X
+  else if (v === 127) { out.push(0x5e, 0x3f); } // ^?
+  else out.push(v);
+}
+
+/**
+ * Apply cat's formatting flags to `bytes`, threading line-numbering and
+ * blank-squeeze state via `state` across files. Returns the transformed bytes.
+ */
+function formatBytes(bytes: Uint8Array, opts: Options, state: { lineNo: number; blanks: number }): Uint8Array {
+  const out: number[] = [];
+  const doNumber = opts.number || opts.numberNonblank;
+  const encNum = (n: number): number[] => {
+    const s = String(n).padStart(6, ' ') + '\t';
+    return [...s].map((c) => c.charCodeAt(0));
+  };
+  let i = 0;
+  while (i < bytes.length) {
+    // Determine the current logical line (up to and including the next \n).
+    let nl = i;
+    while (nl < bytes.length && bytes[nl] !== 0x0a) nl++;
+    const hasNL = nl < bytes.length;
+    const isBlank = nl === i; // empty line (immediate newline)
+
+    if (opts.squeeze && isBlank) {
+      state.blanks++;
+      if (state.blanks > 1) { i = hasNL ? nl + 1 : nl; continue; } // drop extra blank
+    } else if (!isBlank) {
+      state.blanks = 0;
+    }
+
+    // Line number prefix: -n numbers all lines; -b only non-blank.
+    if (doNumber) {
+      if (opts.numberNonblank) { if (!isBlank) out.push(...encNum(state.lineNo++)); }
+      else out.push(...encNum(state.lineNo++));
+    }
+    for (let j = i; j < nl; j++) renderByte(bytes[j], opts, out);
+    if (hasNL) {
+      if (opts.showEnds) out.push(0x24); // $
+      out.push(0x0a);
+      i = nl + 1;
+    } else {
+      i = nl; // unterminated final line: no $ / no newline
+    }
+  }
+  return new Uint8Array(out);
+}
+
+const catCommand: CommandFn = async (io: CommandIO): Promise<number> => {
+  const parsed = parseArgs(io.args.slice(1), {
+    boolean: [
+      'n', 'number', 'b', 'number-nonblank', 's', 'squeeze-blank',
+      'E', 'show-ends', 'T', 'show-tabs', 'v', 'show-nonprinting',
+      'A', 'show-all', 'e', 't', 'u',
+    ],
+    alias: {
+      number: 'n', 'number-nonblank': 'b', 'squeeze-blank': 's',
+      'show-ends': 'E', 'show-tabs': 'T', 'show-nonprinting': 'v', 'show-all': 'A',
+    },
+    unknown: 'error',
+  });
+  const name = io.args[0] ?? 'cat';
 
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
+
+  if (parsed.unknown.length) {
+    try { return await exitWith(err, 1, optionError(name, parsed.unknown[0])); }
+    finally { await out.close().catch(() => {}); await err.close().catch(() => {}); }
+  }
+
+  const { positionals, flags } = parsed;
+  // Composite flags: -A = -vET, -e = -vE, -t = -vT.
+  const opts: Options = {
+    number: Boolean(flags.n),
+    numberNonblank: Boolean(flags.b),
+    squeeze: Boolean(flags.s),
+    showEnds: Boolean(flags.E) || Boolean(flags.A) || Boolean(flags.e),
+    showTabs: Boolean(flags.T) || Boolean(flags.A) || Boolean(flags.t),
+    showNonprint: Boolean(flags.v) || Boolean(flags.A) || Boolean(flags.e) || Boolean(flags.t),
+  };
+  const formatting = opts.number || opts.numberNonblank || opts.squeeze || opts.showEnds || opts.showTabs || opts.showNonprint;
+
+  const sources = positionals.length > 0 ? positionals : ['-'];
   let exitCode = 0;
-  let lineNo = 1;
   let stdinAborted = false;
+  const state = { lineNo: 1, blanks: 0 };
 
   try {
     for (const src of sources) {
       if (src === '-') {
-        if (!number) {
-          // Raw byte passthrough — no line semantics needed.
-          // Stream chunk-by-chunk so `cat bigfile | head -n1` can cancel early
-          // instead of buffering all of bigfile first (D1).
+        if (!formatting) {
+          // Raw byte passthrough — stream so a downstream break cancels early.
           const reader = io.stdin.getReader();
           try {
             for (;;) {
@@ -100,7 +206,7 @@ const catCommand: CommandFn = async (io: CommandIO): Promise<number> => {
           }
           continue;
         }
-        // -n on stdin: buffer stdin fully to number lines (line semantics required).
+        // Formatting flags: buffer stdin to apply line semantics.
         const chunks: Uint8Array[] = [];
         let total = 0;
         const reader = io.stdin.getReader();
@@ -116,29 +222,15 @@ const catCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         const combined = new Uint8Array(total);
         let off = 0;
         for (const c of chunks) { combined.set(c, off); off += c.byteLength; }
-        const bytes = combined;
-        const text = new TextDecoder().decode(bytes);
-        if (text === '') continue;
-        const hasTrailing = text.endsWith('\n');
-        const body = hasTrailing ? text.slice(0, -1) : text;
-        const lines = body.split('\n');
-        for (let i = 0; i < lines.length; i++) {
-          const prefix = String(lineNo++).padStart(6, ' ') + '\t';
-          const isLast = i === lines.length - 1;
-          const suffix = !isLast || hasTrailing ? '\n' : '';
-          await writeBytes(out, new TextEncoder().encode(prefix + lines[i] + suffix));
-        }
+        await writeBytes(out, formatBytes(combined, opts, state));
         continue;
       }
 
-      if (!number) {
-        // Stream the file (constant memory) so a never-EOFing device or a huge
-        // file does not buffer; stop early if the downstream breaks (EPIPE).
+      if (!formatting) {
         try {
           if (await streamFile(io, src, out)) { stdinAborted = true; break; }
         } catch (e) {
-          const msg = (e as { message?: string }).message ?? 'No such file or directory';
-          await writeLine(err, `${name}: ${src}: ${msg}`);
+          await writeLine(err, `${name}: ${src}: ${errnoText(e)}`);
           exitCode = 1;
         }
         continue;
@@ -148,25 +240,11 @@ const catCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       try {
         bytes = await readFile(io, src);
       } catch (e) {
-        // Mirror coreutils: report per-file error, continue, exit non-zero.
-        const msg = (e as { message?: string }).message ?? 'No such file or directory';
-        await writeLine(err, `${name}: ${src}: ${msg}`);
+        await writeLine(err, `${name}: ${src}: ${errnoText(e)}`);
         exitCode = 1;
         continue;
       }
-
-      // -n: number every line. Split on \n, preserving a trailing newline.
-      const text = new TextDecoder().decode(bytes);
-      if (text === '') continue;
-      const hasTrailing = text.endsWith('\n');
-      const body = hasTrailing ? text.slice(0, -1) : text;
-      const lines = body.split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        const prefix = String(lineNo++).padStart(6, ' ') + '\t';
-        const isLast = i === lines.length - 1;
-        const suffix = !isLast || hasTrailing ? '\n' : '';
-        await writeBytes(out, new TextEncoder().encode(prefix + lines[i] + suffix));
-      }
+      await writeBytes(out, formatBytes(bytes, opts, state));
     }
   } finally {
     await out.close().catch(() => { /* already closed */ });

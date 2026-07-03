@@ -6,8 +6,9 @@ import type { CommandIO } from '../harness.ts';
 function makeIO(args: string[]) {
   const stdin = new ReadableStream<Uint8Array>({ start(c) { c.close(); } });
   const outChunks: Uint8Array[] = [];
+  const errChunks: Uint8Array[] = [];
   const stdout = new WritableStream<Uint8Array>({ write(c) { outChunks.push(c); } });
-  const stderr = new WritableStream<Uint8Array>({ write() {} });
+  const stderr = new WritableStream<Uint8Array>({ write(c) { errChunks.push(c); } });
   const decode = (chunks: Uint8Array[]): string => {
     let t = 0; for (const c of chunks) t += c.byteLength;
     const b = new Uint8Array(t); let o = 0;
@@ -17,6 +18,7 @@ function makeIO(args: string[]) {
   return {
     io: { args, env: {}, cwd: '/', stdin, stdout, stderr, syscall: async () => ({}) } as CommandIO,
     out: () => decode(outChunks),
+    err: () => decode(errChunks),
   };
 }
 
@@ -66,6 +68,48 @@ describe('sprintfAll', () => {
   test('%G uppercases exponent', () => {
     expect(sprintfAll('%G', ['1000000'])).toBe('1E+06');
   });
+
+  // ── GNU-parity gap fixes ─────────────────────────────────────────────────────
+
+  test('%u of -1 is uintmax (64-bit), not >>>0', () => {
+    expect(sprintfAll('%u', ['-1'])).toBe('18446744073709551615');
+  });
+  test('%o of -1 is uintmax octal', () => {
+    expect(sprintfAll('%o', ['-1'])).toBe('1777777777777777777777');
+  });
+  test('%x of -1 is 16 f', () => {
+    expect(sprintfAll('%x', ['-1'])).toBe('ffffffffffffffff');
+  });
+  test('%X of -1 uppercase', () => {
+    expect(sprintfAll('%X', ['-1'])).toBe('FFFFFFFFFFFFFFFF');
+  });
+  test('%d past 2^53 exact via BigInt', () => {
+    expect(sprintfAll('%d', ['9007199254740993'])).toBe('9007199254740993');
+  });
+  test('%e forces 2-digit exponent', () => {
+    expect(sprintfAll('%e', ['1000000'])).toBe('1.000000e+06');
+  });
+  test('%E forces 2-digit exponent', () => {
+    expect(sprintfAll('%E', ['1000000'])).toBe('1.000000E+06');
+  });
+  test('%05d keeps sign before zeros', () => {
+    expect(sprintfAll('%05d', ['-42'])).toBe('-0042');
+  });
+  test('%+05d positive keeps + before zeros', () => {
+    expect(sprintfAll('%+05d', ['7'])).toBe('+0007');
+  });
+  test('%05x zero-pads after alt prefix', () => {
+    expect(sprintfAll('%#08x', ['255'])).toBe('0x0000ff');
+  });
+  test('format-string bare octal \\NNN', () => {
+    expect(sprintfAll('\\101', [])).toBe('A');
+  });
+  test('format-string \\0101 → \\010 + 1', () => {
+    expect(sprintfAll('a\\0101b', [])).toBe('a\x081b');
+  });
+  test('\\c truncates format output', () => {
+    expect(sprintfAll('ab\\cde', [])).toBe('ab');
+  });
 });
 
 describe('printf command', () => {
@@ -85,5 +129,37 @@ describe('printf command', () => {
     const h = makeIO(['printf', '%d\n', '1', '2', '3']);
     expect(await printfCommand(h.io)).toBe(0);
     expect(h.out()).toBe('1\n2\n3\n');
+  });
+
+  test('%d abc: prints 0, diagnostic on stderr, exit 1', async () => {
+    const h = makeIO(['printf', '%d\n', 'abc']);
+    expect(await printfCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('0\n');
+    expect(h.err()).toContain('expected a numeric value');
+  });
+
+  test('%d overflow: clamps to INTMAX, diagnostic, exit 1', async () => {
+    const h = makeIO(['printf', '%d\n', '99999999999999999999999999']);
+    expect(await printfCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('9223372036854775807\n');
+    expect(h.err()).toContain('Result too large');
+  });
+
+  test('%d negative overflow clamps to INTMAX_MIN', async () => {
+    const h = makeIO(['printf', '%d\n', '-99999999999999999999999999']);
+    expect(await printfCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('-9223372036854775808\n');
+  });
+
+  test('\\c suppresses the rest of output', async () => {
+    const h = makeIO(['printf', 'ab\\cde']);
+    expect(await printfCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('ab');
+  });
+
+  test('\\c inside %b stops all further output including format \\n', async () => {
+    const h = makeIO(['printf', '%b\n', 'a\\cb']);
+    expect(await printfCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a');
   });
 });

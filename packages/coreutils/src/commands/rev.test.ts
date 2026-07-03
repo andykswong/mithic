@@ -9,10 +9,22 @@ describe('rev', () => {
     expect(h.out()).toBe('olleh\ndlrow\n');
   });
 
-  test('preserves no-trailing-newline', async () => {
+  test('adds a trailing newline to an unterminated final line (BSD parity)', async () => {
     const h = makeIO({ args: ['rev'], stdinText: 'abc' });
     expect(await revCommand(h.io)).toBe(0);
-    expect(h.out()).toBe('cba');
+    expect(h.out()).toBe('cba\n');
+  });
+
+  test('adds a trailing newline for a multi-line unterminated input', async () => {
+    const h = makeIO({ args: ['rev'], stdinText: 'abc\ndef' });
+    expect(await revCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('cba\nfed\n');
+  });
+
+  test('adds a trailing newline for an unterminated file', async () => {
+    const h = makeIO({ args: ['rev', '/f'], files: { '/f': 'cat' } });
+    expect(await revCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('tac\n');
   });
 
   test('reverses file content', async () => {
@@ -33,9 +45,9 @@ describe('rev', () => {
     expect(h.out()).toBe('éfac\n');
   });
 
-  test('missing file errors and exits 1', async () => {
+  test('missing file errors and exits 1 with BSD-style message', async () => {
     const h = makeIO({ args: ['rev', '/missing'] });
     expect(await revCommand(h.io)).toBe(1);
-    expect(h.err()).toContain('rev:');
+    expect(h.err()).toBe('rev: /missing: No such file or directory\n');
   });
 });

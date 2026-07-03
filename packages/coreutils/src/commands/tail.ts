@@ -11,8 +11,51 @@
  * Not supported: `-f` (follow). tail reads to EOF and exits; there is no
  * streaming follow mode in a one-shot sandboxed process.
  */
-import { defineCommand, parseArgs, writeBytes, writeString } from '../harness.ts';
+import { defineCommand, parseArgs, writeBytes, writeString, exitWith, fsErrorText } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
+
+/** Canonical POSIX errno text for an `fs/*` failure (see head.ts for rationale). */
+const ERRNO_TEXT: Record<string, string> = {
+  ENOENT: 'No such file or directory', EACCES: 'Permission denied', EEXIST: 'File exists',
+  ENOTDIR: 'Not a directory', EISDIR: 'Is a directory', EXDEV: 'Invalid cross-device link',
+  ENOTEMPTY: 'Directory not empty', EINVAL: 'Invalid argument', ENOSPC: 'No space left on device',
+  EIO: 'Input/output error',
+};
+function errnoText(err: unknown): string {
+  const code = (err as { code?: string })?.code;
+  return (code && ERRNO_TEXT[code]) ?? fsErrorText(err);
+}
+
+/**
+ * GNU size suffixes shared by `head`/`tail`. Lowercase `k`/`m` are accepted
+ * (legacy) but lowercase `g`… are NOT — only the uppercase single letters and
+ * the two-letter `xB` (base-1000) forms. Returns the multiplier or undefined.
+ */
+function suffixMultiplier(suf: string): number | undefined {
+  const KB = 1000;
+  const K = 1024;
+  switch (suf) {
+    case '': return 1;
+    case 'b': return 512;
+    case 'k': case 'K': return K;
+    case 'KB': return KB;
+    case 'm': case 'M': return K * K;
+    case 'MB': return KB * KB;
+    case 'G': return K ** 3;
+    case 'GB': return KB ** 3;
+    case 'T': return K ** 4;
+    case 'TB': return KB ** 4;
+    case 'P': return K ** 5;
+    case 'PB': return KB ** 5;
+    case 'E': return K ** 6;
+    case 'EB': return KB ** 6;
+    case 'Z': return K ** 7;
+    case 'ZB': return KB ** 7;
+    case 'Y': return K ** 8;
+    case 'YB': return KB ** 8;
+    default: return undefined;
+  }
+}
 
 /**
  * Read stdin into the bytes tail must finally emit, in BOUNDED memory — the OOM
@@ -159,9 +202,45 @@ async function readFile(io: CommandIO, path: string): Promise<Uint8Array> {
 /** A count spec: either "last n" (fromStart=false) or "from index n" (1-based, fromStart=true). */
 interface CountSpec { n: number; fromStart: boolean; }
 
-function parseCount(raw: string): CountSpec {
-  if (raw.startsWith('+')) return { n: Number(raw.slice(1)), fromStart: true };
-  return { n: Number(raw), fromStart: false };
+/**
+ * Parse a tail count operand: an optional leading sign (`+N` = from the start,
+ * `-N`/`N` = the last N), a decimal magnitude, and an optional GNU size suffix.
+ * Returns undefined on a malformed value so the caller can emit GNU's diagnostic.
+ */
+function parseCount(raw: string): CountSpec | undefined {
+  let s = raw;
+  let fromStart = false;
+  if (s.startsWith('+')) { fromStart = true; s = s.slice(1); }
+  else if (s.startsWith('-')) { s = s.slice(1); }
+  const m = /^([0-9]+)([a-zA-Z]*)$/.exec(s);
+  if (!m) return undefined;
+  const mult = suffixMultiplier(m[2]);
+  if (mult === undefined) return undefined;
+  return { n: Number(m[1]) * mult, fromStart };
+}
+
+/**
+ * Legacy `-N` prefilter that is OPERAND-AWARE: a bare `-<digits>[suffix]` token
+ * is the classic `tail -5` line count ONLY when it is not the value of a
+ * preceding `-n`/`-c` option. Returns the surviving args (legacy token removed)
+ * plus the raw legacy string (so the caller reuses parseCount for the suffix).
+ */
+function extractLegacy(args: string[]): { filtered: string[]; legacy?: string } {
+  let legacy: string | undefined;
+  const filtered: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--') { filtered.push(...args.slice(i)); break; }
+    if (a === '-n' || a === '-c' || a === '--lines' || a === '--bytes') {
+      filtered.push(a);
+      if (args[i + 1] !== undefined) filtered.push(args[++i]);
+      continue;
+    }
+    const m = /^-([0-9]+[a-zA-Z]*)$/.exec(a);
+    if (m) { legacy = m[1]; continue; }
+    filtered.push(a);
+  }
+  return { filtered, legacy };
 }
 
 function tailLines(bytes: Uint8Array, spec: CountSpec): Uint8Array {
@@ -193,20 +272,13 @@ function tailBytes(bytes: Uint8Array, spec: CountSpec): Uint8Array {
 }
 
 const tailCommand: CommandFn = async (io: CommandIO): Promise<number> => {
-  const { positionals, flags } = parseArgs(io.args.slice(1), {
+  const name = io.args[0] ?? 'tail';
+  const { filtered, legacy } = extractLegacy(io.args.slice(1));
+  const { positionals, flags } = parseArgs(filtered, {
     string: ['n', 'c', 'lines', 'bytes'],
     boolean: ['q', 'v', 'quiet', 'silent', 'verbose', 'f', 'follow'],
     alias: { lines: 'n', bytes: 'c', quiet: 'q', silent: 'q', verbose: 'v', follow: 'f' },
   });
-  const name = io.args[0] ?? 'tail';
-
-  const byteMode = flags.c !== undefined;
-  const spec = byteMode
-    ? parseCount(String(flags.c))
-    : flags.n !== undefined ? parseCount(String(flags.n)) : { n: 10, fromStart: false };
-
-  const sources = positionals.length > 0 ? positionals : ['-'];
-  const wantHeaders = Boolean(flags.v) || (sources.length > 1 && !flags.q);
 
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
@@ -214,6 +286,27 @@ const tailCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   let printed = 0;
 
   try {
+    const byteMode = flags.c !== undefined;
+    let spec: CountSpec;
+    if (byteMode) {
+      const parsed = parseCount(String(flags.c));
+      if (parsed === undefined) return await exitWith(err, 1, `${name}: invalid number of bytes: ‘${flags.c}’`);
+      spec = parsed;
+    } else if (flags.n !== undefined) {
+      const parsed = parseCount(String(flags.n));
+      if (parsed === undefined) return await exitWith(err, 1, `${name}: invalid number of lines: ‘${flags.n}’`);
+      spec = parsed;
+    } else if (legacy !== undefined) {
+      const parsed = parseCount('-' + legacy);
+      if (parsed === undefined) return await exitWith(err, 1, `${name}: invalid number of lines: ‘${legacy}’`);
+      spec = parsed;
+    } else {
+      spec = { n: 10, fromStart: false };
+    }
+
+    const sources = positionals.length > 0 ? positionals : ['-'];
+    const wantHeaders = Boolean(flags.v) || (sources.length > 1 && !flags.q);
+
     if (flags.f) {
       await writeString(err, `${name}: -f (follow) is not supported; reading to EOF\n`);
     }
@@ -232,8 +325,7 @@ const tailCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       let bytes: Uint8Array;
       try { bytes = await readFile(io, src); }
       catch (e) {
-        const msg = (e as { message?: string }).message ?? 'No such file or directory';
-        await writeString(err, `${name}: cannot open '${src}' for reading: ${msg}\n`);
+        await writeString(err, `${name}: cannot open '${src}' for reading: ${errnoText(e)}\n`);
         exitCode = 1;
         continue;
       }

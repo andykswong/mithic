@@ -313,6 +313,38 @@ describe('awk interp — string builtins', () => {
     expect(run('BEGIN{ print substr("hello", 3) }')).toBe('llo\n');
   });
 
+  // gawk 5.x: a start position < 1 clamps to 1 WITHOUT reducing the requested
+  // length; the length is taken from the clamped start (byte-exact with gawk).
+  test('substr negative start does not over-subtract length', () => {
+    expect(run('BEGIN{ print substr("hello", -1, 3) }')).toBe('hel\n');
+    expect(run('BEGIN{ print substr("hello", 0, 3) }')).toBe('hel\n');
+    expect(run('BEGIN{ print substr("hello", -2, 3) }')).toBe('hel\n');
+    expect(run('BEGIN{ print substr("hello", -10, 3) }')).toBe('hel\n');
+  });
+
+  test('substr negative start with length reaching end', () => {
+    expect(run('BEGIN{ print substr("hello", -1, 5) }')).toBe('hello\n');
+    expect(run('BEGIN{ print substr("abcdefghij", -5, 20) }')).toBe('abcdefghij\n');
+  });
+
+  test('substr negative start no-length starts from 1', () => {
+    expect(run('BEGIN{ print substr("hello", -1) }')).toBe('hello\n');
+  });
+
+  test('substr non-positive / negative length is empty', () => {
+    expect(run('BEGIN{ print "[" substr("hello", 2, -1) "]" }')).toBe('[]\n');
+    expect(run('BEGIN{ print "[" substr("hello", 3, 0) "]" }')).toBe('[]\n');
+  });
+
+  test('substr truncates fractional start and length', () => {
+    expect(run('BEGIN{ print substr("hello", 2.9, 2) }')).toBe('el\n');
+    expect(run('BEGIN{ print substr("hello", 1, 2.9) }')).toBe('he\n');
+  });
+
+  test('substr start past end is empty', () => {
+    expect(run('BEGIN{ print "[" substr("hello", 6) "]" }')).toBe('[]\n');
+  });
+
   test('index', () => {
     expect(run('BEGIN{ print index("hello", "ll") }')).toBe('3\n');
   });
