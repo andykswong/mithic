@@ -2072,3 +2072,52 @@ test('declare -gr / -gi under a local shadow keep the attribute on the global af
   expect((await run('n=orig; f(){ local n=hi; declare -gi n=5; }; f; declare -p n; n+=3; echo "$n"')).out)
     .toBe('declare -i n="5"\n8\n');
 });
+
+// ── Review-round-2 regression fixes ──────────────────────────────────────────
+
+test('[[ ]] lone/unbalanced grouping paren is a syntax error (exit 2)', async () => {
+  for (const s of ['[[ ( ]]', '[[ ) ]]', '[[ x || ( ]]', '[[ x && ) ]]', '[[ ! ( ]]', '[[ ( ) ) ]]', '[[ ( a == a ) || ( ]]']) {
+    expect((await run(`${s}; echo $?`)).out).toBe('2\n');
+  }
+  // Balanced grouping is unaffected.
+  expect((await run('[[ ( a == a ) ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ ( a == a ) && ( b == b ) ]]; echo $?')).out).toBe('0\n');
+});
+
+test('[[ ]] unspaced nested grouping (( )) is valid grouping, not a malformed op', async () => {
+  expect((await run('[[ ((a)) ]]; echo $?')).out).toBe('0\n');       // nonempty → true
+  expect((await run('[[ (( a == b )) ]]; echo $?')).out).toBe('1\n');
+  expect((await run('[[ ((-n x)) ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ ((a == b || c)) ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ ( ( a ) ) ]]; echo $?')).out).toBe('0\n');   // spaced form still works
+});
+
+test('[[ =~ ]] empty or invalid regex is fail-loud (exit 2), not a fabricated match', async () => {
+  // An empty regex (from an unset/empty var, or "") is a bash regcomp error, not "match all".
+  expect((await run('re=; [[ hello =~ $re ]]; echo $?')).out).toBe('2\n');
+  expect((await run('[[ hello =~ "" ]]; echo $?')).out).toBe('2\n');
+  // An invalid regex is exit 2, not a fabricated false (exit 1).
+  expect((await run('pat="["; [[ abc =~ $pat ]]; echo $?')).out).toBe('2\n');
+  // A valid regex is unaffected.
+  expect((await run('[[ abc =~ b ]]; echo $?')).out).toBe('0\n');
+});
+
+test('a scalar assignment to an array/assoc-typed name targets element/key [0]', async () => {
+  // Regression: after a bare `declare -a`, a plain scalar assign was swallowed.
+  expect((await run('declare -a arr; arr=first; declare -p arr')).out).toBe('declare -a arr=([0]="first")\n');
+  expect((await run('declare -a a=(1 2 3); a=x; declare -p a')).out).toBe('declare -a a=([0]="x" [1]="2" [2]="3")\n');
+  expect((await run('declare -A m; m=x; declare -p m')).out).toBe('declare -A m=([0]="x" )\n');
+});
+
+test('declare -a / -A on an existing scalar promotes it to element/key [0]', async () => {
+  expect((await run('v=hi; declare -a v; declare -p v')).out).toBe('declare -a v=([0]="hi")\n');
+  expect((await run('v=hi; declare -A v; declare -p v')).out).toBe('declare -A v=([0]="hi" )\n');
+});
+
+test('declare -gA under a local shadow of a bare-declared global: local stays bare, global gets the value', async () => {
+  // During the function the LOCAL is still bare-declared; after return the GLOBAL is valued.
+  expect((await run('f(){ local -A g; declare -gA g=([P]=v); declare -p g; }; f')).out)
+    .toBe('declare -A g\n');
+  expect((await run('declare -A g; f(){ local -A g; declare -gA g=([P]=v); }; f; declare -p g')).out)
+    .toBe('declare -A g=([P]="v" )\n');
+});

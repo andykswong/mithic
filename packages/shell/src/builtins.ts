@@ -26,8 +26,12 @@ export interface ShellState {
   declareLocal(name: string): 'fresh' | 'existing' | 'none';
   /** Register a name as an associative array (`declare -A`). With `global` (from
    * `declare -gA`), a same-name function-local shadow is preserved and the assoc
-   * attribute is recorded on the global binding's snapshot instead. */
+   * attribute is recorded on the global binding's snapshot instead. Promotes an
+   * existing scalar to key `[0]` (bash). */
   declareAssoc?(name: string, global?: boolean): void;
+  /** Register a name as an indexed array (`declare -a`). Promotes an existing scalar
+   * to element `[0]` (bash: `v=hi; declare -a v` → `([0]="hi")`). */
+  declareArray?(name: string): void;
   /**
    * Record a name as DECLARED-but-unset (`declare NAME` / `declare -a NAME` /
    * `declare -A NAME` / `declare -x NAME`, no value). bash prints these as a bare
@@ -802,6 +806,10 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         }
         // `declare -A name` registers an associative array (G6).
         if (isAssoc) declareAssocAttr(n);
+        // `declare -a name` marks the name an indexed array (promoting an existing
+        // scalar to element [0]); a later scalar `name=v` then routes to `name[0]`
+        // (bash). Skip under `-g` shadow handling / when it's already the assoc case.
+        else if (flags.has('a') && !flagGlobal) ctx.state?.declareArray?.(n);
         // `declare -i name` marks the name integer BEFORE assigning, so the RHS
         // is arithmetic-evaluated (bash: `declare -i n=1+2` → n=3).
         if (flagInteger) markIntegerAttr(n);

@@ -748,9 +748,23 @@ export class Executor {
           }
         }
         if (!this.assocArrays.has(name)) this.assocArrays.set(name, new Map());
-        // An associative declaration shadows any prior scalar/indexed value.
+        // Promote an existing scalar to key `[0]` (bash: `v=hi; declare -A v` →
+        // `([0]="hi")`), or an existing indexed array's elements to string keys.
+        const m = this.assocArrays.get(name)!;
+        if (name in this.context.env) { m.set('0', this.context.env[name]); }
+        else if (this.arrays.has(name)) { this.arrays.get(name)!.forEach((v, i) => { if (i in this.arrays.get(name)!) m.set(String(i), v); }); }
         delete this.context.env[name];
         this.arrays.delete(name);
+      },
+      declareArray: (name) => {
+        // `declare -a NAME`: mark NAME an indexed array. Promote an existing scalar to
+        // element `[0]` (bash: `v=hi; declare -a v` → `([0]="hi")`); an existing array
+        // is left as-is.
+        if (this.arrays.has(name)) return;
+        const arr: string[] = [];
+        if (name in this.context.env) arr[0] = this.context.env[name];
+        this.arrays.set(name, arr);
+        delete this.context.env[name];
       },
       setArray: (name, values) => {
         // Mirror the bare `name=(a b c)` assignment path so `read -a` / `mapfile`
@@ -972,8 +986,22 @@ export class Executor {
   }
 
   /** Drop `name` from the declared-but-unset set — called whenever a real value or
-   * element is assigned, so `declare -p` switches from the bare form to `=value`/`=(…)`. */
-  private clearDeclaredUnset(name: string): void {
+   * element is assigned, so `declare -p` switches from the bare form to `=value`/`=(…)`.
+   * With `global` (a `declare -g` write) and a same-name function-local shadow, clear
+   * the marker on the OUTERMOST scope's SNAPSHOT (the global binding) rather than the
+   * live local's — the local stays declared-unset until it returns, the global becomes
+   * valued (bash: `declare -A g; f(){ local -A g; declare -gA g=([P]=v); }` → after
+   * return the GLOBAL is `([P]="v")`, and inside the function the LOCAL is still bare). */
+  private clearDeclaredUnset(name: string, global = false): void {
+    if (global) {
+      for (let i = 0; i < this.localScopes.length; i++) {
+        if (this.localScopes[i].has(name)) {
+          const snap = this.localSavedArrays[i].get(name);
+          if (snap !== undefined) snap.declaredUnset = undefined;
+          return; // do NOT touch the live local's marker
+        }
+      }
+    }
     this.declaredUnset.delete(name);
   }
 
@@ -1541,6 +1569,15 @@ export class Executor {
   private validateCond(words: string[], group: boolean[], literalOp: boolean[]): void {
     const isOp = (i: number, op: string): boolean => words[i] === op && (literalOp.length === 0 || literalOp[i]);
     const wasLiteral = (i: number): boolean => literalOp.length === 0 || literalOp[i];
+    // Grouping-paren BALANCE check (bash: a lone/unbalanced `(`/`)` is a syntax error —
+    // `[[ ( ]]`, `[[ ) ]]`, `[[ x || ( ]]` all exit 2). A `)` before its `(` (depth < 0)
+    // or a non-zero final depth is malformed.
+    let pd = 0;
+    for (let i = 0; i < words.length; i++) {
+      if (group[i] && words[i] === '(') pd++;
+      else if (group[i] && words[i] === ')') { pd--; if (pd < 0) throw new TestSyntaxError('syntax error near `)\''); }
+    }
+    if (pd !== 0) throw new TestSyntaxError('syntax error near `(\'');
     const topLevel = (op: string): number => {
       let depth = 0, found = -1;
       for (let i = 0; i < words.length; i++) {
@@ -1639,19 +1676,24 @@ export class Executor {
       return await this.evalConditional(words.slice(1, -1), group.slice(1, -1), regexSources.slice(1, -1), literalOp.slice(1, -1));
     }
     if (words.length === 3 && isOp(1, '=~')) {
-      try {
-        // The regex operand uses the regex-PRESERVING expansion (quoted → literal,
-        // unquoted backslashes kept) — NOT the quote-collapsed `words[2]`, which would
-        // turn `"a.b"`/`a\.b` into the metacharacter `a.b`. Falls back to `words[2]`
-        // only if the parallel source is absent (defensive).
-        const source = regexSources[2] ?? words[2];
-        const m = new RegExp(source).exec(words[0]);
-        // On a match, populate $BASH_REMATCH (0 = whole match, N = group N); a
-        // non-match clears it (bash leaves the previous value, but clearing is the
-        // safer, predictable choice and matches the common test-then-read idiom).
-        this.bashRematch = m ? m.map((g) => g ?? '') : [];
-        return m !== null;
-      } catch { return false; }
+      // The regex operand uses the regex-PRESERVING expansion (quoted → literal,
+      // unquoted backslashes kept) — NOT the quote-collapsed `words[2]`, which would
+      // turn `"a.b"`/`a\.b` into the metacharacter `a.b`. Falls back to `words[2]`
+      // only if the parallel source is absent (defensive).
+      const source = regexSources[2] ?? words[2];
+      // An EMPTY or INVALID regex is FAIL-LOUD in bash (POSIX regcomp rejects it):
+      // `[[ x =~ ]]`-with-empty-var and `[[ abc =~ [ ]]` both report an "invalid
+      // regular expression" diagnostic and return 2 — NOT a fabricated true/false.
+      if (source === '') throw new TestSyntaxError('invalid regular expression; empty (sub)expression');
+      let re: RegExp;
+      try { re = new RegExp(source); }
+      catch { throw new TestSyntaxError(`invalid regular expression \`${source}'`); }
+      const m = re.exec(words[0]);
+      // On a match, populate $BASH_REMATCH (0 = whole match, N = group N); a
+      // non-match clears it (bash leaves the previous value, but clearing is the
+      // safer, predictable choice and matches the common test-then-read idiom).
+      this.bashRematch = m ? m.map((g) => g ?? '') : [];
+      return m !== null;
     }
     if (words.length === 3 && (isOp(1, '==') || isOp(1, '='))) {
       return globMatch(words[0], words[2], this.globMatchOpts());
@@ -2989,8 +3031,10 @@ export class Executor {
       return true;
     }
     // Any real value/element assignment promotes the name out of declared-but-unset
-    // (bash: `declare -a a; a+=(x)` → `declare -p a` now shows `=(…)`, not the bare form).
-    this.clearDeclaredUnset(a.name);
+    // (bash: `declare -a a; a+=(x)` → `declare -p a` now shows `=(…)`, not the bare
+    // form). Under `declare -g` this clears the GLOBAL binding's marker, not a local
+    // shadow's (the local stays bare-declared until it returns).
+    this.clearDeclaredUnset(a.name, global);
     // NOTE: a bare `name=value` / `name=(…)` assignment (even inside a function) is
     // GLOBAL in bash — it modifies the existing variable in the nearest enclosing
     // scope, defaulting to global. It is NOT auto-localized. Function-local scoping
@@ -3034,6 +3078,13 @@ export class Executor {
       this.arrays.set(a.name, arr);
       delete this.context.env[a.name];
       return false;
+    }
+    // A plain scalar assignment to an ARRAY- or ASSOC-typed name targets element/key
+    // `[0]` (bash: `declare -a a; a=x` → `a=([0]="x")`; `m=x` on a `-A` map → `[0]=x`).
+    // Route it through the element path so the value is visible and the container type
+    // is preserved (previously the scalar write was swallowed by the shadowing array).
+    if (a.index === undefined && (this.arrays.has(a.name) || this.assocArrays.has(a.name))) {
+      return await this.applyAssignment({ ...a, index: '0' }, expander, global);
     }
     // Scalar (possibly append). If the name currently holds an array, `name+=v`
     // appends to element 0 in bash; we keep it simple and treat scalars only.

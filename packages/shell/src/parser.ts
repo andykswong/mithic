@@ -455,6 +455,12 @@ class Parser {
     const words: string[] = [];
     const group: boolean[] = []; // parallel: true = genuine grouping paren token
     while (this.peek() && !this.atType('DRBRACKET')) {
+      // An ADJACENT `((` / `))` lexes as a single DLPAREN/DRPAREN token, but inside
+      // `[[ ]]` bash treats it as nested grouping — `[[ ((a)) ]]` ≡ `[[ ( ( a ) ) ]]`.
+      // Split it into two grouping parens so the evaluator groups correctly (and the
+      // fail-loud malformed check doesn't reject valid nested grouping).
+      if (this.atType('DLPAREN')) { this.next(); words.push('(', '('); group.push(true, true); continue; }
+      if (this.atType('DRPAREN')) { this.next(); words.push(')', ')'); group.push(true, true); continue; }
       // A GROUPING `(`/`)` lexes as LPAREN/RPAREN; a quoted/literal operand `'('`
       // lexes as a WORD. Record which so the evaluator can group correctly even
       // after expansion collapses quoting (`[[ '(' == '(' ]]` must NOT group).
