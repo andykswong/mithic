@@ -240,6 +240,87 @@ test('printf %#g keeps trailing zeros (already correct) and %g still trims', asy
   expect(await printf('%g', '3')).toBe('3');
 });
 
+test('printf %#g forces a trailing point on integer-valued output', async () => {
+  expect(await printf('%#g', '100000')).toBe('100000.');
+  expect(await printf('%#.3g', '100')).toBe('100.');
+  expect(await printf('%#.1g', '5')).toBe('5.');
+  expect(await printf('%#g', '200000')).toBe('200000.');
+  expect(await printf('%#.1g', '1e20')).toBe('1.e+20');
+  expect(await printf('%#G', '100000')).toBe('100000.');
+});
+
+test('printf hex-integer and hex-float args to a float conversion (C strtold)', async () => {
+  expect(await printf('%f', '0x10')).toBe('16.000000');
+  expect(await printf('%f', '0xff')).toBe('255.000000');
+  expect(await printf('%f', '0x1.8p3')).toBe('12.000000'); // 1.5 * 2^3
+  expect(await printf('%g', '0x1p4')).toBe('16');
+});
+
+test('printf inf/nan literal float args are formatted (not "invalid number")', async () => {
+  expect(await printf('%f', 'inf')).toBe('inf');
+  expect(await printf('%f', '-inf')).toBe('-inf');
+  expect(await printf('%f', 'nan')).toBe('nan');
+  expect(await printf('%f', '-nan')).toBe('nan'); // nan has no sign
+  expect(await printf('%f', 'infinity')).toBe('inf');
+  expect(await printf('%f', 'INF')).toBe('inf'); // case-insensitive parse
+  expect(await printf('%e', 'inf')).toBe('inf');
+  expect(await printf('%g', 'nan')).toBe('nan');
+});
+
+test('printf inf/nan uppercase for %F/%E/%G; sign + width honored, zero-fill ignored', async () => {
+  expect(await printf('%F', 'inf')).toBe('INF');
+  expect(await printf('%E', 'nan')).toBe('NAN');
+  expect(await printf('%G', '-inf')).toBe('-INF');
+  expect(await printf('%+f', 'inf')).toBe('+inf');
+  expect(await printf('% f', 'inf')).toBe(' inf');
+  expect(await printf('[%10f]', 'inf')).toBe('[       inf]');
+  expect(await printf('[%-10f]', 'inf')).toBe('[inf       ]');
+  expect(await printf('[%010f]', 'inf')).toBe('[       inf]'); // NOT zero-filled
+});
+
+test('printf %F finite value is %f with the same body', async () => {
+  expect(await printf('%F', '3')).toBe('3.000000');
+  expect(await printf('%.2F', '3.14159')).toBe('3.14');
+});
+
+test('printf %S / %C alias %s / %c (wide-string/char variants)', async () => {
+  expect(await printf('%S', 'foo')).toBe('foo');
+  expect(await printf('%.2S', 'hello')).toBe('he');
+  expect(await printf('[%5S]', 'hi')).toBe('[   hi]');
+  expect(await printf('%C', 'foo')).toBe('f');
+});
+
+test('printf %a / %A C99 hex float', async () => {
+  expect(await printf('%a', '1.5')).toBe('0x1.8p+0');
+  expect(await printf('%a', '1.0')).toBe('0x1p+0');
+  expect(await printf('%a', '0.5')).toBe('0x1p-1');
+  expect(await printf('%a', '0')).toBe('0x0p+0');
+  expect(await printf('%a', '255')).toBe('0x1.fep+7');
+  expect(await printf('%a', '0.1')).toBe('0x1.999999999999ap-4');
+  expect(await printf('%A', '1.5')).toBe('0X1.8P+0');
+  // precision = fixed number of hex fraction digits (rounded half-to-even)
+  expect(await printf('%.2a', '1.5')).toBe('0x1.80p+0');
+  expect(await printf('%.0a', '1.5')).toBe('0x1p+0');
+  // inf/nan share the float path
+  expect(await printf('%a', 'inf')).toBe('inf');
+  expect(await printf('%A', 'nan')).toBe('NAN');
+});
+
+test('printf %n consumes no arg and emits nothing (exit 0)', async () => {
+  let out = ''; let err = '';
+  const ctx: any = { cwd: '/', env: {}, write: (s: string) => (out += s), writeErr: (s: string) => (err += s) };
+  const code = await runBuiltin('printf', ['a%nb'], ctx);
+  expect(out).toBe('ab');
+  expect(err).toBe('');
+  expect(code).toBe(0);
+});
+
+test('printf infinite RESULT from a huge magnitude prints inf, not JS Infinity', async () => {
+  expect(await printf('%f', '1e309')).toBe('inf');
+  expect(await printf('%g', '1e400')).toBe('inf');
+  expect(await printf('%e', '-1e400')).toBe('-inf');
+});
+
 // ── printf invalid / missing format character → exit 1 + diagnostic ──────────
 
 test('printf bare trailing % is "missing format character" (exit 1, prints prefix)', async () => {

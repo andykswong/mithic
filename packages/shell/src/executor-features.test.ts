@@ -1057,8 +1057,13 @@ test('applying -l to an EXISTING value does not refold it; only later writes fol
   expect((await run('x=HELLO; declare -l x; x=AGAIN; echo $x')).out).toBe('again\n');
 });
 
-test('+l / +u removes the case-fold attribute', async () => {
+test('+l / +u removes the case-fold attribute (matching direction only)', async () => {
   expect((await run('declare -l x=abc; declare +l x; x=DEF; echo $x')).out).toBe('DEF\n');
+  // +u on a -l var keeps the LOWER fold; +l on a -u var keeps UPPER (bash).
+  expect((await run('declare -l x=Hi; declare +u x; x=AB; echo $x')).out).toBe('ab\n');
+  expect((await run('declare -u x=hi; declare +l x; x=ab; echo $x')).out).toBe('AB\n');
+  // -u after -l switches direction.
+  expect((await run('declare -l x=Hi; declare -u x; x=ab; echo $x')).out).toBe('AB\n');
 });
 
 test('declare -p reflects the -l/-u attribute (and bare -l name with no value)', async () => {
@@ -1152,6 +1157,14 @@ test('test/[ ] -v NAME tests variable set-ness (like [[ -v ]])', async () => {
   expect((await run('[ -v bar ]; echo $?')).out).toBe('1\n');
 });
 
+test('test/[ ] an EMPTY path operand is nonexistent (not resolved to cwd)', async () => {
+  const fs = mockFs({ '/exists.txt': 'hi' });
+  expect((await run('[ -e "" ]; echo $?', {}, fs)).out).toBe('1\n');
+  expect((await run('[ -f "" ]; echo $?', {}, fs)).out).toBe('1\n');
+  expect((await run('[ -d "" ]; echo $?', {}, fs)).out).toBe('1\n');
+  expect((await run('[ "" -ef "" ]; echo $?', {}, fs)).out).toBe('1\n');
+});
+
 // ── test/[ ] bash diagnostics: unary/binary operator expected, arg counts ────
 
 test('test/[ ] with a missing binary operand → "unary operator expected", exit 2', async () => {
@@ -1205,6 +1218,25 @@ test('test/[ ] valid comparisons and short forms still pass (no false diagnostic
   expect((await run('[ = ]; echo $?')).out).toBe('0\n');
   expect((await run('[ ! x ]; echo $?')).out).toBe('1\n');
   expect((await run('[ \\( a \\) ]; echo $?')).out).toBe('0\n');
+});
+
+test('[[ ]] parenthesized grouping', async () => {
+  const fs = mockFs({ '/exists.txt': 'hi', '/dir/x': 'y' });
+  expect((await run('[[ ( -f /exists.txt ) ]]; echo $?', {}, fs)).out).toBe('0\n');
+  expect((await run('[[ ( -f /exists.txt ) && ( -d /dir ) ]]; echo $?', {}, fs)).out).toBe('0\n');
+  expect((await run('[[ ( -f /nope || -d /dir ) ]]; echo $?', {}, fs)).out).toBe('0\n');
+  expect((await run('[[ ( -f /nope ) || ( -f /nope2 ) ]]; echo $?', {}, fs)).out).toBe('1\n');
+  // grouping overrides the flat left-to-right of && / ||
+  expect((await run('[[ -n a || -n b && -z c ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ ( -n a || -n b ) && -z c ]]; echo $?')).out).toBe('1\n');
+});
+
+test('[[ ]] -ef/-nt/-ot binary file-comparison operators', async () => {
+  const fs = mockFs({ '/a.txt': 'x', '/b.txt': 'y' });
+  expect((await run('[[ /a.txt -ef /a.txt ]]; echo $?', {}, fs)).out).toBe('0\n');
+  expect((await run('[[ /a.txt -ef /b.txt ]]; echo $?', {}, fs)).out).toBe('1\n');
+  // -nt/-ot need mtime the VFS lacks → conservatively false, matching [ ]
+  expect((await run('[[ /a.txt -nt /b.txt ]]; echo $?', {}, fs)).out).toBe('1\n');
 });
 
 test('test/[ ] lexical </> and [[ ]] lexical </>', async () => {

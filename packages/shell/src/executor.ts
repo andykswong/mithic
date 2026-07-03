@@ -1372,20 +1372,35 @@ export class Executor {
     return (await this.evalConditional(words)) ? 0 : 1;
   }
 
-  /** Evaluate a `[[ ... ]]` expression (supports !, &&, ||, =~, -f/-d/-z/-n, comparisons). */
+  /** Evaluate a `[[ ... ]]` expression (supports !, &&, ||, ( ), =~, -f/-d/-z/-n, comparisons). */
   private async evalConditional(words: string[]): Promise<boolean> {
-    // Handle binary logical at top level (left-to-right, no precedence beyond that).
-    const andIdx = words.indexOf('&&');
-    if (andIdx >= 0) {
-      return (await this.evalConditional(words.slice(0, andIdx)))
-        && (await this.evalConditional(words.slice(andIdx + 1)));
-    }
-    const orIdx = words.indexOf('||');
+    // Split binary logicals at the SHALLOWEST paren depth (so `( a && b ) || c` groups
+    // correctly); scan for the LAST top-level `||` then `&&` (left-associative). A
+    // top-level connective binds looser than a parenthesized subgroup.
+    const topLevel = (op: string): number => {
+      let depth = 0, found = -1;
+      for (let i = 0; i < words.length; i++) {
+        if (words[i] === '(') depth++;
+        else if (words[i] === ')') depth--;
+        else if (depth === 0 && words[i] === op) found = i;
+      }
+      return found;
+    };
+    const orIdx = topLevel('||');
     if (orIdx >= 0) {
       return (await this.evalConditional(words.slice(0, orIdx)))
         || (await this.evalConditional(words.slice(orIdx + 1)));
     }
+    const andIdx = topLevel('&&');
+    if (andIdx >= 0) {
+      return (await this.evalConditional(words.slice(0, andIdx)))
+        && (await this.evalConditional(words.slice(andIdx + 1)));
+    }
     if (words[0] === '!') return !(await this.evalConditional(words.slice(1)));
+    // A fully-parenthesized group `( expr )`: strip the outer parens and recurse.
+    if (words[0] === '(' && words[words.length - 1] === ')') {
+      return await this.evalConditional(words.slice(1, -1));
+    }
     if (words.length === 3 && words[1] === '=~') {
       try {
         const m = new RegExp(words[2]).exec(words[0]);
@@ -1406,6 +1421,11 @@ export class Executor {
     // redirections and needing no escaping (bash).
     if (words.length === 3 && words[1] === '<') return words[0] < words[2];
     if (words.length === 3 && words[1] === '>') return words[0] > words[2];
+    // File-comparison binops `-nt`/`-ot`/`-ef` — same VFS logic as `[ ]` (condFileTest
+    // takes the two operands NUL-joined).
+    if (words.length === 3 && (words[1] === '-nt' || words[1] === '-ot' || words[1] === '-ef')) {
+      return this.condFileTest(words[1], words[0] + '\0' + words[2]);
+    }
     if (words.length === 2 && words[0].startsWith('-')) {
       return this.condFileTest(words[0], words[1]);
     }
@@ -1455,14 +1475,16 @@ export class Executor {
     // File-comparison binops arrive with the two operands NUL-joined.
     if (op === '-nt' || op === '-ot' || op === '-ef') {
       const [pa, pb] = path.split('\0');
-      const sa = await this.statPath(this.absPath(pa));
-      const sb = await this.statPath(this.absPath(pb));
+      const sa = pa === '' ? undefined : await this.statPath(this.absPath(pa));
+      const sb = pb === '' ? undefined : await this.statPath(this.absPath(pb));
       // `-ef` (same file): same canonical path AND both exist. `-nt`/`-ot` need mtime,
       // which the `{dir}`-only FsClient does not expose → conservatively false.
       if (op === '-ef') return sa !== undefined && sb !== undefined && this.absPath(pa) === this.absPath(pb);
       return false;
     }
-    const stat = await this.statPath(this.absPath(path));
+    // An EMPTY path operand is never a filesystem entry (bash: `[ -e '' ]` is false).
+    // Guard before absPath, which would otherwise resolve '' to the cwd.
+    const stat = path === '' ? undefined : await this.statPath(this.absPath(path));
     const exists = stat !== undefined;
     switch (op) {
       case '-f': return exists && !stat!.dir;

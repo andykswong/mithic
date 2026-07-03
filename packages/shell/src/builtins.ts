@@ -590,14 +590,25 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       const flagInteger = flags.has('i');
       const flagReadonly = isReadonly || flags.has('r');
       const flagExport = flags.has('x'); // `declare -x` / `-rx` → exported attribute
-      // `declare -l` (lowercase) / `-u` (uppercase) case-fold attribute. Both together
-      // (`-lu`) cancel to NO fold (bash). Only meaningful on declare/typeset/local.
-      const flagCaseFold: 'lower' | 'upper' | undefined =
-        (flags.has('l') && flags.has('u')) ? undefined
-          : flags.has('l') ? 'lower' : flags.has('u') ? 'upper' : undefined;
-      // `+l`/`+u` clear the fold; `-l`/`-u`/`-lu` set it. Either presence means we
-      // (re)assign the name's fold attribute below.
+      // `declare -l` (lowercase) / `-u` (uppercase) set the case-fold attribute;
+      // `-l -u` together cancel to NO fold. `+l`/`+u` REMOVE a fold, but only the
+      // MATCHING direction (`+u` on a `-l` var keeps the lower fold — bash). Either a
+      // minus- or plus- l/u flag means we recompute the name's fold below.
       const hasCaseFoldFlag = flags.has('l') || flags.has('u') || plusFlags.has('l') || plusFlags.has('u');
+      // Compute the resulting fold for a name given its CURRENT fold. `-l`/`-u` win
+      // (set direction; both = clear); otherwise a `+l`/`+u` clears only its own
+      // direction, leaving the opposite fold intact.
+      const nextCaseFold = (current: 'lower' | 'upper' | undefined): 'lower' | 'upper' | undefined => {
+        if (flags.has('l') && flags.has('u')) return undefined; // -lu cancels
+        if (flags.has('l')) return 'lower';
+        if (flags.has('u')) return 'upper';
+        if (plusFlags.has('l') && current === 'lower') return undefined;
+        if (plusFlags.has('u') && current === 'upper') return undefined;
+        return current; // +u on lower / +l on upper: unchanged
+      };
+      const markFold = (n: string): void => {
+        if (hasCaseFoldFlag) ctx.state?.markCaseFold?.(n, nextCaseFold(ctx.state?.caseFoldOf?.(n)));
+      };
       if (isAssoc && (ctx.state?.getOption('posix') ?? false)) {
         errOut(ctx, 'shell: declare: -A: not supported in POSIX mode\n');
         return 2;
@@ -622,7 +633,7 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         if (flagInteger) ctx.state?.markInteger?.(a.name);
         // Mark case-fold BEFORE applying the array so applyBuiltinAssignment folds
         // each element (bash: `declare -la a=(FOO Bar)` → foo bar).
-        if (hasCaseFoldFlag) ctx.state?.markCaseFold?.(a.name, flagCaseFold);
+        markFold(a.name);
         const roBlockedArr = flagGlobal ? (ctx.state?.isGlobalReadonly?.(a.name) ?? false) : (ctx.state?.isReadonly?.(a.name) ?? false);
         if (roBlockedArr) {
           errOut(ctx, `shell: ${name}: ${a.name}: readonly variable\n`);
@@ -663,7 +674,7 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
             if (isLocal && scope === 'none') { errOut(ctx, 'shell: local: can only be used in a function\n'); return 1; }
           }
           if (flagInteger) ctx.state?.markInteger?.(subM[1]);
-          if (hasCaseFoldFlag) ctx.state?.markCaseFold?.(subM[1], flagCaseFold);
+          markFold(subM[1]);
           if (await ctx.applyBuiltinAssignment({ name: subM[1], value: arg.slice(eq + 1), index: subM[2], append: subM[3] === '+' }, flagGlobal)) declStatus = 1;
           if (flagReadonly) ctx.state?.markReadonly?.(subM[1]);
           if (flagExport) ctx.state?.markExport?.(subM[1]);
@@ -698,10 +709,11 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         // `declare -i name` marks the name integer BEFORE assigning, so the RHS
         // is arithmetic-evaluated (bash: `declare -i n=1+2` → n=3).
         if (flagInteger) ctx.state?.markInteger?.(n);
-        // `declare -l`/`-u` set/clear the case-fold attribute before assigning so the
-        // value below folds. Applying the attribute to an EXISTING value does NOT
-        // refold it (bash: `x=HELLO; declare -l x` keeps HELLO; only later writes fold).
-        if (hasCaseFoldFlag) ctx.state?.markCaseFold?.(n, flagCaseFold);
+        // `declare -l`/`-u` (and `+l`/`+u`) set/clear the case-fold attribute before
+        // assigning so the value below folds. Applying the attribute to an EXISTING
+        // value does NOT refold it (bash: `x=HELLO; declare -l x` keeps HELLO; only
+        // later writes fold).
+        markFold(n);
         if (eq > 0) {
           // A write to an ALREADY-readonly var fails — even via `readonly NAME=val`
           // (bash: `readonly r=a; readonly r=b` errors). The first `readonly RO=1`
@@ -1936,7 +1948,9 @@ function formatPrintf(format: string, args: string[]): PrintfResult {
       if (!m) { out += c; i++; continue; } // unreachable (all groups optional) — defensive
       const spec = m[0];
       const conv = fmt[i + spec.length]; // the conversion char, or undefined at end
-      if (conv === undefined || !'sbcdiuoxXeEfgGq'.includes(conv)) {
+      // `%n` (store-count) has no shell effect: consume no arg, emit nothing (bash).
+      if (conv === 'n') { consumedConversion = true; i += spec.length + 1; continue; }
+      if (conv === undefined || !'sbcCdiuoxXeEfFgGqSaA'.includes(conv)) {
         // Missing conversion (trailing `%`, or flags/modifier that ran off the end) →
         // "missing format character" quoting the whole spec; a present-but-unknown
         // char → "invalid format character" quoting that char. Either way bash stops
@@ -1990,7 +2004,9 @@ function formatOne(conv: string, flags: string, width: number | undefined, prec:
   let signPrefix = '';
 
   switch (conv) {
-    case 's': {
+    // `%S` is the wide-string variant of `%s`; over the JS-string surface it behaves
+    // identically. `%C` likewise aliases `%c`.
+    case 's': case 'S': {
       body = arg;
       if (prec !== undefined) body = body.slice(0, prec);
       return { text: pad(body, width, left, false) };
@@ -2002,9 +2018,10 @@ function formatOne(conv: string, flags: string, width: number | undefined, prec:
       if (prec !== undefined) body = body.slice(0, prec);
       return { text: pad(body, width, left, false), stop };
     }
-    case 'c': {
+    case 'c': case 'C': {
       // `%c` prints the FIRST character of the argument; an EMPTY argument yields a
-      // single NUL byte (bash: `printf '[%c]' ''` → `[` NUL `]`).
+      // single NUL byte (bash: `printf '[%c]' ''` → `[` NUL `]`). `%C` is the wide
+      // variant — identical over the JS-string surface.
       body = arg === '' ? '\0' : arg.slice(0, 1);
       return { text: pad(body, width, left, false) };
     }
@@ -2042,19 +2059,45 @@ function formatOne(conv: string, flags: string, width: number | undefined, prec:
       body = digits;
       return { text: padNum(altPrefix, body, width, left, zero && prec === undefined), error: parsed.error };
     }
-    case 'f': case 'e': case 'E': case 'g': case 'G': {
+    case 'a': case 'A': {
+      // C99 hex float: sign 0x mantissa[.frac]p±exp. Infinity/NaN share the float path.
       const parsed = parseFloatArg(arg);
       const num = parsed.value;
+      if (!Number.isFinite(num)) {
+        const up = conv === 'A';
+        if (Number.isNaN(num)) return { text: pad(up ? 'NAN' : 'nan', width, left, false), error: parsed.error };
+        const sp = num < 0 ? '-' : plus ? '+' : space ? ' ' : '';
+        return { text: pad(sp + (up ? 'INF' : 'inf'), width, left, false), error: parsed.error };
+      }
+      const neg = num < 0 || Object.is(num, -0);
+      signPrefix = neg ? '-' : plus ? '+' : space ? ' ' : '';
+      body = formatHexFloat(Math.abs(num), prec !== undefined && prec >= 0 ? prec : undefined, conv === 'A');
+      return { text: padNum(signPrefix, body, width, left, zero), error: parsed.error };
+    }
+    case 'f': case 'F': case 'e': case 'E': case 'g': case 'G': {
+      const parsed = parseFloatArg(arg);
+      const num = parsed.value;
+      // Infinity / NaN: `inf`/`nan` for lowercase convs, `INF`/`NAN` for %F/%E/%G.
+      // NaN carries no sign; ±inf takes the usual sign/plus/space prefix. Width pads
+      // but zero-fill is ignored (bash space-pads inf/nan).
+      if (!Number.isFinite(num)) {
+        const upperConv = conv === 'F' || conv === 'E' || conv === 'G';
+        if (Number.isNaN(num)) return { text: pad(upperConv ? 'NAN' : 'nan', width, left, false), error: parsed.error };
+        const sp = num < 0 ? '-' : plus ? '+' : space ? ' ' : '';
+        return { text: pad(sp + (upperConv ? 'INF' : 'inf'), width, left, false), error: parsed.error };
+      }
+      // `%F` shares `%f`'s finite formatting (its uppercase inf/nan handled above).
+      const fconv = conv === 'F' ? 'f' : conv;
       if (prec !== undefined && prec < 0) prec = undefined; // defensive: negative → unset
       const p = prec ?? 6;
       let s: string;
-      if (conv === 'f') s = formatFixed(Math.abs(num), p);
-      else if (conv === 'e' || conv === 'E') s = formatExp(Math.abs(num), p, conv === 'E');
-      else s = formatG(Math.abs(num), prec === undefined ? 6 : (prec === 0 ? 1 : prec), conv === 'G', alt);
+      if (fconv === 'f') s = formatFixed(Math.abs(num), p);
+      else if (fconv === 'e' || fconv === 'E') s = formatExp(Math.abs(num), p, fconv === 'E');
+      else s = formatG(Math.abs(num), prec === undefined ? 6 : (prec === 0 ? 1 : prec), fconv === 'G', alt);
       // `%#` forces a decimal point even when precision trimmed it away. For %g the
       // trailing-zero trim is already suppressed above; %f/%e with precision 0 print
       // no point, so inject one right after the integer/mantissa digits (bash: `3.`).
-      if (alt && (conv === 'f' || conv === 'e' || conv === 'E') && !s.includes('.')) {
+      if (alt && (fconv === 'f' || fconv === 'e' || fconv === 'E') && !s.includes('.')) {
         const m = /^(\d+)(.*)$/s.exec(s); // digits then optional exponent (e±NN)
         if (m !== null) s = m[1] + '.' + m[2];
       }
@@ -2130,6 +2173,45 @@ function scaledRoundHalfEven(ax: number, k: number): bigint {
   return q;
 }
 
+/**
+ * `%a`/`%A` C99 hex-float of a non-negative finite double: `0x` + leading hex digit
+ * (1 for normals, 0 for subnormals/zero) + optional `.frac` + `p±exp` (decimal binary
+ * exponent). `prec` = exact number of hex fraction digits (rounded half-to-even,
+ * carrying into the leading digit); undefined = shortest exact. `upper` → uppercase.
+ */
+function formatHexFloat(ax: number, prec: number | undefined, upper: boolean): string {
+  let out: string;
+  if (ax === 0) {
+    out = '0x0' + (prec !== undefined && prec > 0 ? '.' + '0'.repeat(prec) : '') + 'p+0';
+  } else {
+    const buf = new DataView(new ArrayBuffer(8)); buf.setFloat64(0, ax);
+    const hi = buf.getUint32(0), lo = buf.getUint32(4);
+    const rawExp = (hi >>> 20) & 0x7ff;
+    const mant = (BigInt(hi & 0xfffff) << 32n) | BigInt(lo >>> 0); // 52-bit fraction
+    let e2: number; let lead: bigint;
+    if (rawExp === 0) { e2 = -1022; lead = 0n; }  // subnormal: leading 0
+    else { e2 = rawExp - 1023; lead = 1n; }       // normal: leading 1, unbiased exp
+    let fracDigits = mant.toString(16).padStart(13, '0'); // 52 bits = 13 hex digits
+    if (prec === undefined) {
+      fracDigits = fracDigits.replace(/0+$/, ''); // shortest exact
+    } else if (prec < 13) {
+      const rest = fracDigits.slice(prec);
+      let val = BigInt('0x' + (fracDigits.slice(0, prec) || '0'));
+      const half = BigInt('0x8' + '0'.repeat(rest.length - 1));
+      const restVal = BigInt('0x' + rest);
+      if (restVal > half || (restVal === half && (val & 1n) === 1n)) val += 1n; // half-to-even
+      const maxv = 1n << BigInt(4 * prec);
+      if (val >= maxv) { val -= maxv; lead += 1n; } // carry into the leading digit
+      fracDigits = prec > 0 ? val.toString(16).padStart(prec, '0') : '';
+    } else {
+      fracDigits = fracDigits.padEnd(prec, '0');
+    }
+    const frac = fracDigits.length > 0 ? '.' + fracDigits : '';
+    out = '0x' + lead.toString(16) + frac + 'p' + (e2 < 0 ? '-' : '+') + Math.abs(e2);
+  }
+  return upper ? out.toUpperCase() : out;
+}
+
 /** `%f` magnitude of a non-negative finite double with `prec` fractional digits. */
 function formatFixed(ax: number, prec: number): string {
   if (!Number.isFinite(ax)) return Math.abs(ax).toFixed(Math.min(prec, 100));
@@ -2177,9 +2259,13 @@ function formatG(n: number, sig: number, upper: boolean, alt: boolean): string {
     // Trim trailing zeros before the exponent. `formatExp` may have uppercased `e`
     // to `E` (for `%G`), so match either case (was lowercase-only → %G never trimmed).
     if (!alt) s = s.replace(/\.?0+([eE])/, '$1');
+    // `%#g` keeps the point even at precision 0 (`%#.1g 1e20` → `1.e+20`).
+    else if (!s.includes('.')) s = s.replace(/([eE])/, '.$1');
   } else {
     s = formatFixed(n, Math.max(0, sig - 1 - exp));
     if (!alt && s.includes('.')) s = s.replace(/\.?0+$/, '');
+    // `%#g` on an integer-valued result forces a trailing point (`%#g 100000` → `100000.`).
+    else if (alt && !s.includes('.')) s = s + '.';
   }
   return s;
 }
@@ -2277,9 +2363,27 @@ function clampInt(v: bigint, unsigned: boolean, arg: string): IntArg {
 function parseFloatArg(arg: string): NumArg {
   const s = arg.trim();
   if (s[0] === '\'' || s[0] === '"') return { value: s.codePointAt(1) ?? 0 };
-  if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(s) || /^[+-]?0[xX][0-9a-fA-F.pP+-]+$/.test(s)) {
-    const v = parseFloat(s);
-    return { value: Number.isNaN(v) ? 0 : v };
+  // `inf`/`infinity`/`nan` (any case, optional sign) — bash/C strtold specials.
+  const spec = /^([+-]?)(inf(inity)?|nan)$/i.exec(s);
+  if (spec !== null) {
+    const neg = spec[1] === '-';
+    if (/^nan$/i.test(spec[2])) return { value: NaN };
+    return { value: neg ? -Infinity : Infinity };
+  }
+  // Decimal float.
+  if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(s)) return { value: parseFloat(s) };
+  // Hex integer (`0x10`) or C hex-float (`0x1.8p3`). JS `parseFloat`/`Number` cannot
+  // parse hex floats, so compute them directly: mantissa (hex, with optional frac)
+  // scaled by the binary exponent `p±N`.
+  const hex = /^([+-]?)0[xX]([0-9a-fA-F]*)(?:\.([0-9a-fA-F]*))?(?:[pP]([+-]?\d+))?$/.exec(s);
+  if (hex !== null && (hex[2] !== '' || hex[3] !== undefined)) {
+    const sign = hex[1] === '-' ? -1 : 1;
+    let mant = hex[2] === '' ? 0 : parseInt(hex[2], 16);
+    if (hex[3] !== undefined && hex[3] !== '') {
+      for (let i = 0; i < hex[3].length; i++) mant += parseInt(hex[3][i], 16) * 16 ** -(i + 1);
+    }
+    const bexp = hex[4] !== undefined ? parseInt(hex[4], 10) : 0;
+    return { value: sign * mant * 2 ** bexp };
   }
   const v = parseFloat(s);
   if (Number.isNaN(v)) return { value: 0, error: `${arg}: invalid number` };

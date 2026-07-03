@@ -105,7 +105,22 @@ malformed expression emits bash's diagnostic (`X: unary operator expected`,
 `X: binary operator expected`, `too many arguments`) with exit 2 — sharing the same
 `condFileTest` logic as `[[ ]]`. (9) **`declare`/`typeset`/`local -l`/`-u`** case-fold
 attribute folds every assigned value (scalar/array/element/`+=`), `-lu` cancels,
-`+l`/`+u` clears, and `declare -p` shows `-l`/`-u` (flag order `a i r x l/u`).
+`+l`/`+u` clears (matching direction only), and `declare -p` shows `-l`/`-u` (flag
+order `a i r x l/u`).
+
+A **5-dimension adversarial bash-5.3 differential review** of the frontier wave then
+found 13 further confirmed divergences, fixed here (again byte-exact vs bash 5.3.15):
+two were REGRESSIONS the wave introduced — `[ -e '' ]`/`[ -f '' ]` wrongly true (an
+empty path must be nonexistent, not resolved to the cwd), and `+u` on a `-l` var (or
+`+l` on `-u`) wrongly wiped the whole fold (now clears only the matching direction).
+The rest were pre-existing gaps the sharper lens surfaced and completed: `printf`
+hex-integer / C hex-float args (`%f 0x10` → `16.0`, `%f 0x1.8p3` → `12.0`); `inf`/
+`nan`/`infinity` literal float args (any case) formatted as `inf`/`-inf`/`nan` (and
+`INF`/`NAN` for `%F`/`%E`/`%G`) with sign + width but no zero-fill, and an overflowing
+magnitude prints `inf` not JS `Infinity`; `%#g`/`%#G` force a trailing point on
+integer-valued output (`%#g 100000` → `100000.`); the conversions `%a`/`%A` (C99 hex
+float, ties-to-even), `%F` (uppercase-inf `%f`), `%S`/`%C` (wide aliases), and `%n`
+(no-op); and `[[ ]]` gained `( … )` grouping and the `-ef`/`-nt`/`-ot` binops.
 
 ## Deliberate boundaries (documented, not gaps)
 
@@ -154,6 +169,33 @@ These are intentional design limits, not missing features:
   type/symlink tests `-h`/`-L`/`-b`/`-c`/`-p`/`-S`/`-t` plus the mtime binops
   `-nt`/`-ot` report false. `-e`/`-f`/`-d`/`-v`/`-R`/`-o`/`-ef` are exact. Faithful
   permission/mtime tests would need a richer VFS stat — out of scope.
+- **`printf %(FMT)T` (strftime timestamp) is not implemented.** bash's
+  `printf '%(%Y-%m-%d)T' SECONDS` formats a time_t via `strftime`. mithic reports it
+  as an invalid format character. A faithful port needs a `strftime` engine + locale/TZ
+  handling; low use in agent scripts. (The C99 float/wide conversions `%a`/`%A`/`%F`/
+  `%S`/`%C` and the no-op `%n` ARE implemented and byte-exact vs bash.)
+- **`printf` does not emit the ERANGE `Result too large` diagnostic for an underflowing
+  (subnormal-rounding) float argument.** bash prints the rounded value AND exits 1 with
+  `ARG: Result too large` for e.g. `printf '%g' 5e-324`; mithic prints the byte-identical
+  value but exits 0 with no diagnostic. Only the exit code + stderr differ, never stdout;
+  detecting it would need the parse path to flag sub-`DBL_MIN` magnitudes.
+- **A `printf` invalid-format-character diagnostic quotes the DECODED byte when a
+  backslash escape sits at the conversion position.** `printf '%\n'` reports
+  `` `<LF>': invalid format character `` (the interpreted newline) where bash quotes the
+  literal `` `\' ``. Cosmetic (stderr text only); the exit code and stopped-output match.
+  The format string is escape-interpreted before spec parsing, so the raw escape is gone
+  by the time the error fires.
+- **`test`/`[` accepts DEEPLY nested parentheses that bash's argc-driven parser rejects.**
+  `[ '(' '(' x ')' ')' ]` is true in mithic (its recursive grammar allows nesting) but
+  bash errors (`(: unary operator expected`, exit 2) — bash only special-cases a SINGLE
+  `( expr )` level in `[ ]`. mithic is more permissive, not less; single-level grouping
+  and the common cases match. (`[[ ( ( … ) ) ]]` nests fine in both.)
+- **`declare -l`/`-u` uses JS full Unicode case mapping where bash uses simple
+  per-codepoint mapping.** `declare -u x=ß` → `SS` (mithic, `String.toUpperCase`) vs `ß`
+  (bash, `towupper` 1:1); likewise the ligature `ﬁ`→`FI` and `İ`→`i̇`. ASCII and
+  precomposed accented Latin (`déjà`→`DÉJÀ`) match exactly; only the rare 1-to-many /
+  special-casing codepoints differ. A faithful port would map each code point through the
+  Unicode SIMPLE case mapping only.
 
 ---
 
