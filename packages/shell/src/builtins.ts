@@ -823,9 +823,11 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         }
         if (flagP || flagBigP) {
           // Path forms: print ONLY the file path (nothing for a shadowed name under
-          // -p; -P prints the forced PATH hit). A shadowed name with no file → silent.
+          // -p; -P prints the forced PATH hit). A miss exits 1: for -p only when the
+          // name is NOT shadowed (a shadowed builtin has rc 0), but for -P (force
+          // search) ALWAYS — `type -P if` finds no file and exits 1 (bash).
           if (file !== undefined) ctx.write(`${file}\n`);
-          else if (!shadowed) status = 1;
+          else if (flagBigP || !shadowed) status = 1;
           continue;
         }
         if (flagT) {
@@ -1802,7 +1804,9 @@ function formatOne(conv: string, flags: string, width: number | undefined, prec:
       return { text: pad(body, width, left, false), stop };
     }
     case 'c': {
-      body = arg.slice(0, 1);
+      // `%c` prints the FIRST character of the argument; an EMPTY argument yields a
+      // single NUL byte (bash: `printf '[%c]' ''` → `[` NUL `]`).
+      body = arg === '' ? '\0' : arg.slice(0, 1);
       return { text: pad(body, width, left, false) };
     }
     case 'q':
@@ -1951,17 +1955,23 @@ function digitsToBig(digits: string, base: bigint): bigint {
  *     [INTMAX_MIN, INTMAX_MAX]; unsigned (`%u`/`%x`/`%o`) allow [-(2^64-1), 2^64-1].
  */
 function parseIntArg(arg: string, unsigned: boolean): IntArg {
-  const s = arg.trim();
+  // Only LEADING whitespace is skipped (bash strtoimax); TRAILING content makes it a
+  // partial/invalid number (`'42 '` → invalid), unlike the whole-string trim before.
+  const s = arg.replace(/^\s+/, '');
   // A leading quote yields the next char's code point (unclamped, always in range).
   if (s[0] === '\'' || s[0] === '"') return { value: BigInt(s.codePointAt(1) ?? 0) };
+  const signed = s[0] === '+' || s[0] === '-';
   const sign = s[0] === '-' ? -1n : 1n;
-  const body = s.replace(/^[+-]/, '');
+  const body = signed ? s.slice(1) : s;
+  // A SIGNED token (leading +/-) that fails to parse cleanly reports the GENERIC
+  // "invalid number" (bash), not "invalid hex/octal number".
+  const badWord = signed ? 'invalid number' : undefined;
   // Hex: `0x…`. A trailing non-hex char is a partial-parse error keeping the run.
   if (/^0[xX]/.test(body)) {
     const hex = body.slice(2).match(/^[0-9a-fA-F]+/);
-    if (hex === null) return { value: 0n, error: `${arg}: invalid hex number` };
+    if (hex === null) return { value: 0n, error: `${arg}: ${badWord ?? 'invalid hex number'}` };
     const val = clampInt(digitsToBig(hex[0], 16n) * sign, unsigned, arg);
-    if (hex[0].length !== body.length - 2) return { value: val.value, error: `${arg}: invalid hex number` };
+    if (hex[0].length !== body.length - 2) return { value: val.value, error: `${arg}: ${badWord ?? 'invalid hex number'}` };
     return val;
   }
   // Octal: a leading `0` followed by digits. `08`/`09`/`0778` are invalid octal but
@@ -1970,7 +1980,7 @@ function parseIntArg(arg: string, unsigned: boolean): IntArg {
     const oct = body.slice(1).match(/^[0-7]+/);
     const octRun = oct ? oct[0] : '';
     const val = clampInt(digitsToBig(octRun, 8n) * sign, unsigned, arg);
-    if (octRun.length !== body.length - 1) return { value: val.value, error: `${arg}: invalid octal number` };
+    if (octRun.length !== body.length - 1) return { value: val.value, error: `${arg}: ${badWord ?? 'invalid octal number'}` };
     return val;
   }
   // Decimal (incl. a bare `0`).
@@ -1982,15 +1992,19 @@ function parseIntArg(arg: string, unsigned: boolean): IntArg {
 }
 
 /**
- * Clamp a BigInt to the printf target range. Out-of-range saturates to the boundary
- * and is an ERROR (bash exits 1 but prints the saturated value). The message quotes
- * the ORIGINAL argument token (`ARG: Result too large`).
+ * Clamp a BigInt to the printf target range. Out-of-range saturates and is an ERROR
+ * (bash exits 1 but prints the saturated value). Signed convs clamp to [INTMAX_MIN,
+ * INTMAX_MAX]. Unsigned (`%u`/`%x`/`%o`) allow [-(2^64-1), 2^64-1]: a value ABOVE
+ * the range OR BELOW -(2^64-1) both saturate to UINTMAX_MAX (bash). The message
+ * quotes the ORIGINAL argument token (`ARG: Result too large`).
  */
 function clampInt(v: bigint, unsigned: boolean, arg: string): IntArg {
-  const hi = unsigned ? UINTMAX_MAX : INTMAX_MAX;
-  const lo = unsigned ? UINTMAX_MIN : INTMAX_MIN;
-  if (v > hi) return { value: hi, error: `${arg.trim()}: Result too large` };
-  if (v < lo) return { value: lo, error: `${arg.trim()}: Result too large` };
+  if (unsigned) {
+    if (v > UINTMAX_MAX || v < UINTMAX_MIN) return { value: UINTMAX_MAX, error: `${arg.trim()}: Result too large` };
+    return { value: v };
+  }
+  if (v > INTMAX_MAX) return { value: INTMAX_MAX, error: `${arg.trim()}: Result too large` };
+  if (v < INTMAX_MIN) return { value: INTMAX_MIN, error: `${arg.trim()}: Result too large` };
   return { value: v };
 }
 

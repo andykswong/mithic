@@ -406,3 +406,29 @@ test('printf invalid number exits 1 and keeps leading digits', async () => {
   expect(partial.out).toBe('12\n');
   expect(partial.code).toBe(1);
 });
+
+test('printf skips LEADING whitespace only; trailing content is invalid', async () => {
+  expect(await printf('%d\n', ' 42')).toBe('42\n'); // leading ws OK
+  const tw = await printfR('%d\n', '42 ');           // trailing ws → invalid, keeps 42
+  expect(tw.out).toBe('42\n'); expect(tw.code).toBe(1); expect(tw.err).toMatch(/invalid number/);
+});
+
+test('printf %u/%x/%o underflow beyond -(2^64-1) saturates to UINTMAX_MAX (exit 1)', async () => {
+  const u = await printfR('%u\n', '-18446744073709551616'); // -(2^64), just below range
+  expect(u.out).toBe('18446744073709551615\n');
+  expect(u.code).toBe(1);
+  expect(u.err).toMatch(/Result too large/);
+});
+
+test('printf signed invalid hex/octal reports generic "invalid number" (bash)', async () => {
+  const h = await printfR('%d\n', '-0x1g');
+  expect(h.out).toBe('-1\n'); expect(h.code).toBe(1);
+  expect(h.err).toMatch(/invalid number/); expect(h.err).not.toMatch(/hex/);
+  const o = await printfR('%d\n', '-0778');
+  expect(o.out).toBe('-63\n'); expect(o.code).toBe(1);
+  expect(o.err).not.toMatch(/octal/);
+});
+
+test('printf %c of an empty argument emits a NUL byte', async () => {
+  expect(await printf('[%c]', '')).toBe('[\0]');
+});

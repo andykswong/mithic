@@ -1115,6 +1115,14 @@ test('type -P forces a $PATH search even when a builtin shadows the name', async
   expect((await run('type -p ls', PATHENV, pathFs())).out).toBe('/bin/ls\n');  // ls not a builtin
 });
 
+test('type -P of a shadowed name with no $PATH file exits 1 (force-search miss)', async () => {
+  // `if` (keyword) and a function have no PATH file: -P forces a search → miss, rc 1.
+  expect((await run('type -P if; echo "rc=$?"', PATHENV, pathFs())).out).toBe('rc=1\n');
+  expect((await run('f(){ :; }; type -P f; echo "rc=$?"', PATHENV, pathFs())).out).toBe('rc=1\n');
+  // -p of a shadowed builtin (echo) is silent with rc 0 (no forced search).
+  expect((await run('type -p echo; echo "rc=$?"', PATHENV, pathFs())).out).toBe('rc=0\n');
+});
+
 test('type / command accept clustered flags and -- terminator', async () => {
   expect((await run('type -ta echo', PATHENV, pathFs())).out).toBe('builtin\nfile\n');
   expect((await run('type -- ls', PATHENV, pathFs())).out).toBe('ls is /bin/ls\n');
