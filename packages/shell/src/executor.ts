@@ -28,7 +28,7 @@ import { globMatch } from './glob.ts';
 import type { GlobOptions } from './glob.ts';
 import { Expander, ExpansionError } from './expander.ts';
 import { expandHistory, HistoryEventNotFound } from './history-expand.ts';
-import { isBuiltin, isShellKeyword, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES, PosixSpecialBuiltinError, POSIX_SPECIAL_BUILTINS } from './builtins.ts';
+import { isBuiltin, isShellKeyword, runBuiltin, OPTION_FLAGS, SET_O_OPTIONS, SHOPT_NAMES, PosixSpecialBuiltinError, POSIX_SPECIAL_BUILTINS, testNumericCompare } from './builtins.ts';
 import type { BuiltinContext, ShellState, ShellOptionName } from './builtins.ts';
 import { Environment, computeShlvl } from './environment.ts';
 import type { EnvHost } from './environment.ts';
@@ -1365,6 +1365,23 @@ export class Executor {
     if (words.length === 3 && words[1] === '>') return words[0] > words[2];
     if (words.length === 2 && words[0].startsWith('-')) {
       return this.condFileTest(words[0], words[1]);
+    }
+    // `[[ a -eq b ]]` numeric comparison: operands are ARITHMETIC expressions (bash),
+    // so `[[ 010 -eq 8 ]]` (octal) and `[[ 0x10 -eq 16 ]]` (hex) hold — evaluated in
+    // 64-bit BigInt. (`[ ]`/`test` use decimal-only operands; see testNumericCompare.)
+    if (words.length === 3 && ['-eq', '-ne', '-lt', '-le', '-gt', '-ge'].includes(words[1])) {
+      const arrHook = this.arithArrayAccessExec();
+      const env = this.arithEnvForExpr();
+      const ev = (s: string): bigint => { try { return evalArith(s, env, arrHook); } catch { return 0n; } };
+      const x = ev(words[0]), y = ev(words[2]);
+      switch (words[1]) {
+        case '-eq': return x === y;
+        case '-ne': return x !== y;
+        case '-lt': return x < y;
+        case '-le': return x <= y;
+        case '-gt': return x > y;
+        case '-ge': return x >= y;
+      }
     }
     return evalTestArgs(words);
   }
@@ -3145,13 +3162,7 @@ function evalTestArgs(args: string[]): boolean {
     switch (op) {
       case '=': case '==': return a === b;
       case '!=': return a !== b;
-      case '-eq': return Number(a) === Number(b);
-      case '-ne': return Number(a) !== Number(b);
-      case '-lt': return Number(a) < Number(b);
-      case '-le': return Number(a) <= Number(b);
-      case '-gt': return Number(a) > Number(b);
-      case '-ge': return Number(a) >= Number(b);
-      default: return false;
+      default: return testNumericCompare(a, op, b) ?? false; // 64-bit -eq/-ne/-lt/…
     }
   }
   return false;

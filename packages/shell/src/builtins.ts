@@ -1595,6 +1595,33 @@ function unaryTest(op: string, s: string): boolean {
   }
 }
 
+/**
+ * Parse a `test`/`[ ]` numeric operand as a 64-bit integer. POSIX `test` operands
+ * are DECIMAL (bash `[ 010 -eq 10 ]` is true — `010` is decimal ten, not octal;
+ * `[ 0x10 ... ]` errors). 64-bit BigInt keeps precision beyond 2^53 (a JS `Number`
+ * would not). A non-numeric operand → 0 (the mock surface returns false, not error).
+ */
+function testInt(s: string): bigint {
+  const t = s.trim();
+  const m = /^([+-]?)0*([0-9]+)$/.exec(t); // decimal, leading zeros stripped
+  if (m === null) return 0n;
+  try { return BigInt(m[1] + (m[2] || '0')); } catch { return 0n; }
+}
+
+/** The 64-bit integer comparison operators for `test`/`[` (DECIMAL operands). */
+export function testNumericCompare(a: string, op: string, b: string): boolean | undefined {
+  const x = testInt(a), y = testInt(b);
+  switch (op) {
+    case '-eq': return x === y;
+    case '-ne': return x !== y;
+    case '-lt': return x < y;
+    case '-le': return x <= y;
+    case '-gt': return x > y;
+    case '-ge': return x >= y;
+    default: return undefined;
+  }
+}
+
 function binaryTest(a: string, op: string, b: string): boolean {
   switch (op) {
     case '=':
@@ -1602,13 +1629,7 @@ function binaryTest(a: string, op: string, b: string): boolean {
     case '!=': return a !== b;
     case '<': return a < b;   // lexical (byte) ordering, as in bash test/[
     case '>': return a > b;
-    case '-eq': return Number(a) === Number(b);
-    case '-ne': return Number(a) !== Number(b);
-    case '-lt': return Number(a) < Number(b);
-    case '-le': return Number(a) <= Number(b);
-    case '-gt': return Number(a) > Number(b);
-    case '-ge': return Number(a) >= Number(b);
-    default: return false;
+    default: return testNumericCompare(a, op, b) ?? false;
   }
 }
 

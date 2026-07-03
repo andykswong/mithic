@@ -968,6 +968,18 @@ test('test/[ ] -a/-o operators and 3-arg negation', async () => {
   expect((await run('[ ! -n "" ] && echo isempty')).out).toBe('isempty\n');
 });
 
+test('numeric comparisons are 64-bit; [ ] is decimal, [[ ]] is arithmetic', async () => {
+  // 64-bit precision beyond 2^53 (was Number()-truncated).
+  expect((await run('[ 9223372036854775807 -eq 9223372036854775806 ] && echo EQ || echo NE')).out).toBe('NE\n');
+  expect((await run('[[ 9223372036854775807 -eq 9223372036854775807 ]] && echo BIG')).out).toBe('BIG\n');
+  // `[ ]`/test operands are DECIMAL (010 == ten, not octal eight).
+  expect((await run('[ 010 -eq 10 ] && echo DEC || echo N')).out).toBe('DEC\n');
+  // `[[ ]]` operands are ARITHMETIC (010 == octal 8, 0x10 == 16, bare var).
+  expect((await run('[[ 010 -eq 8 ]] && echo OCT')).out).toBe('OCT\n');
+  expect((await run('[[ 0x10 -eq 16 ]] && echo HEX')).out).toBe('HEX\n');
+  expect((await run('x=100; [[ x -eq 100 ]] && echo VAR')).out).toBe('VAR\n');
+});
+
 test('test/[ ] lexical </> and [[ ]] lexical </>', async () => {
   expect((await run('[ apple \\< banana ] && echo ordered')).out).toBe('ordered\n');
   expect((await run('[ banana \\> apple ] && echo ok')).out).toBe('ok\n');
