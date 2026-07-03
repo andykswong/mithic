@@ -809,7 +809,10 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         // `declare -a name` marks the name an indexed array (promoting an existing
         // scalar to element [0]); a later scalar `name=v` then routes to `name[0]`
         // (bash). Skip under `-g` shadow handling / when it's already the assoc case.
-        else if (flags.has('a') && !flagGlobal) ctx.state?.declareArray?.(n);
+        // Quirk: `readonly -a NAME` on a VALUELESS name does NOT record the array
+        // attribute (bash shows `declare -r NAME`, not `-ar`); only `declare`/`local`/
+        // `typeset -a` (or `readonly -a NAME=(…)` with a value) does.
+        else if (flags.has('a') && !flagGlobal && (!isReadonly || eq > 0)) ctx.state?.declareArray?.(n);
         // `declare -i name` marks the name integer BEFORE assigning, so the RHS
         // is arithmetic-evaluated (bash: `declare -i n=1+2` → n=3).
         if (flagInteger) markIntegerAttr(n);
@@ -862,8 +865,11 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
           // declareAssoc above; predeclare records the declared-but-unset marker (and
           // seeds an empty array for `-a`). A function-local bare declare records the
           // marker too (declareLocal snapshotted the pre-shadow state; the return-restore
-          // clears it so it does not leak to the caller).
-          ctx.state?.predeclare?.(n, isAssoc ? 'assoc' : flags.has('a') ? 'array' : 'scalar');
+          // clears it so it does not leak to the caller). Quirk: `readonly -a NAME` on a
+          // valueless name does NOT take the array type (bash → `declare -r NAME`), so
+          // predeclare it as a plain scalar under readonly.
+          const predKind = isAssoc ? 'assoc' : (flags.has('a') && !isReadonly) ? 'array' : 'scalar';
+          ctx.state?.predeclare?.(n, predKind);
         }
         // A bare `declare NAME` / `local NAME` (no `=value`) declares the name but
         // leaves it UNSET (bash: `local x; echo ${x+SET}` prints nothing) — a fresh

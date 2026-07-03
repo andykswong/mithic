@@ -1932,8 +1932,10 @@ test('declare -i (no names) lists integer variables; -r lists readonly; -a lists
     .toBe('declare -a arr=([0]="x" [1]="y")\n');
   expect((await run('declare -A m=([k]=v); s=1; declare -A')).out)
     .toBe('declare -A m=([k]="v" )\n');
-  // Combined -ir lists only vars carrying BOTH attributes.
-  expect((await run('declare -ir c=5; declare -i x=1; declare -ir')).out).toBe('declare -ir c="5"\n');
+  // Combined -ir is a UNION of the non-type attributes: lists integer-only, readonly-
+  // only, AND both (bash — see the dedicated union test below).
+  expect((await run('declare -i x=1; declare -r y=2; declare -ir z=3; declare -ir')).out)
+    .toBe('declare -i x="1"\ndeclare -r y="2"\ndeclare -ir z="3"\n');
 });
 
 // ── declare -g under a same-name function-local shadow (two narrow scoping gaps) ─────
@@ -2120,4 +2122,45 @@ test('declare -gA under a local shadow of a bare-declared global: local stays ba
     .toBe('declare -A g\n');
   expect((await run('declare -A g; f(){ local -A g; declare -gA g=([P]=v); }; f; declare -p g')).out)
     .toBe('declare -A g=([P]="v" )\n');
+});
+
+// ── Review-round-3 regression fixes ──────────────────────────────────────────
+
+test('[[ ]] a literal unary operator in word[0] binds first (3-word form is a syntax error)', async () => {
+  // bash: `[[ -e = -e ]]` → the unary -e consumes `=`, word[2] `-e` is unexpected → exit 2.
+  expect((await run('[[ -e = -e ]]; echo $?')).out).toBe('2\n');
+  expect((await run('[[ -z -eq 3 ]]; echo $?')).out).toBe('2\n');
+  expect((await run('[[ -f == x ]]; echo $?')).out).toBe('2\n');
+  // word[0] NOT a unary op → ordinary binary comparison, unaffected.
+  expect((await run('[[ x = -e ]]; echo $?')).out).toBe('1\n');
+  expect((await run('[[ = == = ]]; echo $?')).out).toBe('0\n');
+  expect((await run('[[ abc == abc ]]; echo $?')).out).toBe('0\n');
+});
+
+test('declare -FLAG listing is a UNION of non-type attrs (type filters -a/-A are AND)', async () => {
+  // `declare -ir` lists integer-only, readonly-only, AND both (union), not just both.
+  expect((await run('declare -i x=1; declare -r y=2; declare -ir z=3; declare -ir')).out)
+    .toBe('declare -i x="1"\ndeclare -r y="2"\ndeclare -ir z="3"\n');
+});
+
+test('[[ -v NAME ]] on a bare (element-less) array/assoc is UNSET; set once [0] exists', async () => {
+  expect((await run('declare -a A; [[ -v A ]]; echo $?')).out).toBe('1\n');       // empty array → unset
+  expect((await run('declare -a A; A[0]=x; [[ -v A ]]; echo $?')).out).toBe('0\n'); // [0] set → set
+  expect((await run('declare -A M; [[ -v M ]]; echo $?')).out).toBe('1\n');
+  expect((await run('declare -A M; M[0]=x; [[ -v M ]]; echo $?')).out).toBe('0\n');
+});
+
+test('a bare targetless declare -n appears in the declare -n attribute listing', async () => {
+  expect((await run('declare -n rf; declare -n')).out).toBe('declare -n rf\n');
+});
+
+test('readonly -a on a valueless name does not take the array type (bash quirk)', async () => {
+  expect((await run('readonly -a AR; declare -p AR')).out).toBe('declare -r AR\n');
+  // ...but readonly -a NAME=(…) with a value DOES record the array attribute.
+  expect((await run('readonly -a AR=(1 2); declare -p AR')).out).toBe('declare -ar AR=([0]="1" [1]="2")\n');
+});
+
+test('declare -ga (indexed) under a local -A shadow writes an INDEXED global, not assoc', async () => {
+  expect((await run('g=(a b c); f(){ local -A g; declare -ga g=(P Q); }; f; declare -p g')).out)
+    .toBe('declare -a g=([0]="P" [1]="Q")\n');
 });

@@ -1624,6 +1624,12 @@ export class Executor {
       throw new TestSyntaxError(`syntax error: \`${words[1]}' unexpected; conditional binary operator expected`);
     }
     if (words.length === 3) {
+      // A literal UNARY operator in word[0] binds FIRST (higher precedence than a binary
+      // op), consuming word[1] as its argument and leaving word[2] unexpected — bash
+      // errors (`[[ -e = -e ]]` → syntax error, exit 2), NOT a binary comparison.
+      if ((TEST_UNARY.has(words[0]) || words[0] === '<' || words[0] === '>') && wasLiteral(0)) {
+        throw new TestSyntaxError(`syntax error in conditional expression: unexpected token \`${words[2]}'`);
+      }
       const BINOPS = ['=~', '==', '=', '!=', '<', '>', '-nt', '-ot', '-ef', '-eq', '-ne', '-lt', '-le', '-gt', '-ge'];
       if (BINOPS.some((o) => isOp(1, o))) return; // valid `a OP b`
       throw new TestSyntaxError(`syntax error: \`${words[1]}' conditional binary operator expected`);
@@ -1788,7 +1794,11 @@ export class Executor {
         const arr = this.arrays.get(nm);
         return arr !== undefined && arr[Number(sub)] !== undefined;
       }
-      return nm in this.context.env || this.arrays.has(nm) || this.assocArrays.has(nm) || this.namerefs.has(nm);
+      // A bare (unsubscripted) NAME on an array/assoc tests element/key `0` (bash:
+      // `-v arr` ≡ `-v arr[0]`), so a declared-but-empty `declare -a A` is UNSET.
+      if (this.arrays.has(nm)) return this.arrays.get(nm)![0] !== undefined;
+      if (this.assocArrays.has(nm)) return this.assocArrays.get(nm)!.has('0');
+      return nm in this.context.env || this.namerefs.has(nm);
     }
     // `-o OPT`: shell-option test (`set -o`); NOT a filesystem path.
     if (op === '-o') return SET_O_OPTIONS.includes(path as ShellOptionName) && this.options[path as ShellOptionName];
@@ -2926,17 +2936,17 @@ export class Executor {
     // Integer arrays arith-evaluate; a `declare -l`/`-u` array folds each element.
     const evalIfInt = (v: string): string =>
       intAttr ? String(this.evalArithValue(v)) : applyCaseFold(v, foldMode);
-    // Is the TARGET binding associative? For a live (non-`-g`) target that's
-    // `this.assocArrays`. For a `declare -g` target shadowed by a same-name local,
-    // it is the GLOBAL binding's assoc-ness: either its snapshot already holds an
-    // assoc, or `declare -gA` just marked the live name assoc (declareAssoc set
-    // `this.assocArrays`, meaning the -A attribute is intended for the global). In
-    // either case route the `[key]=value` literal into the GLOBAL snapshot's assoc
-    // map — WITHOUT this, the assoc literal fell through to the indexed path, which
-    // dropped the `-A` attribute and mangled `[y]=v` into `[0]="v"`.
+    // Is the GLOBAL TARGET binding associative? For a `declare -g` write shadowed by a
+    // same-name local, this MUST be the GLOBAL binding's own type (its snapshot's
+    // `assoc`), NOT the live local shadow's — a `declare -ga` (indexed) write under a
+    // `local -A` shadow must stay INDEXED (bash), even though the live local is assoc.
+    // `declareAssoc(name, global=true)` sets `snap.assoc` for a `-gA` write; its absence
+    // means the global is indexed. (WITHOUT this split, a `-gA` literal fell to the
+    // indexed path — dropping `-A` and mangling `[y]=v` into `[0]="v"` — and a `-ga`
+    // literal was wrongly routed into the local shadow's assoc store.)
     if (globalScopeIdx >= 0) {
       const snap = this.localSavedArrays[globalScopeIdx].get(name);
-      const targetIsAssoc = snap?.assoc !== undefined || this.assocArrays.has(name);
+      const targetIsAssoc = snap?.assoc !== undefined;
       if (targetIsAssoc) {
         const gAssoc = snap?.assoc ?? new Map<string, string>();
         if (!append) gAssoc.clear();
@@ -3357,7 +3367,8 @@ export class Executor {
         case 'x': return this.exportedNames.has(n);
         case 'l': return this.caseFoldNames.get(n) === 'lower';
         case 'u': return this.caseFoldNames.get(n) === 'upper';
-        case 'n': return this.namerefs.has(n);
+        // A nameref is either a live mapping OR a bare targetless `declare -n rf`.
+        case 'n': return this.namerefs.has(n) || this.declaredUnset.get(n) === 'nameref';
         default: return true; // non-attribute letters (g/p handled by caller) don't filter
       }
     };
@@ -3366,10 +3377,17 @@ export class Executor {
       ...this.declaredUnset.keys(), ...this.exportedNames, ...this.namerefs.keys(),
       ...this.readonlyNames, ...this.integerNames, ...this.caseFoldNames.keys(),
     ]);
-    const wanted = [...flags].filter((ch) => 'aAirxlun'.includes(ch));
+    // bash's attribute-listing semantics: `-a`/`-A` are restrictive TYPE FILTERS (a
+    // listed var must match ALL requested types), while `-i -r -x -l -u -n` are a UNION
+    // — a var lists if it carries ANY of them (so `declare -ir` lists integer-only,
+    // readonly-only, AND both). A var with no union attribute requested that still
+    // passes the type filter is NOT listed unless a union attr was also requested.
+    const typeFilters = [...flags].filter((ch) => ch === 'a' || ch === 'A');
+    const unionAttrs = [...flags].filter((ch) => 'irxlun'.includes(ch));
     const out: string[] = [];
     for (const n of [...all].sort()) {
-      if (!wanted.every((ch) => has(n, ch))) continue;
+      if (!typeFilters.every((ch) => has(n, ch))) continue;         // type filter: AND
+      if (unionAttrs.length > 0 && !unionAttrs.some((ch) => has(n, ch))) continue; // union: OR
       const l = this.declareP([n]).lines[0];
       if (l !== undefined) out.push(l);
     }
