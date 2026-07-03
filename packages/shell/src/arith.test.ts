@@ -152,6 +152,21 @@ test('&& / || / ?: short-circuit — the untaken side is not evaluated', () => {
   expect(evalArith('5 || 0/0', {})).toBe(1n);
 });
 
+test('subscript side effects in a dead branch are suppressed (inherit suppress)', () => {
+  // `0 ? a[i++] : 9` must NOT increment i (the subscript is in the untaken arm).
+  const acc = (store: Record<string, string[]>) => ({
+    getElement: (n: string, i: number) => store[n]?.[i],
+    setElement: (n: string, i: number, v: string) => { (store[n] ??= [])[i] = v; },
+  });
+  const e1: Record<string, string> = { i: '0' };
+  expect(evalArith('0 ? a[i++] : 9', e1, acc({ a: ['5', '6'] }))).toBe(9n);
+  expect(e1.i).toBe('0'); // unchanged
+  // The LIVE branch still increments.
+  const e2: Record<string, string> = { i: '0' };
+  expect(evalArith('1 ? a[i++] : 9', e2, acc({ a: ['5', '6'] }))).toBe(5n);
+  expect(e2.i).toBe('1');
+});
+
 test('leading-zero values are octal; invalid octal / negative exponent error', () => {
   // A leading-zero VARIABLE value is octal (n=017 → 15).
   expect(evalArith('n', { n: '017' })).toBe(15n);

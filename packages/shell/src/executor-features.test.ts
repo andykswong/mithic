@@ -128,6 +128,15 @@ test('(( )) and arith-for handle shift-assign <<= />>= (lexer splits << from =)'
 test('arithmetic short-circuit in $(( )) does not leak errors/side-effects', async () => {
   expect((await run('echo before; echo $((0 && 1/0)); echo after')).out).toBe('before\n0\nafter\n');
   expect((await run('x=0; echo $((1 ? 10 : (x=99))); echo $x')).out).toBe('10\n0\n');
+  // a subscript side effect in a dead branch does not run (inherits suppression).
+  expect((await run('a=(5 6 7); i=0; echo $(( 0 ? a[i++] : 9 )); echo "i=$i"')).out).toBe('9\ni=0\n');
+  expect((await run('i=1; echo $(( 0 && a[i++] )); echo "i=$i"')).out).toBe('0\ni=1\n');
+});
+
+test('an integer-attributed assignment with a malformed arith RHS errors (exit 1), var unchanged', async () => {
+  const r = await run('declare -i n; n=3+; echo "n=$n rc=$?"');
+  expect(r.out).toBe('n= rc=1\n');   // n left unset, status 1
+  expect(r.err).not.toBe('');         // a diagnostic is emitted
 });
 
 // ── command substitution ──────────────────────────────────────────────────────

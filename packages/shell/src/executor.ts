@@ -2576,12 +2576,20 @@ export class Executor {
       return false;
     }
     // An integer-attributed name (`declare -i`) evaluates its RHS arithmetically;
-    // `+=` adds numerically rather than string-concatenating (bash).
+    // `+=` adds numerically rather than string-concatenating (bash). A MALFORMED RHS
+    // (`n=3+`) is an arithmetic error: bash reports it (exit 1) and leaves the var
+    // unchanged — do NOT silently write 0.
     if (this.integerNames.has(a.name)) {
-      const rhs = this.evalArithValue(val);
-      const next = a.append ? this.evalArithValue(this.context.env[a.name] ?? '0') + rhs : rhs;
-      this.context.env[a.name] = String(next);
-      return false;
+      try {
+        const rhs = evalArith(val, this.arithEnvForExpr(), this.arithArrayAccessExec());
+        const prev = a.append ? evalArith(this.context.env[a.name] ?? '0', this.arithEnvForExpr(), this.arithArrayAccessExec()) : 0n;
+        this.context.env[a.name] = String(a.append ? prev + rhs : rhs);
+        return false;
+      } catch (e) {
+        this.io.stderr(`shell: ${val}: ${e instanceof Error ? e.message.replace(/^arith: /, '') : 'arithmetic syntax error'}\n`);
+        this.lastStatus = 1;
+        return true; // rejected → caller surfaces nonzero status; var unchanged
+      }
     }
     this.context.env[a.name] = a.append ? (this.context.env[a.name] ?? '') + val : val;
     return false;

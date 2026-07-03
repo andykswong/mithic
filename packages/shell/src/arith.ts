@@ -184,7 +184,11 @@ class ArithParser {
     if (b < 0 || !name.endsWith(']')) return undefined;
     const arr = name.slice(0, b);
     const idxSrc = name.slice(b + 1, -1);
-    const index = Number(new ArithParser(tokenize(idxSrc), this.env, this.arr).parse());
+    // Inherit the current suppression: a subscript inside a short-circuited / untaken
+    // branch (`0 ? a[i++] : 9`) must NOT run its side effects (bash never evaluates it).
+    const sub = new ArithParser(tokenize(idxSrc), this.env, this.arr);
+    sub.suppress = this.suppress;
+    const index = Number(sub.parse());
     return { arr, index };
   }
 
@@ -204,7 +208,11 @@ class ArithParser {
     // expression (bash recursive arith). An invalid octal (`08`) throws.
     const num = parseArithInt(raw); // may throw on invalid octal
     if (num !== undefined) return num;
-    return wrap64(new ArithParser(tokenize(raw.trim()), this.env, this.arr).parse());
+    // A variable whose value is itself an arith expression — inherit suppression so
+    // its side effects (rare) also stay off in a dead branch.
+    const sub = new ArithParser(tokenize(raw.trim()), this.env, this.arr);
+    sub.suppress = this.suppress;
+    return wrap64(sub.parse());
   }
   private write(name: string, value: bigint): bigint {
     const v = wrap64(value);
