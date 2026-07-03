@@ -341,7 +341,7 @@ test('printf %.*f negative precision is unset (default 6)', async () => {
 
 // printf uses 64-bit intmax_t/uintmax_t (BigInt), matching bash. Negatives to an
 // unsigned/hex/octal conversion reinterpret at 64-bit width; a signed value out of
-// [-2^63, 2^63-1] saturates with a "Result too large" WARNING (stderr) but exit 0.
+// [-2^63, 2^63-1] saturates and is a HARD ERROR (exit 1) but still prints the value.
 test('printf %x/%X/%u/%o of -1 is 64-bit (bash intmax_t parity)', async () => {
   expect(await printf('%x\n', '-1')).toBe('ffffffffffffffff\n');
   expect(await printf('%X\n', '-1')).toBe('FFFFFFFFFFFFFFFF\n');
@@ -354,39 +354,55 @@ test('printf %d of INTMAX_MAX/MIN is exact (no double-precision loss)', async ()
   expect(await printf('%i\n', '-9223372036854775808')).toBe('-9223372036854775808\n');
 });
 
-test('printf %u unsigned wrap of small negatives has no warning', async () => {
+test('printf %u unsigned wrap of small negatives has no error', async () => {
   const r = await printfR('%u\n', '-2');
   expect(r.out).toBe('18446744073709551614\n');
   expect(r.err).toBe('');
   expect(r.code).toBe(0);
-  // A 64-bit hex literal fits uintmax exactly, no warning.
+  // A 64-bit hex literal fits uintmax exactly, no error.
   const h = await printfR('%u\n', '0xffffffffffffffff');
   expect(h.out).toBe('18446744073709551615\n');
   expect(h.err).toBe('');
   expect(h.code).toBe(0);
+  // The low bound for unsigned convs is -(2^64-1): still in range, wraps to 1.
+  const lo = await printfR('%u\n', '-18446744073709551615');
+  expect(lo.out).toBe('1\n');
+  expect(lo.err).toBe('');
+  expect(lo.code).toBe(0);
 });
 
-test('printf signed saturation is a WARNING (stderr) but exit 0, not an error', async () => {
+test('printf out-of-range "Result too large" is an ERROR (exit 1) but prints saturated value', async () => {
   const over = await printfR('%d\n', '9223372036854775808'); // INTMAX_MAX + 1
   expect(over.out).toBe('9223372036854775807\n');
   expect(over.err).toMatch(/Result too large/);
-  expect(over.code).toBe(0);
-  // A too-large hex literal to a SIGNED conversion saturates to INTMAX_MAX, rc 0.
+  expect(over.code).toBe(1);
+  // A too-large hex literal to a SIGNED conversion saturates to INTMAX_MAX, exit 1.
   const hx = await printfR('%d\n', '0xffffffffffffffff');
   expect(hx.out).toBe('9223372036854775807\n');
-  expect(hx.err).toMatch(/Result too large/);
-  expect(hx.code).toBe(0);
+  expect(hx.code).toBe(1);
 });
 
-test('printf octal input parses (BigInt has no legacy-octal literal)', async () => {
-  expect(await printf('%d\n', '010')).toBe('8\n');     // 0-prefixed octal
+test('printf octal/hex parsing + invalid-octal/hex diagnostics (bash parity)', async () => {
+  expect(await printf('%d\n', '010')).toBe('8\n');      // valid octal
+  expect(await printf('%d\n', '007')).toBe('7\n');
   expect(await printf('%x\n', '0x1f')).toBe('1f\n');
-  expect(await printf('%d\n', '\'A')).toBe('65\n');     // char-code, unclamped
+  expect(await printf('%d\n', '\'A')).toBe('65\n');      // char-code, unclamped
+  // 08/09/0778 are invalid octal → error, keep the leading valid-octal run.
+  const o8 = await printfR('%d\n', '09');
+  expect(o8.out).toBe('0\n'); expect(o8.code).toBe(1); expect(o8.err).toMatch(/invalid octal number/);
+  const o778 = await printfR('%d\n', '0778');
+  expect(o778.out).toBe('63\n'); expect(o778.code).toBe(1); // 0o77 = 63
+  // partial hex keeps the parsed hex digits (0x1g → 1), error.
+  const hg = await printfR('%d\n', '0x1g');
+  expect(hg.out).toBe('1\n'); expect(hg.code).toBe(1); expect(hg.err).toMatch(/invalid hex number/);
 });
 
-test('printf invalid number still exits 1 (distinct from saturation warning)', async () => {
+test('printf invalid number exits 1 and keeps leading digits', async () => {
   const bad = await printfR('%d\n', 'abc');
   expect(bad.out).toBe('0\n');
   expect(bad.code).toBe(1);
   expect(bad.err).toMatch(/invalid number/);
+  const partial = await printfR('%d\n', '12abc');
+  expect(partial.out).toBe('12\n');
+  expect(partial.code).toBe(1);
 });

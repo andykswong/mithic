@@ -421,7 +421,6 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
     case 'printf': {
       const r = formatPrintf(args[0] ?? '', args.slice(1));
       ctx.write(r.out);
-      for (const w of r.warnings) errOut(ctx, `shell: printf: warning: ${w}\n`);
       for (const e of r.errors) errOut(ctx, `shell: printf: ${e}\n`);
       return r.errors.length > 0 ? 1 : 0;
     }
@@ -1607,15 +1606,14 @@ class TestParser {
  *   - %b interprets escapes in the ARGUMENT
  *   - integer args: leading-`'`/`"` char code, 0x hex, 0 octal, or decimal
  */
-/** Result of a `printf` run: the produced output + any invalid-number errors. */
-interface PrintfResult { out: string; errors: string[]; warnings: string[] }
+/** Result of a `printf` run: the produced output + any number/format errors (exit 1). */
+interface PrintfResult { out: string; errors: string[] }
 
 function formatPrintf(format: string, args: string[]): PrintfResult {
   const fmt = interpretEscapes(format, /*octalBackslashZero*/ true);
   let out = '';
   let argi = 0;
   const errors: string[] = [];
-  const warnings: string[] = [];
   let stop = false;                          // `%b`'s `\c` truncates ALL output
   // Track whether the arg just consumed was actually PRESENT: a MISSING numeric
   // arg is 0 with no diagnostic (bash), but a present-but-invalid one errors.
@@ -1651,12 +1649,9 @@ function formatPrintf(format: string, args: string[]): PrintfResult {
       const argPresent = lastPresent;
       const r = formatOne(conv, flags, width, prec, argVal);
       out += r.text;
-      // A missing numeric arg is 0 with no diagnostic; only a PRESENT invalid arg
-      // errors (exit 1) or warns ("Result too large" saturation, exit 0).
-      if (argPresent) {
-        if (r.error !== undefined) errors.push(r.error);
-        if (r.warn !== undefined) warnings.push(r.warn);
-      }
+      // A missing numeric arg is 0 with no diagnostic; only a PRESENT invalid /
+      // out-of-range arg errors (exit 1, but the value is still printed).
+      if (argPresent && r.error !== undefined) errors.push(r.error);
       if (r.stop) stop = true;
       i += m[0].length;
     }
@@ -1664,14 +1659,11 @@ function formatPrintf(format: string, args: string[]): PrintfResult {
     if (!consumedConversion) break;           // no conversions ⇒ print once
     if (argi === startArgi) break;            // conversions but consumed no args ⇒ stop
   } while (argi < args.length);
-  return { out, errors, warnings };
+  return { out, errors };
 }
 
-/**
- * One conversion's output plus an optional invalid-number `error` (exit 1), a
- * `warn` ("Result too large" saturation, exit 0), and a `\c` `stop` flag.
- */
-interface OneResult { text: string; error?: string; warn?: string; stop?: boolean }
+/** One conversion's output plus an optional `error` (exit 1) and a `\c` `stop` flag. */
+interface OneResult { text: string; error?: string; stop?: boolean }
 
 /** Format a single conversion. `arg` is the raw string argument. */
 function formatOne(conv: string, flags: string, width: number | undefined, prec: number | undefined, arg: string): OneResult {
@@ -1720,7 +1712,7 @@ function formatOne(conv: string, flags: string, width: number | undefined, prec:
       }
       if (prec !== undefined) { digits = digits.padStart(prec, '0'); if (prec === 0 && parsed.value === 0n) digits = ''; }
       body = digits;
-      return { text: padNum(signPrefix, body, width, left, zero && prec === undefined), error: parsed.error, warn: parsed.warn };
+      return { text: padNum(signPrefix, body, width, left, zero && prec === undefined), error: parsed.error };
     }
     case 'o': case 'x': case 'X': {
       // Unsigned base conversions mask to 64 bits (two's-complement for negatives),
@@ -1733,7 +1725,7 @@ function formatOne(conv: string, flags: string, width: number | undefined, prec:
       let altPrefix = '';
       if (alt && uv !== 0n) altPrefix = conv === 'o' ? '0' : conv === 'x' ? '0x' : '0X';
       body = digits;
-      return { text: padNum(altPrefix, body, width, left, zero && prec === undefined), error: parsed.error, warn: parsed.warn };
+      return { text: padNum(altPrefix, body, width, left, zero && prec === undefined), error: parsed.error };
     }
     case 'f': case 'e': case 'E': case 'g': case 'G': {
       const parsed = parseFloatArg(arg);
@@ -1815,15 +1807,17 @@ interface NumArg { value: number; error?: string }
 
 /**
  * A parsed printf INTEGER argument (64-bit `intmax_t`/`uintmax_t` via BigInt) plus
- * an optional `error` (invalid/partial number → exit 1) or `warn` (out-of-range
- * saturation → "Result too large", exit 0).
+ * an optional `error`. Every diagnostic (invalid/partial number, invalid octal/hex,
+ * out-of-range "Result too large") is a hard ERROR: bash exits 1 but STILL prints
+ * the parsed/saturated value. There is no exit-0 warning path.
  */
-interface IntArg { value: bigint; error?: string; warn?: string }
+interface IntArg { value: bigint; error?: string }
 
 const TWO_POW_64 = 1n << 64n;
 const INTMAX_MAX = (1n << 63n) - 1n;      // 9223372036854775807
 const INTMAX_MIN = -(1n << 63n);          // -9223372036854775808
 const UINTMAX_MAX = TWO_POW_64 - 1n;      // 18446744073709551615
+const UINTMAX_MIN = -(TWO_POW_64 - 1n);   // -(2^64-1): bash's low bound for %u/%x/%o
 
 /** Parse a magnitude string of the given base into a BigInt (avoids Number). */
 function digitsToBig(digits: string, base: bigint): bigint {
@@ -1834,40 +1828,57 @@ function digitsToBig(digits: string, base: bigint): bigint {
 
 /**
  * Parse a printf integer argument as a 64-bit value: `'c` char code, ±0x hex,
- * ±0 octal, ±decimal (leading whitespace allowed). bash emits an "invalid number"
- * diagnostic (exit 1) for a non-numeric token and a "value not completely
- * converted" note (exit 1, leading digits kept) for a partial token. A value
- * outside the target range saturates to the boundary with a "Result too large"
- * WARNING (exit 0): signed convs clamp to [INTMAX_MIN, INTMAX_MAX]; `unsigned`
- * convs (`%u`/`%x`/`%o`) allow [-2^63, 2^64-1] and clamp only beyond those.
+ * ±0 octal, ±decimal (leading whitespace allowed). bash diagnostics (all exit 1,
+ * value still printed):
+ *   - non-numeric token → `invalid number` (value 0)
+ *   - partial token (`12abc`) → `invalid number`, keeps leading digits of its base
+ *     (`0x1g` keeps hex `1`; `12abc` keeps `12`)
+ *   - `08`/`09`/`0778` → `invalid octal number`, keeps the leading valid octal run
+ *   - `0xg`/`0x` → `invalid hex number` (value 0)
+ *   - out-of-range → `Result too large`, saturates. Signed convs clamp to
+ *     [INTMAX_MIN, INTMAX_MAX]; unsigned (`%u`/`%x`/`%o`) allow [-(2^64-1), 2^64-1].
  */
 function parseIntArg(arg: string, unsigned: boolean): IntArg {
   const s = arg.trim();
   // A leading quote yields the next char's code point (unclamped, always in range).
   if (s[0] === '\'' || s[0] === '"') return { value: BigInt(s.codePointAt(1) ?? 0) };
-  let raw: bigint | undefined;
-  let m: RegExpMatchArray | null;
-  if ((m = s.match(/^([+-]?)0[xX]([0-9a-fA-F]+)$/))) raw = digitsToBig(m[2], 16n) * (m[1] === '-' ? -1n : 1n);
-  else if ((m = s.match(/^([+-]?)0([0-7]+)$/))) raw = digitsToBig(m[2], 8n) * (m[1] === '-' ? -1n : 1n);
-  else if ((m = s.match(/^([+-]?)(\d+)$/))) raw = digitsToBig(m[2], 10n) * (m[1] === '-' ? -1n : 1n);
-  if (raw === undefined) {
-    // Not a clean integer: keep any leading decimal digits (bash prints those).
-    const lead = s.match(/^[+-]?\d+/);
-    if (lead === null) return { value: 0n, error: `${arg}: invalid number` };
-    const v = clampInt(digitsToBig(lead[0].replace(/^[+-]/, ''), 10n) * (lead[0][0] === '-' ? -1n : 1n), unsigned, arg).value;
-    return { value: v, error: `${arg}: value not completely converted` };
+  const sign = s[0] === '-' ? -1n : 1n;
+  const body = s.replace(/^[+-]/, '');
+  // Hex: `0x…`. A trailing non-hex char is a partial-parse error keeping the run.
+  if (/^0[xX]/.test(body)) {
+    const hex = body.slice(2).match(/^[0-9a-fA-F]+/);
+    if (hex === null) return { value: 0n, error: `${arg}: invalid hex number` };
+    const val = clampInt(digitsToBig(hex[0], 16n) * sign, unsigned, arg);
+    if (hex[0].length !== body.length - 2) return { value: val.value, error: `${arg}: invalid hex number` };
+    return val;
   }
-  return clampInt(raw, unsigned, arg);
+  // Octal: a leading `0` followed by digits. `08`/`09`/`0778` are invalid octal but
+  // keep the leading valid-octal run (bash: `0778` → 63 = 0o77).
+  if (/^0[0-9]+$/.test(body)) {
+    const oct = body.slice(1).match(/^[0-7]+/);
+    const octRun = oct ? oct[0] : '';
+    const val = clampInt(digitsToBig(octRun, 8n) * sign, unsigned, arg);
+    if (octRun.length !== body.length - 1) return { value: val.value, error: `${arg}: invalid octal number` };
+    return val;
+  }
+  // Decimal (incl. a bare `0`).
+  if (/^\d+$/.test(body)) return clampInt(digitsToBig(body, 10n) * sign, unsigned, arg);
+  // Not a clean integer: keep any leading decimal digits (bash prints those).
+  const lead = body.match(/^\d+/);
+  if (lead === null) return { value: 0n, error: `${arg}: invalid number` };
+  return { value: clampInt(digitsToBig(lead[0], 10n) * sign, unsigned, arg).value, error: `${arg}: invalid number` };
 }
 
 /**
- * Clamp a BigInt to the printf target range, flagging saturation as a warning
- * that quotes the ORIGINAL argument token (bash: `warning: 0xff…: Result too large`).
+ * Clamp a BigInt to the printf target range. Out-of-range saturates to the boundary
+ * and is an ERROR (bash exits 1 but prints the saturated value). The message quotes
+ * the ORIGINAL argument token (`ARG: Result too large`).
  */
 function clampInt(v: bigint, unsigned: boolean, arg: string): IntArg {
   const hi = unsigned ? UINTMAX_MAX : INTMAX_MAX;
-  if (v > hi) return { value: hi, warn: `${arg.trim()}: Result too large` };
-  if (v < INTMAX_MIN) return { value: INTMAX_MIN, warn: `${arg.trim()}: Result too large` };
+  const lo = unsigned ? UINTMAX_MIN : INTMAX_MIN;
+  if (v > hi) return { value: hi, error: `${arg.trim()}: Result too large` };
+  if (v < lo) return { value: lo, error: `${arg.trim()}: Result too large` };
   return { value: v };
 }
 
