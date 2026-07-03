@@ -15,8 +15,15 @@ export interface ShellState {
   positional: string[];
   setPositional(p: string[]): void;
   shiftPositional(n: number): void;
-  /** Mark a name as local to the current function scope. */
-  declareLocal(name: string): void;
+  /**
+   * Mark a name as local to the current function scope. Returns:
+   *   'fresh'    — a function scope exists and this call FIRST shadowed the name
+   *                (a prior global value is now hidden; `+=` should start empty).
+   *   'existing' — a function scope exists and the name was ALREADY local here.
+   *   'none'     — at the top level (no-op); lets `local` error and `declare` fall
+   *                back to global scope.
+   */
+  declareLocal(name: string): 'fresh' | 'existing' | 'none';
   /** Register a name as an associative array (`declare -A`). */
   declareAssoc?(name: string): void;
   /**
@@ -231,7 +238,7 @@ export interface BuiltinAssignment {
 export const BUILTINS = [
   'cd', 'pwd', 'export', 'unset', 'echo', 'printf',
   'test', '[', 'true', 'false', 'exit', 'eval', 'set', 'cat', ':',
-  'local', 'declare', 'readonly', 'let', 'shift', 'return', 'getopts', 'read',
+  'local', 'declare', 'typeset', 'readonly', 'let', 'shift', 'return', 'getopts', 'read',
   'mapfile', 'readarray',
   'jobs', 'fg', 'bg', 'wait', 'kill', 'break', 'continue', 'source', '.', 'type',
   'shopt', 'trap', 'disown', 'history', 'fc', 'exec', 'coproc',
@@ -482,10 +489,12 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
 
     case 'local':
     case 'declare':
+    case 'typeset':
     case 'readonly': {
-      // Assign NAME=value into the (function-local for `local`) env.
+      // `typeset` is a ksh-compat synonym for `declare`.
       const isLocal = name === 'local';
       const isReadonly = name === 'readonly';
+      const isDeclare = name === 'declare' || name === 'typeset';
       // Collect flag LETTERS from every leading `-…` token, so combined flags like
       // `declare -ar` / `local -ri` / `declare -Ax` work the same as `-a -r`.
       // Only tokens before the first non-flag operand are options (bash); a bare
@@ -495,13 +504,13 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         if (a.length > 1 && a[0] === '-') { for (const ch of a.slice(1)) flags.add(ch); }
         else break; // first operand — stop flag scanning
       }
-      const isAssoc = name === 'declare' && flags.has('A');
+      const isAssoc = isDeclare && flags.has('A');
       // `declare -n ref=target` declares a nameref (single-level): reads of `ref`
       // and writes to `ref` are redirected to `target` (the latter in the
       // executor's applyAssignment). Recorded instead of storing a literal value.
-      const isNameref = name === 'declare' && flags.has('n');
+      const isNameref = isDeclare && flags.has('n');
       // `declare -p [name...]` prints the declare reconstruction (no assignment).
-      if (name === 'declare' && flags.has('p')) {
+      if (isDeclare && flags.has('p')) {
         const names = args.filter((x) => !x.startsWith('-'));
         const out = ctx.state?.declareP?.(names);
         if (out === undefined) return 0;
@@ -509,6 +518,12 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         for (const line of out.lines) ctx.write(line + '\n');
         return out.missing.length > 0 ? 1 : 0;
       }
+      // Scoping: `local` is always function-local (and errors outside a function).
+      // A bare `declare`/`typeset` inside a function is LOCAL by default; `-g` forces
+      // GLOBAL. `readonly`/`export` are always global. `scopeLocal` requests the
+      // function-local snapshot for the name; falls back to global at the top level.
+      const flagGlobal = flags.has('g');
+      const scopeLocal = isLocal || (isDeclare && !flagGlobal);
       // `declare -i` / `-r` attributes (also honored on `local`). `readonly` is
       // always the readonly attribute; a `-i` on any of them marks integer.
       const flagInteger = flags.has('i');
@@ -526,9 +541,15 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       // handled by the string loop below.
       for (const a of ctx.builtinAssignments ?? []) {
         if (a.array === undefined) continue;
+        // Local-scope the name FIRST (snapshot for restore) so a function-local
+        // `declare`/`local`/`typeset` array does not leak to the caller; then the
+        // attribute markers and value application below act on the local.
+        if (scopeLocal) {
+          const scope = ctx.state?.declareLocal(a.name) ?? 'none';
+          if (isLocal && scope === 'none') { errOut(ctx, 'shell: local: can only be used in a function\n'); return 1; }
+        }
         if (isAssoc) ctx.state?.declareAssoc?.(a.name);
         if (flagInteger) ctx.state?.markInteger?.(a.name);
-        if (isLocal) ctx.state?.declareLocal(a.name);
         if (ctx.state?.isReadonly?.(a.name)) {
           errOut(ctx, `shell: ${name}: ${a.name}: readonly variable\n`);
           declStatus = 1;
@@ -550,6 +571,17 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
           if (eq > 0) ctx.state?.setNameref?.(n, arg.slice(eq + 1));
           continue;
         }
+        // Function scoping FIRST (bash: `declare`/`typeset`/`local` shadow the global
+        // as a local before assigning). A bare `declare` inside a function is local;
+        // `-g`/`readonly`/`export` are global. `local` outside a function is an error.
+        if (scopeLocal) {
+          const scope = ctx.state?.declareLocal(n) ?? 'none';
+          if (isLocal && scope === 'none') { errOut(ctx, 'shell: local: can only be used in a function\n'); return 1; }
+          // A FRESH local (first shadow of a global) starts UNSET, so `+=` appends to
+          // '' rather than the shadowed global value. An ALREADY-local name keeps its
+          // current local value (so `local -i c=3; local -i c+=2` → 5).
+          if (scope === 'fresh' && eq > 0 && append) delete ctx.env[n];
+        }
         // `declare -A name` registers an associative array (G6).
         if (isAssoc) ctx.state?.declareAssoc?.(n);
         // `declare -i name` marks the name integer BEFORE assigning, so the RHS
@@ -566,7 +598,6 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
             declStatus = 1;
             continue;
           }
-          if (isLocal) ctx.state?.declareLocal(n);
           if (!isAssoc) {
             const rhs = arg.slice(eq + 1);
             const prev = append ? (ctx.env[n] ?? '') : '';
@@ -577,9 +608,9 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
               ctx.env[n] = prev + rhs; // `+=` appends (prev is '' when not append)
             }
           }
-        } else if (isLocal) {
-          ctx.state?.declareLocal(arg);
-          if (!(arg in ctx.env)) ctx.env[arg] = '';
+        } else if (scopeLocal && !(n in ctx.env)) {
+          // Bare `declare x` / `local x` in a function creates an empty local.
+          ctx.env[n] = '';
         }
         // `readonly`/`-r` mark the name AFTER its value is set, so the builtin's
         // own assignment succeeds; later reassignments are rejected by the

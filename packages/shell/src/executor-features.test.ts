@@ -1292,6 +1292,53 @@ test('declare -ai NAME=(…) arithmetic-evaluates array-literal elements', async
   expect((await run('declare -ai b=(1+1 2*3); echo "[${b[@]}]"')).out).toBe('[2 6]\n');
 });
 
+test('typeset is a synonym for declare', async () => {
+  expect((await run('typeset -a arr=(p q r); echo "[${arr[1]}]"')).out).toBe('[q]\n');
+  expect((await run('typeset -i n=5+5; echo "$n"')).out).toBe('10\n');
+  expect((await run('type -t typeset', PATHENV, pathFs())).out).toBe('builtin\n');
+});
+
+test('declare/typeset is function-local by default; -g forces global', async () => {
+  // bare declare in a function shadows the global as a local (restored on return).
+  expect((await run('s=global; f() { declare s=local; echo "in=$s"; }; f; echo "out=$s"')).out)
+    .toBe('in=local\nout=global\n');
+  expect((await run('s=g; f() { typeset s=ts; }; f; echo "out=$s"')).out).toBe('out=g\n');
+  // -g forces global for scalars AND arrays/assoc.
+  expect((await run('arr=(a b c); f() { declare -g arr=(x y); }; f; echo "out:${arr[@]}"')).out)
+    .toBe('out:x y\n');
+  expect((await run('x=g; f() { declare -g x=glob; }; f; echo "out=$x"')).out).toBe('out=glob\n');
+  expect((await run('f() { declare -gA m=([k]=v); }; f; echo "m=${m[k]}"')).out).toBe('m=v\n');
+});
+
+test('readonly/export in a function are GLOBAL (not local)', async () => {
+  expect((await run('s=g; f() { readonly s=ro; }; f; echo "out=$s"')).out).toBe('out=ro\n');
+  expect((await run('s=g; f() { export s=ex; }; f; echo "out=$s"')).out).toBe('out=ex\n');
+});
+
+test('a bare assignment inside a function modifies the GLOBAL (not auto-local)', async () => {
+  expect((await run('x=g; f() { x=new; }; f; echo "out=$x"')).out).toBe('out=new\n');
+  expect((await run('a=(g); f() { a=(new); }; f; echo "out=${a[@]}"')).out).toBe('out=new\n');
+});
+
+test('local outside a function is an error (rc 1)', async () => {
+  const r = await run('local x=1; echo "code=$?"');
+  expect(r.out).toBe('code=1\n');
+  expect(r.err).toMatch(/can only be used in a function/);
+});
+
+test('a repeated local += appends to the current local (fresh local += starts empty)', async () => {
+  expect((await run('f(){ local -i c=3; local -i c+=2; echo "$c"; }; f')).out).toBe('5\n');
+  // A FRESH local shadowing a global starts empty, so += appends to '' not the global.
+  expect((await run('s=global; f(){ local s+=X; echo "$s"; }; f')).out).toBe('X\n');
+});
+
+test('a command-prefix assignment is transient for env builtins too (X=1 declare …)', async () => {
+  expect((await run('X=1 declare foo=2; echo "foo=$foo X=[$X]"')).out).toBe('foo=2 X=[]\n');
+  expect((await run('X=1 export q=2; echo "X=[$X] q=$q"')).out).toBe('X=[] q=2\n');
+  // when the prefix key IS the operand, the operand value persists.
+  expect((await run('X=1 export X=2; echo "X=$X"')).out).toBe('X=2\n');
+});
+
 test('declare NAME+=(…) appends to an existing array', async () => {
   expect((await run('declare -a arr=(a b); declare arr+=(c d); echo "[${arr[@]}] n=${#arr[@]}"')).out)
     .toBe('[a b c d] n=4\n');

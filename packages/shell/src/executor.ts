@@ -811,23 +811,23 @@ export class Executor {
     this.context.env.BASHOPTS = on.join(':');
   }
 
-  private declareLocal(name: string): void {
-    if (this.localScopes.length === 0) return;
+  private declareLocal(name: string): 'fresh' | 'existing' | 'none' {
+    if (this.localScopes.length === 0) return 'none';
     const scope = this.localScopes[this.localScopes.length - 1];
     const saved = this.localSaved[this.localSaved.length - 1];
-    if (!scope.has(name)) {
-      scope.add(name);
-      saved.set(name, name in this.context.env ? this.context.env[name] : undefined);
-      // Snapshot array/assoc storage + integer flag too, so a `local arr=(…)` /
-      // `local -A m` / `read -a arr` inside a function is restored on exit and does
-      // not leak to the caller (bash: locals include their array value).
-      const savedArr = this.localSavedArrays[this.localSavedArrays.length - 1];
-      savedArr.set(name, {
-        arr: this.arrays.has(name) ? this.arrays.get(name)!.slice() : undefined,
-        assoc: this.assocArrays.has(name) ? new Map(this.assocArrays.get(name)!) : undefined,
-        integer: this.integerNames.has(name),
-      });
-    }
+    if (scope.has(name)) return 'existing';
+    scope.add(name);
+    saved.set(name, name in this.context.env ? this.context.env[name] : undefined);
+    // Snapshot array/assoc storage + integer flag too, so a `local arr=(…)` /
+    // `local -A m` / `read -a arr` inside a function is restored on exit and does
+    // not leak to the caller (bash: locals include their array value).
+    const savedArr = this.localSavedArrays[this.localSavedArrays.length - 1];
+    savedArr.set(name, {
+      arr: this.arrays.has(name) ? this.arrays.get(name)!.slice() : undefined,
+      assoc: this.assocArrays.has(name) ? new Map(this.assocArrays.get(name)!) : undefined,
+      integer: this.integerNames.has(name),
+    });
+    return 'fresh';
   }
 
   // ── program / statement execution ──────────────────────────────────────────
@@ -2331,16 +2331,16 @@ export class Executor {
         return await this.callFunction(name, argv, localEnv, io);
       }
       if (isBuiltin(name) && builtinShadowsExternal(name, argv)) {
-        // A command-prefix assignment (`IFS=: read …`) is a TEMPORARY overlay for
-        // the builtin's duration, then restored — but ONLY those prefix keys, not
-        // every var the builtin itself set (`read`/`getopts`/`mapfile` write vars
-        // that must persist). The env-mutating builtins (`export`/`declare`/…) keep
-        // their prefix too. Snapshot just the prefix keys and restore them after.
+        // A command-PREFIX assignment (`IFS=: read …`, `X=1 declare …`) is a
+        // TRANSIENT overlay for the builtin's duration, then restored — for EVERY
+        // builtin, including the env-mutating ones (bash: `X=1 export q=2` leaves X
+        // unset). The builtin's OWN operands (`export q=2`, `declare foo=2`) write to
+        // ctx.env directly and persist. A prefix key that is ALSO a builtin operand
+        // (`X=1 export X=2`) must keep the operand's value — so we do NOT restore a
+        // prefix key the builtin reassigned away from the overlay value.
         const overlayKeys = Object.keys(localEnv);
-        const isEnvBuiltin = name === 'export' || name === 'unset' || name === 'local'
-          || name === 'declare' || name === 'readonly';
         const savedPrefix: Record<string, string | undefined> = {};
-        if (cmd.assignments.length > 0 && !isEnvBuiltin) {
+        if (overlayKeys.length > 0) {
           for (const k of overlayKeys) savedPrefix[k] = this.context.env[k];
         }
         Object.assign(this.context.env, localEnv);
@@ -2349,8 +2349,10 @@ export class Executor {
         const arrayAssigns = cmd.assignments.filter((a) => a.array !== undefined);
         const status = await this.dispatch(name, argv, io,
           arrayAssigns.length > 0 ? { stdin, builtinAssignments: arrayAssigns, assignExpander: expander } : { stdin });
-        if (cmd.assignments.length > 0 && !isEnvBuiltin) {
+        if (overlayKeys.length > 0) {
           for (const k of overlayKeys) {
+            // The builtin reassigned this key (operand won over the prefix) → keep it.
+            if (this.context.env[k] !== localEnv[k]) continue;
             if (savedPrefix[k] === undefined) delete this.context.env[k];
             else this.context.env[k] = savedPrefix[k]!;
           }
@@ -2466,7 +2468,11 @@ export class Executor {
       this.lastStatus = 1;
       return true;
     }
-    this.declareLocal(a.name);
+    // NOTE: a bare `name=value` / `name=(…)` assignment (even inside a function) is
+    // GLOBAL in bash — it modifies the existing variable in the nearest enclosing
+    // scope, defaulting to global. It is NOT auto-localized. Function-local scoping
+    // happens ONLY via the `local`/`declare`/`typeset` builtins (which call
+    // declareLocal to snapshot for restore). So applyAssignment must NOT declareLocal.
     if (a.array !== undefined) {
       return await this.applyArrayLiteral(a.name, a.array, a.append ?? false, expander);
     }
