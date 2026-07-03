@@ -128,6 +128,19 @@ These are intentional design limits, not missing features:
   surrogate half for an astral char). ASCII `%c` matches bash exactly. Faithful
   single-byte output would require a byte-oriented printf rewrite over the JS-string
   surface — out of scope; the common ASCII case is correct.
+- **`declare -l` / `-u` case-fold attributes are not applied.** `declare -l x=HELLO`
+  stores `HELLO` verbatim (bash folds to `hello` on assignment and on every later
+  write). The attribute needs per-name case-fold-on-assign state threaded through the
+  scalar/array/element assignment paths; low real-world use.
+- **`printf` float rounding is half-away-from-zero, not C's half-to-even.**
+  `printf '%.0f' 2.5` → `3` (mithic, JS `toFixed`) vs bash's banker's-rounding `2`.
+  Exact-half values at the rounding boundary differ; all other values match. A
+  faithful port needs a round-half-to-even formatter.
+- **`printf %#` alt-flag on `%f`/`%e`/`%g` (force a decimal point) is ignored**, and
+  `test`/`[` does not emit bash's operator/arg-count diagnostics (`unary operator
+  expected`, `too many arguments`) — a malformed `[ 5 -gt ]` yields a plain false
+  rather than exit 2. A trailing/partial `printf` conversion (`printf 'a%'`) prints
+  literally instead of erroring. All narrow, low-value diagnostics.
 
 ---
 
