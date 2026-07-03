@@ -1102,6 +1102,16 @@ test('declare -gu/-gl (fold flag ON the -g command) folds + records on the globa
   expect((await run('f(){ declare g=lv; declare -gu g=hi; }; f; g=more; echo "[$g]"')).out).toBe('[MORE]\n');
 });
 
+test('declare -g NAME[i]=v element write folds by the VISIBLE (local) attribute, not the global', async () => {
+  // An element write lands in the visible local binding, so it folds by the local's
+  // attribute (bash). The global's -l/-u must NOT apply to it.
+  expect((await run('declare -gu a; f(){ local a=zz; declare -g a[1]=hello; echo "${a[1]}"; }; f')).out).toBe('hello\n');
+  expect((await run('f(){ local -u a; declare -g a[1]=hello; echo "${a[1]}"; }; f')).out).toBe('HELLO\n');
+  expect((await run('f(){ local -a a; declare -gl a[0]=WORLD; echo "${a[0]}"; }; f')).out).toBe('WORLD\n');
+  // top-level (no shadow): the global attribute DOES apply to its own element write
+  expect((await run('declare -gu a; declare -g a[1]=hello; echo "${a[1]}"')).out).toBe('HELLO\n');
+});
+
 test('logical NOT usable in arithmetic (history expansion off for non-interactive)', async () => {
   expect((await run('echo $((!0))')).out).toBe('1\n');
   expect((await run('echo $((!5))')).out).toBe('0\n');

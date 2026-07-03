@@ -222,6 +222,15 @@ These are intentional design limits, not missing features:
   the `=~` lex/expansion path (predating the `( )`-grouping work, which itself is exact);
   ordinary regexes — anchors, classes, alternation, backrefs, and grouped patterns like
   `([a-z]+)([0-9]+)`, including inside `[[ ( … ) ]]` — match bash.
+- **`declare -g` on a name a function-local shadows has two narrow scoping gaps.** A
+  `declare -gA m=([k]=v)` (associative-array literal) whose name is shadowed by a local
+  `-A` drops the `-A` attribute and the key (it commits as an indexed array), and a
+  scalar `declare -g NAME+=v` append reads the LOCAL shadow's value rather than the
+  global's. The common `-g` paths (scalar/array/element assignment, fold by the global
+  attribute, `declare -p`) match bash; only these two shadow-interaction corners differ.
+  Both predate the case-fold work and need a global-binding value/assoc accessor
+  symmetric to `setGlobal`/`globalCaseFoldOf` — low blast radius (a `-g` write to a
+  same-name local-shadowed assoc/append inside a function is rare).
 
 ---
 

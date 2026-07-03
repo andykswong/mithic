@@ -2700,8 +2700,12 @@ export class Executor {
       // An integer-attributed array (`declare -i a`) arithmetic-evaluates element
       // RHS values; `+=` adds numerically. Otherwise the value is a plain string.
       const intAttr = this.integerNames.has(a.name);
-      // `declare -g a[i]=v` folds by the global's attribute (not a local shadow's).
-      const foldMode = global ? this.globalCaseFoldOf(a.name) : this.caseFoldNames.get(a.name);
+      // An element write `NAME[i]=v` always lands in the LIVE (possibly local-shadow)
+      // array — even under `declare -g`, the element goes to the visible binding
+      // (bash: gone after the function returns). So fold by the VISIBLE attribute, not
+      // the global's (unlike the whole-array `NAME=(…)` literal path, which targets the
+      // global snapshot and correctly uses globalCaseFoldOf).
+      const foldMode = this.caseFoldNames.get(a.name);
       const evalIfInt = (raw: string, prev: string): string => {
         if (!intAttr) return applyCaseFold(a.append ? prev + raw : raw, foldMode);
         const rhs = this.evalArithValue(raw);
