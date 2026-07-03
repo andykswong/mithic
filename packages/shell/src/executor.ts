@@ -776,6 +776,7 @@ export class Executor {
       markCaseFold: (name, mode) => { if (mode === undefined) this.caseFoldNames.delete(name); else this.caseFoldNames.set(name, mode); },
       caseFoldOf: (name) => this.caseFoldNames.get(name),
       globalCaseFoldOf: (name) => this.globalCaseFoldOf(name),
+      markGlobalCaseFold: (name, mode) => this.markGlobalCaseFold(name, mode),
       markExport: (name) => { this.exportedNames.add(name); },
       declareP: (names) => this.declareP(names),
       setNameref: (ref, target) => { this.namerefs.set(ref, target); },
@@ -852,6 +853,23 @@ export class Executor {
       if (this.localScopes[i].has(name)) return this.localSavedArrays[i].get(name)?.caseFold;
     }
     return this.caseFoldNames.get(name);
+  }
+
+  /** Set/clear the case-fold attribute of the GLOBAL binding of `name` (`declare -gl`/
+   * `-gu`). When a local shadows `name`, write into the OUTERMOST shadowing scope's
+   * snapshot so the fold surfaces on return AND `declare -p` reflects it — without
+   * touching the live local. Otherwise the flat map IS the global. */
+  private markGlobalCaseFold(name: string, mode: 'lower' | 'upper' | undefined): void {
+    for (let i = 0; i < this.localScopes.length; i++) {
+      if (this.localScopes[i].has(name)) {
+        const snap = this.localSavedArrays[i].get(name);
+        if (snap !== undefined) snap.caseFold = mode;
+        else this.localSavedArrays[i].set(name, { integer: false, readonly: false, caseFold: mode });
+        return;
+      }
+    }
+    if (mode === undefined) this.caseFoldNames.delete(name);
+    else this.caseFoldNames.set(name, mode);
   }
 
   private setGlobal(name: string, value: string): boolean {
@@ -2589,7 +2607,9 @@ export class Executor {
     // rather than the visible local. Otherwise `this.arrays` IS the global.
     const globalScopeIdx = global ? this.localScopes.findIndex((s) => s.has(name)) : -1;
     const intAttr = this.integerNames.has(name);
-    const foldMode = this.caseFoldNames.get(name);
+    // A `declare -g` array folds by the GLOBAL binding's attribute (a local shadow's
+    // fold must not leak into it); otherwise the live/flat attribute.
+    const foldMode = global ? this.globalCaseFoldOf(name) : this.caseFoldNames.get(name);
     // Integer arrays arith-evaluate; a `declare -l`/`-u` array folds each element.
     const evalIfInt = (v: string): string =>
       intAttr ? String(this.evalArithValue(v)) : applyCaseFold(v, foldMode);
@@ -2680,7 +2700,8 @@ export class Executor {
       // An integer-attributed array (`declare -i a`) arithmetic-evaluates element
       // RHS values; `+=` adds numerically. Otherwise the value is a plain string.
       const intAttr = this.integerNames.has(a.name);
-      const foldMode = this.caseFoldNames.get(a.name);
+      // `declare -g a[i]=v` folds by the global's attribute (not a local shadow's).
+      const foldMode = global ? this.globalCaseFoldOf(a.name) : this.caseFoldNames.get(a.name);
       const evalIfInt = (raw: string, prev: string): string => {
         if (!intAttr) return applyCaseFold(a.append ? prev + raw : raw, foldMode);
         const rhs = this.evalArithValue(raw);

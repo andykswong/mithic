@@ -466,10 +466,16 @@ class Parser {
       // lexed as separate tokens (`([a-z]+)` → `(` `[a-z]+` `)`). Coalesce the
       // whole RHS — up to `]]` or a `&&`/`||` connective — into ONE regex word so
       // grouped patterns like `([a-z]+)([0-9]+)` survive. (A literal-space regex
-      // must be quoted, as in bash.)
+      // must be quoted, as in bash.) A `)` that would close an ENCLOSING `[[ ( … ) ]]`
+      // grouping (depth < 0 relative to the regex's own parens) ends the regex and is
+      // left for the outer loop to record as a grouping token.
       if (raw === '=~') {
         let re = '';
+        let reDepth = 0; // balance of the regex's OWN parens
         while (this.peek() && !this.atType('DRBRACKET') && !this.atType('AND_IF') && !this.atType('OR_IF')) {
+          if (this.atType('RPAREN') && reDepth === 0) break; // closes an outer group
+          if (this.atType('LPAREN')) reDepth++;
+          else if (this.atType('RPAREN')) reDepth--;
           re += this.next()!.raw;
         }
         words.push(re);

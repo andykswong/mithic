@@ -213,6 +213,15 @@ These are intentional design limits, not missing features:
   `conditional binary operator expected` (exit 2). A well-formed `[[ ]]` — including
   `( )` grouping, `&&`/`||`, and all operators — matches bash; only the diagnostic on
   malformed input differs.
+- **A `[[ ]]` `=~` regex containing an UNQUOTED `&&`/`||`, or an unquoted backslash
+  escape, is mis-parsed.** `[[ "a&&b" =~ (a&&b) ]]` truncates the regex at the `&&`
+  (the lexer treats it as a shell connective), and `[[ '(' =~ ^\($ ]]` has its `\(`
+  backslash stripped by word expansion before the regex compiles. QUOTE the regex to be
+  safe: `[[ "a&&b" =~ "a&&b" ]]` — a quoted `=~` operand is a literal-string match in
+  bash but mithic treats it as a live regex, another narrow divergence. These live in
+  the `=~` lex/expansion path (predating the `( )`-grouping work, which itself is exact);
+  ordinary regexes — anchors, classes, alternation, backrefs, and grouped patterns like
+  `([a-z]+)([0-9]+)`, including inside `[[ ( … ) ]]` — match bash.
 
 ---
 

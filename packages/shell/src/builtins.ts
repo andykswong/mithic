@@ -97,6 +97,12 @@ export interface ShellState {
    * same-name attribute (bash: a `-g` write targets the global binding's attributes).
    */
   globalCaseFoldOf?(name: string): 'lower' | 'upper' | undefined;
+  /**
+   * Set/clear the case-fold attribute of the GLOBAL binding of `name` (`declare -gl`/
+   * `-gu`) — records on the outermost shadowing scope's snapshot when a local shadows
+   * `name`, so it surfaces on return and in `declare -p`, without touching the local.
+   */
+  markGlobalCaseFold?(name: string, mode: 'lower' | 'upper' | undefined): void;
   /** Mark a name as exported (`export` / `declare -x`) — for `declare -p`'s `-x`. */
   markExport?(name: string): void;
   /**
@@ -613,7 +619,12 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         return current; // +u on lower / +l on upper: unchanged
       };
       const markFold = (n: string): void => {
-        if (hasCaseFoldFlag) ctx.state?.markCaseFold?.(n, nextCaseFold(ctx.state?.caseFoldOf?.(n)));
+        if (!hasCaseFoldFlag) return;
+        // `-g`'s fold belongs to the GLOBAL binding (records on the global snapshot
+        // when a local shadows `n`), so `declare -gu g=v` folds by + persists on the
+        // global — not a same-name function-local shadow (bash).
+        if (flagGlobal) ctx.state?.markGlobalCaseFold?.(n, nextCaseFold(ctx.state?.globalCaseFoldOf?.(n)));
+        else ctx.state?.markCaseFold?.(n, nextCaseFold(ctx.state?.caseFoldOf?.(n)));
       };
       if (isAssoc && (ctx.state?.getOption('posix') ?? false)) {
         errOut(ctx, 'shell: declare: -A: not supported in POSIX mode\n');
@@ -2412,9 +2423,11 @@ function parseFloatArg(arg: string): NumArg {
   // Decimal float (may overflow to ±inf or underflow — floatRange flags ERANGE).
   if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(s)) return floatRange(parseFloat(s), arg);
   // Hex integer (`0x10`) or C hex-float (`0x1.8p3`). JS cannot parse these, so compute
-  // directly. A `0x` prefix with NO mantissa AND no fraction digits (`0x`, `0x.`,
-  // `0xp3`) is an invalid hex number (bash), not zero.
-  const hex = /^([+-]?)0[xX]([0-9a-fA-F]*)(?:\.([0-9a-fA-F]*))?(?:[pP]([+-]?\d+))?$/.exec(s);
+  // directly from the longest valid PREFIX (like C strtold). A `0x` prefix with NO
+  // mantissa AND no fraction digits (`0x`, `0x.`, `0xp3`) is an invalid hex number.
+  // Trailing content after a valid hex-float keeps the parsed value BUT errors (bash:
+  // `printf '%f' '0x1.8p3 '` → 12.0 with exit 1 "invalid hex number").
+  const hex = /^([+-]?)0[xX]([0-9a-fA-F]*)(?:\.([0-9a-fA-F]*))?(?:[pP]([+-]?\d+))?/.exec(s);
   if (hex !== null) {
     const intDigits = hex[2], fracDigits = hex[3];
     if (intDigits === '' && (fracDigits === undefined || fracDigits === '')) {
@@ -2426,10 +2439,11 @@ function parseFloatArg(arg: string): NumArg {
       for (let i = 0; i < fracDigits.length; i++) mant += parseInt(fracDigits[i], 16) * 16 ** -(i + 1);
     }
     const bexp = hex[4] !== undefined ? parseInt(hex[4], 10) : 0;
-    return floatRange(sign * mant * 2 ** bexp, arg);
+    const value = sign * mant * 2 ** bexp;
+    // Leftover after the parsed prefix → keep the value but flag the error.
+    if (hex[0].length !== s.length) return { value, error: `${arg}: invalid hex number` };
+    return floatRange(value, arg);
   }
-  // A `0x…` shape that failed the hex grammar (e.g. `0xg`) is an invalid hex number.
-  if (/^[+-]?0[xX]/.test(s)) return { value: 0, error: `${arg}: invalid hex number` };
   const v = parseFloat(s);
   if (Number.isNaN(v)) return { value: 0, error: `${arg}: invalid number` };
   return { value: v, error: `${arg}: invalid number` };

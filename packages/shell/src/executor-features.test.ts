@@ -1092,6 +1092,16 @@ test('a function-local -l/-u fold does NOT apply to a same-name declare -g globa
   expect((await run('declare -u G=x; m(){ declare -g G=hello; }; m; echo "[$G]"')).out).toBe('[HELLO]\n');
 });
 
+test('declare -gu/-gl (fold flag ON the -g command) folds + records on the global binding', async () => {
+  // The fold flag is on the SAME -g command → fold the value AND persist the attr on
+  // the global (bash), even with a same-name local shadow.
+  expect((await run('f(){ declare g=lv; declare -gu g=hello; }; f; echo "[$g]"')).out).toBe('[HELLO]\n');
+  expect((await run('h(){ declare g=lv; declare -gl g=HELLO; }; h; echo "[$g]"')).out).toBe('[hello]\n');
+  expect((await run('f(){ declare g=lv; declare -gu g=hello; }; f; declare -p g')).out).toBe('declare -u g="HELLO"\n');
+  // a later GLOBAL-scope write then folds by the now-global attribute
+  expect((await run('f(){ declare g=lv; declare -gu g=hi; }; f; g=more; echo "[$g]"')).out).toBe('[MORE]\n');
+});
+
 test('logical NOT usable in arithmetic (history expansion off for non-interactive)', async () => {
   expect((await run('echo $((!0))')).out).toBe('1\n');
   expect((await run('echo $((!5))')).out).toBe('0\n');
@@ -1247,6 +1257,15 @@ test('[[ ]] QUOTED ( / ) operands are strings, not grouping (no miscount around 
   expect((await run('[[ \'(\' == \')\' ]] && echo T || echo F')).out).toBe('F\n');
   // real grouping still works alongside a quoted-paren operand
   expect((await run('[[ ( \'(\' == \'(\' ) && a == a ]] && echo T || echo F')).out).toBe('T\n');
+});
+
+test('[[ ]] =~ regex inside a ( ) grouping (coalescer stops at the enclosing close paren)', async () => {
+  expect((await run('[[ ( abc =~ (a) ) ]] && echo T || echo F')).out).toBe('T\n');
+  expect((await run('[[ ( abc =~ (a) ) && ( def =~ d ) ]] && echo T || echo F')).out).toBe('T\n');
+  expect((await run('[[ ( abc =~ ^a ) || ( xyz =~ ^q ) ]] && echo T || echo F')).out).toBe('T\n');
+  expect((await run('[[ ( abc =~ (a)(b)(c) ) && x == x ]] && echo T || echo F')).out).toBe('T\n');
+  // regexes with their own balanced parens still survive OUTSIDE a group
+  expect((await run('[[ ab12 =~ ([a-z]+)([0-9]+) ]] && echo T || echo F')).out).toBe('T\n');
 });
 
 test('[[ ]] -ef/-nt/-ot binary file-comparison operators', async () => {
