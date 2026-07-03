@@ -15,6 +15,10 @@ function fakeFs(tree: Record<string, Entry[]>): FileManagerFs {
       tree[fp] = (tree[fp] ?? []).filter((x) => x.name !== base(from));
       (tree[parent(to)] ??= []).push({ ...e, name: base(to) });
     },
+    async copy(from, to) {
+      const e = (tree[parent(from)] ?? []).find((x) => x.name === base(from));
+      if (e) (tree[parent(to)] ??= []).push({ ...e, name: base(to) });
+    },
   };
 }
 
@@ -286,5 +290,95 @@ test('dropping a file onto a tree folder moves it there', async () => {
   await tick();
 
   expect(renameSpy).toHaveBeenCalledWith('/a.txt', '/docs/a.txt');
+  h.root.remove();
+});
+
+test('typing in the search box filters visible rows', async () => {
+  const h = renderFileManager(document, { fs: fakeFs({ '/': [
+    { name: 'a.txt', kind: 'file' }, { name: 'budget.csv', kind: 'file' },
+  ] }), onOpen: () => {} });
+  document.body.appendChild(h.root);
+  await h.ready;
+
+  const search = h.root.querySelector('[data-role="fm-search"]') as HTMLInputElement;
+  search.value = 'bud';
+  search.dispatchEvent(new Event('input', { bubbles: true }));
+  const names = [...h.root.querySelectorAll('[data-pane="list"] [data-name]')].map((n) => (n as HTMLElement).dataset.name);
+  expect(names).toEqual(['budget.csv']);
+  h.root.remove();
+});
+
+test('grid toggle switches the list pane layout to a grid', async () => {
+  const h = renderFileManager(document, { fs: fakeFs({ '/': [{ name: 'a.txt', kind: 'file' }] }), onOpen: () => {} });
+  document.body.appendChild(h.root);
+  await h.ready;
+  const gridBtn = h.root.querySelector('[data-action="view-grid"]') as HTMLButtonElement;
+  gridBtn.click();
+  const list = h.root.querySelector('[data-pane="list"]') as HTMLElement;
+  expect(list.dataset.view).toBe('grid');
+  h.root.remove();
+});
+
+test('context menu Copy then empty-area Paste duplicates the file', async () => {
+  const copies: string[] = [];
+  const fs: FileManagerFs = {
+    async list() { return [{ name: 'a.txt', kind: 'file' }]; },
+    async mkdir() {}, async createFile() {}, async remove() {}, async rename() {},
+    async copy(from, to) { copies.push(`${from}->${to}`); },
+  };
+  const h = renderFileManager(document, { fs, onOpen: () => {} });
+  document.body.appendChild(h.root);
+  await h.ready;
+
+  h.model.copy('a.txt');                        // simulate the "Copy" menu action
+  await h.model.paste();                        // simulate the empty-area "Paste"
+  expect(copies).toEqual(['/a.txt->/a (1).txt']);
+  h.root.remove();
+});
+
+test('Ctrl+C on a selected row then Ctrl+V pastes', async () => {
+  const copies: string[] = [];
+  const fs: FileManagerFs = {
+    async list() { return [{ name: 'a.txt', kind: 'file' }]; },
+    async mkdir() {}, async createFile() {}, async remove() {}, async rename() {}, async copy(f, t) { copies.push(`${f}->${t}`); },
+  };
+  const h = renderFileManager(document, { fs, onOpen: () => {} });
+  document.body.appendChild(h.root);
+  await h.ready;
+  h.model.select('a.txt');
+  h.root.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true }));
+  h.root.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  expect(copies.length).toBe(1);
+  h.root.remove();
+});
+
+test('locations sidebar lists provided locations and navigates on click', async () => {
+  const listed: string[] = [];
+  const fs: FileManagerFs = {
+    async list(p) { listed.push(p); return []; },
+    async mkdir() {}, async createFile() {}, async remove() {}, async rename() {}, async copy() {},
+  };
+  const h = renderFileManager(document, {
+    fs, onOpen: () => {},
+    locations: [{ label: 'My files', path: '/', icon: '🏠' }, { label: 'Temp', path: '/tmp', icon: '🗂️' }],
+  });
+  document.body.appendChild(h.root);
+  await h.ready;
+
+  const items = h.root.querySelectorAll('[data-pane="sidebar"] [data-location]');
+  expect([...items].map((i) => (i as HTMLElement).dataset.location)).toEqual(['/', '/tmp']);
+  (h.root.querySelector('[data-location="/tmp"]') as HTMLElement).click();
+  await new Promise((r) => setTimeout(r, 0));
+  expect(h.model.cwd).toBe('/tmp');
+  h.root.remove();
+});
+
+test('without a locations prop, the classic directory tree still renders', async () => {
+  const h = renderFileManager(document, { fs: fakeFs({ '/': [{ name: 'sub', kind: 'directory' }] }), onOpen: () => {} });
+  document.body.appendChild(h.root);
+  await h.ready;
+  expect(h.root.querySelector('[data-pane="tree"]')).not.toBeNull();
+  expect(h.root.querySelector('[data-pane="sidebar"]')).toBeNull();
   h.root.remove();
 });

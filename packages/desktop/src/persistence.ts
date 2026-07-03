@@ -46,6 +46,47 @@ export async function saveLayout(vfs: FileSystemProvider, layout: SavedLayout): 
   }
 }
 
+/** Where the desktop stores the pinned-app list (app names, in shelf order). */
+export const PINS_PATH = '/.mithic-desktop/pins.json';
+
+/** Read the pinned-app names; returns `[]` if absent or unparseable. */
+export async function loadPins(vfs: FileSystemProvider): Promise<string[]> {
+  let handle: FileHandle;
+  try {
+    handle = (await vfs.open(PINS_PATH, { read: true })) as FileHandle;
+  } catch {
+    return [];
+  }
+  try {
+    const chunks: Uint8Array[] = [];
+    let off = 0;
+    for (;;) {
+      const c = await vfs.read(handle, off, 65536);
+      if (!c || c.byteLength === 0) break;
+      chunks.push(new Uint8Array(c));
+      off += c.byteLength;
+    }
+    const parsed = JSON.parse(new TextDecoder().decode(concat(chunks))) as unknown;
+    return Array.isArray(parsed) && parsed.every((s) => typeof s === 'string') ? parsed as string[] : [];
+  } catch {
+    return [];
+  } finally {
+    await Promise.resolve(vfs.close(handle)).catch(() => {});
+  }
+}
+
+/** Persist the pinned-app names, creating parent dir + file as needed. */
+export async function savePins(vfs: FileSystemProvider, pins: string[]): Promise<void> {
+  const dir = PINS_PATH.slice(0, PINS_PATH.lastIndexOf('/'));
+  try { await vfs.mkdir(dir); } catch { /* exists */ }
+  const handle = (await vfs.open(PINS_PATH, { write: true, create: true, truncate: true })) as FileHandle;
+  try {
+    await vfs.write(handle, new TextEncoder().encode(JSON.stringify(pins)), 0);
+  } finally {
+    await Promise.resolve(vfs.close(handle)).catch(() => {});
+  }
+}
+
 function isLayout(x: unknown): x is SavedLayout {
   if (typeof x !== 'object' || x === null) return false;
   for (const v of Object.values(x)) {

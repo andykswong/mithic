@@ -1,6 +1,7 @@
 import { bootDesktop } from './boot.ts';
 import { FileSystemRouter, DeviceFsProvider } from '@mithic/io/vfs';
 import type { FileSystemProvider } from '@mithic/io/vfs';
+import { createTaskbar, createAppDrawer, renderPinned, loadPins, savePins } from '@mithic/desktop';
 
 /** Try OPFS at `/` (persistent); fall back to the default seeded MemoryFs. */
 async function persistentVfs(): Promise<FileSystemProvider | undefined> {
@@ -17,26 +18,46 @@ async function persistentVfs(): Promise<FileSystemProvider | undefined> {
 
 async function main(): Promise<void> {
   const desktop = document.getElementById('desktop');
-  const taskbar = document.getElementById('taskbar');
-  if (!desktop || !taskbar) return;
+  const taskbarHost = document.getElementById('taskbar');
+  if (!desktop || !taskbarHost) return;
+
+  // Build the centered taskbar shell FIRST; the WM projects running windows into
+  // its runningRegion (an owned child), so it never clobbers the app-menu/pinned regions.
+  const bar = createTaskbar(document);
+  taskbarHost.appendChild(bar.root);
 
   const vfs = await persistentVfs();
-  const { wm } = await bootDesktop({ desktop, taskbar, vfs });
+  const { wm, apps, vfs: activeVfs } = await bootDesktop({ desktop, taskbar: bar.runningRegion, vfs });
 
-  // Launcher: a button per app, prepended into the taskbar (before window items).
-  const launcher = document.createElement('div');
-  launcher.style.cssText = 'display:flex;gap:4px;margin-right:8px;border-right:1px solid #313244;padding-right:8px;';
-  for (const name of ['terminal', 'files', 'editor', 'image-viewer']) {
-    const b = document.createElement('button');
-    b.textContent = name;
-    b.style.cssText = 'font:12px sans-serif;cursor:pointer;';
-    b.addEventListener('click', () => { void wm.open(name); });
-    launcher.appendChild(b);
-  }
-  taskbar.prepend(launcher);
+  // Pinned shelf (persisted). Seed a default set on first boot.
+  let pins = await loadPins(activeVfs);
+  if (pins.length === 0) pins = ['terminal', 'files', 'editor'];
+  const paint = (): void => renderPinned(document, bar.pinnedRegion, {
+    pins,
+    apps: apps.list(),
+    onLaunch: (n) => void wm.open(n),
+    onUnpin: (n) => { pins = pins.filter((p) => p !== n); void savePins(activeVfs, pins); paint(); },
+  });
+  const togglePin = (name: string): void => {
+    pins = pins.includes(name) ? pins.filter((p) => p !== name) : [...pins, name];
+    void savePins(activeVfs, pins);
+    paint();
+  };
+  paint();
+
+  // App drawer, toggled by the app-menu button. Hidden apps (displayMode 'hidden')
+  // are not launchable from the grid.
+  const drawer = createAppDrawer(document, {
+    apps: () => apps.list().filter((a) => a.displayMode !== 'hidden'),
+    onLaunch: (n) => void wm.open(n),
+    onTogglePin: togglePin,
+    isPinned: (name) => pins.includes(name),
+  });
+  desktop.appendChild(drawer.root);
+  bar.appMenuButton.addEventListener('click', () => drawer.toggle());
 
   // Open a terminal by default.
-  void wm.open('terminal');
+  await wm.open('terminal');
 }
 
 if (typeof document !== 'undefined' && document.getElementById('desktop')) {

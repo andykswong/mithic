@@ -19,6 +19,7 @@ export interface DesktopHandle {
   wm: WindowManager;
   kernel: Kernel;
   vfs: FileSystemProvider;
+  apps: AppRegistry;
 }
 
 /** Build VFS-backed adapters for the editor + file-manager apps. */
@@ -48,6 +49,24 @@ function fileManagerFs(vfs: FileSystemProvider): FileManagerFs {
     async createFile(path) { const h = (await vfs.open(path, { write: true, create: true, truncate: true })) as FileHandle; await vfs.close(h); },
     async remove(path) { try { await vfs.unlink(path); } catch { await vfs.rmdir(path); } },
     async rename(from, to) { await vfs.rename(from, to); },
+    async copy(from, to) {
+      const s = await vfs.stat(from);
+      if (s.type === 'directory') {
+        await vfs.mkdir(to);
+        for (const child of await vfs.readdir(from)) {
+          await this.copy(`${from}/${child.name}`, `${to}/${child.name}`);
+        }
+      } else {
+        const rh = (await vfs.open(from, { read: true })) as FileHandle;
+        const chunks: Uint8Array[] = []; let off = 0;
+        for (;;) { const c = await vfs.read(rh, off, 65536); if (!c || c.byteLength === 0) break; chunks.push(new Uint8Array(c)); off += c.byteLength; }
+        await vfs.close(rh);
+        let total = 0; for (const c of chunks) total += c.byteLength;
+        const buf = new Uint8Array(total); let o = 0; for (const c of chunks) { buf.set(c, o); o += c.byteLength; }
+        const wh = (await vfs.open(to, { write: true, create: true, truncate: true })) as FileHandle;
+        await vfs.write(wh, buf, 0); await vfs.close(wh);
+      }
+    },
   };
 }
 
@@ -92,10 +111,18 @@ export async function bootDesktop(opts: BootOptions): Promise<DesktopHandle> {
 
   apps.register({ name: 'files', title: 'Files', defaultSize: [560, 420], icon: '📁', singleton: true,
     mount: (ctx: WindowContext) => {
-      mountFileManager(ctx, { fs: ffs, onOpen: (path) => {
-        const app = apps.resolveForFile(path) ?? apps.get('editor')!;
-        void wm.open(app.name, { argv: [path] });
-      } });
+      mountFileManager(ctx, {
+        fs: ffs,
+        locations: [
+          { label: 'My files', path: '/', icon: '🏠' },
+          { label: 'Temp', path: '/tmp', icon: '🗂️' },
+          { label: 'Devices', path: '/dev', icon: '🔌' },
+        ],
+        onOpen: (path) => {
+          const app = apps.resolveForFile(path) ?? apps.get('editor')!;
+          void wm.open(app.name, { argv: [path] });
+        },
+      });
     } });
 
   // The image-viewer's display geometry + capabilities come from ITS manifest.json
@@ -113,5 +140,5 @@ export async function bootDesktop(opts: BootOptions): Promise<DesktopHandle> {
   apps.associate('jpeg', 'image-viewer');
   apps.associate('gif', 'image-viewer');
 
-  return { wm, kernel, vfs };
+  return { wm, kernel, vfs, apps };
 }

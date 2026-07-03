@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
 import { FileSystemRouter, MemoryFsProvider } from '@mithic/io/vfs';
+import { createTaskbar } from '@mithic/desktop';
 import { bootDesktop } from './boot.ts';
 
 function surface() {
@@ -9,6 +10,53 @@ function surface() {
   document.body.append(desktop, taskbar);
   return { desktop, taskbar };
 }
+
+test('WM renders running chips into a taskbar runningRegion, leaving app-menu/pinned intact', async () => {
+  const desktop = document.createElement('div');
+  desktop.style.cssText = 'position:relative;width:1024px;height:700px;';
+  const taskbarHost = document.createElement('div');
+  document.body.append(desktop, taskbarHost);
+
+  const bar = createTaskbar(document);
+  taskbarHost.appendChild(bar.root);
+  const pin = document.createElement('button');
+  pin.dataset.role = 'pin';
+  bar.pinnedRegion.appendChild(pin);
+
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const { wm } = await bootDesktop({ desktop, taskbar: bar.runningRegion, vfs });
+
+  await wm.open('terminal');
+  expect(bar.runningRegion.querySelectorAll('[data-role="taskbar-item"]').length).toBe(1);
+  // The app-menu button and the pinned region survived the WM render.
+  expect(bar.appMenuButton.isConnected).toBe(true);
+  expect(bar.pinnedRegion.querySelector('[data-role="pin"]')).not.toBeNull();
+
+  wm.dispose(); desktop.remove(); taskbarHost.remove();
+});
+
+test('app-menu button toggles the app drawer; launching from it opens a window', async () => {
+  const { main } = await import('./main.ts');
+  const desktop = Object.assign(document.createElement('div'), { id: 'desktop' });
+  desktop.style.cssText = 'position:relative;width:1024px;height:700px;';
+  const taskbar = Object.assign(document.createElement('div'), { id: 'taskbar' });
+  document.body.append(desktop, taskbar);
+
+  await main();
+  const appMenu = taskbar.querySelector('[data-role="app-menu"]') as HTMLButtonElement;
+  expect(appMenu).not.toBeNull();
+  appMenu.click(); // opens the drawer
+  const drawer = desktop.querySelector('[data-role="app-drawer"]') as HTMLElement;
+  expect(drawer.style.display).toBe('flex');
+
+  (drawer.querySelector('[data-app="files"]') as HTMLElement).click();
+  for (let i = 0; i < 50 && desktop.querySelectorAll('[data-role="window"]').length < 2; i++) await new Promise((r) => setTimeout(r, 10));
+  const titles = [...desktop.querySelectorAll('[data-role="title"]')].map((t) => t.textContent);
+  expect(titles.some((t) => t?.includes('Files'))).toBe(true);
+
+  desktop.remove(); taskbar.remove();
+});
 
 test('opens a terminal window and a tier-1 editor window', async () => {
   const { desktop, taskbar } = surface();

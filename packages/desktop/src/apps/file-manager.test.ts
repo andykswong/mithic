@@ -8,6 +8,10 @@ function fakeFs(tree: Record<string, Entry[]>): FileManagerFs {
     async createFile(path) { (tree[parent(path)] ??= []).push({ name: base(path), kind: 'file' }); },
     async remove(path) { const p = parent(path); tree[p] = (tree[p] ?? []).filter((e) => e.name !== base(path)); },
     async rename(from, to) { const p = parent(from); const e = (tree[p] ?? []).find((x) => x.name === base(from)); if (e) e.name = base(to); },
+    async copy(from, to) {
+      const e = (tree[parent(from)] ?? []).find((x) => x.name === base(from));
+      if (e) (tree[parent(to)] ??= []).push({ ...e, name: base(to) });
+    },
   };
 }
 const parent = (p: string) => p.slice(0, p.lastIndexOf('/')) || '/';
@@ -52,6 +56,66 @@ describe('file manager model', () => {
     await m.navigate('/');
     await m.up();
     expect(m.cwd).toBe('/');
+  });
+
+  test('setSort reorders entries (size desc) while keeping directories grouped first', async () => {
+    const m = createFileManagerModel({ fs: fakeFs({ '/': [
+      { name: 'b.txt', kind: 'file', size: 10 },
+      { name: 'a.txt', kind: 'file', size: 30 },
+      { name: 'dir', kind: 'directory' },
+    ] }), onOpen: () => {} });
+    await m.navigate('/');
+    m.setSort('size', 'desc');
+    expect(m.entries.map((e) => e.name)).toEqual(['dir', 'a.txt', 'b.txt']); // dirs first, then size desc
+    m.setSort('name', 'asc');
+    expect(m.entries.map((e) => e.name)).toEqual(['dir', 'a.txt', 'b.txt']);
+  });
+
+  test('setQuery filters entries by case-insensitive substring', async () => {
+    const m = createFileManagerModel({ fs: fakeFs({ '/': [
+      { name: 'Invoice.pdf', kind: 'file' },
+      { name: 'notes.txt', kind: 'file' },
+      { name: 'invoices', kind: 'directory' },
+    ] }), onOpen: () => {} });
+    await m.navigate('/');
+    m.setQuery('invo');
+    expect(m.entries.map((e) => e.name).sort()).toEqual(['Invoice.pdf', 'invoices']);
+    m.setQuery('');
+    expect(m.entries.length).toBe(3);
+  });
+});
+
+describe('clipboard', () => {
+  test('copy + paste duplicates a file into the current dir (de-duped name)', async () => {
+    const calls: string[] = [];
+    const fs: FileManagerFs = {
+      async list(p) { return p === '/' ? [{ name: 'a.txt', kind: 'file' }] : []; },
+      async mkdir() {}, async createFile() {}, async remove() {}, async rename() {},
+      async copy(from, to) { calls.push(`copy ${from} -> ${to}`); },
+    };
+    const m = createFileManagerModel({ fs, onOpen: () => {} });
+    await m.navigate('/');
+    m.copy('a.txt');
+    await m.paste();
+    // 'a.txt' exists → paste writes 'a (1).txt' (name de-dup).
+    expect(calls).toEqual(['copy /a.txt -> /a (1).txt']);
+  });
+
+  test('cut + paste moves via rename and clears the clipboard', async () => {
+    const calls: string[] = [];
+    const fs: FileManagerFs = {
+      async list(p) { return p === '/sub' ? [] : [{ name: 'a.txt', kind: 'file' }, { name: 'sub', kind: 'directory' }]; },
+      async mkdir() {}, async createFile() {}, async remove() {},
+      async rename(from, to) { calls.push(`rename ${from} -> ${to}`); },
+      async copy() {},
+    };
+    const m = createFileManagerModel({ fs, onOpen: () => {} });
+    await m.navigate('/');
+    m.cut('a.txt');
+    m.select('sub');
+    await m.pasteInto('/sub');
+    expect(calls).toEqual(['rename /a.txt -> /sub/a.txt']);
+    expect(m.clipboard).toBeNull(); // cut consumed
   });
 });
 
@@ -170,7 +234,7 @@ describe('move', () => {
     const rename = vi.fn(async () => {});
     const fs: FileManagerFs = {
       list: async () => [{ name: 'a.txt', kind: 'file' }, { name: 'docs', kind: 'directory' }],
-      mkdir: async () => {}, createFile: async () => {}, remove: async () => {}, rename,
+      mkdir: async () => {}, createFile: async () => {}, remove: async () => {}, rename, copy: async () => {},
     };
     const m = createFileManagerModel({ fs, onOpen: () => {} });
     await m.navigate('/');
@@ -181,7 +245,7 @@ describe('move', () => {
     const rename = vi.fn(async () => {});
     const fs: FileManagerFs = {
       list: async () => [{ name: 'sub', kind: 'directory' }, { name: 'f.txt', kind: 'file' }],
-      mkdir: async () => {}, createFile: async () => {}, remove: async () => {}, rename,
+      mkdir: async () => {}, createFile: async () => {}, remove: async () => {}, rename, copy: async () => {},
     };
     const m = createFileManagerModel({ fs, onOpen: () => {} });
     await m.navigate('/work');
@@ -192,7 +256,7 @@ describe('move', () => {
     const rename = vi.fn(async () => {});
     const fs: FileManagerFs = {
       list: async () => [{ name: 'f.txt', kind: 'file' }],
-      mkdir: async () => {}, createFile: async () => {}, remove: async () => {}, rename,
+      mkdir: async () => {}, createFile: async () => {}, remove: async () => {}, rename, copy: async () => {},
     };
     const m = createFileManagerModel({ fs, onOpen: () => {} });
     await m.navigate('/work');
@@ -203,7 +267,7 @@ describe('move', () => {
     const rename = vi.fn(async () => {});
     const fs: FileManagerFs = {
       list: async () => [{ name: 'f.txt', kind: 'file' }],
-      mkdir: async () => {}, createFile: async () => {}, remove: async () => {}, rename,
+      mkdir: async () => {}, createFile: async () => {}, remove: async () => {}, rename, copy: async () => {},
     };
     const m = createFileManagerModel({ fs, onOpen: () => {} });
     await m.navigate('/work');
@@ -228,7 +292,7 @@ describe('error handling', () => {
   test('refresh surfaces an empty list and an error flag when fs.list rejects', async () => {
     const fs: FileManagerFs = {
       list: async () => { throw new Error('EACCES'); },
-      mkdir: async () => {}, createFile: async () => {}, remove: async () => {}, rename: async () => {},
+      mkdir: async () => {}, createFile: async () => {}, remove: async () => {}, rename: async () => {}, copy: async () => {},
     };
     const m = createFileManagerModel({ fs, onOpen: () => {} });
     await expect(m.navigate('/secret')).resolves.toBeUndefined();
@@ -240,7 +304,7 @@ describe('error handling', () => {
     let fail = true;
     const fs: FileManagerFs = {
       list: async () => { if (fail) throw new Error('EACCES'); return [{ name: 'ok.txt', kind: 'file' }]; },
-      mkdir: async () => {}, createFile: async () => {}, remove: async () => {}, rename: async () => {},
+      mkdir: async () => {}, createFile: async () => {}, remove: async () => {}, rename: async () => {}, copy: async () => {},
     };
     const m = createFileManagerModel({ fs, onOpen: () => {} });
     await m.navigate('/secret');
