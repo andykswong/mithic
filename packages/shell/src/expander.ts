@@ -553,12 +553,13 @@ export class Expander {
       return `declare -n ${name}=${target ?? value}`;
     }
     if (!set && arr === undefined && map === undefined) return '';
-    // Flag group: type letter (a/A) then i (integer) then r (readonly), bash order.
+    // Flag group: type letter (a/A) then i (integer), r (readonly), x (export) — bash order.
     let group = '';
     if (map !== undefined || flags.includes('A')) group += 'A';
     else if (arr !== undefined || flags.includes('a')) group += 'a';
     if (flags.includes('i')) group += 'i';
     if (flags.includes('r')) group += 'r';
+    if (flags.includes('x')) group += 'x';
     if (map !== undefined) {
       // Assoc keys are double-quoted only when not bare-safe (bash), and bash appends
       // a TRAILING space after the last pair for an associative array.
@@ -688,11 +689,12 @@ export class Expander {
       case 'a': return this.env.attrFlags?.(name) ?? '';
       case 'A': {
         const flags = this.env.attrFlags?.(name) ?? '';
-        // Type letter (a/A) + i + r, matching bash's element @A order.
+        // Type letter (a/A) + i + r + x, matching bash's element @A order.
         let group = '';
         if (flags.includes('A')) group += 'A'; else if (flags.includes('a')) group += 'a';
         if (flags.includes('i')) group += 'i';
         if (flags.includes('r')) group += 'r';
+        if (flags.includes('x')) group += 'x';
         // An attribute-less name (a plain scalar via `${s[0]@A}`) emits the bare
         // `name='value'` form (NO `declare --`), like the whole-scalar @A; with any
         // attribute it prefixes `declare -FLAGS `. An UNSET element omits the value.

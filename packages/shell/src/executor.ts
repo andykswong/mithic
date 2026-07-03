@@ -277,6 +277,8 @@ export class Executor {
   private readonlyNames = new Set<string>();
   /** Names declared `declare -i` (integer): assignments are arithmetic-evaluated. */
   private integerNames = new Set<string>();
+  /** Names marked exported (`export` / `declare -x`) — for `declare -p`'s `-x` flag. */
+  private exportedNames = new Set<string>();
   /** `$BASH_REMATCH` capture groups from the last successful `[[ =~ ]]` match. */
   private bashRematch: string[] = [];
   /** `$_` — the last argument (post-expansion) of the previous simple command. */
@@ -370,14 +372,15 @@ export class Executor {
       procSub: (s, d) => this.procSub(s, d),
       resolveNameref: (n) => this.namerefs.get(n),
       attrFlags: (name) => {
-        // bash `${var@a}`: attribute-type letter (A assoc / a indexed) then `n`
-        // (nameref) then `r` (readonly). Single-attribute cases are unambiguous.
+        // bash `${var@a}`: attribute-type letter (A assoc / a indexed) then `i`
+        // (integer), `n` (nameref), `r` (readonly), `x` (exported), in that order.
         let f = '';
         if (this.assocArrays.has(name)) f += 'A';
         else if (this.arrays.has(name)) f += 'a';
         if (this.integerNames.has(name)) f += 'i';
         if (this.namerefs.has(name)) f += 'n';
         if (this.readonlyNames.has(name)) f += 'r';
+        if (this.exportedNames.has(name)) f += 'x';
         return f;
       },
       isReadonly: (name) => this.readonlyNames.has(name),
@@ -767,6 +770,7 @@ export class Executor {
       unsetVar: (name, index) => this.unsetVar(name, index),
       markInteger: (name) => { this.integerNames.add(name); },
       isInteger: (name) => this.integerNames.has(name),
+      markExport: (name) => { this.exportedNames.add(name); },
       declareP: (names) => this.declareP(names),
       setNameref: (ref, target) => { this.namerefs.set(ref, target); },
       resolveNameref: (name) => this.namerefs.get(name),
@@ -2831,6 +2835,7 @@ export class Executor {
       else if (this.arrays.has(n)) f += 'a';
       if (this.integerNames.has(n)) f += 'i';
       if (this.readonlyNames.has(n)) f += 'r';
+      if (this.exportedNames.has(n)) f += 'x';
       return f;
     };
     const line = (n: string): string | undefined => {

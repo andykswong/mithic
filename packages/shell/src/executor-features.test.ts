@@ -202,6 +202,15 @@ test('${var~} / ${var~~} toggle case; numeric brace ranges zero-pad', async () =
   expect((await run('echo {1..5}')).out).toBe('1 2 3 4 5\n'); // no padding without leading zero
 });
 
+test('export attribute is tracked (declare -p shows -x); %G trims trailing zeros', async () => {
+  expect((await run('export FOO=bar; declare -p FOO')).out).toBe('declare -x FOO="bar"\n');
+  expect((await run('declare -rx e=hi; declare -p e')).out).toBe('declare -rx e="hi"\n');
+  expect((await run('export x=1; echo "${x@a}"')).out).toBe('x\n');
+  // %G (uppercase) trims trailing zeros in the exponent branch (was only lowercase %g).
+  expect((await run('printf "%G\\n" 1000000')).out).toBe('1E+06\n');
+  expect((await run('printf "%G\\n" 0.00001')).out).toBe('1E-05\n');
+});
+
 // ── command substitution ──────────────────────────────────────────────────────
 
 test('$(cmd) command substitution', async () => {

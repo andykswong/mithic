@@ -83,6 +83,8 @@ export interface ShellState {
   markInteger?(name: string): void;
   /** True when the name was marked integer (`declare -i`). */
   isInteger?(name: string): boolean;
+  /** Mark a name as exported (`export` / `declare -x`) — for `declare -p`'s `-x`. */
+  markExport?(name: string): void;
   /**
    * `declare -p [names]` reconstruction. With no names, every set variable/array.
    * Returns the `declare …` lines and any requested names that were not found.
@@ -473,10 +475,14 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
           status = 1;
         }
       }
+      // Mark array operands exported too (`export arr=(…)` creates a non-exported
+      // array in bash, but declare -p still shows -x for a plain `export arr`).
+      for (const a of ctx.builtinAssignments ?? []) if (a.array !== undefined) ctx.state?.markExport?.(a.name);
       for (const arg of args) {
+        if (arg.startsWith('-')) continue; // `export -p`/`-n` flags: accepted, no-op here
         const eq = arg.indexOf('=');
+        const n = eq > 0 ? arg.slice(0, eq) : arg;
         if (eq > 0) {
-          const n = arg.slice(0, eq);
           if (ctx.state?.isReadonly?.(n)) {
             errOut(ctx, `shell: export: ${n}: readonly variable\n`);
             status = 1;
@@ -484,6 +490,9 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
           }
           ctx.env[n] = arg.slice(eq + 1);
         }
+        // Mark the name exported (for `declare -p`'s `-x`) — both `export X=v` and a
+        // bare `export X` of an existing variable.
+        ctx.state?.markExport?.(n);
       }
       return status;
     }
@@ -555,6 +564,7 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
       // always the readonly attribute; a `-i` on any of them marks integer.
       const flagInteger = flags.has('i');
       const flagReadonly = isReadonly || flags.has('r');
+      const flagExport = flags.has('x'); // `declare -x` / `-rx` → exported attribute
       if (isAssoc && (ctx.state?.getOption('posix') ?? false)) {
         errOut(ctx, 'shell: declare: -A: not supported in POSIX mode\n');
         return 2;
@@ -585,6 +595,7 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
           declStatus = 1;
         }
         if (flagReadonly) ctx.state?.markReadonly?.(a.name);
+        if (flagExport) ctx.state?.markExport?.(a.name);
       }
       for (const arg of args) {
         if (arg.startsWith('-')) continue; // option flags handled above
@@ -618,6 +629,7 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
           if (flagInteger) ctx.state?.markInteger?.(subM[1]);
           if (await ctx.applyBuiltinAssignment({ name: subM[1], value: arg.slice(eq + 1), index: subM[2], append: subM[3] === '+' }, flagGlobal)) declStatus = 1;
           if (flagReadonly) ctx.state?.markReadonly?.(subM[1]);
+          if (flagExport) ctx.state?.markExport?.(subM[1]);
           continue;
         }
         // A `local`/`declare`/`typeset` on an ALREADY-readonly name is rejected BEFORE
@@ -682,6 +694,7 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         // own assignment succeeds; later reassignments are rejected by the
         // executor's applyAssignment (POSIX-fatal in posix mode).
         if (flagReadonly) ctx.state?.markReadonly?.(n);
+        if (flagExport) ctx.state?.markExport?.(n);
       }
       return declStatus;
     }
@@ -1976,7 +1989,9 @@ function formatG(n: number, sig: number, upper: boolean, alt: boolean): string {
   let s: string;
   if (exp < -4 || exp >= sig) {
     s = formatExp(n, sig - 1, upper);
-    if (!alt) s = s.replace(/\.?0+e/, 'e');
+    // Trim trailing zeros before the exponent. `formatExp` may have uppercased `e`
+    // to `E` (for `%G`), so match either case (was lowercase-only → %G never trimmed).
+    if (!alt) s = s.replace(/\.?0+([eE])/, '$1');
   } else {
     s = n.toFixed(Math.max(0, sig - 1 - exp));
     if (!alt && s.includes('.')) s = s.replace(/\.?0+$/, '');
