@@ -177,4 +177,15 @@ describe('wc', () => {
     expect(await wcCommand(h.io)).toBe(1);
     expect(h.out()).toBe('');
   });
+
+  test('-L: a carriage return resets the column (GNU display-width)', async () => {
+    // `abc\r` → after CR the column is 0, so the longest line is 3 (abc), not 4.
+    const h1 = makeIO({ args: ['wc', '-L'], stdinText: 'abc\r\n' });
+    expect(await wcCommand(h1.io)).toBe(0);
+    expect(h1.out()).toBe('3\n');
+    // `abc\rXY` → abc reached 3, CR resets, XY reaches 2 → longest 3.
+    const h2 = makeIO({ args: ['wc', '-L'], stdinText: 'abc\rXY\n' });
+    expect(await wcCommand(h2.io)).toBe(0);
+    expect(h2.out()).toBe('3\n');
+  });
 });

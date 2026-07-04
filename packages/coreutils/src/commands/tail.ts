@@ -331,6 +331,15 @@ const tailCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     } else {
       spec = { n: 10, fromStart: false };
     }
+    // GNU quirk: the `+` "from-start" mode is STICKY across mixed/repeated count
+    // options — if ANY count flag used `+` (e.g. `-n +2 -c 3`), the winning count is
+    // from-start too (`-c 3` behaves like `-c +3`). The last flag sets unit + number;
+    // a `+` anywhere sets the mode.
+    if (!spec.fromStart) {
+      const cPlus = flags.c !== undefined && String(flags.c).trimStart().startsWith('+');
+      const nPlus = flags.n !== undefined && String(flags.n).trimStart().startsWith('+');
+      if (cPlus || nPlus) spec = { n: spec.n, fromStart: true };
+    }
 
     const sources = positionals.length > 0 ? positionals : ['-'];
     const wantHeaders = Boolean(flags.v) || (sources.length > 1 && !flags.q);

@@ -219,6 +219,14 @@ const trCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       // Translate: exactly 2 operands.
       if (n === 1) return failMsg(`${name}: missing operand after ${q(positionals[0])}\nTwo strings must be given when translating.\n${help}`);
       if (n > 2) return failMsg(`${name}: extra operand ${q(positionals[2])}\n${help}`);
+      // An EMPTY SET2 in translate mode is an error UNLESS `-t` (truncate) is given —
+      // there is nothing to translate SET1 to (GNU: "when not truncating set1, string2
+      // must be non-empty", exit 1). `-t` with an empty SET2 truncates SET1 to length 0.
+      // GNU emits this message WITHOUT the "Try --help" line (unlike the operand-count
+      // errors above), so it is intentionally omitted here.
+      if (positionals[1] === '' && !truncate) {
+        return failMsg(`${name}: when not truncating set1, string2 must be non-empty\n`);
+      }
     }
 
     const tokens1 = parseSet(positionals[0]);
@@ -226,8 +234,10 @@ const trCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     const tokens2 = positionals[1] !== undefined ? parseSet(positionals[1]) : [];
     const set2 = positionals[1] !== undefined ? expandSet2(tokens2, set1.length) : [];
 
-    // `-t` truncates SET1 to the length of SET2 (translate mode only).
-    if (truncate && !del && set2.length > 0 && set1.length > set2.length) {
+    // `-t` truncates SET1 to the length of SET2 (translate mode only). An EMPTY SET2
+    // with `-t` truncates SET1 to nothing → no character maps, so the input passes
+    // through unchanged (GNU: `tr -t a-z ''` is a no-op, exit 0). Allow length 0.
+    if (truncate && !del && set1.length > set2.length) {
       set1 = set1.slice(0, set2.length);
     }
 

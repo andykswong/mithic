@@ -71,13 +71,16 @@ function charWidth(cp: number): number {
   return 1;
 }
 
-/** Longest display width among the input's lines (tab → next multiple of 8). */
+/** Longest display width among the input's lines (tab → next multiple of 8). A
+ * carriage return resets the column to 0 and a form-feed/vertical-tab ends the
+ * current line's measurement (GNU `wc -L`: `\r` → col 0, `\n`/`\f`/`\v` → new line). */
 function longestLineWidth(text: string): number {
   let max = 0;
   let col = 0;
   for (const ch of text) {
     const cp = ch.codePointAt(0)!;
-    if (cp === 0x0a) { if (col > max) max = col; col = 0; continue; }
+    if (cp === 0x0a || cp === 0x0c || cp === 0x0b) { if (col > max) max = col; col = 0; continue; }
+    if (cp === 0x0d) { if (col > max) max = col; col = 0; continue; } // CR resets the column
     if (cp === 0x09) { col = Math.floor(col / 8) * 8 + 8; continue; }
     col += charWidth(cp);
   }
@@ -119,7 +122,8 @@ async function countStream(stream: ReadableStream<Uint8Array>): Promise<Counts> 
       for (const ch of text) {
         c.chars++;
         const cp = ch.codePointAt(0)!;
-        if (cp === 0x0a) { if (col > c.maxLine) c.maxLine = col; col = 0; }
+        // `\n`/`\f`/`\v` end the line; `\r` resets the column to 0 (GNU `wc -L`).
+        if (cp === 0x0a || cp === 0x0c || cp === 0x0b || cp === 0x0d) { if (col > c.maxLine) c.maxLine = col; col = 0; }
         else if (cp === 0x09) col = Math.floor(col / 8) * 8 + 8;
         else col += charWidth(cp);
         if (WS.test(ch)) inWord = false;

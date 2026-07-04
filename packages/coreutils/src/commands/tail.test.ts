@@ -159,4 +159,12 @@ describe('tail', () => {
     expect(await tailCommand(h.io)).toBe(0);
     expect(h.out()).toBe('bb\nccc\n');
   });
+
+  test('sticky-+: -n +2 -c 3 → byte mode, count 3, from-start (GNU quirk)', async () => {
+    // The last flag (-c 3) sets unit+number, but the earlier `+` (-n +2) makes the
+    // mode from-start, so it behaves like `-c +3` → bytes from index 3 onward.
+    const h = makeIO({ args: ['tail', '-n', '+2', '-c', '3'], stdinText: 'abcdefgh' });
+    expect(await tailCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('cdefgh');
+  });
 });

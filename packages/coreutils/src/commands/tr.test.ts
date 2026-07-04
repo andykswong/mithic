@@ -180,6 +180,19 @@ describe('tr', () => {
     expect(h.out()).toBe('gz\n');
   });
 
+  test('translate with an EMPTY SET2 (no -t) is an error, exit 1 (GNU)', async () => {
+    const h = makeIO({ args: ['tr', 'a-z', ''], stdinText: 'hello\n' });
+    expect(await trCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('');
+    expect(h.err()).toBe('tr: when not truncating set1, string2 must be non-empty\n');
+  });
+
+  test('-t with an EMPTY SET2 truncates SET1 to nothing (no error)', async () => {
+    const h = makeIO({ args: ['tr', '-t', 'a-z', ''], stdinText: 'hello\n' });
+    expect(await trCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('hello\n'); // nothing translated
+  });
+
   describe('expandSet', () => {
     test('ranges', () => { expect(expandSet('a-e').join('')).toBe('abcde'); });
     test('classes', () => { expect(expandSet('[:digit:]').join('')).toBe('0123456789'); });
