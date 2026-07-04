@@ -8,7 +8,7 @@
 
 > Capability-based sandboxed process runtime for the agent era.
 
-**Mithic 2.0** is an isomorphic, capability-based sandboxed **JavaScript** process runtime that runs identically in the browser and on native Node platforms. A microkernel brokers syscalls, IPC pipes, and process lifecycle; a POSIX-style shell and a Unix command suite run as ordinary sandboxed processes on top of it. The same code runs in the browser (local-first, no server required) and on Node.js — every resource a process can touch is an explicitly granted capability over a virtual filesystem and network layer.
+**Mithic** is an isomorphic, capability-based sandboxed **JavaScript** process runtime that runs identically in the browser and on native Node platforms. A microkernel brokers syscalls, IPC pipes, and process lifecycle; a POSIX-style shell and a Unix command suite run as ordinary sandboxed processes on top of it. The same code runs in the browser (local-first, no server required) and on Node.js — every resource a process can touch is an explicitly granted capability over a virtual filesystem and network layer.
 
 ## Core Pillars
 
@@ -20,25 +20,25 @@
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
+┌───────────────────────────────────────────────────────────────────┐
 │                      Browser / Node.js Host                       │
 │                                                                   │
-│   ┌─────────────────────────── Kernel ───────────────────────┐   │
+│   ┌─────────────────────────── Kernel ────────────────────────┐   │
 │   │  ProcessManager · IpcBroker · CapabilityManager           │   │
 │   │  SyscallDispatcher · Remote-DOM host                      │   │
-│   │      │              │                │                     │   │
+│   │      │              │                │                    │   │
 │   │   capability-     pipe IPC      command namespace         │   │
 │   │   gated VFS +     (credit-based  (resolveCommand →        │   │
-│   │   net (@mithic/io)  flow control)  guest module URL)       │   │
+│   │   net (@mithic/io)  flow control)  guest module URL)      │   │
 │   └──────┼──────────────┼────────────────┼────────────────────┘   │
 │          │              │                │                        │
 │   ┌──────┴──────────────┴────────────────┴────────────────────┐   │
-│   │   Runtime backend  (one isolation context per process)     │   │
-│   │   iframe (GUI) · Worker · QuickJS-WASM · isolated-vm       │   │
-│   │       └─ guest-runtime: mithic.* syscall API + stdio       │   │
-│   │          streams + Remote-DOM client                       │   │
-│   └────────────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────────┘
+│   │   Runtime backend  (one isolation context per process)    │   │
+│   │   iframe (GUI) · Worker · QuickJS-WASM · isolated-vm      │   │
+│   │       └─ guest-runtime: mithic.* syscall API + stdio      │   │
+│   │          streams + Remote-DOM client                      │   │
+│   └───────────────────────────────────────────────────────────┘   │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
 The **kernel** owns process lifecycle, the command namespace, and the syscall surface (`fs/*` including `fs/{get,set,list,remove}xattr`, `net/fetch`, `ipc/*`, `process/*`, `dom/mutate`). Guests never hold a socket or a raw file handle — they issue syscalls that the kernel checks against the process's granted capabilities before touching the VFS or `HttpClient`. Following the Linux file-capabilities model, an executable's `security.capability` xattr is its grant: `exec` reads it and narrows against the parent. Each process runs in a **pluggable runtime backend**:
@@ -61,7 +61,7 @@ The **kernel** owns process lifecycle, the command namespace, and the syscall su
 | [`@mithic/guest-runtime`](./packages/guest-runtime) | In-sandbox guest API: `createGuest()` → syscall client, stdio streams, signal/DOM hooks, Remote-DOM client |
 | [`@mithic/kernel`](./packages/kernel) | The microkernel: process lifecycle, IPC broker, capability manager, syscall dispatch, pipelines, Remote-DOM host |
 | [`@mithic/io`](./packages/io) | I/O engine: VFS router + providers (memory, OPFS, Node FS, device, caching) with extended-attribute support (a per-mount metadata store backs xattr + mode/mtime on OPFS/Node FS), HTTP/socket abstractions |
-| [`@mithic/shell`](./packages/shell) | POSIX-style shell interpreter (lexer/parser/expander/executor, 35 builtins) running as a regular Mithic process |
+| [`@mithic/shell`](./packages/shell) | POSIX-style shell interpreter (lexer/parser/expander/executor with builtins) running as a regular Mithic process |
 | [`@mithic/coreutils`](./packages/coreutils) | 71 pure-TypeScript Unix coreutils (including `getcap`/`setcap` over the `fs/*xattr` syscalls), one sandboxed guest module per command |
 | [`@mithic/jq`](./packages/commands/jq) | Pure-TypeScript jq JSON processor as a sandboxed process |
 | [`@mithic/curl`](./packages/commands/curl) | Pure-TypeScript curl-like HTTP client, routed through the capability-gated `net/fetch` syscall |
@@ -69,7 +69,7 @@ The **kernel** owns process lifecycle, the command namespace, and the syscall su
 | [`@mithic/worker`](./packages/worker) | Web Worker polyfill for Node.js (isomorphic `new Worker()`) |
 | [`@mithic/desktop`](./packages/desktop) | Host-side window manager for a browser OS: frames, drag/resize, z-order, taskbar, app registry, geometry persistence — zero third-party deps |
 
-The command suite is **73 commands** total: 71 coreutils plus `jq` and `curl`. The shell dispatches its 35 builtins in-process and spawns everything else as child processes via `process/spawn` and `process/pipeline`. `process/spawn` resolves a bare name via `$PATH` against a VFS file first (checking the execute bit and dispatching by shebang), falling back to the command registry for bootstrap.
+The command suite includes: 70+ coreutils plus `jq` and `curl`. The shell dispatches its builtins in-process and spawns everything else as child processes via `process/spawn` and `process/pipeline`. `process/spawn` resolves a bare name via `$PATH` against a VFS file first (checking the execute bit and dispatching by shebang), falling back to the command registry for bootstrap.
 
 ### Examples
 

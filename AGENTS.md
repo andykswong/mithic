@@ -2,11 +2,11 @@
 
 ## Project Overview
 
-Mithic (Mithic 2.0) is an isomorphic, capability-based sandboxed **JavaScript** process runtime that runs identically in the browser and on native Node platforms. It provides a POSIX-style shell that itself runs as a regular sandboxed process, a capability-gated virtual filesystem (VFS) and network layer, pluggable isolation backends (iframe, Web Worker, QuickJS-WASM, isolated-vm), and a microkernel that brokers syscalls, IPC pipes, process lifecycle, and a sanitized Remote-DOM host for GUI processes.
+Mithic is an isomorphic, capability-based sandboxed **JavaScript** process runtime that runs identically in the browser and on native Node platforms. It provides a POSIX-style shell that itself runs as a regular sandboxed process, a capability-gated virtual filesystem (VFS) and network layer, pluggable isolation backends (iframe, Web Worker, QuickJS-WASM, isolated-vm), and a microkernel that brokers syscalls, IPC pipes, process lifecycle, and a sanitized Remote-DOM host for GUI processes.
 
 npm scope is `@mithic/*`; core library packages are at version `2.0.0` (`@mithic/worker` is `0.1.0`).
 
-> v2 is **JS-first**. The earlier WASM/WASI-Preview-2 implementation is paused — its packages (`wasip2`, `process`, `wasm-transpile`, and the WASM variants of `shell`/`coreutils`/`commands`) live on the `wasm` branch and `origin/main`, not here. Do not reference them as if present on `v2`.
+> Mithic v2 is **JS-first**. The earlier WASM/WASI-Preview-2 implementation is paused — its packages (`wasip2`, `process`, `wasm-transpile`, and the WASM variants of `shell`/`coreutils`/`commands`) live on the `wasm` branch, not here. Do not reference them as if present on `v2`.
 >
 > ("Isola" was an internal codename for an earlier iteration and must not appear as the product name — the product is Mithic.)
 

@@ -55,7 +55,14 @@ test('QuickJSRuntime rejects a URL entry with a clear error (no module loader)',
 
 test('memory limit aborts an over-allocating process', async () => {
   const rt = await QuickJSRuntime.create();
-  const code = 'const a=[]; while(true){ a.push(new Array(100000).fill(0)); }';
+  // Allocate in chunks that each dwarf the 16 MB cap so the loop OOMs on its FIRST
+  // iteration. Small chunks (e.g. Array(100000)) instead creep toward the ceiling,
+  // forcing QuickJS to run a full mark-sweep GC on every push that nears the limit
+  // (the arrays are retained, so nothing is reclaimed) — near-O(n²) thrashing that
+  // takes ~4.5s in isolation and times out under parallel-suite load. A single
+  // over-cap chunk aborts in tens of ms with the same exit-137 outcome. Keep the
+  // chunk large.
+  const code = 'const a=[]; while(true){ a.push(new Array(4000000).fill(0)); }';
   const h = await rt.spawn(code, {
     init: { type: 'init', entry: 'inline', args: ['p'], env: {}, cwd: '/', pid: 1, ppid: 0, capabilities: [], limits: { memoryMb: 16, timeoutMs: 2000 } },
     onSyscall: async () => ({}),
