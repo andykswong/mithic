@@ -1,2 +1,0 @@
-import{m as e,t}from"./harness-D4osTvG0.js";var n=64*1024,r=64*1024*1024,i=async t=>{let i=t.args.slice(1),a=(i.length>0?i.join(` `):`y`)+`
-`,o=new TextEncoder().encode(a),s=Math.max(1,Math.floor(n/o.byteLength)),c=new Uint8Array(s*o.byteLength);for(let e=0;e<s;e++)c.set(o,e*o.byteLength);let l=t.stdout.getWriter(),u=0;try{for(;u<r;){try{await l.write(c)}catch(t){if(e(t))return 0;throw t}u+=c.byteLength}}finally{await l.close().catch(()=>{})}return 0},a=t(i);export{a as default,i as yesCommand};

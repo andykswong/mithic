@@ -1,1 +1,0 @@
-import{c as e,p as t,t as n}from"./harness-D4osTvG0.js";var r=async n=>{t(n.args.slice(1),{boolean:[`L`,`P`]});let r=n.stdout.getWriter();try{return await e(r,n.cwd||`/`),0}finally{await r.close().catch(()=>{})}},i=n(r);export{i as default,r as pwdCommand};
