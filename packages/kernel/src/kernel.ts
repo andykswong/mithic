@@ -394,6 +394,7 @@ export class Kernel {
   #vfs: FileSystemProvider;
   #launcher: GuestLauncher;
   #relayLauncher: RelayLauncher | undefined;
+  readonly #guestImports: Record<string, string>;
   #cwds = new Map<number, string>();
   #onLimitUnenforceable: (pid: number, limit: 'memoryMb' | 'cpuMs', backend: string) => void;
   /** K1: per-process limits, consulted by the dispatcher for networkDisabled/maxChildren. */
@@ -481,6 +482,7 @@ export class Kernel {
     });
     this.#launcher = options.launcher ?? new DefaultGuestLauncher();
     this.#relayLauncher = options.relayLauncher;
+    this.#guestImports = options.guestImports ?? {};
     // C3: the fd-wiring strategy mints child pipes via the IPC broker and checks
     // `open` actions against the parent's fs capability before opening the VFS.
     this.#fdWiring = new FdWiring(this.ipc, this.capabilities, this.#vfs);
@@ -824,6 +826,7 @@ export class Kernel {
       // K2: only pass preopenFds when there are extra fds beyond the default 0/1/2,
       // so the positional fallback path is unaffected for the common case.
       preopenFds: preopenFds.length > 3 ? preopenFds : undefined,
+      guestImports: this.#guestImports,
       display: init.display,
     });
 
@@ -1656,6 +1659,7 @@ export class DefaultGuestLauncher implements GuestLauncher {
         init: ctx.init,
         transfer: [ctx.control, ...ctx.stdio],
         preopenFds: ctx.preopenFds,
+        guestImports: ctx.guestImports,
         display: ctx.display,
       });
     }
