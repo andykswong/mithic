@@ -128,14 +128,24 @@ export class Interpreter {
     });
   }
 
+  /**
+   * Whether a parsed program reads input at all. awk reads its input stream only
+   * when the program has at least one main (pattern-action) rule OR an END block;
+   * a BEGIN-only program reads nothing — it does not even open file operands. The
+   * command entry uses this to avoid slurping (and blocking on) stdin/files that
+   * would never be consumed.
+   */
+  static programNeedsInput(program: Program): boolean {
+    return program.rules.some((r) => r.pattern.type !== 'begin');
+  }
+
   /** Run the whole program over the given inputs; return the process exit code. */
   run(inputs: InputSource[]): number {
     try {
       this.runBegins();
       // If the program has only BEGIN rules and no main/END rules, awk does not
       // read input at all.
-      const needsInput = this.program.rules.some((r) => r.pattern.type !== 'begin');
-      if (needsInput) this.runMain(inputs);
+      if (Interpreter.programNeedsInput(this.program)) this.runMain(inputs);
       this.runEnds();
     } catch (sig) {
       if (sig instanceof ExitSignal) {

@@ -1,6 +1,7 @@
 import { expect, test, describe } from 'vitest';
 import { awkCommand } from './awk.ts';
 import { makeIO } from './_test-io.ts';
+import type { TestHarness } from './_test-io.ts';
 
 describe('awk command — CLI wiring', () => {
   test('program over stdin: print a field', async () => {
@@ -171,5 +172,71 @@ describe('awk command — CLI wiring', () => {
     const h = makeIO({ args: ['awk', '{ printf "%-5s|%3d\\n", $1, $2 }'], stdinText: 'hi 7\n' });
     expect(await awkCommand(h.io)).toBe(0);
     expect(h.out()).toBe('hi   |  7\n');
+  });
+});
+
+describe('awk command — input gating (gawk parity: BEGIN-only reads nothing)', () => {
+  // A stdin that never closes: if awk reads it, readAllText hangs forever. Wrap
+  // the run in a timeout race so a regressed (input-reading) BEGIN-only program
+  // FAILS FAST instead of hanging the suite.
+  function makeIOWithOpenStdin(args: string[]): TestHarness {
+    const h = makeIO({ args });
+    const openStdin = new ReadableStream<Uint8Array>({ start() { /* never enqueues, never closes */ } });
+    return { ...h, io: { ...h.io, stdin: openStdin } };
+  }
+
+  function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+    return Promise.race([
+      p,
+      new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms)),
+    ]);
+  }
+
+  test('BEGIN-only completes promptly even with an unclosed stdin', async () => {
+    const h = makeIOWithOpenStdin(['awk', 'BEGIN{ print 1 }']);
+    const code = await withTimeout(awkCommand(h.io), 2000);
+    expect(code).toBe(0);
+    expect(h.out()).toBe('1\n');
+  });
+
+  test('BEGIN-only does not open (nor error on) file operands', async () => {
+    // gawk: `awk 'BEGIN{print "hi"}' somefile` never touches somefile.
+    const h = makeIO({ args: ['awk', 'BEGIN{ print "hi" }', '/nonexistent/file123'] });
+    expect(await awkCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('hi\n');
+    expect(h.err()).toBe('');
+  });
+
+  test('BEGIN + main rule reads stdin', async () => {
+    const h = makeIO({ args: ['awk', 'BEGIN{ print "b" } { print "line:"$0 }'], stdinText: 'x\ny\n' });
+    expect(await awkCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('b\nline:x\nline:y\n');
+  });
+
+  test('main-only reads stdin', async () => {
+    const h = makeIO({ args: ['awk', '{ print NR": "$0 }'], stdinText: 'a\nb\n' });
+    expect(await awkCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('1: a\n2: b\n');
+  });
+
+  test('BEGIN + END reads stdin so END sees NR', async () => {
+    const h = makeIO({ args: ['awk', 'BEGIN{ print "start" } END{ print "count="NR }'], stdinText: 'a\nb\nc\n' });
+    expect(await awkCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('start\ncount=3\n');
+  });
+
+  test('END-only reads stdin (END alone still consumes input)', async () => {
+    const h = makeIO({ args: ['awk', 'END{ print NR }'], stdinText: 'a\nb\n' });
+    expect(await awkCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('2\n');
+  });
+
+  test('BEGIN-only can still read files via getline < file', async () => {
+    const h = makeIO({
+      args: ['awk', 'BEGIN{ while ((getline line < "/f.txt") > 0) print "got " line }'],
+      files: { '/f.txt': 'x\ny\n' },
+    });
+    expect(await awkCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('got x\ngot y\n');
   });
 });

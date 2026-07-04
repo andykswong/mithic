@@ -170,19 +170,24 @@ const awkCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     }
 
     // Read all input sources up front (the interpreter is synchronous). With no
-    // file operands (or a `-`), read stdin once.
+    // file operands (or a `-`), read stdin once. But a program with only BEGIN
+    // rule(s) reads NOTHING — gawk does not read stdin nor open file operands —
+    // so gate every input read on whether the parsed program needs input; else a
+    // BEGIN-only program would block forever on an unclosed fd 0.
     const inputs: InputSource[] = [];
     const fileArgs = cli.files;
-    if (fileArgs.length === 0) {
-      inputs.push({ name: '', text: await readAllText(io.stdin) });
-    } else {
-      for (const f of fileArgs) {
-        if (f === '-') { inputs.push({ name: '', text: await readAllText(io.stdin) }); continue; }
-        try { inputs.push({ name: f, text: await readFileText(io, f) }); }
-        catch {
-          await writeLine(err, `${name}: can't open file ${f}`);
-          // POSIX awk: a missing file is a fatal-ish error; continue but mark.
-          inputs.push({ name: f, text: '' });
+    if (Interpreter.programNeedsInput(program)) {
+      if (fileArgs.length === 0) {
+        inputs.push({ name: '', text: await readAllText(io.stdin) });
+      } else {
+        for (const f of fileArgs) {
+          if (f === '-') { inputs.push({ name: '', text: await readAllText(io.stdin) }); continue; }
+          try { inputs.push({ name: f, text: await readFileText(io, f) }); }
+          catch {
+            await writeLine(err, `${name}: can't open file ${f}`);
+            // POSIX awk: a missing file is a fatal-ish error; continue but mark.
+            inputs.push({ name: f, text: '' });
+          }
         }
       }
     }
