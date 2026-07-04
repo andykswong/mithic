@@ -28,6 +28,15 @@ export interface SpawnOptions {
    * transfer list with non-transferable nulls.
    */
   preopenFds?: number[];
+  /**
+   * OF1/G2 (spec §4.2/§6): curated dependency SOURCE TEXTS handed to the sandbox at spawn.
+   * Map of specifier → self-contained ESM module source (named exports). The in-sandbox
+   * bootstrap mints a blob: module per entry (same-origin to the sandbox) and exposes them
+   * on `boot.imports` as `specifier → blob URL`. Host-controlled — a guest cannot add entries;
+   * an un-allowlisted name is simply absent (fail-loud). Empty/omitted for a zero-dep guest.
+   * Opaque to the runtime (it never parses these) — provenance is a build-time concern.
+   */
+  guestImports?: Record<string, string>;
   display?: {
     mode: 'hidden' | 'inline' | 'window' | 'fullscreen';
     width?: number;

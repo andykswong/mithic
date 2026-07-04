@@ -89,6 +89,15 @@ export interface KernelOptions {
    */
   resolveCommand?: (name: string, cwd: string, env: Record<string, string>) => string | URL | undefined;
   /**
+   * OF1/G2 (spec §6): host-curated dependency SOURCE TEXTS for browser guests. Map of
+   * specifier → self-contained ESM module source (named exports; produced at build time —
+   * see the Lab's bundleGuestEsm). The kernel threads this into the boot message so the
+   * sandbox bootstrap mints blob: modules and builds `boot.imports`. Host owns the namespace
+   * (mirrors `resolveCommand`); a guest cannot add entries. Unset = no curated deps ({}); a
+   * zero-dep guest still runs. Node's in-process launcher materializes these as file:// URLs.
+   */
+  guestImports?: Record<string, string>;
+  /**
    * HTTP client backing the capability-gated `net/fetch` syscall. The kernel
    * checks the calling process's `net` capability for the request ORIGIN before
    * the client is ever invoked, so a guest can never reach an origin it lacks
@@ -324,6 +333,8 @@ export interface LaunchContext {
    * Supplied when the process has preopen fds beyond stdin/stdout/stderr.
    */
   preopenFds?: number[];
+  /** OF1/G2: curated dep source texts, forwarded to `runtime.spawn` / the in-process launcher. */
+  guestImports?: Record<string, string>;
   /** GUI display placement forwarded to the runtime's `spawn` (see {@link DisplayOptions}). */
   display?: DisplayOptions;
 }
