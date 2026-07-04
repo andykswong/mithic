@@ -1,0 +1,1 @@
+var e={png:`image/png`,jpg:`image/jpeg`,jpeg:`image/jpeg`,webp:`image/webp`};function t(t){let n=t.lastIndexOf(`.`);if(n!==-1)return e[t.slice(n+1).toLowerCase()]}function n(e,t){let n=new Uint8Array(e.byteLength);return n.set(e),t===void 0?new Blob([n]):new Blob([n],{type:t})}export{n as bytesToBlob,t as mimeForPath};

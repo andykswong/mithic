@@ -3,183 +3,130 @@
 <a href="https://www.npmjs.com/package/@mithic/io"><img src="https://img.shields.io/npm/v/@mithic/io?style=flat-square&amp;logo=npm" alt="npm"></a>
 <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-red.svg?style=flat-square" alt="license: MIT"></a></p>
 <blockquote>
-<p>I/O layer for mithic — virtual filesystem, network providers, and sync-bridge</p>
+<p>I/O engine for Mithic — virtual filesystem router, providers, and network abstractions</p>
 </blockquote>
 <h2 id="overview" class="tsd-anchor-link">Overview<a href="#overview" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
-<p><code>@mithic/io</code> is the foundational I/O layer for the mithic runtime. It provides:</p>
+<p><code>@mithic/io</code> is the foundational I/O layer for the Mithic runtime. It provides:</p>
 <ul>
-<li><strong>Virtual File System (VFS)</strong> — A mount-based router with pluggable providers (memory, OPFS, Node.js native fs, synthetic devices)</li>
-<li><strong>Network Providers</strong> — Virtual HTTP client/server and TCP/UDP socket interfaces</li>
-<li><strong>Sync Bridge</strong> — <code>SharedArrayBuffer</code> + <code>Atomics</code> bridge enabling synchronous calls from WASM workers, with a unified call handler and pre-built sync-bridge providers</li>
-<li><strong>Stream Handlers</strong> — <code>InputStreamHandler</code> / <code>OutputStreamHandler</code> interfaces for composable I/O</li>
+<li><strong>Virtual File System (VFS)</strong> — A mount-based router with pluggable providers (memory, OPFS, Node.js native fs, synthetic devices, network devices, caching)</li>
+<li><strong>Network Providers</strong> — Virtual HTTP client/server and TCP/UDP socket interfaces with pluggable implementations</li>
 </ul>
+<p>The VFS is what the Mithic kernel mounts and exposes to sandboxed processes; the Mithic Vitest suite exercises it directly. All interfaces are <strong>async</strong> — methods return <code>T | Promise&lt;T&gt;</code> and consumers <code>await</code> them.</p>
 <h2 id="install" class="tsd-anchor-link">Install<a href="#install" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
-<pre><code class="shell"><span class="hl-2">npm</span><span class="hl-0"> </span><span class="hl-6">install</span><span class="hl-0"> </span><span class="hl-6">@mithic/io</span>
+<pre><code class="shell"><span class="hl-3">npm</span><span class="hl-0"> </span><span class="hl-6">install</span><span class="hl-0"> </span><span class="hl-6">@mithic/io</span>
 </code><button type="button">Copy</button></pre>
 
 <h2 id="key-concepts" class="tsd-anchor-link">Key Concepts<a href="#key-concepts" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
-<h3 id="maybeasync-sync-interface-pattern" class="tsd-anchor-link">MaybeAsync / Sync Interface Pattern<a href="#maybeasync-sync-interface-pattern" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<p>All provider interfaces use <code>MaybePromise&lt;T&gt;</code> (= <code>T | Promise&lt;T&gt;</code>) as return types. Sync variants narrow returns to <code>T</code> only:</p>
-<pre><code class="typescript"><span class="hl-5">interface</span><span class="hl-0"> </span><span class="hl-8">FileSystemProvider</span><span class="hl-0"> {</span><br/><span class="hl-0">  </span><span class="hl-2">read</span><span class="hl-0">(</span><span class="hl-1">handle</span><span class="hl-0">, </span><span class="hl-1">offset</span><span class="hl-0">, </span><span class="hl-1">len</span><span class="hl-0">): </span><span class="hl-8">MaybePromise</span><span class="hl-0">&lt;</span><span class="hl-8">Uint8Array</span><span class="hl-0">&gt;;  </span><span class="hl-7">// base</span><br/><span class="hl-0">}</span><br/><span class="hl-5">interface</span><span class="hl-0"> </span><span class="hl-8">SyncFileSystemProvider</span><span class="hl-0"> </span><span class="hl-5">extends</span><span class="hl-0"> </span><span class="hl-8">FileSystemProvider</span><span class="hl-0"> {</span><br/><span class="hl-0">  </span><span class="hl-2">read</span><span class="hl-0">(</span><span class="hl-1">handle</span><span class="hl-0">, </span><span class="hl-1">offset</span><span class="hl-0">, </span><span class="hl-1">len</span><span class="hl-0">): </span><span class="hl-8">Uint8Array</span><span class="hl-0">;                 </span><span class="hl-7">// sync narrowing</span><br/><span class="hl-0">}</span>
-</code><button type="button">Copy</button></pre>
-
-<p>This enables:</p>
-<ul>
-<li><strong>Async consumers</strong> (call handler, router) use <code>await</code> on any provider — works for both sync and async</li>
-<li><strong>Sync consumers</strong> (WASI code) accept only <code>Sync*</code> variants — guaranteed no-Promise returns</li>
-</ul>
-<h3 id="file-system-providers" class="tsd-anchor-link">File System Providers<a href="#file-system-providers" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<h3 id="async-provider-interfaces" class="tsd-anchor-link">Async provider interfaces<a href="#async-provider-interfaces" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p>All provider interfaces are async: filesystem and network methods return <code>T | Promise&lt;T&gt;</code>, so a single async consumer (the router, the kernel) works against both in-memory and I/O-bound backends. The <code>MaybePromise&lt;T&gt;</code> helper type (<code>= T | Promise&lt;T&gt;</code>) and the <code>chainMaybePromise</code> / <code>mapMaybePromise</code> / <code>isThenable</code> utilities make it cheap to thread a value through whether or not it is wrapped in a <code>Promise</code>.</p>
+<h3 id="virtual-file-system" class="tsd-anchor-link">Virtual File System<a href="#virtual-file-system" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p><code>FileSystemProvider</code> is the core interface. It exposes POSIX-style operations — <code>open</code>, <code>read</code>, <code>write</code>, <code>truncate</code>, <code>close</code>, <code>stat</code>, <code>readdir</code>, <code>mkdir</code>, <code>unlink</code>, <code>rmdir</code>, <code>rename</code>, <code>symlink</code>, <code>readlink</code>, <code>link</code>, <code>chmod</code>, <code>utimes</code>, the extended-attribute ops <code>getxattr</code> / <code>setxattr</code> / <code>listxattr</code> / <code>removexattr</code>, <code>mkfifo</code>, optional <code>realpath</code> / <code>watch</code> / <code>sync</code>, and optional <code>init</code> / <code>dispose</code> lifecycle hooks. Errors are thrown as <code>FileSystemError</code> carrying a <code>FileSystemErrorCode</code> (<code>'no-entry'</code>, <code>'access'</code>, <code>'exist'</code>, <code>'not-directory'</code>, <code>'is-directory'</code>, <code>'cross-device'</code>, …) aligned with the WASI <code>wasi:filesystem</code> error-code names.</p>
+<p>Providers whose backing store cannot carry extended attributes natively — <code>OPFSProvider</code> (which also loses <code>mode</code>/<code>mtime</code>) and <code>NodeFsProvider</code> — persist xattrs plus <code>mode</code>/<code>mtime</code> in a per-mount sidecar <code>MetadataStore</code>, a single reserved <code>.mithic-meta.json</code> blob at the mount root keyed by canonical path. That sidecar is hidden from <code>readdir</code> and guarded from direct VFS access at the root.</p>
+<h4 id="providers" class="tsd-anchor-link">Providers<a href="#providers" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h4>
 <table>
 <thead>
 <tr>
 <th>Provider</th>
-<th>Interface</th>
-<th>Use Case</th>
+<th>Entry point</th>
+<th>Use case</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>MemoryFsProvider</code></td>
-<td><code>SyncFileSystemProvider</code></td>
-<td>Testing, browser default</td>
+<td><code>@mithic/io/vfs</code></td>
+<td>In-memory store — testing, browser default</td>
 </tr>
 <tr>
 <td><code>DeviceFsProvider</code></td>
-<td><code>SyncFileSystemProvider</code></td>
-<td>Synthetic <code>/dev</code> devices (null, zero, stdin, stdout, stderr)</td>
+<td><code>@mithic/io/vfs</code></td>
+<td>Synthetic devices: <code>null</code>, <code>zero</code>, <code>random</code>, <code>urandom</code>, <code>stdin</code>, <code>stdout</code>, <code>stderr</code></td>
+</tr>
+<tr>
+<td><code>NetworkDeviceFsProvider</code></td>
+<td><code>@mithic/io/vfs</code></td>
+<td>Network-backed synthetic devices</td>
+</tr>
+<tr>
+<td><code>CachingProvider</code></td>
+<td><code>@mithic/io/vfs</code> (also <code>@mithic/io/vfs/providers/caching</code>)</td>
+<td>Read-through cache wrapping another provider</td>
 </tr>
 <tr>
 <td><code>OPFSProvider</code></td>
-<td><code>FileSystemProvider</code></td>
-<td>Browser persistent storage</td>
+<td><code>@mithic/io/vfs/providers/opfs</code></td>
+<td>Browser persistent storage (Origin Private File System)</td>
 </tr>
 <tr>
 <td><code>NodeFsProvider</code></td>
-<td><code>FileSystemProvider</code></td>
-<td>Native server/desktop</td>
-</tr>
-<tr>
-<td><code>SyncBridgeFsProvider</code></td>
-<td><code>SyncFileSystemProvider</code></td>
-<td>Cross-thread via WorkerIo</td>
+<td><code>@mithic/io/vfs/providers/node-fs</code></td>
+<td>Native server/desktop, backed by <code>node:fs</code></td>
 </tr>
 </tbody>
 </table>
 <h4 id="file-system-router" class="tsd-anchor-link">File System Router<a href="#file-system-router" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h4>
-<p><code>FileSystemRouter</code> (async) and <code>SyncFileSystemRouter</code> (sync) delegate to mounted providers via longest-prefix path matching:</p>
-<pre><code class="typescript"><span class="hl-9">import</span><span class="hl-0"> { </span><span class="hl-1">SyncFileSystemRouter</span><span class="hl-0">, </span><span class="hl-1">MemoryFsProvider</span><span class="hl-0">, </span><span class="hl-1">DeviceFsProvider</span><span class="hl-0"> } </span><span class="hl-9">from</span><span class="hl-0"> </span><span class="hl-6">&#39;@mithic/io/vfs&#39;</span><span class="hl-0">;</span><br/><br/><span class="hl-5">const</span><span class="hl-0"> </span><span class="hl-4">router</span><span class="hl-0"> = </span><span class="hl-5">new</span><span class="hl-0"> </span><span class="hl-2">SyncFileSystemRouter</span><span class="hl-0">();</span><br/><span class="hl-1">router</span><span class="hl-0">.</span><span class="hl-2">mount</span><span class="hl-0">(</span><span class="hl-6">&#39;/&#39;</span><span class="hl-0">, </span><span class="hl-5">new</span><span class="hl-0"> </span><span class="hl-2">MemoryFsProvider</span><span class="hl-0">());</span><br/><span class="hl-1">router</span><span class="hl-0">.</span><span class="hl-2">mount</span><span class="hl-0">(</span><span class="hl-6">&#39;/dev&#39;</span><span class="hl-0">, </span><span class="hl-5">new</span><span class="hl-0"> </span><span class="hl-2">DeviceFsProvider</span><span class="hl-0">());</span>
+<p><code>FileSystemRouter</code> itself implements <code>FileSystemProvider</code>, so routers compose. It delegates to mounted providers via longest-prefix path matching:</p>
+<pre><code class="typescript"><span class="hl-9">import</span><span class="hl-0"> { </span><span class="hl-1">FileSystemRouter</span><span class="hl-0">, </span><span class="hl-1">MemoryFsProvider</span><span class="hl-0">, </span><span class="hl-1">DeviceFsProvider</span><span class="hl-0"> } </span><span class="hl-9">from</span><span class="hl-0"> </span><span class="hl-6">&#39;@mithic/io/vfs&#39;</span><span class="hl-0">;</span><br/><br/><span class="hl-8">const</span><span class="hl-0"> </span><span class="hl-2">router</span><span class="hl-0"> = </span><span class="hl-8">new</span><span class="hl-0"> </span><span class="hl-3">FileSystemRouter</span><span class="hl-0">();</span><br/><span class="hl-9">await</span><span class="hl-0"> </span><span class="hl-1">router</span><span class="hl-0">.</span><span class="hl-3">mount</span><span class="hl-0">(</span><span class="hl-6">&#39;/&#39;</span><span class="hl-0">, </span><span class="hl-8">new</span><span class="hl-0"> </span><span class="hl-3">MemoryFsProvider</span><span class="hl-0">());</span><br/><span class="hl-9">await</span><span class="hl-0"> </span><span class="hl-1">router</span><span class="hl-0">.</span><span class="hl-3">mount</span><span class="hl-0">(</span><span class="hl-6">&#39;/dev&#39;</span><span class="hl-0">, </span><span class="hl-8">new</span><span class="hl-0"> </span><span class="hl-3">DeviceFsProvider</span><span class="hl-0">());</span><br/><br/><span class="hl-8">const</span><span class="hl-0"> </span><span class="hl-2">fh</span><span class="hl-0"> = </span><span class="hl-9">await</span><span class="hl-0"> </span><span class="hl-1">router</span><span class="hl-0">.</span><span class="hl-3">open</span><span class="hl-0">(</span><span class="hl-6">&#39;/tmp/hello.txt&#39;</span><span class="hl-0">, { </span><span class="hl-1">create:</span><span class="hl-0"> </span><span class="hl-8">true</span><span class="hl-0">, </span><span class="hl-1">write:</span><span class="hl-0"> </span><span class="hl-8">true</span><span class="hl-0"> });</span><br/><span class="hl-9">await</span><span class="hl-0"> </span><span class="hl-1">router</span><span class="hl-0">.</span><span class="hl-3">write</span><span class="hl-0">(</span><span class="hl-1">fh</span><span class="hl-0">, </span><span class="hl-8">new</span><span class="hl-0"> </span><span class="hl-3">TextEncoder</span><span class="hl-0">().</span><span class="hl-3">encode</span><span class="hl-0">(</span><span class="hl-6">&#39;hi&#39;</span><span class="hl-0">), </span><span class="hl-10">0</span><span class="hl-0">);</span><br/><span class="hl-9">await</span><span class="hl-0"> </span><span class="hl-1">router</span><span class="hl-0">.</span><span class="hl-3">close</span><span class="hl-0">(</span><span class="hl-1">fh</span><span class="hl-0">);</span>
 </code><button type="button">Copy</button></pre>
 
+<p>Paths are canonicalized with <code>normalizePath</code>. <code>mount</code> / <code>unmount</code> drive each provider's optional <code>init</code> / <code>dispose</code> hooks, and <code>resolve(path)</code> returns the <code>{ provider, relativePath, mountPoint }</code> (<code>ResolveResult</code>) selected for a path.</p>
 <h3 id="network-providers" class="tsd-anchor-link">Network Providers<a href="#network-providers" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p>The <code>net</code> layer defines the HTTP and socket abstractions plus default implementations:</p>
 <table>
 <thead>
 <tr>
 <th>Interface</th>
-<th>Sync Variant</th>
-<th>SyncBridge impl</th>
+<th>Implementations</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>HttpClient</code></td>
-<td><code>SyncHttpClient</code></td>
-<td><code>SyncBridgeHttpClient</code></td>
+<td><code>FetchHttpClient</code>, <code>MockHttpClient</code>, <code>DisabledHttpClient</code></td>
 </tr>
 <tr>
-<td><code>SocketProvider</code></td>
-<td><code>SyncSocketProvider</code></td>
-<td><code>SyncBridgeSocketProvider</code></td>
+<td><code>HttpServer</code></td>
+<td><code>DisabledHttpServer</code>, Node.js HTTP server (<code>@mithic/io/net/providers/node-http-server</code>)</td>
 </tr>
 <tr>
-<td><code>TcpSocket</code></td>
-<td><code>SyncTcpSocket</code></td>
-<td><code>SyncBridgeTcpSocket</code></td>
+<td><code>SocketProvider</code> / <code>TcpSocket</code> / <code>UdpSocket</code></td>
+<td><code>DisabledSocketProvider</code>, Node.js sockets (<code>@mithic/io/net/providers/node-socket-provider</code>)</td>
 </tr>
 </tbody>
 </table>
-<h3 id="stream-handlers" class="tsd-anchor-link">Stream Handlers<a href="#stream-handlers" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<table>
-<thead>
-<tr>
-<th>Interface</th>
-<th>Sync Variant</th>
-<th>SyncBridge impl</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>InputStreamHandler</code></td>
-<td><code>SyncInputStreamHandler</code></td>
-<td><code>SyncBridgeInputStreamHandler</code></td>
-</tr>
-<tr>
-<td><code>OutputStreamHandler</code></td>
-<td><code>SyncOutputStreamHandler</code></td>
-<td><code>SyncBridgeOutputStreamHandler</code></td>
-</tr>
-</tbody>
-</table>
-<h3 id="sync-bridge" class="tsd-anchor-link">Sync Bridge<a href="#sync-bridge" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<p>For WASM workers that need synchronous I/O backed by async providers on another thread:</p>
-<pre><code class="typescript"><span class="hl-7">// Main thread: set up I/O loop with call handler</span><br/><span class="hl-9">import</span><span class="hl-0"> { </span><span class="hl-1">IoLoop</span><span class="hl-0">, </span><span class="hl-1">createCallHandler</span><span class="hl-0"> } </span><span class="hl-9">from</span><span class="hl-0"> </span><span class="hl-6">&#39;@mithic/io/io&#39;</span><span class="hl-0">;</span><br/><br/><span class="hl-5">const</span><span class="hl-0"> </span><span class="hl-4">loop</span><span class="hl-0"> = </span><span class="hl-5">new</span><span class="hl-0"> </span><span class="hl-2">IoLoop</span><span class="hl-0">({ </span><span class="hl-1">onCall:</span><span class="hl-0"> </span><span class="hl-2">createCallHandler</span><span class="hl-0">({ </span><span class="hl-1">fs:</span><span class="hl-0"> </span><span class="hl-1">memoryProvider</span><span class="hl-0"> }) });</span><br/><span class="hl-5">const</span><span class="hl-0"> </span><span class="hl-4">workerPort</span><span class="hl-0"> = </span><span class="hl-1">loop</span><span class="hl-0">.</span><span class="hl-2">addWorker</span><span class="hl-0">();</span><br/><br/><span class="hl-7">// Worker thread: use sync-bridge providers</span><br/><span class="hl-9">import</span><span class="hl-0"> { </span><span class="hl-1">WorkerIo</span><span class="hl-0">, </span><span class="hl-1">SyncBridgeFsProvider</span><span class="hl-0">, </span><span class="hl-1">SyncBridgeHttpClient</span><span class="hl-0"> } </span><span class="hl-9">from</span><span class="hl-0"> </span><span class="hl-6">&#39;@mithic/io/io&#39;</span><span class="hl-0">;</span><br/><br/><span class="hl-5">const</span><span class="hl-0"> </span><span class="hl-4">io</span><span class="hl-0"> = </span><span class="hl-5">new</span><span class="hl-0"> </span><span class="hl-2">WorkerIo</span><span class="hl-0">(</span><span class="hl-1">port</span><span class="hl-0">);</span><br/><span class="hl-5">const</span><span class="hl-0"> </span><span class="hl-4">fs</span><span class="hl-0"> = </span><span class="hl-5">new</span><span class="hl-0"> </span><span class="hl-2">SyncBridgeFsProvider</span><span class="hl-0">(</span><span class="hl-1">io</span><span class="hl-0">);       </span><span class="hl-7">// implements SyncFileSystemProvider</span><br/><span class="hl-5">const</span><span class="hl-0"> </span><span class="hl-4">http</span><span class="hl-0"> = </span><span class="hl-5">new</span><span class="hl-0"> </span><span class="hl-2">SyncBridgeHttpClient</span><span class="hl-0">(</span><span class="hl-1">io</span><span class="hl-0">);     </span><span class="hl-7">// implements SyncHttpClient</span>
-</code><button type="button">Copy</button></pre>
-
-<h2 id="cross-platform-requirements" class="tsd-anchor-link">Cross-Platform Requirements<a href="#cross-platform-requirements" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
-<h3 id="browser-sharedarraybuffer-and-cross-origin-isolation" class="tsd-anchor-link">Browser: SharedArrayBuffer and Cross-Origin Isolation<a href="#browser-sharedarraybuffer-and-cross-origin-isolation" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<p>The sync-bridge relies on <code>SharedArrayBuffer</code> and <code>Atomics</code> for synchronous cross-thread communication. Browsers require <strong>Cross-Origin Isolation</strong> headers for <code>SharedArrayBuffer</code> to be available:</p>
-<pre><code><span class="hl-1">Cross</span><span class="hl-0">-</span><span class="hl-1">Origin</span><span class="hl-0">-</span><span class="hl-1">Opener</span><span class="hl-0">-</span><span class="hl-10">Policy</span><span class="hl-0">: </span><span class="hl-1">same</span><span class="hl-0">-</span><span class="hl-1">origin</span><br/><span class="hl-1">Cross</span><span class="hl-0">-</span><span class="hl-1">Origin</span><span class="hl-0">-</span><span class="hl-1">Embedder</span><span class="hl-0">-</span><span class="hl-10">Policy</span><span class="hl-0">: </span><span class="hl-1">require</span><span class="hl-0">-</span><span class="hl-1">corp</span>
-</code><button>Copy</button></pre>
-
-<p>Without these headers, <code>SharedArrayBuffer</code> is undefined and the sync-bridge will not function.</p>
-<h3 id="browser-atomicswait-and-the-main-thread" class="tsd-anchor-link">Browser: Atomics.wait() and the Main Thread<a href="#browser-atomicswait-and-the-main-thread" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<p><code>Atomics.wait()</code> <strong>cannot be called on the browser main thread</strong> — it throws a <code>TypeError</code>. All synchronous blocking I/O (which uses <code>Atomics.wait()</code> internally) must run inside a <strong>Web Worker</strong>. The typical architecture is:</p>
-<ul>
-<li><strong>Main thread</strong>: Runs the <code>IoLoop</code> with async providers (e.g., OPFS, fetch-based HTTP)</li>
-<li><strong>Worker thread</strong>: Runs WASM code with <code>SyncBridge*</code> providers that block via <code>Atomics.wait()</code></li>
-</ul>
-<h3 id="nodejs-worker-threads-for-sync-bridge" class="tsd-anchor-link">Node.js: Worker Threads for Sync Bridge<a href="#nodejs-worker-threads-for-sync-bridge" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<p>On Node.js, the sync-bridge requires <code>worker_threads</code> for blocking I/O. The worker uses <code>Atomics.wait()</code> to block until the main thread (or another worker running the <code>IoLoop</code>) services the request and signals completion via <code>Atomics.notify()</code>.</p>
-<p>Node.js does allow <code>Atomics.wait()</code> on the main thread, but using it there would block the event loop and prevent the <code>IoLoop</code> from servicing requests — so a dedicated worker thread is still required for WASM workloads that use synchronous I/O.</p>
+<p><code>HttpClient.send</code> mirrors the Fetch API and supports <code>redirect: 'manual'</code>, which the kernel uses to capability-check redirect targets before following them (SSRF guard).</p>
 <h2 id="exports" class="tsd-anchor-link">Exports<a href="#exports" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
 <table>
 <thead>
 <tr>
-<th>Entry Point</th>
+<th>Entry point</th>
 <th>Contents</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>@mithic/io</code></td>
-<td>Main index (all types and providers)</td>
-</tr>
-<tr>
-<td><code>@mithic/io/io</code></td>
-<td>Sync-bridge, call handler, stream handlers, WorkerIo, IoLoop</td>
-</tr>
-<tr>
-<td><code>@mithic/io/io/providers/node-stdio</code></td>
-<td>Node.js stdio stream handlers (NodeAsyncStdinHandler, NodeStdoutHandler, NodeStderrHandler)</td>
-</tr>
-<tr>
-<td><code>@mithic/io/io/providers/sync-bridge</code></td>
-<td>SyncBridge providers (SyncBridgeFsProvider, createStdinHandler, etc.)</td>
+<td>Main index — re-exports <code>vfs</code>, <code>net</code>, and shared utils/types</td>
 </tr>
 <tr>
 <td><code>@mithic/io/vfs</code></td>
-<td>VFS router, provider interface, MemoryFsProvider</td>
-</tr>
-<tr>
-<td><code>@mithic/io/vfs/providers/opfs</code></td>
-<td>OPFS provider (browser)</td>
+<td><code>FileSystemProvider</code>, <code>FileSystemRouter</code>, <code>FileSystemError</code>, <code>FileStat</code>, <code>DirEntry</code>, <code>FileHandle</code>, <code>OpenFlags</code>, <code>DescriptorType</code>, <code>WatchEvent</code>, <code>ResolveResult</code>, <code>normalizePath</code>, <code>VFSDirectoryHandle</code>, <code>VFSFileHandle</code>, and the <code>MemoryFsProvider</code> / <code>DeviceFsProvider</code> / <code>NetworkDeviceFsProvider</code> / <code>CachingProvider</code> providers</td>
 </tr>
 <tr>
 <td><code>@mithic/io/vfs/providers/node-fs</code></td>
-<td>Node.js native fs provider</td>
+<td><code>NodeFsProvider</code> (Node.js native fs)</td>
+</tr>
+<tr>
+<td><code>@mithic/io/vfs/providers/opfs</code></td>
+<td><code>OPFSProvider</code> (browser)</td>
+</tr>
+<tr>
+<td><code>@mithic/io/vfs/providers/caching</code></td>
+<td><code>CachingProvider</code></td>
 </tr>
 <tr>
 <td><code>@mithic/io/net</code></td>
-<td>HTTP and socket interfaces + providers</td>
+<td><code>HttpClient</code>, <code>HttpServer</code>, <code>HttpRequest</code>/<code>HttpResponse</code>, <code>TcpSocket</code>/<code>UdpSocket</code>/<code>SocketProvider</code>, <code>DisabledSocketProvider</code>, and the <code>FetchHttpClient</code> / <code>MockHttpClient</code> / <code>DisabledHttpClient</code> / <code>DisabledHttpServer</code> providers</td>
 </tr>
 <tr>
 <td><code>@mithic/io/net/providers/node-http-server</code></td>
@@ -191,4 +138,6 @@
 </tr>
 </tbody>
 </table>
-</section><details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Modules"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg><h2>Modules</h2></summary><dl class="tsd-member-summaries"><dt class="tsd-member-summary" id="_"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><a href="_mithic_io..html"></a><a href="#_" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd><dt class="tsd-member-summary" id="io"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><a href="_mithic_io.io.html">io</a><a href="#io" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd><dt class="tsd-member-summary" id="ioprovidersnode-stdio"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><a href="_mithic_io.io_providers_node-stdio.html">io/providers/node-stdio</a><a href="#ioprovidersnode-stdio" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd><dt class="tsd-member-summary" id="ioproviderssync-bridge"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><a href="_mithic_io.io_providers_sync-bridge.html">io/providers/sync-bridge</a><a href="#ioproviderssync-bridge" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd><dt class="tsd-member-summary" id="net"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><a href="_mithic_io.net.html">net</a><a href="#net" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd><dt class="tsd-member-summary" id="netprovidersnode-http-server"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><a href="_mithic_io.net_providers_node-http-server.html">net/providers/node-http-server</a><a href="#netprovidersnode-http-server" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd><dt class="tsd-member-summary" id="netprovidersnode-socket-provider"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><a href="_mithic_io.net_providers_node-socket-provider.html">net/providers/node-socket-provider</a><a href="#netprovidersnode-socket-provider" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd><dt class="tsd-member-summary" id="vfs"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><a href="_mithic_io.vfs.html">vfs</a><a href="#vfs" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd><dt class="tsd-member-summary" id="vfsprovidersnode-fs"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><a href="_mithic_io.vfs_providers_node-fs.html">vfs/providers/node-fs</a><a href="#vfsprovidersnode-fs" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd><dt class="tsd-member-summary" id="vfsprovidersopfs"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><a href="_mithic_io.vfs_providers_opfs.html">vfs/providers/opfs</a><a href="#vfsprovidersopfs" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd></dl></details></div><div class="col-sidebar"><div class="page-menu"><div class="tsd-navigation settings"><details class="tsd-accordion"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg><h3>Settings</h3></summary><div class="tsd-accordion-details"><div class="tsd-filter-visibility"><span class="settings-label">Member Visibility</span><ul id="tsd-filter-options"><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-protected" name="protected"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Protected</span></label></li><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-inherited" name="inherited" checked/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Inherited</span></label></li><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-external" name="external"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>External</span></label></li></ul></div><div class="tsd-theme-toggle"><label class="settings-label" for="tsd-theme">Theme</label><select id="tsd-theme"><option value="os">OS</option><option value="light">Light</option><option value="dark">Dark</option></select></div></div></details></div><details open class="tsd-accordion tsd-page-navigation"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg><h3>On This Page</h3></summary><div class="tsd-accordion-details"><a href="#mithicio"><span>@mithic/io</span></a><ul><li><a href="#overview"><span>Overview</span></a></li><li><a href="#install"><span>Install</span></a></li><li><a href="#key-concepts"><span>Key <wbr/>Concepts</span></a></li><li><ul><li><a href="#maybeasync-sync-interface-pattern"><span>Maybe<wbr/>Async / <wbr/>Sync <wbr/>Interface <wbr/>Pattern</span></a></li><li><a href="#file-system-providers"><span>File <wbr/>System <wbr/>Providers</span></a></li><li><ul><li><a href="#file-system-router"><span>File <wbr/>System <wbr/>Router</span></a></li></ul></li><li><a href="#network-providers"><span>Network <wbr/>Providers</span></a></li><li><a href="#stream-handlers"><span>Stream <wbr/>Handlers</span></a></li><li><a href="#sync-bridge"><span>Sync <wbr/>Bridge</span></a></li></ul></li><li><a href="#cross-platform-requirements"><span>Cross-<wbr/>Platform <wbr/>Requirements</span></a></li><li><ul><li><a href="#browser-sharedarraybuffer-and-cross-origin-isolation"><span>Browser: <wbr/>Shared<wbr/>Array<wbr/>Buffer and <wbr/>Cross-<wbr/>Origin <wbr/>Isolation</span></a></li><li><a href="#browser-atomicswait-and-the-main-thread"><span>Browser: <wbr/>Atomics.wait() and the <wbr/>Main <wbr/>Thread</span></a></li><li><a href="#nodejs-worker-threads-for-sync-bridge"><span>Node.js: <wbr/>Worker <wbr/>Threads for <wbr/>Sync <wbr/>Bridge</span></a></li></ul></li><li><a href="#exports"><span>Exports</span></a></li></ul><details open class="tsd-accordion tsd-page-navigation-section"><summary class="tsd-accordion-summary" data-key="section-Modules"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>Modules</summary><div><a href="#_"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><span></span></a><a href="#io"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><span>io</span></a><a href="#ioprovidersnode-stdio"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><span>io/providers/node-<wbr/>stdio</span></a><a href="#ioproviderssync-bridge"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><span>io/providers/sync-<wbr/>bridge</span></a><a href="#net"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><span>net</span></a><a href="#netprovidersnode-http-server"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><span>net/providers/node-<wbr/>http-<wbr/>server</span></a><a href="#netprovidersnode-socket-provider"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><span>net/providers/node-<wbr/>socket-<wbr/>provider</span></a><a href="#vfs"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><span>vfs</span></a><a href="#vfsprovidersnode-fs"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><span>vfs/providers/node-<wbr/>fs</span></a><a href="#vfsprovidersopfs"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><span>vfs/providers/opfs</span></a></div></details></div></details></div><div class="site-menu"><nav class="tsd-navigation"><a href="../modules.html">mithic - v0.3.0</a><ul class="tsd-small-nested-navigation" id="tsd-nav-container"><li>Loading...</li></ul></nav></div></div></div><footer><p class="tsd-generator">Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p></footer><div class="overlay"></div></body></html>
+<h2 id="license" class="tsd-anchor-link">License<a href="#license" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>MIT</p>
+</section><details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Modules"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg><h2>Modules</h2></summary><dl class="tsd-member-summaries"><dt class="tsd-member-summary" id="_"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><a href="_mithic_io..html"></a><a href="#_" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd><dt class="tsd-member-summary" id="net"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><a href="_mithic_io.net.html">net</a><a href="#net" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd><dt class="tsd-member-summary" id="netprovidersnode-http-server"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><a href="_mithic_io.net_providers_node-http-server.html">net/providers/node-http-server</a><a href="#netprovidersnode-http-server" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd><dt class="tsd-member-summary" id="netprovidersnode-socket-provider"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><a href="_mithic_io.net_providers_node-socket-provider.html">net/providers/node-socket-provider</a><a href="#netprovidersnode-socket-provider" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd><dt class="tsd-member-summary" id="vfs"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><a href="_mithic_io.vfs.html">vfs</a><a href="#vfs" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd><dt class="tsd-member-summary" id="vfsproviderscaching"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><a href="_mithic_io.vfs_providers_caching.html">vfs/providers/caching</a><a href="#vfsproviderscaching" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd><dt class="tsd-member-summary" id="vfsprovidersnode-fs"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><a href="_mithic_io.vfs_providers_node-fs.html">vfs/providers/node-fs</a><a href="#vfsprovidersnode-fs" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd><dt class="tsd-member-summary" id="vfsprovidersopfs"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><a href="_mithic_io.vfs_providers_opfs.html">vfs/providers/opfs</a><a href="#vfsprovidersopfs" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd></dl></details></div><div class="col-sidebar"><div class="page-menu"><div class="tsd-navigation settings"><details class="tsd-accordion"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg><h3>Settings</h3></summary><div class="tsd-accordion-details"><div class="tsd-filter-visibility"><span class="settings-label">Member Visibility</span><ul id="tsd-filter-options"><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-protected" name="protected"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Protected</span></label></li><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-inherited" name="inherited" checked/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Inherited</span></label></li><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-external" name="external"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>External</span></label></li></ul></div><div class="tsd-theme-toggle"><label class="settings-label" for="tsd-theme">Theme</label><select id="tsd-theme"><option value="os">OS</option><option value="light">Light</option><option value="dark">Dark</option></select></div></div></details></div><details open class="tsd-accordion tsd-page-navigation"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg><h3>On This Page</h3></summary><div class="tsd-accordion-details"><a href="#mithicio"><span>@mithic/io</span></a><ul><li><a href="#overview"><span>Overview</span></a></li><li><a href="#install"><span>Install</span></a></li><li><a href="#key-concepts"><span>Key <wbr/>Concepts</span></a></li><li><ul><li><a href="#async-provider-interfaces"><span>Async provider interfaces</span></a></li><li><a href="#virtual-file-system"><span>Virtual <wbr/>File <wbr/>System</span></a></li><li><ul><li><a href="#providers"><span>Providers</span></a></li><li><a href="#file-system-router"><span>File <wbr/>System <wbr/>Router</span></a></li></ul></li><li><a href="#network-providers"><span>Network <wbr/>Providers</span></a></li></ul></li><li><a href="#exports"><span>Exports</span></a></li><li><a href="#license"><span>License</span></a></li></ul><details open class="tsd-accordion tsd-page-navigation-section"><summary class="tsd-accordion-summary" data-key="section-Modules"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>Modules</summary><div><a href="#_"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><span></span></a><a href="#net"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><span>net</span></a><a href="#netprovidersnode-http-server"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><span>net/providers/node-<wbr/>http-<wbr/>server</span></a><a href="#netprovidersnode-socket-provider"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><span>net/providers/node-<wbr/>socket-<wbr/>provider</span></a><a href="#vfs"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><span>vfs</span></a><a href="#vfsproviderscaching"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><span>vfs/providers/caching</span></a><a href="#vfsprovidersnode-fs"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><span>vfs/providers/node-<wbr/>fs</span></a><a href="#vfsprovidersopfs"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Module"><use href="../assets/icons.svg#icon-2"></use></svg><span>vfs/providers/opfs</span></a></div></details></div></details></div><div class="site-menu"><nav class="tsd-navigation"><a href="../modules.html">mithic - v0.3.0</a><ul class="tsd-small-nested-navigation" id="tsd-nav-container"><li>Loading...</li></ul></nav></div></div></div><footer><p class="tsd-generator">Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p></footer><div class="overlay"></div></body></html>

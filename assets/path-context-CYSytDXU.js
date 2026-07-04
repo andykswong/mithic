@@ -1,0 +1,1 @@
+import{r as e}from"./guest-BZCBgR1b.js";function t(t){return{cwd:t.cwd,fs:e(t.syscall,t.cwd)}}export{t};

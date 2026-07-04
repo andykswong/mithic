@@ -1,0 +1,181 @@
+<!DOCTYPE html><html class="default" lang="en" data-base="../"><head><meta charset="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>@mithic/server | mithic - v0.3.0</title><meta name="description" content="Documentation for mithic"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/icons.js" id="tsd-icons-script"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script><script async src="../assets/hierarchy.js" id="tsd-hierarchy-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os";document.body.style.display="none";setTimeout(() => window.app?app.showPage():document.body.style.removeProperty("display"),500)</script><header class="tsd-page-toolbar"><div class="tsd-toolbar-contents container"><a href="../index.html" class="title">mithic - v0.3.0</a><div id="tsd-toolbar-links"></div><button id="tsd-search-trigger" class="tsd-widget" aria-label="Search"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-search"></use></svg></button><dialog id="tsd-search" aria-label="Search"><input role="combobox" id="tsd-search-input" aria-controls="tsd-search-results" aria-autocomplete="list" aria-expanded="true" autocapitalize="off" autocomplete="off" placeholder="Search the docs" maxLength="100"/><ul role="listbox" id="tsd-search-results"></ul><div id="tsd-search-status" aria-live="polite" aria-atomic="true"><div>Preparing search index...</div></div></dialog><a href="#" class="tsd-widget menu" id="tsd-toolbar-menu-trigger" data-toggle="menu" aria-label="Menu"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-menu"></use></svg></a></div></header><div class="container container-main"><div class="col-content"><div class="tsd-page-title"><ul class="tsd-breadcrumb" aria-label="Breadcrumb"><li><a href="" aria-current="page">@mithic/server</a></li></ul><h1>Module @mithic/server</h1></div><section class="tsd-panel tsd-typography"><h1 id="mithicserver" class="tsd-anchor-link">@mithic/server<a href="#mithicserver" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h1>
+<p>Host-side HTTP API for Mithic: a <a href="https://hono.dev">Hono</a> app that runs
+sandboxed Mithic processes server-side over a single <code>POST /exec</code> endpoint. Each
+request boots a fresh kernel over a QuickJS isolate, runs the supplied guest code
+under resource limits, captures stdout/stderr, and returns the result as JSON —
+with no shared state between requests.</p>
+<p>Because it builds on Hono, the app runs anywhere Hono runs: Node.js, edge
+runtimes (Cloudflare Workers, Deno, Bun), and any host with a <code>fetch</code>-style
+adapter.</p>
+<h2 id="responsibilities" class="tsd-anchor-link">Responsibilities<a href="#responsibilities" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<ul>
+<li><strong>Sandboxed execution</strong> — spawns guest code through <code>@mithic/kernel</code> on a
+per-request <code>QuickJSRuntime</code>; the kernel remains the trust boundary, so every
+guest syscall is capability-checked in-kernel regardless of backend.</li>
+<li><strong>Resource limits</strong> — forwards <code>ProcessLimits</code> (<code>timeoutMs</code>, <code>cpuMs</code>,
+<code>memoryMb</code>, <code>maxOutputBytes</code>) to the kernel and reports whether a limit was
+hit.</li>
+<li><strong>Request validation</strong> — rejects malformed bodies, empty <code>code</code>, non-string
+<code>stdin</code>, and non-positive limit values with <code>4xx</code> before any process is
+spawned.</li>
+<li><strong>Isolation</strong> — each request gets its own kernel, QuickJS runtime, and an
+in-memory VFS (<code>FileSystemRouter</code> + <code>MemoryFsProvider</code> mounted at <code>/</code>); nothing
+is shared across calls.</li>
+</ul>
+<h2 id="why-quickjs" class="tsd-anchor-link">Why QuickJS<a href="#why-quickjs" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>The server uses the QuickJS backend (<code>@mithic/runtime/backends/quickjs</code>) because:</p>
+<ul>
+<li>It enforces <code>timeoutMs</code> and <code>cpuMs</code> via a WASM interrupt handler — real
+enforcement, not a best-effort race — making timeout behavior deterministic on
+Node.</li>
+<li>It is fully portable: no SharedArrayBuffer and no COOP/COEP headers needed.</li>
+<li>It runs on the same JS thread, so no Worker is required (works in any Node
+process without special flags).</li>
+</ul>
+<p>Guest code therefore uses the QuickJS relay protocol — calling
+<code>__mithic_syscall(...)</code> directly — rather than <code>@mithic/guest-runtime</code>'s
+MessagePort path. A <code>QuickJSRelayLauncher</code> bridges the kernel's <code>RelayContext</code> to
+<code>QuickJSRuntime.spawn()</code>: <code>pipe/write</code> is routed to stdout/stderr capture,
+<code>process/exit</code> closes the pipes and reports the exit code, <code>process/getpid</code>
+returns the assigned pid, and every other syscall is routed back through the
+kernel (<code>ctx.onSyscall</code>) where capability checks run.</p>
+<h2 id="exports" class="tsd-anchor-link">Exports<a href="#exports" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<pre><code class="ts"><span class="hl-9">import</span><span class="hl-0"> { </span><span class="hl-1">createApp</span><span class="hl-0"> } </span><span class="hl-9">from</span><span class="hl-0"> </span><span class="hl-6">&#39;@mithic/server&#39;</span><span class="hl-0">;</span><br/><span class="hl-9">import</span><span class="hl-0"> </span><span class="hl-9">type</span><span class="hl-0"> { </span><span class="hl-1">ExecRequest</span><span class="hl-0">, </span><span class="hl-1">ExecResponse</span><span class="hl-0"> } </span><span class="hl-9">from</span><span class="hl-0"> </span><span class="hl-6">&#39;@mithic/server&#39;</span><span class="hl-0">;</span>
+</code><button type="button">Copy</button></pre>
+
+<ul>
+<li><strong><code>createApp(): Hono</code></strong> — builds and returns the Hono app. Exported separately
+from any server binding so tests can drive it via <code>app.request()</code> without
+opening a TCP socket.</li>
+<li><strong><code>ExecRequest</code> / <code>ExecResponse</code></strong> — the request/response shapes for <code>/exec</code>.</li>
+</ul>
+<h2 id="quick-start" class="tsd-anchor-link">Quick start<a href="#quick-start" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<pre><code class="ts"><span class="hl-9">import</span><span class="hl-0"> { </span><span class="hl-1">createApp</span><span class="hl-0"> } </span><span class="hl-9">from</span><span class="hl-0"> </span><span class="hl-6">&#39;@mithic/server&#39;</span><span class="hl-0">;</span><br/><span class="hl-9">import</span><span class="hl-0"> { </span><span class="hl-1">serve</span><span class="hl-0"> } </span><span class="hl-9">from</span><span class="hl-0"> </span><span class="hl-6">&#39;@hono/node-server&#39;</span><span class="hl-0">;</span><br/><br/><span class="hl-8">const</span><span class="hl-0"> </span><span class="hl-2">app</span><span class="hl-0"> = </span><span class="hl-3">createApp</span><span class="hl-0">();</span><br/><span class="hl-3">serve</span><span class="hl-0">({ </span><span class="hl-1">fetch:</span><span class="hl-0"> </span><span class="hl-1">app</span><span class="hl-0">.</span><span class="hl-1">fetch</span><span class="hl-0">, </span><span class="hl-1">port:</span><span class="hl-0"> </span><span class="hl-10">3000</span><span class="hl-0"> });</span>
+</code><button type="button">Copy</button></pre>
+
+<h2 id="_" class="tsd-anchor-link"><code>POST /exec</code><a href="#_" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>Runs one guest program and returns its captured output. The request body is
+limited to <strong>1 MiB</strong> (<code>413</code> on overflow).</p>
+<h3 id="request-" class="tsd-anchor-link">Request — <code>ExecRequest</code><a href="#request-" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>code</code></td>
+<td><code>string</code> (required)</td>
+<td>Guest source. Uses the QuickJS relay (<code>__mithic_syscall</code>) directly.</td>
+</tr>
+<tr>
+<td><code>env</code></td>
+<td><code>Record&lt;string, string&gt;</code></td>
+<td>Environment variables forwarded to the guest. Optional.</td>
+</tr>
+<tr>
+<td><code>limits</code></td>
+<td><code>ProcessLimits</code></td>
+<td>Resource limits for this execution. Optional.</td>
+</tr>
+<tr>
+<td><code>stdin</code></td>
+<td><code>string</code></td>
+<td>Optional UTF-8 stdin fed to the guest's fd 0 (read via <code>pipe/read {fd:0}</code> until EOF). A non-string value returns <code>400</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><code>limits</code> accepts the <code>ProcessLimits</code> fields from <code>@mithic/protocol</code>. The server
+validates <code>timeoutMs</code>, <code>cpuMs</code>, <code>memoryMb</code>, and <code>maxOutputBytes</code>: each, if
+present, must be a finite positive number, otherwise the request is rejected with
+<code>400</code> rather than silently clamped.</p>
+<pre><code class="jsonc"><span class="hl-0">{</span><br/><span class="hl-0">  </span><span class="hl-13">&quot;code&quot;</span><span class="hl-0">: </span><span class="hl-6">&quot;globalThis.__mithic_syscall(JSON.stringify({ id: 1, call: &#39;pipe/write&#39;, args: { fd: 1, data: &#39;hello</span><span class="hl-12">\\</span><span class="hl-6">n&#39; } })); globalThis.__mithic_syscall(JSON.stringify({ id: 2, call: &#39;process/exit&#39;, args: { code: 0 } }));&quot;</span><span class="hl-0">,</span><br/><span class="hl-0">  </span><span class="hl-13">&quot;env&quot;</span><span class="hl-0">: { </span><span class="hl-13">&quot;FOO&quot;</span><span class="hl-0">: </span><span class="hl-6">&quot;bar&quot;</span><span class="hl-0"> },</span><br/><span class="hl-0">  </span><span class="hl-13">&quot;limits&quot;</span><span class="hl-0">: {</span><br/><span class="hl-0">    </span><span class="hl-13">&quot;timeoutMs&quot;</span><span class="hl-0">: </span><span class="hl-10">5000</span><span class="hl-0">,</span><br/><span class="hl-0">    </span><span class="hl-13">&quot;cpuMs&quot;</span><span class="hl-0">: </span><span class="hl-10">2000</span><span class="hl-0">,</span><br/><span class="hl-0">    </span><span class="hl-13">&quot;memoryMb&quot;</span><span class="hl-0">: </span><span class="hl-10">64</span><span class="hl-0">,</span><br/><span class="hl-0">    </span><span class="hl-13">&quot;maxOutputBytes&quot;</span><span class="hl-0">: </span><span class="hl-10">65536</span><br/><span class="hl-0">  }</span><br/><span class="hl-0">}</span>
+</code><button type="button">Copy</button></pre>
+
+<h3 id="response-" class="tsd-anchor-link">Response — <code>ExecResponse</code><a href="#response-" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>exitCode</code></td>
+<td><code>number</code></td>
+<td>Exit code reported by the guest (or <code>137</code> for OOM / SIGKILL).</td>
+</tr>
+<tr>
+<td><code>stdout</code></td>
+<td><code>string</code></td>
+<td>Captured stdout, decoded as UTF-8.</td>
+</tr>
+<tr>
+<td><code>stderr</code></td>
+<td><code>string</code></td>
+<td>Captured stderr, decoded as UTF-8.</td>
+</tr>
+<tr>
+<td><code>limitHit</code></td>
+<td><code>boolean</code></td>
+<td><code>true</code> when a limit was configured and the process exited non-zero.</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="jsonc"><span class="hl-0">{</span><br/><span class="hl-0">  </span><span class="hl-13">&quot;exitCode&quot;</span><span class="hl-0">: </span><span class="hl-10">0</span><span class="hl-0">,</span><br/><span class="hl-0">  </span><span class="hl-13">&quot;stdout&quot;</span><span class="hl-0">: </span><span class="hl-6">&quot;hello</span><span class="hl-12">\n</span><span class="hl-6">&quot;</span><span class="hl-0">,</span><br/><span class="hl-0">  </span><span class="hl-13">&quot;stderr&quot;</span><span class="hl-0">: </span><span class="hl-6">&quot;&quot;</span><span class="hl-0">,</span><br/><span class="hl-0">  </span><span class="hl-13">&quot;limitHit&quot;</span><span class="hl-0">: </span><span class="hl-8">false</span><br/><span class="hl-0">}</span>
+</code><button type="button">Copy</button></pre>
+
+<h3 id="semantics" class="tsd-anchor-link"><code>limitHit</code> semantics<a href="#semantics" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p><code>limitHit</code> is <code>true</code> when at least one limit was configured <strong>and</strong> the process
+exited non-zero. This single flag covers all enforcement paths:</p>
+<ul>
+<li><code>timeoutMs</code> / <code>cpuMs</code> — the QuickJS interrupt handler throws, exiting with
+code <code>1</code>.</li>
+<li><code>memoryMb</code> OOM — exits with <code>137</code>.</li>
+<li><code>maxOutputBytes</code> overflow — the kernel sends SIGKILL, exiting with <code>137</code>.</li>
+</ul>
+<p>If no limits were set, <code>limitHit</code> stays <code>false</code> even when the guest exits
+non-zero (a plain program error is not a limit hit).</p>
+<h3 id="status-codes" class="tsd-anchor-link">Status codes<a href="#status-codes" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>200</code></td>
+<td>Execution completed (the result, including a non-zero <code>exitCode</code>, is in the body).</td>
+</tr>
+<tr>
+<td><code>400</code></td>
+<td>Invalid JSON, empty/non-string <code>code</code>, non-string <code>stdin</code>, or a non-positive limit value.</td>
+</tr>
+<tr>
+<td><code>413</code></td>
+<td>Request body exceeds 1 MiB.</td>
+</tr>
+<tr>
+<td><code>500</code></td>
+<td>Internal execution error (e.g. the kernel threw); any spawned process is killed.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="testing" class="tsd-anchor-link">Testing<a href="#testing" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<pre><code class="sh"><span class="hl-3">npm</span><span class="hl-0"> </span><span class="hl-6">test</span><span class="hl-0">    </span><span class="hl-7"># vitest — exercises the Hono app via app.request() (no socket)</span>
+</code><button type="button">Copy</button></pre>
+
+<blockquote>
+<p><strong>Note:</strong> warm-VM pooling is not yet implemented. Each request currently
+creates a fresh <code>QuickJSRuntime</code>; the WASM module is loaded once and shared, so
+per-request overhead is a new QuickJS runtime + context. (Binary / streaming
+stdin upload — beyond the in-body UTF-8 <code>stdin</code> string — is also future work.)</p>
+</blockquote>
+</section><details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Interfaces"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg><h2>Interfaces</h2></summary><dl class="tsd-member-summaries"><dt class="tsd-member-summary" id="execrequest"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Interface"><use href="../assets/icons.svg#icon-256"></use></svg><a href="../interfaces/_mithic_server.ExecRequest.html">ExecRequest</a><a href="#execrequest" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd><dt class="tsd-member-summary" id="execresponse"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Interface"><use href="../assets/icons.svg#icon-256"></use></svg><a href="../interfaces/_mithic_server.ExecResponse.html">ExecResponse</a><a href="#execresponse" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd></dl></details><details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Functions"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg><h2>Functions</h2></summary><dl class="tsd-member-summaries"><dt class="tsd-member-summary" id="createapp"><span class="tsd-member-summary-name"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Function"><use href="../assets/icons.svg#icon-64"></use></svg><a href="../functions/_mithic_server.createApp.html">createApp</a><a href="#createapp" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></span></dt><dd class="tsd-member-summary"></dd></dl></details></div><div class="col-sidebar"><div class="page-menu"><div class="tsd-navigation settings"><details class="tsd-accordion"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg><h3>Settings</h3></summary><div class="tsd-accordion-details"><div class="tsd-filter-visibility"><span class="settings-label">Member Visibility</span><ul id="tsd-filter-options"><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-protected" name="protected"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Protected</span></label></li><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-inherited" name="inherited" checked/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Inherited</span></label></li><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-external" name="external"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>External</span></label></li></ul></div><div class="tsd-theme-toggle"><label class="settings-label" for="tsd-theme">Theme</label><select id="tsd-theme"><option value="os">OS</option><option value="light">Light</option><option value="dark">Dark</option></select></div></div></details></div><details open class="tsd-accordion tsd-page-navigation"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg><h3>On This Page</h3></summary><div class="tsd-accordion-details"><a href="#mithicserver"><span>@mithic/server</span></a><ul><li><a href="#responsibilities"><span>Responsibilities</span></a></li><li><a href="#why-quickjs"><span>Why <wbr/>Quick<wbr/>JS</span></a></li><li><a href="#exports"><span>Exports</span></a></li><li><a href="#quick-start"><span>Quick start</span></a></li><li><a href="#_"><span></span></a></li><li><ul><li><a href="#request-"><span>Request — </span></a></li><li><a href="#response-"><span>Response — </span></a></li><li><a href="#semantics"><span> semantics</span></a></li><li><a href="#status-codes"><span>Status codes</span></a></li></ul></li><li><a href="#testing"><span>Testing</span></a></li></ul><details open class="tsd-accordion tsd-page-navigation-section"><summary class="tsd-accordion-summary" data-key="section-Interfaces"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>Interfaces</summary><div><a href="#execrequest"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Interface"><use href="../assets/icons.svg#icon-256"></use></svg><span>Exec<wbr/>Request</span></a><a href="#execresponse"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Interface"><use href="../assets/icons.svg#icon-256"></use></svg><span>Exec<wbr/>Response</span></a></div></details><details open class="tsd-accordion tsd-page-navigation-section"><summary class="tsd-accordion-summary" data-key="section-Functions"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>Functions</summary><div><a href="#createapp"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Function"><use href="../assets/icons.svg#icon-64"></use></svg><span>create<wbr/>App</span></a></div></details></div></details></div><div class="site-menu"><nav class="tsd-navigation"><a href="../modules.html">mithic - v0.3.0</a><ul class="tsd-small-nested-navigation" id="tsd-nav-container"><li>Loading...</li></ul></nav></div></div></div><footer><p class="tsd-generator">Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p></footer><div class="overlay"></div></body></html>
