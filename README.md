@@ -62,14 +62,14 @@ The **kernel** owns process lifecycle, the command namespace, and the syscall su
 | [`@mithic/kernel`](./packages/kernel) | The microkernel: process lifecycle, IPC broker, capability manager, syscall dispatch, pipelines, Remote-DOM host |
 | [`@mithic/io`](./packages/io) | I/O engine: VFS router + providers (memory, OPFS, Node FS, device, caching) with extended-attribute support (a per-mount metadata store backs xattr + mode/mtime on OPFS/Node FS), HTTP/socket abstractions |
 | [`@mithic/shell`](./packages/shell) | POSIX-style shell interpreter (lexer/parser/expander/executor, 35 builtins) running as a regular Mithic process |
-| [`@mithic/coreutils`](./packages/coreutils) | 56 pure-TypeScript Unix coreutils (including `getcap`/`setcap` over the `fs/*xattr` syscalls), one sandboxed guest module per command |
+| [`@mithic/coreutils`](./packages/coreutils) | 71 pure-TypeScript Unix coreutils (including `getcap`/`setcap` over the `fs/*xattr` syscalls), one sandboxed guest module per command |
 | [`@mithic/jq`](./packages/commands/jq) | Pure-TypeScript jq JSON processor as a sandboxed process |
 | [`@mithic/curl`](./packages/commands/curl) | Pure-TypeScript curl-like HTTP client, routed through the capability-gated `net/fetch` syscall |
 | [`@mithic/server`](./packages/server) | Host-side Hono REST server: sandboxed code execution over `POST /exec` |
 | [`@mithic/worker`](./packages/worker) | Web Worker polyfill for Node.js (isomorphic `new Worker()`) |
 | [`@mithic/desktop`](./packages/desktop) | Host-side window manager for a browser OS: frames, drag/resize, z-order, taskbar, app registry, geometry persistence — zero third-party deps |
 
-The command suite is **58 commands** total: 56 coreutils plus `jq` and `curl`. The shell dispatches its 35 builtins in-process and spawns everything else as child processes via `process/spawn` and `process/pipeline`. `process/spawn` resolves a bare name via `$PATH` against a VFS file first (checking the execute bit and dispatching by shebang), falling back to the command registry for bootstrap.
+The command suite is **73 commands** total: 71 coreutils plus `jq` and `curl`. The shell dispatches its 35 builtins in-process and spawns everything else as child processes via `process/spawn` and `process/pipeline`. `process/spawn` resolves a bare name via `$PATH` against a VFS file first (checking the execute bit and dispatching by shebang), falling back to the command registry for bootstrap.
 
 ### Examples
 

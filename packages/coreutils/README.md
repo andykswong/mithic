@@ -32,11 +32,21 @@ WebAssembly, no deps). `md5sum` ships a pure-TS RFC 1321 MD5 (`_md5.ts`), since
 Web Crypto exposes no MD5. A few of these intentionally diverge from GNU where
 exact parity is not reproducible over a virtual filesystem or is low-value,
 documented in each command's header: `du` uses a `ceil(byte-sum / 1024)` block
-model (not `st_blocks`); `od` ships the faithful single-byte `-t x1`/`-t o1`/`-t
-d1`/`-c` forms plus the 2-byte `-t x2`/`-t o2`/`-t d2` words and `*`
-duplicate-line elision (combining multiple `-t` specs on one dump is still a
-follow-up); and `column`'s `-t` table mode is faithful while the non-`-t` fill
-mode is a simplified 80-column pack.
+model (not `st_blocks`); `od` supports the single-byte (`-t x1`/`o1`/`d1`/`-c`,
+`-a` named-ASCII), 2-byte (`-t x2`/`o2`/`d2`), and multiple combined `-t` specs
+with `*` duplicate-line elision; and `column`'s `-t` table mode is faithful while
+the non-`-t` fill mode is a simplified 80-column pack.
+
+A subsequent GNU-9.11 command-level parity wave (differentially verified against
+the `g`-prefixed GNU binaries) brought the suite byte-exact across dozens of
+flag- and edge-level gaps — e.g. `cksum` gained `-z`/`--zero` and pure-TS
+BLAKE2b/SM3 digests (`-a blake2b`/`-a sm3`), `seq`/`printf` numeric formatting is
+round-half-to-even, `expr` handles POSIX character classes, `find` supports
+`-prune`, and `sort`/`split`/`head`/`tail`/`uniq`/`tr`/`shuf` reject unknown
+options with GNU exit codes. A handful of behaviors remain deliberate documented
+deviations (each noted in the command's header): `base32 -d` is case-insensitive
+where GNU is case-sensitive, and `sort -R`'s shuffle order is not byte-comparable
+to GNU's keyed-hash order.
 
 The authoritative list is the `COMMAND_NAMES` array in `src/resolver.ts`; each
 name has a matching `src/commands/<name>.ts`. (`grep` family: `grep`, `egrep`,
