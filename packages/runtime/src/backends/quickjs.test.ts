@@ -19,6 +19,34 @@ test('onResult fires every registered callback with the __mithic_done value', as
   expect(seen[0]).toEqual({ a: 1, list: [1, 2, 3] });
 });
 
+// BYTE-LOSS regression at the serializer boundary: a host Uint8Array returned in
+// a syscall result must reach the guest as a real Array with byte-exact values.
+// Before the fix, `jsonToHandle` fell into the generic-object branch and produced
+// `{0:b0,1:b1,...}`, corrupting every byte-bearing result (e.g. fs/read). Includes
+// 0x00, 0x7F, 0x80, 0xFF and a multi-byte UTF-8 sequence.
+test('jsonToHandle: a host Uint8Array syscall result reaches the guest as a byte-exact array', async () => {
+  const rt = await QuickJSRuntime.create();
+  const bytes = [0, 0x7f, 0x80, 0xff, 0xe2, 0x82, 0xac, 65];
+  const code = `
+    const r = await __mithic_syscall('probe/read', {});
+    const b = r.bytes;
+    __mithic_done({
+      isArray: Array.isArray(b),
+      values: Array.prototype.slice.call(b),
+    });
+  `;
+  let resolved: { isArray: boolean; values: number[] } | undefined;
+  rt.onResult((v) => { resolved = v as { isArray: boolean; values: number[] }; });
+  const h = await rt.spawn(code, {
+    init: { type: 'init', entry: 'inline', args: ['p'], env: {}, cwd: '/', pid: 88, ppid: 0, capabilities: [] },
+    onSyscall: async () => ({ bytes: new Uint8Array(bytes) }),
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  expect(resolved?.isArray).toBe(true);
+  expect(resolved?.values).toEqual(bytes);
+  rt.dispose(h);
+});
+
 test('isAlive/dispose/kill/waitExit tolerate a non-existent handle', async () => {
   const rt = await QuickJSRuntime.create();
   const ghost = { id: 9999 };

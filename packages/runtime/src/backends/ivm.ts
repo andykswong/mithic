@@ -170,7 +170,7 @@ export class IvmRuntime implements Runtime {
       }
       try {
         const result = await onSyscall(call, args);
-        return JSON.stringify(result ?? {});
+        return stringifyResponse(result ?? {});
       } catch (err) {
         const code = (err && typeof err === 'object' && 'code' in err) ? String((err as { code: unknown }).code) : 'EIO';
         const message = err instanceof Error ? err.message : String(err);
@@ -293,5 +293,24 @@ export class IvmRuntime implements Runtime {
     this.#stopCpuWatch(entry);
     try { if (!entry.isolate.isDisposed) { entry.context.release(); entry.isolate.dispose(); } } catch { /* already disposed */ }
   }
+}
+
+/**
+ * Serialize a syscall response for the isolate. Plain `JSON.stringify` turns a
+ * Uint8Array (or any TypedArray view / ArrayBuffer) into `{0:b0,1:b1,...}`, which
+ * the guest's `JSON.parse` cannot distinguish from a real object — every
+ * byte-bearing result (e.g. fs/read) would be corrupted. The replacer converts
+ * such views to a plain number Array so the guest receives a real array it can
+ * reconstruct into bytes (matching the pipe relay's {data:number[]} form).
+ */
+function stringifyResponse(value: unknown): string {
+  return JSON.stringify(value, (_key, v) => {
+    if (ArrayBuffer.isView(v)) {
+      const view = v as ArrayBufferView;
+      return Array.from(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
+    }
+    if (v instanceof ArrayBuffer) return Array.from(new Uint8Array(v));
+    return v;
+  });
 }
 

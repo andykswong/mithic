@@ -22,6 +22,49 @@ test('fs/open + fs/read returns file bytes for an authorized process', async () 
   expect(new TextDecoder().decode((read as { ok: true; result: Uint8Array }).result)).toBe('hello');
 });
 
+// BYTE-LOSS regression (write direction): a guest Uint8Array degrades to a plain
+// number[] (or a numeric-keyed byte object) when it crosses the QuickJS/ivm relay
+// JSON boundary. fs/write must accept those byte forms and store them byte-exact —
+// mirroring the pipe/write relay tolerance — so binary writes survive on relay
+// backends. The transferable (Worker/iframe) Uint8Array form is unaffected.
+test('fs/write accepts a relay-serialized number[] and stores bytes byte-exact', async () => {
+  const d = await setup();
+  const bytes = [0, 0x7f, 0x80, 0xff, 65];
+  const open = (await d.dispatch(1, { id: 1, call: 'fs/open', args: { path: '/tmp/w.dat', oflags: { create: true, write: true, truncate: true } } })).response;
+  const fd = (open as { ok: true; result: { fd: number } }).result.fd;
+  const w = (await d.dispatch(1, { id: 2, call: 'fs/write', args: { fd, data: bytes, offset: 0 } })).response;
+  expect(w).toMatchObject({ ok: true, result: { written: bytes.length } });
+  await d.dispatch(1, { id: 3, call: 'fs/close', args: { fd } });
+  const ro = (await d.dispatch(1, { id: 4, call: 'fs/open', args: { path: '/tmp/w.dat', oflags: { read: true } } })).response;
+  const rfd = (ro as { ok: true; result: { fd: number } }).result.fd;
+  const read = (await d.dispatch(1, { id: 5, call: 'fs/read', args: { fd: rfd, len: 4096 } })).response;
+  expect(Array.from((read as { ok: true; result: Uint8Array }).result)).toEqual(bytes);
+});
+
+test('fs/write accepts a numeric-keyed byte object (degraded Uint8Array) byte-exact', async () => {
+  const d = await setup();
+  const bytes = [10, 0, 200, 255];
+  const obj: Record<string, number> = {};
+  bytes.forEach((b, i) => { obj[i] = b; });
+  const open = (await d.dispatch(1, { id: 1, call: 'fs/open', args: { path: '/tmp/o.dat', oflags: { create: true, write: true, truncate: true } } })).response;
+  const fd = (open as { ok: true; result: { fd: number } }).result.fd;
+  const w = (await d.dispatch(1, { id: 2, call: 'fs/write', args: { fd, data: obj, offset: 0 } })).response;
+  expect(w).toMatchObject({ ok: true, result: { written: bytes.length } });
+  await d.dispatch(1, { id: 3, call: 'fs/close', args: { fd } });
+  const ro = (await d.dispatch(1, { id: 4, call: 'fs/open', args: { path: '/tmp/o.dat', oflags: { read: true } } })).response;
+  const rfd = (ro as { ok: true; result: { fd: number } }).result.fd;
+  const read = (await d.dispatch(1, { id: 5, call: 'fs/read', args: { fd: rfd, len: 4096 } })).response;
+  expect(Array.from((read as { ok: true; result: Uint8Array }).result)).toEqual(bytes);
+});
+
+test('fs/write still rejects a non-byte data payload', async () => {
+  const d = await setup();
+  const open = (await d.dispatch(1, { id: 1, call: 'fs/open', args: { path: '/tmp/bad.dat', oflags: { create: true, write: true } } })).response;
+  const fd = (open as { ok: true; result: { fd: number } }).result.fd;
+  const w = (await d.dispatch(1, { id: 2, call: 'fs/write', args: { fd, data: { foo: 'bar' } } })).response;
+  expect(w).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
+});
+
 test('fs/open outside granted prefix returns EACCES', async () => {
   const d = await setup();
   const res = (await d.dispatch(1, { id: 3, call: 'fs/open', args: { dirfd: -100, path: '/etc/shadow', oflags: { read: true } } })).response;
@@ -195,6 +238,36 @@ test('xattr: fs/setxattr then fs/getxattr round-trips the value', async () => {
   expect(set.ok).toBe(true);
   const get = (await d.dispatch(1, { id: 2, call: 'fs/getxattr', args: { path: '/tmp/a.txt', name: 'user.tag' } })).response;
   expect(Array.from((get as { ok: true; result: Uint8Array }).result)).toEqual([1, 2, 3, 255]);
+});
+
+// BYTE-LOSS regression (fs/setxattr value, guest→kernel): setcap builds the value
+// via encodeCapabilities() → Uint8Array; on the relay path (QuickJS/ivm) it degrades
+// to a number[] or numeric-keyed object. parseFsSetxattr must decode those back so a
+// capability xattr can be set on relay backends, not rejected as EINVAL.
+test('xattr: fs/setxattr accepts a relay-serialized number[] value byte-exact', async () => {
+  const { d } = await fsSetup();
+  const bytes = [0, 0x7f, 0x80, 0xff, 7];
+  const set = (await d.dispatch(1, { id: 1, call: 'fs/setxattr', args: { path: '/tmp/a.txt', name: 'security.capability', value: bytes } })).response;
+  expect(set.ok).toBe(true);
+  const get = (await d.dispatch(1, { id: 2, call: 'fs/getxattr', args: { path: '/tmp/a.txt', name: 'security.capability' } })).response;
+  expect(Array.from((get as { ok: true; result: Uint8Array }).result)).toEqual(bytes);
+});
+
+test('xattr: fs/setxattr accepts a numeric-keyed byte object value byte-exact', async () => {
+  const { d } = await fsSetup();
+  const bytes = [10, 0, 200, 255];
+  const obj: Record<string, number> = {};
+  bytes.forEach((b, i) => { obj[i] = b; });
+  const set = (await d.dispatch(1, { id: 1, call: 'fs/setxattr', args: { path: '/tmp/a.txt', name: 'user.cap', value: obj } })).response;
+  expect(set.ok).toBe(true);
+  const get = (await d.dispatch(1, { id: 2, call: 'fs/getxattr', args: { path: '/tmp/a.txt', name: 'user.cap' } })).response;
+  expect(Array.from((get as { ok: true; result: Uint8Array }).result)).toEqual(bytes);
+});
+
+test('xattr: fs/setxattr still rejects a non-byte value (EINVAL)', async () => {
+  const { d } = await fsSetup();
+  const set = (await d.dispatch(1, { id: 1, call: 'fs/setxattr', args: { path: '/tmp/a.txt', name: 'user.bad', value: { foo: 'bar' } } })).response;
+  expect(set).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
 });
 
 // No-entry: our errno vocabulary has no ENODATA/ENOATTR, so a missing attr maps
@@ -749,6 +822,75 @@ test('Fix 3: process/pipeline with 2 stages succeeds when maxChildren:2', async 
   expect(res.ok).toBe(true);
 });
 
+// BYTE-LOSS regression (process/pipeline fds[0] bytes action, guest→kernel): a
+// shell here-string/here-doc/`<`-file into an external command forwards fd 0 as
+// {action:'bytes', data:<Uint8Array>}; on the relay path it degrades to a number[]
+// / numeric-keyed object. The parser must coerce it back to a tight Uint8Array (so
+// #feedBytesToPort's data.slice() works), not reject it EINVAL.
+test('process/pipeline coerces a relay-serialized number[] bytes fd action byte-exact', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'process' }]);
+  let captured: Uint8Array | undefined;
+  const pipelineChild = async (_pid: number, stages: Array<{ spec: { fds?: Record<number, { action: string; data?: unknown }> } }>) => {
+    const action = stages[0].spec.fds?.[0];
+    captured = action?.data as Uint8Array | undefined;
+    return { exitCodes: [0], lastStdout: new Uint8Array() };
+  };
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/', resolveCommand: (name) => name, pipelineChild,
+  });
+  const bytes = [0, 0x7f, 0x80, 0xff, 33];
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'process/pipeline',
+    args: { stages: [{ path: 'grep', argv: ['grep', 'x'], fds: { 0: { action: 'bytes', data: bytes } } }] },
+  })).response;
+  expect(res.ok).toBe(true);
+  expect(captured).toBeInstanceOf(Uint8Array);
+  expect(Array.from(captured!)).toEqual(bytes);
+});
+
+test('process/pipeline coerces a numeric-keyed byte object bytes fd action byte-exact', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'process' }]);
+  let captured: Uint8Array | undefined;
+  const pipelineChild = async (_pid: number, stages: Array<{ spec: { fds?: Record<number, { action: string; data?: unknown }> } }>) => {
+    captured = stages[0].spec.fds?.[0]?.data as Uint8Array | undefined;
+    return { exitCodes: [0], lastStdout: new Uint8Array() };
+  };
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/', resolveCommand: (name) => name, pipelineChild,
+  });
+  const bytes = [104, 105, 0, 255];
+  const obj: Record<string, number> = {};
+  bytes.forEach((b, i) => { obj[i] = b; });
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'process/pipeline',
+    args: { stages: [{ path: 'cat', argv: ['cat'], fds: { 0: { action: 'bytes', data: obj } } }] },
+  })).response;
+  expect(res.ok).toBe(true);
+  expect(Array.from(captured!)).toEqual(bytes);
+});
+
+test('process/pipeline still rejects a non-byte bytes fd action (EINVAL)', async () => {
+  const router = new FileSystemRouter();
+  const caps = new CapabilityManager();
+  caps.grant(1, [{ type: 'process' }]);
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/', resolveCommand: (name) => name,
+    pipelineChild: async () => ({ exitCodes: [0], lastStdout: new Uint8Array() }),
+  });
+  const res = (await d.dispatch(1, {
+    id: 1,
+    call: 'process/pipeline',
+    args: { stages: [{ path: 'cat', argv: ['cat'], fds: { 0: { action: 'bytes', data: { foo: 'bar' } } } }] },
+  })).response;
+  expect(res).toMatchObject({ ok: false, error: { code: 'EINVAL' } });
+});
+
 // ── net/fetch syscall ──────────────────────────────────────────────────────
 
 import type { HttpClient, HttpRequest, HttpResponse } from '@mithic/io/net';
@@ -840,6 +982,44 @@ test('net/fetch forwards method, headers, and body to the http client', async ()
   expect(calls[0].method).toBe('POST');
   expect(calls[0].headers).toEqual([['content-type', 'application/json']]);
   expect(new TextDecoder().decode(calls[0].body)).toBe('{"a":1}');
+});
+
+// BYTE-LOSS regression (net/fetch request body, guest→kernel): a guest sets the
+// body as a Uint8Array; on the relay path (QuickJS/ivm) it degrades to a number[]
+// or a numeric-keyed object. parseNetFetch must decode those back so a binary POST
+// body reaches the HttpClient byte-exact instead of being silently dropped.
+test('net/fetch accepts a relay-serialized number[] body byte-exact', async () => {
+  const { d, calls } = netSetup();
+  const bytes = [0, 0x7f, 0x80, 0xff, 42];
+  await d.dispatch(1, {
+    id: 1,
+    call: 'net/fetch',
+    args: { method: 'POST', url: 'https://api.example.com/upload', headers: [], body: bytes },
+  });
+  expect(Array.from(calls[0].body!)).toEqual(bytes);
+});
+
+test('net/fetch accepts a numeric-keyed byte object body byte-exact', async () => {
+  const { d, calls } = netSetup();
+  const bytes = [1, 2, 3, 255, 0];
+  const obj: Record<string, number> = {};
+  bytes.forEach((b, i) => { obj[i] = b; });
+  await d.dispatch(1, {
+    id: 1,
+    call: 'net/fetch',
+    args: { method: 'POST', url: 'https://api.example.com/upload', headers: [], body: obj },
+  });
+  expect(Array.from(calls[0].body!)).toEqual(bytes);
+});
+
+test('net/fetch with no body sends none (absent body stays undefined)', async () => {
+  const { d, calls } = netSetup();
+  await d.dispatch(1, {
+    id: 1,
+    call: 'net/fetch',
+    args: { method: 'GET', url: 'https://api.example.com/data', headers: [] },
+  });
+  expect(calls[0].body).toBeUndefined();
 });
 
 test('net/fetch maps an http client failure to a kernel error (EHOSTUNREACH)', async () => {
@@ -1397,6 +1577,32 @@ test('C2: injected relayPipe handlers service pipe/* through the dispatcher', as
   const close = (await d.dispatch(1, { id: 3, call: 'pipe/close', args: { fd: 3 } })).response;
   expect(close).toMatchObject({ ok: true });
   expect(calls).toEqual(['read:3', 'write:4', 'close:3']);
+});
+
+// BYTE-LOSS regression (pipe/write data, guest→kernel): the shell coproc writer
+// sends `data: <Uint8Array>`; on the relay path it degrades to a numeric-keyed
+// object. parsePipeWrite must coerce it back so relay pipe writes stay byte-exact
+// (number[] and string forms are unaffected).
+test('C2: pipe/write coerces a numeric-keyed byte object to bytes byte-exact', async () => {
+  const router = new FileSystemRouter();
+  await router.mount('/', new MemoryFsProvider());
+  const caps = new CapabilityManager();
+  let received: unknown;
+  const d = new SyscallDispatcher({
+    vfs: router, caps, cwdOf: () => '/',
+    relayPipe: {
+      read: async () => ({ ok: true, result: { data: [] } }),
+      write: async (_pid, _fd, data) => { received = data; return { ok: true, result: { written: (data as Uint8Array).byteLength } }; },
+      close: () => ({ ok: true, result: {} }),
+    },
+  });
+  const bytes = [0, 0x80, 0xff, 42];
+  const obj: Record<string, number> = {};
+  bytes.forEach((b, i) => { obj[i] = b; });
+  const res = (await d.dispatch(1, { id: 1, call: 'pipe/write', args: { fd: 3, data: obj } })).response;
+  expect(res).toMatchObject({ ok: true, result: { written: bytes.length } });
+  expect(received).toBeInstanceOf(Uint8Array);
+  expect(Array.from(received as Uint8Array)).toEqual(bytes);
 });
 
 test('C2: malformed pipe/write args (non-numeric fd) is rejected with EINVAL', async () => {

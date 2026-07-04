@@ -49,10 +49,29 @@ interface NetFetchResult {
   status: number;
   statusText?: string;
   headers?: [string, string][];
-  /** Buffered fallback body (relay backends). */
-  body?: Uint8Array | ArrayBuffer;
+  /**
+   * Buffered fallback body (relay backends). On the transferable (Worker/iframe)
+   * path this is the kernel's raw Uint8Array. On the relay (QuickJS/isolated-vm)
+   * path a Uint8Array does not survive the JSON round-trip: bytes arrive as a
+   * plain `number[]` (matching the fs/read relay form).
+   */
+  body?: Uint8Array | ArrayBuffer | number[];
   /** B6: true when the body is delivered as a STREAM over a transferred port. */
   bodyStream?: boolean;
+}
+
+/**
+ * Normalize a buffered `net/fetch` body to a Uint8Array. The transferable path
+ * delivers a Uint8Array/ArrayBuffer directly; the relay path delivers a plain
+ * `number[]` (the serializer's `Array.from` form). Passing a `number[]` straight
+ * to `new Response()` would coerce it to a comma-joined string, so decode first —
+ * mirroring `decodeBytes` in fs-access.ts.
+ */
+function decodeFetchBytes(body: NetFetchResult['body']): Uint8Array {
+  if (body instanceof Uint8Array) return body;
+  if (body instanceof ArrayBuffer) return new Uint8Array(body);
+  if (Array.isArray(body)) return new Uint8Array(body);
+  return new Uint8Array();
 }
 
 /**
@@ -152,9 +171,10 @@ function buildResponse(result: NetFetchResult, ports: readonly MessagePort[], si
   }
 
   // Buffered fallback (relay backend) — or a streamed result that arrived with
-  // no port (defensive: treat as empty).
-  const body = result.body ?? new Uint8Array();
-  return new Response(body as BodyInit, init);
+  // no port (defensive: treat as empty). Decode a relay number[] to bytes; an
+  // empty body becomes null so the Response is not given a stray empty stream.
+  const bytes = decodeFetchBytes(result.body);
+  return new Response(bytes.byteLength ? (bytes as BodyInit) : null, init);
 }
 
 /** Statuses for which a `Response` body MUST be null (per the Fetch spec). */

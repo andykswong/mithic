@@ -128,3 +128,78 @@ test.skipIf(!ivmAvailable)('kernel relay: ivm guest reads fd-0 stdin (bytes sour
   expect((await kernel.wait(pid)).code).toBe(0);
   expect(new TextDecoder().decode(await stdout!)).toBe('ivm:xyz');
 }, 15000);
+
+/**
+ * BYTE-LOSS REGRESSION (ivm): the ivm bridge serializes syscall args/results via
+ * JSON.stringify/parse, which mangles a Uint8Array to `{0:..}` in BOTH directions
+ * (fs/write args + fs/read result). The guest writes non-UTF8 bytes (0x00, 0x7F,
+ * 0x80, 0xFF plus a multi-byte UTF-8 sequence) to a MemoryFsProvider file, reads
+ * them back, and echoes the byte VALUES as a comma-joined string for a byte-exact,
+ * encoding-independent assertion.
+ */
+test.skipIf(!ivmAvailable)('kernel relay: ivm fs/write + fs/read round-trips binary bytes byte-exact', async () => {
+  const ivmRt = await IvmRuntime.create(64);
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = new Kernel({ runtime: ivmRt, vfs, relayLauncher: new IvmRelayLauncher(ivmRt) });
+
+  const bytes = [0, 0x7f, 0x80, 0xff, 0xe2, 0x82, 0xac, 65];
+
+  const code = `
+    const bytes = new Uint8Array([${bytes.join(',')}]);
+    const { fd } = __mithic_syscall('fs/open', { path: '/bin.dat', oflags: { create: true, write: true, truncate: true } });
+    __mithic_syscall('fs/write', { fd, data: bytes, offset: 0 });
+    __mithic_syscall('fs/close', { fd });
+    const { fd: rfd } = __mithic_syscall('fs/open', { path: '/bin.dat', oflags: { read: true } });
+    const r = __mithic_syscall('fs/read', { fd: rfd, len: 4096 });
+    const data = Array.isArray(r) ? r : (r && r.data ? r.data : (r && typeof r === 'object' ? Object.keys(r).map(function(k){return r[k];}) : []));
+    __mithic_syscall('fs/close', { fd: rfd });
+    __mithic_syscall('pipe/write', { fd: 1, data: 'bytes:' + Array.prototype.join.call(data, ',') + '|isArray:' + Array.isArray(r) });
+    __mithic_syscall('process/exit', { code: 0 });
+  `;
+
+  const { pid, stdout } = await kernel.spawn(code, {
+    args: ['prog'],
+    capabilities: [{ type: 'fs', paths: ['/'], operations: ['read', 'write'] }],
+    captureStdout: true,
+  });
+  expect((await kernel.wait(pid)).code).toBe(0);
+  // `isArray:true` guards the READ direction independently: the ivm read serializer
+  // (stringifyResponse) must deliver a real number[] to the guest. Without the fix
+  // the host Uint8Array is mangled to `{0:..}` — the guest's defensive Object.keys
+  // fallback would still reconstruct the byte values, so assert on the raw result
+  // shape so a read-serializer revert goes RED here, not only in the dedicated
+  // backend serializer test.
+  expect(new TextDecoder().decode(await stdout!)).toBe('bytes:' + bytes.join(',') + '|isArray:true');
+  const h = await vfs.open('/bin.dat', { read: true });
+  const stored = await vfs.read(h, 0, 4096);
+  await vfs.close(h);
+  expect(Array.from(stored)).toEqual(bytes);
+}, 20000);
+
+/** BYTE-LOSS edge (ivm): an empty read at EOF yields zero bytes. */
+test.skipIf(!ivmAvailable)('kernel relay: ivm fs/read at EOF returns an empty chunk', async () => {
+  const ivmRt = await IvmRuntime.create(64);
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = new Kernel({ runtime: ivmRt, vfs, relayLauncher: new IvmRelayLauncher(ivmRt) });
+
+  const code = `
+    const { fd } = __mithic_syscall('fs/open', { path: '/empty.dat', oflags: { create: true, write: true, truncate: true } });
+    __mithic_syscall('fs/close', { fd });
+    const { fd: rfd } = __mithic_syscall('fs/open', { path: '/empty.dat', oflags: { read: true } });
+    const r = __mithic_syscall('fs/read', { fd: rfd, len: 4096 });
+    const data = Array.isArray(r) ? r : (r && r.data ? r.data : (r && typeof r === 'object' ? Object.keys(r).map(function(k){return r[k];}) : []));
+    __mithic_syscall('fs/close', { fd: rfd });
+    __mithic_syscall('pipe/write', { fd: 1, data: 'len:' + data.length });
+    __mithic_syscall('process/exit', { code: 0 });
+  `;
+
+  const { pid, stdout } = await kernel.spawn(code, {
+    args: ['prog'],
+    capabilities: [{ type: 'fs', paths: ['/'], operations: ['read', 'write'] }],
+    captureStdout: true,
+  });
+  expect((await kernel.wait(pid)).code).toBe(0);
+  expect(new TextDecoder().decode(await stdout!)).toBe('len:0');
+}, 20000);

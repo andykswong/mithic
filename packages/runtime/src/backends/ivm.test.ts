@@ -45,6 +45,41 @@ test.skipIf(!(await isIvmAvailable()))(
   },
 );
 
+// BYTE-LOSS regression at the ivm serializer boundary: a host Uint8Array returned
+// in a syscall result must reach the guest as a real Array with byte-exact values.
+// Before the fix, `JSON.stringify(result)` turned the Uint8Array into `{0:b0,...}`,
+// corrupting every byte-bearing result (e.g. fs/read). Includes 0x00, 0x7F, 0x80,
+// 0xFF and a multi-byte UTF-8 sequence.
+test.skipIf(!(await isIvmAvailable()))(
+  'byte serializer: a host Uint8Array syscall result reaches the isolate as a byte-exact array',
+  async () => {
+    const rt = await IvmRuntime.create(64);
+    const bytes = [0, 0x7f, 0x80, 0xff, 0xe2, 0x82, 0xac, 65];
+    let reported: { isArray?: boolean; values?: number[] } | undefined;
+    const code = `
+      const r = __mithic_syscall('probe/read', {});
+      const b = r.bytes;
+      __mithic_syscall('probe/report', {
+        isArray: Array.isArray(b),
+        values: Array.prototype.slice.call(b),
+      });
+      __mithic_syscall('process/exit', { code: 0 });
+    `;
+    const handle = await rt.spawn(code, {
+      init: { type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 1, ppid: 0, capabilities: [] },
+      onSyscall: async (call, args) => {
+        if (call === 'probe/read') return { ok: true, result: { bytes: new Uint8Array(bytes) } };
+        if (call === 'probe/report') { reported = args as typeof reported; return { ok: true, result: {} }; }
+        return { ok: true, result: {} };
+      },
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 300));
+    expect(reported?.isArray).toBe(true);
+    expect(reported?.values).toEqual(bytes);
+    rt.dispose(handle);
+  },
+);
+
 test.skipIf(!(await isIvmAvailable()))(
   'IvmRuntime.isAlive returns true for live isolate and false after dispose',
   async () => {

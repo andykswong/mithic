@@ -463,6 +463,21 @@ function jsonToHandle(ctx: QuickJSAsyncContext, value: unknown): QuickJSHandle {
     }
     return arr;
   }
+  // Bytes: a Uint8Array (or any TypedArray view / ArrayBuffer) does NOT survive the
+  // JSON round-trip as bytes — the generic-object branch below would turn it into
+  // `{0:b0,1:b1,...}`, corrupting every byte-bearing syscall result (e.g. fs/read).
+  // Emit a plain number Array instead so the guest receives a real JS array it can
+  // reconstruct into a Uint8Array (matching the pipe relay's {data:number[]} form).
+  if (ArrayBuffer.isView(value)) {
+    return jsonToHandle(ctx, Array.from(new Uint8Array(
+      (value as ArrayBufferView).buffer,
+      (value as ArrayBufferView).byteOffset,
+      (value as ArrayBufferView).byteLength,
+    )));
+  }
+  if (value instanceof ArrayBuffer) {
+    return jsonToHandle(ctx, Array.from(new Uint8Array(value)));
+  }
   if (typeof value === 'object') {
     const obj = ctx.newObject();
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {

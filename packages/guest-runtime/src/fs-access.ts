@@ -156,14 +156,26 @@ export class GuestFile {
 /** Issue one `fs/read` and normalize the wire result to a Uint8Array. */
 async function readFsChunk(syscall: SyscallHook, fd: number, len: number): Promise<Uint8Array> {
   const result = await syscall('fs/read', { fd, len });
-  // The kernel returns the bytes directly; tolerate a `{data}` wrapper too.
+  return decodeBytes(result);
+}
+
+/**
+ * Normalize an `fs/read` wire result to a Uint8Array. On the transferable
+ * (Worker/iframe) path the kernel's raw Uint8Array survives structuredClone. On
+ * the relay (QuickJS/isolated-vm) path bytes cross the JSON boundary as a plain
+ * `number[]` (a real Uint8Array does not survive the round-trip); a `{data}`
+ * wrapper is tolerated in either form.
+ */
+function decodeBytes(result: unknown): Uint8Array {
   if (result instanceof Uint8Array) return result;
+  if (result instanceof ArrayBuffer) return new Uint8Array(result);
+  if (Array.isArray(result)) return new Uint8Array(result as number[]);
   if (result && typeof result === 'object' && 'data' in result) {
     const data = (result as { data: unknown }).data;
     if (data instanceof Uint8Array) return data;
     if (data instanceof ArrayBuffer) return new Uint8Array(data);
+    if (Array.isArray(data)) return new Uint8Array(data as number[]);
   }
-  if (result instanceof ArrayBuffer) return new Uint8Array(result);
   return new Uint8Array();
 }
 

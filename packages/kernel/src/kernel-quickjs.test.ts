@@ -472,3 +472,128 @@ test('kernel relay: an fd-0 open stdin source is capability-checked (EACCES, no 
     fds: { 0: { action: 'open', path: '/secret.txt', flags: { read: true } } },
   })).rejects.toThrow(/EACCES|permission denied/i);
 }, 15000);
+
+/**
+ * BYTE-LOSS REGRESSION: binary data must survive the relay JSON round-trip
+ * byte-exact in BOTH directions — fs/write (guest→host, `ctx.dump` mangles a
+ * guest Uint8Array to `{0:..}`) and fs/read (host→guest, `jsonToHandle` mangled a
+ * host Uint8Array to `{0:..}`). The guest writes non-UTF8 bytes (0x00, 0x7F,
+ * 0x80, 0xFF plus a multi-byte UTF-8 sequence) to a MemoryFsProvider file, reads
+ * them back, and echoes the byte VALUES as a comma-joined string so the assertion
+ * is byte-exact and text-encoding independent.
+ */
+test('kernel relay: quickjs fs/write + fs/read round-trips binary bytes byte-exact', async () => {
+  const qjsRt = await QuickJSRuntime.create();
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = new Kernel({ runtime: qjsRt, vfs, relayLauncher: new QuickJSGuestLauncher(qjsRt) });
+
+  // 0x00, 0x7F, 0x80, 0xFF, and the UTF-8 bytes of '€' (0xE2,0x82,0xAC) + 'A'.
+  const bytes = [0, 0x7f, 0x80, 0xff, 0xe2, 0x82, 0xac, 65];
+
+  const code = `
+    const bytes = new Uint8Array([${bytes.join(',')}]);
+    const { fd } = __mithic_syscall('fs/open', { path: '/bin.dat', oflags: { create: true, write: true, truncate: true } });
+    __mithic_syscall('fs/write', { fd, data: bytes, offset: 0 });
+    __mithic_syscall('fs/close', { fd });
+    const { fd: rfd } = __mithic_syscall('fs/open', { path: '/bin.dat', oflags: { read: true } });
+    const r = __mithic_syscall('fs/read', { fd: rfd, len: 4096 });
+    const data = Array.isArray(r) ? r : (r && r.data ? r.data : (r && typeof r === 'object' ? Object.keys(r).map(function(k){return r[k];}) : []));
+    __mithic_syscall('fs/close', { fd: rfd });
+    __mithic_syscall('pipe/write', { fd: 1, data: 'bytes:' + Array.prototype.join.call(data, ',') + '|isArray:' + Array.isArray(r) });
+    __mithic_syscall('process/exit', { code: 0 });
+  `;
+
+  const { pid, stdout } = await kernel.spawn(code, {
+    args: ['prog'],
+    capabilities: [{ type: 'fs', paths: ['/'], operations: ['read', 'write'] }],
+    captureStdout: true,
+  });
+
+  expect((await kernel.wait(pid)).code).toBe(0);
+  // `isArray:true` guards the READ direction independently: the read serializer
+  // (quickjs jsonToHandle) must deliver a real number[] to the guest. Without the
+  // fix the host Uint8Array is mangled to `{0:..}` — the guest's defensive
+  // Object.keys fallback would still reconstruct the byte values, so assert on the
+  // raw result shape so a read-serializer revert goes RED here, not only in the
+  // dedicated backend serializer test.
+  expect(new TextDecoder().decode(await stdout!)).toBe('bytes:' + bytes.join(',') + '|isArray:true');
+  // The bytes actually landed in the VFS byte-exact (not just echoed).
+  const h = await vfs.open('/bin.dat', { read: true });
+  const stored = await vfs.read(h, 0, 4096);
+  await vfs.close(h);
+  expect(Array.from(stored)).toEqual(bytes);
+}, 15000);
+
+/** BYTE-LOSS edge: an empty read at EOF yields zero bytes (not a mangled object). */
+test('kernel relay: quickjs fs/read at EOF returns an empty chunk', async () => {
+  const qjsRt = await QuickJSRuntime.create();
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = new Kernel({ runtime: qjsRt, vfs, relayLauncher: new QuickJSGuestLauncher(qjsRt) });
+
+  const code = `
+    const { fd } = __mithic_syscall('fs/open', { path: '/empty.dat', oflags: { create: true, write: true, truncate: true } });
+    __mithic_syscall('fs/close', { fd });
+    const { fd: rfd } = __mithic_syscall('fs/open', { path: '/empty.dat', oflags: { read: true } });
+    const r = __mithic_syscall('fs/read', { fd: rfd, len: 4096 });
+    const data = Array.isArray(r) ? r : (r && r.data ? r.data : (r && typeof r === 'object' ? Object.keys(r).map(function(k){return r[k];}) : []));
+    __mithic_syscall('fs/close', { fd: rfd });
+    __mithic_syscall('pipe/write', { fd: 1, data: 'len:' + data.length });
+    __mithic_syscall('process/exit', { code: 0 });
+  `;
+
+  const { pid, stdout } = await kernel.spawn(code, {
+    args: ['prog'],
+    capabilities: [{ type: 'fs', paths: ['/'], operations: ['read', 'write'] }],
+    captureStdout: true,
+  });
+  expect((await kernel.wait(pid)).code).toBe(0);
+  expect(new TextDecoder().decode(await stdout!)).toBe('len:0');
+}, 15000);
+
+/**
+ * BYTE-LOSS edge (large): a file bigger than one guest READ_CHUNK_BYTES must
+ * still round-trip byte-exact. Here the guest writes a large high-byte pattern in
+ * one fs/write then reads it back in a loop until EOF, asserting the running
+ * checksum + length so a single dropped/duplicated byte fails the test.
+ */
+test('kernel relay: quickjs fs/read spans multiple chunks byte-exact (large high-byte file)', async () => {
+  const qjsRt = await QuickJSRuntime.create();
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  const kernel = new Kernel({ runtime: qjsRt, vfs, relayLauncher: new QuickJSGuestLauncher(qjsRt) });
+
+  const total = 200_000; // > INITIAL_CREDIT_BYTES (64 KiB) READ_CHUNK boundary
+  // Deterministic pattern: byte i = (i * 31 + 7) & 0xff — spans 0..255 incl. high bytes + NUL.
+  let expectedSum = 0;
+  for (let i = 0; i < total; i++) expectedSum += (i * 31 + 7) & 0xff;
+
+  const code = `
+    const N = ${total};
+    const buf = new Uint8Array(N);
+    for (let i = 0; i < N; i++) buf[i] = (i * 31 + 7) & 0xff;
+    const { fd } = __mithic_syscall('fs/open', { path: '/big.dat', oflags: { create: true, write: true, truncate: true } });
+    __mithic_syscall('fs/write', { fd, data: buf, offset: 0 });
+    __mithic_syscall('fs/close', { fd });
+    const { fd: rfd } = __mithic_syscall('fs/open', { path: '/big.dat', oflags: { read: true } });
+    let sum = 0, count = 0;
+    for (;;) {
+      const r = __mithic_syscall('fs/read', { fd: rfd, len: 65536 });
+      const data = Array.isArray(r) ? r : (r && r.data ? r.data : (r && typeof r === 'object' ? Object.keys(r).map(function(k){return r[k];}) : []));
+      if (data.length === 0) break;
+      for (let i = 0; i < data.length; i++) { sum += data[i]; count++; }
+    }
+    __mithic_syscall('fs/close', { fd: rfd });
+    __mithic_syscall('pipe/write', { fd: 1, data: 'count=' + count + ',sum=' + sum });
+    __mithic_syscall('process/exit', { code: 0 });
+  `;
+
+  const { pid, stdout } = await kernel.spawn(code, {
+    args: ['prog'],
+    capabilities: [{ type: 'fs', paths: ['/'], operations: ['read', 'write'] }],
+    captureStdout: true,
+  });
+  expect((await kernel.wait(pid)).code).toBe(0);
+  expect(new TextDecoder().decode(await stdout!)).toBe(`count=${total},sum=${expectedSum}`);
+}, 30000);

@@ -68,6 +68,31 @@ test('B2: Response.arrayBuffer() yields the raw bytes', async () => {
   expect(new Uint8Array(ab)).toEqual(bytes);
 });
 
+// BYTE-LOSS regression (relay decode): on the QuickJS/isolated-vm relay path a
+// net/fetch buffered body Uint8Array does not survive the JSON round-trip — the
+// kernel's bytes arrive at the guest as a plain number[] (the serializer's
+// Array.from form; matching fs/read). buildResponse must decode a number[] body
+// to byte-exact bytes; passing the number[] straight to `new Response()` would
+// coerce it to the string "104,105,..." and corrupt every byte.
+test('BYTE-LOSS: a relay-style number[] body is decoded byte-exact (not stringified)', async () => {
+  const bytes = [104, 105, 0, 0x80, 0xff, 0xe2, 0x82, 0xac];
+  const relay: SyscallResult = { result: { status: 200, headers: [], body: bytes }, ports: [] };
+  const fetch = createFetch(async (call) => {
+    if (call !== 'net/fetch') throw new Error(`unexpected: ${call}`);
+    return relay;
+  });
+
+  const res = await fetch('http://x/blob');
+  expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array(bytes));
+});
+
+test('BYTE-LOSS: a relay-style empty number[] body yields a zero-length body', async () => {
+  const relay: SyscallResult = { result: { status: 200, headers: [], body: [] }, ports: [] };
+  const fetch = createFetch(async () => relay);
+  const res = await fetch('http://x/empty');
+  expect((await res.arrayBuffer()).byteLength).toBe(0);
+});
+
 test('B2: a Request object is accepted as input', async () => {
   const { syscall, calls } = fakeSyscall(() => ({ status: 200, headers: [], body: enc.encode('hi') }));
   const fetch = createFetch(syscall);

@@ -144,7 +144,8 @@ non-zero (a plain program error is not a limit hit).
 npm test    # vitest — exercises the Hono app via app.request() (no socket)
 ```
 
-> **Note:** warm-VM pooling is not yet implemented. Each request currently
-> creates a fresh `QuickJSRuntime`; the WASM module is loaded once and shared, so
-> per-request overhead is a new QuickJS runtime + context. (Binary / streaming
-> stdin upload — beyond the in-body UTF-8 `stdin` string — is also future work.)
+> **Note:** warm-VM pooling is not yet implemented. Each request currently calls
+> `QuickJSRuntime.create()`, which compiles a fresh WASM module (per request — the
+> module is not shared across calls), so per-request overhead is a new WASM module
+> + QuickJS runtime + context. (Binary / streaming stdin upload — beyond the
+> in-body UTF-8 `stdin` string — is also future work.)

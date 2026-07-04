@@ -717,17 +717,24 @@ export class SyscallDispatcher {
       if (code === undefined) {
         return fail(id, 'ENOENT', `command not found: ${path}`);
       }
-      // D8: an fd-0 stdin source (a `<` open / `<<`/`<<<` bytes). Validate a
-      // `bytes` action's data at the boundary (EINVAL) before it reaches the pump.
+      // D8: an fd-0 stdin source (a `<` open / `<<`/`<<<` bytes). A `bytes`
+      // action's data is a guest Uint8Array; on the relay path it degrades to a
+      // number[] / numeric-keyed object, so coerce it back to a tight Uint8Array
+      // before it reaches the pump (EINVAL only when it is not bytes at all) —
+      // mirroring parseFsWrite/parseFsSetxattr.
       let fds: Record<number, FdAction> | undefined;
       if (r.fds !== undefined) {
         if (typeof r.fds !== 'object' || r.fds === null) {
           return fail(id, 'EINVAL', 'process/pipeline: fds must be an object keyed by fd');
         }
         for (const action of Object.values(r.fds as Record<number, unknown>)) {
-          if ((action as { action?: string })?.action === 'bytes'
-            && !((action as { data?: unknown }).data instanceof Uint8Array)) {
-            return fail(id, 'EINVAL', 'process/pipeline: bytes fd action data must be a Uint8Array');
+          if ((action as { action?: string })?.action === 'bytes') {
+            const a = action as { data?: unknown };
+            const bytes = coerceRelayBytes(a.data);
+            if (!bytes) {
+              return fail(id, 'EINVAL', 'process/pipeline: bytes fd action data must be a Uint8Array');
+            }
+            a.data = bytes;
           }
         }
         fds = r.fds as Record<number, FdAction>;
@@ -1626,12 +1633,60 @@ function parseFsRead(args: Record<string, unknown>): SyscallArgs<'fs/read'> {
 }
 
 function parseFsWrite(args: Record<string, unknown>): SyscallArgs<'fs/write'> {
-  const data = args.data;
-  if (!(data instanceof Uint8Array) && !(data instanceof ArrayBuffer) && typeof data !== 'string') {
-    throw new MalformedArgsError('write data must be bytes or a string');
-  }
+  // A guest passes `data` as a Uint8Array. On the relay path (QuickJS/isolated-vm)
+  // that Uint8Array crosses the JSON boundary as a plain number[] or a numeric-keyed
+  // object ({0:b0,1:b1,...}) — neither is an instanceof Uint8Array. Coerce those
+  // byte forms to a tight Uint8Array here (mirroring the pipe/write relay tolerance)
+  // so binary writes survive on non-transferable backends.
+  const data = coerceWriteData(args.data);
   const out: SyscallArgs<'fs/write'> = { fd: reqFd(args), data };
   if (typeof args.offset === 'number') out.offset = args.offset;
+  return out;
+}
+
+/**
+ * Coerce an `fs/write` `data` argument to a Uint8Array/ArrayBuffer/string. Accepts
+ * the relay-serialized byte forms (a number[] or a numeric-keyed byte object) that
+ * a guest's Uint8Array degrades to when it crosses the QuickJS/ivm JSON boundary.
+ */
+function coerceWriteData(data: unknown): Uint8Array | ArrayBuffer | string {
+  if (data instanceof Uint8Array || data instanceof ArrayBuffer || typeof data === 'string') return data;
+  const bytes = coerceRelayBytes(data);
+  if (bytes) return bytes;
+  throw new MalformedArgsError('write data must be bytes or a string');
+}
+
+/**
+ * Coerce a relay-degraded BYTES argument to a Uint8Array, or undefined if the
+ * value is not a byte payload. On the relay path (QuickJS/isolated-vm) a guest's
+ * Uint8Array crosses the JSON boundary as a plain number[] or a numeric-keyed
+ * object ({0:b0,1:b1,...}); on the transferable path it stays a real Uint8Array
+ * (returned as-is). Used by every syscall arg parser that accepts guest bytes
+ * (fs/write, fs/setxattr, net/fetch body) so binary survives on all backends.
+ */
+function coerceRelayBytes(value: unknown): Uint8Array | undefined {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (Array.isArray(value)) return Uint8Array.from(value as number[]);
+  return numericKeyedToBytes(value);
+}
+
+/**
+ * Reconstruct a Uint8Array from a numeric-keyed byte object ({0:b0,1:b1,...}) — the
+ * degraded form a relay backend's JSON round-trip produces for a guest Uint8Array.
+ * Returns undefined if `o` is not a dense, contiguous 0-based numeric-keyed object.
+ */
+function numericKeyedToBytes(o: unknown): Uint8Array | undefined {
+  if (!o || typeof o !== 'object') return undefined;
+  const rec = o as Record<string, unknown>;
+  const keys = Object.keys(rec);
+  const n = keys.length;
+  const out = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const v = rec[String(i)];
+    if (typeof v !== 'number') return undefined;
+    out[i] = v;
+  }
   return out;
 }
 
@@ -1664,8 +1719,11 @@ function parseFsXattrName(args: Record<string, unknown>): SyscallArgs<'fs/getxat
 
 function parseFsSetxattr(args: Record<string, unknown>): SyscallArgs<'fs/setxattr'> {
   if (typeof args.name !== 'string') throw new MalformedArgsError('xattr name must be a string');
-  if (!(args.value instanceof Uint8Array)) throw new MalformedArgsError('xattr value must be bytes');
-  return { path: reqPath(args), name: args.name, value: args.value };
+  // The guest passes a Uint8Array value; on the relay path it degrades to a
+  // number[] / numeric-keyed object — coerce it back so setcap works everywhere.
+  const value = coerceRelayBytes(args.value);
+  if (!value) throw new MalformedArgsError('xattr value must be bytes');
+  return { path: reqPath(args), name: args.name, value };
 }
 
 function parseFsUtimes(args: Record<string, unknown>): SyscallArgs<'fs/utimes'> {
@@ -1709,9 +1767,16 @@ function parsePipeRead(args: Record<string, unknown>): SyscallArgs<'pipe/read'> 
 }
 
 function parsePipeWrite(args: Record<string, unknown>): SyscallArgs<'pipe/write'> {
-  const data = args.data;
+  let data = args.data;
+  // Uint8Array / number[] / string pass through; a relay-degraded Uint8Array
+  // (numeric-keyed object) is coerced back to bytes — consistent with the other
+  // byte-bearing parsers so binary survives on non-transferable backends.
   if (!(data instanceof Uint8Array) && !Array.isArray(data) && typeof data !== 'string') {
-    throw new MalformedArgsError('pipe/write data must be bytes, a number[], or a string');
+    const bytes = numericKeyedToBytes(data);
+    if (!bytes) {
+      throw new MalformedArgsError('pipe/write data must be bytes, a number[], or a string');
+    }
+    data = bytes;
   }
   return { fd: reqFd(args), data: data as Uint8Array | number[] | string };
 }
@@ -1726,11 +1791,12 @@ interface NetFetchParsed {
 }
 
 function parseNetFetch(args: Record<string, unknown>): NetFetchParsed {
-  let body: Uint8Array | undefined;
+  // A guest may set body as a Uint8Array (relay path degrades it to number[] /
+  // numeric-keyed object) or a string; anything else means no body.
   const rawBody = args.body;
-  if (rawBody instanceof Uint8Array) body = rawBody;
-  else if (rawBody instanceof ArrayBuffer) body = new Uint8Array(rawBody);
-  else if (typeof rawBody === 'string') body = new TextEncoder().encode(rawBody);
+  const body = typeof rawBody === 'string'
+    ? new TextEncoder().encode(rawBody)
+    : coerceRelayBytes(rawBody);
   return {
     method: typeof args.method === 'string' ? args.method : 'GET',
     url: typeof args.url === 'string' ? args.url : '',

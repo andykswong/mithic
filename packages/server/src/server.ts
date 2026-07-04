@@ -17,10 +17,11 @@
  * ## Pool
  *
  * TODO (Open Question 4): pool warm QuickJS VMs to amortise the WASM module load
- * cost. Currently each /exec request creates a fresh QuickJSRuntime.create() call.
- * QuickJSRuntime.create() shares the WASM module instance (it's loaded once), so
- * the overhead per request is a new QJS runtime + context, which is cheap — but
- * pooling idle VMs would still improve tail latency for burst traffic.
+ * cost. Currently each /exec request creates a fresh QuickJSRuntime.create() call,
+ * which compiles a new WASM module per request (the module is not shared across
+ * calls), so the overhead per request is a new WASM module + QJS runtime + context.
+ * Pooling idle VMs (or sharing one compiled module) would improve tail latency for
+ * burst traffic.
  *
  * ## Limits validation
  *

@@ -323,6 +323,52 @@ test('Q1: writePath/readPath round-trip bytes by absolute path', async () => {
   expect(Array.from(await readPath(g, '/a.bin'))).toEqual([0, 255, 128]);
 });
 
+// BYTE-LOSS regression (relay decode): on the QuickJS/isolated-vm relay path a
+// Uint8Array does not survive the JSON round-trip — the kernel's fs/read bytes
+// arrive as a plain number[] (or a {data:number[]} wrapper). The façade must decode
+// both to a byte-exact Uint8Array, in addition to the transferable Uint8Array form.
+test('BYTE-LOSS: readPath decodes a relay-style fs/read number[] result byte-exact', async () => {
+  const bytes = [0, 0x7f, 0x80, 0xff, 0xe2, 0x82, 0xac, 65];
+  let served = false;
+  const relaySyscall: SyscallHook = async (call) => {
+    switch (call) {
+      case 'fs/stat': return { type: 'file', size: bytes.length };
+      case 'fs/open': return { fd: 3 };
+      // Relay backends serialize bytes as a plain number[] (not a Uint8Array).
+      case 'fs/read': {
+        if (served) return []; // EOF: empty array
+        served = true;
+        return bytes.slice();
+      }
+      case 'fs/close': return {};
+      default: throw new Error(`unexpected: ${call}`);
+    }
+  };
+  const g = guestStub(relaySyscall, '/');
+  expect(Array.from(await readPath(g, '/a.bin'))).toEqual(bytes);
+});
+
+test('BYTE-LOSS: readPath decodes a relay-style {data:number[]} fs/read result byte-exact', async () => {
+  const bytes = [0, 0x7f, 0x80, 0xff, 65];
+  let served = false;
+  const relaySyscall: SyscallHook = async (call) => {
+    switch (call) {
+      case 'fs/stat': return { type: 'file', size: bytes.length };
+      case 'fs/open': return { fd: 3 };
+      case 'fs/read': {
+        // First read returns the wrapped byte array; second is EOF (empty).
+        if (served) return { data: [] };
+        served = true;
+        return { data: bytes.slice() };
+      }
+      case 'fs/close': return {};
+      default: throw new Error(`unexpected: ${call}`);
+    }
+  };
+  const g = guestStub(relaySyscall, '/');
+  expect(Array.from(await readPath(g, '/a.bin'))).toEqual(bytes);
+});
+
 test('Q1: writePath/readPath resolve a relative path against cwd', async () => {
   const { syscall, tree } = mockFs();
   tree.set('/work', { type: 'directory' });
