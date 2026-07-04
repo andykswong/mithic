@@ -54,3 +54,37 @@ test('data: Worker origin: opaque(null) when kDataUrlWorkerOpaqueOrigin is activ
   }
   rt.dispose(handle);
 }, 10000);
+
+// ACCEPTED RESIDUAL (spec §3.5a): a null-origin Worker still holds fetch/WebSocket/EventSource/
+// sendBeacon and can spawn a nested worker with fresh network globals. This is NOT a bug fixed
+// here — it is a regression-guard that the residual is UNDERSTOOD. The "network is only net/fetch"
+// invariant holds on the IFRAME (connect-src 'none'), NOT the Worker. When worker-in-iframe lands
+// (§3.5a / §11 / TODO G6-worker-outbound), FLIP these to block-assertions. Do NOT "fix" this by
+// reverting to a same-origin/host-minted-blob: worker — that reintroduces the §3.5 inbound vuln.
+test('DOCUMENTED residual: null-origin Worker retains network globals + nested worker (§3.5a)', async () => {
+  const rt = new WorkerRuntime();
+  const ch = new MessageChannel();
+  const code = /* js */`
+    globalThis.__mithic_default = (boot) => {
+      const present = {
+        fetch: typeof fetch === 'function',
+        WebSocket: typeof WebSocket === 'function',
+        EventSource: typeof EventSource === 'function',
+        importScripts: typeof importScripts === 'function',
+        Worker: typeof Worker === 'function',
+      };
+      boot.control.postMessage({ id: 3, call: 'residual', args: present });
+    };
+  `;
+  const received: unknown[] = [];
+  ch.port1.onmessage = (e) => received.push(e.data);
+  ch.port1.start?.();
+  const handle = await rt.spawn(code, { init: baseInit(4), transfer: [ch.port2] });
+  await new Promise<void>((r) => setTimeout(r, 500));
+  const msg = received.find((m) => (m as { call?: string })?.call === 'residual') as { args: Record<string, boolean> } | undefined;
+  expect(msg).toBeDefined();
+  // These are TRUE today (accepted residual). This test EXISTS to make that explicit.
+  expect(msg!.args.fetch).toBe(true);
+  expect(msg!.args.Worker).toBe(true);
+  rt.dispose(handle);
+}, 10000);
