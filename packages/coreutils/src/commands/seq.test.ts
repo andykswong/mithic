@@ -286,6 +286,31 @@ describe('applySeqFormat', () => {
   test('%+.1f negative keeps minus', () => expect(applySeqFormat('%+.1f', -1)).toBe('-1.0'));
   test('%+05.1f sign takes a column', () => expect(applySeqFormat('%+05.1f', 1)).toBe('+01.0'));
   test('%+05.1f negative zero-pad after minus', () => expect(applySeqFormat('%+05.1f', -1)).toBe('-01.0'));
+
+  // ── M2: round-half-to-EVEN for %f/%e/%E (matches GNU/C, not JS toFixed) ──
+  test('%.0f 2.5 → 2 (tie to even)', () => expect(applySeqFormat('%.0f', 2.5)).toBe('2'));
+  test('%.0f 3.5 → 4 (tie to even)', () => expect(applySeqFormat('%.0f', 3.5)).toBe('4'));
+  test('%.0f -2.5 → -2 (tie to even)', () => expect(applySeqFormat('%.0f', -2.5)).toBe('-2'));
+  test('%.0f 0.5 → 0 (tie to even)', () => expect(applySeqFormat('%.0f', 0.5)).toBe('0'));
+  test('%.1f 0.25 → 0.2 (tie to even)', () => expect(applySeqFormat('%.1f', 0.25)).toBe('0.2'));
+  test('%.0f 1.5 → 2 (non-boundary still correct)', () => expect(applySeqFormat('%.0f', 1.5)).toBe('2'));
+  test('%.0f 2.4 → 2 (non-tie down)', () => expect(applySeqFormat('%.0f', 2.4)).toBe('2'));
+  test('%.0f 2.6 → 3 (non-tie up)', () => expect(applySeqFormat('%.0f', 2.6)).toBe('3'));
+  test('%f default 6 digits still correct', () => expect(applySeqFormat('%f', 2.5)).toBe('2.500000'));
+  test('%.0e 2.5 → 2e+00 (tie to even)', () => expect(applySeqFormat('%.0e', 2.5)).toBe('2e+00'));
+  test('%.3e 12345 → 1.234e+04 (tie to even)', () => expect(applySeqFormat('%.3e', 12345)).toBe('1.234e+04'));
+  test('%e exponent zero-padding preserved', () => expect(applySeqFormat('%e', 1000000)).toBe('1.000000e+06'));
+  test('%.0g 2.5 → 2 (tie to even)', () => expect(applySeqFormat('%.0g', 2.5)).toBe('2'));
+
+  // ── L2: %g/%G C rules — scientific when exp < -4 or >= precision, strip zeros ──
+  test('%g 1000000 → 1e+06', () => expect(applySeqFormat('%g', 1000000)).toBe('1e+06'));
+  test('%g 0.00001 → 1e-05', () => expect(applySeqFormat('%g', 0.00001)).toBe('1e-05'));
+  test('%.3g 12345 → 1.23e+04', () => expect(applySeqFormat('%.3g', 12345)).toBe('1.23e+04'));
+  test('%g 100000 stays fixed', () => expect(applySeqFormat('%g', 100000)).toBe('100000'));
+  test('%g 0.0001 stays fixed', () => expect(applySeqFormat('%g', 0.0001)).toBe('0.0001'));
+  test('%g strips trailing zeros (1.5)', () => expect(applySeqFormat('%g', 1.5)).toBe('1.5'));
+  test('%g integer value (3)', () => expect(applySeqFormat('%g', 3)).toBe('3'));
+  test('%G uppercases exponent', () => expect(applySeqFormat('%G', 1000000)).toBe('1E+06'));
 });
 
 describe('parseSeqNumber', () => {

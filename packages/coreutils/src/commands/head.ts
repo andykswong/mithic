@@ -19,7 +19,7 @@
  * The negative forms (`-c -N` / `-n -N`) are inherently whole-input (you cannot
  * know the last N until EOF), so they buffer with the shared byte cap.
  */
-import { defineCommand, parseArgs, readAll, writeBytes, writeString, exitWith, fsErrorText } from '../harness.ts';
+import { defineCommand, parseArgs, readAll, writeBytes, writeString, exitWith, optionError, fsErrorText } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 const LIMIT = -1; // sentinel: a limit was reached, stop reading
@@ -238,11 +238,13 @@ const headCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const name = io.args[0] ?? 'head';
   const { filtered, legacyN } = extractLegacy(rawArgs);
 
-  const { positionals, flags } = parseArgs(filtered, {
+  const parsed = parseArgs(filtered, {
     string: ['n', 'c', 'lines', 'bytes'],
-    boolean: ['q', 'v', 'quiet', 'silent', 'verbose'],
-    alias: { lines: 'n', bytes: 'c', quiet: 'q', silent: 'q', verbose: 'v' },
+    boolean: ['q', 'v', 'z', 'quiet', 'silent', 'verbose', 'zero-terminated'],
+    alias: { lines: 'n', bytes: 'c', quiet: 'q', silent: 'q', verbose: 'v', 'zero-terminated': 'z' },
+    unknown: 'error',
   });
+  const { positionals, flags } = parsed;
 
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
@@ -251,6 +253,7 @@ const headCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   let stdinHitLimit = false;
 
   try {
+    if (parsed.unknown.length) return await exitWith(err, 1, optionError(name, parsed.unknown[0]));
     // GNU is last-wins when both `-c` and `-n` are supplied; otherwise byte mode
     // iff `-c` is present at all.
     const last = lastCountFlag(filtered);

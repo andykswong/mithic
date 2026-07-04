@@ -17,7 +17,7 @@
  *   -z / --zero-terminated  NUL line delimiter
  *   FILE                    input file (default/`-` = stdin) unless -e/-i
  */
-import { defineCommand, parseArgs, readAll, exitWith, fsErrorText } from '../harness.ts';
+import { defineCommand, parseArgs, readAll, exitWith, optionError, fsErrorText } from '../harness.ts';
 import { readFile, writeFile } from '../fs.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
@@ -64,15 +64,18 @@ function splitRecords(bytes: Uint8Array, zero: boolean): string[] {
 
 const shufCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const name = io.args[0] ?? 'shuf';
-  const { positionals, flags } = parseArgs(io.args.slice(1), {
+  const parsed = parseArgs(io.args.slice(1), {
     boolean: ['e', 'echo', 'r', 'repeat', 'z', 'zero-terminated'],
     string: ['n', 'head-count', 'i', 'input-range', 'o', 'output', 'random-source'],
     alias: { echo: 'e', 'head-count': 'n', 'input-range': 'i', 'zero-terminated': 'z', repeat: 'r', output: 'o' },
+    unknown: 'error',
   });
+  const { positionals, flags } = parsed;
 
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
   try {
+    if (parsed.unknown.length) return await exitWith(err, 1, optionError(name, parsed.unknown[0]));
     // GNU rejects a REPEATED -i/--input-range (parseArgs would silently last-win).
     let iCount = 0;
     const raw = io.args.slice(1);
@@ -124,7 +127,9 @@ const shufCommand: CommandFn = async (io: CommandIO): Promise<number> => {
       const m = /^(\d+)-(\d+)$/.exec(String(flags.i));
       if (!m) return await exitWith(err, 1, `${name}: invalid input range: ‘${flags.i}’`);
       const lo = parseInt(m[1], 10), hi = parseInt(m[2], 10);
-      if (lo > hi) return await exitWith(err, 1, `${name}: invalid input range: ‘${flags.i}’`);
+      // GNU treats HI == LO-1 as an EMPTY range (exit 0, no output); only HI < LO-1
+      // is a hard error.
+      if (lo > hi + 1) return await exitWith(err, 1, `${name}: invalid input range: ‘${flags.i}’`);
       lines = [];
       for (let x = lo; x <= hi; x++) lines.push(String(x));
     } else {

@@ -1,6 +1,6 @@
 import { expect, test, describe } from 'vitest';
 import { printfCommand } from './printf.ts';
-import { sprintfAll } from './printf.ts';
+import { sprintfAll, sprintfFull } from './printf.ts';
 import type { CommandIO } from '../harness.ts';
 
 function makeIO(args: string[]) {
@@ -150,6 +150,85 @@ describe('sprintfAll', () => {
   test('%x above INTMAX_MAX accepted', () => {
     expect(sprintfAll('%x', ['9223372036854775808'])).toBe('8000000000000000');
   });
+
+  // ── M1: FORMAT-string \xHH hex escapes (GNU handles these in the format too) ──
+  test('format \\x41\\x42 → AB', () => expect(sprintfAll('\\x41\\x42\\n', [])).toBe('AB\n'));
+  test('format \\x0a → newline', () => expect(sprintfAll('\\x0a', [])).toBe('\n'));
+  test('format \\x9 (1 hex digit) → tab', () => expect(sprintfAll('\\x9', [])).toBe('\t'));
+  test('format \\xff → byte 0xff', () => expect(sprintfAll('\\xff', [])).toBe('\xff'));
+
+  // ── DEFECT 7: \x with zero hex digits is a GNU error (not literal \x) ──
+  test('format \\x with no hex digit → error, no output', () => {
+    const r = sprintfFull('\\x', []);
+    expect(r.text).toBe('');
+    expect(r.truncated).toBe(true);
+    expect(r.diags.some((d) => d.message.includes('missing hexadecimal number in escape'))).toBe(true);
+  });
+  test('format a\\x → emits "a" then errors', () => {
+    const r = sprintfFull('a\\x', []);
+    expect(r.text).toBe('a');
+    expect(r.diags.some((d) => d.message.includes('missing hexadecimal number in escape'))).toBe(true);
+  });
+  test('format X\\xgY → emits "X" then errors (stops before g)', () => {
+    const r = sprintfFull('X\\xgY', []);
+    expect(r.text).toBe('X');
+    expect(r.truncated).toBe(true);
+    expect(r.diags.some((d) => d.message.includes('missing hexadecimal number in escape'))).toBe(true);
+  });
+
+  // ── DEFECT P1: \x with no hex digit is a GNU error in %b args too ──
+  test('%b a\\x → emits "a" then errors (missing hex)', () => {
+    const r = sprintfFull('%b', ['a\\x']);
+    expect(r.text).toBe('a');
+    expect(r.truncated).toBe(true);
+    expect(r.diags.some((d) => d.message.includes('missing hexadecimal number in escape'))).toBe(true);
+  });
+  test('%b a\\xgb → emits "a" then errors (stops before g)', () => {
+    const r = sprintfFull('%b', ['a\\xgb']);
+    expect(r.text).toBe('a');
+    expect(r.truncated).toBe(true);
+    expect(r.diags.some((d) => d.message.includes('missing hexadecimal number in escape'))).toBe(true);
+  });
+  test('%b a\\x1 → 0x01 control preserved', () => expect(sprintfAll('%b', ['a\\x1'])).toBe('a\x01'));
+  test('%b a\\x41 → aA control preserved', () => expect(sprintfAll('%b', ['a\\x41'])).toBe('aA'));
+
+  // ── L1: %q shell-quote conversion (matches GNU printf %q) ──
+  test('%q empty → \'\'', () => expect(sprintfAll('%q\n', [''])).toBe('\'\'\n'));
+  test('%q plain word unquoted', () => expect(sprintfAll('%q\n', ['plain'])).toBe('plain\n'));
+  test('%q space → single-quoted', () => expect(sprintfAll('%q\n', ['a b'])).toBe('\'a b\'\n'));
+  test('%q dollar → single-quoted', () => expect(sprintfAll('%q\n', ['a$b'])).toBe('\'a$b\'\n'));
+  test('%q double-quote → single-quoted', () => expect(sprintfAll('%q\n', ['a"b'])).toBe('\'a"b\'\n'));
+  test('%q single-quote only → double-quoted', () => expect(sprintfAll('%q\n', ['a\'b'])).toBe('"a\'b"\n'));
+  test('%q single-quote + metachar → escaped single-quote', () =>
+    expect(sprintfAll('%q', ['a=\'b'])).toBe('\'a=\'\\\'\'b\''));
+  test('%q single-quote + double-quote → escaped single-quote', () =>
+    expect(sprintfAll('%q', ['a\'b"c'])).toBe('\'a\'\\\'\'b"c\''));
+  test('%q newline → $\'\\n\' mixed form', () =>
+    expect(sprintfAll('%q', ['a\nb'])).toBe('\'a\'$\'\\n\'\'b\''));
+  test('%q tab → $\'\\t\' mixed form', () =>
+    expect(sprintfAll('%q', ['a\tb'])).toBe('\'a\'$\'\\t\'\'b\''));
+  test('%q leading control → \'\'$\'\\001\'', () =>
+    expect(sprintfAll('%q', ['\x01'])).toBe('\'\'$\'\\001\''));
+  test('%q DEL byte → octal escape', () =>
+    expect(sprintfAll('%q', ['a\x7fb'])).toBe('\'a\'$\'\\177\'\'b\''));
+  test('%q leading # quoted', () => expect(sprintfAll('%q', ['#ab'])).toBe('\'#ab\''));
+  test('%q non-leading # bare', () => expect(sprintfAll('%q', ['a#b'])).toBe('a#b'));
+  test('%q leading ~ quoted', () => expect(sprintfAll('%q', ['~ab'])).toBe('\'~ab\''));
+  test('%q non-leading ~ bare', () => expect(sprintfAll('%q', ['a~b'])).toBe('a~b'));
+  test('%q = always quoted', () => expect(sprintfAll('%q', ['a=b'])).toBe('\'a=b\''));
+  test('%q standalone { quoted', () => expect(sprintfAll('%q', ['{'])).toBe('\'{\''));
+  test('%q { in longer string bare', () => expect(sprintfAll('%q', ['a{b'])).toBe('a{b'));
+  test('%q backslash quoted', () => expect(sprintfAll('%q', ['a\\b'])).toBe('\'a\\b\''));
+  test('%q repeats over multiple args', () =>
+    expect(sprintfAll('%q\n', ['a b', 'c d'])).toBe('\'a b\'\n\'c d\'\n'));
+  test('%q consumes exactly one arg (no format doubling)', () =>
+    expect(sprintfAll('[%q]', ['x'])).toBe('[x]'));
+
+  // ── DEFECT 8: %q escapes UTF-8 BYTES (LC_ALL=C), not JS UTF-16 code units ──
+  test('%q multibyte café → UTF-8 byte octals', () =>
+    expect(sprintfAll('%q', ['café'])).toBe('\'caf\'$\'\\303\\251\''));
+  test('%q astral emoji → 4 UTF-8 byte octals', () =>
+    expect(sprintfAll('%q', ['😀'])).toBe('\'\'$\'\\360\\237\\230\\200\''));
 });
 
 describe('printf command', () => {

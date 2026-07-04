@@ -53,7 +53,7 @@ const realpathCommand: CommandFn = async (io: CommandIO): Promise<number> => {
 
     for (const p of parsed.positionals) {
       try {
-        const resolved = await canonicalize(io, normalize(absolutize(p, io.cwd)), mode);
+        const resolved = await canonicalize(io, absolutize(p, io.cwd), mode);
         let display = resolved;
         // --relative-base: only relativize when `resolved` is inside the base.
         const inBase = canonBase === undefined || isWithin(resolved, canonBase);

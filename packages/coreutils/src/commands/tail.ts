@@ -11,7 +11,7 @@
  * Not supported: `-f` (follow). tail reads to EOF and exits; there is no
  * streaming follow mode in a one-shot sandboxed process.
  */
-import { defineCommand, parseArgs, writeBytes, writeString, exitWith, fsErrorText } from '../harness.ts';
+import { defineCommand, parseArgs, writeBytes, writeString, exitWith, optionError, fsErrorText } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 /** Canonical POSIX errno text for an `fs/*` failure (see head.ts for rationale). */
@@ -268,6 +268,32 @@ function lastCountFlag(args: string[]): 'c' | 'n' | undefined {
   return last;
 }
 
+/**
+ * Whether ANY occurrence of a `-c`/`-n`/`--bytes`/`--lines` count carried a
+ * leading `+` (from-start). GNU's `+` mode is STICKY across repeated count flags
+ * — parseArgs collapses repeats to the last value and loses an earlier `+`, so
+ * scan the (legacy-filtered) argv directly. Returns true iff any count value
+ * begins with `+`.
+ */
+function anyCountPlus(args: string[]): boolean {
+  const isPlus = (v: string | undefined): boolean => v !== undefined && v.trimStart().startsWith('+');
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--') break;
+    if (a === '-c' || a === '-n' || a === '--bytes' || a === '--lines') {
+      if (isPlus(args[i + 1])) return true;
+      if (args[i + 1] !== undefined) i++;
+      continue;
+    }
+    if (a.startsWith('--bytes=')) { if (isPlus(a.slice('--bytes='.length))) return true; continue; }
+    if (a.startsWith('--lines=')) { if (isPlus(a.slice('--lines='.length))) return true; continue; }
+    if ((a.startsWith('-c') || a.startsWith('-n')) && !a.startsWith('--') && a.length > 2) {
+      if (isPlus(a.slice(2))) return true;
+    }
+  }
+  return false;
+}
+
 function tailLines(bytes: Uint8Array, spec: CountSpec): Uint8Array {
   // Offsets where each line starts (byte after each \n, plus 0).
   const starts: number[] = [0];
@@ -299,11 +325,13 @@ function tailBytes(bytes: Uint8Array, spec: CountSpec): Uint8Array {
 const tailCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const name = io.args[0] ?? 'tail';
   const { filtered, legacy } = extractLegacy(io.args.slice(1));
-  const { positionals, flags } = parseArgs(filtered, {
+  const parsed = parseArgs(filtered, {
     string: ['n', 'c', 'lines', 'bytes'],
-    boolean: ['q', 'v', 'quiet', 'silent', 'verbose', 'f', 'follow'],
-    alias: { lines: 'n', bytes: 'c', quiet: 'q', silent: 'q', verbose: 'v', follow: 'f' },
+    boolean: ['q', 'v', 'z', 'quiet', 'silent', 'verbose', 'zero-terminated', 'f', 'follow'],
+    alias: { lines: 'n', bytes: 'c', quiet: 'q', silent: 'q', verbose: 'v', 'zero-terminated': 'z', follow: 'f' },
+    unknown: 'error',
   });
+  const { positionals, flags } = parsed;
 
   const out = io.stdout.getWriter();
   const err = io.stderr.getWriter();
@@ -311,6 +339,7 @@ const tailCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   let printed = 0;
 
   try {
+    if (parsed.unknown.length) return await exitWith(err, 1, optionError(name, parsed.unknown[0]));
     // GNU is last-wins when both `-c` and `-n` are supplied; otherwise byte mode
     // iff `-c` is present at all.
     const last = lastCountFlag(filtered);
@@ -335,11 +364,7 @@ const tailCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     // options — if ANY count flag used `+` (e.g. `-n +2 -c 3`), the winning count is
     // from-start too (`-c 3` behaves like `-c +3`). The last flag sets unit + number;
     // a `+` anywhere sets the mode.
-    if (!spec.fromStart) {
-      const cPlus = flags.c !== undefined && String(flags.c).trimStart().startsWith('+');
-      const nPlus = flags.n !== undefined && String(flags.n).trimStart().startsWith('+');
-      if (cPlus || nPlus) spec = { n: spec.n, fromStart: true };
-    }
+    if (!spec.fromStart && anyCountPlus(filtered)) spec = { n: spec.n, fromStart: true };
 
     const sources = positionals.length > 0 ? positionals : ['-'];
     const wantHeaders = Boolean(flags.v) || (sources.length > 1 && !flags.q);

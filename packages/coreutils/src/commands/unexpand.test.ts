@@ -122,6 +122,32 @@ describe('unexpand', () => {
     expect(h.out()).toBe('word    word\n');
   });
 
+  // ── R4: a -t value that looks like -NUMBER is not the obsolete shorthand ───
+  test('-t -1 error quotes the VALUE token, not -t (R4 regression)', async () => {
+    const h = makeIO({ args: ['unexpand', '-t', '-1'], stdinText: 'a\tb\n' });
+    expect(await unexpandCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('unexpand: tab size contains invalid character(s): ‘-1’\n');
+  });
+
+  test('standalone -4 obsolete shorthand still works', async () => {
+    const h = makeIO({ args: ['unexpand', '-4'], stdinText: '    a\n' });
+    expect(await unexpandCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('\ta\n');
+  });
+
+  // ── L8: --first-only means LEADING-only (like the default, NOT -a) ─────────
+  test('--first-only converts only the leading blank run', async () => {
+    const h = makeIO({ args: ['unexpand', '--first-only'], stdinText: '        a       b\n' });
+    expect(await unexpandCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('\ta       b\n');
+  });
+
+  test('--first (unambiguous prefix of --first-only) leaves interior spaces', async () => {
+    const h = makeIO({ args: ['unexpand', '--first'], stdinText: 'a        b        c\n' });
+    expect(await unexpandCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a        b        c\n');
+  });
+
   // ── file-read failure exits 1 (parity finding) ────────────────────────────
   test('missing file operand exits 1', async () => {
     const h = makeIO({ args: ['unexpand', '/noexist'] });

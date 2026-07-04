@@ -58,8 +58,15 @@ const commCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const err = io.stderr.getWriter();
   try {
     if (parsed.unknown.length) { await writeString(err, optionError(name, parsed.unknown[0]) + '\n'); return 1; }
-    if (positionals.length < 2) {
-      return await exitWith(err, 1, `${name}: missing operand`);
+    const hint = `\nTry '${name} --help' for more information.`;
+    if (positionals.length === 0) {
+      return await exitWith(err, 1, `${name}: missing operand${hint}`);
+    }
+    if (positionals.length === 1) {
+      return await exitWith(err, 1, `${name}: missing operand after ‘${positionals[0]}’${hint}`);
+    }
+    if (positionals.length > 2) {
+      return await exitWith(err, 1, `${name}: extra operand ‘${positionals[2]}’${hint}`);
     }
 
     const zero = Boolean(flags['z']);

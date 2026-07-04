@@ -75,6 +75,34 @@ describe('awk command — CLI wiring', () => {
     expect(h.file('/out.txt')).toBe('a\nb\n');
   });
 
+  test('print > "/dev/stdout" writes to stdout, not the VFS', async () => {
+    const h = makeIO({ args: ['awk', 'BEGIN{ print "a" > "/dev/stdout" }'] });
+    expect(await awkCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\n');
+    expect(h.err()).toBe('');
+    expect(h.file('/dev/stdout')).toBeUndefined();
+  });
+
+  test('print > "/dev/stderr" writes to stderr, not the VFS', async () => {
+    const h = makeIO({ args: ['awk', 'BEGIN{ print "e" > "/dev/stderr" }'] });
+    expect(await awkCommand(h.io)).toBe(0);
+    expect(h.err()).toBe('e\n');
+    expect(h.out()).toBe('');
+    expect(h.file('/dev/stderr')).toBeUndefined();
+  });
+
+  test('/dev/stdout interleaves with normal print and accumulates on repeat', async () => {
+    const h = makeIO({ args: ['awk', 'BEGIN{ print "one"; print "two" > "/dev/stdout"; print "three" >> "/dev/stdout" }'] });
+    expect(await awkCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('one\ntwo\nthree\n');
+  });
+
+  test('printf > "/dev/stdout" writes to stdout', async () => {
+    const h = makeIO({ args: ['awk', 'BEGIN{ printf "%s\\n", "z" > "/dev/stdout" }'] });
+    expect(await awkCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('z\n');
+  });
+
   test('getline < file reads from the VFS', async () => {
     const h = makeIO({
       args: ['awk', 'BEGIN{ while ((getline line < "/f.txt") > 0) print "got " line }'],

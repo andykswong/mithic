@@ -479,6 +479,58 @@ describe('find -depth / -quit', () => {
   });
 });
 
+// ── M5: -prune ───────────────────────────────────────────────────────────────
+
+describe('find -prune', () => {
+  const tree = { '/t/a/inside.txt': 'x', '/t/b/y.txt': 'y', '/t/top.txt': 'top' };
+
+  test('-name a -prune -o -print skips the pruned dir subtree', async () => {
+    const h = makeIO({ args: ['find', '.', '-name', 'a', '-prune', '-o', '-print'], cwd: '/t', files: tree });
+    expect(await findCommand(h.io)).toBe(0);
+    const lines = h.out().split('\n').filter(Boolean);
+    // The `a` directory itself is not printed (the -o short-circuits before -print),
+    // and its contents are never visited. (find sorts children for determinism, so
+    // the traversal order differs from GNU's raw readdir order but the set matches.)
+    expect(lines.sort()).toEqual(['.', './b', './b/y.txt', './top.txt']);
+    expect(lines).not.toContain('./a');
+    expect(lines).not.toContain('./a/inside.txt');
+  });
+
+  test('-type d -prune prunes the start dir → only the start prints', async () => {
+    const h = makeIO({ args: ['find', '.', '-type', 'd', '-prune'], cwd: '/t', files: tree });
+    expect(await findCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('.\n');
+  });
+});
+
+// ── L5: leading -L / -H / -P global options ──────────────────────────────────
+
+describe('find leading -L/-H/-P options', () => {
+  test('-L . walks the tree (no symlinks → same as default)', async () => {
+    const h = makeIO({ args: ['find', '-L', '.'], cwd: '/d', files: { '/d/a.txt': '1' } });
+    expect(await findCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('.\n./a.txt\n');
+  });
+
+  test('-H . walks the tree', async () => {
+    const h = makeIO({ args: ['find', '-H', '.'], cwd: '/d', files: { '/d/a.txt': '1' } });
+    expect(await findCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('.\n./a.txt\n');
+  });
+
+  test('-P . (no-follow default) walks the tree', async () => {
+    const h = makeIO({ args: ['find', '-P', '.'], cwd: '/d', files: { '/d/a.txt': '1' } });
+    expect(await findCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('.\n./a.txt\n');
+  });
+
+  test('leading options combine with a following expression', async () => {
+    const h = makeIO({ args: ['find', '-L', '/r', '-name', '*.txt'], files });
+    expect(await findCommand(h.io)).toBe(0);
+    expect(h.out().trim().split('\n')).toEqual(['/r/a.txt', '/r/sub/c.txt', '/r/sub/deep/d.txt']);
+  });
+});
+
 // ── B2.2: -size / -empty / -newer / -printf ─────────────────────────────────
 
 describe('find -size / -empty / -newer / -printf', () => {

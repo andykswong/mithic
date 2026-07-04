@@ -167,4 +167,42 @@ describe('tail', () => {
     expect(await tailCommand(h.io)).toBe(0);
     expect(h.out()).toBe('cdefgh');
   });
+
+  // ── R3: sticky-+ survives a repeated same count flag (regression) ───────────
+  describe('sticky-+ across a repeated same count flag', () => {
+    test('-n +3 -n 2 keeps from-start mode (line 2 onward)', async () => {
+      const h = makeIO({ args: ['tail', '-n', '+3', '-n', '2'], stdinText: 'a\nb\nc\nd\ne\nf\n' });
+      expect(await tailCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('b\nc\nd\ne\nf\n');
+    });
+    test('-c +3 -c 2 keeps from-start byte mode (byte 2 onward)', async () => {
+      const h = makeIO({ args: ['tail', '-c', '+3', '-c', '2'], stdinText: 'a\nb\nc\nd\ne\nf\n' });
+      expect(await tailCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('\nb\nc\nd\ne\nf\n');
+    });
+    test('control: -n 2 -n +3 → from-start with last count (line 3 onward)', async () => {
+      const h = makeIO({ args: ['tail', '-n', '2', '-n', '+3'], stdinText: 'a\nb\nc\nd\ne\nf\n' });
+      expect(await tailCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('c\nd\ne\nf\n');
+    });
+    test('control: -n 2 -n 3 (no +) stays last-N', async () => {
+      const h = makeIO({ args: ['tail', '-n', '2', '-n', '3'], stdinText: 'a\nb\nc\nd\ne\nf\n' });
+      expect(await tailCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('d\ne\nf\n');
+    });
+  });
+
+  // ── M7: unknown options are rejected (exit 1) ───────────────────────────────
+  describe('unknown option rejection', () => {
+    test('long unknown option → exit 1 + unrecognized diagnostic', async () => {
+      const h = makeIO({ args: ['tail', '--bogus'], stdinText: 'a\n' });
+      expect(await tailCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('tail: unrecognized option \'--bogus\'\nTry \'tail --help\' for more information.\n');
+    });
+    test('short unknown option → exit 1 + invalid-option diagnostic', async () => {
+      const h = makeIO({ args: ['tail', '-Z'], stdinText: 'a\n' });
+      expect(await tailCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('tail: invalid option -- \'Z\'\nTry \'tail --help\' for more information.\n');
+    });
+  });
 });

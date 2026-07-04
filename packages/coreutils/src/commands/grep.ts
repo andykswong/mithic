@@ -41,6 +41,7 @@ interface GrepOptions {
   after: number;
   before: number;
   color: boolean;
+  colorAuto: boolean; // --color / --color=auto: colorize only when stdout is a TTY
   quiet: boolean; // -q: suppress output, exit 0 on first match
   maxCount: number; // -m N: stop after N matches per file (0 = unlimited)
   withFilename: boolean; // -H: always prefix output with the filename
@@ -162,7 +163,7 @@ function parseGrepArgs(argv: string[]): GrepOptions {
     ignoreCase: false, invert: false, lineNumber: false, count: false,
     listMatches: false, listNoMatches: false, onlyMatching: false,
     word: false, line: false, recursive: false, syntax: 'bre', perl: false,
-    after: 0, before: 0, color: false,
+    after: 0, before: 0, color: false, colorAuto: false,
     quiet: false, maxCount: 0,
     withFilename: false, noFilename: false, byteOffset: false, nulData: false,
     include: [], exclude: [],
@@ -208,7 +209,10 @@ function parseGrepArgs(argv: string[]): GrepOptions {
         case 'after-context': o.after = num(val ?? argv[++i]); break;
         case 'before-context': o.before = num(val ?? argv[++i]); break;
         case 'context': { const n = num(val ?? argv[++i]); o.after = n; o.before = n; break; }
-        case 'color': case 'colour': o.color = val === 'always' || val === 'auto'; break;
+        case 'color': case 'colour':
+          o.color = val === 'always';
+          o.colorAuto = val === undefined || val === 'auto';
+          break;
         case 'quiet': case 'silent': o.quiet = true; break;
         case 'max-count': o.maxCount = num(val ?? argv[++i]); break;
         case 'include': o.include.push(globToRegExp(val ?? argv[++i] ?? '')); break;
@@ -354,6 +358,23 @@ function fixOrphanQuantifiers(source: string, ere: boolean): string {
   return source.replace(/(^|[(|])(\*)/g, (_m, pre: string, q: string) => pre + '\\' + q);
 }
 
+/**
+ * Rewrite a PCRE LEADING inline-flag prefix `(?flags)rest` into JS's supported
+ * group-modifier form `(?flags:rest)`. PCRE accepts a bare `(?i)` prefix that
+ * sets flags for the remainder of the pattern; JS RegExp only supports the group
+ * form. JS group modifiers cover `i`/`m`/`s` and their negation (`(?-i:...)`,
+ * `(?i-s:...)`) but not `x`, which we drop (JS has no free-spacing mode). Any
+ * `(?flags:...)` GROUP form is left untouched (it already works).
+ */
+function rewritePerlFlagPrefix(raw: string): string {
+  const m = /^\(\?([a-zA-Z]*(?:-[a-zA-Z]+)?)\)/.exec(raw);
+  if (!m) return raw;
+  const flags = m[1].replace(/x/g, '').replace(/-$/, '');
+  const rest = raw.slice(m[0].length);
+  if (flags === '' || flags === '-') return rest;
+  return `(?${flags}:${rest})`;
+}
+
 function buildMatcher(o: GrepOptions): CompiledMatcher {
   const flags = (o.ignoreCase ? 'i' : '');
   // Wrap each pattern source per -w / -x semantics, then OR them in one RegExp.
@@ -362,7 +383,7 @@ function buildMatcher(o: GrepOptions): CompiledMatcher {
     if (o.perl) {
       // -P: PCRE — pass the pattern straight through to the JS RegExp engine
       // (a close superset for the common lookaround / class / anchor cases).
-      body = raw === '' ? '(?:)' : raw;
+      body = raw === '' ? '(?:)' : rewritePerlFlagPrefix(raw);
     } else if (o.syntax === 'fixed') {
       body = escapeRegExp(raw);
     } else {
@@ -574,6 +595,9 @@ const grepCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   // egrep / fgrep aliases.
   if (name === 'egrep') o.syntax = 'ere';
   if (name === 'fgrep') o.syntax = 'fixed';
+
+  // --color=auto (and bare --color) colorize only when stdout is a real TTY.
+  if (o.colorAuto && (io.isatty?.(1) ?? false)) o.color = true;
 
   const err = io.stderr.getWriter();
   const out = io.stdout.getWriter();

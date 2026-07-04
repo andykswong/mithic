@@ -167,7 +167,7 @@ function formatCharA(b: number): string {
   if (b < NAMED_A.length) return NAMED_A[b];
   if (b === 0x7f) return 'del';
   if (b >= 0x21 && b <= 0x7e) return String.fromCharCode(b);
-  return (b & 0x7f).toString(); // high-bit chars fall back to low-7-bit name in GNU; rarely hit
+  return formatCharA(b & 0x7f); // high-bit chars mask to the low-7-bit ASCII name/char in GNU
 }
 
 /** Bytes per datum for a type (1 for a/c). */
@@ -307,9 +307,10 @@ const odCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         const val = eq >= 0 ? body.slice(eq + 1) : undefined;
         const take = (): string | undefined => val ?? argv[++i];
         if (key === 'address-radix') {
-          const v = take(); if (v === undefined || !'xdon'.includes(v) || v.length !== 1)
-            return await exitWith(err, 1, `${name}: invalid output address radix '${v ?? ''}'; it must be one character from [doxn]`);
-          radix = v as AddrRadix; continue;
+          const v = take(); const c0 = v?.[0];
+          if (c0 === undefined || !'xdon'.includes(c0))
+            return await exitWith(err, 1, `${name}: invalid output address radix '${c0 ?? ''}'; it must be one character from [doxn]`);
+          radix = c0 as AddrRadix; continue;
         }
         if (key === 'format' || key === 'type') {
           const v = take(); if (v === undefined) return await exitWith(err, 1, `${name}: option '--${key}' requires an argument`);
@@ -330,9 +331,10 @@ const odCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         if (ch === 'A') {
           const rest = cluster.slice(j + 1);
           const v = rest.length > 0 ? rest : argv[++i];
-          if (v === undefined || v.length !== 1 || !'xdon'.includes(v))
-            return await exitWith(err, 1, `${name}: invalid output address radix '${v ?? ''}'; it must be one character from [doxn]`);
-          radix = v as AddrRadix; break;
+          const c0 = v?.[0];
+          if (c0 === undefined || !'xdon'.includes(c0))
+            return await exitWith(err, 1, `${name}: invalid output address radix '${c0 ?? ''}'; it must be one character from [doxn]`);
+          radix = c0 as AddrRadix; break;
         }
         if (ch === 't') {
           const rest = cluster.slice(j + 1);

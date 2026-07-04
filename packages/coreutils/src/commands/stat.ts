@@ -136,8 +136,20 @@ function applyFormat(fmt: string, name: string, st: StatResult, escapes: boolean
     const c = fmt[i];
     if (c === '%' && i + 1 < fmt.length) { out += expand(fmt[++i], name, st); }
     else if (escapes && c === '\\' && i + 1 < fmt.length) {
-      const n = fmt[++i];
-      out += n === 'n' ? '\n' : n === 't' ? '\t' : n === 'r' ? '\r' : n === '\\' ? '\\' : n;
+      const n = fmt[i + 1];
+      if (n === 'x' && /[0-9a-fA-F]/.test(fmt[i + 2] ?? '')) {
+        i += 2; let hex = fmt[i];
+        if (/[0-9a-fA-F]/.test(fmt[i + 1] ?? '')) hex += fmt[++i];
+        out += String.fromCharCode(parseInt(hex, 16));
+      } else if (n >= '0' && n <= '7') {
+        i++; let oct = fmt[i];
+        for (let k = 0; k < 2 && /[0-7]/.test(fmt[i + 1] ?? ''); k++) oct += fmt[++i];
+        out += String.fromCharCode(parseInt(oct, 8) & 0xff);
+      } else {
+        i++;
+        out += n === 'a' ? '\x07' : n === 'b' ? '\b' : n === 'f' ? '\f' : n === 'n' ? '\n'
+          : n === 'r' ? '\r' : n === 't' ? '\t' : n === 'v' ? '\v' : n === '\\' ? '\\' : n;
+      }
     } else { out += c; }
   }
   return out;

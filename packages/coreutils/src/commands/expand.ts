@@ -137,9 +137,15 @@ export function expandText(text: string, tabs: TabStops, initialOnly = false): s
 export function normalizeTabArgs(argv: string[]): string[] {
   const out: string[] = [];
   let afterDashDash = false;
+  let expectTabValue = false;
   for (const a of argv) {
     if (afterDashDash) { out.push(a); continue; }
     if (a === '--') { afterDashDash = true; out.push(a); continue; }
+    // The separate value of a preceding `-t`/`--tabs` is NOT the obsolete
+    // `-NUMBER` shorthand even when it looks like `-1` — pass it through so the
+    // invalid-tab-size diagnostic quotes the value, not a synthesized `-t`.
+    if (expectTabValue) { expectTabValue = false; out.push(a); continue; }
+    if (a === '-t' || a === '--tabs') { expectTabValue = true; out.push(a); continue; }
     if (/^-[0-9]/.test(a) && /^-[0-9,/+ ]+$/.test(a)) {
       out.push('-t', a.slice(1));
       continue;

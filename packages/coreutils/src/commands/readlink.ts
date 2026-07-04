@@ -10,7 +10,7 @@
  *   -q / -s / --quiet / --silent : suppress most error messages (default here)
  */
 import { defineCommand, parseArgs, exitWith, optionError, fsErrorText, writeLine } from '../harness.ts';
-import { readlink, normalize } from '../fs.ts';
+import { readlink } from '../fs.ts';
 import { canonicalize } from './canonicalize.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
@@ -65,7 +65,7 @@ const readlinkCommand: CommandFn = async (io: CommandIO): Promise<number> => {
           // -f/-e/-m: canonicalize with our own walker. The kernel's fs/realpath
           // tolerates a missing final component, so it cannot enforce -e's
           // all-must-exist rule — the walker does that.
-          value = await canonicalize(io, normalize(absolutize(p, io.cwd)), mode);
+          value = await canonicalize(io, absolutize(p, io.cwd), mode);
         } else {
           value = await readlink(io, p);
         }

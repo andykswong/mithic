@@ -86,13 +86,34 @@ function unexpandLine(line: string, tabs: TabStops, all: boolean): string {
   return out;
 }
 
+/**
+ * GNU `unexpand` accepts `--first-only` (LEADING-blanks-only, the default) and
+ * any unambiguous PREFIX of it (`--first`, `--first-o`, …). Rewrite such a prefix
+ * to the canonical `--first-only` so the parser recognizes it; leave other
+ * arguments (including `--` and everything after it) untouched.
+ */
+function expandFirstOnly(argv: string[]): string[] {
+  const out: string[] = [];
+  let afterDashDash = false;
+  for (const a of argv) {
+    if (afterDashDash) { out.push(a); continue; }
+    if (a === '--') { afterDashDash = true; out.push(a); continue; }
+    if (a.startsWith('--f') && !a.includes('=') && 'first-only'.startsWith(a.slice(2))) {
+      out.push('--first-only');
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
+}
+
 const unexpandCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const name = io.args[0] ?? 'unexpand';
-  const argv = normalizeTabArgs(io.args.slice(1));
+  const argv = expandFirstOnly(normalizeTabArgs(io.args.slice(1)));
   const parsed = parseArgs(argv, {
-    boolean: ['a', 'all', 'first'],
+    boolean: ['a', 'all', 'first-only'],
     string: ['t', 'tabs'],
-    alias: { all: 'a', tabs: 't', first: 'a' },
+    alias: { all: 'a', tabs: 't' },
     unknown: 'error',
   });
   const { positionals, flags } = parsed;

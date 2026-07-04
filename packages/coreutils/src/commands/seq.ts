@@ -66,6 +66,81 @@ export function parseSeqNumber(s: string): number {
   return Number(s);
 }
 
+/**
+ * Round the exact IEEE-754 value of a non-negative finite double `ax`, scaled by
+ * 10^k, to the nearest integer with ties-to-EVEN — matching C/GNU printf. JS
+ * `toFixed`/`toExponential` round exact ties half-away-from-zero, so this is the
+ * only place the output diverges from them (on exact-half values).
+ */
+function scaledRoundHalfEven(ax: number, k: number): bigint {
+  const buf = new DataView(new ArrayBuffer(8));
+  buf.setFloat64(0, ax);
+  const hi = buf.getUint32(0), lo = buf.getUint32(4);
+  const rawExp = (hi >>> 20) & 0x7ff;
+  let mant = (BigInt(hi & 0xfffff) << 32n) | BigInt(lo >>> 0);
+  let e2: number;
+  if (rawExp === 0) e2 = -1074;
+  else { mant |= (1n << 52n); e2 = rawExp - 1075; }
+  if (mant === 0n) return 0n;
+  let num = mant, den = 1n;
+  if (k >= 0) num *= 10n ** BigInt(k); else den *= 10n ** BigInt(-k);
+  if (e2 >= 0) num <<= BigInt(e2); else den <<= BigInt(-e2);
+  let q = num / den;
+  const twiceRem = (num - q * den) * 2n;
+  if (twiceRem > den) q += 1n;
+  else if (twiceRem === den && (q % 2n) === 1n) q += 1n;
+  return q;
+}
+
+/** `%f` magnitude of a non-negative finite double with `prec` fractional digits, ties-to-even. */
+function fixedHalfEven(ax: number, prec: number): string {
+  if (!Number.isFinite(ax)) return Math.abs(ax).toFixed(Math.min(prec, 100));
+  const q = scaledRoundHalfEven(ax, prec).toString();
+  if (prec === 0) return q;
+  const s = q.padStart(prec + 1, '0');
+  return s.slice(0, s.length - prec) + '.' + s.slice(s.length - prec);
+}
+
+/** `%e` magnitude of a non-negative finite double, ties-to-even, ≥2 exponent digits. */
+function expHalfEven(n: number, prec: number, upper: boolean): string {
+  const e = upper ? 'E' : 'e';
+  if (!Number.isFinite(n)) return fixSeqExp(Math.abs(n).toExponential(prec));
+  if (n === 0) return (prec > 0 ? '0.' + '0'.repeat(prec) : '0') + e + '+00';
+  const digits = prec + 1;
+  let exp = Math.floor(Math.log10(n));
+  let q = scaledRoundHalfEven(n, prec - exp);
+  while (q.toString().length > digits) { exp += 1; q = scaledRoundHalfEven(n, prec - exp); }
+  while (q !== 0n && q.toString().length < digits) { exp -= 1; q = scaledRoundHalfEven(n, prec - exp); }
+  const ds = q.toString().padStart(digits, '0');
+  const mant = prec > 0 ? ds[0] + '.' + ds.slice(1) : ds;
+  const esign = exp < 0 ? '-' : '+';
+  return mant + e + esign + String(Math.abs(exp)).padStart(2, '0');
+}
+
+/**
+ * C `%g` for a non-negative value `n`: `sig` significant digits (0 → 1). Uses `%e`
+ * when the decimal exponent is < -4 or >= sig, else `%f`. Trailing zeros stripped.
+ * Rounds ties-to-even.
+ */
+function gHalfEven(n: number, sig: number, upper: boolean): string {
+  if (sig < 1) sig = 1;
+  if (n === 0) return '0';
+  if (!Number.isFinite(n)) return expHalfEven(n, sig - 1, upper);
+  let exp = Math.floor(Math.log10(n));
+  let q = scaledRoundHalfEven(n, sig - 1 - exp);
+  while (q.toString().length > sig) { exp += 1; q = scaledRoundHalfEven(n, sig - 1 - exp); }
+  while (q !== 0n && q.toString().length < sig) { exp -= 1; q = scaledRoundHalfEven(n, sig - 1 - exp); }
+  let s: string;
+  if (exp < -4 || exp >= sig) {
+    s = expHalfEven(n, sig - 1, upper);
+    s = s.replace(/\.?0+([eE])/, '$1');
+  } else {
+    s = fixedHalfEven(n, Math.max(0, sig - 1 - exp));
+    if (s.includes('.')) s = s.replace(/\.?0+$/, '');
+  }
+  return s;
+}
+
 /** Apply a simple printf-style format string to a numeric value. */
 export function applySeqFormat(fmt: string, val: number): string {
   let result = '';
@@ -93,17 +168,17 @@ export function applySeqFormat(fmt: string, val: number): string {
       const zeroPad = flags.includes('0') && !leftAlign;
       const plusFlag = flags.includes('+');
       const spaceFlag = flags.includes(' ');
+      const neg = val < 0 || Object.is(val, -0);
+      const ax = Math.abs(val);
       let s: string;
       if (spec === 'f') {
-        s = val.toFixed(p ?? 6);
+        s = (neg ? '-' : '') + fixedHalfEven(ax, p ?? 6);
       } else if (spec === 'e') {
-        s = fixSeqExp(val.toExponential(p ?? 6));
+        s = (neg ? '-' : '') + expHalfEven(ax, p ?? 6, false);
       } else if (spec === 'E') {
-        s = fixSeqExp(val.toExponential(p ?? 6)).toUpperCase();
+        s = (neg ? '-' : '') + expHalfEven(ax, p ?? 6, true);
       } else if (spec === 'g' || spec === 'G') {
-        const precision = p ?? 6;
-        s = precision === 0 ? val.toFixed(0) : parseFloat(val.toPrecision(precision || 1)).toString();
-        if (spec === 'G') s = s.toUpperCase();
+        s = (neg ? '-' : '') + gHalfEven(ax, p ?? 6, spec === 'G');
       } else {
         // Fallback: treat as %g
         s = val.toString();

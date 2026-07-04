@@ -324,3 +324,149 @@ describe('expr big-integer arithmetic (BigInt, exact past 2^53)', () => {
     expect(h.out()).toBe('0');
   });
 });
+
+describe('expr M3: leading + is not part of an integer (GNU form is -?[0-9]+)', () => {
+  test('+5 + 1 is a non-integer arithmetic error (exit 2)', async () => {
+    const h = makeIO(['expr', '+5', '+', '1']);
+    expect(await exprCommand(h.io)).toBe(2);
+    expect(h.err()).toContain('non-integer argument');
+  });
+
+  test('+0 = 0 compares string-wise → 0, exit 1', async () => {
+    const h = makeIO(['expr', '+0', '=', '0']);
+    expect(await exprCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('0');
+  });
+
+  test('5 = +5 compares string-wise → 0, exit 1', async () => {
+    const h = makeIO(['expr', '5', '=', '+5']);
+    expect(await exprCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('0');
+  });
+
+  test('+10 < +9 is byte-wise → 1, exit 0', async () => {
+    const h = makeIO(['expr', '+10', '<', '+9']);
+    expect(await exprCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('1');
+  });
+
+  test('negative integers still work (-5 + 1 = -4)', async () => {
+    const h = makeIO(['expr', '-5', '+', '1']);
+    expect(await exprCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('-4');
+  });
+
+  test('leading-zero integers still numeric (007 + 1 = 8)', async () => {
+    const h = makeIO(['expr', '007', '+', '1']);
+    expect(await exprCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('8');
+  });
+});
+
+describe('expr M4: POSIX character classes in the : (BRE) operator', () => {
+  test('[[:alpha:]]* matches letters', async () => {
+    const h = makeIO(['expr', 'abcABC', ':', '[[:alpha:]]*']);
+    expect(await exprCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('6');
+  });
+
+  test('[[:digit:]]* matches only leading digits', async () => {
+    const h = makeIO(['expr', '123abc', ':', '[[:digit:]]*']);
+    expect(await exprCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('3');
+  });
+
+  test('[[:alnum:]]* stops at a space', async () => {
+    const h = makeIO(['expr', 'a1 b', ':', '[[:alnum:]]*']);
+    expect(await exprCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('2');
+  });
+
+  test('[[:space:]] matches whitespace', async () => {
+    const h = makeIO(['expr', '  x', ':', '[[:space:]]*']);
+    expect(await exprCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('2');
+  });
+
+  test('negated class [^[:digit:]]* works', async () => {
+    const h = makeIO(['expr', 'abc123', ':', '[^[:digit:]]*']);
+    expect(await exprCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('3');
+  });
+
+  test('ordinary range [a-z]* still works alongside classes', async () => {
+    const h = makeIO(['expr', 'abcABC', ':', '[a-z]*']);
+    expect(await exprCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('3');
+  });
+});
+
+describe('expr L3: backslash before an ordinary char in a BRE is a literal', () => {
+  test('a\\tb matches literal "atb" (\\t == literal t)', async () => {
+    const h = makeIO(['expr', 'atb', ':', 'a\\tb']);
+    expect(await exprCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('3');
+  });
+
+  test('a\\tb does NOT match a real tab', async () => {
+    const h = makeIO(['expr', 'a\tb', ':', 'a\\tb']);
+    expect(await exprCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('0');
+  });
+
+  test('BRE metacharacter escapes still work (\\. is a literal dot)', async () => {
+    const lit = makeIO(['expr', 'a.b', ':', 'a\\.b']);
+    await exprCommand(lit.io);
+    expect(lit.out()).toBe('3');
+    const noMatch = makeIO(['expr', 'axb', ':', 'a\\.b']);
+    expect(await exprCommand(noMatch.io)).toBe(1);
+    expect(noMatch.out()).toBe('0');
+  });
+});
+
+describe('expr D5: glibc-BRE regex operators \\w \\W \\s \\S \\b \\B (not literals)', () => {
+  test('\\w matches a word char', async () => {
+    const h = makeIO(['expr', '_', ':', '\\w']);
+    expect(await exprCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('1');
+  });
+
+  test('\\w* counts leading word chars', async () => {
+    const h = makeIO(['expr', 'abc', ':', '\\w*']);
+    expect(await exprCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('3');
+  });
+
+  test('\\s matches whitespace', async () => {
+    const h = makeIO(['expr', ' x', ':', '\\s']);
+    expect(await exprCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('1');
+  });
+
+  test('\\S matches a non-space char', async () => {
+    const h = makeIO(['expr', 'abc', ':', '\\S*']);
+    expect(await exprCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('3');
+  });
+
+  test('\\W matches a non-word char (WWW is a word → no match)', async () => {
+    const h = makeIO(['expr', 'WWW', ':', '\\W']);
+    expect(await exprCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('0');
+  });
+
+  test('\\B (non-boundary) does not match at the start of a word', async () => {
+    const h = makeIO(['expr', 'BBB', ':', '\\B']);
+    expect(await exprCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('0');
+  });
+
+  test('\\d stays a LITERAL "d" (glibc BRE, not a digit class)', async () => {
+    const lit = makeIO(['expr', 'd', ':', '\\d']);
+    expect(await exprCommand(lit.io)).toBe(0);
+    expect(lit.out()).toBe('1');
+    const noMatch = makeIO(['expr', '5', ':', '\\d']);
+    expect(await exprCommand(noMatch.io)).toBe(1);
+    expect(noMatch.out()).toBe('0');
+  });
+});

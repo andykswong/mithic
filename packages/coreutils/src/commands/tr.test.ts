@@ -228,4 +228,18 @@ describe('tr', () => {
       ]);
     });
   });
+
+  // ── M7: unknown options are rejected (exit 1) ───────────────────────────────
+  describe('unknown option rejection', () => {
+    test('short unknown option -Z → exit 1 + invalid-option diagnostic', async () => {
+      const h = makeIO({ args: ['tr', '-Z', 'a', 'b'], stdinText: 'a\n' });
+      expect(await trCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('tr: invalid option -- \'Z\'\nTry \'tr --help\' for more information.\n');
+    });
+    test('long unknown option → exit 1 + unrecognized diagnostic', async () => {
+      const h = makeIO({ args: ['tr', '--bogus', 'a', 'b'], stdinText: 'a\n' });
+      expect(await trCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('tr: unrecognized option \'--bogus\'\nTry \'tr --help\' for more information.\n');
+    });
+  });
 });

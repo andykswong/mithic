@@ -86,12 +86,15 @@ export function b64DecodeGroup(s: string): { bytes: Uint8Array; ok: boolean } {
     buf[o++] = (v0 << 2) | (v1 >> 4);
     if (nd >= 3) buf[o++] = ((v1 & 0xf) << 4) | (v2 >> 2);
     if (nd === 4) { buf[o++] = ((v2 & 3) << 6) | v3; continue; }
-    // Terminal group (2 or 3 data chars): must be the LAST quartet, trailing bits
-    // zero, and — when '=' padding is present — the group must be a full 4 chars.
+    // Terminal group (2 or 3 data chars): trailing bits must be zero, and — when
+    // '=' padding is present — the group must be a full 4 chars.
     if (nd === 3 && (v2 & 3)) return fail();
     if (nd === 2 && (v1 & 0xf)) return fail();
     if (pad > 0 && pad !== 4 - nd) return fail(); // wrong pad count
-    if (i + 4 < s.length) return fail(); // data after a terminal group
+    // After a FULLY PADDED terminal quantum GNU resets and keeps decoding, so
+    // concatenated streams (`YQ==YQ==`) decode fully. A short UNPADDED tail
+    // followed by more data is a genuine truncation → fail.
+    if (i + 4 < s.length) { if (pad === 4 - nd) continue; return fail(); }
   }
   return { bytes: buf.subarray(0, o), ok: true };
 }

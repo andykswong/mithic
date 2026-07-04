@@ -21,7 +21,10 @@ import type { CommandFn, CommandIO } from '../harness.ts';
  * the leading `0` counts as one of the (up to) three digits when present as the
  * first, i.e. we read at most 3 octal digits total after the backslash).
  */
-export function processEscapesFull(s: string): { text: string; truncated: boolean } {
+export function processEscapesFull(
+  s: string,
+  opts: { errorOnMissingHex?: boolean } = {},
+): { text: string; truncated: boolean; missingHex?: boolean } {
   let result = '';
   let i = 0;
   while (i < s.length) {
@@ -59,8 +62,11 @@ export function processEscapesFull(s: string): { text: string; truncated: boolea
           if (hex) {
             result += String.fromCharCode(parseInt(hex, 16));
             i += 2 + hex.length;
+          } else if (opts.errorOnMissingHex) {
+            // printf %b: `\x` with no hex digit is an error; stop and drop the rest.
+            return { text: result, truncated: true, missingHex: true };
           } else {
-            result += '\\x'; i += 2;
+            result += '\\x'; i += 2; // echo -e: leave `\x` literal
           }
           break;
         }

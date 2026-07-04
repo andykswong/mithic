@@ -218,4 +218,18 @@ describe('head', () => {
     // (printed was not bumped by the failed /g open).
     expect(h.out()).toBe('==> /f <==\nA\n');
   });
+
+  // ── M7: unknown options are rejected (exit 1) ───────────────────────────────
+  describe('unknown option rejection', () => {
+    test('long unknown option → exit 1 + unrecognized diagnostic', async () => {
+      const h = makeIO({ args: ['head', '--bogus'], stdinText: 'a\n' });
+      expect(await headCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('head: unrecognized option \'--bogus\'\nTry \'head --help\' for more information.\n');
+    });
+    test('short unknown option → exit 1 + invalid-option diagnostic', async () => {
+      const h = makeIO({ args: ['head', '-Z'], stdinText: 'a\n' });
+      expect(await headCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('head: invalid option -- \'Z\'\nTry \'head --help\' for more information.\n');
+    });
+  });
 });

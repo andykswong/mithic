@@ -81,6 +81,28 @@ describe('readlink', () => {
     expect(h.out()).toBe('');
   });
 
+  // ── L11: an intermediate erased by a following `..` must still be existence-checked ──
+
+  test('-f fails when a component erased by a following .. does not exist', async () => {
+    // No dir "a"; foo.txt present. GNU readlink -f a/../foo.txt → exit 1, no stdout
+    // (the missing "a" is lstat-checked before the ".." collapses it).
+    const h = makeIO({ args: ['readlink', '-f', '/a/../foo.txt'], files: { '/foo.txt': 'x' } });
+    expect(await readlinkCommand(h.io)).toBe(1);
+    expect(h.out()).toBe('');
+  });
+
+  test('-f resolves a/../foo.txt when the erased intermediate exists', async () => {
+    const h = makeIO({ args: ['readlink', '-f', '/a/../foo.txt'], files: { '/a/keep': '1', '/foo.txt': 'x' } });
+    expect(await readlinkCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('/foo.txt\n');
+  });
+
+  test('-m still collapses .. lexically without existence checks', async () => {
+    const h = makeIO({ args: ['readlink', '-m', '/a/../foo.txt'] });
+    expect(await readlinkCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('/foo.txt\n');
+  });
+
   test('unknown flag → exit 1', async () => {
     const h = makeIO({ args: ['readlink', '--bogus', '/x'] });
     expect(await readlinkCommand(h.io)).toBe(1);

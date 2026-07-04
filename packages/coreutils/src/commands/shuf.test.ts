@@ -242,4 +242,53 @@ describe('shuf command', () => {
     expect(await shufCommand(h.io)).toBe(0);
     expect(h.out()).toBe('5\n');
   });
+
+  // ── L9: -i HI == LO-1 is an EMPTY range (exit 0, no output) ─────────────────
+  describe('empty input range HI == LO-1', () => {
+    test('-i 1-0 → empty, exit 0', async () => {
+      const h = makeIO({ args: ['shuf', '-i', '1-0'] });
+      expect(await shufCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('');
+      expect(h.err()).toBe('');
+    });
+    test('-i 2-1 → empty, exit 0', async () => {
+      const h = makeIO({ args: ['shuf', '-i', '2-1'] });
+      expect(await shufCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('');
+    });
+    test('-i 10-9 → empty, exit 0', async () => {
+      const h = makeIO({ args: ['shuf', '-i', '10-9'] });
+      expect(await shufCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('');
+    });
+    test('-i 3-1 still errors (HI < LO-1)', async () => {
+      const h = makeIO({ args: ['shuf', '-i', '3-1'] });
+      expect(await shufCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('shuf: invalid input range: ‘3-1’\n');
+    });
+    test('-i 1-1 stays at parity (single value)', async () => {
+      const h = makeIO({ args: ['shuf', '-i', '1-1'] });
+      expect(await shufCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('1\n');
+    });
+    test('-i 0-0 stays at parity (single value)', async () => {
+      const h = makeIO({ args: ['shuf', '-i', '0-0'] });
+      expect(await shufCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('0\n');
+    });
+  });
+
+  // ── M7: unknown options are rejected (exit 1) ───────────────────────────────
+  describe('unknown option rejection', () => {
+    test('long unknown option → exit 1 + unrecognized diagnostic', async () => {
+      const h = makeIO({ args: ['shuf', '--bogus'], stdinText: 'a\n' });
+      expect(await shufCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('shuf: unrecognized option \'--bogus\'\nTry \'shuf --help\' for more information.\n');
+    });
+    test('short unknown option → exit 1 + invalid-option diagnostic', async () => {
+      const h = makeIO({ args: ['shuf', '-Z'], stdinText: 'a\n' });
+      expect(await shufCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('shuf: invalid option -- \'Z\'\nTry \'shuf --help\' for more information.\n');
+    });
+  });
 });

@@ -444,6 +444,10 @@ export class Interpreter {
       this.io.pipeToCommand(target, text);
       return;
     }
+    // gawk/BSD route /dev/stdout and /dev/stderr to the process's own fd1/fd2
+    // rather than the VFS, so redirected output reaches the terminal.
+    if (target === '/dev/stdout') { this.io.write(text); return; }
+    if (target === '/dev/stderr') { this.io.writeErr(text); return; }
     if (!this.io.writeFile) { this.io.writeErr(`awk: print > "${target}" not supported\n`); return; }
     const append = redirect.mode === '>>' || this.openWrites.has(target);
     this.openWrites.add(target);

@@ -192,6 +192,139 @@ describe('cksum command', () => {
     expect(h.err()).toContain('invalid argument ‘bogus’ for ‘--algorithm’');
     expect(h.err()).toContain('- ‘sha256’');
   });
+
+  // ── M9: -z / --zero uses a NUL line terminator ──
+
+  test('-z ends the default CRC line with NUL instead of newline', async () => {
+    const h = makeIO({ args: ['cksum', '-z', '/f.txt'], files: { '/f.txt': 'hello\n' } });
+    expect(await cksumCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('3015617425 6 /f.txt\x00');
+  });
+
+  test('--zero ends the tagged hash line with NUL', async () => {
+    const h = makeIO({ args: ['cksum', '--zero', '-a', 'md5', '/f.txt'], files: { '/f.txt': 'hello\n' } });
+    await cksumCommand(h.io);
+    expect(h.out()).toBe('MD5 (/f.txt) = b1946ac92492d2347c6235b4d2611184\x00');
+  });
+
+  test('-z with --untagged and multiple files puts NUL after each line', async () => {
+    const h = makeIO({ args: ['cksum', '-z', '--untagged', '-a', 'sha256', '/a', '/b'], files: { '/a': 'x', '/b': 'y' } });
+    await cksumCommand(h.io);
+    const parts = h.out().split('\x00');
+    expect(parts.length).toBe(3); // two lines each NUL-terminated + trailing empty
+    expect(parts[0].endsWith('  /a')).toBe(true);
+    expect(parts[1].endsWith('  /b')).toBe(true);
+    expect(parts[2]).toBe('');
+    expect(h.out()).not.toContain('\n');
+  });
+
+  // ── L13: BLAKE2b and SM3 digests (pure-TS) ──
+
+  test('-a blake2b produces the GNU 512-bit tagged digest', async () => {
+    const h = makeIO({ args: ['cksum', '-a', 'blake2b', '/f.txt'], files: { '/f.txt': 'hello\n' } });
+    expect(await cksumCommand(h.io)).toBe(0);
+    expect(h.out()).toBe(
+      'BLAKE2b (/f.txt) = f60ce482e5cc1229f39d71313171a8d9f4ca3a87d066bf4b205effb528192a75' +
+      'f14f3271e2c1a90e1de53f275b4d4793eef2f5e31ea90d2ce29d2e481c36435f\n',
+    );
+  });
+
+  test('-a blake2b --length=256 selects the BLAKE2b-256 tag and digest', async () => {
+    const h = makeIO({ args: ['cksum', '-a', 'blake2b', '--length=256', '/f.txt'], files: { '/f.txt': 'hello\n' } });
+    expect(await cksumCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('BLAKE2b-256 (/f.txt) = 93becc6e9882211c3ec3708c95bcd69baab7bb59c7f4bc84ce637b88a534b783\n');
+  });
+
+  test('-a sm3 produces the GNU tagged digest', async () => {
+    const h = makeIO({ args: ['cksum', '-a', 'sm3', '/f.txt'], files: { '/f.txt': 'hello\n' } });
+    expect(await cksumCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('SM3 (/f.txt) = f7a87a195b0cc0052b9d598482212ceb07e4ea60e8d139a5dfeff36c24abf2b3\n');
+  });
+
+  test('-a sm3 empty input matches the SM3 spec value', async () => {
+    // SM3("") per GNU gcksum -a sm3.
+    const h = makeIO({ args: ['cksum', '--untagged', '-a', 'sm3'], stdinText: '' });
+    await cksumCommand(h.io);
+    expect(h.out()).toBe('1ab21d8355cfa17f8e61194831e81a8f22bec8c728fefb747ed035eb5082aa2b  -\n');
+  });
+
+  // ── D6: --length is only valid for blake2b (GNU rejects it elsewhere) ──
+
+  test.each(['md5', 'sha256', 'crc', 'bsd', 'sm3', 'sysv'])(
+    '--length with -a %s is rejected (exit 1, GNU diagnostic)',
+    async (algo) => {
+      const h = makeIO({ args: ['cksum', '-a', algo, '--length=256', '/f.txt'], files: { '/f.txt': 'hello\n' } });
+      expect(await cksumCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('cksum: --length is only supported with --algorithm blake2b, sha2, or sha3\n');
+      expect(h.out()).toBe('');
+    },
+  );
+
+  test('bare cksum --length is rejected (default algorithm is crc)', async () => {
+    const h = makeIO({ args: ['cksum', '--length=256', '/f.txt'], files: { '/f.txt': 'hello\n' } });
+    expect(await cksumCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('cksum: --length is only supported with --algorithm blake2b, sha2, or sha3\n');
+    expect(h.out()).toBe('');
+  });
+
+  test('-a blake2b --length still produces its digest (exit 0)', async () => {
+    const h = makeIO({ args: ['cksum', '-a', 'blake2b', '--length=256', '/f.txt'], files: { '/f.txt': 'hello\n' } });
+    expect(await cksumCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('BLAKE2b-256 (/f.txt) = 93becc6e9882211c3ec3708c95bcd69baab7bb59c7f4bc84ce637b88a534b783\n');
+  });
+
+  // ── C1: --length must reject trailing non-digit garbage (GNU strtol-strict) ──
+
+  test.each(['256x', '0x100', '8bad'])(
+    '-a blake2b --length=%s is rejected (trailing garbage, exit 1)',
+    async (len) => {
+      const h = makeIO({ args: ['cksum', '-a', 'blake2b', `--length=${len}`, '/f.txt'], files: { '/f.txt': 'hi' } });
+      expect(await cksumCommand(h.io)).toBe(1);
+      expect(h.err()).toBe(`cksum: invalid length: ‘${len}’\n`);
+      expect(h.out()).toBe('');
+    },
+  );
+
+  test('-a blake2b --length out-of-range emits the GNU two-line diagnostic', async () => {
+    const h = makeIO({ args: ['cksum', '-a', 'blake2b', '--length=520', '/f.txt'], files: { '/f.txt': 'hi' } });
+    expect(await cksumCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('cksum: invalid length: ‘520’\ncksum: maximum digest length for ‘BLAKE2b’ is 512 bits\n');
+    expect(h.out()).toBe('');
+  });
+
+  test('-a blake2b --length not a multiple of 8 emits the GNU two-line diagnostic', async () => {
+    const h = makeIO({ args: ['cksum', '-a', 'blake2b', '--length=12', '/f.txt'], files: { '/f.txt': 'hi' } });
+    expect(await cksumCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('cksum: invalid length: ‘12’\ncksum: length is not a multiple of 8\n');
+    expect(h.out()).toBe('');
+  });
+
+  // ── C-WS: --length accepts xstrtol leading whitespace / leading + (GNU parity) ──
+
+  test.each([' 8', '+8'])(
+    '-a blake2b --length=%j accepts leading ws / + (BLAKE2b-8, exit 0)',
+    async (len) => {
+      const h = makeIO({ args: ['cksum', '-a', 'blake2b', `--length=${len}`], stdinText: 'abc' });
+      expect(await cksumCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('BLAKE2b-8 (-) = 6b\n');
+    },
+  );
+
+  test.each(['256x', '8bad', '8 '])(
+    '-a blake2b --length=%j still rejected (trailing garbage, exit 1)',
+    async (len) => {
+      const h = makeIO({ args: ['cksum', '-a', 'blake2b', `--length=${len}`], stdinText: 'abc' });
+      expect(await cksumCommand(h.io)).toBe(1);
+      expect(h.err()).toBe(`cksum: invalid length: ‘${len}’\n`);
+      expect(h.out()).toBe('');
+    },
+  );
+
+  test('-a blake2b --length=0 keeps the default 512-bit digest (exit 0)', async () => {
+    const h = makeIO({ args: ['cksum', '-a', 'blake2b', '--length=0', '/f.txt'], files: { '/f.txt': 'hi' } });
+    expect(await cksumCommand(h.io)).toBe(0);
+    expect(h.out()).toMatch(/^BLAKE2b \(\/f\.txt\) = [0-9a-f]{128}\n$/);
+  });
 });
 
 describe('sum command', () => {

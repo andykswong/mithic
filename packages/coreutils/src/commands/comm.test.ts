@@ -154,6 +154,41 @@ describe('comm', () => {
     expect(await commCommand(h.io)).toBe(1);
   });
 
+  // ── L7: missing-operand diagnostics match GNU ─────────────────────────────
+  test('one operand → "missing operand after ‘FILE’" + help hint', async () => {
+    const h = makeIO({ args: ['comm', '/a.txt'], files: { '/a.txt': 'x\n' } });
+    expect(await commCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('comm: missing operand after ‘/a.txt’\nTry \'comm --help\' for more information.\n');
+    expect(h.out()).toBe('');
+  });
+
+  test('zero operands → "missing operand" + help hint', async () => {
+    const h = makeIO({ args: ['comm'] });
+    expect(await commCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('comm: missing operand\nTry \'comm --help\' for more information.\n');
+    expect(h.out()).toBe('');
+  });
+
+  // ── L6: a 3rd+ operand is rejected (first surplus named) ──────────────────
+  test('three operands → "extra operand ‘<3rd>’" + help hint, no stdout', async () => {
+    const h = makeIO({
+      args: ['comm', '/a.txt', '/b.txt', '/c.txt'],
+      files: { '/a.txt': 'a\n', '/b.txt': 'b\n', '/c.txt': 'c\n' },
+    });
+    expect(await commCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('comm: extra operand ‘/c.txt’\nTry \'comm --help\' for more information.\n');
+    expect(h.out()).toBe('');
+  });
+
+  test('four operands → only the FIRST surplus operand is named', async () => {
+    const h = makeIO({
+      args: ['comm', '/a.txt', '/b.txt', '/c.txt', '/d.txt'],
+      files: { '/a.txt': 'a\n', '/b.txt': 'b\n', '/c.txt': 'c\n', '/d.txt': 'd\n' },
+    });
+    expect(await commCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('comm: extra operand ‘/c.txt’\nTry \'comm --help\' for more information.\n');
+  });
+
   // ── input order checking (GNU parity) ─────────────────────────────────────
   test('default: unsorted input warns and exits 1 but still merges', async () => {
     const h = makeIO({ args: ['comm', '/a', '/b'], files: { '/a': 'c\na\n', '/b': 'a\nb\n' } });

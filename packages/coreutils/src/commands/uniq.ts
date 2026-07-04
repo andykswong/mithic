@@ -15,7 +15,7 @@
  *   - operands: [INPUT [OUTPUT]] — INPUT `-`/none = stdin. (OUTPUT to a path
  *     is accepted but written to stdout; file output is not used by the shell.)
  */
-import { CoalescingWriter, defineCommand, isBrokenPipe, parseArgs, writeString, exitWith, fsErrorText } from '../harness.ts';
+import { CoalescingWriter, defineCommand, isBrokenPipe, parseArgs, optionError, writeString, exitWith, fsErrorText } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 /** Canonical POSIX errno text for an `fs/*` failure (see head.ts for rationale). */
@@ -135,14 +135,16 @@ const uniqCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     preFiltered.push(a);
   }
 
-  const { positionals, flags } = parseArgs(preFiltered, {
+  const parsed = parseArgs(preFiltered, {
     boolean: ['c', 'd', 'u', 'i', 'z', 'D', 'count', 'repeated', 'unique', 'ignore-case', 'zero-terminated'],
     string: ['f', 's', 'w', 'skip-fields', 'skip-chars', 'check-chars'],
     alias: {
       count: 'c', repeated: 'd', unique: 'u', 'ignore-case': 'i',
       'skip-fields': 'f', 'skip-chars': 's', 'check-chars': 'w', 'zero-terminated': 'z',
     },
+    unknown: 'error',
   });
+  const { positionals, flags } = parsed;
   const name = io.args[0] ?? 'uniq';
   const showCount = Boolean(flags.c);
   const onlyDup = Boolean(flags.d);
@@ -155,6 +157,7 @@ const uniqCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   let stdinAborted = false;
 
   try {
+    if (parsed.unknown.length) return await exitWith(err, 1, optionError(name, parsed.unknown[0]));
     // GNU validates the numeric argument to -f/-s/-w and errors (exit 1) on a
     // non-numeric, negative, or suffixed value rather than silently no-op'ing.
     let skipFields = 0, skipChars = 0, width = -1;

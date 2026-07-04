@@ -231,4 +231,18 @@ describe('uniq', () => {
       expect(h.out()).toBe('a\n');
     });
   });
+
+  // ── M7: unknown options are rejected (exit 1) ───────────────────────────────
+  describe('unknown option rejection', () => {
+    test('long unknown option → exit 1 + unrecognized diagnostic', async () => {
+      const h = makeIO({ args: ['uniq', '--bogus'], stdinText: 'a\n' });
+      expect(await uniqCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('uniq: unrecognized option \'--bogus\'\nTry \'uniq --help\' for more information.\n');
+    });
+    test('short unknown option → exit 1 + invalid-option diagnostic', async () => {
+      const h = makeIO({ args: ['uniq', '-Z'], stdinText: 'a\n' });
+      expect(await uniqCommand(h.io)).toBe(1);
+      expect(h.err()).toBe('uniq: invalid option -- \'Z\'\nTry \'uniq --help\' for more information.\n');
+    });
+  });
 });

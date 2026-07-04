@@ -75,6 +75,35 @@ describe('cut', () => {
     expect(h.err()).toContain('cut: /missing:');
   });
 
+  // ── L4: GNU cut ALWAYS terminates each emitted line with LF ────────────────
+  describe('unterminated input still gets a trailing LF', () => {
+    test('-c on stdin with no final newline', async () => {
+      const h = makeIO({ args: ['cut', '-c', '1'], stdinText: 'nonl' });
+      expect(await cutCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('n\n');
+    });
+    test('-f on stdin with no final newline', async () => {
+      const h = makeIO({ args: ['cut', '-d', ',', '-f', '1'], stdinText: 'a,b,c' });
+      expect(await cutCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('a\n');
+    });
+    test('-c on a file with a mid-stream unterminated last line', async () => {
+      const h = makeIO({ args: ['cut', '-c', '1', '/in'], files: { '/in': 'ab\ncd' } });
+      expect(await cutCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('a\nc\n');
+    });
+    test('empty stdin produces no output (no spurious LF)', async () => {
+      const h = makeIO({ args: ['cut', '-c', '1'], stdinText: '' });
+      expect(await cutCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('');
+    });
+    test('fully -s-suppressed unterminated input produces no output', async () => {
+      const h = makeIO({ args: ['cut', '-d', ',', '-f', '1', '-s'], stdinText: 'nodelim' });
+      expect(await cutCommand(h.io)).toBe(0);
+      expect(h.out()).toBe('');
+    });
+  });
+
   describe('parseList', () => {
     test('mixed', () => {
       const r = parseList('1,4-6,9-', true);

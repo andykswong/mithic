@@ -132,7 +132,10 @@ export function b32DecodeGroup(s: string): { bytes: Uint8Array; ok: boolean } {
       // pad count for a legal boundary, and trailing bits zero. A wrong pad count
       // emits NOTHING for this octet (matching GNU).
       if (avail !== 8 || !LEGAL_TAIL.has(nd) || nd === 0 || pad !== 8 - nd || !trailingZero) return fail();
-      if (i + 8 < s.length) return fail(); // data after a padded terminal octet
+      for (const b of tmp) buf[o++] = b;
+      // After a FULLY PADDED terminal octet GNU resets and keeps decoding, so
+      // concatenated padded octets decode fully (`IE======IE======` → "AA").
+      continue;
     } else if (nd < 8) {
       // Unpadded short octet: emit the decodable bytes, then require a legal
       // boundary length and zero trailing bits (it must be the last octet).
@@ -213,11 +216,13 @@ class StreamingB32Decoder {
   }
 
   update(text: string): { bytes: Uint8Array; ok: boolean } {
-    const s = this.#carry + this.#clean(text);
-    const whole = s.length - (s.length % 8);
-    this.#carry = s.slice(whole);
-    if (whole === 0) return { bytes: new Uint8Array(0), ok: true };
-    return b32DecodeGroup(s.slice(0, whole).toUpperCase());
+    // A fully-padded terminal octet makes GNU reset and keep decoding, but a
+    // short/unpadded octet followed by more data is a truncation error. Deciding
+    // that requires the WHOLE logical input (an 8-char window can't see across
+    // its own boundary), so buffer here and decode once in final(). Whitespace/
+    // garbage stripping keeps memory bounded to the alphabet chars.
+    this.#carry += this.#clean(text);
+    return { bytes: new Uint8Array(0), ok: true };
   }
 
   final(): { bytes: Uint8Array; ok: boolean } {

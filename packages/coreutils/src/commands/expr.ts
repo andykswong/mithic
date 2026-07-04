@@ -23,8 +23,9 @@ import type { CommandFn, CommandIO } from '../harness.ts';
 
 type Value = string | bigint;
 
-/** GNU expr treats an operand as a number only if it is a signed decimal integer. */
-const INT_RE = /^[+-]?\d+$/;
+/** GNU expr treats an operand as a number only if it is `-?[0-9]+` (a leading `+`
+ *  is NOT part of an integer). */
+const INT_RE = /^-?\d+$/;
 
 /** A syntax/usage error in an expr expression — GNU exits 2 for these. */
 class ExprSyntaxError extends Error {}
@@ -64,6 +65,47 @@ function toIndex(v: Value): number {
  * (extended) regex, so we swap which of each pair is escaped. Character classes
  * `[...]` are copied verbatim (their contents are already the same in both).
  */
+/** JS regex fragments for the POSIX character classes usable inside `[[:class:]]`. */
+const POSIX_CLASS: Record<string, string> = {
+  alpha: 'a-zA-Z',
+  digit: '0-9',
+  alnum: 'a-zA-Z0-9',
+  upper: 'A-Z',
+  lower: 'a-z',
+  space: '\\s',
+  blank: ' \\t',
+  punct: '!-/:-@\\[-`{-~',
+  cntrl: '\\x00-\\x1f\\x7f',
+  xdigit: '0-9A-Fa-f',
+  print: '\\x20-\\x7e',
+  graph: '\\x21-\\x7e',
+};
+
+/**
+ * Copy a BRE bracket expression starting at `[` (index `i`) into JS regex source,
+ * translating any `[[:class:]]` POSIX classes (which JS does not support) into
+ * their equivalent ranges. Ordinary ranges (`[a-z]`) pass through unchanged.
+ * Returns the JS source and the index of the closing `]`.
+ */
+function translateBracket(bre: string, i: number): [string, number] {
+  let cls = '[';
+  let j = i + 1;
+  if (bre[j] === '^') { cls += '^'; j++; }
+  if (bre[j] === ']') { cls += ']'; j++; } // a leading ] is a literal member
+  while (j < bre.length && bre[j] !== ']') {
+    if (bre[j] === '[' && bre[j + 1] === ':') {
+      const end = bre.indexOf(':]', j + 2);
+      if (end !== -1) {
+        const name = bre.slice(j + 2, end);
+        if (POSIX_CLASS[name] !== undefined) { cls += POSIX_CLASS[name]; j = end + 2; continue; }
+      }
+    }
+    cls += bre[j]; j++;
+  }
+  cls += ']';
+  return [cls, j];
+}
+
 function breToJs(bre: string): string {
   let out = '';
   for (let i = 0; i < bre.length; i++) {
@@ -74,22 +116,22 @@ function breToJs(bre: string): string {
       // Backslashed metacharacters in BRE map to bare metacharacters in JS.
       if (n === '(' || n === ')' || n === '{' || n === '}' || n === '+' || n === '?' || n === '|') {
         out += n;
-      } else {
-        // \1..\9 backrefs, \. \* etc. — keep the escape as-is.
+      } else if (/[1-9]/.test(n) || '.*[]^$\\'.includes(n) || 'wWsSbB'.includes(n)) {
+        // \1..\9 backrefs, escaped BRE metacharacters, and the glibc-BRE regex
+        // operators \w \W \s \S \b \B (word/space/boundary) — keep the escape
+        // as-is (JS RegExp understands these identically).
         out += '\\' + n;
+      } else {
+        // \<ordinary> in a BRE is the LITERAL ordinary char (glibc: `\t` == `t`),
+        // NOT a JS control escape. Emit the char, escaped only if JS-special.
+        out += /[a-zA-Z0-9]/.test(n) ? n : '\\' + n;
       }
       i++;
     } else if (c === '(' || c === ')' || c === '{' || c === '}' || c === '+' || c === '?' || c === '|') {
       // Bare metacharacter in BRE is a LITERAL → escape it for JS.
       out += '\\' + c;
     } else if (c === '[') {
-      // Copy the bracket expression verbatim up to the matching ']'.
-      let cls = '[';
-      let j = i + 1;
-      if (bre[j] === '^') { cls += '^'; j++; }
-      if (bre[j] === ']') { cls += ']'; j++; } // a leading ] is a literal member
-      while (j < bre.length && bre[j] !== ']') { cls += bre[j]; j++; }
-      cls += ']';
+      const [cls, j] = translateBracket(bre, i);
       out += cls;
       i = j;
     } else {

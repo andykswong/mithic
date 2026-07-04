@@ -10,6 +10,7 @@ function makeIO(opts: {
   args: string[];
   stdinText?: string;
   files?: Tree;
+  isatty?: (fd: number) => boolean;
 }): { io: CommandIO; out(): string; err(): string } {
   const files = opts.files ?? {};
   const enc = new TextEncoder();
@@ -78,7 +79,7 @@ function makeIO(opts: {
   };
 
   return {
-    io: { args: opts.args, env: {}, cwd: '/', stdin, stdout, stderr, syscall },
+    io: { args: opts.args, env: {}, cwd: '/', stdin, stdout, stderr, syscall, isatty: opts.isatty },
     out: () => decode(outChunks),
     err: () => decode(errChunks),
   };
@@ -306,6 +307,54 @@ describe('grep', () => {
     const h = makeIO({ args: ['grep', '--color=always', '$'], stdinText: 'hello\n' });
     expect(await grepCommand(h.io)).toBe(0);
     expect(h.out()).toBe('hello\n');
+  });
+
+  test('--color=auto emits NO color when stdout is not a TTY', async () => {
+    const h = makeIO({ args: ['grep', '--color=auto', 'foo'], stdinText: 'foo\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('foo\n');
+  });
+
+  test('--color=auto emits SGR when stdout IS a TTY', async () => {
+    const h = makeIO({ args: ['grep', '--color=auto', 'b'], stdinText: 'abc\n', isatty: (fd) => fd === 1 });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\x1b[01;31m\x1b[Kb\x1b[m\x1b[Kc\n');
+  });
+
+  test('bare --color emits NO color when stdout is not a TTY', async () => {
+    const h = makeIO({ args: ['grep', '--color', 'foo'], stdinText: 'foo\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('foo\n');
+  });
+
+  test('--color=always still emits SGR regardless of TTY', async () => {
+    const h = makeIO({ args: ['grep', '--color=always', 'b'], stdinText: 'abc\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('a\x1b[01;31m\x1b[Kb\x1b[m\x1b[Kc\n');
+  });
+
+  test('-P accepts leading (?i) inline-flag prefix', async () => {
+    const h = makeIO({ args: ['grep', '-P', '(?i)FOO'], stdinText: 'foo\nFOO\nbar\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('foo\nFOO\n');
+  });
+
+  test('-P accepts leading (?-i) inline-flag prefix', async () => {
+    const h = makeIO({ args: ['grep', '-P', '(?-i)foo'], stdinText: 'foo\nFOO\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('foo\n');
+  });
+
+  test('-P still accepts the (?i:...) group form', async () => {
+    const h = makeIO({ args: ['grep', '-P', '(?i:FOO)'], stdinText: 'foo\nFOO\nbar\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('foo\nFOO\n');
+  });
+
+  test('-P leading (?ms) multi-flag prefix', async () => {
+    const h = makeIO({ args: ['grep', '-P', '(?is)F.O'], stdinText: 'fxo\nbar\n' });
+    expect(await grepCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('fxo\n');
   });
 
   test('--color=always [0-9]* only colors the digit run', async () => {

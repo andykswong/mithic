@@ -377,4 +377,41 @@ describe('od', () => {
     expect(await odCommand(h.io)).toBe(1);
     expect(h.err()).toBe('od: invalid output address radix \'z\'; it must be one character from [doxn]\n');
   });
+
+  // ── M8: -a named-ASCII masks high bytes to the low-7-bit name/char ──
+
+  test('-a renders bytes >= 0x80 as the masked low-7-bit ASCII name/char', async () => {
+    // 0x80&0x7f=0x00 → nul, 0xff&0x7f=0x7f → del, 0xe0&0x7f=0x60 → `
+    const h = makeIO({ args: ['od', '-A', 'n', '-a', '/in'], files: { '/in': new Uint8Array([0x80, 0xff, 0xe0]) } });
+    expect(await odCommand(h.io)).toBe(0);
+    expect(h.out()).toBe(' nul del   `\n');
+  });
+
+  test('-a masks a high printable byte to its low-7-bit character', async () => {
+    // 0xc1 & 0x7f = 0x41 → 'A'; 0xfe & 0x7f = 0x7e → '~'
+    const h = makeIO({ args: ['od', '-A', 'n', '-a', '/in'], files: { '/in': new Uint8Array([0xc1, 0xfe]) } });
+    await odCommand(h.io);
+    expect(h.out()).toBe('   A   ~\n');
+  });
+
+  // ── L12: -A / --address-radix reads only the FIRST char of its argument ──
+
+  test('-A reads only the first char of a multi-char radix argument', async () => {
+    // GNU `od -Anone` → radix n (first char of "none"); no address column.
+    const h = makeIO({ args: ['od', '-Anone', '-t', 'x1', '/in'], files: { '/in': 'AB' } });
+    expect(await odCommand(h.io)).toBe(0);
+    expect(h.out()).toBe(' 41 42\n');
+  });
+
+  test('--address-radix=xyz uses only the first char (x)', async () => {
+    const h = makeIO({ args: ['od', '--address-radix=xyz', '-t', 'x1', '/in'], files: { '/in': 'AB' } });
+    await odCommand(h.io);
+    expect(h.out()).toBe('000000 41 42\n000002\n');
+  });
+
+  test('-A with an invalid first char quotes only the first char', async () => {
+    const h = makeIO({ args: ['od', '-Azzz', '/in'], files: { '/in': 'AB' } });
+    expect(await odCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('od: invalid output address radix \'z\'; it must be one character from [doxn]\n');
+  });
 });

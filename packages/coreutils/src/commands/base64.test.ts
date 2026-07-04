@@ -136,7 +136,21 @@ describe('b64Encode / b64Decode roundtrip', () => {
   test('wrong explicit padding count is invalid', () => {
     expect(b64Decode('YQ=')).toBeNull();   // 2 data need 2 pads, not 1
     expect(b64Decode('aGk==')).toBeNull(); // 3 data need 1 pad, not 2
-    expect(b64Decode('aGVsbG8=x')).toBeNull(); // data after a terminal group
+  });
+
+  // R1: after a FULLY PADDED terminal quantum GNU resets and keeps decoding, so
+  // concatenated padded quanta decode fully (they do not fail as "data after a
+  // terminal group"). Genuine garbage / short unpadded tails still fail.
+  test('concatenated fully-padded quanta decode fully', () => {
+    expect(new TextDecoder().decode(b64Decode('YQ==YQ==')!)).toBe('aa');
+    expect(new TextDecoder().decode(b64Decode('YQ==YQ==YQ==')!)).toBe('aaa');
+    expect(new TextDecoder().decode(b64Decode('TWE=TWE=')!)).toBe('MaMa'); // 3-data + 1-pad quanta
+  });
+
+  test('data after a NON-padded terminal group still fails', () => {
+    expect(b64Decode('aGVsbG8x')).toEqual(new TextEncoder().encode('hello1')); // valid full groups
+    expect(b64Decode('YQ==X')).toBeNull();      // padded quantum then a lone garbage char
+    expect(b64Decode('aGVsbG8=x')).toBeNull();  // full+padded quanta then a lone char
   });
 });
 
@@ -240,5 +254,12 @@ describe('base64 command', () => {
     expect(await base64Command(h.io)).toBe(1);
     expect(new TextDecoder().decode(h.out())).toBe('hello');
     expect(h.err()).toBe('base64: invalid input\n');
+  });
+
+  // R1: concatenated padded quanta decode fully across the stream (exit 0).
+  test('-d decodes concatenated fully-padded quanta (YQ==YQ== → aa), exit 0', async () => {
+    const h = makeIO({ args: ['base64', '-d'], stdinText: 'YQ==YQ==' });
+    expect(await base64Command(h.io)).toBe(0);
+    expect(new TextDecoder().decode(h.out())).toBe('aa');
   });
 });

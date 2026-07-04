@@ -221,6 +221,85 @@ function zeroPadSigned(sign: string, digits: string, width: number): string {
   return sign + digits.padStart(width - sign.length, '0');
 }
 
+/** C-string names for the control bytes glibc's shell-escape quoting spells out. */
+const CTRL_ESCAPE: Record<number, string> = {
+  0x07: '\\a', 0x08: '\\b', 0x09: '\\t', 0x0a: '\\n',
+  0x0b: '\\v', 0x0c: '\\f', 0x0d: '\\r',
+};
+
+/**
+ * Shell-quote `arg` exactly like GNU `printf %q` (glibc `quotearg` with the
+ * shell-escape style). Rules:
+ *   - empty string → `''`;
+ *   - a byte that is a control/non-printable char is emitted in a `$'...'` run
+ *     (named escape when known, else 3-digit octal); adjacent literal text sits
+ *     in its own `'...'` run, so `a\nb` → `'a'$'\n''b'`;
+ *   - otherwise, if any char forces quoting (shell metacharacters, plus leading
+ *     `#`/`~`, plus a standalone `{`/`}`), the string is single-quoted; but when
+ *     the ONLY quoting trigger is a `'` (with no other single-quote-forcing char
+ *     and no `"`/`$`/`` ` ``/`\`) the string is double-quoted instead
+ *     (`a'b` → `"a'b"`);
+ *   - a string needing no quoting is emitted bare.
+ */
+function shellQuote(arg: string): string {
+  if (arg === '') return '\'\'';
+
+  const forcesQuote = (ch: string, i: number): boolean => {
+    if (' \t\n!"$&\'()*;<>?[\\^`|='.includes(ch)) return true;
+    if ((ch === '#' || ch === '~') && i === 0) return true;
+    if ((ch === '{' || ch === '}') && arg.length === 1) return true;
+    return false;
+  };
+
+  let needsEscape = false;
+  let needsQuote = false;
+  let onlyQuoteTrigger = true; // every forcing char so far is the single-quote `'`
+  for (let i = 0; i < arg.length; i++) {
+    const code = arg.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f || code > 0x7f) { needsEscape = true; needsQuote = true; onlyQuoteTrigger = false; continue; }
+    const ch = arg[i];
+    if (forcesQuote(ch, i)) {
+      needsQuote = true;
+      if (ch !== '\'') onlyQuoteTrigger = false;
+    }
+    if ('"$`\\'.includes(ch)) onlyQuoteTrigger = false;
+  }
+
+  if (!needsQuote) return arg;
+
+  if (needsEscape) {
+    // Mixed form: literal runs in '...', escaped bytes in $'...'. Non-printable
+    // bytes are the UTF-8 encoding of the string (GNU under LC_ALL=C escapes each
+    // byte), so a multibyte char yields one octal escape per UTF-8 byte.
+    const bytes = new TextEncoder().encode(arg);
+    let out = '';
+    let lit = '';
+    let esc = '';
+    const flushLit = () => { if (lit !== '') { out += `'${lit}'`; lit = ''; } };
+    // GNU always opens with a '...' run, so a leading escape gets an empty ''.
+    const flushEsc = () => { if (esc !== '') { if (out === '') out += '\'\''; out += `$'${esc}'`; esc = ''; } };
+    for (const code of bytes) {
+      if (code < 0x20 || code >= 0x7f) {
+        flushLit();
+        esc += CTRL_ESCAPE[code] ?? '\\' + code.toString(8).padStart(3, '0');
+      } else {
+        flushEsc();
+        lit += String.fromCharCode(code);
+      }
+    }
+    flushEsc();
+    flushLit();
+    return out;
+  }
+
+  if (onlyQuoteTrigger && arg.includes('\'')) {
+    return '"' + arg + '"';
+  }
+
+  // Single-quote, escaping any embedded ' as '\''.
+  return '\'' + arg.replace(/'/g, '\'\\\'\'') + '\'';
+}
+
 /** Mutable state threaded through a format pass: numeric diagnostics + a
  *  `\c`-in-`%b` truncation flag (which stops ALL further output). */
 interface PassState { diags: PrintfDiag[]; truncated: boolean; }
@@ -268,14 +347,16 @@ function applyConversion(
       break;
     }
     case 'b': {
-      const esc = processEscapesFull(rawArg);
-      if (esc.truncated) state.truncated = true; // `\c` in %b stops all output
+      const esc = processEscapesFull(rawArg, { errorOnMissingHex: true });
+      if (esc.missingHex) state.diags.push({ message: 'missing hexadecimal number in escape' });
+      if (esc.truncated) state.truncated = true; // `\c` or `\x`-no-hex in %b stops all output
       let str = esc.text;
       if (precision !== null && precision >= 0) str = str.slice(0, precision);
       out = pad(str, width ?? 0, flags);
       break;
     }
     case 'c': out = pad(rawArg[0] ?? '\0', width ?? 0, flags); break;
+    case 'q': out = pad(shellQuote(rawArg), width ?? 0, flags); break;
     case 'd': case 'i': {
       const n = intArg();
       const neg = n < 0n;
@@ -415,6 +496,11 @@ export function sprintfFull(fmt: string, args: string[]): SprintfResult {
           while (j < fmt.length && j < i + 4 && fmt[j] >= '0' && fmt[j] <= '7') oct += fmt[j++];
           s += String.fromCharCode(parseInt(oct, 8) & 0xff);
           i = j;
+        } else if (next === 'x') {
+          // `\xHH` — 1-2 hex digits; a bare `\x` (no hex) errors, same as %b.
+          const hex = fmt.slice(i + 2, i + 4).match(/^[0-9a-fA-F]{1,2}/)?.[0];
+          if (hex) { s += String.fromCharCode(parseInt(hex, 16)); i += 2 + hex.length; }
+          else { state.diags.push({ message: 'missing hexadecimal number in escape' }); state.truncated = true; return s; }
         } else {
           s += '\\' + next; i += 2;
         }

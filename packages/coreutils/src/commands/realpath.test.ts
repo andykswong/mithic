@@ -28,6 +28,20 @@ describe('realpath', () => {
     expect(await realpathCommand(h.io)).toBe(1);
   });
 
+  // ── L11: an intermediate erased by a following `..` must still exist ──
+
+  test('default errors when a component erased by a following .. is missing', async () => {
+    // No dir "a"; foo.txt present. GNU realpath a/../foo.txt → exit 1.
+    const h = makeIO({ args: ['realpath', '/a/../foo.txt'], files: { '/foo.txt': 'x' } });
+    expect(await realpathCommand(h.io)).toBe(1);
+  });
+
+  test('default resolves a/../foo.txt when the erased intermediate exists', async () => {
+    const h = makeIO({ args: ['realpath', '/a/../foo.txt'], files: { '/a/keep': '1', '/foo.txt': 'x' } });
+    expect(await realpathCommand(h.io)).toBe(0);
+    expect(h.out()).toBe('/foo.txt\n');
+  });
+
   test('-m allows missing path', async () => {
     const h = makeIO({ args: ['realpath', '-m', '/x/../y/z'] });
     expect(await realpathCommand(h.io)).toBe(0);

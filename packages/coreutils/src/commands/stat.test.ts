@@ -21,6 +21,16 @@ describe('stat format', () => {
   test('\\n escape', () => {
     expect(applyFormat('%n\\n', '/x', st, true)).toBe('/x\n');
   });
+  test('--printf full escape set: \\a \\b \\f \\v', () => {
+    expect(applyFormat('\\a\\b\\f\\v', '/x', st, true)).toBe('\x07\b\f\x0b');
+  });
+  test('--printf \\xNN hex and \\NNN octal escapes', () => {
+    // \x41 → A, \101 → A, \v → VT
+    expect(applyFormat('x\\x41 o\\101 v\\v', '/x', st, true)).toBe('xA oA v\x0b');
+  });
+  test('-c/--format leaves escapes literal (escapes=false)', () => {
+    expect(applyFormat('x\\x41 v\\v', '/x', st, false)).toBe('x\\x41 v\\v');
+  });
   test('%A perm string, %f raw mode hex, %B/%o constants, %N quoted', () => {
     expect(applyFormat('%A', '/x', st, false)).toBe('-rw-r--r--');
     expect(applyFormat('%A', '/x', dirSt, false)).toBe('drwxr-xr-x');

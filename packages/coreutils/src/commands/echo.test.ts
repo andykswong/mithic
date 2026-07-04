@@ -30,6 +30,8 @@ describe('processEscapes', () => {
   test('\\1234 stops at 3 octal digits', () => expect(processEscapes('\\1234')).toBe('S4'));
   test('\\01234 leading 0 then 3 octal digits', () => expect(processEscapes('\\01234')).toBe('S4'));
   test('\\xHH hex', () => expect(processEscapes('\\x41')).toBe('A'));
+  test('\\x with no hex digit stays literal (echo does not error)', () =>
+    expect(processEscapes('a\\x')).toBe('a\\x'));
   test('\\e escape (ESC)', () => expect(processEscapes('\\e')).toBe('\x1b'));
   test('unknown escape passed through', () => expect(processEscapes('\\z')).toBe('\\z'));
   test('\\c truncates and signals truncated', () => {

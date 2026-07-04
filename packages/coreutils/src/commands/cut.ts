@@ -305,9 +305,11 @@ const cutCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         // writes so the pipeline drains incrementally instead of buffering all.
         const sink = new CoalescingWriter(out);
         try {
-          for await (const { line, eol } of streamLines(io.stdin)) {
+          // GNU cut always terminates each emitted line with LF, regardless of
+          // whether the input line was newline-terminated.
+          for await (const { line } of streamLines(io.stdin)) {
             const cut = cutLine(line, mode);
-            if (cut !== null) await sink.push(cut + (eol ? '\n' : ''));
+            if (cut !== null) await sink.push(cut + '\n');
           }
           await sink.flush();
         } catch (e) {
@@ -324,15 +326,16 @@ const cutCommand: CommandFn = async (io: CommandIO): Promise<number> => {
         continue;
       }
       if (text === '') continue;
-      const hasTrailing = text.endsWith('\n');
-      const body = hasTrailing ? text.slice(0, -1) : text;
+      const body = text.endsWith('\n') ? text.slice(0, -1) : text;
       const lines = body.split('\n');
       const outLines: string[] = [];
       for (const line of lines) {
         const cut = cutLine(line, mode);
         if (cut !== null) outLines.push(cut);
       }
-      if (outLines.length > 0) await writeString(out, outLines.join('\n') + (hasTrailing ? '\n' : ''));
+      // GNU cut always LF-terminates each emitted line (even an unterminated
+      // final input line); suppressed-to-empty output emits nothing.
+      if (outLines.length > 0) await writeString(out, outLines.join('\n') + '\n');
     }
     return exitCode;
   } finally {

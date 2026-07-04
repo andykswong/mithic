@@ -13,7 +13,7 @@
  *
  * Reads stdin incrementally (streaming) so `yes | tr … | head` terminates.
  */
-import { CoalescingWriter, defineCommand, isBrokenPipe, parseArgs, writeString } from '../harness.ts';
+import { CoalescingWriter, defineCommand, isBrokenPipe, optionError, parseArgs, writeString } from '../harness.ts';
 import type { CommandFn, CommandIO } from '../harness.ts';
 
 const CLASS_MEMBERS: Record<string, () => string[]> = {
@@ -177,10 +177,12 @@ function expandSet2(tokens: SetToken[], set1Len: number): string[] {
 
 const trCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   const name = io.args[0] ?? 'tr';
-  const { positionals, flags } = parseArgs(io.args.slice(1), {
+  const parsed = parseArgs(io.args.slice(1), {
     boolean: ['d', 's', 'c', 'C', 't', 'complement', 'delete', 'squeeze-repeats', 'truncate-set1'],
     alias: { complement: 'c', C: 'c', delete: 'd', 'squeeze-repeats': 's', 'truncate-set1': 't' },
+    unknown: 'error',
   });
+  const { positionals, flags } = parsed;
   const del = Boolean(flags.d);
   const squeeze = Boolean(flags.s);
   const complement = Boolean(flags.c);
@@ -198,6 +200,7 @@ const trCommand: CommandFn = async (io: CommandIO): Promise<number> => {
   };
 
   try {
+    if (parsed.unknown.length) return failMsg(`${optionError(name, parsed.unknown[0])}\n`);
     // Operand-count validation (GNU diagnostics use U+2018/U+2019 quotes).
     const q = (s: string): string => `‘${s}’`;
     const help = `Try '${name} --help' for more information.\n`;

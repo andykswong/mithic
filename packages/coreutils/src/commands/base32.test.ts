@@ -110,6 +110,26 @@ describe('b32Encode / b32Decode roundtrip', () => {
     expect(b32Decode('MY=')).toBeNull();    // 2 data need 6 pads
     expect(b32Decode('MZXW6==')).toBeNull(); // 5 data need 3 pads
   });
+
+  // R2: after a FULLY PADDED terminal octet GNU resets and keeps decoding, so
+  // concatenated padded octets and a padded octet followed by full octets decode
+  // fully. An impossible-length tail after a padded octet still fails.
+  test('concatenated fully-padded octets decode fully', () => {
+    expect(new TextDecoder().decode(b32Decode('IE======IE======')!)).toBe('AA');
+    expect(new TextDecoder().decode(b32Decode('MZXW6===MZXW6===')!)).toBe('foofoo');
+  });
+
+  test('a full octet after a padded terminal octet decodes (reset)', () => {
+    // MFRA==== → "ab", then AAAAAAAA (all-zero full octet) → 5 zero bytes.
+    expect(b32Decode('MFRA====AAAAAAAA')).toEqual(new Uint8Array([0x61, 0x62, 0, 0, 0, 0, 0]));
+    // MFRA==== → "ab", then MFRGG (5-char terminal) → "abc" ⇒ "ababc" (a,b,a,b,c).
+    expect(b32Decode('MFRA====MFRGG')).toEqual(new Uint8Array([0x61, 0x62, 0x61, 0x62, 0x63]));
+  });
+
+  test('an impossible-length tail after a padded octet fails', () => {
+    // MFRA==== → "ab", then a lone "M" (1-char impossible octet) → fail.
+    expect(b32Decode('MFRA====M')).toBeNull();
+  });
 });
 
 describe('base32 command', () => {
@@ -181,6 +201,28 @@ describe('base32 command', () => {
     const h = makeIO({ args: ['base32', '-d'], stdinText: 'MFRGGZDFM' });
     expect(await base32Command(h.io)).toBe(1);
     expect(new TextDecoder().decode(h.out())).toBe('abcde');
+    expect(h.err()).toBe('base32: invalid input\n');
+  });
+
+  // R2: a full octet after a padded terminal octet decodes across the streaming
+  // window boundary (mithic used to error here because the mod-8 window hid the
+  // reset). GNU: 'MFRA====AAAAAAAA' → "ab\0\0\0\0\0", exit 0.
+  test('-d decodes a full octet following a padded terminal octet (exit 0)', async () => {
+    const h = makeIO({ args: ['base32', '-d'], stdinText: 'MFRA====AAAAAAAA' });
+    expect(await base32Command(h.io)).toBe(0);
+    expect(h.out()).toEqual(new Uint8Array([0x61, 0x62, 0, 0, 0, 0, 0]));
+  });
+
+  test('-d decodes concatenated padded octets (IE======IE====== → AA), exit 0', async () => {
+    const h = makeIO({ args: ['base32', '-d'], stdinText: 'IE======IE======' });
+    expect(await base32Command(h.io)).toBe(0);
+    expect(new TextDecoder().decode(h.out())).toBe('AA');
+  });
+
+  test('-d errors on an impossible-length tail after a padded octet', async () => {
+    const h = makeIO({ args: ['base32', '-d'], stdinText: 'MFRA====M' });
+    expect(await base32Command(h.io)).toBe(1);
+    expect(new TextDecoder().decode(h.out())).toBe('ab');
     expect(h.err()).toBe('base32: invalid input\n');
   });
 });

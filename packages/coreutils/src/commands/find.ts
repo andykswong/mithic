@@ -20,6 +20,7 @@
  *     -empty                      zero-byte file / empty directory
  *     -newer FILE                 mtime strictly newer than FILE's
  *     -true / -false              constant true / false
+ *     -prune                      true; don't descend into this directory
  *
  *   Actions (side effects; presence of ANY action suppresses the implicit -print):
  *     -print                      print path + `\n`
@@ -127,6 +128,8 @@ interface Entry {
   start: string;
   /** True when the directory has no children (for -empty). */
   isEmptyDir: boolean;
+  /** Set true by `-prune` to stop the walk descending into this directory. */
+  prune: boolean;
 }
 
 /** Shared per-run state threaded through evaluation. */
@@ -189,6 +192,15 @@ const printfNode = (format: string): EvalNode => ({
 /** `-quit` action: evaluates true, then unwinds the walk immediately (exit 0). */
 const quitNode = (): EvalNode => ({
   evaluate: async (_entry, ctx) => { ctx.quit = true; throw new QuitWalk(); },
+});
+
+/**
+ * `-prune`: always true; if the current entry is a directory, mark it so the walk
+ * does not descend into it (has no effect on a non-directory). Not an action, so
+ * it does not suppress the implicit `-print`.
+ */
+const pruneNode = (): EvalNode => ({
+  evaluate: async (entry) => { if (entry.st.type === 'directory') entry.prune = true; return true; },
 });
 
 function execNode(argv: string[], batch: boolean): ExecNode {
@@ -418,6 +430,7 @@ class ExprParser {
       }
       case '-true': return testNode(() => true);
       case '-false': return testNode(() => false);
+      case '-prune': return pruneNode();
       case '-print': this.hasAction = true; return printNode('\n');
       case '-print0': this.hasAction = true; return printNode('\0');
       case '-printf': { this.hasAction = true; return printfNode(this.requireValue(pred)); }
@@ -550,12 +563,21 @@ const findCommand: CommandFn = async (io: CommandIO): Promise<number> => {
     if (argv.includes('--help')) { await writeString(out, HELP); return 0; }
     if (argv.includes('--version')) { await writeString(out, VERSION); return 0; }
 
+    // Leading global options -L/-H/-P set the symlink-follow policy and must be
+    // consumed before path collection (they precede the paths in GNU's grammar).
+    // -P is the no-follow default; -L follows all symlinks; -H follows only the
+    // command-line operands. With no symlinks in the tree all three walk it
+    // identically, so we accept them and (for now) always no-follow.
+    let i = 0;
+    while (i < argv.length && (argv[i] === '-L' || argv[i] === '-H' || argv[i] === '-P')) {
+      i++;
+    }
+
     // find's grammar is positional: PATH operands come first, then the expression.
     // A leading operand is a PATH unless it starts the expression: only `-…`
     // predicates, `(`, and `!` do that. GNU treats a leading `)` or `,` as a path
     // (it stat()s them), so those do NOT stop path collection.
     const starts: string[] = [];
-    let i = 0;
     while (i < argv.length && !argv[i].startsWith('-') && argv[i] !== '(' && argv[i] !== '!') {
       starts.push(argv[i]);
       i++;
@@ -624,6 +646,7 @@ async function walk(
   const entry: Entry = {
     path, st, depth, start,
     isEmptyDir: type === 'directory' && (entries?.length ?? 0) === 0,
+    prune: false,
   };
 
   // -mindepth: entries shallower than mindepth are traversed but not evaluated.
@@ -634,7 +657,7 @@ async function walk(
     await root.evaluate(entry, ctx);
   }
 
-  if (type === 'directory' && entries && !(opts.maxdepth !== undefined && depth >= opts.maxdepth)) {
+  if (!entry.prune && type === 'directory' && entries && !(opts.maxdepth !== undefined && depth >= opts.maxdepth)) {
     const sorted = [...entries].sort((a, b) => a.name.localeCompare(b.name));
     for (const e of sorted) {
       await walk(io, findJoin(path, e.name), depth + 1, start, root, opts, ctx);
@@ -658,8 +681,9 @@ Operators (decreasing precedence):
       EXPR1 -o EXPR2   EXPR1 -or EXPR2   EXPR1 , EXPR2
 
 Tests:  -name PATTERN -iname PATTERN -path PATTERN -type [bcdpfls]
-        -size N[bckMG] -empty -newer FILE -true -false
+        -size N[bckMG] -empty -newer FILE -true -false -prune
 
+Global options (before paths): -L -H -P
 Options: -maxdepth LEVELS -mindepth LEVELS -depth
 
 Actions: -print -print0 -printf FORMAT -exec COMMAND ; -quit

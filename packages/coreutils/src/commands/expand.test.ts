@@ -103,6 +103,25 @@ describe('expand', () => {
     expect(h.out()).toBe('    a   b\n');
   });
 
+  // ── R4: a -t value that looks like -NUMBER is not the obsolete shorthand ───
+  test('-t -1 error quotes the VALUE token, not -t (R4 regression)', async () => {
+    const h = makeIO({ args: ['expand', '-t', '-1'], stdinText: 'a\tb\n' });
+    expect(await expandCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('expand: tab size contains invalid character(s): ‘-1’\n');
+  });
+
+  test('-t 1,-3 error quotes the -3 token', async () => {
+    const h = makeIO({ args: ['expand', '-t', '1,-3'], stdinText: 'a\tb\n' });
+    expect(await expandCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('expand: tab size contains invalid character(s): ‘-3’\n');
+  });
+
+  test('-t -x error quotes -x (value passed through untouched)', async () => {
+    const h = makeIO({ args: ['expand', '-t', '-x'], stdinText: 'a\tb\n' });
+    expect(await expandCommand(h.io)).toBe(1);
+    expect(h.err()).toBe('expand: tab size contains invalid character(s): ‘-x’\n');
+  });
+
   // ── file-read failure exits 1 (parity finding) ────────────────────────────
   test('missing file operand exits 1', async () => {
     const h = makeIO({ args: ['expand', '/noexist'] });
