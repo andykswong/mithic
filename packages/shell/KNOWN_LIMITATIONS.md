@@ -22,9 +22,9 @@ Scope: this is shell-**LANGUAGE** comparison (builtins, parameter expansion,
 arithmetic, control flow, POSIX mode) — **not** spawned-command comparison.
 Commands like `ls`/`grep`/coreutils run as *spawned guests* over the real kernel,
 not in this mock-kernel harness; the mock's `spawn`/`wait` are stubs. **Every
-comparison case must be builtin/expansion-only.** A COMMAND-level (coreutils)
-comparison harness — driving the real kernel + guest spawns — is a separate future
-effort, not covered here.
+comparison case must be builtin/expansion-only.** The COMMAND-level (coreutils)
+comparison — driving the real kernel + guest spawns vs GNU/BSD — is a separate
+harness (see the closing section).
 
 ### Fixture provenance — bash version
 
@@ -59,13 +59,8 @@ dev machine). bash 3.2 LACKS bash-4+ features (case modification `${s^^}`/`${s,,
 
 Prioritized for agents. Each row: the gap + a one-line agent use case.
 
-_No open shell-language or shell/runtime gaps are currently tracked._ Per the open-only
-convention, closed work is not narrated here — the shipped bash-parity waves (through
-July 2026, incl. the 64-bit-`intmax_t`/`$PATH`-resolution/array-literal/`@`-transform
-"architectural" wave, the printf-rounding/format-char/test-diagnostics/case-fold
-"frontier" wave, its multi-round adversarial review, and the `[[ ]]`/`[[ =~ ]]`/`declare`
-known-bug closeout) have been removed from this open-only registry. Only genuine,
-still-open divergences live below.
+_No open shell-language or shell/runtime gaps are currently tracked._ (Per the open-only
+convention, closed work is removed rather than narrated here.)
 
 ## Deliberate boundaries (documented, not gaps)
 
@@ -73,9 +68,7 @@ Intentional design limits, not missing features. The governing rule: a boundary 
 be **fail-loud** (report an error + nonzero exit), **inert-by-design** (a graceful,
 documented no-op with a test), or **more-permissive** (accepts a superset of bash but
 never yields a *wrong* result) — **never silently wrong** (a plausible-but-incorrect
-value with no signal). Each row states which class it is. (Divergences that WERE
-silently wrong — `[ -f /nonexistent ]`→true, the perm/size/mtime file-test
-degradation, the printf-underflow ERANGE miss — have been fixed, not documented here.)
+value with no signal). Each row states which class it is.
 
 ### Inert-by-design (graceful no-op, no wrong output)
 
@@ -135,19 +128,25 @@ degradation, the printf-underflow ERANGE miss — have been fixed, not documente
   aborts a `bash -c '…'` (only) on a readonly-assignment error; mithic reports the
   error + exit 1 and CONTINUES (matching the script-file behavior — it has no
   `-c`-vs-script distinction). POSIX mode already makes readonly-reassign fatal.
+- **A malformed `[[ ]]` is a per-STATEMENT runtime error, not a whole-list parse abort.**
+  `[[ -e ]]` (and other malformed conditionals) fail loud — a `syntax error` diagnostic +
+  exit 2 — but bash rejects the *entire command list* at parse time (nothing after the
+  `[[ ]]` runs, even under `false && [[ -e ]]`), whereas mithic errors the statement and
+  continues. Fail-loud, not silently-wrong; the exit-2 signal matches for the statement.
+- **A `[[ =~ ]]` regex with an UNQUOTED SPACE is not preserved** (`[[ a =~ ( a ) ]]` builds
+  `(a)` — the `=~` coalescer drops inter-token whitespace since tokens carry no source
+  offsets). Quote a literal-space regex: `[[ a =~ "( a )" ]]`. More-permissive parse, not
+  a wrong result on the common (quoted / space-free) forms.
 
-_No known-buggy divergences are currently tracked._ The four that were listed here
-(the `[[ ]]` malformed-expression fabricated-false, the `[[ =~ ]]` unquoted-backslash /
-quoted-literal mis-expansion, `declare -FLAG` attribute-listing + bare-predeclaration,
-and the `declare -g` assoc-literal / `+=`-append scoping gaps) have shipped — each now
-matches bash 5.3 byte-for-byte, with regression tests in `src/executor-features.test.ts`.
+### Known bugs (fail-safe / narrow) — none open
+
+_No known-buggy divergences are currently tracked._
 
 ---
 
-## Future: command-level (coreutils) comparison
+## Command-level (coreutils) comparison — separate harness
 
-The comparison harness here only covers shell-language behavior. Comparing mithic's
-coreutils (`ls`, `grep`, `cat`, `jq`, `curl`, …) against their GNU/BSD counterparts
-requires driving the **real kernel** and spawning guests (not the mock-kernel
-`Executor` surface), plus a stable VFS fixture tree. That is a separate, heavier
-harness and is intentionally out of scope for this registry.
+The comparison harness *here* covers only shell-**LANGUAGE** behavior. The command-level
+comparison (mithic's coreutils `ls`/`grep`/`cat`/… as spawned guests over the **real
+kernel**, vs their GNU/BSD counterparts) is a **separate harness** and is not covered by
+this registry.
