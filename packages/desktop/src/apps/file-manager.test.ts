@@ -84,6 +84,17 @@ describe('file manager model', () => {
     expect(m.entries.length).toBe(3);
   });
 
+  test('setQuery clears the selection (a filtered-out row must not stay selected)', async () => {
+    const m = createFileManagerModel({ fs: fakeFs({ '/': [
+      { name: 'a.txt', kind: 'file' }, { name: 'b.txt', kind: 'file' },
+    ] }), onOpen: () => {} });
+    await m.navigate('/');
+    m.select('a.txt');
+    expect(m.selected).toBe('a.txt');
+    m.setQuery('b'); // 'a.txt' is now filtered out — selection must reset
+    expect(m.selected).toBeNull();
+  });
+
   test('the search query is cleared on navigation (no stale filter carried into a new dir)', async () => {
     const m = createFileManagerModel({ fs: fakeFs({
       '/': [{ name: 'invoice.pdf', kind: 'file' }, { name: 'docs', kind: 'directory' }],

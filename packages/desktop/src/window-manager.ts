@@ -305,12 +305,14 @@ export class WindowManager {
       const item = this.#desktop.ownerDocument.createElement('button');
       item.dataset.role = 'taskbar-item';
       item.dataset.id = String(t.window.id);
-      if (t.window.id === topId && t.window.state !== 'minimized') item.dataset.focused = 'true';
+      // topId is already the top NON-minimized window (minimized are skipped above),
+      // so a bare id match is sufficient for the focused marker.
+      if (t.window.id === topId) item.dataset.focused = 'true';
       const icon = t.app.icon ? `${t.app.icon} ` : '';
       item.textContent = `${icon}${t.window.title}`;
       item.style.cssText = 'font:12px sans-serif;cursor:pointer;max-width:160px;overflow:hidden;text-overflow:ellipsis;'
         + 'border:none;border-radius:8px;padding:4px 10px;color:#cdd6f4;'
-        + (t.window.id === topId && t.window.state !== 'minimized' ? 'background:#45475a;' : 'background:#313244;')
+        + (t.window.id === topId ? 'background:#45475a;' : 'background:#313244;')
         + (t.window.state === 'minimized' ? 'opacity:.6;' : '');
       item.addEventListener('click', () => {
         if (t.window.state === 'minimized') this.restore(t.window.id);

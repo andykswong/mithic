@@ -171,7 +171,7 @@ export function createFileManagerModel(deps: FileManagerDeps): FileManagerModel 
     get query() { return query; },
     get clipboard() { return clipboard; },
     setSort(key, d) { sortKey = key; if (d) sortDir = d; else if (key === sortKey) sortDir = sortDir === 'asc' ? 'desc' : 'asc'; },
-    setQuery(q) { query = q; },
+    setQuery(q) { query = q; selected = null; }, // a filter change can hide the selected row
     copy(name) { clipboard = { op: 'copy', path: join(cwd, name), name }; },
     cut(name) { clipboard = { op: 'cut', path: join(cwd, name), name }; },
     async paste() { await model.pasteInto(cwd); },
