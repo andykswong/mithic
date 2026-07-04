@@ -48,6 +48,13 @@ export interface ShellState {
    * to `${name[i]}` / `${name[@]}` / `${#name[@]}` expansion.
    */
   setArray?(name: string, values: string[]): void;
+  /**
+   * Store `values` into indexed array NAME starting at index `origin`, WITHOUT
+   * clearing pre-existing elements (`mapfile -O origin`): elements below origin
+   * and beyond the written range survive, a gap becomes a real hole, and an
+   * existing scalar is promoted to `[0]`.
+   */
+  setArrayFrom?(name: string, values: string[], origin: number): void;
   /** Wait for a job/pid, returning its exit code. */
   waitJob(spec?: number): Promise<number>;
   waitAll(): Promise<number>;
@@ -1803,16 +1810,37 @@ function splitReadWithRests(line: string, spec: IfsSpec, limit: number): { field
 }
 
 /**
- * `mapfile`/`readarray [-t] [-d DELIM] [-u FD] [NAME]` — slurp ALL of stdin (or
- * fd `FD`) and split into the indexed array NAME (default `MAPFILE`). Lines are
- * split on `\n` (or `-d DELIM`); `-t` strips the trailing delimiter from each
- * element. A trailing empty segment after the final delimiter is not stored.
+ * `mapfile`/`readarray [-d DELIM] [-n COUNT] [-O ORIGIN] [-s COUNT] [-t] [-u FD]
+ * [NAME]` — slurp ALL of stdin (or fd `FD`) and split into the indexed array
+ * NAME (default `MAPFILE`). Lines are split on `\n` (or `-d DELIM`); `-t` strips
+ * the trailing delimiter from each element. A trailing empty segment after the
+ * final delimiter is not stored.
+ *
+ * Data-affecting flags (bash-5.3 semantics): `-s COUNT` skips the first COUNT
+ * records; `-n COUNT` copies at most COUNT records (0 = all); `-O ORIGIN` stores
+ * starting at array index ORIGIN without clearing pre-existing elements (else
+ * the whole array is replaced). The per-quantum callback pair `-c`/`-C` is NOT
+ * supported (no in-builtin shell-function invocation): rather than silently
+ * dropping it, it fails loud with a diagnostic and a nonzero status.
  */
 async function runMapfile(args: string[], ctx: BuiltinContext): Promise<number> {
+  const self = 'mapfile';
   let strip = false;
   let delim = '\n';
   let fdArg: number | undefined;
   let name = 'MAPFILE';
+  let count = 0;   // -n: max records (0 ⇒ all)
+  let skip = 0;    // -s: skip leading records
+  let origin: number | undefined; // -O: start index (undefined ⇒ replace array)
+  let callback = false; // -c/-C requested (unsupported)
+
+  // A COUNT/ORIGIN operand is a non-negative decimal integer; bash rejects a
+  // negative or non-numeric value with a flag-specific diagnostic and exit 1.
+  const parseNonNeg = (v: string, label: string): number | null => {
+    if (!/^\d+$/.test(v)) { errOut(ctx, `${self}: ${v}: invalid ${label}\n`); return null; }
+    return parseInt(v, 10);
+  };
+
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '-t') { strip = true; continue; }
@@ -1820,8 +1848,33 @@ async function runMapfile(args: string[], ctx: BuiltinContext): Promise<number> 
     if (a.startsWith('-d') && a.length > 2) { delim = a.slice(2)[0]; continue; }
     if (a === '-u') { fdArg = parseInt(args[++i] ?? '', 10); continue; }
     if (a.startsWith('-u') && a.length > 2) { fdArg = parseInt(a.slice(2), 10); continue; }
-    if (a.startsWith('-')) continue; // -O/-s/-n/-c/-C unsupported: ignore
+    if (a === '-n' || a === '-s' || a === '-O') {
+      const label = a === '-O' ? 'array origin' : 'line count';
+      const n = parseNonNeg(args[++i] ?? '', label);
+      if (n === null) return 1;
+      if (a === '-n') count = n; else if (a === '-s') skip = n; else origin = n;
+      continue;
+    }
+    if ((a.startsWith('-n') || a.startsWith('-s') || a.startsWith('-O')) && a.length > 2) {
+      const flag = a.slice(0, 2);
+      const label = flag === '-O' ? 'array origin' : 'line count';
+      const n = parseNonNeg(a.slice(2), label);
+      if (n === null) return 1;
+      if (flag === '-n') count = n; else if (flag === '-s') skip = n; else origin = n;
+      continue;
+    }
+    if (a === '-C') { callback = true; i++; continue; } // consume the callback operand
+    if (a.startsWith('-C') && a.length > 2) { callback = true; continue; }
+    if (a === '-c') { callback = true; i++; continue; } // consume the quantum operand
+    if (a.startsWith('-c') && a.length > 2) { callback = true; continue; }
     name = a;
+  }
+
+  if (callback) {
+    // Fail loud rather than silently ignore: the callback would need to invoke a
+    // shell function per quantum, which the builtin has no hook to do.
+    errOut(ctx, `${self}: -c/-C (per-quantum callback) is not supported\n`);
+    return 2;
   }
 
   // Read ALL available input. From a numbered fd, drain successive lines; from
@@ -1842,8 +1895,12 @@ async function runMapfile(args: string[], ctx: BuiltinContext): Promise<number> 
   }
 
   const elements = splitKeepingDelimiter(data, delim);
-  const values = strip ? elements.map((e) => (e.endsWith(delim) ? e.slice(0, -delim.length) : e)) : elements;
-  ctx.state?.setArray?.(name, values);
+  // `-s` skips leading records; `-n` (when nonzero) caps how many follow.
+  let selected = skip > 0 ? elements.slice(skip) : elements;
+  if (count > 0) selected = selected.slice(0, count);
+  const values = strip ? selected.map((e) => (e.endsWith(delim) ? e.slice(0, -delim.length) : e)) : selected;
+  if (origin !== undefined) ctx.state?.setArrayFrom?.(name, values, origin);
+  else ctx.state?.setArray?.(name, values);
   return 0;
 }
 

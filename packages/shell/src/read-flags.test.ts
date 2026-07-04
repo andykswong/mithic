@@ -151,6 +151,129 @@ test('mapfile defaults to the MAPFILE array when no name is given', async () => 
   expect(h.out.trim()).toBe('p-q n=2');
 });
 
+// ── mapfile data-affecting flags (-n / -s / -O), bash-5.3 exact ──────────────
+
+test('mapfile -n 2 copies at most 2 records', async () => {
+  const h = mk();
+  await h.ex.exec('printf \'%s\\n\' a b c d | { mapfile -t -n 2 arr; declare -p arr; }');
+  expect(h.out.trim()).toBe('declare -a arr=([0]="a" [1]="b")');
+});
+
+test('mapfile -n 0 means all records', async () => {
+  const h = mk();
+  await h.ex.exec('printf \'%s\\n\' a b c | { mapfile -t -n 0 arr; declare -p arr; }');
+  expect(h.out.trim()).toBe('declare -a arr=([0]="a" [1]="b" [2]="c")');
+});
+
+test('mapfile -s 2 skips the first 2 records', async () => {
+  const h = mk();
+  await h.ex.exec('printf \'%s\\n\' a b c d | { mapfile -t -s 2 arr; declare -p arr; }');
+  expect(h.out.trim()).toBe('declare -a arr=([0]="c" [1]="d")');
+});
+
+test('mapfile -s 2 -n 1 skips then limits', async () => {
+  const h = mk();
+  await h.ex.exec('printf \'%s\\n\' a b c d e | { mapfile -t -s 2 -n 1 arr; declare -p arr; }');
+  expect(h.out.trim()).toBe('declare -a arr=([0]="c")');
+});
+
+test('mapfile -s beyond the input yields an empty array', async () => {
+  const h = mk();
+  await h.ex.exec('printf \'%s\\n\' a b | { mapfile -t -s 10 arr; declare -p arr; echo "s=$?"; }');
+  expect(h.out.trim()).toBe('declare -a arr=()\ns=0');
+});
+
+test('mapfile -O 3 stores starting at index 3 (empty array)', async () => {
+  const h = mk();
+  await h.ex.exec('printf \'%s\\n\' x y | { mapfile -t -O 3 arr; declare -p arr; }');
+  expect(h.out.trim()).toBe('declare -a arr=([3]="x" [4]="y")');
+});
+
+test('mapfile -O 2 overwrites from index 2 without clearing elements below or beyond', async () => {
+  const h = mk();
+  await h.ex.exec('arr=(a b c d e); printf \'%s\\n\' X Y | { mapfile -t -O 2 arr; declare -p arr; }');
+  expect(h.out.trim()).toBe('declare -a arr=([0]="a" [1]="b" [2]="X" [3]="Y" [4]="e")');
+});
+
+// ── attached-form numeric flags (-n2 / -s2 / -O2, no space): a distinct parse
+// branch (flag = a.slice(0,2), value = a.slice(2)) that the spaced-form cases
+// above never exercise. Locks the slice offset and the -O vs -n/-s label/target
+// selection against a silent future regression. bash-5.3 exact.
+test('mapfile -t -n2 (attached) copies at most 2 records', async () => {
+  const h = mk();
+  await h.ex.exec('printf \'%s\\n\' a b c d | { mapfile -t -n2 arr; declare -p arr; }');
+  expect(h.out.trim()).toBe('declare -a arr=([0]="a" [1]="b")');
+});
+
+test('mapfile -t -s2 (attached) skips the first 2 records', async () => {
+  const h = mk();
+  await h.ex.exec('printf \'%s\\n\' a b c d | { mapfile -t -s2 arr; declare -p arr; }');
+  expect(h.out.trim()).toBe('declare -a arr=([0]="c" [1]="d")');
+});
+
+test('mapfile -t -O2 (attached) stores starting at index 2 without clearing others', async () => {
+  const h = mk();
+  await h.ex.exec('arr=(a b c d e); printf \'%s\\n\' X Y | { mapfile -t -O2 arr; declare -p arr; }');
+  expect(h.out.trim()).toBe('declare -a arr=([0]="a" [1]="b" [2]="X" [3]="Y" [4]="e")');
+});
+
+test('mapfile -O beyond existing length leaves a hole', async () => {
+  const h = mk();
+  await h.ex.exec('arr=(a b); printf \'%s\\n\' X Y | { mapfile -t -O 5 arr; declare -p arr; }');
+  expect(h.out.trim()).toBe('declare -a arr=([0]="a" [1]="b" [5]="X" [6]="Y")');
+});
+
+test('mapfile -O promotes an existing scalar to [0]', async () => {
+  const h = mk();
+  await h.ex.exec('arr=hello; printf \'%s\\n\' X Y | { mapfile -t -O 2 arr; declare -p arr; }');
+  expect(h.out.trim()).toBe('declare -a arr=([0]="hello" [2]="X" [3]="Y")');
+});
+
+test('mapfile without -O clears the whole pre-existing array (replace, not merge)', async () => {
+  const h = mk();
+  await h.ex.exec('arr=(a b c d e); printf \'%s\\n\' X Y | { mapfile -t arr; declare -p arr; }');
+  expect(h.out.trim()).toBe('declare -a arr=([0]="X" [1]="Y")');
+});
+
+// ── invalid numeric operands: bash-exact diagnostics + exit 1 ────────────────
+
+test('mapfile -n with a negative count errors (invalid line count, exit 1)', async () => {
+  const h = mk();
+  await h.ex.exec('printf \'%s\\n\' a b | { mapfile -t -n -1 arr; echo "s=$?"; }');
+  expect(h.err).toContain('mapfile: -1: invalid line count');
+  expect(h.out.trim()).toBe('s=1');
+});
+
+test('mapfile -n with a non-numeric count errors (invalid line count, exit 1)', async () => {
+  const h = mk();
+  await h.ex.exec('printf \'%s\\n\' a b | { mapfile -t -n xyz arr; echo "s=$?"; }');
+  expect(h.err).toContain('mapfile: xyz: invalid line count');
+  expect(h.out.trim()).toBe('s=1');
+});
+
+test('mapfile -O with a negative origin errors (invalid array origin, exit 1)', async () => {
+  const h = mk();
+  await h.ex.exec('printf \'%s\\n\' a b | { mapfile -t -O -1 arr; echo "s=$?"; }');
+  expect(h.err).toContain('mapfile: -1: invalid array origin');
+  expect(h.out.trim()).toBe('s=1');
+});
+
+// ── -c/-C callback is unsupported: fail LOUD, never silently ignored ─────────
+
+test('mapfile -C callback fails loud (diagnostic + nonzero status)', async () => {
+  const h = mk();
+  await h.ex.exec('cb(){ :; }; printf \'%s\\n\' a b | { mapfile -t -C cb arr; echo "s=$?"; }');
+  expect(h.err).toContain('not supported');
+  expect(h.out.trim()).toBe('s=2');
+});
+
+test('mapfile -c quantum (paired with -C) fails loud, never silently ignored', async () => {
+  const h = mk();
+  await h.ex.exec('cb(){ :; }; printf \'%s\\n\' a b c d | { mapfile -t -c 2 -C cb arr; echo "s=$?"; }');
+  expect(h.err).toContain('not supported');
+  expect(h.out.trim()).toBe('s=2');
+});
+
 // ── A7: read -p PROMPT / read -s consume their operands ──────────────────────
 
 test('read -p PROMPT reads into the named var (prompt operand consumed, not a var name)', async () => {

@@ -775,6 +775,21 @@ export class Executor {
         delete this.context.env[name];
         this.clearDeclaredUnset(name);
       },
+      setArrayFrom: (name, values, origin) => {
+        // `mapfile -O ORIGIN`: store starting at index ORIGIN WITHOUT clearing the
+        // pre-existing array — elements below ORIGIN and beyond the written range
+        // survive, and a gap between them becomes a real hole (bash). An existing
+        // scalar is promoted to `[0]` first (bash: `v=hi; mapfile -O 2 v`).
+        let arr = this.arrays.get(name);
+        if (arr === undefined) {
+          arr = [];
+          if (name in this.context.env) arr[0] = this.context.env[name];
+        }
+        for (let k = 0; k < values.length; k++) arr[origin + k] = values[k];
+        this.arrays.set(name, arr);
+        delete this.context.env[name];
+        this.clearDeclaredUnset(name);
+      },
       predeclare: (name, kind) => this.predeclare(name, kind),
       clearDeclaredUnset: (name) => this.clearDeclaredUnset(name),
       waitJob: (id) => this.jobControl.waitJob(id),

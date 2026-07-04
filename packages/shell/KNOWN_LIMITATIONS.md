@@ -95,6 +95,12 @@ value with no signal). Each row states which class it is.
   wrong date. A faithful port needs a `strftime` engine + locale/TZ handling; low use
   in agent scripts. (The C99 float/wide conversions `%a`/`%A`/`%F`/`%S`/`%C` and the
   no-op `%n` ARE implemented and byte-exact vs bash.)
+- **`mapfile`/`readarray -c QUANTUM` / `-C CALLBACK` (per-quantum callback) is not
+  implemented — FAIL-LOUD.** `mapfile -C cb arr` reports `mapfile: -c/-C (per-quantum
+  callback) is not supported` (exit 2), never silently dropping the flags. The callback
+  would need to invoke a shell function once per QUANTUM records read, for which the
+  in-process builtin has no hook. The data-affecting flags `-n`/`-s`/`-O` (and `-t`/`-d`/
+  `-u`) ARE implemented and byte-exact vs bash.
 
 ### More-permissive (accepts a superset of bash; never a wrong result)
 
