@@ -47,6 +47,8 @@ export class WindowManager {
   readonly #kernel: WmKernel;
   readonly #apps: AppRegistry;
   readonly #taskbar: HTMLElement | undefined;
+  /** WM-owned child of #taskbar holding the running-window chips (never clobbers siblings). */
+  #itemsHost: HTMLElement | undefined;
   readonly #tracked = new Map<number, Tracked>();
   readonly #storage: FileSystemProvider | undefined;
   /** In-memory cache of the persisted layout (empty until #layoutReady resolves). */
@@ -254,6 +256,8 @@ export class WindowManager {
   dispose(): void {
     this.#hostWindow.removeEventListener('blur', this.#onHostBlur);
     for (const id of [...this.#tracked.keys()]) this.close(id);
+    this.#itemsHost?.remove();
+    this.#itemsHost = undefined;
   }
 
   /** Best-effort persist of a window's current geometry, keyed by app name. */
@@ -273,22 +277,49 @@ export class WindowManager {
     this.#renderTaskbar();
   }
 
+  /** Lazily create (and return) the WM-owned running-items container inside #taskbar. */
+  #itemsContainer(): HTMLElement | undefined {
+    if (!this.#taskbar) return undefined;
+    if (!this.#itemsHost || !this.#taskbar.contains(this.#itemsHost)) {
+      const host = this.#desktop.ownerDocument.createElement('div');
+      host.dataset.role = 'taskbar-items';
+      host.style.cssText = 'display:flex;gap:4px;align-items:center;';
+      this.#taskbar.appendChild(host);
+      this.#itemsHost = host;
+    }
+    return this.#itemsHost;
+  }
+
   #renderTaskbar(): void {
-    if (!this.#taskbar) return;
-    this.#taskbar.textContent = '';
+    const host = this.#itemsContainer();
+    if (!host) return;
+    host.textContent = '';   // clears ONLY the WM's own container, never sibling launcher/pinned regions
+    const topId = [...this.#tracked.values()].reduce<number | undefined>(
+      (top, t) => (
+        t.window.state === 'minimized' ? top
+          : top === undefined || t.window.z > this.#tracked.get(top)!.window.z ? t.window.id : top
+      ),
+      undefined,
+    );
     for (const t of this.#tracked.values()) {
       const item = this.#desktop.ownerDocument.createElement('button');
       item.dataset.role = 'taskbar-item';
       item.dataset.id = String(t.window.id);
-      item.textContent = t.window.title;
+      // topId is already the top NON-minimized window (minimized are skipped above),
+      // so a bare id match is sufficient for the focused marker.
+      if (t.window.id === topId) item.dataset.focused = 'true';
+      const icon = t.app.icon ? `${t.app.icon} ` : '';
+      item.textContent = `${icon}${t.window.title}`;
       item.style.cssText = 'font:12px sans-serif;cursor:pointer;max-width:160px;overflow:hidden;text-overflow:ellipsis;'
+        + 'border:none;border-radius:8px;padding:4px 10px;color:#cdd6f4;'
+        + (t.window.id === topId ? 'background:#45475a;' : 'background:#313244;')
         + (t.window.state === 'minimized' ? 'opacity:.6;' : '');
       item.addEventListener('click', () => {
         if (t.window.state === 'minimized') this.restore(t.window.id);
         else this.focus(t.window.id);
       });
       t.taskbarItem = item;
-      this.#taskbar.appendChild(item);
+      host.appendChild(item);
     }
   }
 }

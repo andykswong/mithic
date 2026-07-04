@@ -12,13 +12,24 @@ export interface FileManagerFs {
   createFile(path: string): Promise<void>;
   remove(path: string): Promise<void>;
   rename(from: string, to: string): Promise<void>;
+  /** Copy a file OR directory (recursively) from `from` to `to`. */
+  copy(from: string, to: string): Promise<void>;
 }
+
+export interface FileLocation { label: string; path: string; icon?: string; }
 
 export interface FileManagerDeps {
   fs: FileManagerFs;
   /** Launch the app associated with a file (WM wires this to "Open With"). */
   onOpen(path: string): void;
+  /** When provided, a ChromeOS-style "locations" sidebar replaces the directory tree. */
+  locations?: FileLocation[];
 }
+
+export type SortKey = 'name' | 'size' | 'type';
+export type SortDir = 'asc' | 'desc';
+
+export interface Clipboard { op: 'copy' | 'cut'; path: string; name: string; }
 
 export interface FileManagerModel {
   readonly cwd: string;
@@ -31,6 +42,18 @@ export interface FileManagerModel {
   readonly selected: string | null;
   readonly canBack: boolean;
   readonly canForward: boolean;
+  readonly sortKey: SortKey;
+  readonly sortDir: SortDir;
+  readonly query: string;
+  readonly clipboard: Clipboard | null;
+  setSort(key: SortKey, dir?: SortDir): void;
+  setQuery(q: string): void;
+  copy(name: string): void;
+  cut(name: string): void;
+  /** Paste into the current dir (de-duping the name if it collides). */
+  paste(): Promise<void>;
+  /** Paste into an explicit dir (e.g. a selected subfolder). */
+  pasteInto(destDir: string): Promise<void>;
   navigate(path: string): Promise<void>;
   enter(name: string): Promise<void>;
   up(): Promise<void>;
@@ -52,12 +75,34 @@ export interface FileManagerModel {
 const join = (dir: string, name: string): string => (dir === '/' ? `/${name}` : `${dir}/${name}`);
 const parentOf = (p: string): string => (p === '/' ? '/' : p.slice(0, p.lastIndexOf('/')) || '/');
 
-/** Sort: directories first, then files; each alphabetical (case-insensitive). */
-function sortEntries(entries: Entry[]): Entry[] {
+/** Sort by key+dir but always group directories first (case-insensitive tiebreak on name). */
+function sortView(entries: Entry[], key: SortKey, dir: SortDir): Entry[] {
+  const sign = dir === 'asc' ? 1 : -1;
   return [...entries].sort((a, b) => {
-    if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
-    return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+    if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1; // dirs first, regardless of dir
+    let cmp = 0;
+    if (key === 'size') cmp = (a.size ?? 0) - (b.size ?? 0);
+    else if (key === 'type') cmp = extOf2(a.name).localeCompare(extOf2(b.name));
+    if (cmp === 0) cmp = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+    return cmp * sign;
   });
+}
+function extOf2(name: string): string { const i = name.lastIndexOf('.'); return i > 0 ? name.slice(i + 1).toLowerCase() : ''; }
+
+/**
+ * If `name` collides in `existing`, insert " (1)", " (2)", … before the extension.
+ * `force` de-dupes even on the first attempt (used when a cut lands in a dir that
+ * already holds a same-named entry). Returns the first free name.
+ */
+function dedupeName(name: string, existing: Set<string>, force = false): string {
+  if (!force && !existing.has(name)) return name;
+  const dot = name.lastIndexOf('.');
+  const base = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '';
+  for (let i = 1; ; i++) {
+    const candidate = `${base} (${i})${ext}`;
+    if (!existing.has(candidate)) return candidate;
+  }
 }
 
 /** Build cumulative breadcrumb segments from an absolute path. */
@@ -74,20 +119,30 @@ function pathSegments(p: string): PathSegment[] {
 /** The headless model — navigation + actions, no DOM. Node-testable. */
 export function createFileManagerModel(deps: FileManagerDeps): FileManagerModel {
   let cwd = '/';
-  let entries: Entry[] = [];
+  let rawEntries: Entry[] = [];
   let error = false;
   let selected: string | null = null;
+  let sortKey: SortKey = 'name';
+  let sortDir: SortDir = 'asc';
+  let query = '';
+  let clipboard: Clipboard | null = null;
   const history: string[] = [];
   let histIndex = -1;
 
   const refresh = async (): Promise<void> => {
     try {
-      entries = sortEntries(await deps.fs.list(cwd));
+      rawEntries = await deps.fs.list(cwd);
       error = false;
     } catch {
-      entries = [];
+      rawEntries = [];
       error = true;
     }
+  };
+
+  const view = (): Entry[] => {
+    const q = query.trim().toLowerCase();
+    const filtered = q ? rawEntries.filter((e) => e.name.toLowerCase().includes(q)) : rawEntries;
+    return sortView(filtered, sortKey, sortDir);
   };
 
   /** Set cwd, push onto history (truncating any forward stack), refresh. */
@@ -99,17 +154,36 @@ export function createFileManagerModel(deps: FileManagerDeps): FileManagerModel 
       histIndex = history.length - 1;
     }
     selected = null;
+    query = ''; // a search filter is scoped to the folder it was typed in
     await refresh();
   };
 
   const model: FileManagerModel = {
     get cwd() { return cwd; },
-    get entries() { return entries; },
+    get entries() { return view(); },
     get error() { return error; },
     get segments() { return pathSegments(cwd); },
     get selected() { return selected; },
     get canBack() { return histIndex > 0; },
     get canForward() { return histIndex < history.length - 1; },
+    get sortKey() { return sortKey; },
+    get sortDir() { return sortDir; },
+    get query() { return query; },
+    get clipboard() { return clipboard; },
+    setSort(key, d) { sortKey = key; if (d) sortDir = d; else if (key === sortKey) sortDir = sortDir === 'asc' ? 'desc' : 'asc'; },
+    setQuery(q) { query = q; selected = null; }, // a filter change can hide the selected row
+    copy(name) { clipboard = { op: 'copy', path: join(cwd, name), name }; },
+    cut(name) { clipboard = { op: 'cut', path: join(cwd, name), name }; },
+    async paste() { await model.pasteInto(cwd); },
+    async pasteInto(destDir) {
+      if (!clipboard) return;
+      const existing = new Set((await deps.fs.list(destDir)).map((e) => e.name));
+      const dest = join(destDir, dedupeName(clipboard.name, existing, clipboard.op === 'cut' && destDir === parentOf(clipboard.path)));
+      if (clipboard.op === 'copy') await deps.fs.copy(clipboard.path, dest);
+      else await deps.fs.rename(clipboard.path, dest);
+      if (clipboard.op === 'cut') clipboard = null; // move consumes the clipboard
+      await refresh();
+    },
     async navigate(path) { await go(path); },
     async enter(name) { await go(join(cwd, name)); },
     async up() { await go(parentOf(cwd)); },
@@ -118,6 +192,7 @@ export function createFileManagerModel(deps: FileManagerDeps): FileManagerModel 
       histIndex -= 1;
       cwd = history[histIndex];
       selected = null;
+      query = '';
       await refresh();
     },
     async forward() {
@@ -125,6 +200,7 @@ export function createFileManagerModel(deps: FileManagerDeps): FileManagerModel 
       histIndex += 1;
       cwd = history[histIndex];
       selected = null;
+      query = '';
       await refresh();
     },
     async open(name) { deps.onOpen(join(cwd, name)); },
@@ -137,7 +213,7 @@ export function createFileManagerModel(deps: FileManagerDeps): FileManagerModel 
       await deps.fs.rename(join(cwd, name), join(destDir, name));
       await refresh();
     },
-    async listChildren(path) { return sortEntries(await deps.fs.list(path)); },
+    async listChildren(path) { return sortView(await deps.fs.list(path), 'name', 'asc'); },
     select(name) { selected = name; },
     clearSelection() { selected = null; },
   };
@@ -148,6 +224,8 @@ export interface FileManagerHandle {
   readonly root: HTMLElement;
   readonly model: FileManagerModel;
   readonly ready: Promise<void>;
+  /** Remove the document-level listeners this instance installed (call on window close). */
+  dispose(): void;
 }
 
 interface MenuItem { id: string; label: string; run: () => void; }
@@ -171,16 +249,40 @@ export function renderFileManager(doc: Document, deps: FileManagerDeps): FileMan
   const upBtn = button(doc, 'Up'); upBtn.dataset.action = 'up';
   const mkdirBtn = button(doc, 'New Folder');
   const mkfileBtn = button(doc, 'New File');
+
+  const search = doc.createElement('input');
+  search.dataset.role = 'fm-search';
+  search.type = 'search';
+  search.placeholder = 'Search';
+  search.style.cssText = 'flex:0 0 160px;padding:3px 8px;border-radius:6px;border:1px solid #45475a;background:#1e1e2e;color:#cdd6f4;font:12px sans-serif;';
+  search.addEventListener('input', () => { model.setQuery(search.value); drawList(); });
+
+  const listViewBtn = button(doc, '☰'); listViewBtn.dataset.action = 'view-list'; listViewBtn.title = 'List view';
+  const gridViewBtn = button(doc, '⊞'); gridViewBtn.dataset.action = 'view-grid'; gridViewBtn.title = 'Grid view';
+  let view: 'list' | 'grid' = 'list';
+  listViewBtn.addEventListener('click', () => { view = 'list'; drawList(); });
+  gridViewBtn.addEventListener('click', () => { view = 'grid'; drawList(); });
+
+  const sortSel = doc.createElement('select');
+  sortSel.dataset.role = 'fm-sort';
+  for (const [val, label] of [['name', 'Name'], ['size', 'Size'], ['type', 'Type']] as const) {
+    const o = doc.createElement('option'); o.value = val; o.textContent = label; sortSel.appendChild(o);
+  }
+  sortSel.style.cssText = 'font:12px sans-serif;';
+  sortSel.addEventListener('change', () => { model.setSort(sortSel.value as SortKey); drawList(); });
+
   const crumb = doc.createElement('span');
   crumb.dataset.crumbBar = '';
   crumb.style.cssText = 'flex:1 1 auto;display:flex;flex-wrap:wrap;align-items:center;font:12px ui-monospace,monospace;';
-  bar.append(backBtn, fwdBtn, upBtn, mkdirBtn, mkfileBtn, crumb);
+  bar.append(backBtn, fwdBtn, upBtn, mkdirBtn, mkfileBtn, search, listViewBtn, gridViewBtn, sortSel, crumb);
 
   // --- Panes ---------------------------------------------------------------
   const panes = doc.createElement('div');
   panes.style.cssText = 'flex:1 1 auto;display:flex;min-height:0;';
+
+  const useSidebar = !!deps.locations?.length;
   const tree = doc.createElement('div');
-  tree.dataset.pane = 'tree';
+  tree.dataset.pane = useSidebar ? 'sidebar' : 'tree';
   tree.style.cssText = 'flex:0 0 180px;overflow:auto;border-right:1px solid #313244;padding:4px 0;';
   const list = doc.createElement('div');
   list.dataset.pane = 'list';
@@ -224,6 +326,8 @@ export function renderFileManager(doc: Document, deps: FileManagerDeps): FileMan
   const rowMenuItems = (e: Entry): MenuItem[] => [
     { id: 'open', label: 'Open', run: () => { void runOpen(e); } },
     { id: 'open-with', label: 'Open With…', run: () => { void runOpen(e); } },
+    { id: 'cut', label: 'Cut', run: () => { model.cut(e.name); } },
+    { id: 'copy', label: 'Copy', run: () => { model.copy(e.name); } },
     { id: 'rename', label: 'Rename', run: () => {
       const to = typeof prompt === 'function' ? prompt('New name:', e.name) : null;
       if (to && to !== e.name) void model.rename(e.name, to).then(drawAll);
@@ -239,6 +343,7 @@ export function renderFileManager(doc: Document, deps: FileManagerDeps): FileMan
       const name = typeof prompt === 'function' ? prompt('File name:') : null;
       if (name) void model.newFile(name).then(drawAll);
     } },
+    { id: 'paste', label: 'Paste', run: () => { void model.paste().then(drawAll); } },
   ];
 
   const runOpen = async (e: Entry): Promise<void> => {
@@ -257,6 +362,10 @@ export function renderFileManager(doc: Document, deps: FileManagerDeps): FileMan
 
   // --- List pane -----------------------------------------------------------
   const drawList = (): void => {
+    list.dataset.view = view;
+    list.style.cssText = view === 'grid'
+      ? 'flex:1 1 auto;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;padding:8px;align-content:start;'
+      : 'flex:1 1 auto;overflow:auto;';
     list.textContent = '';
     if (model.error) {
       const err = doc.createElement('div');
@@ -273,7 +382,9 @@ export function renderFileManager(doc: Document, deps: FileManagerDeps): FileMan
       row.draggable = true;
       const isSel = model.selected === e.name;
       if (isSel) row.dataset.selected = 'true';
-      row.style.cssText = `padding:4px 10px;cursor:default;user-select:none;${isSel ? 'background:#45475a;' : ''}`;
+      row.style.cssText = view === 'grid'
+        ? `display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 4px;border-radius:8px;cursor:default;user-select:none;${isSel ? 'background:#45475a;' : ''}`
+        : `padding:4px 10px;cursor:default;user-select:none;${isSel ? 'background:#45475a;' : ''}`;
       row.textContent = `${e.kind === 'directory' ? '📁' : '📄'} ${e.name}`;
 
       row.addEventListener('click', (ev) => { ev.stopPropagation(); model.select(e.name); applySelection(); });
@@ -364,6 +475,23 @@ export function renderFileManager(doc: Document, deps: FileManagerDeps): FileMan
     tree.appendChild(treeNode('/', '/', 0));
   };
 
+  const drawSidebar = (): void => {
+    tree.textContent = '';
+    for (const loc of deps.locations ?? []) {
+      const node = doc.createElement('div');
+      node.dataset.location = loc.path;
+      const active = model.cwd === loc.path;
+      node.style.cssText = `display:flex;align-items:center;gap:6px;padding:6px 10px;cursor:pointer;user-select:none;${active ? 'background:#45475a;' : ''}`;
+      node.textContent = `${loc.icon ?? '📁'} ${loc.label}`;
+      node.addEventListener('click', () => { void model.navigate(loc.path).then(drawAll); });
+      // Drop target: move a dragged entry into this location.
+      node.addEventListener('dragover', (ev) => { if (dragName) { ev.preventDefault(); node.style.outline = '1px solid #89b4fa'; } });
+      node.addEventListener('dragleave', () => { node.style.outline = ''; });
+      node.addEventListener('drop', (ev) => { ev.preventDefault(); node.style.outline = ''; void dropMoveInto(loc.path); });
+      tree.appendChild(node);
+    }
+  };
+
   const dropMoveInto = async (destDir: string): Promise<void> => {
     if (!dragName) return;
     const name = dragName;
@@ -399,7 +527,10 @@ export function renderFileManager(doc: Document, deps: FileManagerDeps): FileMan
     fwdBtn.disabled = !model.canForward;
   };
 
-  const drawAll = (): void => { drawCrumb(); drawButtons(); drawTree(); drawList(); };
+  const drawAll = (): void => {
+    if (search.value !== model.query) search.value = model.query; // keep the box in sync (query clears on nav)
+    drawCrumb(); drawButtons(); if (useSidebar) drawSidebar(); else drawTree(); drawList();
+  };
 
   // --- Wiring --------------------------------------------------------------
   backBtn.addEventListener('click', () => { void model.back().then(drawAll); });
@@ -423,14 +554,31 @@ export function renderFileManager(doc: Document, deps: FileManagerDeps): FileMan
     if (!(ev.target as HTMLElement).closest('[data-name]')) { model.clearSelection(); applySelection(); }
   });
 
+  root.tabIndex = 0; // make the manager focusable so it receives key events
+  root.addEventListener('keydown', (ev) => {
+    if (!ev.ctrlKey && !ev.metaKey) return;
+    // Never hijack copy/cut/paste while the user is typing in a text field (the
+    // search box, a future rename field): let the browser's native clipboard win.
+    if ((ev.target as Element | null)?.closest('input, textarea, [contenteditable]')) return;
+    const key = ev.key.toLowerCase();
+    if (key === 'c' && model.selected) { ev.preventDefault(); model.copy(model.selected); }
+    else if (key === 'x' && model.selected) { ev.preventDefault(); model.cut(model.selected); }
+    else if (key === 'v') { ev.preventDefault(); void model.paste().then(drawAll); }
+  });
+
   const ready = (async () => {
     await model.navigate('/');
-    await loadTreeChildren('/');
-    expanded.add('/');
+    if (!useSidebar) { await loadTreeChildren('/'); expanded.add('/'); }
     drawAll();
   })();
 
-  return { root, model, ready };
+  const dispose = (): void => {
+    doc.removeEventListener('mousedown', onDocMouseDown);
+    doc.removeEventListener('keydown', onDocKeyDown);
+    closeMenu();
+  };
+
+  return { root, model, ready, dispose };
 }
 
 function menuX(ev: MouseEvent): number { return ev.offsetX ?? ev.clientX; }
@@ -448,5 +596,6 @@ export function mountFileManager(ctx: WindowContext, deps: FileManagerDeps): Fil
   const h = renderFileManager(ctx.content.ownerDocument, deps);
   ctx.content.appendChild(h.root);
   ctx.setTitle('Files');
+  ctx.onClose(() => h.dispose());
   return h;
 }
