@@ -71,16 +71,20 @@ interface WorkerEntry {
 function defaultWorkerFactory(): WorkerFactory {
   return {
     create(bootstrapSrc: string): WorkerLike {
-      let workerUrl: string;
-
-      // Use Blob URL when available (browser + Node with URL.createObjectURL).
-      if (typeof Blob !== 'undefined' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
-        const blob = new Blob([bootstrapSrc], { type: 'text/javascript' });
-        workerUrl = URL.createObjectURL(blob);
-      } else {
-        workerUrl = `data:text/javascript,${encodeURIComponent(bootstrapSrc)}`;
-      }
-
+      // SECURITY (spec §3.5): spawn the worker from a `data:` URL carrying ONLY the fixed
+      // bootstrap, NOT a host-page `blob:` URL. Rationale: the browser is moving data:-URL
+      // workers to a UNIQUE OPAQUE (null) origin — Chrome "Opaque origin for data: URLs"
+      // (kDataUrlWorkerOpaqueOrigin, Chrome 150+, HTML-spec-aligned). Spawning from `data:`
+      // means our workers inherit that isolation AUTOMATICALLY once it ships: they can no
+      // longer reach the host origin's cookies/IndexedDB/caches/same-origin fetch. A host-page
+      // `blob:` worker (URL.createObjectURL on the host page) inherits the host origin and does
+      // NOT get the opaque origin — it would remain same-origin FOREVER. So `data:` is strictly
+      // correct even though, in browsers WITHOUT the flag yet, self.origin is still the host
+      // origin (a documented transitional state; outbound egress is an accepted residual, §3.5a).
+      // The bootstrap is tiny + fixed, so the `data:` length limit is a non-issue; the guest +
+      // deps arrive as boot-message bytes and become in-sandbox blob: modules (stage 2). Do NOT
+      // revert to a host-page blob: spawn to "optimize" this — it permanently forfeits the fix.
+      const workerUrl = `data:text/javascript,${encodeURIComponent(bootstrapSrc)}`;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const W = (globalThis as any).Worker as typeof Worker;
       return new W(workerUrl, { type: 'classic' });
