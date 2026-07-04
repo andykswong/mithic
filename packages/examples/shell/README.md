@@ -5,9 +5,10 @@ front-end driving the JavaScript `@mithic/shell` interpreter, which runs over an
 `@mithic/kernel` `Kernel` (on a `WorkerRuntime`) with the full `@mithic/coreutils`
 + `@mithic/jq` + `@mithic/curl` command suite available as sandboxed processes.
 
-This is the re-adaptation of the original xterm.js WASM shell to the v2 JS-first
-stack: the terminal front-end is unchanged, but it now drives the pure-TypeScript
-`@mithic/shell` interpreter and command guests instead of WASM/WASI components.
+This is the re-adaptation of the original xterm.js WASM shell to the Mithic 2.0
+JS-first stack: the terminal front-end is unchanged, but it now drives the
+pure-TypeScript `@mithic/shell` interpreter and command guests instead of
+WASM/WASI components.
 
 ```
 xterm.js  ──keystrokes──▶  line editor  ──command line──▶  @mithic/shell Executor

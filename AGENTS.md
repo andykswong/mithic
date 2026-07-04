@@ -6,7 +6,7 @@ Mithic is an isomorphic, capability-based sandboxed **JavaScript** process runti
 
 npm scope is `@mithic/*`; core library packages are at version `2.0.0` (`@mithic/worker` is `0.1.0`).
 
-> Mithic v2 is **JS-first**. The earlier WASM/WASI-Preview-2 implementation is paused — its packages (`wasip2`, `process`, `wasm-transpile`, and the WASM variants of `shell`/`coreutils`/`commands`) live on the `wasm` branch, not here. Do not reference them as if present on `v2`.
+> Mithic is **JS-first** (the Mithic 2.0 line, now on `main`). The earlier WASM/WASI-Preview-2 implementation is paused — its packages (`wasip2`, `process`, `wasm-transpile`, and the WASM variants of `shell`/`coreutils`/`commands`) live on the `wasm` branch, not here. Do not reference them as if present on the current tree.
 >
 > ("Isola" was an internal codename for an earlier iteration and must not appear as the product name — the product is Mithic.)
 

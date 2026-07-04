@@ -133,7 +133,7 @@ Toolchain: TypeScript 6+, ESM-only, Vite 8, Vitest 3.2.
 
 ## A note on the WASM approach
 
-Mithic 2.0 (this `v2` branch) is **JavaScript-first**. The earlier WebAssembly / WASI-Preview-2 implementation — including the `wasip2`, `process`, and `wasm-transpile` packages and the WASM variants of the shell and command packages — is **paused**, not deleted. It is preserved on the [`wasm`](https://github.com/andykswong/mithic/tree/wasm) branch (and on `origin/main`), and is recoverable there.
+Mithic 2.0 is **JavaScript-first**. The earlier WebAssembly / WASI-Preview-2 implementation — including the `wasip2`, `process`, and `wasm-transpile` packages and the WASM variants of the shell and command packages — is **paused**, not deleted. It is preserved on the [`wasm`](https://github.com/andykswong/mithic/tree/wasm) branch, and is recoverable there.
 
 ## API Documentation
 

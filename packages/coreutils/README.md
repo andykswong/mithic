@@ -8,8 +8,7 @@ syscalls, and returns an exit code — running identically in the browser and on
 Node.
 
 > These replace the earlier Rust→WASM coreutils. That WASM/WASI implementation
-> is paused and preserved on the `wasm` branch (and `origin/main`); it is not part
-> of this branch.
+> is paused and preserved on the `wasm` branch; it is not part of this tree.
 
 ## Commands
 
