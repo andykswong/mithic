@@ -53,10 +53,14 @@ export function buildSrcdoc(): string {
 // The ACTUAL control is deleting the constructors before the guest runs. This runs at
 // bootstrap module-eval time, strictly before any __mithic_run guest code arrives async.
 // RTCPeerConnection is [Exposed=Window] only, so this is iframe-scoped (the Worker global
-// does not expose it — no shim needed there).
+// does not expose it — no shim needed there). The list targets the standard, Chromium
+// (webkit) and legacy Firefox (moz) constructor names; a future engine that ships a WebRTC
+// constructor under a new prefix MUST be added here.
 try { delete globalThis.RTCPeerConnection; } catch (_e) { globalThis.RTCPeerConnection = undefined; }
 try { delete globalThis.webkitRTCPeerConnection; } catch (_e) { globalThis.webkitRTCPeerConnection = undefined; }
+try { delete globalThis.mozRTCPeerConnection; } catch (_e) { globalThis.mozRTCPeerConnection = undefined; }
 try { delete globalThis.RTCDataChannel; } catch (_e) { globalThis.RTCDataChannel = undefined; }
+try { delete globalThis.mozRTCDataChannel; } catch (_e) { globalThis.mozRTCDataChannel = undefined; }
 
 // Bootstrap protocol: mirrors worker.ts BOOTSTRAP_SOURCE but for an iframe context.
 // Communication is via window.parent.postMessage / window.onmessage with port transfer.

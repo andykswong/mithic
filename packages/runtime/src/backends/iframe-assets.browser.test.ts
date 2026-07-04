@@ -29,6 +29,7 @@ test('WebRTC shim: RTCPeerConnection is deleted before the guest runs', async ()
     export default async (_boot) => {
       const gone = typeof RTCPeerConnection === 'undefined'
         && typeof webkitRTCPeerConnection === 'undefined'
+        && typeof mozRTCPeerConnection === 'undefined'
         && typeof RTCDataChannel === 'undefined';
       window.parent.postMessage({ id: 1, call: 'webrtc-check', args: { gone } }, '*');
     };
@@ -80,15 +81,35 @@ test('a guest renders a blob: <img> it produced — it actually paints under the
   expect((msg as { args: { err: boolean } }).args.err).toBe(false);
 }, 10000);
 
-test('negative: connect-src none blocks fetch from inside the iframe', async () => {
+test('negative: connect-src none blocks fetch + WebSocket egress (CSP-specific)', async () => {
+  // A bare `try { await fetch(cross-origin) }` is UNSOUND: a null-origin cross-origin
+  // fetch rejects on CORS/network regardless of CSP, so it would pass even if connect-src
+  // were opened to https:/*. We instead detect the CSP itself: register a
+  // securitypolicyviolation listener and require a violation whose directive matches
+  // /connect/. This flips to false the moment connect-src is loosened.
+  // Empirically (this repo's Chromium): fetch → connect-src violation fires; WebSocket
+  // does NOT throw synchronously from `new WebSocket()` under connect-src 'none' — it also
+  // surfaces as a connect-src securitypolicyviolation. So both are asserted via the event.
   const msg = await probe(/* js */`
     export default async (_boot) => {
-      let blocked = false;
-      try { await fetch('https://example.com/x'); } catch (_e) { blocked = true; }
-      window.parent.postMessage({ id: 1, call: 'probe', args: { blocked } }, '*');
+      const dirs = new Set();
+      document.addEventListener('securitypolicyviolation', (e) => {
+        if (/connect/.test(e.violatedDirective)) dirs.add(e.blockedURI.slice(0, 3));
+      });
+      let fetchViolation = false, wsViolation = false;
+      // fetch
+      try { await fetch('https://example.com/x'); } catch (_e) { /* CORS/network — not the signal */ }
+      // WebSocket (constructor does not throw synchronously in Chromium; the block is a CSP violation)
+      try { new WebSocket('wss://example.com'); } catch (_e) { /* if an engine throws, that is also a block */ }
+      // Give the violation events a tick to dispatch.
+      await new Promise((r) => setTimeout(r, 300));
+      fetchViolation = dirs.has('htt');
+      wsViolation = dirs.has('wss');
+      window.parent.postMessage({ id: 1, call: 'probe', args: { fetchViolation, wsViolation } }, '*');
     };
   `);
-  expect((msg as { args: { blocked: boolean } })?.args.blocked).toBe(true);
+  expect((msg as { args: { fetchViolation: boolean } })?.args.fetchViolation).toBe(true);
+  expect((msg as { args: { wsViolation: boolean } })?.args.wsViolation).toBe(true);
 }, 10000);
 
 test('negative: nested Worker is CSP-refused (worker-src absent → default-src none)', async () => {
@@ -126,4 +147,36 @@ test('negative: script-src did NOT gain data: — a data: module import is refus
     };
   `);
   expect((msg as { args: { refused: boolean } })?.args.refused).toBe(true);
+}, 10000);
+
+test('negative: a guest cannot mint a child realm with pristine RTCPeerConnection (frame-src → default-src none)', async () => {
+  // The WebRTC shim only deletes constructors in the TOP guest realm. A child
+  // iframe would get fresh globals — that vector is closed NOT by the shim but by
+  // default-src 'none' (frame-src fallback): the child frame cannot be created as a
+  // live realm, so its inline script never runs. Empirically (this repo's Chromium) NO
+  // securitypolicyviolation event fires on the parent for a blocked child frame, so the
+  // sound, control-specific signal is childRan === false. A positive control proves inline
+  // script DOES run at top level, so if frame-src/default-src were opened the child would
+  // run and this flips to a failure. childRan flips true (test fails) if the vector opens.
+  const msg = await probe(/* js */`
+    export default async (_boot) => {
+      let topInline = false, childRan = false;
+      window.addEventListener('message', (e) => { if (e.data && e.data.__child) childRan = true; });
+      // Positive control: a top-level inline <script> runs under script-src 'unsafe-inline'.
+      const s = document.createElement('script');
+      s.textContent = 'window.__topInline = true;';
+      document.head.appendChild(s);
+      topInline = window.__topInline === true;
+      // Vector: child <iframe srcdoc> attempting to run inline script + reach a pristine realm.
+      const f = document.createElement('iframe');
+      f.srcdoc = '<script>window.top.postMessage({ __child: 1, rtc: typeof RTCPeerConnection !== "undefined" }, "*");<\\/script>';
+      document.body.appendChild(f);
+      await new Promise((r) => setTimeout(r, 500));
+      window.parent.postMessage({ id: 1, call: 'probe', args: { topInline, childRan } }, '*');
+    };
+  `);
+  // Sanity: inline script works in the guest realm, so a runnable child WOULD have run.
+  expect((msg as { args: { topInline: boolean } })?.args.topInline).toBe(true);
+  // Control: the child frame was CSP-refused — its script never executed.
+  expect((msg as { args: { childRan: boolean } })?.args.childRan).toBe(false);
 }, 10000);
