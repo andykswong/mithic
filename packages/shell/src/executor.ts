@@ -3697,6 +3697,7 @@ export class Executor {
       evalArith: (expr) => evalArith(expr, this.arithEnvForExpr(), this.arithArrayAccessExec()),
       resolveExternal: (n) => this.resolveExternalPath(n),
       condTest: (op, operand) => this.condFileTest(op, operand),
+      hasFs: !!this.fs?.fsStat,
       builtinAssignments: opts.builtinAssignments,
       applyBuiltinAssignment: opts.assignExpander
         ? (a, global) => this.applyAssignment(a, opts.assignExpander!, global)

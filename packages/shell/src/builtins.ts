@@ -288,6 +288,13 @@ export interface BuiltinContext {
    */
   condTest?(op: string, operand: string): boolean | Promise<boolean>;
   /**
+   * True when a real filesystem is wired (the executor has an `fs` with `fsStat`),
+   * so `cd`/`pushd` MUST validate a target's existence + dir-ness via {@link condTest}
+   * (bash: `cd nonexistent` fails, PWD unchanged). Absent/false in fs-less unit tests,
+   * where `cd` keeps its lexical no-check behavior (there is nothing to stat).
+   */
+  hasFs?: boolean;
+  /**
    * Structured assignment operands for an ASSIGNMENT BUILTIN (`declare`/`local`/
    * `readonly`/`export`/`typeset`), parsed by the parser as assignment words so an
    * array literal `declare -a arr=(a b c)` arrives as an Assignment with an `array`
@@ -370,6 +377,18 @@ function resolvePath(cwd: string, target: string): string {
 }
 
 /**
+ * Validate a resolved `cd`/`pushd` target against the live VFS. Returns `undefined`
+ * when the target is a usable directory (or when no filesystem is wired — fs-less
+ * unit tests keep the lexical no-check behavior), else the bash error-message
+ * suffix: `No such file or directory` (ENOENT) or `Not a directory` (ENOTDIR).
+ */
+async function cdTargetError(ctx: BuiltinContext, resolved: string): Promise<string | undefined> {
+  if (!ctx.hasFs || ctx.condTest === undefined) return undefined;
+  if (await ctx.condTest('-d', resolved)) return undefined;
+  return (await ctx.condTest('-e', resolved)) ? 'Not a directory' : 'No such file or directory';
+}
+
+/**
  * Format the directory stack for `dirs`/`pushd`/`popd`: cwd first, then the
  * `below` entries (most-recent-first), space-separated. Unless `long`, abbreviate
  * a leading `$HOME` to `~` (bash default).
@@ -406,7 +425,10 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
 
     case 'cd': {
       const target = args[0] ?? ctx.env.HOME ?? '/';
-      ctx.cwd = resolvePath(ctx.cwd, target);
+      const resolved = resolvePath(ctx.cwd, target);
+      const err = await cdTargetError(ctx, resolved);
+      if (err !== undefined) { errOut(ctx, `shell: cd: ${target}: ${err}\n`); return 1; }
+      ctx.cwd = resolved;
       ctx.env.PWD = ctx.cwd;
       return 0;
     }
@@ -451,9 +473,13 @@ export async function runBuiltin(name: string, args: string[], ctx: BuiltinConte
         ctx.env.PWD = ctx.cwd;
         stack[0] = prevCwd;
       } else {
-        // Push cwd below, then cd to DIR (DIR becomes the new top = cwd).
+        // Push cwd below, then cd to DIR (DIR becomes the new top = cwd). Like `cd`,
+        // a nonexistent / non-directory target fails without touching cwd or the stack.
+        const resolved = resolvePath(ctx.cwd, dir);
+        const cdErr = await cdTargetError(ctx, resolved);
+        if (cdErr !== undefined) { errOut(ctx, `shell: pushd: ${dir}: ${cdErr}\n`); return 1; }
         stack.unshift(ctx.cwd);
-        ctx.cwd = resolvePath(ctx.cwd, dir);
+        ctx.cwd = resolved;
         ctx.env.PWD = ctx.cwd;
       }
       ctx.write(formatDirStack(ctx.cwd, stack, false, ctx.env.HOME) + '\n');

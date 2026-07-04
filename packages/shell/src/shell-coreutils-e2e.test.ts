@@ -37,7 +37,7 @@ function composedResolver(): (name: string, cwd: string, env: Record<string, str
 
 /** Boot a real Kernel + WorkerRuntime with the composed resolver and a seeded MemoryFs. */
 async function bootShell(files: Record<string, string> = {}): Promise<{
-  run: (script: string) => Promise<{ stdout: string; code: number }>;
+  run: (script: string) => Promise<{ stdout: string; stderr: string; code: number }>;
   readFile: (path: string) => Promise<string>;
 }> {
   const [{ Kernel }, { WorkerRuntime }, { FileSystemRouter, MemoryFsProvider }] = await Promise.all([
@@ -55,14 +55,16 @@ async function bootShell(files: Record<string, string> = {}): Promise<{
 
   return {
     async run(script) {
-      const { pid, stdout } = await kernel.spawn(guestUrl, {
+      const { pid, stdout, stderr } = await kernel.spawn(guestUrl, {
         args: ['bash', '-c', script],
         capabilities: [{ type: 'process' }, ...FS_RW],
         captureStdout: true,
+        captureStderr: true,
       });
       const { code } = await kernel.wait(pid);
       const bytes = stdout ? await stdout : new Uint8Array();
-      return { stdout: new TextDecoder().decode(bytes), code };
+      const errBytes = stderr ? await stderr : new Uint8Array();
+      return { stdout: new TextDecoder().decode(bytes), stderr: new TextDecoder().decode(errBytes), code };
     },
     async readFile(path) {
       const h = await fs.open(path, { read: true });
@@ -249,4 +251,43 @@ test('tr translation through a pipe', async () => {
   const out = await k.run('echo hello | tr a-z A-Z');
   expect(out.stdout.trim()).toBe('HELLO');
   expect(out.code).toBe(0);
+}, T);
+
+// ── `cd`/`pushd` must validate the target against the real VFS (bash parity) ──
+// Regression: cd resolved its target purely lexically and always returned 0, so
+// `cd /nonexistent` "succeeded" and only a later `.`-accessing command failed.
+
+test('cd into a nonexistent directory fails (ENOENT), leaves cwd unchanged', async () => {
+  const k = await bootShell();
+  const out = await k.run('cd /; cd /no/such/dir; echo "rc=$?"; pwd');
+  expect(out.stderr).toContain('cd: /no/such/dir: No such file or directory');
+  expect(out.stdout).toBe('rc=1\n/\n'); // cwd stayed at /
+}, T);
+
+test('cd into a regular file fails (ENOTDIR)', async () => {
+  const k = await bootShell({ '/afile': 'x' });
+  const out = await k.run('cd /; cd /afile; echo "rc=$?"; pwd');
+  expect(out.stderr).toContain('cd: /afile: Not a directory');
+  expect(out.stdout).toBe('rc=1\n/\n');
+}, T);
+
+test('cd into a real directory still succeeds (exit 0, cwd changes, no output)', async () => {
+  const k = await bootShell({ '/sub/keep': 'x' });
+  const out = await k.run('cd /sub; echo "rc=$?"; pwd');
+  expect(out.stderr).toBe('');
+  expect(out.stdout).toBe('rc=0\n/sub\n');
+}, T);
+
+test('cd / and cd with no arg (HOME) still succeed', async () => {
+  const k = await bootShell();
+  const out = await k.run('cd /; echo "rc=$?"; pwd');
+  expect(out.stdout).toBe('rc=0\n/\n');
+  expect(out.stderr).toBe('');
+}, T);
+
+test('pushd into a nonexistent directory fails and does not change cwd', async () => {
+  const k = await bootShell();
+  const out = await k.run('cd /; pushd /no/such/dir; echo "rc=$?"; pwd');
+  expect(out.stderr).toContain('pushd: /no/such/dir: No such file or directory');
+  expect(out.stdout).toBe('rc=1\n/\n');
 }, T);
