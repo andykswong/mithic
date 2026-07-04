@@ -91,6 +91,10 @@ export default async (boot) => {
     return url;
   };
   dropZone.addEventListener('dragover', (e) => e.preventDefault());
+  let onSettled;
+  const loaded = new Promise((res) => { onSettled = res; });
+  img.addEventListener('load', () => onSettled(img.naturalWidth));
+  img.addEventListener('error', () => onSettled(0));
   dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
@@ -115,6 +119,13 @@ export default async (boot) => {
   const drop = new DragEvent('drop', { bubbles: true, cancelable: true });
   Object.defineProperty(drop, 'dataTransfer', { value: dt });
   dropZone.dispatchEvent(drop);
+
+  // Wait for the <img> 'load' event (canonical paint signal), then emit img-painted with
+  // its naturalWidth BEFORE closing stdout — a nonzero width proves the blob actually
+  // decoded/painted under the new CSP (a CSP-blocked blob fires 'error' → width 0).
+  // Emitting inline (not from the listener) keeps the marker ordered ahead of w.close().
+  const nw = await Promise.race([loaded, new Promise((r) => setTimeout(() => r(img.naturalWidth), 2000))]);
+  await emit('img-painted:' + nw);
 
   await w.close().catch(() => {});
   g.exit(0);
@@ -144,6 +155,7 @@ test('image-viewer: renders <img> on drop and emits ready + img-rendered markers
   // The process self-reported its DOM work.
   expect(out).toContain('ready');
   expect(out).toMatch(/img-rendered:blob:/);
+  expect(out).toMatch(/img-painted:[1-9]/); // naturalWidth > 0 — the blob actually decoded under the new CSP
   expect(out).toContain('tag=IMG');
   expect(out).toContain('name=pixel.png');
 
