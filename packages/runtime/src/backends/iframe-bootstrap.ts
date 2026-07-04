@@ -25,7 +25,25 @@ export function buildSrcdoc(): string {
   return `<!DOCTYPE html>
 <html>
 <head>
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'">
+<!--
+  Opaque-origin guest sandbox CSP (see spec §3.3/§5). This is DELIBERATELY permissive
+  for code execution ('unsafe-inline' 'unsafe-eval') — isolation here comes from the
+  opaque origin + postMessage-only egress, NOT from script-src. Do not "harden" this
+  into a general-web XSS policy. Rules:
+   - img/media/font-src take blob: AND data: (passive, guest-produced assets, local only —
+     NO remote origins: a remote asset GET is an exfil channel connect-src cannot stop, §9 rule 2).
+   - connect-src 'none' blocks fetch/XHR/WebSocket/EventSource/sendBeacon/<a ping> — network is
+     the net/fetch syscall, not the guest (§3.4).
+   - form-action/base-uri 'none' are belt-and-suspenders; navigation/popup/form egress is closed
+     PRIMARILY by the sandbox="allow-scripts" attribute (no allow-forms/allow-popups/
+     allow-top-navigation). ANY future sandbox-flag addition must re-run the §3.4 threat model.
+   - webrtc 'block' is DECLARED but NOT enforced by shipping browsers (CSP3 "Other Directive") —
+     the REAL WebRTC control is the RTCPeerConnection/RTCDataChannel shim below (Task A2).
+   - worker-src stays ABSENT → falls back to default-src 'none' → blocks nested Worker/SharedWorker.
+   - script-src does NOT get data: (ever) and does NOT get blob: yet (Task Group D adds blob: for
+     the guest-module import()).
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; img-src blob: data:; media-src blob: data:; font-src blob: data:; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'; webrtc 'block'">
 </head>
 <body>
 <script type="module">
