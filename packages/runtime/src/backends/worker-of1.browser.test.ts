@@ -72,3 +72,22 @@ test('Worker OF1: a malformed guest (SyntaxError) surfaces __mithic_error, not s
   expect(errors.length).toBeGreaterThan(0);
   rt.dispose(handle);
 }, 10000);
+
+test('Worker OF1: a URL-entry guest (isUrl path) imports directly without host-side re-minting', async () => {
+  const rt = new WorkerRuntime();
+  const ch = new MessageChannel();
+  const received: unknown[] = [];
+  ch.port1.onmessage = (e) => received.push(e.data);
+  ch.port1.start?.();
+  const guestSrc = /* js */`
+    export default async (boot) => {
+      boot.control.postMessage({ id: 5, call: 'url-ran', args: { pid: boot.init.pid } });
+    };
+  `;
+  const url = new URL(URL.createObjectURL(new Blob([guestSrc], { type: 'text/javascript' })));
+  const handle = await rt.spawn(url, { init: baseInit(11), transfer: [ch.port2] });
+  await new Promise((r) => setTimeout(r, 600));
+  const msg = received.find((m) => (m as { call?: string })?.call === 'url-ran') as { args: { pid: number } } | undefined;
+  expect(msg?.args.pid).toBe(11);
+  rt.dispose(handle);
+}, 10000);

@@ -1,7 +1,7 @@
 import { test, expect } from 'vitest';
 import { Kernel } from './kernel.ts';
 import { FileSystemRouter, MemoryFsProvider } from '@mithic/io/vfs';
-import type { Runtime, ProcessHandle, SpawnOptions } from '@mithic/runtime';
+import type { Runtime } from '@mithic/runtime';
 import { WORKER_CAPABILITIES } from '@mithic/runtime';
 import type { GuestLauncher, LaunchContext } from './kernel.ts';
 
