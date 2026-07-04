@@ -22,3 +22,23 @@ test('buildSrcdoc CSP: passive blob:/data: on img/font/media, egress locked', ()
   expect(csp).not.toMatch(/default-src[^;]*blob:/);
   expect(csp).not.toMatch(/default-src[^;]*data:/);
 });
+
+test('WebRTC shim: RTCPeerConnection is deleted before the guest runs', async () => {
+  const rt = new IframeRuntime();
+  const code = /* js */`
+    export default async (_boot) => {
+      const gone = typeof RTCPeerConnection === 'undefined'
+        && typeof webkitRTCPeerConnection === 'undefined'
+        && typeof RTCDataChannel === 'undefined';
+      window.parent.postMessage({ id: 1, call: 'webrtc-check', args: { gone } }, '*');
+    };
+  `;
+  const init = { type: 'init' as const, entry: 'inline' as const, args: [], env: {}, cwd: '/', pid: 1, ppid: 0, capabilities: [] };
+  const received: unknown[] = [];
+  const handle = await rt.spawn(code, { init });
+  rt.onMessage(handle, (m) => received.push(m));
+  await new Promise<void>((r) => setTimeout(r, 500));
+  const msg = received.find((m) => (m as { call?: string })?.call === 'webrtc-check') as { args: { gone: boolean } } | undefined;
+  expect(msg?.args.gone).toBe(true);
+  rt.dispose(handle);
+}, 10000);

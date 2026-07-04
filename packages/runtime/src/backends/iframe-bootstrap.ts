@@ -47,6 +47,17 @@ export function buildSrcdoc(): string {
 </head>
 <body>
 <script type="module">
+// WebRTC egress control (spec §3.4). CSP3 \`webrtc 'block'\` is NOT enforced by any
+// shipping browser, and RTCPeerConnection is outside the connect-src fallback chain,
+// so it defaults to allowed — a compromised guest could exfiltrate over a data channel.
+// The ACTUAL control is deleting the constructors before the guest runs. This runs at
+// bootstrap module-eval time, strictly before any __mithic_run guest code arrives async.
+// RTCPeerConnection is [Exposed=Window] only, so this is iframe-scoped (the Worker global
+// does not expose it — no shim needed there).
+try { delete globalThis.RTCPeerConnection; } catch (_e) { globalThis.RTCPeerConnection = undefined; }
+try { delete globalThis.webkitRTCPeerConnection; } catch (_e) { globalThis.webkitRTCPeerConnection = undefined; }
+try { delete globalThis.RTCDataChannel; } catch (_e) { globalThis.RTCDataChannel = undefined; }
+
 // Bootstrap protocol: mirrors worker.ts BOOTSTRAP_SOURCE but for an iframe context.
 // Communication is via window.parent.postMessage / window.onmessage with port transfer.
 let __mithic_boot = null;
