@@ -349,7 +349,7 @@ export async function createLab(options: LabOptions = {}): Promise<Lab> {
 if (typeof document !== 'undefined' && document.getElementById('lab')) {
   void import('./image-tool/boot.ts').then(({ bootImageTool }) => {
     const root = document.getElementById('lab')!;
-    const endpoint = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_TELEMETRY_ENDPOINT;
+    const endpoint = import.meta.env.VITE_TELEMETRY_ENDPOINT;
     return bootImageTool({ root, telemetryEndpoint: endpoint });
   });
 }

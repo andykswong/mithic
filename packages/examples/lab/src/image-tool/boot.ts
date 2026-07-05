@@ -11,6 +11,13 @@ export interface BootOptions {
   root: HTMLElement;
   /** First-party telemetry endpoint; when omitted, events go to the console sink only (no egress). */
   telemetryEndpoint?: string;
+  /**
+   * TEST-ONLY env overrides merged into the spawned app guest's env. The product
+   * page NEVER sets this; it exists so the browser test can drive the guest's
+   * `MITHIC_TEST_DROP` funnel hook through the real boot path and assert the
+   * no-upload invariant under load.
+   */
+  guestEnv?: Record<string, string>;
 }
 
 export interface ImageToolHandle {
@@ -35,19 +42,30 @@ export async function bootImageTool(options: BootOptions): Promise<ImageToolHand
   const sink: TelemetrySink = options.telemetryEndpoint ? beaconSink(options.telemetryEndpoint) : consoleSink;
 
   const pipe = lab.kernel.ipc.createPipe();
-  void forwardMarkers(portToReadable(pipe.readPort), (ev) => {
-    sink(ev);
-    // CTA navigation is host-side (the sandboxed guest cannot navigate/popup).
-    if (ev.name === 'cta_clicked') {
-      // A real deployment routes to the "run at scale / self-host" page. Kept as a
-      // documented hook here so the demand signal is captured before navigation.
-      // window.open('/self-host', '_blank', 'noopener');
+  // Fire-and-forget, but a throwing sink (e.g. `navigator.sendBeacon` raising) must
+  // not surface as an unhandled rejection that tears down the page — telemetry is
+  // best-effort. Catch per-event inside the callback AND on the loop's promise.
+  forwardMarkers(portToReadable(pipe.readPort), (ev) => {
+    try {
+      sink(ev);
+      // CTA navigation is host-side (the sandboxed guest cannot navigate/popup).
+      if (ev.name === 'cta_clicked') {
+        // A real deployment routes to the "run at scale / self-host" page. Kept as a
+        // documented hook here so the demand signal is captured before navigation.
+        // window.open('/self-host', '_blank', 'noopener');
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[telemetry] sink failed:', err);
     }
+  }).catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error('[telemetry] marker forwarding failed:', err);
   });
 
   const { pid } = await lab.kernel.spawn(IMAGE_TOOL_PATH, {
     args: ['image-tool'],
-    env: { PATH: '/usr/bin:/bin', PWD: '/' },
+    env: { PATH: '/usr/bin:/bin', PWD: '/', ...options.guestEnv },
     cwd: '/',
     capabilities: [
       { type: 'fs', paths: ['/'], operations: ['read', 'write', 'execute'] },
