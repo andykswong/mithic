@@ -84,6 +84,69 @@ test('a guest renders a blob: <img> it produced — it actually paints under the
   expect((msg as { args: { err: boolean } }).args.err).toBe(false);
 }, 10000);
 
+test('negative: form submit + window.open cannot navigate/egress — guest survives, no navigation (§8 G6-assets)', async () => {
+  // The sandbox is allow-scripts ONLY (no allow-forms / allow-popups / allow-top-navigation)
+  // + form-action 'none'. Empirically (this repo's Chromium, 2026-07-04):
+  //  - a <form method=GET action=https://evil> .submit() does NOT navigate: the guest keeps
+  //    running past it and location.href stays 'about:srcdoc' (blocked by the sandbox; no
+  //    allow-forms). A successful GET/top-navigation would have torn down the realm.
+  //  - window.open('https://evil') returns null (no allow-popups) — no popup opens.
+  // (A location.assign('https://evil') top-navigation is ALSO refused, but the assignment
+  // stops the guest's own current task before a follow-up postMessage, so it is not a clean
+  // deterministic signal and is not asserted here; the form+open path proves survival+no-nav.)
+  const msg = await probe(/* js */`
+    export default async (_boot) => {
+      const violations = [];
+      document.addEventListener('securitypolicyviolation', (e) => violations.push(e.violatedDirective));
+      const urlBefore = String(location.href);
+      const f = document.createElement('form');
+      f.method = 'GET'; f.action = 'https://evil.example/x';
+      document.body.appendChild(f);
+      try { f.submit(); } catch (_e) { /* a throw is also a block */ }
+      await new Promise((r) => setTimeout(r, 200));
+      let openResult = 'none';
+      try { const w = window.open('https://evil.example'); openResult = (w === null) ? 'null' : 'window'; } catch (_e) { openResult = 'threw'; }
+      await new Promise((r) => setTimeout(r, 200));
+      // If either had navigated the realm away, THIS postMessage would never arrive.
+      window.parent.postMessage({ id: 1, call: 'probe', args: {
+        survived: true,
+        navigated: String(location.href) !== urlBefore,
+        openResult,
+        formViolation: violations.some((d) => /form-action/.test(d)),
+      } }, '*');
+    };
+  `);
+  expect(msg).toBeDefined();
+  expect((msg as { args: { survived: boolean } }).args.survived).toBe(true);
+  expect((msg as { args: { navigated: boolean } }).args.navigated).toBe(false);
+  expect((msg as { args: { openResult: string } }).args.openResult).toBe('null');
+}, 15000);
+
+test('negative: the host page cannot reference a guest-minted blob: (opaque-iframe origin) — host fetch fails (§8 G6-assets)', async () => {
+  // A guest mints a blob: and posts its URL up to the host. The blob is same-origin ONLY to
+  // the opaque iframe realm that created it; from the host page it is cross-origin. Empirically
+  // (this repo's Chromium): the guest's blob: URL is 'blob:null/...' (opaque origin) and a
+  // host-side fetch of it rejects with a TypeError. The host cannot dereference it.
+  const rt = new IframeRuntime();
+  const init = { type: 'init' as const, entry: 'inline' as const, args: [], env: {}, cwd: '/', pid: 1, ppid: 0, capabilities: [] };
+  const code = /* js */`
+    export default async (_boot) => {
+      const url = URL.createObjectURL(new Blob(['hello-from-guest'], { type: 'text/plain' }));
+      window.parent.postMessage({ id: 1, call: 'blob', args: { url } }, '*');
+    };
+  `;
+  let blobUrl = '';
+  const handle = await rt.spawn(code, { init });
+  rt.onMessage(handle, (m) => { const mm = m as { call?: string; args?: { url?: string } }; if (mm?.call === 'blob' && mm.args?.url) blobUrl = mm.args.url; });
+  await new Promise((r) => setTimeout(r, 600));
+  expect(blobUrl.startsWith('blob:')).toBe(true);
+  let hostFetchOk = false, hostFetchThrew = false;
+  try { hostFetchOk = (await fetch(blobUrl)).ok; } catch (_e) { hostFetchThrew = true; }
+  rt.dispose(handle);
+  expect(hostFetchOk).toBe(false);
+  expect(hostFetchThrew).toBe(true);
+}, 15000);
+
 test('negative: connect-src none blocks fetch + WebSocket egress (CSP-specific)', async () => {
   // A bare `try { await fetch(cross-origin) }` is UNSOUND: a null-origin cross-origin
   // fetch rejects on CORS/network regardless of CSP, so it would pass even if connect-src

@@ -48,6 +48,21 @@ for (const [name, makeRt] of [['worker', () => new WorkerRuntime()], ['iframe', 
   }, 20000);
 }
 
+// §8: exec-from-VFS runs a guest from ANY path, not only /usr/bin. The worker E2E
+// (kernel-worker-of1, /home/greet) covers a non-/usr/bin path; this pins the same on
+// the OPAQUE-origin iframe backend — installed to /home/scripts/greet and spawned by
+// ABSOLUTE path — byte-exact.
+test('Lab OF1 (iframe): an ESM guest at a NON-/usr/bin path runs when spawned by absolute path', async () => {
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  await writeFile(vfs, '/home/scripts/greet', GUEST);
+  await vfs.chmod('/home/scripts/greet', 0o755);
+  const kernel = new Kernel({ runtime: new IframeRuntime(), vfs, guestImports: { '@mithic/guest-runtime': guestRuntimeDep } });
+  const { pid, stdout } = await kernel.spawn('/home/scripts/greet', { args: ['greet', 'anywhere'], env: {}, capabilities: [], captureStdout: true });
+  await kernel.wait(pid);
+  expect(new TextDecoder().decode(await stdout!)).toBe('hi anywhere\n');
+}, 20000);
+
 /**
  * The Lab's real launcher is InProcessCommandLauncher (commands.ts): a registered
  * `command:<name>` sentinel boots in-process; ANY other code (exec-from-VFS guest

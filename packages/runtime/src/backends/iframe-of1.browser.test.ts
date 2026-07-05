@@ -46,6 +46,34 @@ test('iframe OF1: dep loaded via boot.imports (blob: module) resolves and runs',
   rt.dispose(handle);
 }, 10000);
 
+test('iframe OF1: a dep blob is same-origin to the sandbox (blob: protocol + same-origin import succeeds)', async () => {
+  // §8/§4.4 "Same-origin blob": the in-sandbox-minted dep blob is same-origin to THIS opaque
+  // iframe, which is what lets the guest `import()` it. The deterministic signal: boot.imports[dep]
+  // starts with 'blob:' AND `await import(dep)` resolves and its export runs. NOTE: unlike the
+  // Worker, a `fetch(blob:)` is NOT usable as the signal here — the iframe's connect-src 'none'
+  // refuses fetch of ANY URL (including a same-origin blob:), so fetch fails for a CSP reason, not
+  // an origin one. import() is a SCRIPT fetch governed by script-src blob: (allowed), so import
+  // success is the sound same-origin proof (a cross-origin blob would fail its module fetch).
+  const rt = new IframeRuntime();
+  const code = /* js */`
+    export default async (boot) => {
+      const u = boot.imports['dep'];
+      const isBlob = typeof u === 'string' && u.startsWith('blob:');
+      let importedValue = null;
+      try { const m = await import(u); importedValue = m.hello(); } catch (_e) { importedValue = 'IMPORT-FAILED'; }
+      window.parent.postMessage({ id: 22, call: 'origin', args: { isBlob, importedValue } }, '*');
+    };
+  `;
+  const received: unknown[] = [];
+  const handle = await rt.spawn(code, { init: baseInit(22), guestImports: { dep: 'export const hello = () => 42;' } });
+  rt.onMessage(handle, (m) => received.push(m));
+  await new Promise((r) => setTimeout(r, 800));
+  const msg = received.find((m) => (m as { call?: string })?.call === 'origin') as { args: { isBlob: boolean; importedValue: unknown } } | undefined;
+  expect(msg?.args.isBlob).toBe(true);
+  expect(msg?.args.importedValue).toBe(42);
+  rt.dispose(handle);
+}, 10000);
+
 test('iframe OF1: un-allowlisted dep is fail-loud (import(undefined) throws → __mithic_error)', async () => {
   const rt = new IframeRuntime();
   const code = /* js */`
