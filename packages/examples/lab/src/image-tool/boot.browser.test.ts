@@ -1,3 +1,10 @@
+/**
+ * Task V5+ (injectable runtime backend). {@link createLab} accepts an optional
+ * runtime parameter, defaulting to {@link WorkerRuntime} for backward compatibility.
+ * Callers (e.g., image-tool product page) can inject an {@link IframeRuntime} to
+ * run guests as visible GUI guests that paint their own preview. This test verifies
+ * both the default and injected paths work end-to-end.
+ */
 import { afterEach, expect, test } from 'vitest';
 import { createLab } from '../main.ts';
 import type { Lab } from '../main.ts';
