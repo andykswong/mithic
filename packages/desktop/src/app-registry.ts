@@ -144,6 +144,9 @@ export function appDescriptorFromManifest(
     defaultSize: manifest.display?.defaultSize ?? DEFAULT_MANIFEST_SIZE,
     displayMode: manifest.display?.mode ?? 'window',
     capabilities: caps,
+    // G6-CSP-manifest (spec §9): compile the manifest's `assets` into the per-guest
+    // iframe CSP the WM threads into `kernel.spawn({ csp })`.
+    csp: manifestCsp(manifest),
     entry: extras.entry,
     mount: extras.mount,
   };

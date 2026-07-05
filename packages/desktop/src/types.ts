@@ -47,6 +47,15 @@ export interface AppDescriptor {
    * Defaults to `'window'` when unset.
    */
   displayMode?: 'window' | 'fullscreen' | 'hidden';
+  /**
+   * G6-CSP-manifest (spec §9): the per-guest iframe CSP compiled from the app's
+   * manifest `assets` (via `manifestCsp`). Threaded into the tier-2 `kernel.spawn`
+   * `csp` so the guest's iframe applies exactly the policy its manifest declares
+   * (a manifest with no `assets` yields a CSP with no img/media/font-src — the
+   * guest cannot render passive assets unless it opts in). Undefined = the iframe
+   * falls back to the runtime's DEFAULT_GUEST_CSP.
+   */
+  csp?: string;
   /** Tier-1: render host DOM into the window. */
   mount?: (ctx: WindowContext, argv: string[]) => void | Promise<void>;
   /** Tier-2: sandboxed iframe guest entry (inline source string or URL). */

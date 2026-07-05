@@ -251,6 +251,14 @@ export interface SpawnInit {
    */
   display?: DisplayOptions;
   /**
+   * G6-CSP-manifest (spec §9): per-guest Content-Security-Policy applied to the
+   * iframe srcdoc. Threaded straight through to the launcher and runtime; ignored
+   * by non-iframe backends (Worker/QuickJS/ivm have no iframe CSP of their own).
+   * When omitted the iframe uses DEFAULT_GUEST_CSP. Compiled host-side from the
+   * guest's manifest (see @mithic/desktop manifestCsp).
+   */
+  csp?: string;
+  /**
    * Mark this process's stdio (fds 0/1/2) as connected to an INTERACTIVE
    * terminal — sets `PreopenDescriptor.tty` so the guest's `isatty(fd)` returns
    * true. A terminal frontend (xterm) sets this; a pipeline/redirect/batch spawn
@@ -337,6 +345,12 @@ export interface LaunchContext {
   guestImports?: Record<string, string>;
   /** GUI display placement forwarded to the runtime's `spawn` (see {@link DisplayOptions}). */
   display?: DisplayOptions;
+  /**
+   * G6-CSP-manifest (spec §9): per-guest iframe CSP, forwarded to `runtime.spawn`
+   * (only the iframe backend applies it). When omitted the iframe uses
+   * DEFAULT_GUEST_CSP. See {@link SpawnInit.csp}.
+   */
+  csp?: string;
 }
 
 /** Starts a guest module against the kernel-built boot wiring. */
@@ -828,6 +842,7 @@ export class Kernel {
       preopenFds: preopenFds.length > 3 ? preopenFds : undefined,
       guestImports: this.#guestImports,
       display: init.display,
+      csp: init.csp,
     });
 
     this.#handles.set(pid, handle);
@@ -1661,6 +1676,7 @@ export class DefaultGuestLauncher implements GuestLauncher {
         preopenFds: ctx.preopenFds,
         guestImports: ctx.guestImports,
         display: ctx.display,
+        csp: ctx.csp,
       });
     }
     return this.#launchInProcess(runtime, ctx);

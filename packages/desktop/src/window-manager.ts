@@ -170,6 +170,10 @@ export class WindowManager {
         ({ pid } = await this.#kernel.spawn(app.entry, {
           args: [app.name, ...(opts.argv ?? [])],
           capabilities: app.capabilities ?? [],
+          // G6-CSP-manifest (spec §9): the per-guest iframe CSP compiled from the
+          // app's manifest `assets` (via appDescriptorFromManifest → manifestCsp).
+          // Undefined for apps registered without a manifest → DEFAULT_GUEST_CSP.
+          csp: app.csp,
           display: {
             // Thread the app's declared display mode (from its manifest) so the
             // guest learns it via `guest.display`. A `hidden` app still gets a
