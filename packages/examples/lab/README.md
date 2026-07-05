@@ -74,13 +74,19 @@ npm test           # the Chromium browser tests (vitest --project browser)
 
 This is about the **module form of a guest's bytes**, not how the file gets into the VFS
 (`echo … > /usr/bin/foo` works — exec-from-VFS reads and runs those bytes). When the
-kernel execs a `#!/bin/node` file, the WorkerRuntime bootstrap runs the (shebang-stripped)
-source via `(0,eval)(source)` and reads `globalThis.__mithic_default`. So the bytes must be
-a **self-contained classic-script IIFE**: a top-level `export default` is a `SyntaxError`
-under `eval`, and a bare `import '@mithic/guest-runtime'` can't resolve in an opaque-origin
-worker. A normal hand-authored ESM guest therefore won't run from VFS bytes in-browser
-today — so a build-time `?bundle` esbuild plugin (`build/bundle-plugin.ts`) emits the IIFE
-form for each utility, which `installUtility` writes to `/usr/bin/<name>`. Letting an
-*unbundled* ESM guest run from VFS in-sandbox needs a per-backend resolver (a worker
-import-map / `blob:` module bootstrap) — deferred Phase-1.2 work (RFC 0001 §4.2
-"As-built"). On Node the launcher loads a real ESM graph, so it has no such constraint.
+kernel execs a `#!/bin/node` file, the Worker/iframe bootstrap mints an **in-sandbox
+`blob:` module** from the (shebang-stripped) source and `await import()`s it — it is no
+longer `(0,eval)`-d. A hand-authored **ESM** guest (top-level `export default (boot) => …`)
+therefore **runs directly from VFS bytes in-browser** (OF1), and it resolves `@mithic/*`
+deps by importing a URL it reads from a host-curated `boot.imports` map of in-sandbox
+`blob:` module URLs — **not** a bare specifier, **not** a browser import map, and with **no
+source rewrite** (G2). This is shipped; see the design spec
+`2026-07-04-esm-guest-loading-and-iframe-csp.md`.
+
+The build-time `?bundle` esbuild plugin (`build/bundle-plugin.ts`) is **still supported** and
+is the **fallback for dep-heavy guests**: it emits a self-contained classic-script IIFE whose
+footer sets `globalThis.__mithic_default`, which the stage-2 loader picks up (esbuild drops
+`export default`, so an IIFE guest has no `mod.default` — the loader resolves the entrypoint
+as `mod.default ?? globalThis.__mithic_default`, covering both forms). `installUtility` writes
+either form to `/usr/bin/<name>`. On Node the launcher loads a real ESM graph and populates
+`boot.imports` with `file://` URLs, so the same guest runs isomorphically.
