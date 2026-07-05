@@ -40,10 +40,14 @@ export function buildSrcdoc(): string {
    - webrtc 'block' is DECLARED but NOT enforced by shipping browsers (CSP3 "Other Directive") —
      the REAL WebRTC control is the RTCPeerConnection/RTCDataChannel shim below (Task A2).
    - worker-src stays ABSENT → falls back to default-src 'none' → blocks nested Worker/SharedWorker.
-   - script-src does NOT get data: (ever) and does NOT get blob: yet (Task Group D adds blob: for
-     the guest-module import()).
+   - script-src does NOT get data: (ever).
+   - script-src ALSO gets blob: (OF1) — await import(blobUrl) is a SCRIPT FETCH governed by
+     script-src, NOT covered by 'unsafe-eval' (MDN, verified 2026-07-04). Removing blob: here
+     silently breaks OF1 (the guest module can't load). This is NO NEW AUTHORITY: the iframe
+     already runs 'unsafe-inline' 'unsafe-eval' and is opaque-origin, so a blob: it mints is
+     same-origin to THIS iframe only (§3.2/§3.3). Do not "harden" it away.
 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; img-src blob: data:; media-src blob: data:; font-src blob: data:; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'; webrtc 'block'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob:; img-src blob: data:; media-src blob: data:; font-src blob: data:; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'; webrtc 'block'">
 </head>
 <body>
 <script type="module">
