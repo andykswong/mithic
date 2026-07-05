@@ -74,9 +74,10 @@ export function bundleGuestPlugin(): Plugin {
     name: 'mithic-lab-bundle-guest',
     enforce: 'pre',
     async resolveId(id, importer) {
-      // Longest suffix first: `?bundle-esm` ends in `-esm`, so `?bundle` must not
-      // match it. Delegate path resolution to Vite, then re-attach the marker so
-      // `load` sees the absolute path. Relative ids resolve against the importer.
+      // The two suffixes are non-overlapping ('...?bundle-esm' does not end with
+      // '?bundle'), so match order is not load-bearing; the loop just keeps both
+      // handlers together. Delegate path resolution to Vite, then re-attach the
+      // marker so `load` sees the absolute path. Relative ids resolve against the importer.
       for (const suf of [SUFFIX_ESM, SUFFIX]) {
         if (id.endsWith(suf)) {
           const bare = id.slice(0, -suf.length);

@@ -26,7 +26,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:node-native": "node --test --test-force-exit \"src/**/*.node-test.ts\""
+    "test:node-native": "node --test --test-timeout=15000 --test-force-exit \"src/**/*.node-test.ts\""
   },
   "repository": {
     "type": "git",

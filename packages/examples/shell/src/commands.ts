@@ -125,10 +125,8 @@ export class InProcessCommandLauncher implements GuestLauncher {
     const handle: ProcessHandle = { id: ctx.init.pid };
     const preopenPorts: Record<number, MessagePort> = {};
     ctx.stdio.forEach((port, i) => { if (port != null) preopenPorts[i] = port; });
-    // G2: honor the §4.1 always-present boot.imports invariant even for a guest
-    // booted AS a registered command, so a future ESM command guest isn't handed
-    // an absent boot.imports (a bare command guest imports nothing today → {}).
-    const boot = { control: ctx.control, init: ctx.init, preopenPorts, imports: ctx.guestImports ?? {} };
+    // Registered in-process command guests are pre-bundled and do not use boot.imports; honor the §4.1 always-present ({}) + frozen contract. A dep-bearing ESM command guest would need materialized file:// URLs (see #launchInProcess) — not supported for command: guests today.
+    const boot = { control: ctx.control, init: ctx.init, preopenPorts, imports: Object.freeze({}) };
 
     const guestDefault = await load();
     // Fire-and-forget: the guest drives itself and signals exit over `control`.

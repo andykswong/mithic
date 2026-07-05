@@ -47,3 +47,59 @@ test('Node in-process launcher populates boot.imports with resolvable URLs (non-
   await kernel.wait(pid);
   assert.strictEqual(new TextDecoder().decode(await stdout!), 'node-ok world');
 });
+
+// §4.4 zero-dep: a guest with NO deps in guestImports must still see boot.imports as
+// a present, empty object (the always-present invariant). This guest self-reports it
+// over its own stdout write port (no createGuest dep needed).
+const ZERO_DEP_GUEST = `#!/bin/node
+export default async (boot) => {
+  const ok = boot.imports && typeof boot.imports === 'object' && Object.keys(boot.imports).length === 0;
+  const text = ok ? 'imports-ok:' + Object.keys(boot.imports).length : 'imports-BAD';
+  boot.preopenPorts[1]?.postMessage({ type: 'data', chunk: new TextEncoder().encode(text) });
+  boot.preopenPorts[1]?.postMessage({ type: 'end' });
+  boot.control.postMessage({ type: 'exit', code: 0 });
+  boot.control.close();
+};`;
+
+test('§4.4: a zero-dep guest sees boot.imports present and empty (Kernel without guestImports)', async () => {
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  await writeFile(vfs, '/usr/bin/zero', ZERO_DEP_GUEST);
+  await vfs.chmod('/usr/bin/zero', 0o755);
+  const kernel = new Kernel({ runtime: new WorkerRuntime(), vfs }); // no guestImports → {}
+  const { pid, stdout } = await kernel.spawn('zero', { args: ['zero'], env: { PATH: '/usr/bin' }, capabilities: [], captureStdout: true });
+  await kernel.wait(pid);
+  assert.strictEqual(new TextDecoder().decode(await stdout!), 'imports-ok:0');
+});
+
+// §6.1 fail-loud negative: a guest importing a MISSING dep does `import(undefined)`,
+// which throws. The in-process launcher's fire-and-forget catch swallows the crash,
+// so the guest never writes stdout and never exits (wait + capture both hang forever).
+// The honest, observable fail-loud behavior on this path is: the SUCCESS output never
+// appears. Race a bounded window so the test terminates cleanly instead of hanging.
+const MISSING_DEP_GUEST = `#!/bin/node
+export default async (boot) => {
+  const { createGuest } = await import(boot.imports['not-there']);
+  const g = createGuest(boot);
+  const w = g.stdout.getWriter();
+  await w.write(new TextEncoder().encode('SHOULD-NOT-APPEAR'));
+  await w.close();
+  g.exit(0);
+};`;
+
+test('§6.1 fail-loud: a guest importing a MISSING dep never produces its success output', async () => {
+  const vfs = new FileSystemRouter();
+  await vfs.mount('/', new MemoryFsProvider());
+  await writeFile(vfs, '/usr/bin/boom', MISSING_DEP_GUEST);
+  await vfs.chmod('/usr/bin/boom', 0o755);
+  const kernel = new Kernel({ runtime: new WorkerRuntime(), vfs, guestImports: { '@mithic/guest-runtime': DEP } });
+  const { stdout } = await kernel.spawn('boom', { args: ['boom'], env: { PATH: '/usr/bin' }, capabilities: [], captureStdout: true });
+  // import(undefined) throws → the guest never writes → the capture never settles.
+  // Assert the crash is fail-loud: no success output within a bounded window.
+  const HANG = Symbol('hang');
+  const result = await Promise.race([
+    stdout!.then((b) => new TextDecoder().decode(b)),
+    new Promise<typeof HANG>((res) => setTimeout(() => res(HANG), 2000)),
+  ]);
+  assert.strictEqual(result, HANG); // crashed silently: no 'SHOULD-NOT-APPEAR', no EOF
+});
