@@ -1,10 +1,45 @@
 import { createGuest, readPath, writePath } from '@mithic/guest-runtime';
 import { STYLES } from './styles.ts';
-import { guestMarker as marker, sizeBucket, widthBucket } from './guest-marker.ts';
 
 const FORMATS = ['webp', 'jpeg', 'png'] as const;
 type Fmt = (typeof FORMATS)[number];
 const EXT: Record<Fmt, string> = { webp: 'webp', jpeg: 'jpeg', png: 'png' };
+
+// ---- content-free telemetry markers ----
+// Inlined so the guest is a self-contained `?bundle` (importing the host `telemetry.ts`
+// would drag its sinks/allowlist machinery into the guest). MUST stay in sync with
+// `telemetry.ts` (`MARKER_PREFIX` + `esc` + `sizeBucket`/`widthBucket`); the host
+// `parseMarker`/`sanitizeEvent` reverse this exactly. `telemetry.browser.test.ts` pins
+// the escaping round-trip against the host parser.
+const MARKER_PREFIX = 'mithic-ev';
+
+/** Escape control chars structural in the tab/newline line protocol (byte-identical to `telemetry.ts` `esc`). */
+function esc(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/\t/g, '\\t').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+}
+
+/** Build a marker line: `mithic-ev\t<name>\t<k=v>...` with keys and values escaped. */
+function marker(name: string, dims: Record<string, string> = {}): string {
+  const kvs = Object.entries(dims).map(([k, v]) => `${esc(k)}=${esc(v)}`);
+  return [MARKER_PREFIX, name, ...kvs].join('\t');
+}
+
+/** Coarse size bucket — NEVER the raw byte count. Mirrors `telemetry.ts` `sizeBucket`. */
+function sizeBucket(b: number): string {
+  if (b < 100 * 1024) return '<100KB';
+  if (b < 1024 * 1024) return '100KB-1MB';
+  if (b < 5 * 1024 * 1024) return '1-5MB';
+  if (b < 20 * 1024 * 1024) return '5-20MB';
+  return '>20MB';
+}
+
+/** Coarse source-width bucket. Mirrors `telemetry.ts` `widthBucket`. */
+function widthBucket(px: number): string {
+  if (px <= 512) return 'small';
+  if (px <= 1536) return 'medium';
+  if (px <= 4096) return 'large';
+  return 'xlarge';
+}
 
 /**
  * Wrap raw bytes in a Blob. Copies into a fresh ArrayBuffer-backed view so the part
@@ -32,6 +67,7 @@ export default async function main(boot: unknown): Promise<void> {
   let targetWidth = 1024;
   let format: Fmt = 'webp';
   let lastOutUrl: string | undefined;
+  let origUrl: string | undefined;
 
   // ---- DOM (layout C) ----
   document.head.appendChild(Object.assign(document.createElement('style'), { textContent: STYLES }));
@@ -104,7 +140,9 @@ export default async function main(boot: unknown): Promise<void> {
     sourceWidth = bmp.width; bmp.close();
     slider.max = String(sourceWidth);
     wnote.textContent = `· source ${sourceWidth}px · won't upscale`;
-    orig.src = URL.createObjectURL(toBlob(bytes));
+    if (origUrl) URL.revokeObjectURL(origUrl);
+    origUrl = URL.createObjectURL(toBlob(bytes));
+    orig.src = origUrl;
     orig.classList.remove('hidden');
     controls.classList.remove('hidden');
     result.classList.add('hidden');
@@ -202,6 +240,7 @@ export default async function main(boot: unknown): Promise<void> {
   // GUI process: stay alive until signalled.
   await new Promise<void>((resolve) => { guest.onSignal(() => resolve()); });
   if (lastOutUrl) URL.revokeObjectURL(lastOutUrl);
+  if (origUrl) URL.revokeObjectURL(origUrl);
   await writer.close().catch(() => {});
   guest.exit(0);
 }

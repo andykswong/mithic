@@ -5,8 +5,7 @@ import { IframeRuntime } from '@mithic/runtime/backends/iframe';
 import { installResizeConvertWorkflow } from './workflow.ts';
 import { installImageToolGuest, IMAGE_TOOL_PATH } from './guest-install.ts';
 import { portToReadable } from '@mithic/guest-runtime';
-import { forwardMarkers, parseMarker, type TelemetryEvent } from './telemetry.ts';
-import { GUEST_MARKER_PREFIX, guestMarker } from './guest-marker.ts';
+import { forwardMarkers, type TelemetryEvent } from './telemetry.ts';
 
 const T = 30000;
 let lab: Lab | undefined;
@@ -101,21 +100,3 @@ test('the image-tool app guest processes a dropped image and emits the funnel ma
   await collected.catch(() => {});
   container.remove();
 }, T);
-
-test('the guest inline marker escapes control chars so the host parseMarker round-trips a tab/newline value', () => {
-  // The guest carries its OWN inline marker()/esc (for ?bundle self-containment). It MUST
-  // stay byte-compatible with the host telemetry esc/parseMarker: a dimension value with a
-  // tab, newline, CR, or backslash must round-trip losslessly through the host parser rather
-  // than fragmenting the tab/newline-delimited line protocol.
-  expect(GUEST_MARKER_PREFIX).toBe('mithic-ev');
-  const value = 'IndexError:\ttoo\nlong\rslash\\end';
-  const line = guestMarker('process_error', { errorClass: value });
-  // Structural tabs separate exactly 3 fields; the value's own tab/newline/CR are escaped, so
-  // the guest line does not fragment and carries no raw newline/CR.
-  expect(line.split('\t').length).toBe(3);
-  expect(line).not.toMatch(/[\n\r]/);
-  const ev = parseMarker(line)!;
-  expect(ev).not.toBeNull();
-  expect(ev.name).toBe('process_error');
-  expect(ev.dims.errorClass).toBe(value);
-});

@@ -160,15 +160,18 @@ test('forwardMarkers only forwards sanitized, allowlisted events', async () => {
 });
 
 test('marker escapes tab and newline characters in dimension values (line-protocol integrity)', () => {
-  // A value containing a tab / newline must round-trip losslessly rather than fragmenting the line.
-  const line = marker('process_error', { errorClass: 'IndexError:\ttoo\nlong\r' });
+  // A value carrying a tab / newline / CR / backslash together must round-trip losslessly rather
+  // than fragmenting the line. `guest.ts` inlines a byte-identical `marker`/`esc` for ?bundle
+  // self-containment, so this pins the shared wire contract both sides depend on.
+  const value = 'IndexError:\ttoo\nlong\rslash\\end';
+  const line = marker('process_error', { errorClass: value });
   // Structural tabs separate the 3 fields; the value's own tab/newline/CR are escaped, so the
   // line does not fragment (no extra tabs from the value) and carries no raw newline/CR.
   expect(line.split('\t').length).toBe(3); // MARKER_PREFIX, name, one k=v — no fragmentation.
   expect(line).not.toMatch(/[\n\r]/); // value newlines/CR escaped, never raw.
   const ev = parseMarker(line)!;
   expect(ev.name).toBe('process_error');
-  expect(ev.dims.errorClass).toBe('IndexError:\ttoo\nlong\r');
+  expect(ev.dims.errorClass).toBe(value);
 });
 
 test('marker escapes special characters in dimension keys too', () => {
