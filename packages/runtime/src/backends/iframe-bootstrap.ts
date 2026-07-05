@@ -60,6 +60,14 @@ export const DEFAULT_GUEST_CSP = 'default-src \'none\'; script-src \'unsafe-inli
  *     listens to via a window.onmessage listener on the host page.
  */
 export function buildSrcdoc(csp: string = DEFAULT_GUEST_CSP): string {
+  // Defensive fail-loud (G6-CSP-manifest): the csp is interpolated raw into the
+  // double-quoted meta `content="..."`. A double-quote (or `<`/`>`) in a malformed
+  // compiled CSP could break out of the attribute / tag. manifestCsp never emits
+  // these (its directives are single-quoted tokens only), so a value containing one
+  // is a bug — throw rather than emit a broken/injectable srcdoc.
+  if (/["<>]/.test(csp)) {
+    throw new Error('buildSrcdoc: csp must not contain a double-quote, "<" or ">" (meta-attribute breakout)');
+  }
   return `<!DOCTYPE html>
 <html>
 <head>

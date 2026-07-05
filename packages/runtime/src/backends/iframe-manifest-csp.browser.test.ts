@@ -35,6 +35,16 @@ test('buildSrcdoc(csp) uses the supplied CSP verbatim; default when omitted', ()
   expect(DEFAULT_GUEST_CSP).toMatch(/script-src[^;]*\bblob:/);
 });
 
+test('buildSrcdoc throws (fail-loud) on a csp containing a double-quote, < or > (no meta-attr breakout)', () => {
+  // manifestCsp never emits these, so this is belt-and-suspenders: a malformed compiled
+  // CSP must not be interpolated raw into content="${csp}" and break out of the meta tag.
+  expect(() => buildSrcdoc('default-src \'none\'; report-uri "x"')).toThrow();
+  expect(() => buildSrcdoc('default-src \'none\'; <script>')).toThrow();
+  expect(() => buildSrcdoc('default-src \'none\'>')).toThrow();
+  // A well-formed CSP (single-quoted tokens only, no double-quote/</>) does NOT throw.
+  expect(() => buildSrcdoc(DEFAULT_GUEST_CSP)).not.toThrow();
+});
+
 test('a guest spawned with a manifest-compiled CSP (assets.img) can render a blob: image', async () => {
   const rt = new IframeRuntime();
   const csp = manifestCsp({ name: 'viewer', assets: { img: true } });
@@ -58,17 +68,25 @@ test('a guest spawned with a manifest-compiled CSP (assets.img) can render a blo
   rt.dispose(handle);
 }, 10000);
 
-test('a guest with NO assets in its manifest cannot render an image (img-src absent)', async () => {
+test('a guest with NO assets in its manifest cannot render an image — img-src absent fires a CSP violation', async () => {
+  // CSP-SPECIFIC (mirrors the Group A connect-src negative): a bare "did not paint"
+  // is unsound (any load failure yields painted:false). We assert the REAL control —
+  // a `securitypolicyviolation` whose directive is img-src/default-src — so this flips
+  // to a failure the moment img-src is (wrongly) opened for a no-assets manifest.
   const rt = new IframeRuntime();
   const csp = manifestCsp({ name: 'headless' });
   const code = /* js */`
     export default async (_boot) => {
+      let blocked = false, painted = false;
+      document.addEventListener('securitypolicyviolation', (e) => {
+        if (/img-src|default-src/.test(e.violatedDirective)) blocked = true;
+      });
       const img = document.createElement('img');
-      img.onload = () => window.parent.postMessage({ call: 'ok', painted: true }, '*');
-      img.onerror = () => window.parent.postMessage({ call: 'ok', painted: false }, '*');
+      img.onload = () => { painted = true; };
+      img.onerror = () => { /* CSP-blocked load surfaces here + as a violation */ };
       document.body.appendChild(img);
       img.src = URL.createObjectURL(new Blob([Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='), c=>c.charCodeAt(0))], { type: 'image/png' }));
-      setTimeout(() => window.parent.postMessage({ call: 'ok', painted: false }, '*'), 500);
+      setTimeout(() => window.parent.postMessage({ call: 'ok', blocked, painted }, '*'), 500);
     };
   `;
   const init = { type: 'init' as const, entry: 'inline' as const, args: [], env: {}, cwd: '/', pid: 2, ppid: 0, capabilities: [] };
@@ -76,7 +94,9 @@ test('a guest with NO assets in its manifest cannot render an image (img-src abs
   const handle = await rt.spawn(code, { init, csp });
   rt.onMessage(handle, (m) => received.push(m));
   await new Promise((r) => setTimeout(r, 900));
-  const msg = received.find((m) => (m as { call?: string })?.call === 'ok') as { painted: boolean } | undefined;
+  const msg = received.find((m) => (m as { call?: string })?.call === 'ok') as { blocked: boolean; painted: boolean } | undefined;
+  // The image was CSP-refused: a violation fired and it never painted.
+  expect(msg?.blocked).toBe(true);
   expect(msg?.painted).toBe(false);
   rt.dispose(handle);
 }, 10000);
