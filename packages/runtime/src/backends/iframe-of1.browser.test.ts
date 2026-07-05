@@ -95,3 +95,51 @@ test('negative: with blob: stripped from script-src, the guest-module import is 
   expect((got as { refused: boolean }).refused).toBe(true);
   iframe.remove();
 }, 10000);
+
+test('iframe OF1: an IIFE guest (globalThis.__mithic_default, no export) still runs', async () => {
+  const rt = new IframeRuntime();
+  const code = /* js */`
+    'use strict';
+    globalThis.__mithic_default = async (boot) => {
+      window.parent.postMessage({ id: 6, call: 'iife-ran', args: { pid: boot.init.pid } }, '*');
+    };
+  `;
+  const received: unknown[] = [];
+  const handle = await rt.spawn(code, { init: baseInit(16) });
+  rt.onMessage(handle, (m) => received.push(m));
+  await new Promise((r) => setTimeout(r, 800));
+  const msg = received.find((m) => (m as { call?: string })?.call === 'iife-ran') as { args: { pid: number } } | undefined;
+  expect(msg?.args.pid).toBe(16);
+  rt.dispose(handle);
+}, 10000);
+
+test('iframe OF1: isUrl entry with a host-minted blob: is unsupported by design — fails loud, does not run', async () => {
+  // DIVERGENCE from the Worker isUrl path (worker-of1: a host-minted blob: URL DOES import,
+  // because a data:-spawned Worker is transitionally same-origin to the host page). The iframe
+  // is OPAQUE-origin: a host-page blob: URL is cross-origin to it, and the restrictive script-src
+  // (no origin sources) has nothing to match, so `await import(hostBlobUrl)` in the bootstrap
+  // throws "Failed to fetch dynamically imported module". Empirically observed (this repo's
+  // Chromium, 2026-07-04): the guest NEVER runs and the bootstrap's run().catch() surfaces a
+  // __mithic_error — fail-loud, not silent. This is BY DESIGN: exec-from-VFS always passes source
+  // STRINGS (the in-sandbox-minting path), so iframe isUrl entry is a niche/unsupported path; this
+  // test PINS that reality rather than asserting a success that does not occur.
+  const rt = new IframeRuntime();
+  const guestSrc = /* js */`
+    export default async (boot) => {
+      window.parent.postMessage({ id: 99, call: 'url-ran', args: { pid: boot.init.pid } }, '*');
+    };
+  `;
+  const url = new URL(URL.createObjectURL(new Blob([guestSrc], { type: 'text/javascript' })));
+  const received: unknown[] = [];
+  const errors: unknown[] = [];
+  const handle = await rt.spawn(url, { init: baseInit(17) });
+  rt.onMessage(handle, (m) => {
+    received.push(m);
+    if ((m as { __mithic_error?: unknown })?.__mithic_error != null) errors.push(m);
+  });
+  await new Promise((r) => setTimeout(r, 800));
+  const ran = received.some((m) => (m as { call?: string })?.call === 'url-ran');
+  expect(ran).toBe(false);
+  expect(errors.length).toBeGreaterThan(0);
+  rt.dispose(handle);
+}, 10000);
