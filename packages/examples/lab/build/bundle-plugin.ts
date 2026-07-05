@@ -46,6 +46,28 @@ async function bundleGuest(entry: string): Promise<string> {
   return result.outputFiles[0].text;
 }
 
+/**
+ * Bundle one entry into a self-contained ESM module (named exports preserved). Used for G2
+ * dependency bytes (e.g. @mithic/guest-runtime), which a guest imports via
+ * `const { createGuest } = await import(boot.imports['@mithic/guest-runtime'])` — so the
+ * module MUST keep its `export { createGuest, … }` (unlike the guest-IIFE `?bundle` form,
+ * which drops export default and assigns globalThis.__mithic_default). Same esbuild machinery,
+ * different `format`.
+ */
+export async function bundleGuestEsm(entry: string): Promise<string> {
+  const result = await build({
+    entryPoints: [entry],
+    bundle: true,
+    format: 'esm',
+    platform: 'browser',
+    target: 'esnext',
+    write: false,
+    legalComments: 'none',
+    logLevel: 'silent',
+  });
+  return result.outputFiles[0].text;
+}
+
 export function bundleGuestPlugin(): Plugin {
   return {
     name: 'mithic-lab-bundle-guest',

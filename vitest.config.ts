@@ -29,6 +29,8 @@ export default defineConfig({
             'packages/io/src/net/**/*.test.ts',
             'packages/commands/*/src/**/*.test.ts',
             'packages/desktop/src/**/*.test.ts',
+            // Lab build-tool unit tests (esbuild dep-bytes producer) run in Node, not under a src/ glob.
+            'packages/examples/lab/build/**/*.test.ts',
           ],
           exclude: ['**/*.browser.test.ts', '**/node_modules/**', '**/dist/**'],
           environment: 'node',
