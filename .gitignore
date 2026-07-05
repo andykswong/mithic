@@ -124,3 +124,6 @@ Cargo.lock
 
 # Claude Code Worktrees
 .claude/worktrees/
+
+# superpowers brainstorm scratch (not source)
+.superpowers/
