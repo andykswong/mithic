@@ -14,10 +14,13 @@ test('buildSrcdoc CSP: passive blob:/data: on img/font/media, egress locked', ()
   expect(csp).toContain('form-action \'none\'');
   expect(csp).toContain('base-uri \'none\'');
   expect(csp).toContain('webrtc \'block\'');
-  // script-src must NOT gain data: (ever) and must NOT yet gain blob: (that is Task Group D).
+  // script-src GAINED blob: (OF1 — for the guest-module import()) but must NEVER gain data:.
+  expect(csp).toMatch(/script-src[^;]*\bblob:/);
   expect(csp).not.toMatch(/script-src[^;]*data:/);
-  expect(csp).not.toMatch(/script-src[^;]*blob:/);
-  expect(csp).toContain('script-src \'unsafe-inline\' \'unsafe-eval\'');
+  expect(csp).toContain('script-src \'unsafe-inline\' \'unsafe-eval\' blob:');
+  // worker-src 'none' is EXPLICIT (OF1): with blob: now in script-src, an ABSENT worker-src
+  // would inherit it via the child-src→script-src fallback and permit `new Worker(blob:)`.
+  expect(csp).toContain('worker-src \'none\'');
   // Scheme must be scoped to specific directives, never default-src.
   expect(csp).not.toMatch(/default-src[^;]*blob:/);
   expect(csp).not.toMatch(/default-src[^;]*data:/);
@@ -112,7 +115,9 @@ test('negative: connect-src none blocks fetch + WebSocket egress (CSP-specific)'
   expect((msg as { args: { wsViolation: boolean } })?.args.wsViolation).toBe(true);
 }, 10000);
 
-test('negative: nested Worker is CSP-refused (worker-src absent → default-src none)', async () => {
+test('negative: nested Worker is CSP-refused (explicit worker-src none)', async () => {
+  // worker-src 'none' is pinned EXPLICITLY (OF1): once script-src gained blob:, an absent
+  // worker-src would inherit it (child-src→script-src fallback) and permit new Worker(blob:).
   // Chromium does NOT throw synchronously from `new Worker(blob:)` under a worker-src
   // violation — it fires a `securitypolicyviolation` event + an async worker `error`
   // event and the worker never runs (no message). "blocked" therefore = the constructor

@@ -40,7 +40,11 @@ export function buildSrcdoc(): string {
      allow-top-navigation). ANY future sandbox-flag addition must re-run the §3.4 threat model.
    - webrtc 'block' is DECLARED but NOT enforced by shipping browsers (CSP3 "Other Directive") —
      the REAL WebRTC control is the RTCPeerConnection/RTCDataChannel shim below (Task A2).
-   - worker-src stays ABSENT → falls back to default-src 'none' → blocks nested Worker/SharedWorker.
+   - worker-src 'none' is EXPLICIT (OF1) — it blocks nested Worker/SharedWorker/ServiceWorker.
+     worker-src does NOT fall back to default-src: absent, it falls back child-src -> script-src
+     -> default-src (CSP3, MDN verified 2026-07-04). Once script-src gained blob: (below), an
+     ABSENT worker-src would inherit blob: and permit new Worker(blob:) — reopening the nested-
+     worker vector §3.4 closes. Pinning worker-src 'none' here severs that fallback. Do NOT drop it.
    - script-src does NOT get data: (ever).
    - script-src ALSO gets blob: (OF1) — await import(blobUrl) is a SCRIPT FETCH governed by
      script-src, NOT covered by 'unsafe-eval' (MDN, verified 2026-07-04). Removing blob: here
@@ -48,7 +52,7 @@ export function buildSrcdoc(): string {
      already runs 'unsafe-inline' 'unsafe-eval' and is opaque-origin, so a blob: it mints is
      same-origin to THIS iframe only (§3.2/§3.3). Do not "harden" it away.
 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob:; img-src blob: data:; media-src blob: data:; font-src blob: data:; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'; webrtc 'block'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob:; worker-src 'none'; img-src blob: data:; media-src blob: data:; font-src blob: data:; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'; webrtc 'block'">
 </head>
 <body>
 <script type="module">
