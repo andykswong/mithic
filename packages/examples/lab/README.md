@@ -47,6 +47,19 @@ ingestFile(File) ─▶ /in/photo.png ──┐
   utilities (with their xattr capabilities) across reload, so a saved workflow re-runs
   deterministically.
 
+## The image-tool page (single-utility demand-validation surface)
+
+`index.html` boots **the image-tool product page** (`src/image-tool/`): a privacy-first
+"resize & convert an image" tool. The UI runs as a **GUI guest** in a visible sandboxed
+iframe (`IframeRuntime`) that owns its drop zone, writes the dropped bytes to the VFS via
+the `fs` syscall, runs the `#!/bin/bash` `resize-convert` workflow (chaining `imgresize`
+→ `imgconvert` — composition via exec-from-VFS), reads the result back, mints a `blob:`
+inside its own iframe and paints it under the shipped G6 CSP (`img-src blob:`), and offers
+download + a "run at scale / self-host" CTA. Image bytes never leave the device; the only
+egress is a content-free, first-party telemetry beacon (`src/image-tool/telemetry.ts`),
+configurable via `VITE_TELEMETRY_ENDPOINT` (defaults to a console-only sink). No COOP/COEP,
+no OPFS, no third-party analytics — single file per run.
+
 ## API
 
 ```ts
