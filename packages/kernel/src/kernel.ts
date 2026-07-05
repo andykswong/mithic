@@ -1682,9 +1682,14 @@ export class DefaultGuestLauncher implements GuestLauncher {
       const fd = ctx.preopenFds ? ctx.preopenFds[i] : i;
       if (typeof fd === 'number') preopenPorts[fd] = port;
     });
-    const boot = { control: ctx.control, init: ctx.init, preopenPorts };
+    // OF1/G2 (spec §6.1): materialize curated deps as file:// URLs so the guest's
+    // `import(boot.imports[name])` resolves in Node. Do NOT rely on bare-specifier
+    // resolution from the temp dir (os.tmpdir() node_modules won't reach the
+    // workspace @mithic/*).
+    const { imports, dir } = await materializeImports(ctx.guestImports ?? {});
+    const boot = { control: ctx.control, init: ctx.init, preopenPorts, imports };
 
-    const defaultExport = await loadGuestDefault(ctx.code);
+    const defaultExport = await loadGuestDefault(ctx.code, dir);
     // Fire-and-forget: the guest drives itself, signalling exit over control.
     Promise.resolve(defaultExport(boot)).catch(() => { /* guest crash surfaces via exit */ });
     return handle;
@@ -1693,7 +1698,34 @@ export class DefaultGuestLauncher implements GuestLauncher {
 
 type GuestDefault = (boot: unknown) => unknown | Promise<unknown>;
 
-async function loadGuestDefault(code: string | URL): Promise<GuestDefault> {
+/**
+ * OF1/G2 (spec §6.1): write each curated dep's source to a temp `.mjs` sibling and
+ * key it by name to its `file://` URL, so a guest's `import(boot.imports[name])`
+ * resolves in Node. Zero deps → a frozen empty map + no dir (the guest's own
+ * temp-dir minting in `loadGuestDefault` is unaffected), honoring the §4.1
+ * always-present `boot.imports` invariant.
+ */
+async function materializeImports(
+  deps: Record<string, string>,
+): Promise<{ imports: Record<string, string>; dir: string | undefined }> {
+  const names = Object.keys(deps);
+  if (names.length === 0) return { imports: Object.freeze({}), dir: undefined };
+  const { writeFile, mkdtemp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { pathToFileURL } = await import('node:url');
+  const dir = await mkdtemp(join(tmpdir(), 'mithic-guest-'));
+  const imports: Record<string, string> = {};
+  let i = 0;
+  for (const name of names) {
+    const file = join(dir, `dep-${i++}.mjs`);
+    await writeFile(file, deps[name]);
+    imports[name] = pathToFileURL(file).href;
+  }
+  return { imports: Object.freeze(imports), dir };
+}
+
+async function loadGuestDefault(code: string | URL, dir?: string): Promise<GuestDefault> {
   if (code instanceof URL) {
     // @vite-ignore: the specifier is a runtime URL Vite cannot statically analyze.
     // This Node-only path never runs in the browser (the examples use
@@ -1703,12 +1735,13 @@ async function loadGuestDefault(code: string | URL): Promise<GuestDefault> {
     return mod.default as GuestDefault;
   }
   // Materialize the inline module so its ESM imports/exports resolve normally.
+  // Reuse the deps' temp dir when present so the guest .mjs sits beside them.
   const { writeFile, mkdtemp } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const { pathToFileURL } = await import('node:url');
-  const dir = await mkdtemp(join(tmpdir(), 'mithic-guest-'));
-  const file = join(dir, 'guest.mjs');
+  const targetDir = dir ?? (await mkdtemp(join(tmpdir(), 'mithic-guest-')));
+  const file = join(targetDir, 'guest.mjs');
   await writeFile(file, code);
   // @vite-ignore: a runtime temp-file URL — see the URL branch above.
   const mod = await import(/* @vite-ignore */ pathToFileURL(file).href);
