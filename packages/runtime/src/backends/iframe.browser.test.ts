@@ -10,9 +10,10 @@
  * from @mithic/guest-runtime is NOT needed inside the guest string — we reconstruct
  * the minimal createGuest logic inline.
  */
-import { expect, test } from 'vitest';
+import { describe, expect, it, test } from 'vitest';
 import { IframeRuntime } from './iframe.ts';
 import { buildSrcdoc } from './iframe-bootstrap.ts';
+import type { ProcessInit } from '@mithic/protocol';
 
 // Minimal inline createGuest re-implementation for use inside iframe guest code.
 // This avoids any dependency on @mithic/guest-runtime inside the opaque-origin iframe.
@@ -360,4 +361,39 @@ test('spawn applies display.title to the iframe element', async () => {
   const iframe = document.querySelector('iframe[title="My Window"]');
   expect(iframe).not.toBeNull();
   rt.dispose(handle);
+});
+
+function minimalInit(): ProcessInit {
+  return {
+    type: 'init', entry: 'inline', args: ['t'], env: {}, cwd: '/', pid: 1, ppid: 0,
+    capabilities: [],
+  } as ProcessInit;
+}
+
+describe('IframeRuntime allow-downloads', () => {
+  it('adds allow-downloads to the sandbox only when display.allowDownloads is set on a visible guest', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const rt = new IframeRuntime();
+    // A visible guest that opts into downloads.
+    await rt.spawn('globalThis.__mithic_default = () => {};', {
+      init: minimalInit(),
+      display: { mode: 'window', container, allowDownloads: true },
+    });
+    const framesWithDownloads = [...container.querySelectorAll('iframe')]
+      .filter((f) => (f.getAttribute('sandbox') ?? '').includes('allow-downloads'));
+    expect(framesWithDownloads.length).toBe(1);
+    container.remove();
+  });
+
+  it('a hidden guest never gets allow-downloads even if the flag is set', async () => {
+    const rt = new IframeRuntime();
+    const before = document.querySelectorAll('iframe[sandbox~="allow-downloads"]').length;
+    await rt.spawn('globalThis.__mithic_default = () => {};', {
+      init: minimalInit(),
+      display: { mode: 'hidden', allowDownloads: true },
+    });
+    const after = document.querySelectorAll('iframe[sandbox~="allow-downloads"]').length;
+    expect(after).toBe(before);
+  });
 });
