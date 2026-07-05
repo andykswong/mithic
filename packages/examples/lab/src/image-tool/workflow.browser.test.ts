@@ -119,6 +119,59 @@ test.each([
   bmp.close();
 }, T);
 
+// Unsupported output format (spec §5 error path). The OUT extension drives the output
+// format, and `imgconvert` only accepts png/jpg/jpeg/webp — an unknown extension (e.g.
+// `.gif`/`.bmp`/`.txt`) errors. The `FORMAT` arg ($2), even set to a valid-looking value,
+// does not rescue an unsupported OUT extension because it is reserved and never consumed.
+//
+// Documented behavior of the shipped workflow: the failing `imgconvert` reports the
+// unsupported format on stderr and NO output file is produced (the image bytes are never
+// silently written to the wrong path — the safety-relevant invariant). Note it does NOT
+// fall back to a default format.
+//
+// KNOWN LIMITATION (documented, not asserted as a failure): although `imgconvert` returns
+// a non-zero status and the script runs under `set -euo pipefail`, the workflow's overall
+// exit code is currently 0 here because the `trap '…' EXIT` cleanup's success status
+// clobbers the failing command's status in the shell's EXIT-trap path (real bash preserves
+// the failing status → exit 1). That divergence lives in `@mithic/shell`'s trap handling,
+// not this workflow, so this test pins the product-relevant contract (stderr diagnostic +
+// no output file) rather than the exit code.
+test.each([
+  ['gif', '/out/photo.gif'],
+  ['bmp', '/out/photo.bmp'],
+  ['txt', '/out/photo.txt'],
+])('resize-convert errors on an unsupported %s output extension (stderr diagnostic, no output file)', async (
+  _label,
+  outPath,
+) => {
+  lab = await createLab({ persistStorage: null });
+  await seed(lab, '/in/photo.png', await fixturePng(40, 20));
+  await installResizeConvertWorkflow(lab.vfs);
+
+  // FORMAT ($2) is a valid format string, but it is reserved/unused — the OUT extension
+  // is what selects the encoder, so an unsupported extension still fails.
+  const { pid, stdout, stderr } = await lab.kernel.spawn('resize-convert', {
+    args: ['resize-convert', '16', 'webp', '/in/photo.png', outPath],
+    env: { PATH: '/usr/bin:/bin' },
+    cwd: '/',
+    capabilities: [
+      { type: 'fs', paths: ['/'], operations: ['read', 'write', 'execute'] },
+      { type: 'process', maxChildren: 16 },
+    ],
+    captureStdout: true,
+    captureStderr: true,
+  });
+  await lab.kernel.wait(pid);
+  if (stdout) await stdout;
+  const errBytes = stderr ? await stderr : new Uint8Array();
+  const errText = new TextDecoder().decode(errBytes);
+
+  // The failing utility reports the unsupported output format on stderr (fails loud, not silent).
+  expect(errText).toContain('unsupported output format');
+  // No output file was produced under the unsupported path — no silent fallback, no stray write.
+  await expect(lab.vfs.open(outPath, { read: true })).rejects.toThrow();
+}, T);
+
 test('resize-convert never upscales: a target wider than the source is clamped to source width', async () => {
   lab = await createLab({ persistStorage: null });
   await seed(lab, '/in/photo.png', await fixturePng(40, 20));

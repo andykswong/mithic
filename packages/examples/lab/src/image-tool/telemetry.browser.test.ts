@@ -159,6 +159,31 @@ test('forwardMarkers only forwards sanitized, allowlisted events', async () => {
   expect(got).toEqual([{ name: 'processed', dims: { inFmt: 'png' } }]);
 });
 
+test('parseMarker + sanitizeEvent carry a marker with every allowlisted dimension intact', () => {
+  // A realistic near-max event: all 9 allowlisted dimension keys present with values that
+  // each satisfy their predicate. This proves the tab-separated line-protocol parser and the
+  // sanitizer handle a full, multi-dimension event without dropping or reordering fields —
+  // the widest event the funnel ever emits (a `processed` plus every optional dim).
+  const dims: Record<string, string> = {
+    inFmt: 'png', outFmt: 'webp', srcWidthBucket: 'large', targetWidth: '1024',
+    bytesInBucket: '1-5MB', bytesOutBucket: '100KB-1MB', ms: '340',
+    errorClass: 'RangeError', cta: 'result-scale',
+  };
+  // The marker builder emits every key; assert the wire line carries all 9 fields (+ prefix + name).
+  const line = marker('processed', dims);
+  expect(line.split('\t').length).toBe(2 + Object.keys(dims).length); // prefix, name, 9 k=v
+
+  const parsed = parseMarker(line)!;
+  expect(Object.keys(parsed.dims).sort()).toEqual(Object.keys(DIMENSION_ALLOWLIST).sort());
+
+  // Sanitization keeps every one of them: each key is allowlisted and each value conforms.
+  const clean = sanitizeEvent(parsed)!;
+  expect(clean.name).toBe('processed');
+  expect(clean.dims).toEqual(dims);
+  // Every allowlisted key is represented — none were silently dropped.
+  expect(Object.keys(clean.dims).sort()).toEqual(Object.keys(DIMENSION_ALLOWLIST).sort());
+});
+
 test('marker escapes tab and newline characters in dimension values (line-protocol integrity)', () => {
   // A value carrying a tab / newline / CR / backslash together must round-trip losslessly rather
   // than fragmenting the line. `guest.ts` inlines a byte-identical `marker`/`esc` for ?bundle

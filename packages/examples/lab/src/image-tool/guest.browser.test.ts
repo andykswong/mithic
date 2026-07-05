@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 import { createLab } from '../main.ts';
 import type { Lab } from '../main.ts';
 import { IframeRuntime } from '@mithic/runtime/backends/iframe';
@@ -184,6 +184,89 @@ test('the app guest UI processes a genuine DragEvent drop (no test-hook)', async
     // State 3 post-render (spec §5): the 'previewed' marker fires after the blob: preview paints.
     await expect.poll(() => events.some((e) => e.name === 'previewed'), { timeout: T }).toBe(true);
   } finally {
+    ui.dispose();
+    document.head.querySelector('style')?.remove();
+    document.body.innerHTML = '';
+  }
+}, T);
+
+// Error path (spec §5): when the workflow fails (throws / non-zero exit surfaced as a
+// thrown Error by the guest's runWorkflow), the catch block must reveal the result div
+// with an error message and emit `process_error` carrying the error's `errorClass`. The
+// funnel/DragEvent tests only cover the happy path; this pins the failure branch in the
+// same pure-DOM context (the extracted `renderImageToolUI` factory `main(boot)` wires).
+test('the app guest UI reveals an error state and emits process_error when the workflow fails', async () => {
+  const events: TelemetryEvent[] = [];
+  class WorkflowError extends Error { override name = 'WorkflowError'; }
+  const ui = renderImageToolUI(document, {
+    runWorkflow: async () => { throw new WorkflowError('workflow exited 1'); },
+    emit: (name, dims) => { events.push({ name, dims: dims ?? {} }); },
+  });
+
+  try {
+    // Before any run, the result div is hidden.
+    expect(document.getElementById('result')!.classList.contains('hidden')).toBe(true);
+
+    // Load a source so runBtn has bytes to act on, then click Run — the injected
+    // runWorkflow throws, driving the catch block.
+    await ui.loadFile(await fixturePng(40, 20), 'shot.png');
+    ui.runBtn.click();
+
+    // The error is surfaced: process_error fires with the thrown error's class as errorClass.
+    await expect.poll(() => events.some((e) => e.name === 'process_error'), { timeout: T }).toBe(true);
+    const err = events.find((e) => e.name === 'process_error');
+    expect(err?.dims.errorClass).toBe('WorkflowError');
+
+    // The result div is revealed carrying the error message (progressive-reveal to State 3-error).
+    await expect.poll(() => document.getElementById('result')!.classList.contains('hidden'), { timeout: T }).toBe(false);
+    expect(document.getElementById('resultmsg')!.textContent).toContain('error: workflow exited 1');
+
+    // The happy-path markers never fired — the failure short-circuited before preview.
+    expect(events.some((e) => e.name === 'processed')).toBe(false);
+    expect(events.some((e) => e.name === 'previewed')).toBe(false);
+
+    // The Run button is re-enabled by the finally block so the user can retry.
+    expect(ui.runBtn.disabled).toBe(false);
+  } finally {
+    ui.dispose();
+    document.head.querySelector('style')?.remove();
+    document.body.innerHTML = '';
+  }
+}, T);
+
+// Download interaction (spec §5, Task 6 `downloaded` marker): after a successful run the
+// download button is wired to mint an <a download> and click it, and emit `downloaded`
+// with the output format. The funnel test stops at `previewed`; this exercises the user
+// clicking Download and asserts the marker fires with its `outFmt` dimension.
+test('the app guest UI emits the downloaded marker with outFmt when the download button is clicked', async () => {
+  const events: TelemetryEvent[] = [];
+  const RIFF_WEBP = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
+  const ui = renderImageToolUI(document, {
+    runWorkflow: async () => RIFF_WEBP,
+    emit: (name, dims) => { events.push({ name, dims: dims ?? {} }); },
+  });
+
+  // The anchor click() in the download handler would open a navigation in the test realm;
+  // intercept it so the assertion targets only the marker + anchor wiring.
+  const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  try {
+    // Complete a run so the result (with the download button) is shown and the handler wired.
+    await ui.loadFile(await fixturePng(40, 20), 'shot.png');
+    ui.runBtn.click();
+    await expect.poll(() => events.some((e) => e.name === 'previewed'), { timeout: T }).toBe(true);
+
+    // The user clicks Download.
+    (document.getElementById('download') as HTMLButtonElement).click();
+
+    // The `downloaded` marker fires with the chosen output format (default webp).
+    await expect.poll(() => events.some((e) => e.name === 'downloaded'), { timeout: T }).toBe(true);
+    const dl = events.find((e) => e.name === 'downloaded');
+    expect(dl?.dims.outFmt).toBe('webp');
+
+    // The download wiring created + clicked a real <a download> (the mechanism the marker attends).
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  } finally {
+    clickSpy.mockRestore();
     ui.dispose();
     document.head.querySelector('style')?.remove();
     document.body.innerHTML = '';
