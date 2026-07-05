@@ -275,6 +275,8 @@ export interface DisplayOptions {
   title?: string;
   /** Host-side per-window mount target; see runtime `SpawnOptions.display.container`. */
   container?: HTMLElement;
+  /** Opt-in `allow-downloads` sandbox token for a visible guest; see runtime `SpawnOptions.display.allowDownloads` (spec §6.3). */
+  allowDownloads?: boolean;
 }
 
 export interface SpawnResult {

@@ -14,6 +14,8 @@ import { describe, expect, it, test } from 'vitest';
 import { IframeRuntime } from './iframe.ts';
 import { buildSrcdoc } from './iframe-bootstrap.ts';
 import type { ProcessInit } from '@mithic/protocol';
+import { Kernel } from '@mithic/kernel';
+import { FileSystemRouter, MemoryFsProvider } from '@mithic/io/vfs';
 
 // Minimal inline createGuest re-implementation for use inside iframe guest code.
 // This avoids any dependency on @mithic/guest-runtime inside the opaque-origin iframe.
@@ -445,6 +447,22 @@ describe('IframeRuntime allow-downloads', () => {
     // A compute guest still runs scripts — the token is present.
     expect(sandbox.split(/\s+/)).toContain('allow-scripts');
     rt.dispose(handle);
+    container.remove();
+  });
+
+  it('a kernel-spawned visible guest with display.allowDownloads gets the sandbox token end-to-end', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const vfs = new FileSystemRouter();
+    await vfs.mount('/', new MemoryFsProvider());
+    const kernel = new Kernel({ runtime: new IframeRuntime({ container }), vfs });
+    await kernel.spawn('globalThis.__mithic_default = () => {};', {
+      args: ['t'],
+      capabilities: [{ type: 'fs', paths: ['/'], operations: ['read', 'write'] }],
+      display: { mode: 'window', container, allowDownloads: true },
+    });
+    const frame = container.querySelector('iframe')!;
+    expect((frame.getAttribute('sandbox') ?? '').includes('allow-downloads')).toBe(true);
     container.remove();
   });
 });
