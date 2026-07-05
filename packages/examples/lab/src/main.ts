@@ -40,6 +40,7 @@ import { createCommandSuite } from './commands.ts';
 import { installUtility } from './install.ts';
 import { labUtilities } from './utilities.ts';
 import shellSource from '../../../shell/src/process.ts?bundle';
+import guestRuntimeDep from '../../../guest-runtime/src/index.ts?bundle-esm';
 
 const SHEBANG = '#!/bin/node\n';
 
@@ -298,6 +299,12 @@ export async function createLab(options: LabOptions = {}): Promise<Lab> {
     resolveCommand: (name) => suite.resolve(name),
     launcher: suite.launcher,
     onDomMutate,
+    // G2: the curated dep bytes an exec-from-VFS ESM guest resolves via
+    // `import(boot.imports['@mithic/guest-runtime'])`. The initial allowlist is
+    // just @mithic/guest-runtime; the kernel mints a blob:/file:// module from
+    // this source per spawn so a bare `@mithic/guest-runtime` never has to resolve
+    // in the opaque worker/iframe (the documented browser loading problem).
+    guestImports: { '@mithic/guest-runtime': guestRuntimeDep },
   });
 
   const kernelClient = makeKernelClient(kernel);

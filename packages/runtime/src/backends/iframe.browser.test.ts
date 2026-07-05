@@ -6,12 +6,13 @@
  * Guest-import strategy: the iframe runs in an opaque origin (no allow-same-origin),
  * so it cannot use import maps or reach the Vite dev server. We therefore pass guest
  * logic as self-contained inline code strings. The bootstrap inside the srcdoc turns
- * that string into a Blob URL module (or falls back to indirect eval), so `import`
+ * that string into an in-sandbox Blob URL module and import()s it (OF1/G2), so `import`
  * from @mithic/guest-runtime is NOT needed inside the guest string — we reconstruct
  * the minimal createGuest logic inline.
  */
 import { expect, test } from 'vitest';
 import { IframeRuntime } from './iframe.ts';
+import { buildSrcdoc } from './iframe-bootstrap.ts';
 
 // Minimal inline createGuest re-implementation for use inside iframe guest code.
 // This avoids any dependency on @mithic/guest-runtime inside the opaque-origin iframe.
@@ -289,50 +290,18 @@ test('IframeRuntime: postMessage delivers message to guest recv hook', async () 
   rt.dispose(handle);
 }, 10000);
 
-// ---- URL spawn path generates valid dynamic import (unit assertion, no DOM needed) ----
+// ---- OF1/G2 stage-2 load: bootstrap import()s a blob module, no regex+eval ----
 
-test('IframeRuntime: URL spawn generates dynamic import() — not a bare static import declaration', () => {
-  // We verify the generated code string without actually spawning an iframe.
-  // A static `import mod from "..."` declaration is invalid inside eval() and would throw
-  // SyntaxError. A dynamic `await import(url)` expression is valid in an async context.
-  //
-  // NOTE: blob: URL imports are blocked by opaque-origin CSP in a sandboxed iframe
-  // (no allow-same-origin, so the opaque origin cannot load blob: URLs created by the
-  // parent). Actual URL-spawn browser smoke test is therefore omitted; this unit assertion
-  // validates the generated code shape instead.
-  //
-  // We reach into the private spawn() logic by inspecting the __mithic_run message that
-  // would be sent — but since we can't intercept that without a real DOM, we instead
-  // replicate the generation logic from iframe.ts here for assertion purposes.
-  const url = 'https://example.com/guest.js';
-  const generated = `(async () => {
-        const mod = await import(${JSON.stringify(url)});
-        if (typeof mod.default === 'function') {
-          globalThis.__mithic_default = mod.default;
-        }
-      })();`;
-
-  expect(generated).toContain('await import(');
-  expect(generated).not.toMatch(/^\s*import\s+\w+\s+from\s+/m); // no static import declaration
-});
-
-test('IframeRuntime: export-default regex does NOT corrupt mid-line string literals', () => {
-  // Verify the anchored regex used in iframe-bootstrap.ts does not match "export default"
-  // embedded mid-line inside a string literal on the same line as other code.
-  // The regex must be applied with the `m` (multiline) flag and `^[ \t]*` anchor.
-  const regex = /^[ \t]*export\s+default\s+/mg;
-
-  // Should match: a top-level export default declaration (at line start)
-  expect('export default function foo() {}'.replace(regex, 'X = ')).toBe('X = function foo() {}');
-  expect('  export default class Bar {}'.replace(regex, 'X = ')).toBe('X = class Bar {}');
-
-  // Should NOT match: "export default" inside a string literal on the same line as other code
-  const withStringLiteral = 'const x = "export default x";';
-  expect(withStringLiteral.replace(regex, 'CORRUPTED')).toBe(withStringLiteral);
-
-  // Should NOT match: "export default" in a mid-line position after other tokens
-  const midLine = 'foo("export default bar");';
-  expect(midLine.replace(regex, 'CORRUPTED')).toBe(midLine);
+test('IframeRuntime: bootstrap loads the guest via a blob: module import(), not regex+eval', () => {
+  // OF1/G2 removed the `export default` → globalThis.__mithic_default regex rewrite and the
+  // indirect `(0, eval)` path. The srcdoc bootstrap now mints an in-sandbox blob: module and
+  // `import()`s it. Assert the removed machinery is gone and the blob-module path is present,
+  // so a regression that re-introduces eval is caught even without a DOM.
+  const srcdoc = buildSrcdoc();
+  expect(srcdoc).not.toContain('(0, eval)');
+  expect(srcdoc).not.toContain('globalThis.__mithic_default = '); // no export-default rewrite remains
+  expect(srcdoc).toContain('URL.createObjectURL');
+  expect(srcdoc).toContain('await import(guestUrl)');
 });
 
 test('IframeRuntime: window mode mounts into a per-spawn container and fills it', async () => {

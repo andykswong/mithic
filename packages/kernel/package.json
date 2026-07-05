@@ -25,7 +25,8 @@
     "build": "vite build",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:node-native": "node --test --test-timeout=15000 --test-force-exit \"src/**/*.node-test.ts\""
   },
   "repository": {
     "type": "git",

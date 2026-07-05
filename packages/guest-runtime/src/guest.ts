@@ -12,6 +12,13 @@ export interface GuestOptions {
   control: MessagePort;
   init: ProcessInit;
   preopenPorts?: Record<number, MessagePort>;
+  /**
+   * OF1/G2 (spec §4.1): frozen map of dependency specifier → in-sandbox blob: module URL,
+   * populated by the sandbox bootstrap BEFORE the guest entrypoint runs. A guest resolves a
+   * dep via `import(boot.imports['@mithic/guest-runtime'])` — never a bare specifier. Always
+   * present ({} for a zero-dep guest); a missing name yields `import(undefined)` → throws.
+   */
+  imports?: Record<string, string>;
 }
 
 /**

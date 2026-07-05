@@ -18,6 +18,7 @@ jobs:
     - run: npm run typecheck
     - run: npx playwright install --with-deps
     - run: npm test
+    - run: npm run test:node-native
     - uses: codecov/codecov-action@v6
       with:
         token: ${{ secrets.CODECOV_TOKEN }}

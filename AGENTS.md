@@ -48,6 +48,7 @@ npm run build                # vite build across all workspaces (tsc for @mithic
 npm test                     # vitest run across all projects (node + browser)
 npm run test:node            # node-environment tests only
 npm run test:browser         # browser-mode tests (Chromium via Playwright)
+npm run test:node-native     # node --test guards NOT collected by vitest (*.node-test.ts) — real-Node non-Vite isomorphism (e.g. the OF1/G2 boot.imports launcher)
 npm run lint                 # eslint
 npm run typecheck            # tsc --noEmit per package
 ```
@@ -79,6 +80,7 @@ The include globs are an **explicit allowlist**, not a `packages/*` sweep — `@
   - **isolated-vm** (`IvmRuntime`) — hard V8 memory cap; wall-clock (not CPU-time) timeout, so `cpuLimit` is honestly advertised as false.
 
   `selectBackend(policy, context)` picks one against each backend's `RuntimeCapabilities` (`gui, transferable, directPipes, deterministic, memoryLimit, cpuLimit, parallelism, interruptible`), default fallback order `['worker','iframe','quickjs','ivm']`.
+- **Guest loading is ESM-from-VFS (OF1/G2/G6 — [spec](../docs/mithic/superpowers/specs/2026-07-04-esm-guest-loading-and-iframe-csp.md))** — a hand-authored `#!/bin/node` **ESM** guest runs byte-for-byte from any VFS path in-browser. The Worker + iframe bootstraps mint an **in-sandbox `blob:` module** from the guest bytes and `await import()` it (there is no `eval` guest-load path), resolving the entrypoint as `mod.default ?? globalThis.__mithic_default` (covers hand-authored ESM AND `?bundle` IIFE guests). `@mithic/*` deps resolve via a **host-curated `boot.imports`** map of in-sandbox `blob:` module URLs (`KernelOptions.guestImports` → `boot.imports`; frozen; a missing name is a fail-loud `import(undefined)`) — not bare specifiers, no source rewrite. Node's in-process launcher materializes the same via `file://` temp modules. **Security (browser):** the iframe carries a locked CSP (`DEFAULT_GUEST_CSP` in `iframe-bootstrap.ts`: `script-src '…' blob:` for the module import, **explicit `worker-src 'none'`**, passive `img/media/font-src blob: data:` local-only, `connect-src 'none'` — network is the `net/fetch` syscall — plus a `RTCPeerConnection` bootstrap shim), compilable per-guest from the `AppManifest` (`manifestCsp` → `SpawnInit.csp`); `RemoteDomHost` rejects remote-origin `src`/`srcset`/`poster`/`href` host-side. The Worker spawns from a `data:` URL (forward-compatible opaque origin — null at Chrome 150 `kDataUrlWorkerOpaqueOrigin`; same-origin to the host pre-150, a transitional state; outbound egress is an accepted residual). Relay backends (QuickJS/ivm) are ESM-out-of-scope (async-IIFE `eval`, no module loader).
 - **Everything is a file / POSIX shell** — `@mithic/shell` mirrors Bash (builtin-first dispatch; non-builtins spawned via `process/spawn` and `process/pipeline`), with POSIX `set` options (`errexit`, `nounset`, `xtrace`, `pipefail`, `noclobber`). Storage, devices, and IPC are all VFS mounts. Shell I/O is **byte-stream based**: `CommandIO.stdin`/`BuiltinContext.stdin` are `ReadableStream<Uint8Array>` and output goes through an `OutputSink` (callable text sink + `writeBytes`), so `cat`/`read`/`mapfile` stream and a guest's binary stdout reaches the terminal byte-exact. In-process compound pipelines run stages concurrently over identity `TransformStream`s (EPIPE on early exit; a builtin infinite producer has a broken-pipe backstop). Supports the full `${var@OP}` transform set (`@Q @U @u @L @E @a @A @P @K @k`), `coproc` (relay backends via the `process/coproc` syscall), `<&`/`<>`/`<<<` redirects, and UDP/TCP over `/dev/udp`·`/dev/tcp` (`exec 3<>/dev/udp/host/port` + datagram-aware `read`).
 - **Disposable ownership convention** — When a component receives a `Disposable` resource, ownership must be explicit:
   - **Owned**: The receiver calls `[Symbol.dispose]()` when done. The resource's lifetime is tied to the receiver.
@@ -99,13 +101,13 @@ Many tests import from `dist/`. Running tests without building first risks testi
 
 **Do NOT** `git stash` + `npm test` to check if tests "were already broken" — this tests whatever stale JS was last built, not the stashed-to state. If you need a baseline, do: `git stash && npm run build && npm test`.
 
-The verification sequence is always run from the **monorepo root**: `npm run build && npm run typecheck && npm test`. This builds and tests all packages — don't limit to a single package, since changes often have cross-package effects.
+The verification sequence is always run from the **monorepo root**: `npm run build && npm run typecheck && npm test && npm run test:node-native`. This builds and tests all packages — don't limit to a single package, since changes often have cross-package effects. (`test:node-native` runs the `*.node-test.ts` guards under real `node --test`; vitest deliberately does **not** collect them — they cover Node-only, non-Vite paths like the in-process launcher's `boot.imports` materialization.)
 
 ### Tests
 
 - Every code change must include tests covering the new or modified behavior — happy path, edge cases, and error conditions.
 - When fixing a bug, add a regression test that reproduces it before applying the fix.
-- Do not consider work done until `npm run build && npm run typecheck && npm test` passes from the monorepo root.
+- Do not consider work done until `npm run build && npm run typecheck && npm test && npm run test:node-native` passes from the monorepo root.
 
 ### Other guidelines
 

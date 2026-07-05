@@ -89,6 +89,15 @@ export interface KernelOptions {
    */
   resolveCommand?: (name: string, cwd: string, env: Record<string, string>) => string | URL | undefined;
   /**
+   * OF1/G2 (spec §6): host-curated dependency SOURCE TEXTS for browser guests. Map of
+   * specifier → self-contained ESM module source (named exports; produced at build time —
+   * see the Lab's bundleGuestEsm). The kernel threads this into the boot message so the
+   * sandbox bootstrap mints blob: modules and builds `boot.imports`. Host owns the namespace
+   * (mirrors `resolveCommand`); a guest cannot add entries. Unset = no curated deps ({}); a
+   * zero-dep guest still runs. Node's in-process launcher materializes these as file:// URLs.
+   */
+  guestImports?: Record<string, string>;
+  /**
    * HTTP client backing the capability-gated `net/fetch` syscall. The kernel
    * checks the calling process's `net` capability for the request ORIGIN before
    * the client is ever invoked, so a guest can never reach an origin it lacks
@@ -242,6 +251,14 @@ export interface SpawnInit {
    */
   display?: DisplayOptions;
   /**
+   * G6-CSP-manifest (spec §9): per-guest Content-Security-Policy applied to the
+   * iframe srcdoc. Threaded straight through to the launcher and runtime; ignored
+   * by non-iframe backends (Worker/QuickJS/ivm have no iframe CSP of their own).
+   * When omitted the iframe uses DEFAULT_GUEST_CSP. Compiled host-side from the
+   * guest's manifest (see @mithic/desktop manifestCsp).
+   */
+  csp?: string;
+  /**
    * Mark this process's stdio (fds 0/1/2) as connected to an INTERACTIVE
    * terminal — sets `PreopenDescriptor.tty` so the guest's `isatty(fd)` returns
    * true. A terminal frontend (xterm) sets this; a pipeline/redirect/batch spawn
@@ -324,8 +341,16 @@ export interface LaunchContext {
    * Supplied when the process has preopen fds beyond stdin/stdout/stderr.
    */
   preopenFds?: number[];
+  /** OF1/G2: curated dep source texts, forwarded to `runtime.spawn` / the in-process launcher. */
+  guestImports?: Record<string, string>;
   /** GUI display placement forwarded to the runtime's `spawn` (see {@link DisplayOptions}). */
   display?: DisplayOptions;
+  /**
+   * G6-CSP-manifest (spec §9): per-guest iframe CSP, forwarded to `runtime.spawn`
+   * (only the iframe backend applies it). When omitted the iframe uses
+   * DEFAULT_GUEST_CSP. See {@link SpawnInit.csp}.
+   */
+  csp?: string;
 }
 
 /** Starts a guest module against the kernel-built boot wiring. */
@@ -383,6 +408,7 @@ export class Kernel {
   #vfs: FileSystemProvider;
   #launcher: GuestLauncher;
   #relayLauncher: RelayLauncher | undefined;
+  readonly #guestImports: Record<string, string>;
   #cwds = new Map<number, string>();
   #onLimitUnenforceable: (pid: number, limit: 'memoryMb' | 'cpuMs', backend: string) => void;
   /** K1: per-process limits, consulted by the dispatcher for networkDisabled/maxChildren. */
@@ -470,6 +496,7 @@ export class Kernel {
     });
     this.#launcher = options.launcher ?? new DefaultGuestLauncher();
     this.#relayLauncher = options.relayLauncher;
+    this.#guestImports = options.guestImports ?? {};
     // C3: the fd-wiring strategy mints child pipes via the IPC broker and checks
     // `open` actions against the parent's fs capability before opening the VFS.
     this.#fdWiring = new FdWiring(this.ipc, this.capabilities, this.#vfs);
@@ -813,7 +840,9 @@ export class Kernel {
       // K2: only pass preopenFds when there are extra fds beyond the default 0/1/2,
       // so the positional fallback path is unaffected for the common case.
       preopenFds: preopenFds.length > 3 ? preopenFds : undefined,
+      guestImports: this.#guestImports,
       display: init.display,
+      csp: init.csp,
     });
 
     this.#handles.set(pid, handle);
@@ -1645,7 +1674,9 @@ export class DefaultGuestLauncher implements GuestLauncher {
         init: ctx.init,
         transfer: [ctx.control, ...ctx.stdio],
         preopenFds: ctx.preopenFds,
+        guestImports: ctx.guestImports,
         display: ctx.display,
+        csp: ctx.csp,
       });
     }
     return this.#launchInProcess(runtime, ctx);
@@ -1667,9 +1698,14 @@ export class DefaultGuestLauncher implements GuestLauncher {
       const fd = ctx.preopenFds ? ctx.preopenFds[i] : i;
       if (typeof fd === 'number') preopenPorts[fd] = port;
     });
-    const boot = { control: ctx.control, init: ctx.init, preopenPorts };
+    // OF1/G2 (spec §6.1): materialize curated deps as file:// URLs so the guest's
+    // `import(boot.imports[name])` resolves in Node. Do NOT rely on bare-specifier
+    // resolution from the temp dir (os.tmpdir() node_modules won't reach the
+    // workspace @mithic/*).
+    const { imports, dir } = await materializeImports(ctx.guestImports ?? {});
+    const boot = { control: ctx.control, init: ctx.init, preopenPorts, imports };
 
-    const defaultExport = await loadGuestDefault(ctx.code);
+    const defaultExport = await loadGuestDefault(ctx.code, dir);
     // Fire-and-forget: the guest drives itself, signalling exit over control.
     Promise.resolve(defaultExport(boot)).catch(() => { /* guest crash surfaces via exit */ });
     return handle;
@@ -1678,24 +1714,56 @@ export class DefaultGuestLauncher implements GuestLauncher {
 
 type GuestDefault = (boot: unknown) => unknown | Promise<unknown>;
 
-async function loadGuestDefault(code: string | URL): Promise<GuestDefault> {
+/**
+ * OF1/G2 (spec §6.1): write each curated dep's source to a temp `.mjs` sibling and
+ * key it by name to its `file://` URL, so a guest's `import(boot.imports[name])`
+ * resolves in Node. Zero deps → a frozen empty map + no dir (the guest's own
+ * temp-dir minting in `loadGuestDefault` is unaffected), honoring the §4.1
+ * always-present `boot.imports` invariant.
+ */
+async function materializeImports(
+  deps: Record<string, string>,
+): Promise<{ imports: Record<string, string>; dir: string | undefined }> {
+  const names = Object.keys(deps);
+  if (names.length === 0) return { imports: Object.freeze({}), dir: undefined };
+  const { writeFile, mkdtemp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { pathToFileURL } = await import('node:url');
+  const dir = await mkdtemp(join(tmpdir(), 'mithic-guest-'));
+  const imports: Record<string, string> = {};
+  let i = 0;
+  for (const name of names) {
+    const file = join(dir, `dep-${i++}.mjs`);
+    await writeFile(file, deps[name]);
+    imports[name] = pathToFileURL(file).href;
+  }
+  return { imports: Object.freeze(imports), dir };
+}
+
+async function loadGuestDefault(code: string | URL, dir?: string): Promise<GuestDefault> {
   if (code instanceof URL) {
     // @vite-ignore: the specifier is a runtime URL Vite cannot statically analyze.
     // This Node-only path never runs in the browser (the examples use
     // InProcessCommandLauncher), but Vite analyzes the built kernel.js and warns —
     // the comment is the documented suppression for an intentionally-dynamic import.
     const mod = await import(/* @vite-ignore */ code.href);
-    return mod.default as GuestDefault;
+    // Match the Worker/iframe bootstraps' entrypoint contract (spec §4.2/§4.3): a ?bundle IIFE guest has no mod.default and sets globalThis.__mithic_default when the module is imported.
+    const def = (mod && typeof mod.default === 'function') ? mod.default : (globalThis as { __mithic_default?: unknown }).__mithic_default;
+    return def as GuestDefault;
   }
   // Materialize the inline module so its ESM imports/exports resolve normally.
+  // Reuse the deps' temp dir when present so the guest .mjs sits beside them.
   const { writeFile, mkdtemp } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const { pathToFileURL } = await import('node:url');
-  const dir = await mkdtemp(join(tmpdir(), 'mithic-guest-'));
-  const file = join(dir, 'guest.mjs');
+  const targetDir = dir ?? (await mkdtemp(join(tmpdir(), 'mithic-guest-')));
+  const file = join(targetDir, 'guest.mjs');
   await writeFile(file, code);
   // @vite-ignore: a runtime temp-file URL — see the URL branch above.
   const mod = await import(/* @vite-ignore */ pathToFileURL(file).href);
-  return mod.default as GuestDefault;
+  // Match the Worker/iframe bootstraps' entrypoint contract (spec §4.2/§4.3): a ?bundle IIFE guest has no mod.default and sets globalThis.__mithic_default when the module is imported.
+  const def = (mod && typeof mod.default === 'function') ? mod.default : (globalThis as { __mithic_default?: unknown }).__mithic_default;
+  return def as GuestDefault;
 }

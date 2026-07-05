@@ -22,7 +22,7 @@ interface IframeEntry {
  *
  * Communication protocol (matches WorkerRuntime exactly):
  *  1. spawn() posts { __mithic_init, ports } with transferList to the iframe's contentWindow
- *  2. spawn() posts { __mithic_run: codeStr } to trigger evaluation
+ *  2. spawn() posts { __mithic_run: { guest, isUrl, imports } } to trigger the stage-2 blob load
  *  3. Inbound messages from the iframe are routed to onMessage() callbacks
  *  4. postMessage() sends a message down to the iframe
  *  5. kill() / dispose() removes the iframe from the DOM
@@ -53,26 +53,13 @@ export class IframeRuntime implements Runtime {
   async spawn(code: string | URL, options: SpawnOptions): Promise<ProcessHandle> {
     const id = this.#nextId++;
 
-    let codeStr: string;
-    if (typeof code === 'string') {
-      codeStr = code;
-    } else {
-      // URL reference: generate a dynamic import expression wrapped in an async IIFE.
-      // A static `import mod from "..."` declaration is NOT valid inside eval(), so we
-      // use a dynamic `await import(url)` expression instead — matching worker.ts behavior.
-      const url = code instanceof URL ? code.href : String(code);
-      codeStr = `(async () => {
-        const mod = await import(${JSON.stringify(url)});
-        if (typeof mod.default === 'function') {
-          globalThis.__mithic_default = mod.default;
-        }
-      })();`;
-    }
+    const isUrl = typeof code !== 'string';
+    const guest = isUrl ? (code instanceof URL ? code.href : String(code)) : code;
 
     // Create the sandboxed iframe
     const iframe = document.createElement('iframe');
     iframe.setAttribute('sandbox', 'allow-scripts');
-    iframe.srcdoc = buildSrcdoc();
+    iframe.srcdoc = buildSrcdoc(options.csp);
 
     // Apply display mode styling
     const displayMode = options.display?.mode ?? 'hidden';
@@ -147,7 +134,11 @@ export class IframeRuntime implements Runtime {
       hasPorts ? (options.transfer as Transferable[]) : [],
     );
 
-    iframe.contentWindow!.postMessage({ __mithic_run: codeStr }, '*');
+    // OF1/G2: send guest source + dep source-texts as DATA (not a string to eval).
+    iframe.contentWindow!.postMessage(
+      { __mithic_run: { guest, isUrl, imports: options.guestImports ?? {} } },
+      '*',
+    );
 
     return { id };
   }

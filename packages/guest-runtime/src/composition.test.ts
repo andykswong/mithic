@@ -38,7 +38,8 @@ function buildBoot(ports: (MessagePort | null)[], init: ProcessInit) {
   for (let i = 1; i < ports.length; i++) {
     if (ports[i] != null) preopenPorts[i - 1] = ports[i]!;
   }
-  return { control: ports[0]!, init, preopenPorts };
+  // OF1/G2: the sandbox bootstrap always populates boot.imports ({} for a zero-dep guest).
+  return { control: ports[0]!, init, preopenPorts, imports: {} };
 }
 
 test('BOOTSTRAP_SOURCE shape matches buildBoot construction', () => {
@@ -51,6 +52,7 @@ test('BOOTSTRAP_SOURCE shape matches buildBoot construction', () => {
   expect(BOOTSTRAP_SOURCE).toContain('control: ports[0]');
   expect(BOOTSTRAP_SOURCE).toContain('__mithic_init');
   expect(BOOTSTRAP_SOURCE).toContain('__mithic_default');
+  expect(BOOTSTRAP_SOURCE).toContain('imports');
 });
 
 test('guest syscall+stdout composition: createGuest wired via WorkerRuntime boot shape', async () => {

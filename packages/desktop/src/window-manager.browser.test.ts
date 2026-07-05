@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest';
 import { WindowManager } from './window-manager.ts';
-import { AppRegistry } from './app-registry.ts';
+import { AppRegistry, appDescriptorFromManifest } from './app-registry.ts';
 import { SHIELD_CLASS } from './drag.ts';
 import type { AppDescriptor } from './types.ts';
 
@@ -80,6 +80,46 @@ test('open() threads an app\'s declared displayMode into the tier-2 spawn displa
   await wm.open('bg');
   expect(kernel.spawnCalls.length).toBe(1);
   expect(kernel.spawnCalls[0].init.display.mode).toBe('hidden');
+
+  wm.dispose();
+  desktop.remove();
+});
+
+test('open() threads the manifest-compiled csp into the tier-2 spawn (G6-CSP-manifest §9)', async () => {
+  const desktop = setupDesktop();
+  const kernel = fakeKernel();
+  const apps = new AppRegistry();
+  // A tier-2 app registered from a manifest: appDescriptorFromManifest compiles the
+  // manifest `assets` into `descriptor.csp`, and the WM must forward it into
+  // kernel.spawn's `csp` so the guest iframe applies exactly its manifest policy.
+  const viewer = appDescriptorFromManifest(
+    { name: 'viewer', assets: { img: true } },
+    { entry: 'CODE;' },
+  );
+  apps.register(viewer);
+  const wm = new WindowManager({ desktop, kernel: kernel as any, apps });
+
+  await wm.open('viewer');
+  expect(kernel.spawnCalls.length).toBe(1);
+  expect(kernel.spawnCalls[0].init.csp).toBe(viewer.csp);
+  expect(kernel.spawnCalls[0].init.csp).toContain('img-src blob: data:');
+
+  wm.dispose();
+  desktop.remove();
+});
+
+test('open() of a manifest-less tier-2 app leaves csp undefined (DEFAULT_GUEST_CSP fallback)', async () => {
+  const desktop = setupDesktop();
+  const kernel = fakeKernel();
+  const apps = new AppRegistry();
+  // A hand-registered descriptor with no csp field → the WM passes csp: undefined
+  // and the iframe backend falls back to DEFAULT_GUEST_CSP.
+  apps.register({ name: 'plain', title: 'Plain', defaultSize: [400, 300], entry: 'CODE;' });
+  const wm = new WindowManager({ desktop, kernel: kernel as any, apps });
+
+  await wm.open('plain');
+  expect(kernel.spawnCalls.length).toBe(1);
+  expect(kernel.spawnCalls[0].init.csp).toBeUndefined();
 
   wm.dispose();
   desktop.remove();

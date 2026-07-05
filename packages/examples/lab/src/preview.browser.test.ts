@@ -104,7 +104,7 @@ describe('previewResult', () => {
 });
 
 describe('the RemoteDomHost sanitizer the preview rides on', () => {
-  it('rejects a data: / javascript: / vbscript: URL on an img src (only blob: passes)', () => {
+  it('rejects hostile/remote img srcs (§9 rule 3); blob: and inert data:image pass', () => {
     const container = freshContainer();
     const host = new RemoteDomHost({ container });
     // Build an <img> directly via mutations and try to set hostile srcs.
@@ -115,19 +115,31 @@ describe('the RemoteDomHost sanitizer the preview rides on', () => {
     const img = container.querySelector('img')!;
 
     for (const hostile of [
-      'data:image/png;base64,AAAA',
       'javascript:alert(1)',
       'vbscript:msgbox(1)',
+      // §9 rule 3: RemoteDomHost renders in the HOST page (no CSP) — a REMOTE src is a
+      // host-origin GET-exfil channel, so remote origins are rejected here.
+      'https://evil.example/beacon?x=1',
+      'http://evil.example/x',
+      '//evil.example/x',
+      // SVG data: can script (<svg onload=…>), so it is NOT an inert image — rejected.
+      'data:image/svg+xml,<svg onload=alert(1)>',
     ]) {
       const applied = host.applyMutations([{ type: 'setAttribute', id: 1, name: 'src', value: hostile }]);
       expect(applied).toBe(0);
       expect(img.hasAttribute('src')).toBe(false);
     }
 
-    // A blob: URL is NOT on the blocklist, so it is accepted.
+    // A blob: URL (guest-produced local asset — what previewResult uses) is accepted.
     const ok = host.applyMutations([{ type: 'setAttribute', id: 1, name: 'src', value: 'blob:https://x/abc' }]);
     expect(ok).toBe(1);
     expect(img.getAttribute('src')).toBe('blob:https://x/abc');
+
+    // An INERT data:image (png) is passive-safe in the host DOM — §5 img-src data:
+    // allowance — so it is accepted for a passive `src`.
+    const dataOk = host.applyMutations([{ type: 'setAttribute', id: 1, name: 'src', value: 'data:image/png;base64,AAAA' }]);
+    expect(dataOk).toBe(1);
+    expect(img.getAttribute('src')).toBe('data:image/png;base64,AAAA');
   });
 
   it('drops a disallowed tag (e.g. script) outright', () => {

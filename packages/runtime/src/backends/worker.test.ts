@@ -4,21 +4,23 @@ import type { MockWorkerInner } from '@mithic/worker/mock';
 import { WorkerRuntime, BOOTSTRAP_SOURCE, type WorkerFactory, type WorkerLike } from './worker.ts';
 
 /**
- * A test factory that creates MockWorkers and simulates the bootstrap protocol:
- * - Listens for `{ __mithic_init, ports }` messages and stores boot state
- * - Listens for `{ __mithic_run: string }` messages from the runtime
- * - Evaluates the guest code in a minimal scope with `self.__post` and `onmessage`
- * - Calls `__mithic_default(boot)` if set, otherwise `__mithic_main()` for backward compat
+ * A test factory that creates MockWorkers and simulates the OF1/G2 stage-2
+ * bootstrap protocol in Node:
+ * - Listens for `{ __mithic_init, ports }` messages and stores boot state (with `imports: {}`)
+ * - Listens for `{ __mithic_run: { guest, isUrl, imports } }` messages from the runtime
+ * - Evaluates the guest SOURCE in a minimal scope with `self.__post` and `onmessage`
+ *   (Node CANNOT `import(blob:)`, so the mock evals the string directly instead of minting a
+ *   blob: module — the fixtures set `globalThis.__mithic_default`, which the eval exposes)
+ * - Calls `__mithic_default(boot)` if set
  * - Routes inbound (non-run, non-init) messages to `__mithic_recv`
  */
 function makeTestFactory(): WorkerFactory {
   return {
     create(_src: string): WorkerLike {
       // State for the simulated worker scope
-      let isoMain: (() => void) | null = null;
       let isoRecv: ((msg: unknown) => void) | null = null;
       let isoDefault: ((boot: unknown) => Promise<void> | void) | null = null;
-      let pendingBoot: unknown = null;
+      let pendingBoot: { imports?: Record<string, string> } | null = null;
 
       let innerRef: MockWorkerInner;
 
@@ -41,13 +43,18 @@ function makeTestFactory(): WorkerFactory {
                 const fd = preopenFds ? preopenFds[i - 1] : i - 1;
                 if (typeof fd === 'number') preopenPorts[fd] = ports[i];
               }
-              pendingBoot = { control: ports[0], init: d['__mithic_init'], preopenPorts };
+              pendingBoot = { control: ports[0], init: d['__mithic_init'], preopenPorts, imports: {} } as never;
               return;
             }
-            if ('__mithic_run' in d && typeof d['__mithic_run'] === 'string') {
+            if ('__mithic_run' in d && d['__mithic_run'] != null && typeof d['__mithic_run'] === 'object') {
+              // OF1/G2 stage 2. Node cannot import(blob:), so the mock evals the guest
+              // SOURCE string directly (fixtures set globalThis.__mithic_default) and
+              // populates boot.imports from the DATA carried in the run message.
+              const spec = d['__mithic_run'] as { guest: string; isUrl: boolean; imports?: Record<string, string> };
+              if (pendingBoot) pendingBoot.imports = spec.imports ?? {};
+
               // Evaluate guest code in a scope that provides self.__post
               const guestScope = {
-                __mithic_main: null as (() => void) | null,
                 __mithic_recv: null as ((msg: unknown) => void) | null,
                 __mithic_default: null as ((boot: unknown) => Promise<void> | void) | null,
               };
@@ -57,27 +64,21 @@ function makeTestFactory(): WorkerFactory {
                 __post: (msg: unknown) => { inner.postMessage(msg); },
               };
 
-              // Run guest code: it may set globalThis.__mithic_main, __mithic_recv, or __mithic_default
-              const guestCode = d['__mithic_run'] as string;
+              // Run guest code: it may set globalThis.__mithic_default or __mithic_recv
               try {
                 new Function(
                   'globalThis', 'self',
-                  guestCode
+                  spec.guest,
                 )(guestScope, selfObj);
               } catch { /* ignore eval errors in tests */ }
 
               isoDefault = guestScope.__mithic_default;
-              isoMain = guestScope.__mithic_main;
               isoRecv = guestScope.__mithic_recv;
 
               if (typeof isoDefault === 'function') {
                 Promise.resolve(isoDefault(pendingBoot)).then(() => {
                   isoRecv = guestScope.__mithic_recv;
                 }).catch(() => { /* ignore */ });
-              } else if (typeof isoMain === 'function') {
-                try { isoMain(); } catch { /* ignore */ }
-                // After main(), capture any updated recv
-                isoRecv = guestScope.__mithic_recv;
               }
               return;
             }
@@ -99,7 +100,7 @@ function makeTestFactory(): WorkerFactory {
 test('worker backend spawns a process that posts a syscall request', async () => {
   const rt = new WorkerRuntime(makeTestFactory());
 
-  const code = 'globalThis.__mithic_main = () => { self.__post({ id: 1, call: \'process/getpid\', args: {} }); };';
+  const code = 'globalThis.__mithic_default = () => { self.__post({ id: 1, call: \'process/getpid\', args: {} }); };';
 
   const received: unknown[] = [];
   const handle = await rt.spawn(code, {
@@ -118,7 +119,7 @@ test('worker backend spawns a process that posts a syscall request', async () =>
 test('isAlive returns true for live process and false after dispose', async () => {
   const rt = new WorkerRuntime(makeTestFactory());
 
-  const code = 'globalThis.__mithic_main = () => {};';
+  const code = 'globalThis.__mithic_default = () => {};';
   const handle = await rt.spawn(code, {
     init: { type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 2, ppid: 0, capabilities: [] },
   });
@@ -131,7 +132,7 @@ test('isAlive returns true for live process and false after dispose', async () =
 test('kill terminates worker and isAlive returns false', async () => {
   const rt = new WorkerRuntime(makeTestFactory());
 
-  const code = 'globalThis.__mithic_main = () => {};';
+  const code = 'globalThis.__mithic_default = () => {};';
   const handle = await rt.spawn(code, {
     init: { type: 'init', entry: 'inline', args: [], env: {}, cwd: '/', pid: 3, ppid: 0, capabilities: [] },
   });
@@ -144,10 +145,10 @@ test('kill terminates worker and isAlive returns false', async () => {
 test('postMessage sends a message to the worker recv hook', async () => {
   const rt = new WorkerRuntime(makeTestFactory());
 
-  // Guest sets __mithic_recv after __mithic_main runs;
+  // Guest sets __mithic_recv after its default export runs;
   // recv echoes inbound messages back to the host via __post
   const code = `
-    globalThis.__mithic_main = () => {
+    globalThis.__mithic_default = () => {
       globalThis.__mithic_recv = (msg) => {
         self.__post({ id: 99, call: 'echo', args: { got: msg } });
       };
@@ -176,11 +177,14 @@ test('postMessage sends a message to the worker recv hook', async () => {
 test('BOOTSTRAP_SOURCE contains expected protocol hooks', () => {
   expect(BOOTSTRAP_SOURCE).toContain('__post');
   expect(BOOTSTRAP_SOURCE).toContain('__mithic_run');
-  expect(BOOTSTRAP_SOURCE).toContain('__mithic_main');
   expect(BOOTSTRAP_SOURCE).toContain('__mithic_recv');
-  expect(BOOTSTRAP_SOURCE).toContain('__mithic_init');
   expect(BOOTSTRAP_SOURCE).toContain('__mithic_default');
+  expect(BOOTSTRAP_SOURCE).toContain('__mithic_init');
   expect(BOOTSTRAP_SOURCE).toContain('__mithic_boot');
+  expect(BOOTSTRAP_SOURCE).toContain('createObjectURL');
+  expect(BOOTSTRAP_SOURCE).toContain('imports');
+  expect(BOOTSTRAP_SOURCE).not.toContain('(0, eval)');
+  expect(BOOTSTRAP_SOURCE).not.toContain('__mithic_main');
 });
 
 test('per-instance id counters are independent', async () => {
@@ -188,7 +192,7 @@ test('per-instance id counters are independent', async () => {
   const rt2 = new WorkerRuntime(makeTestFactory());
 
   const init = { type: 'init' as const, entry: 'inline' as const, args: [], env: {}, cwd: '/', pid: 10, ppid: 0, capabilities: [] };
-  const code = 'globalThis.__mithic_main = () => {};';
+  const code = 'globalThis.__mithic_default = () => {};';
 
   const h1a = await rt1.spawn(code, { init });
   const h1b = await rt1.spawn(code, { init });
@@ -287,7 +291,7 @@ test('preopenFds maps stdio ports to non-positional guest fds (K2)', async () =>
 test('postMessage forwards a transfer list to the worker', async () => {
   const rt = new WorkerRuntime(makeTestFactory());
   const code = `
-    globalThis.__mithic_main = () => {
+    globalThis.__mithic_default = () => {
       globalThis.__mithic_recv = (msg) => { self.__post({ id: 11, call: 'recv', args: { hasPort: msg != null && typeof msg === 'object' && 'port' in msg } }); };
     };
   `;

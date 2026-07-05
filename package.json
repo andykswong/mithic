@@ -16,6 +16,7 @@
     "typecheck": "npm run typecheck --ws --if-present",
     "test": "vitest run",
     "test:node": "vitest run --project node",
+    "test:node-native": "npm run test:node-native --ws --if-present",
     "test:browser": "vitest run --project browser",
     "test:watch": "vitest"
   },

