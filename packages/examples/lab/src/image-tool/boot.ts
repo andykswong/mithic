@@ -20,7 +20,13 @@ export interface BootOptions {
   guestEnv?: Record<string, string>;
 }
 
-export interface ImageToolHandle {
+/**
+ * Host-side bootstrap handle to the running image-tool page: the {@link Lab}, the
+ * spawned app-guest `pid`, and a `dispose()` that tears the lab down. Distinct from
+ * guest.ts's `ImageToolHandle` (a pure-DOM UI-control handle) — named for its boot
+ * context so the two never shadow each other when imported into one scope.
+ */
+export interface BootImageToolHandle {
   lab: Lab;
   pid: number;
   dispose(): void;
@@ -33,7 +39,7 @@ export interface ImageToolHandle {
  * ingest/preview/download; the host only forwards content-free markers and handles
  * the CTA navigation. No COOP/COEP required (iframe backend, no SharedArrayBuffer).
  */
-export async function bootImageTool(options: BootOptions): Promise<ImageToolHandle> {
+export async function bootImageTool(options: BootOptions): Promise<BootImageToolHandle> {
   const runtime = new IframeRuntime({ container: options.root });
   const lab = await createLab({ persistStorage: null, runtime });
   await installResizeConvertWorkflow(lab.vfs);

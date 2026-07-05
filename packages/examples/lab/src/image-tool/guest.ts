@@ -181,6 +181,13 @@ export function renderImageToolUI(doc: Document, deps: ImageToolDeps): ImageTool
     fmts.appendChild(b);
   }
 
+  // Render confirmation (spec §8, G6 fact): 'previewed' fires after `preview.src` is
+  // ASSIGNED, but the image decode/paint inside the opaque iframe is asynchronous. Emit
+  // 'rendered' from the <img> load event so a marker attests the blob: image actually
+  // painted under the CSP (not merely that output bytes exist). Fire-and-forget; a
+  // throwing sink is best-effort and must not surface as an unhandled rejection.
+  preview.onload = () => { void Promise.resolve(emit('rendered', { outFmt: format })).catch(() => {}); };
+
   const baseName = () => sourceName.replace(/\.[^.]+$/, '');
 
   // ---- load a dropped/chosen file ----
@@ -236,11 +243,13 @@ export function renderImageToolUI(doc: Document, deps: ImageToolDeps): ImageTool
         bytesInBucket: sizeBucket(sourceBytes.byteLength), bytesOutBucket: sizeBucket(outBytes.byteLength),
         ms: String(ms),
       });
-      // Download wiring (allow-downloads on the visible iframe makes this work).
-      downloadBtn.onclick = () => {
+      // Download wiring (allow-downloads on the visible iframe makes this work). Await
+      // the telemetry marker so a monotonic 'downloaded' event isn't dropped if the guest
+      // is signalled/exits right after the user clicks Download.
+      downloadBtn.onclick = async () => {
         const a = doc.createElement('a');
         a.href = lastOutUrl!; a.download = `${baseName()}.${EXT[format]}`; a.click();
-        emit('downloaded', { outFmt: format });
+        await emit('downloaded', { outFmt: format });
       };
       await emit('previewed', { outFmt: format });
     } catch (err) {
@@ -253,8 +262,12 @@ export function renderImageToolUI(doc: Document, deps: ImageToolDeps): ImageTool
   };
 
   $('again').onclick = () => { result.classList.add('hidden'); drop.scrollIntoView(); };
-  $('cta-scale').onclick = () => emit('cta_clicked', { cta: 'result-scale' });
-  $('cta-landing-link').onclick = () => emit('cta_clicked', { cta: 'landing' });
+  // Await the CTA marker so the inbound B2B/self-host demand signal — the one event
+  // Phase 2 gates on — is reliably delivered before any host-side navigation follows;
+  // a throwing sink is best-effort and must not surface as an unhandled rejection.
+  const emitCta = async (cta: string): Promise<void> => { try { await emit('cta_clicked', { cta }); } catch { /* best-effort */ } };
+  $('cta-scale').onclick = () => { void emitCta('result-scale'); };
+  $('cta-landing-link').onclick = () => { void emitCta('landing'); };
 
   // Dismissible privacy notice (spec §7). The guest can't reach host storage, so
   // "dismiss" is in-session (hides the banner); a real deployment can persist a flag

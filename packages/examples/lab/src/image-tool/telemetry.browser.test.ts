@@ -144,6 +144,14 @@ test('sanitizeEvent rejects an event with a name outside the allowlist', () => {
   expect(sanitizeEvent({ name: 'exfiltrate', dims: {} })).toBeNull();
 });
 
+test("sanitizeEvent admits the 'rendered' render-confirmation event (spec §8: self-reports rendered/ready)", () => {
+  // The preview <img> load event emits `rendered` with the output format — the G6 signal
+  // the produced blob: image actually decoded/painted inside the iframe. It is on the
+  // allowlist (so it forwards) and carries only a content-free bucketed/enumerated dim.
+  const clean = sanitizeEvent(parseMarker('mithic-ev\trendered\toutFmt=webp')!)!;
+  expect(clean).toEqual({ name: 'rendered', dims: { outFmt: 'webp' } });
+});
+
 test('forwardMarkers only forwards sanitized, allowlisted events', async () => {
   const got: TelemetryEvent[] = [];
   const sink: TelemetrySink = (ev) => { got.push(ev); };

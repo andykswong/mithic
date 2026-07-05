@@ -17,11 +17,11 @@ export const MARKER_PREFIX = 'mithic-ev';
 /** The allowlist of event names the page emits. */
 export type TelemetryEventName =
   | 'page_view' | 'file_dropped' | 'processing_started' | 'processed'
-  | 'process_error' | 'previewed' | 'downloaded' | 'cta_clicked';
+  | 'process_error' | 'previewed' | 'rendered' | 'downloaded' | 'cta_clicked';
 
 const EVENT_NAMES: ReadonlySet<string> = new Set<TelemetryEventName>([
   'page_view', 'file_dropped', 'processing_started', 'processed',
-  'process_error', 'previewed', 'downloaded', 'cta_clicked',
+  'process_error', 'previewed', 'rendered', 'downloaded', 'cta_clicked',
 ]);
 
 export interface TelemetryEvent {

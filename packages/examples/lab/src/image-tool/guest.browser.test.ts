@@ -21,6 +21,16 @@ async function fixturePng(width = 40, height = 20): Promise<Uint8Array> {
   return new Uint8Array(await blob.arrayBuffer());
 }
 
+/** A genuinely-decodable image so the preview <img> fires its `load` event (drives 'rendered'). */
+async function fixtureImage(type: string, width = 32, height = 16): Promise<Uint8Array> {
+  const canvas = new OffscreenCanvas(width, height);
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#a6e3a1';
+  ctx.fillRect(0, 0, width, height);
+  const blob = await canvas.convertToBlob({ type });
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
 test('the image-tool app guest processes a dropped image and emits the funnel markers', async () => {
   const container = document.createElement('div');
   document.body.appendChild(container);
@@ -57,9 +67,12 @@ test('the image-tool app guest processes a dropped image and emits the funnel ma
     display: { mode: 'window', width: 480, height: 640, container, allowDownloads: true },
   });
 
-  // Poll the collected markers until the full funnel appears (guest self-reports).
+  // Poll the collected markers until the full funnel appears (guest self-reports). The
+  // 'rendered' marker fires from the preview <img> LOAD event — proof (G6) the produced
+  // blob: image actually DECODED AND PAINTED inside the opaque iframe under the shipped
+  // CSP, not merely that output bytes exist (spec §8: self-reports rendered/ready).
   await expect.poll(() => events.map((e) => e.name), { timeout: T })
-    .toEqual(expect.arrayContaining(['file_dropped', 'processing_started', 'processed', 'previewed']));
+    .toEqual(expect.arrayContaining(['file_dropped', 'processing_started', 'processed', 'previewed', 'rendered']));
 
   const processed = events.find((e) => e.name === 'processed')!;
   expect(processed.dims.outFmt).toBe('webp');
@@ -117,13 +130,14 @@ test('the image-tool app guest processes a dropped image and emits the funnel ma
 // not the env test-hook — and asserts the progressive-reveal order end-to-end.
 test('the app guest UI processes a genuine DragEvent drop (no test-hook)', async () => {
   const events: TelemetryEvent[] = [];
-  // A RIFF/WEBP-magic stub stands in for the workflow output so the reveal + preview
-  // wiring is exercised without the kernel; the kernel-backed workflow is covered by
-  // workflow.browser.test.ts and the funnel test above.
-  const RIFF_WEBP = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
+  // A genuinely-decodable JPEG stands in for the workflow output so the preview <img>
+  // actually decodes + fires its `load` event (the basis for the 'rendered' marker),
+  // exercising the reveal + preview wiring without the kernel; the kernel-backed
+  // workflow is covered by workflow.browser.test.ts and the funnel test above.
+  const outImage = await fixtureImage('image/jpeg');
   let ran = 0;
   const ui = renderImageToolUI(document, {
-    runWorkflow: async () => { ran++; return RIFF_WEBP; },
+    runWorkflow: async () => { ran++; return outImage; },
     emit: (name, dims) => { events.push({ name, dims: dims ?? {} }); },
   });
 
@@ -131,6 +145,15 @@ test('the app guest UI processes a genuine DragEvent drop (no test-hook)', async
     // Progressive-reveal State 1 (spec §5/§8): before any drop, controls + result hidden.
     expect(document.getElementById('controls')!.classList.contains('hidden')).toBe(true);
     expect(document.getElementById('result')!.classList.contains('hidden')).toBe(true);
+
+    // Mobile/reveal structural invariant (spec §8): the core layout is single-column —
+    // the top-level UI sections stack in normal block flow (body is not a grid/flex row),
+    // so on a narrow viewport controls/preview/download read top-to-bottom (not
+    // pixel-perfect — a structural guard against a regression to a multi-column layout).
+    const bodyDisplay = window.getComputedStyle(document.body).display;
+    expect(bodyDisplay === 'block' || bodyDisplay === 'flow-root').toBe(true);
+    expect(window.getComputedStyle(document.body).gridTemplateColumns).toBe('none');
+    expect(document.body.querySelector('[style*="grid-template-columns"]')).toBeNull();
 
     // Dispatch a REAL DragEvent (not the env hook) with a File on its DataTransfer.
     const png = await fixturePng(40, 20);
@@ -181,8 +204,13 @@ test('the app guest UI processes a genuine DragEvent drop (no test-hook)', async
     // Preview points at a blob: minted inside this realm (G6 img-src blob:).
     expect((document.getElementById('preview') as HTMLImageElement).getAttribute('src')?.startsWith('blob:')).toBe(true);
 
-    // State 3 post-render (spec §5): the 'previewed' marker fires after the blob: preview paints.
+    // State 3 post-render (spec §5): the 'previewed' marker fires after `preview.src` is
+    // assigned. The 'rendered' marker fires LATER, from the <img> load event — confirming
+    // the produced blob: image actually DECODED AND PAINTED (spec §8: self-reports
+    // rendered/ready), not merely that `src` was set. It carries the output format.
     await expect.poll(() => events.some((e) => e.name === 'previewed'), { timeout: T }).toBe(true);
+    await expect.poll(() => events.some((e) => e.name === 'rendered'), { timeout: T }).toBe(true);
+    expect(events.find((e) => e.name === 'rendered')?.dims.outFmt).toBe('jpeg');
   } finally {
     ui.dispose();
     document.head.querySelector('style')?.remove();
@@ -238,12 +266,24 @@ test('the app guest UI reveals an error state and emits process_error when the w
 // download button is wired to mint an <a download> and click it, and emit `downloaded`
 // with the output format. The funnel test stops at `previewed`; this exercises the user
 // clicking Download and asserts the marker fires with its `outFmt` dimension.
+//
+// The `emit` stub here is ASYNC (it settles the event on a later microtask, like the real
+// guest's `writer.write(...)` returning a Promise). The download handler MUST `await emit`
+// so the monotonic 'downloaded' marker is not dropped if the guest is signalled/exits
+// right after the click — a synchronous handler would let the write race the teardown.
 test('the app guest UI emits the downloaded marker with outFmt when the download button is clicked', async () => {
   const events: TelemetryEvent[] = [];
   const RIFF_WEBP = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
+  const emitCalls: Array<Promise<void>> = [];
   const ui = renderImageToolUI(document, {
     runWorkflow: async () => RIFF_WEBP,
-    emit: (name, dims) => { events.push({ name, dims: dims ?? {} }); },
+    // Async emit: record the event only after a microtask so a non-awaited caller would
+    // lose ordering/delivery. The awaited handlers make the marker deterministic.
+    emit: (name, dims) => {
+      const p = Promise.resolve().then(() => { events.push({ name, dims: dims ?? {} }); });
+      emitCalls.push(p);
+      return p;
+    },
   });
 
   // The anchor click() in the download handler would open a navigation in the test realm;
@@ -258,7 +298,8 @@ test('the app guest UI emits the downloaded marker with outFmt when the download
     // The user clicks Download.
     (document.getElementById('download') as HTMLButtonElement).click();
 
-    // The `downloaded` marker fires with the chosen output format (default webp).
+    // The `downloaded` marker fires with the chosen output format (default webp). The
+    // handler awaited the async emit, so the marker is delivered (not lost to a race).
     await expect.poll(() => events.some((e) => e.name === 'downloaded'), { timeout: T }).toBe(true);
     const dl = events.find((e) => e.name === 'downloaded');
     expect(dl?.dims.outFmt).toBe('webp');
@@ -267,6 +308,39 @@ test('the app guest UI emits the downloaded marker with outFmt when the download
     expect(clickSpy).toHaveBeenCalledTimes(1);
   } finally {
     clickSpy.mockRestore();
+    ui.dispose();
+    document.head.querySelector('style')?.remove();
+    document.body.innerHTML = '';
+  }
+}, T);
+
+// CTA demand signal (spec §7, funnel B2B/self-host intent): the two "run at scale /
+// self-host" CTAs emit `cta_clicked` with the CTA id. `emit` is ASYNC here (mirrors the
+// real guest's `writer.write`), so the handlers must reliably deliver the marker even
+// though the click callback cannot itself be awaited — a lost CTA marker would drop the
+// exact inbound signal Phase 2 gates on. The result-scale CTA is only present after a run.
+test('the app guest UI emits cta_clicked for both self-host CTAs (async-emit-safe)', async () => {
+  const events: TelemetryEvent[] = [];
+  const RIFF_WEBP = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
+  const ui = renderImageToolUI(document, {
+    runWorkflow: async () => RIFF_WEBP,
+    // Async emit: record only on a later microtask, so a fire-and-forget handler that
+    // failed to schedule/handle the promise would never record the event.
+    emit: (name, dims) => Promise.resolve().then(() => { events.push({ name, dims: dims ?? {} }); }),
+  });
+
+  try {
+    // The always-present landing CTA fires immediately.
+    (document.getElementById('cta-landing-link') as HTMLElement).click();
+    await expect.poll(() => events.some((e) => e.name === 'cta_clicked' && e.dims.cta === 'landing'), { timeout: T }).toBe(true);
+
+    // The result-scale CTA appears only after a successful run.
+    await ui.loadFile(await fixturePng(40, 20), 'shot.png');
+    ui.runBtn.click();
+    await expect.poll(() => events.some((e) => e.name === 'previewed'), { timeout: T }).toBe(true);
+    (document.getElementById('cta-scale') as HTMLElement).click();
+    await expect.poll(() => events.some((e) => e.name === 'cta_clicked' && e.dims.cta === 'result-scale'), { timeout: T }).toBe(true);
+  } finally {
     ui.dispose();
     document.head.querySelector('style')?.remove();
     document.body.innerHTML = '';
