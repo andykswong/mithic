@@ -1748,7 +1748,9 @@ async function loadGuestDefault(code: string | URL, dir?: string): Promise<Guest
     // InProcessCommandLauncher), but Vite analyzes the built kernel.js and warns —
     // the comment is the documented suppression for an intentionally-dynamic import.
     const mod = await import(/* @vite-ignore */ code.href);
-    return mod.default as GuestDefault;
+    // Match the Worker/iframe bootstraps' entrypoint contract (spec §4.2/§4.3): a ?bundle IIFE guest has no mod.default and sets globalThis.__mithic_default when the module is imported.
+    const def = (mod && typeof mod.default === 'function') ? mod.default : (globalThis as { __mithic_default?: unknown }).__mithic_default;
+    return def as GuestDefault;
   }
   // Materialize the inline module so its ESM imports/exports resolve normally.
   // Reuse the deps' temp dir when present so the guest .mjs sits beside them.
@@ -1761,5 +1763,7 @@ async function loadGuestDefault(code: string | URL, dir?: string): Promise<Guest
   await writeFile(file, code);
   // @vite-ignore: a runtime temp-file URL — see the URL branch above.
   const mod = await import(/* @vite-ignore */ pathToFileURL(file).href);
-  return mod.default as GuestDefault;
+  // Match the Worker/iframe bootstraps' entrypoint contract (spec §4.2/§4.3): a ?bundle IIFE guest has no mod.default and sets globalThis.__mithic_default when the module is imported.
+  const def = (mod && typeof mod.default === 'function') ? mod.default : (globalThis as { __mithic_default?: unknown }).__mithic_default;
+  return def as GuestDefault;
 }
