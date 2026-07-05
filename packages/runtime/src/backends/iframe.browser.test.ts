@@ -371,29 +371,80 @@ function minimalInit(): ProcessInit {
 }
 
 describe('IframeRuntime allow-downloads', () => {
-  it('adds allow-downloads to the sandbox only when display.allowDownloads is set on a visible guest', async () => {
+  const GUEST = 'globalThis.__mithic_default = () => {};';
+
+  // The rule: a VISIBLE guest (inline / window / fullscreen) that opts in via
+  // display.allowDownloads gets the `allow-downloads` sandbox token.
+  for (const mode of ['inline', 'window', 'fullscreen'] as const) {
+    it(`adds allow-downloads to the sandbox for a visible '${mode}' guest that opts in`, async () => {
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const rt = new IframeRuntime();
+      const handle = await rt.spawn(GUEST, {
+        init: minimalInit(),
+        display: { mode, container, allowDownloads: true },
+      });
+      const iframe = container.querySelector('iframe');
+      expect(iframe).not.toBeNull();
+      const sandbox = iframe!.getAttribute('sandbox') ?? '';
+      expect(sandbox.split(/\s+/)).toContain('allow-downloads');
+      // allow-scripts must always remain present.
+      expect(sandbox.split(/\s+/)).toContain('allow-scripts');
+      rt.dispose(handle);
+      container.remove();
+    });
+  }
+
+  it('does NOT add allow-downloads for a visible guest when the flag is omitted (default false)', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const rt = new IframeRuntime();
-    // A visible guest that opts into downloads.
-    await rt.spawn('globalThis.__mithic_default = () => {};', {
+    const handle = await rt.spawn(GUEST, {
       init: minimalInit(),
-      display: { mode: 'window', container, allowDownloads: true },
+      display: { mode: 'window', container },
     });
-    const framesWithDownloads = [...container.querySelectorAll('iframe')]
-      .filter((f) => (f.getAttribute('sandbox') ?? '').includes('allow-downloads'));
-    expect(framesWithDownloads.length).toBe(1);
+    const iframe = container.querySelector('iframe');
+    expect(iframe).not.toBeNull();
+    const sandbox = iframe!.getAttribute('sandbox') ?? '';
+    expect(sandbox.split(/\s+/)).not.toContain('allow-downloads');
+    expect(sandbox.split(/\s+/)).toContain('allow-scripts');
+    rt.dispose(handle);
+    container.remove();
+  });
+
+  it('does NOT add allow-downloads for a visible guest when the flag is explicitly false', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const rt = new IframeRuntime();
+    const handle = await rt.spawn(GUEST, {
+      init: minimalInit(),
+      display: { mode: 'window', container, allowDownloads: false },
+    });
+    const iframe = container.querySelector('iframe');
+    expect(iframe).not.toBeNull();
+    const sandbox = iframe!.getAttribute('sandbox') ?? '';
+    expect(sandbox.split(/\s+/)).not.toContain('allow-downloads');
+    rt.dispose(handle);
     container.remove();
   });
 
   it('a hidden guest never gets allow-downloads even if the flag is set', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
     const rt = new IframeRuntime();
-    const before = document.querySelectorAll('iframe[sandbox~="allow-downloads"]').length;
-    await rt.spawn('globalThis.__mithic_default = () => {};', {
+    const handle = await rt.spawn(GUEST, {
       init: minimalInit(),
-      display: { mode: 'hidden', allowDownloads: true },
+      // Hidden guests mount on document.body, not the per-spawn container. Track by
+      // handle-scoped id via a title so we can locate exactly the iframe we spawned.
+      display: { mode: 'hidden', allowDownloads: true, title: 'hidden-dl-check' },
     });
-    const after = document.querySelectorAll('iframe[sandbox~="allow-downloads"]').length;
-    expect(after).toBe(before);
+    const iframe = document.querySelector('iframe[title="hidden-dl-check"]');
+    expect(iframe).not.toBeNull();
+    const sandbox = iframe!.getAttribute('sandbox') ?? '';
+    expect(sandbox.split(/\s+/)).not.toContain('allow-downloads');
+    // A compute guest still runs scripts — the token is present.
+    expect(sandbox.split(/\s+/)).toContain('allow-scripts');
+    rt.dispose(handle);
+    container.remove();
   });
 });
