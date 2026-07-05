@@ -59,7 +59,7 @@ export class IframeRuntime implements Runtime {
     // Create the sandboxed iframe
     const iframe = document.createElement('iframe');
     iframe.setAttribute('sandbox', 'allow-scripts');
-    iframe.srcdoc = buildSrcdoc();
+    iframe.srcdoc = buildSrcdoc(options.csp);
 
     // Apply display mode styling
     const displayMode = options.display?.mode ?? 'hidden';

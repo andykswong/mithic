@@ -37,6 +37,15 @@ export interface SpawnOptions {
    * Opaque to the runtime (it never parses these) — provenance is a build-time concern.
    */
   guestImports?: Record<string, string>;
+  /**
+   * G6-CSP-manifest (spec §9): a per-guest Content-Security-Policy compiled from the guest's
+   * manifest, applied to the iframe srcdoc. Ignored by the Worker backend (no CSP of its own).
+   * When omitted, the iframe uses DEFAULT_GUEST_CSP. INVARIANTS the compiler MUST preserve:
+   * connect-src 'none' (network is net/fetch); passive dirs blob:/data: ONLY (no remote origins);
+   * script-src keeps blob: (OF1) and never data:; worker-src 'none' (else script-src blob: reopens
+   * nested workers). Compiled host-side (see @mithic/desktop manifestCsp).
+   */
+  csp?: string;
   display?: {
     mode: 'hidden' | 'inline' | 'window' | 'fullscreen';
     width?: number;

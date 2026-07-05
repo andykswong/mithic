@@ -1,13 +1,50 @@
 /**
+ * Opaque-origin guest sandbox CSP (see spec §3.3/§5). This is DELIBERATELY permissive
+ * for code execution ('unsafe-inline' 'unsafe-eval') — isolation here comes from the
+ * opaque origin + postMessage-only egress, NOT from script-src. Do not "harden" this
+ * into a general-web XSS policy. Rules:
+ *  - img/media/font-src take blob: AND data: (passive, guest-produced assets, local only —
+ *    NO remote origins: a remote asset GET is an exfil channel connect-src cannot stop, §9 rule 2).
+ *  - connect-src 'none' blocks fetch/XHR/WebSocket/EventSource/sendBeacon/<a ping> — network is
+ *    the net/fetch syscall, not the guest (§3.4).
+ *  - form-action/base-uri 'none' are belt-and-suspenders; navigation/popup/form egress is closed
+ *    PRIMARILY by the sandbox="allow-scripts" attribute (no allow-forms/allow-popups/
+ *    allow-top-navigation). ANY future sandbox-flag addition must re-run the §3.4 threat model.
+ *  - webrtc 'block' is DECLARED but NOT enforced by shipping browsers (CSP3 "Other Directive") —
+ *    the REAL WebRTC control is the RTCPeerConnection/RTCDataChannel shim below (Task A2).
+ *  - worker-src 'none' is EXPLICIT (OF1) — it blocks nested Worker/SharedWorker/ServiceWorker.
+ *    worker-src does NOT fall back to default-src: absent, it falls back child-src -> script-src
+ *    -> default-src (CSP3, MDN verified 2026-07-04). Once script-src gained blob: (below), an
+ *    ABSENT worker-src would inherit blob: and permit new Worker(blob:) — reopening the nested-
+ *    worker vector §3.4 closes. Pinning worker-src 'none' here severs that fallback. Do NOT drop it.
+ *  - script-src does NOT get data: (ever).
+ *  - script-src ALSO gets blob: (OF1) — await import(blobUrl) is a SCRIPT FETCH governed by
+ *    script-src, NOT covered by 'unsafe-eval' (MDN, verified 2026-07-04). Removing blob: here
+ *    silently breaks OF1 (the guest module can't load). This is NO NEW AUTHORITY: the iframe
+ *    already runs 'unsafe-inline' 'unsafe-eval' and is opaque-origin, so a blob: it mints is
+ *    same-origin to THIS iframe only (§3.2/§3.3). Do not "harden" it away.
+ *
+ * This is the DEFAULT applied when a spawn supplies no per-guest `csp`. G6-CSP-manifest
+ * (spec §9) lets the host pass a manifest-compiled CSP into {@link buildSrcdoc}; that
+ * compiled policy MUST preserve this directive set's invariants (see @mithic/desktop
+ * manifestCsp) — most critically worker-src 'none' and connect-src 'none'.
+ */
+export const DEFAULT_GUEST_CSP = 'default-src \'none\'; script-src \'unsafe-inline\' \'unsafe-eval\' blob:; worker-src \'none\'; img-src blob: data:; media-src blob: data:; font-src blob: data:; style-src \'unsafe-inline\'; connect-src \'none\'; form-action \'none\'; base-uri \'none\'; webrtc \'block\'';
+
+/**
  * Builds an HTML srcdoc string for use as an iframe's srcdoc attribute.
  *
  * The resulting document:
- *  - Has a locked-down CSP that allows only inline scripts/styles (no external fetches)
+ *  - Has a locked-down CSP (`csp`, defaulting to {@link DEFAULT_GUEST_CSP}) that allows only
+ *    inline scripts/styles (no external fetches)
  *  - Runs an inline module script that implements the same __mithic_init / __mithic_run
  *    bootstrap protocol as worker.ts BOOTSTRAP_SOURCE, but over window.postMessage
  *    with the opener/parent as the host
  *  - Reconstructs the boot object: { control, init, preopenPorts, imports }
  *  - Calls the guest module's default export with the boot object
+ *
+ * @param csp The Content-Security-Policy for the iframe (G6-CSP-manifest §9). Defaults to
+ *   {@link DEFAULT_GUEST_CSP}; a host compiles a per-guest policy from its manifest.
  *
  * Protocol (same as WorkerRuntime):
  *  1. Host sends { __mithic_init: ProcessInit, ports: Transferable[] } with a transfer list.
@@ -22,37 +59,11 @@
  *  4. Guest posts messages back via window.parent.postMessage() which the IframeRuntime
  *     listens to via a window.onmessage listener on the host page.
  */
-export function buildSrcdoc(): string {
+export function buildSrcdoc(csp: string = DEFAULT_GUEST_CSP): string {
   return `<!DOCTYPE html>
 <html>
 <head>
-<!--
-  Opaque-origin guest sandbox CSP (see spec §3.3/§5). This is DELIBERATELY permissive
-  for code execution ('unsafe-inline' 'unsafe-eval') — isolation here comes from the
-  opaque origin + postMessage-only egress, NOT from script-src. Do not "harden" this
-  into a general-web XSS policy. Rules:
-   - img/media/font-src take blob: AND data: (passive, guest-produced assets, local only —
-     NO remote origins: a remote asset GET is an exfil channel connect-src cannot stop, §9 rule 2).
-   - connect-src 'none' blocks fetch/XHR/WebSocket/EventSource/sendBeacon/<a ping> — network is
-     the net/fetch syscall, not the guest (§3.4).
-   - form-action/base-uri 'none' are belt-and-suspenders; navigation/popup/form egress is closed
-     PRIMARILY by the sandbox="allow-scripts" attribute (no allow-forms/allow-popups/
-     allow-top-navigation). ANY future sandbox-flag addition must re-run the §3.4 threat model.
-   - webrtc 'block' is DECLARED but NOT enforced by shipping browsers (CSP3 "Other Directive") —
-     the REAL WebRTC control is the RTCPeerConnection/RTCDataChannel shim below (Task A2).
-   - worker-src 'none' is EXPLICIT (OF1) — it blocks nested Worker/SharedWorker/ServiceWorker.
-     worker-src does NOT fall back to default-src: absent, it falls back child-src -> script-src
-     -> default-src (CSP3, MDN verified 2026-07-04). Once script-src gained blob: (below), an
-     ABSENT worker-src would inherit blob: and permit new Worker(blob:) — reopening the nested-
-     worker vector §3.4 closes. Pinning worker-src 'none' here severs that fallback. Do NOT drop it.
-   - script-src does NOT get data: (ever).
-   - script-src ALSO gets blob: (OF1) — await import(blobUrl) is a SCRIPT FETCH governed by
-     script-src, NOT covered by 'unsafe-eval' (MDN, verified 2026-07-04). Removing blob: here
-     silently breaks OF1 (the guest module can't load). This is NO NEW AUTHORITY: the iframe
-     already runs 'unsafe-inline' 'unsafe-eval' and is opaque-origin, so a blob: it mints is
-     same-origin to THIS iframe only (§3.2/§3.3). Do not "harden" it away.
--->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob:; worker-src 'none'; img-src blob: data:; media-src blob: data:; font-src blob: data:; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'; webrtc 'block'">
+<meta http-equiv="Content-Security-Policy" content="${csp}">
 </head>
 <body>
 <script type="module">
