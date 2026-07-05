@@ -9,6 +9,7 @@ import { afterEach, expect, test } from 'vitest';
 import { createLab } from '../main.ts';
 import type { Lab } from '../main.ts';
 import { IframeRuntime } from '@mithic/runtime/backends/iframe';
+import { bootImageTool } from './boot.ts';
 
 const T = 20000;
 let lab: Lab | undefined;
@@ -28,3 +29,33 @@ test('createLab accepts an injected IframeRuntime and still runs a command', asy
   expect(out).toContain('iframe-ok');
   container.remove();
 }, T);
+
+test('bootImageTool mounts the app guest and NO network request carries image bytes', async () => {
+  const root = document.createElement('div');
+  root.id = 'lab';
+  document.body.appendChild(root);
+
+  // Spy on all egress: fetch + sendBeacon. The page must send neither image bytes.
+  const seen: string[] = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    seen.push(`fetch:${String(input)}:${typeof init?.body === 'string' ? init!.body : ''}`);
+    return Promise.resolve(new Response(''));
+  }) as typeof fetch;
+  const origBeacon = navigator.sendBeacon?.bind(navigator);
+  (navigator as unknown as { sendBeacon: (u: string, b?: BodyInit) => boolean }).sendBeacon =
+    (u: string) => { seen.push(`beacon:${u}`); return true; };
+
+  const handle = await bootImageTool({ root, telemetryEndpoint: undefined }); // no endpoint => consoleSink
+  lab = handle.lab;
+
+  // A visible iframe (the app guest) was mounted.
+  await expect.poll(() => root.querySelectorAll('iframe').length, { timeout: 20000 }).toBeGreaterThan(0);
+
+  // No egress at all with consoleSink; crucially, nothing carrying bytes.
+  expect(seen.filter((s) => /image|blob:|RIFF|\.webp/.test(s))).toEqual([]);
+
+  globalThis.fetch = origFetch;
+  if (origBeacon) (navigator as unknown as { sendBeacon: typeof origBeacon }).sendBeacon = origBeacon;
+  root.remove();
+}, 20000);

@@ -345,7 +345,11 @@ export async function createLab(options: LabOptions = {}): Promise<Lab> {
   };
 }
 
-// Auto-boot when loaded as the page entry (index.html).
+// Auto-boot the image-tool product page when loaded as the page entry (index.html).
 if (typeof document !== 'undefined' && document.getElementById('lab')) {
-  void createLab();
+  void import('./image-tool/boot.ts').then(({ bootImageTool }) => {
+    const root = document.getElementById('lab')!;
+    const endpoint = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_TELEMETRY_ENDPOINT;
+    return bootImageTool({ root, telemetryEndpoint: endpoint });
+  });
 }
