@@ -68,3 +68,30 @@ test('iframe OF1: malformed guest surfaces __mithic_error', async () => {
   expect(errors.length).toBeGreaterThan(0);
   rt.dispose(handle);
 }, 10000);
+
+test('negative: with blob: stripped from script-src, the guest-module import is CSP-refused', async () => {
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('sandbox', 'allow-scripts');
+  iframe.srcdoc = `<!DOCTYPE html><html><head>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'">
+    </head><body><script type="module">
+      window.onmessage = async () => {
+        let refused = false;
+        try {
+          const u = URL.createObjectURL(new Blob(['export default 1'], { type: 'text/javascript' }));
+          await import(u);
+        } catch (_e) { refused = true; }
+        window.parent.postMessage({ call: 'csp', refused }, '*');
+      };
+    </script></body></html>`;
+  document.body.appendChild(iframe);
+  await new Promise((r) => iframe.addEventListener('load', () => r(undefined), { once: true }));
+  const got = await new Promise((resolve) => {
+    window.addEventListener('message', function h(e) {
+      if ((e.data as { call?: string })?.call === 'csp') { window.removeEventListener('message', h); resolve(e.data); }
+    });
+    iframe.contentWindow!.postMessage({}, '*');
+  });
+  expect((got as { refused: boolean }).refused).toBe(true);
+  iframe.remove();
+}, 10000);
