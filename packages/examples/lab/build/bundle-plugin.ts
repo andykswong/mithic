@@ -28,6 +28,7 @@ import { build } from 'esbuild';
 import type { Plugin } from 'vite';
 
 const SUFFIX = '?bundle';
+const SUFFIX_ESM = '?bundle-esm';
 
 /** Bundle one entry into a `globalThis.__mithic_default`-assigning IIFE. */
 async function bundleGuest(entry: string): Promise<string> {
@@ -73,20 +74,31 @@ export function bundleGuestPlugin(): Plugin {
     name: 'mithic-lab-bundle-guest',
     enforce: 'pre',
     async resolveId(id, importer) {
-      if (!id.endsWith(SUFFIX)) return null;
-      const bare = id.slice(0, -SUFFIX.length);
-      // Delegate path resolution to Vite, then re-attach the marker so `load`
-      // sees the absolute path. Relative ids resolve against the importer.
-      const resolved = await this.resolve(bare, importer, { skipSelf: true });
-      if (!resolved) return null;
-      return resolved.id + SUFFIX;
+      // Longest suffix first: `?bundle-esm` ends in `-esm`, so `?bundle` must not
+      // match it. Delegate path resolution to Vite, then re-attach the marker so
+      // `load` sees the absolute path. Relative ids resolve against the importer.
+      for (const suf of [SUFFIX_ESM, SUFFIX]) {
+        if (id.endsWith(suf)) {
+          const bare = id.slice(0, -suf.length);
+          const resolved = await this.resolve(bare, importer, { skipSelf: true });
+          if (!resolved) return null;
+          return resolved.id + suf;
+        }
+      }
+      return null;
     },
     async load(id) {
-      if (!id.endsWith(SUFFIX)) return null;
-      const entry = id.slice(0, -SUFFIX.length);
-      this.addWatchFile(entry);
-      const source = await bundleGuest(entry);
-      return `export default ${JSON.stringify(source)};`;
+      if (id.endsWith(SUFFIX_ESM)) {
+        const entry = id.slice(0, -SUFFIX_ESM.length);
+        this.addWatchFile(entry);
+        return `export default ${JSON.stringify(await bundleGuestEsm(entry))};`;
+      }
+      if (id.endsWith(SUFFIX)) {
+        const entry = id.slice(0, -SUFFIX.length);
+        this.addWatchFile(entry);
+        return `export default ${JSON.stringify(await bundleGuest(entry))};`;
+      }
+      return null;
     },
   };
 }
