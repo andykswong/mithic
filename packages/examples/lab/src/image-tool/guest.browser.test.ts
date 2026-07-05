@@ -152,6 +152,19 @@ test('the app guest UI processes a genuine DragEvent drop (no test-hook)', async
     await expect.poll(() => events.some((e) => e.name === 'file_dropped'), { timeout: T }).toBe(true);
     await expect.poll(() => document.getElementById('controls')!.classList.contains('hidden'), { timeout: T }).toBe(false);
 
+    // The file_dropped marker carries the parsed source format dimension (spec §5).
+    const fileDrop = events.find((e) => e.name === 'file_dropped');
+    expect(fileDrop?.dims.inFmt).toBe('png');
+
+    // Drive the primary UX controls before Run: pick a format via the format buttons and a
+    // width via the number input (the source is 40px, so pick a value within range — the UI
+    // clamps to source width, no upscale). These are the real controls, not the env hook.
+    const jpegBtn = [...document.querySelectorAll('#fmts .fmt')].find((b) => (b as HTMLElement).dataset.f === 'jpeg') as HTMLButtonElement;
+    jpegBtn.click();
+    const wnum = document.getElementById('wnum') as HTMLInputElement;
+    wnum.value = '32';
+    wnum.dispatchEvent(new Event('input', { bubbles: true }));
+
     // The guest doesn't auto-run on drop; the user clicks Run.
     ui.runBtn.click();
 
@@ -159,8 +172,17 @@ test('the app guest UI processes a genuine DragEvent drop (no test-hook)', async
     await expect.poll(() => events.some((e) => e.name === 'processed'), { timeout: T }).toBe(true);
     await expect.poll(() => document.getElementById('result')!.classList.contains('hidden'), { timeout: T }).toBe(false);
     expect(ran).toBe(1);
+
+    // The processed marker reflects the format/width chosen through the UI controls above.
+    const processed = events.find((e) => e.name === 'processed');
+    expect(processed?.dims.outFmt).toBe('jpeg');
+    expect(processed?.dims.targetWidth).toBe('32');
+
     // Preview points at a blob: minted inside this realm (G6 img-src blob:).
     expect((document.getElementById('preview') as HTMLImageElement).getAttribute('src')?.startsWith('blob:')).toBe(true);
+
+    // State 3 post-render (spec §5): the 'previewed' marker fires after the blob: preview paints.
+    await expect.poll(() => events.some((e) => e.name === 'previewed'), { timeout: T }).toBe(true);
   } finally {
     ui.dispose();
     document.head.querySelector('style')?.remove();

@@ -240,7 +240,7 @@ export function renderImageToolUI(doc: Document, deps: ImageToolDeps): ImageTool
       downloadBtn.onclick = () => {
         const a = doc.createElement('a');
         a.href = lastOutUrl!; a.download = `${baseName()}.${EXT[format]}`; a.click();
-        void emit('downloaded', { outFmt: format });
+        emit('downloaded', { outFmt: format });
       };
       await emit('previewed', { outFmt: format });
     } catch (err) {
@@ -253,8 +253,8 @@ export function renderImageToolUI(doc: Document, deps: ImageToolDeps): ImageTool
   };
 
   $('again').onclick = () => { result.classList.add('hidden'); drop.scrollIntoView(); };
-  $('cta-scale').onclick = () => void emit('cta_clicked', { cta: 'result-scale' });
-  $('cta-landing-link').onclick = () => void emit('cta_clicked', { cta: 'landing' });
+  $('cta-scale').onclick = () => emit('cta_clicked', { cta: 'result-scale' });
+  $('cta-landing-link').onclick = () => emit('cta_clicked', { cta: 'landing' });
 
   // Dismissible privacy notice (spec §7). The guest can't reach host storage, so
   // "dismiss" is in-session (hides the banner); a real deployment can persist a flag
