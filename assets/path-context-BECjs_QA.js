@@ -1,0 +1,1 @@
+import{i as e}from"./guest-BISJfuGd.js";function t(t){return{cwd:t.cwd,fs:e(t.syscall,t.cwd)}}export{t};

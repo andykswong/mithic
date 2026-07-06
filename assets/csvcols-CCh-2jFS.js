@@ -1,0 +1,5 @@
+import{n as e,r as t}from"./guest-BISJfuGd.js";import{c as n,t as r}from"./harness-D21nZyx0.js";import{t as i}from"./path-context-BECjs_QA.js";var a=async r=>{let[,a,o]=r.args,s=r.stderr.getWriter();try{if(a===void 0||o===void 0)return await n(s,`csvcols: usage: COLS=col,... csvcols IN OUT`),1;let c=(r.env.COLS??``).split(`,`).map(e=>e.trim()).filter(e=>e!==``);if(c.length===0)return await n(s,`csvcols: COLS must name at least one column`),1;let l=i(r),u;try{u=new TextDecoder().decode(await t(l,a))}catch(e){return await n(s,`csvcols: ${e.message}`),1}let d=u.endsWith(`
+`),f=(d?u.slice(0,-1):u).split(`
+`);if(f.length===0||f[0]===``)return await n(s,`csvcols: empty input (no header row)`),1;let p=f[0].split(`,`),m=[];for(let e of c){let t=p.indexOf(e);if(t===-1)return await n(s,`csvcols: unknown column: ${e}`),1;m.push(t)}let h=f.map(e=>{let t=e.split(`,`);return m.map(e=>t[e]??``).join(`,`)}).join(`
+`)+(d?`
+`:``);try{return await e(l,o,new TextEncoder().encode(h)),0}catch(e){return await n(s,`csvcols: ${e.message}`),1}}finally{await s.close().catch(()=>{})}},o=r(a);export{a as csvcolsCommand,o as default};

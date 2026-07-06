@@ -1,1 +1,0 @@
-import{defineShaCommand as e,makeShaCommand as t}from"./_sha-Dap7w_jV.js";var n=t(`sha512sum`,`SHA-512`),r=e(`sha512sum`,`SHA-512`);export{r as default,n as sha512sumCommand};

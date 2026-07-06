@@ -1,1 +1,0 @@
-import{i as e}from"./guest-B7a9Kq5z.js";function t(t){return{cwd:t.cwd,fs:e(t.syscall,t.cwd)}}export{t};

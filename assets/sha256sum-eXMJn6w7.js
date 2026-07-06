@@ -1,0 +1,1 @@
+import{defineShaCommand as e,makeShaCommand as t}from"./_sha-CwKryyMZ.js";var n=t(`sha256sum`,`SHA-256`),r=e(`sha256sum`,`SHA-256`);export{r as default,n as sha256sumCommand};
