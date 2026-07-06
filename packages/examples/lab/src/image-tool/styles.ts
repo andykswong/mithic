@@ -1,8 +1,11 @@
-/** Inline CSS for the image-tool guest UI (layout C, progressive-reveal, mobile-first). */
+/** Inline CSS for the image-tool guest UI (layout C, progressive-reveal, responsive). */
 export const STYLES = `
 :root { color-scheme: dark; }
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: ui-sans-serif, system-ui, sans-serif; background: #11111b; color: #cdd6f4; padding: 16px; }
+/* Responsive centered single-column: fluid on mobile, capped + centered on wider
+   viewports (the guest iframe now fills the full page — index.html no longer caps it),
+   so the page reads well on phone AND desktop instead of a permanently-narrow strip. */
+body { font-family: ui-sans-serif, system-ui, sans-serif; background: #11111b; color: #cdd6f4; padding: 16px; max-width: 720px; margin: 0 auto; }
 h1 { font-size: 20px; color: #89b4fa; text-align: center; }
 .sub { font-size: 12px; color: #a6adc8; text-align: center; margin-bottom: 16px; }
 .privacy { display: flex; gap: 8px; align-items: flex-start; font-size: 11px; color: #a6adc8; background: #1e1e2e; border: 1px solid #313244; border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; }
@@ -20,7 +23,7 @@ input[type=number] { width: 72px; min-height: 44px; background: #1e1e2e; border:
 #run, #download { width: 100%; min-height: 48px; border: none; border-radius: 8px; font: inherit; font-weight: 800; cursor: pointer; margin-top: 12px; }
 #run { background: #a6e3a1; color: #11111b; }
 #download { background: #a6e3a1; color: #11111b; }
-#preview { max-width: 100%; border-radius: 8px; margin-top: 8px; }
+#orig, #preview { display: block; max-width: 100%; height: auto; border-radius: 8px; margin-top: 8px; }
 .stats { display: flex; gap: 8px; margin-top: 8px; }
 .stat { flex: 1; background: #1e1e2e; border: 1px solid #45475a; border-radius: 6px; padding: 10px; text-align: center; font-size: 12px; }
 .stat.after { border-color: #a6e3a1; color: #a6e3a1; }

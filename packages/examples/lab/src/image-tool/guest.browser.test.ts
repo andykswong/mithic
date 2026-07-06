@@ -6,7 +6,7 @@ import { installResizeConvertWorkflow } from './workflow.ts';
 import { installImageToolGuest, IMAGE_TOOL_PATH } from './guest-install.ts';
 import { portToReadable } from '@mithic/guest-runtime';
 import { forwardMarkers, type TelemetryEvent } from './telemetry.ts';
-import { renderImageToolUI } from './guest.ts';
+import { renderImageToolUI, formatBytes } from './guest.ts';
 
 const T = 30000;
 let lab: Lab | undefined;
@@ -346,3 +346,94 @@ test('the app guest UI emits cta_clicked for both self-host CTAs (async-emit-saf
     document.body.innerHTML = '';
   }
 }, T);
+
+// --- Bug #3: the before/after stats must show EXACT human-readable sizes, not the
+// coarse content-free telemetry buckets. The user's own file size is shown locally
+// (never egress), so it must be precise — a 4.2 MB -> 212 KB reduction reading as
+// "1-5MB -> 100KB-1MB" (or an unchanged bucket) is the reported "sizes are off" bug.
+// `formatBytes` is the display formatter; `sizeBucket` stays telemetry-only.
+test('formatBytes renders exact human-readable sizes (display is not the telemetry bucket)', () => {
+  expect(formatBytes(0)).toBe('0 B');
+  expect(formatBytes(512)).toBe('512 B');
+  expect(formatBytes(1024)).toBe('1.0 KB');
+  expect(formatBytes(212 * 1024)).toBe('212.0 KB');
+  expect(formatBytes(4.2 * 1024 * 1024)).toBe('4.2 MB');
+  // Two sizes in the SAME telemetry bucket must render as DISTINCT display strings
+  // (this is exactly what made the stats look "off"): 300KB and 900KB are both
+  // "100KB-1MB" as a bucket, but must differ on screen.
+  expect(formatBytes(300 * 1024)).not.toBe(formatBytes(900 * 1024));
+});
+
+test('the before/after stats show exact sizes (not coarse buckets)', async () => {
+  const events: TelemetryEvent[] = [];
+  // Source + output both fall in the SAME '<100KB' telemetry bucket, so if the stats
+  // used sizeBucket they would read identically. Exact display must not.
+  const sourcePng = await fixturePng(40, 20);
+  const outImage = await fixtureImage('image/webp', 16, 8);
+  const ui = renderImageToolUI(document, {
+    runWorkflow: async () => outImage,
+    emit: (name, dims) => { events.push({ name, dims: dims ?? {} }); },
+  });
+  try {
+    await ui.loadFile(sourcePng, 'shot.png');
+    ui.runBtn.click();
+    await expect.poll(() => events.some((e) => e.name === 'processed'), { timeout: T }).toBe(true);
+
+    const before = document.getElementById('statbefore')!.textContent ?? '';
+    const after = document.getElementById('statafter')!.textContent ?? '';
+    // Stats show the EXACT byte-derived sizes, not the coarse bucket tokens.
+    expect(before).toContain(formatBytes(sourcePng.byteLength));
+    expect(after).toContain(formatBytes(outImage.byteLength));
+    expect(before).not.toMatch(/<100KB|100KB-1MB|1-5MB|5-20MB|>20MB/);
+    expect(after).not.toMatch(/<100KB|100KB-1MB|1-5MB|5-20MB|>20MB/);
+    // Telemetry keeps the coarse bucket (content-free) — display and wire diverge by design.
+    const processed = events.find((e) => e.name === 'processed');
+    expect(processed?.dims.bytesInBucket).toBe('<100KB');
+  } finally {
+    ui.dispose();
+    document.head.querySelector('style')?.remove();
+    document.body.innerHTML = '';
+  }
+}, T);
+
+// --- Bug #2: the ORIGINAL uploaded image (#orig) must be constrained to the content
+// width so it can't overflow horizontally (only #preview had max-width:100%).
+test('the original preview image is width-constrained (no horizontal overflow)', async () => {
+  const ui = renderImageToolUI(document, {
+    runWorkflow: async () => new Uint8Array([0x52, 0x49, 0x46, 0x46]),
+    emit: () => {},
+  });
+  try {
+    await ui.loadFile(await fixturePng(40, 20), 'shot.png');
+    const orig = document.getElementById('orig') as HTMLImageElement;
+    const preview = document.getElementById('preview') as HTMLImageElement;
+    // Both the original and the result image cap at 100% of their container.
+    expect(window.getComputedStyle(orig).maxWidth).toBe('100%');
+    expect(window.getComputedStyle(preview).maxWidth).toBe('100%');
+  } finally {
+    ui.dispose();
+    document.head.querySelector('style')?.remove();
+    document.body.innerHTML = '';
+  }
+}, T);
+
+// --- Bug #1 (guest half): the layout must be responsive, not permanently mobile. The
+// content is a centered column with a max-width so it doesn't sprawl on desktop AND
+// isn't hard-locked to a narrow width. (The host-iframe half — dropping the #lab 560px
+// cap so the guest gets the full viewport — lives in index.html, not unit-testable here;
+// covered by the manual smoke + the shell change.)
+test('the guest layout is a centered, responsive content column (not hard-locked to mobile)', () => {
+  const ui = renderImageToolUI(document, { runWorkflow: async () => new Uint8Array(), emit: () => {} });
+  try {
+    const bodyStyle = window.getComputedStyle(document.body);
+    // A max-width bounds the reading column on wide screens (responsive, not full-bleed),
+    // and auto side-margins center it — the hallmark of a responsive centered column
+    // rather than a fixed narrow mobile strip.
+    expect(bodyStyle.maxWidth).not.toBe('none');
+    expect(bodyStyle.marginLeft).toBe(bodyStyle.marginRight);
+  } finally {
+    ui.dispose();
+    document.head.querySelector('style')?.remove();
+    document.body.innerHTML = '';
+  }
+});

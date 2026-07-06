@@ -8,7 +8,10 @@
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body { height: 100%; background: #11111b; }
-      #lab { height: 100%; width: 100%; max-width: 560px; margin: 0 auto; }
+      /* The guest iframe fills the full viewport; the guest's own CSS owns the
+         responsive centered content column, so the page adapts to phone AND desktop
+         (no host-side mobile-width cap). */
+      #lab { height: 100%; width: 100%; }
       #lab > iframe { width: 100%; height: 100%; border: none; }
     </style>
   </head>

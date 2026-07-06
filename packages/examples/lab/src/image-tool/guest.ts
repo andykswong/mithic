@@ -42,6 +42,20 @@ function widthBucket(px: number): string {
 }
 
 /**
+ * Exact, human-readable byte size for the USER-FACING before/after stats (e.g.
+ * `4.2 MB`, `212.0 KB`, `512 B`). Distinct from {@link sizeBucket}, which is the
+ * COARSE, content-free value emitted to telemetry: the user sees their OWN file's
+ * precise size (rendered locally, never egress — so precision is safe and is the
+ * whole "4.2 MB → 212 KB" value prop), while the wire only ever carries a bucket.
+ */
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+/**
  * Wrap raw bytes in a Blob. Copies into a fresh ArrayBuffer-backed view so the part
  * is statically a `BlobPart` — a `Uint8Array` off a syscall may be over a
  * `SharedArrayBuffer`, which `BlobPart` excludes (mirrors coreutils `bytesToBlob`).
@@ -233,8 +247,10 @@ export function renderImageToolUI(doc: Document, deps: ImageToolDeps): ImageTool
       if (lastOutUrl) URL.revokeObjectURL(lastOutUrl);
       lastOutUrl = URL.createObjectURL(toBlob(outBytes, `image/${format}`));
       preview.src = lastOutUrl;
-      statBefore.textContent = `before · ${sizeBucket(sourceBytes.byteLength)} · ${sourceWidth}px`;
-      statAfter.textContent = `after · ${sizeBucket(outBytes.byteLength)} · ${targetWidth}px ${format.toUpperCase()}`;
+      // User-facing stats show EXACT sizes (formatBytes), rendered locally and never
+      // sent; the coarse sizeBucket is telemetry-only (the `processed` marker below).
+      statBefore.textContent = `before · ${formatBytes(sourceBytes.byteLength)} · ${sourceWidth}px`;
+      statAfter.textContent = `after · ${formatBytes(outBytes.byteLength)} · ${targetWidth}px ${format.toUpperCase()}`;
       resultMsg.textContent = `✓ processed in ${ms} ms · 0 bytes uploaded`;
       result.classList.remove('hidden');
       await emit('processed', {
