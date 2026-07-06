@@ -59,6 +59,14 @@ export interface SpawnOptions {
      * only (an HTMLElement) — deliberately NOT on the protocol wire.
      */
     container?: HTMLElement;
+    /**
+     * Opt-in `allow-downloads` sandbox token for a VISIBLE guest whose UI needs to
+     * initiate a browser download (e.g. a product-surface GUI guest with a Download
+     * button). Ignored for `mode: 'hidden'` (compute guests never get it) — the
+     * token only grants download initiation, NOT same-origin / popups / navigation,
+     * so it does not widen the opaque-origin threat model (spec §6.3). Default false.
+     */
+    allowDownloads?: boolean;
   };
 }
 

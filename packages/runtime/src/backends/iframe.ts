@@ -58,11 +58,21 @@ export class IframeRuntime implements Runtime {
 
     // Create the sandboxed iframe
     const iframe = document.createElement('iframe');
-    iframe.setAttribute('sandbox', 'allow-scripts');
-    iframe.srcdoc = buildSrcdoc(options.csp);
 
     // Apply display mode styling
     const displayMode = options.display?.mode ?? 'hidden';
+
+    // sandbox="allow-scripts" (no allow-same-origin → opaque origin). A VISIBLE guest
+    // may additionally opt into `allow-downloads` (product-surface Download button);
+    // hidden compute guests never get it. The token only grants download initiation,
+    // not same-origin/popups/navigation, so the opaque-origin threat model is unchanged.
+    const sandboxTokens = ['allow-scripts'];
+    if (displayMode !== 'hidden' && options.display?.allowDownloads === true) {
+      sandboxTokens.push('allow-downloads');
+    }
+    iframe.setAttribute('sandbox', sandboxTokens.join(' '));
+    iframe.srcdoc = buildSrcdoc(options.csp);
+
     if (displayMode === 'hidden') {
       iframe.style.display = 'none';
       iframe.style.width = '0';

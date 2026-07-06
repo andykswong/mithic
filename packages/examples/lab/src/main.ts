@@ -22,6 +22,7 @@
 import { Kernel, RemoteDomHost } from '@mithic/kernel';
 import type { DomMutation } from '@mithic/guest-runtime/remote-dom';
 import { WorkerRuntime } from '@mithic/runtime/backends/worker';
+import type { Runtime } from '@mithic/runtime';
 import { FileSystemRouter, MemoryFsProvider, DeviceFsProvider } from '@mithic/io/vfs';
 import { OPFSProvider } from '@mithic/io/vfs/providers/opfs';
 import type { OPFSStorageManager } from '@mithic/io/vfs/providers/opfs';
@@ -97,6 +98,13 @@ export interface LabOptions {
    * unset, `dom/mutate` returns ENOSYS to the guest (no preview pane).
    */
   resolveDomContainer?: (pid: number) => Element | undefined;
+  /**
+   * The isolation backend the kernel runs guests on. Defaults to a
+   * {@link WorkerRuntime}, preserving existing behavior. The image-tool product
+   * page injects an {@link IframeRuntime} so the app runs as a visible GUI guest
+   * that paints its own preview (spec §3.3). Existing callers pass nothing.
+   */
+  runtime?: Runtime;
 }
 
 export interface Lab {
@@ -294,7 +302,7 @@ export async function createLab(options: LabOptions = {}): Promise<Lab> {
     : undefined;
 
   const kernel = new Kernel({
-    runtime: new WorkerRuntime(),
+    runtime: options.runtime ?? new WorkerRuntime(),
     vfs,
     resolveCommand: (name) => suite.resolve(name),
     launcher: suite.launcher,
@@ -337,7 +345,11 @@ export async function createLab(options: LabOptions = {}): Promise<Lab> {
   };
 }
 
-// Auto-boot when loaded as the page entry (index.html).
+// Auto-boot the image-tool product page when loaded as the page entry (index.html).
 if (typeof document !== 'undefined' && document.getElementById('lab')) {
-  void createLab();
+  void import('./image-tool/boot.ts').then(({ bootImageTool }) => {
+    const root = document.getElementById('lab')!;
+    const endpoint = import.meta.env.VITE_TELEMETRY_ENDPOINT;
+    return bootImageTool({ root, telemetryEndpoint: endpoint });
+  });
 }

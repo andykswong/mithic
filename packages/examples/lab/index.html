@@ -3,11 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>mithic lab</title>
+    <title>Resize &amp; convert an image — runs in your browser, no upload</title>
+    <meta name="description" content="Resize and convert images entirely in your browser. Your files never leave your device — no upload, no server." />
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      html, body { height: 100%; background: #1e1e2e; color: #cdd6f4; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-      #lab { height: 100%; width: 100%; padding: 16px; }
+      html, body { height: 100%; background: #11111b; }
+      /* The guest iframe fills the full viewport; the guest's own CSS owns the
+         responsive centered content column, so the page adapts to phone AND desktop
+         (no host-side mobile-width cap). */
+      #lab { height: 100%; width: 100%; }
+      #lab > iframe { width: 100%; height: 100%; border: none; }
     </style>
   </head>
   <body>
